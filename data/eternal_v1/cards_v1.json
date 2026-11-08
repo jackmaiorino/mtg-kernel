@@ -24122,6 +24122,39 @@
     "morph"
    ],
    "java_file": "Mage.Sets/src/mage/cards/b/BirchloreRangers.java"
+  },
+  {
+   "name": "Thornscape Battlemage",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "kicker",
+    "etb_trigger",
+    "direct_damage",
+    "destroy_artifact"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThornscapeBattlemage.java"
   }
  ]
 }

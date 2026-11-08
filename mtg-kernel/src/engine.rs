@@ -252,6 +252,11 @@ pub struct EngineState {
     /// persistent id-keyed marker could falsely survive a later, unkicked
     /// cast of the same physical card) -- see `EffectCond::WasKicked`'s doc.
     pub pending_kicked_source: Option<ObjectId>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_premodern_p2b_v1::BattlemageEntryV1::is_empty"
+    )]
+    pub battlemage_entry_v1: crate::eternal_premodern_p2b_v1::BattlemageEntryV1,
     /// Exile-zone "you may play/cast this" grants from an impulse-draw
     /// effect (Clockwork Percussionist, Experimental Synthesizer, Reckless
     /// Impulse) -- see `PlayPermission`'s doc.
@@ -1036,6 +1041,9 @@ pub struct PendingCast {
     /// it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hand_free_cast_v1: Option<HandFreeCastV1>,
+    /// The second printed kicker of Thornscape Battlemage, independently paid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thornscape_white_kicker_v1: Option<bool>,
 }
 impl PendingCast {
     pub(crate) fn selected_x_v59(&self) -> Option<u16> {
@@ -1119,6 +1127,10 @@ impl std::hash::Hash for PendingCast {
         if let Some(choice) = self.hand_free_cast_v1 {
             std::hash::Hash::hash(&"hand-free-cast/v1", state);
             std::hash::Hash::hash(&choice, state);
+        }
+        if let Some(paid) = self.thornscape_white_kicker_v1 {
+            std::hash::Hash::hash(&"thornscape-white-kicker/v1", state);
+            std::hash::Hash::hash(&paid, state);
         }
     }
 }
@@ -2703,6 +2715,15 @@ fn validate_spell_source_contract_fields(
             );
         }
         validate_optional_additional_paid_refs(kind, item.controller, &item.v4.paid_cost_refs)?;
+    }
+    let battlemage_kickers = item.v4.battlemage_kickers_v1.0;
+    let bad_kicker_receipt = if crate::eternal_premodern_p2b_v1::is_thornscape(def) {
+        battlemage_kickers > 3 || item.kicked != (battlemage_kickers != 0)
+    } else {
+        battlemage_kickers != 0
+    };
+    if bad_kicker_receipt {
+        return Err("spell's paid Battlemage kickers do not match its source".into());
     }
     let origin_generation = source
         .v4
@@ -9803,6 +9824,26 @@ fn pending_cast_quote_v1(
     )
 }
 
+fn thornscape_white_kicker_payable(
+    state: &GameState,
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+) -> bool {
+    let mut projected = state.clone();
+    let mut paying = pending.clone();
+    paying.thornscape_white_kicker_v1 = Some(true);
+    projected.engine.pending_cast = Some(paying.clone());
+    pending_cast_quote_v1(
+        def,
+        &paying,
+        finalized_cast_method(&paying, paying.source_contract.cast_method, def),
+        paying.kicked == Some(true),
+        0,
+        &projected,
+    )
+    .is_some()
+}
+
 /// Records the pay-or-skip answer of a hand cast under a free-cast
 /// permission. Skipping the mana cost makes X zero, except Sickening
 /// Dreams' X, which counts an additional cost's discards.
@@ -14319,6 +14360,11 @@ pub(crate) fn validate_pending_cast(
     let def = card_def::CARD_DEFS
         .get(source.card_def as usize)
         .ok_or("pending cast source definition is missing")?;
+    if pending.thornscape_white_kicker_v1.is_some()
+        && (!crate::eternal_premodern_p2b_v1::is_thornscape(def) || pending.kicked.is_none())
+    {
+        return Err("white kicker selection has no matching red kicker stage".into());
+    }
     if pending.wide_x_value_v59.is_some()
         && !supports_wide_cast_x_v59(pending.source_contract.card_def, def)
     {
@@ -14380,6 +14426,7 @@ pub(crate) fn validate_pending_cast(
         || placeholder.v4.x_value != 0
         || !placeholder.v4.paid_cost_refs.is_empty()
         || placeholder.v4.optional_additional_cost_paid.is_some()
+        || !placeholder.v4.battlemage_kickers_v1.is_empty()
         || placeholder.v4.target_spec.is_some()
         || !placeholder.v4.target_contracts.is_empty()
         || placeholder.v4.activated_ability_index.is_some()
@@ -15274,15 +15321,15 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         return None;
     }
 
-    // Kicker (Goblin Bushwhacker) is decided before targets/modes, same as
-    // any other cast-time cost choice -- only asked when paying the base
-    // cost *and* the kicker cost together is currently affordable; every
-    // card in this pool with `kicker_cost` has no `alt_cost`, so checking
-    // against the effective normal cost (never `def.alt_cost`) is exhaustive
-    // here.
+    // Kicker precedes targets and modes and is offered when the selected
+    // spell form can pay for it together with the base cost.
     if def.kicker_cost.is_some() && pending.kicked.is_none() {
-        let payable =
-            pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, true, 0, state).is_some();
+        let method = if crate::eternal_premodern_p2b_v1::is_thornscape(def) {
+            finalized_cast_method(&pending, staged_method, def)
+        } else {
+            CastMethodV4::Normal
+        };
+        let payable = pending_cast_quote_v1(def, &pending, method, true, 0, state).is_some();
         if payable
             && def.kicked_target_spec.is_some()
             && !kicker_targets_complete(state, def, &pending, false)
@@ -15318,6 +15365,25 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 .variable_targeting_kicked = Some(false);
         }
         state.engine.pending_cast.as_mut().unwrap().kicked = Some(false);
+        return drain_pending_cast_or_decide(state);
+    }
+
+    if crate::eternal_premodern_p2b_v1::is_thornscape(def)
+        && pending.thornscape_white_kicker_v1.is_none()
+    {
+        if thornscape_white_kicker_payable(state, &pending, def) {
+            return Some(Decision::ChooseEffectOption {
+                player: pending.controller,
+                source: pending.spell,
+                option_count: 2,
+            });
+        }
+        state
+            .engine
+            .pending_cast
+            .as_mut()
+            .unwrap()
+            .thornscape_white_kicker_v1 = Some(false);
         return drain_pending_cast_or_decide(state);
     }
 
@@ -19800,6 +19866,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         .last()
         .expect("resolve_top_of_stack called with an empty stack");
     let resolving_source = item.source;
+    if item.kind != StackItemKind::Spell && !item.v4.battlemage_kickers_v1.is_empty() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
+    }
     let fake_death_owner =
         match crate::fake_your_own_death_v50::death_custody::acquire_resolution(state, item) {
             Ok(owner) => owner,
@@ -20321,6 +20394,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     // explicitly set every time (`Some` or `None`), never left stale from a
     // previous resolution. See `EngineState::pending_kicked_source`'s doc.
     state.engine.pending_kicked_source = if item.kicked { Some(item.source) } else { None };
+    state.engine.battlemage_entry_v1.0 = (!item.v4.battlemage_kickers_v1.is_empty())
+        .then_some((item.source, item.v4.battlemage_kickers_v1));
     let ctx = ExecCtx {
         niv_damage_origin_v1,
         stack_item_id: Some(item.v4.stack_item_id),
@@ -24205,6 +24280,7 @@ enum PendingCastActionStage {
     ChooseGreatwurmCost,
     ChooseSphinxLoreRoute,
     ChooseOmniscienceRoute,
+    ChooseThornscapeWhiteKicker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24244,6 +24320,11 @@ fn pending_cast_action_stage(
     }
     if pending.kicked.is_none() {
         return Ok(PendingCastActionStage::ChooseKicker);
+    }
+    if crate::eternal_premodern_p2b_v1::is_thornscape(def)
+        && pending.thornscape_white_kicker_v1.is_none()
+    {
+        return Ok(PendingCastActionStage::ChooseThornscapeWhiteKicker);
     }
     if pending.optional_additional_cost_paid.is_none() {
         return Ok(PendingCastActionStage::ChooseOptionalAdditionalCost);
@@ -24354,7 +24435,8 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
             PendingCastActionStage::ChooseKicker,
             Action::ChooseKicker(_)
         ) | (
-            PendingCastActionStage::ChooseOptionalAdditionalCost,
+            PendingCastActionStage::ChooseOptionalAdditionalCost
+                | PendingCastActionStage::ChooseThornscapeWhiteKicker,
             Action::ChooseEffectOption(_)
         ) | (
             PendingCastActionStage::ChooseSpellMode,
@@ -24890,8 +24972,12 @@ pub(crate) fn step_without_linked_aura_v1(
             def
                 .kicker_cost
                 .ok_or("this spell has no kicker choice")?;
-            if pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, true, 0, state).is_none()
-            {
+            let method = if crate::eternal_premodern_p2b_v1::is_thornscape(def) {
+                finalized_cast_method(&pending, pending.source_contract.cast_method, def)
+            } else {
+                CastMethodV4::Normal
+            };
+            if pending_cast_quote_v1(def, &pending, method, true, 0, state).is_none() {
                 return Err("the kicker choice is no longer payable".to_string());
             }
             if def.kicked_target_spec.is_some() && !kicker_targets_complete(state, def, &pending, kicked) {
@@ -27537,6 +27623,18 @@ fn apply_pending_cast_effect_option(
         PendingCastActionStage::ChooseOptionalAdditionalCost => {
             apply_choose_optional_additional_cost(state, option_index)
         }
+        PendingCastActionStage::ChooseThornscapeWhiteKicker => {
+            if option_index > 1 || !thornscape_white_kicker_payable(state, &pending, def) {
+                return Err("white kicker option is not currently offered".into());
+            }
+            state
+                .engine
+                .pending_cast
+                .as_mut()
+                .unwrap()
+                .thornscape_white_kicker_v1 = Some(option_index == 1);
+            Ok(())
+        }
         PendingCastActionStage::ChooseFreeCastV1 => {
             let choice = match option_index {
                 0 => HandFreeCastV1::PayManaCost,
@@ -28115,6 +28213,7 @@ fn materialize_begin_cast_with_quote_v1(
         convoke_finished: false,
         escape_exile_finished_v1: false,
         hand_free_cast_v1,
+        thornscape_white_kicker_v1: None,
         mandatory_additional_cost: mandatory_cast_cost_v1::seed(def),
     });
 }
@@ -28465,6 +28564,11 @@ fn finalize_owned_cast(
         pending.mode_chosen.unwrap_or(0)
     };
     item.kicked = was_kicked;
+    if crate::eternal_premodern_p2b_v1::is_thornscape(def) {
+        let white = pending.thornscape_white_kicker_v1 == Some(true);
+        item.kicked |= white;
+        item.v4.battlemage_kickers_v1.0 = u8::from(was_kicked) | (u8::from(white) << 1);
+    }
     if def
         .alt_cost
         .is_some_and(|alt| alt.condition == card_def::AltCostCondition::DisguiseFromHand)

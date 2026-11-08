@@ -908,6 +908,78 @@ fn birchlore_casts_face_down_and_turns_up_for_one_green() {
 }
 
 #[test]
+fn thornscape_pays_each_kicker_separately_and_only_triggers_what_it_paid() {
+    for free in [false, true] {
+        for (red, white) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut state = islands();
+            let battlemage = put(&mut state, P0, "Thornscape Battlemage", Zone::Hand);
+            let artifact = put(&mut state, P1, "Mishra's Bauble", Zone::Battlefield);
+            if free {
+                put(&mut state, P0, "Aluren", Zone::Battlefield);
+                pool(&mut state, P0, &[ManaColor::R, ManaColor::W], 0);
+            } else {
+                pool(
+                    &mut state,
+                    P0,
+                    &[ManaColor::G, ManaColor::R, ManaColor::W],
+                    2,
+                );
+            }
+            act(&mut state, Action::CastSpell(battlemage));
+            settle_with(&mut state, |current, decision| match decision {
+                Decision::ChooseKicker { spell, .. } if spell == battlemage => {
+                    Action::ChooseKicker(red)
+                }
+                Decision::ChooseEffectOption { source, .. } if source == battlemage => {
+                    let pending = current.engine.pending_cast.as_ref().unwrap();
+                    let choice = if pending.thornscape_white_kicker_v1.is_some() {
+                        assert!(free);
+                        true
+                    } else {
+                        white
+                    };
+                    Action::ChooseEffectOption(u16::from(choice))
+                }
+                Decision::ChooseTargets { legal_targets, .. } => {
+                    let target = if legal_targets.contains(&Target::Player(P1)) {
+                        Target::Player(P1)
+                    } else {
+                        assert!(legal_targets.contains(&Target::Object(artifact)));
+                        Target::Object(artifact)
+                    };
+                    Action::ChooseTarget(target)
+                }
+                other => first_answer(other),
+            });
+            assert_eq!(zone(&state, battlemage), Zone::Battlefield);
+            assert_eq!(state.players[P1.index()].life, if red { 18 } else { 20 });
+            assert_eq!(
+                zone(&state, artifact),
+                if white {
+                    Zone::Graveyard
+                } else {
+                    Zone::Battlefield
+                }
+            );
+            assert_eq!(mana(&state, P0, ManaColor::R), u8::from(!red));
+            assert_eq!(mana(&state, P0, ManaColor::W), u8::from(!white));
+        }
+    }
+}
+
+#[test]
+fn thornscape_can_enter_from_a_noncast_effect_without_either_kicker() {
+    let mut state = islands();
+    let artifact = put(&mut state, P1, "Mishra's Bauble", Zone::Battlefield);
+    let battlemage = put(&mut state, P0, "Thornscape Battlemage", Zone::Graveyard);
+    enter(&mut state, battlemage);
+    settled(&mut state);
+    assert_eq!(zone(&state, battlemage), Zone::Battlefield);
+    assert_eq!(zone(&state, artifact), Zone::Battlefield);
+    assert_eq!(state.players[P1.index()].life, 20);
+}
+
+#[test]
 fn caller_of_the_claw_makes_a_bear_for_each_nontoken_creature_that_died_this_turn() {
     let mut state = islands();
     let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);

@@ -180,6 +180,9 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
 /// `eternal_premodern_p2b_v1`.
 pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Thornscape Battlemage" => {
+            "independent_kickers:r:w;etb_if_r:2_damage_any_target;etb_if_w:destroy_artifact"
+        }
         "Arrogant Wurm" => "madness:2g",
         "Birds of Paradise" => "mana:any_color",
         "Birchlore Rangers" => {

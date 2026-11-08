@@ -4887,6 +4887,7 @@ fn kicker_cost_for(name: &str) -> String {
     match name {
         "Divine Resilience" => cost_src("{2}{W}"),
         "Goblin Bushwhacker" => cost_src("{R}"),
+        "Thornscape Battlemage" => cost_src("{R}"),
         // Offspring {2} reuses kicker's optional additional cost.
         "Iridescent Vinelasher" => cost_src("{2}"),
         "Darkstar Augur" => cost_src("{B}"),
