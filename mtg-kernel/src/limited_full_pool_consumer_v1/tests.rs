@@ -285,3 +285,126 @@ fn paid_etali_free_cast_feeds_storm_and_both_owners_bind_the_actual_actions() {
         assert!(reached_storm);
     }
 }
+
+#[test]
+fn paid_axe_equips_the_real_harvester_nightmare_under_one_copy_scope_both_seats() {
+    use crate::{
+        card_def::Keywords,
+        effect::electroduplicate_v1_tests as native,
+        leyline_axe_consumer_v1::ActionV1 as Axe,
+    };
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = native::hv_ready(actor);
+        FastActorSessionV1::enable_limited_native_modes_v1(&mut state, LimitedAppendixV1::FullPool);
+        let harvester = native::paid(&mut state, actor, "Abyssal Harvester", 3);
+        let axe = native::paid(&mut state, actor, "Leyline Axe", 4);
+        native::hv_main(&mut state, actor);
+        let victim = native::paid(&mut state, actor, "Llanowar Elves", 1);
+        storm::cast(
+            &mut state, actor.opponent(), "Burst Lightning", &[Target::Object(victim)], 1,
+        );
+        storm::finish(&mut state);
+        assert_eq!(state.objects.get(victim).zone, Zone::Graveyard);
+        native::hv_activate(&mut state, actor, harvester, victim);
+        native::hv_finish_pair(&mut state);
+        let [nightmare] = native::hv_nightmares(&state, actor)[..] else {
+            panic!("Harvester did not create exactly one actual Nightmare");
+        };
+        assert!(crate::effect::harvester_v1::require_legacy_absence(&state).is_err());
+        assert!(crate::leyline_axe_v1::require_legacy_absence(&state).is_err());
+
+        let mut owner = KaitoSession::from_session(raw(&state)).unwrap();
+        let mut selected = false;
+        let mut equipped = false;
+        for _ in 0..24 {
+            let d = decision(&owner);
+            let backend = d.fixture_backend_v75();
+            let obs = backend.observation();
+            let facts = obs.harvester.as_ref().unwrap();
+            let birth = &facts.activations.last().unwrap().created[0];
+            assert_eq!(birth.original.object, nightmare.0);
+            assert_eq!(birth.copied_printing, card("Llanowar Elves"));
+            assert!(birth.added_copiable_nightmare);
+            let equipment = obs.leyline_axe.as_ref().unwrap().battlefield
+                .iter().find(|row| row.card.object == axe.0).unwrap();
+            if let Some(host) = &equipment.host {
+                assert!(selected);
+                assert_eq!(host.card.object, nightmare.0);
+                assert!(host.receives_printed_bonus);
+                assert!(crate::engine::has_effective_keyword(
+                    owner.fixture_state(), nightmare, Keywords::DOUBLE_STRIKE,
+                ));
+                assert!(crate::engine::has_effective_subtype(
+                    owner.fixture_state(), nightmare, crate::card_def::Subtype::Nightmare,
+                ));
+                assert_model(&owner, &d);
+                equipped = true;
+                break;
+            }
+            let rows = &backend.candidates_v75().candidates;
+            let pick = rows.iter().position(|row| {
+                !selected && (row.leyline_axe_action == Some(Axe::ActivateEquip { generic_cost: 3 })
+                    || (row.leyline_axe_action == Some(Axe::ChooseEquipTarget)
+                        && matches!(&row.action, Action::ChooseTarget {
+                            target: TargetRefV1::Object { object }, ..
+                        } if object.arena_id == nightmare.0)))
+            }).or_else(|| rows.iter().position(|row| matches!(row.action, Action::Pass { .. })))
+                .expect("missing genuine Axe equip continuation");
+            let target_choice = rows[pick].leyline_axe_action == Some(Axe::ChooseEquipTarget);
+            let count_tapped_lands = |state: &GameState| {
+                state.players[actor.index()].battlefield.iter().filter(|&&id| {
+                    let object = state.objects.get(id);
+                    object.tapped && CARD_DEFS[usize::from(object.card_def)].is_land
+                }).count()
+            };
+            let before = count_tapped_lands(owner.fixture_state());
+            owner.apply(&d, pick as u32).unwrap();
+            if target_choice {
+                assert_eq!(count_tapped_lands(owner.fixture_state()) - before, 3);
+                selected = true;
+            }
+        }
+        assert!(equipped);
+    }
+}
+
+#[test]
+fn every_frozen_printing_reaches_the_full_pool_sealed_learner_for_each_seat() {
+    let deck: Vec<_> = declared_printings_v1().unwrap().iter().copied().collect();
+    let model = ModelV1::deterministic_fixture();
+    let library = [card("Forest"); 40];
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut covered = BTreeSet::new();
+        for printings in deck.chunks(7) {
+            // Put a bounded own-hand sample at an actual main-phase decision.
+            // The memberships and actions are read from the owned menu.
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &library, &library, crate::rl::card_name, 550_286, actor,
+            );
+            state.step = crate::state::Step::Main1;
+            FastActorSessionV1::enable_limited_native_modes_v1(&mut state, LimitedAppendixV1::FullPool);
+            for land in ["Plains", "Island", "Swamp", "Mountain", "Forest"] {
+                put(&mut state, actor, land, Zone::Battlefield);
+            }
+            let objects: Vec<_> = printings.iter().map(|&id| {
+                put(&mut state, actor, CARD_DEFS[usize::from(id)].name, Zone::Hand)
+            }).collect();
+            let owner = KaitoSession::from_session(raw(&state)).unwrap();
+            let d = decision(&owner);
+            let backend = d.fixture_backend_v75();
+            assert_eq!(backend.expected().acting_player, actor.into());
+            let hand = &backend.observation().common.common.own_hand;
+            for (&printing, object) in printings.iter().zip(objects) {
+                assert!(hand.iter().any(|row| {
+                    row.stable.arena_id == object.0 && row.stable.card_db_id == printing
+                }), "own hand lost frozen printing {printing}");
+                assert!(covered.insert(printing));
+            }
+            let input = owner.training_input_v1(&d).unwrap();
+            let scores = model.forward(&input).unwrap();
+            assert_eq!(scores.len(), d.packet().actions().len());
+            assert!(scores.iter().all(|score| score.is_finite()));
+        }
+        assert_eq!(&covered, declared_printings_v1().unwrap());
+    }
+}
