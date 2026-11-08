@@ -248,11 +248,47 @@ fn v3_damage_refusal_recovers_when_the_public_operation_finishes() {
         let (departed, damage) = departed_public_damage(&mut state, viewer.opponent());
         propose_and_commit(&mut state, ProposedEvent::draw(viewer));
         let public = state.players[viewer.index()].hand[0];
-        propose_and_commit(
-            &mut state,
-            ProposedEvent::zone_change(public, Zone::Graveyard),
+        assert_eq!(
+            state.objects.get(public).card_def,
+            super::fixtures::id("Fiery Temper")
         );
-        state.stack.push(waiting(public, viewer));
+        // Publish an actual paid spell. A hand-written empty trigger has no
+        // native source incarnation and cannot establish recovery on resolution.
+        state.players[viewer.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 3;
+        if state.priority_player != viewer {
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == viewer
+        ));
+        engine::step(&mut state, Action::CastSpell(public)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { .. }
+        ));
+        engine::step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(viewer.opponent())),
+        )
+        .unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == viewer
+        ));
+        let spell = state.stack.last().expect("paid Fiery Temper");
+        assert_eq!(spell.kind, StackItemKind::Spell);
+        assert_eq!(spell.source, public);
+        assert!(spell.v4.source_contract.is_some());
+        assert_eq!(
+            state.players[viewer.index()].mana_pool[crate::mana::ManaColor::R.pool_index()],
+            0
+        );
+        let life_before = state.players[viewer.opponent().index()].life;
         let history = state.engine.event_history.len();
         assert!(matches!(
             export_v3(&input(&state, &lists, viewer)),
@@ -272,6 +308,11 @@ fn v3_damage_refusal_recovers_when_the_public_operation_finishes() {
             engine::step(&mut state, Action::Pass).unwrap();
         }
         assert!(state.stack.is_empty());
+        assert_eq!(
+            state.players[viewer.opponent().index()].life,
+            life_before - 3
+        );
+        assert_eq!(state.objects.get(public).zone, Zone::Graveyard);
         assert!(state.engine.event_history.len() >= history);
         let out = export_v3(&input(&state, &lists, viewer)).unwrap();
         let CommittedEvent::Damage { source, .. } = out.state.engine.event_history[damage] else {
