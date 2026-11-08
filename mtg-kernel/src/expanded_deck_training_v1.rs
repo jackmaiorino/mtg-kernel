@@ -805,41 +805,13 @@ impl OpponentCacheV1 {
     }
 }
 
-/// Sources a collection boundary verified in this process with resident
-/// reads on (`verified_bytes_cache_v1`); at most this many are remembered.
-const RESIDENT_VERIFIED_SOURCES_V1: usize = 64;
-
-/// With resident reads on, whether a collection boundary of this process
-/// already verified `source` (`remember` records it as verified). Off, never.
-fn resident_verified_source_v1(source: &ExpandedModelSourceV1, remember: bool) -> bool {
-    use std::sync::{Mutex, OnceLock, PoisonError};
-    static VERIFIED: OnceLock<Mutex<Vec<ExpandedModelSourceV1>>> = OnceLock::new();
-    if !verified_bytes_cache_v1::global_v1().resident_v1() {
-        return false;
-    }
-    let mut verified = VERIFIED
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    if verified.contains(source) {
-        return true;
-    }
-    if remember && verified.len() < RESIDENT_VERIFIED_SOURCES_V1 {
-        verified.push(source.clone());
-    }
-    false
-}
-
 /// Revalidate every external byte pin once at a collection boundary before
 /// reusing a process-cached model. Schema-specific semantic validation remains
 /// the cache miss loader's responsibility; changed bytes cannot hit that cache.
 ///
-/// With resident reads on (`verified_bytes_cache_v1`), a source this process
-/// already verified at an earlier boundary passes again without rereading
-/// its files: its verification is a pure function of the pinned bytes, so it
-/// holds for as long as the process trusts those bytes, which is the mode's
-/// contract (once per process, a W5 segment). Every other source is verified
-/// as before.
+/// The import and checkpoint are read as shared bytes: with resident reads on
+/// (`verified_bytes_cache_v1`) each read checks the file's metadata and
+/// borrows the held verified bytes, without copying a 20 MB checkpoint.
 fn verify_collection_opponent_sources_v1(
     episodes: &[ExpandedEpisodeV1],
 ) -> Result<Vec<ExpandedModelSourceV1>, String> {
@@ -857,22 +829,19 @@ fn verify_collection_opponent_sources_v1(
         if source.s_learner.is_some() {
             continue;
         }
-        if resident_verified_source_v1(source, false) {
-            verified.push(source.clone());
-            continue;
-        }
-        let bytes = read_pinned_bytes(&source.play_import)?;
+        let bytes = read_pinned_shared_v1(&source.play_import)?;
         let checkpoint_bytes = source
             .checkpoint
             .as_ref()
-            .map(read_pinned_bytes)
+            .map(read_pinned_shared_v1)
             .transpose()?;
+        let checkpoint_bytes = checkpoint_bytes.as_deref().map(Vec::as_slice);
         let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
         let schema = probe.get("schema").and_then(Value::as_str);
         // A converted source whose base trains verifies the conversion's
         // pins and the base's own, then is served like its base.
         let verified_pins = if schema == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
-            no_state_digest_v1::verify_source_pins_v1(source, &bytes, checkpoint_bytes.as_deref())?
+            no_state_digest_v1::verify_source_pins_v1(source, &bytes, checkpoint_bytes)?
         } else {
             let mut pins_ok = verify_import_pins_v1(&bytes)?;
             // A checkpoint that names a further file (a phase-1
@@ -881,7 +850,7 @@ fn verify_collection_opponent_sources_v1(
             // The process cache holds only sources whose checkpoint the same
             // probe found clean, and this pin was just verified, so a held
             // source needs no probe.
-            if let (true, Some(checkpoint)) = (pins_ok, checkpoint_bytes.as_deref()) {
+            if let (true, Some(checkpoint)) = (pins_ok, checkpoint_bytes) {
                 pins_ok = ordered_update_preparation::holds_source_v1(source)
                     || no_state_digest_v1::names_another_file_v1(checkpoint) == Ok(false);
             }
@@ -890,7 +859,6 @@ fn verify_collection_opponent_sources_v1(
         if !verified_pins {
             continue;
         }
-        resident_verified_source_v1(source, true);
         verified.push(source.clone());
     }
     Ok(verified)
