@@ -1,6 +1,9 @@
 use super::*;
 use crate::card_def::card_id_by_name;
 
+#[path = "full_pool_search_tests.rs"]
+mod full_pool_search;
+
 const UG: &str = include_str!("../../../data/limited/fdn_v1/FDN_top_04956_UG.dck");
 const WG: &str = include_str!("../../../data/limited/fdn_v1/FDN_top_20626_WG.dck");
 
