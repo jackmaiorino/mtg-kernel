@@ -13135,7 +13135,7 @@ pub(crate) fn spellbench_pending_activation_public_v2(
 /// target contracts, without the completed stack-item validator. Callers
 /// either validated the completed item or ran the announcement's own prefix
 /// validator.
-fn stack_item_public_v2_from_frozen(
+pub(crate) fn stack_item_public_v2_from_frozen(
     state: &GameState,
     acting_player: PlayerId,
     stack_index: u32,

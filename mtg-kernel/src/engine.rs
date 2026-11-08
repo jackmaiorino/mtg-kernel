@@ -17120,7 +17120,7 @@ pub(crate) fn spellbench_pending_trigger_announcement(
     Ok(Some(pending_trigger_stack_candidate(state, pending)?))
 }
 
-fn pending_trigger_stack_candidate(
+pub(crate) fn pending_trigger_stack_candidate(
     state: &GameState,
     pending: &PendingTrigger,
 ) -> Result<StackItem, String> {
