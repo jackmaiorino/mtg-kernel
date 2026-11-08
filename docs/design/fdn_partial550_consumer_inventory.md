@@ -1,5 +1,30 @@
 # Partial Foundations consumer inventory
 
+## Current candidate, 2026-11-08
+
+Commit `d39419792` composes consumer source for all 36 original Partial
+printings, with 24 optional family appendices and 26 complete schema shapes.
+The prior Mixed profile still admits its original 20 printings. A separate
+full-pool composition is the next integration task; source coverage does not
+change the catalog's 250 Full / 36 Partial / 0 Missing status.
+
+The combined 33-printing checkpoint passed the guarded native library and
+test-target type check, including Sphinx, Greatwurm and Harvester binary
+metadata, in 475.96 seconds with no Rust warnings. It did not execute those
+fixtures. The 36-printing candidate still needs pinned formatting, compilation,
+the affected paid-game fixtures and genuine new event samples. Shared fair
+search, the bounded DraftZero learner/evaluation and Drake's #474 timing
+acceptance remain separate unfinished requirements.
+
+The hosted Limited test build at `5c08b3eeb` received a runner shutdown signal
+and exited 143 before producing a test artifact. Its log is retained at
+`D:/mtg-kernel-limited586-job-128890706329-5c08.log`, SHA-256
+`e09a59c6a0429b9fbc11c7b363a8a82b28516b92f8a8dc36e17b15ccd721f662`.
+There was no compiler diagnostic. The newer candidate still requires an
+affected build; this interruption is not a pass.
+
+The following inventory preserves the starting gaps and implementation history.
+
 Source inventory for #550, checked against issue550 and origin/main
 `817c8c5124bdc5c0a2630bc8327bb0f8798ec9dd` on2026-11-08. The frozen286-name
 pool still contains250 Full and36 Partial printings. Kykar Spirit, Zombie and
@@ -600,7 +625,11 @@ The repair was reviewed. Pinned formatting passed on all 28 staged Rust inputs;
 17 changed outputs were independently hash-verified and applied in `3d20f546e`.
 Receipt SHA-256
 `24c290d06da886fe3a4e8abe6cab3cdab1485a5bdff1409ad769ca63ecf1d8bb`.
-The combined thirty-three type check is pinned to `3d20f546e` and pending.
+The combined thirty-three type check at `3d20f546e` passed the library,
+all test targets and Sphinx/Greatwurm/Harvester binary metadata without Rust
+warnings. Elapsed time was 475.96 seconds. Receipt SHA-256
+`0c1db49f2fbf286664f4b2c6e493b4f547507e87d499dff9fbf78a5471efd52e`.
+The corresponding paid-game fixtures remain pending.
 
 The bounded learner pilot still selects Return. No Mixed learner, all-286
 fair-search run, training/evaluation result or Full promotion is qualified.
@@ -631,3 +660,21 @@ Human and JSONL owners, model input, two hidden-world axes, snapshot/restore,
 stale actions, two target slots and copied X. Native fixture helpers retain
 their actual paid casts and are only made visible to these additional tests.
 This source has not been formatted, compiled or executed.
+
+The subsequent native cast-form repair binds every physical cast to its
+independent published identity and finalized method. Omitting an eligible
+cast before the first Storm observer enters is rejected. Target-face records
+follow the actual original cast and actual copied stack item. Copy publication
+records its native item and target witnesses transactionally before ordinary
+target validation; failed publication discards that staged state. Retained
+copy slots must match the original native face record, and archived stack
+identities and spell incarnations must be unique. Historical projection never
+reads the printing of a later hidden target incarnation.
+
+Independent source review covered the cast roster, target publication and
+restored face/identity bindings. The additional both-seat fixture pays for an
+opponent creature, gives it hexproof, casts the original targeted spell and
+reaches the copy target menu. It then moves the original target into a hidden
+library, varies only that later printing, compares both viewers and actual
+native action mapping, publishes the copy and resolves its stale target.
+These new fixtures are source-only until the guarded native run completes.
