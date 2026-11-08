@@ -54,11 +54,13 @@ fn closed_list_v3_frozen_286_opening_roots_ignore_hidden_composition_both_seats(
         assert!(ids.insert(id), "duplicate frozen printing {name}");
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut decks = [vec![forest; 40], vec![forest; 40]];
-            decks[actor.index()][..4].fill(id);
+            decks[actor.index()].fill(id);
             let mut corpus = vec![forest; 40];
             corpus[..4].fill(id);
             let belief = LimitedBeliefV1::new([corpus]);
             let session = rules_only_closed_list_game(decks, actor);
+            assert!(session.game_state().players[actor.index()].hand.iter().all(|&object| session.game_state().objects.get(object).card_def == id));
+            assert!(!session.game_state().players[actor.index()].hand.is_empty());
             let FastActorResponseV1::Decision(decision) = session.current_response() else { panic!("{name}: no opening decision") };
             assert_eq!(seat(decision.acting_player), actor);
             compare_worlds(&session, actor, &belief, 552_286 + u64::from(id));
@@ -67,7 +69,7 @@ fn closed_list_v3_frozen_286_opening_roots_ignore_hidden_composition_both_seats(
 }
 
 #[test]
-fn closed_list_v3_paid_partial_spell_roots_ignore_hidden_composition_both_seats() {
+fn closed_list_v3_paid_partial_roots_ignore_hidden_composition_both_seats() {
     let forest = card_id_by_name("Forest").unwrap();
     let partial = names().into_iter().filter(|name| {
         CARD_DEFS[card_id_by_name(name).unwrap() as usize].capability == crate::card_def::CardCapability::Partial
@@ -86,9 +88,19 @@ fn closed_list_v3_paid_partial_spell_roots_ignore_hidden_composition_both_seats(
                 vec![crate::state::Target::Object(creature)]
             } else { vec![] };
             let definition = &CARD_DEFS[printing as usize];
-            let cost = usize::from(definition.cost.generic) + definition.cost.pips.len();
-            let spell = paid::cast(&mut state, actor, &name, &targets, cost);
-            assert!(state.stack.iter().any(|item| item.source == spell && !item.is_copy));
+            if definition.is_land {
+                assert_eq!(name, "Secluded Courtyard");
+                let land = crate::policy_observation_v6::tests::put(&mut state, actor, &name, Zone::Hand);
+                paid::action(&mut state, crate::engine::Action::PlayLand(land));
+            } else {
+                let cost = usize::from(definition.cost.generic) + definition.cost.pips.len();
+                let spell = paid::cast(&mut state, actor, &name, &targets, cost);
+                assert!(state.stack.iter().any(|item| item.source == spell && !item.is_copy));
+                // A real playable instant gives these priority windows a
+                // second action, so this checks actual PIMC visits as well
+                // as explicit world sampling.
+                crate::policy_observation_v6::tests::put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+            }
             let mut corpus = state.objects.iter().filter(|(_, card)| card.owner == actor.opponent() && !card.v4.is_token)
                 .map(|(_, card)| card.card_def).collect::<Vec<_>>();
             corpus.sort_unstable();
@@ -97,6 +109,7 @@ fn closed_list_v3_paid_partial_spell_roots_ignore_hidden_composition_both_seats(
             session.install_rules_only_test_state_v1(state);
             let FastActorResponseV1::Decision(decision) = session.current_response() else { panic!("{name}: paid root did not surface") };
             assert_eq!(seat(decision.acting_player), actor, "{name}: root actor");
+            assert!(decision.legal_action_count > 1, "{name}: search needs a real alternative");
             compare_worlds(&session, actor, &belief, 552_360 + u64::from(printing));
         }
     }
