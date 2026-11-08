@@ -83,6 +83,8 @@ mod root_rebuild;
 mod sbroot;
 mod seeds;
 mod serve;
+#[cfg(test)]
+pub(crate) use serve::worker_answer_v4 as qualify_worker_request_v4;
 mod serve_ac2;
 mod sharing;
 mod tensor_dump;
