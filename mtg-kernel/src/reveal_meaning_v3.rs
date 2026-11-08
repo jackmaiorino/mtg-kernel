@@ -258,7 +258,11 @@ mod tests {
     fn reveal_meaning_v3_concealed_exile_return_and_state_identity() {
         let owner = PlayerId::P0;
         let mut state = empty();
-        let card = put(&mut state, owner, "Swamp", Zone::Exile);
+        // Start from a concealed exile fixture without a face-up transition.
+        let card = put(&mut state, owner, "Swamp", Zone::Library);
+        assert_eq!(state.players[owner.index()].library.pop(), Some(card));
+        state.exile.push(card);
+        state.objects.get_mut(card).zone = Zone::Exile;
         state.objects.get_mut(card).v4.face_down_v1 = Some(FaceDownV1 {
             disguised: false,
             lookers: 1,
@@ -269,6 +273,8 @@ mod tests {
         frozen.reveal_meaning_v3 = Default::default();
         for game in [&mut state, &mut frozen] {
             propose_and_commit(game, ProposedEvent::zone_change(card, Zone::Hand));
+            assert_eq!(game.objects.get(card).zone, Zone::Hand);
+            assert!(game.known_hand_cards(owner.opponent(), owner).is_empty());
         }
         assert_eq!(operations(&state, owner.opponent()), json!([]));
         state.reveal_meaning_v3.shuffle(owner);
@@ -304,7 +310,14 @@ mod tests {
         // Force the actual abort path after a genuine face-up announcement.
         state.players[owner.index()].mana_pool.fill(0);
         engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        // The engine advances the pending payment after the target answer.
+        let _ = engine::advance_until_decision(&mut state);
         assert_eq!(state.objects.get(spell).zone, Zone::Hand);
+        assert!(state.engine.pending_cast.is_none());
+        assert!(!state.engine.event_history.iter().any(|event| matches!(
+            event,
+            crate::event::CommittedEvent::SpellCast { spell: cast, .. } if *cast == spell
+        )));
         let wire = operations(&state, viewer);
         assert_eq!(wire[0]["events"][0]["kind"], "hand_departure");
         assert_eq!(
