@@ -35,7 +35,7 @@ trusted adapter. It advertises a separate extension and receipt identity.
 The payload digest includes the public minima by name, which the adapter and
 entrant can compare with the selected transcript. The `s4a-serve-reveal-v4`
 search mode and its worker require the reveal-v4 schema and use a separate
-seed namespace. Native acceptance and the successor entrant are pending.
+seed namespace. Completed native and companion acceptance is recorded below.
 
 ## Combined candidate qualification source
 
@@ -119,7 +119,7 @@ Next exact default-feature libtest filters: `reveal_v4`,
 `reveal_meaning_v3_`, and
 `infoset_v1::face_down::v2_face_down_exile_to_hidden_zones_never_reveals_the_name`.
 The last filter should use `--exact`; run all with `--test-threads=1` under
-the lead's guarded native runner. These successor checks remain unexecuted.
+the lead's guarded native runner. The later acceptance section records their execution.
 The separate process packet `b04683d` is retained unchanged. Its opening
 32-transition default is not evidence that a search produces a pick; native
 qualification must resolve that process bound before claiming searched
@@ -170,9 +170,8 @@ Focused receipt checks are in
 Python CI shards. They cover matching
 paths, same-payload wrong paths, wrong/missing keys, unmapped picks, group
 identity, original-completion disagreement, incomplete replies and accounting.
-These pure unit cases are not native evidence. They and Python execution are
-deferred while all desktop cores are reserved; only source review and
-`git diff --check` were performed for this follow-up.
+These pure unit cases are separate from native evidence. The later acceptance
+section records their successful guarded execution and the real process result.
 
 ## Observed process qualification (2026-11-08)
 
