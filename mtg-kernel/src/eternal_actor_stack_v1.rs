@@ -17,7 +17,7 @@ pub struct StackProgramV1 {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ProgramV1 {
-    Printed(EffectOp),
+    Printed(Box<EffectOp>),
     CounterCapturedCastSpell {
         /// Public stack ordinal, or absent after that exact spell has left.
         target_stack_index: Option<u32>,
@@ -75,10 +75,10 @@ fn bind_item(
             ProgramOriginV1::SpellMode {
                 mode: item.mode_chosen,
             },
-            ProgramV1::Printed(
+            ProgramV1::Printed(Box::new(
                 def.printed_mode_effect(item.mode_chosen)
                     .ok_or_else(error)?,
-            ),
+            )),
         ),
         StackItemKind::ActivatedAbility => {
             let ability_index = item.v4.activated_ability_index.ok_or_else(error)?;
@@ -92,7 +92,7 @@ fn bind_item(
             }
             (
                 ProgramOriginV1::PrintedActivation { ability_index },
-                ProgramV1::Printed(program),
+                ProgramV1::Printed(Box::new(program)),
             )
         }
         StackItemKind::TriggeredAbility => {
@@ -216,7 +216,7 @@ fn bind_trigger(
         .iter()
         .position(|trigger| (trigger.effect)() == *program)
     {
-        return Ok((index, ProgramV1::Printed(program.clone())));
+        return Ok((index, ProgramV1::Printed(Box::new(program.clone()))));
     }
     // Vexing Bauble and Chalice materialize the publicly observed cast into
     // an exact stack incarnation. Publish its stack position, never its raw ID.
