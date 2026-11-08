@@ -33,6 +33,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
 pub(crate) mod closed_list_v2;
+pub(crate) mod curator_sampling_v1;
 
 pub const LIMITED_MATCH_SCHEMA_V1: &str = "mtg-kernel-limited-match/v1";
 /// UCB1 exploration constant on values in [-1, 1].

@@ -518,6 +518,7 @@ pub fn feature_identity() -> String {
             include_str!("curator_consumer_v1.rs"),
             include_str!("curator_public_v1.rs"),
             include_str!("curator_receipts_v1.rs"),
+            include_str!("limited_match_v1/curator_sampling_v1.rs"),
             include_str!("fiend_artisan_consumer_v1.rs"),
             include_str!("fiend_artisan_public_v1.rs"),
             include_str!("fiend_artisan_receipts_v1.rs"),

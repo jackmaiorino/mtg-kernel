@@ -8590,10 +8590,6 @@ impl FastActorSessionV1 {
         if self.flat_action_contract_mode != FlatActionContractModeV1::RulesOnlyV1 && !typed_full_pool {
             return Err("closedlist-v3 requires a rules-only or full-pool owning session".into());
         }
-        if typed_full_pool && self.state.engine.event_history.iter().any(|e| matches!(e,
-            crate::event::CommittedEvent::CuratorEnteredV1 { .. })) {
-            return Err("full-pool Curator history requires unordered-pile sampling".into());
-        }
         let actor = self.current.as_ref().ok_or("no current decision")?.actor;
         // Answering an already-open operation replays its original GameState.
         // A checkpoint opened inside a sampled rollout has a sampled origin.
@@ -8665,7 +8661,12 @@ impl FastActorSessionV1 {
             return Err("sampled root actor or owning profile differs".into());
         }
         let mut sampled = self.clone();
-        closed_list_v2::rewrite_names(
+        let rewrite = if typed_full_pool {
+            crate::limited_match_v1::curator_sampling_v1::rewrite
+        } else {
+            closed_list_v2::rewrite_names
+        };
+        rewrite(
             &mut sampled.state,
             root.actor,
             root.slots.clone(),

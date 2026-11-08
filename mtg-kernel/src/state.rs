@@ -2563,6 +2563,10 @@ pub struct GameState {
     /// its publicly shown cards to the controller's private library positions.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) curator_unordered_reveal_v1: bool,
+    // Only the opaque owning search clone can detach a name-only arrival from
+    // its native opponent hand slot. Serialized live checkpoints cannot mint it.
+    #[serde(skip)]
+    pub(crate) curator_sampled_hand_arrivals_v1: crate::curator_receipts_v1::SampledHandArrivalsV1,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) greatwurm_commit_receipts_v1: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -2853,6 +2857,7 @@ impl Hash for GameState {
         if self.curator_unordered_reveal_v1 {
             "curator-unordered-reveal/v1".hash(state);
         }
+        self.curator_sampled_hand_arrivals_v1.hash_if_sampled(state);
         if self.harvester_commit_receipts_v1 {
             "harvester-commit-receipts/v1".hash(state);
         }
@@ -3087,6 +3092,7 @@ impl GameState {
             reveal_meaning_v3: Default::default(),
             reveal_knowledge_v4: None,
             curator_unordered_reveal_v1: false,
+            curator_sampled_hand_arrivals_v1: Default::default(),
             greatwurm_commit_receipts_v1: false,
             harvester_commit_receipts_v1: false,
             fiend_artisan_receipts_v1: false,
