@@ -961,11 +961,8 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                 )
                 .map_err(error)?
             || row.zimone_action
-                != crate::zimone_consumer_v1::action(
-                    value.observation.zimone.as_ref(),
-                    &row.action,
-                )
-                .map_err(error)?
+                != crate::zimone_consumer_v1::action(value.observation.zimone.as_ref(), &row.action)
+                    .map_err(error)?
             || row.drakuseth_target
                 != crate::drakuseth_consumer_v1::target_action(
                     value.observation.drakuseth.as_ref(),

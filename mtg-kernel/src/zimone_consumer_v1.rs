@@ -53,8 +53,7 @@ pub(crate) fn preflight(config: &ResetV1) -> Result<(), String> {
 }
 
 fn native(config: &ResetV1) -> Result<FastActorSessionV1, String> {
-    FastActorSessionV1::reset_limited_zimone_v1(config, false)
-        .map_err(|error| format!("{error:?}"))
+    FastActorSessionV1::reset_limited_zimone_v1(config, false).map_err(|error| format!("{error:?}"))
 }
 
 pub fn reset_numeric_v1(config: &ResetV1) -> Result<KaitoSession, String> {
@@ -108,7 +107,10 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
     {
         return Err("invalid Zimone viewer facts".into());
     }
-    for (seat, rows) in [PlayerSeatV1::P0, PlayerSeatV1::P1].into_iter().zip(&facts.battlefield) {
+    for (seat, rows) in [PlayerSeatV1::P0, PlayerSeatV1::P1]
+        .into_iter()
+        .zip(&facts.battlefield)
+    {
         for row in rows {
             if row.card.zone != Zone::Battlefield || row.card.controller != seat {
                 return Err("invalid Zimone battlefield row".into());
@@ -172,10 +174,7 @@ fn same_printed_source(reference: &ReferenceV1, stable: &CardStableRefV1) -> boo
         && reference.zone == stable.zone
 }
 
-pub(crate) fn action(
-    facts: Option<&FactsV1>,
-    action: &Action,
-) -> Result<Option<ActionV1>, String> {
+pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<ActionV1>, String> {
     let Some(facts) = facts else {
         return Ok(None);
     };
@@ -188,25 +187,60 @@ pub(crate) fn action(
         } if source.card_db_id == PRINTING && granted_ability.is_none() => {
             return Ok(Some(ActionV1::ActivateDoubleEveryKind));
         }
-        Action::ChooseTarget { source, actor, remaining, target } if source.card_db_id == PRINTING => (
-            source, *actor, StageV1::OrderedCombat,
-            2u16.checked_sub(u16::from(*remaining)).ok_or("Zimone trigger target cap changed")?,
+        Action::ChooseTarget {
+            source,
+            actor,
+            remaining,
+            target,
+        } if source.card_db_id == PRINTING => (
+            source,
+            *actor,
+            StageV1::OrderedCombat,
+            2u16.checked_sub(u16::from(*remaining))
+                .ok_or("Zimone trigger target cap changed")?,
             Some(target),
         ),
-        Action::FinishTargetSelection { source, actor, selected_count } => {
-            (source, *actor, StageV1::OrderedCombat, *selected_count, None)
-        }
+        Action::FinishTargetSelection {
+            source,
+            actor,
+            selected_count,
+        } => (
+            source,
+            *actor,
+            StageV1::OrderedCombat,
+            *selected_count,
+            None,
+        ),
         Action::ChooseEffectTarget {
-            source, actor, target, selected_count, min_targets, max_targets,
+            source,
+            actor,
+            target,
+            selected_count,
+            min_targets,
+            max_targets,
         } if source.card_db_id == PRINTING => {
             if (*min_targets, *max_targets) != (0, 2) {
                 return Err("Zimone activation target bounds changed".into());
             }
-            (source, *actor, StageV1::PendingActivation, *selected_count, Some(target))
+            (
+                source,
+                *actor,
+                StageV1::PendingActivation,
+                *selected_count,
+                Some(target),
+            )
         }
-        Action::FinishEffectSelection { source, actor, selected_count } => {
-            (source, *actor, StageV1::PendingActivation, *selected_count, None)
-        }
+        Action::FinishEffectSelection {
+            source,
+            actor,
+            selected_count,
+        } => (
+            source,
+            *actor,
+            StageV1::PendingActivation,
+            *selected_count,
+            None,
+        ),
         _ => return Ok(None),
     };
     if source.card_db_id != PRINTING {
@@ -218,7 +252,9 @@ pub(crate) fn action(
             && row.source.captured_controller == actor
             && same_printed_source(&row.source.original_source, source)
     });
-    let row = matching.next().ok_or("missing original Zimone target menu")?;
+    let row = matching
+        .next()
+        .ok_or("missing original Zimone target menu")?;
     if matching.next().is_some()
         || selected_count >= 2
         || usize::from(selected_count) != row.original_targets.len()

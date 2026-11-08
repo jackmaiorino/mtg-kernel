@@ -294,25 +294,44 @@ fn public_appendix_follows_paid_activation_order_full_widths_and_visibility_both
             },
         )
         .unwrap();
-        let hidden = put(&mut state, actor.opponent(), "Zimone, Paradox Sculptor", Zone::Hand);
+        let hidden = put(
+            &mut state,
+            actor.opponent(),
+            "Zimone, Paradox Sculptor",
+            Zone::Hand,
+        );
         priority(&mut state, actor);
         let before = tapped_lands(&state, actor);
         engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
         assert!(matches!(
             engine::advance_until_decision(&mut state),
-            Decision::ChooseEffectTargets { can_finish: true, .. }
+            Decision::ChooseEffectTargets {
+                can_finish: true,
+                ..
+            }
         ));
-        engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(second))).unwrap();
+        engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(second)),
+        )
+        .unwrap();
         assert!(matches!(
             engine::advance_until_decision(&mut state),
-            Decision::ChooseEffectTargets { selected_count: 1, can_finish: true, .. }
+            Decision::ChooseEffectTargets {
+                selected_count: 1,
+                can_finish: true,
+                ..
+            }
         ));
         let partial = public::capture(&state, actor).unwrap();
         let pending = partial.abilities.last().unwrap();
         assert_eq!(pending.kind, AbilityKindV1::ActivateDoubleEveryKind);
         assert_eq!(pending.stage, StageV1::PendingActivation);
         assert_eq!(pending.original_targets[0].original.object, second.0);
-        assert!(!partial.visible_printings.iter().any(|card| card.object == hidden.0));
+        assert!(!partial
+            .visible_printings
+            .iter()
+            .any(|card| card.object == hidden.0));
         assert!(public::capture(&state, actor.opponent())
             .unwrap()
             .visible_printings
@@ -341,13 +360,19 @@ fn public_appendix_follows_paid_activation_order_full_widths_and_visibility_both
             assert_eq!(row.source.captured_controller, actor.into());
             assert_eq!(row.original_targets[0].original.object, second.0);
             assert_eq!(row.original_targets[1].original.object, first.0);
-            assert!(row.original_targets.iter().all(|target| target.currently_legal));
+            assert!(row
+                .original_targets
+                .iter()
+                .all(|target| target.currently_legal));
             let widths = &facts.battlefield[actor.index()]
                 .iter()
                 .find(|permanent| permanent.card.object == first.0)
                 .unwrap()
                 .counters;
-            assert_eq!((widths.charge, widths.stash, widths.finality), (120_000, 300, 300));
+            assert_eq!(
+                (widths.charge, widths.stash, widths.finality),
+                (120_000, 300, 300)
+            );
             assert_eq!(widths.loyalty, 1_100_000_000);
         }
 
@@ -370,7 +395,10 @@ fn public_appendix_follows_paid_activation_order_full_widths_and_visibility_both
             .find(|permanent| permanent.card.object == first.0)
             .unwrap()
             .counters;
-        assert_eq!((widths.charge, widths.stash, widths.finality), (240_000, 600, 600));
+        assert_eq!(
+            (widths.charge, widths.stash, widths.finality),
+            (240_000, 600, 600)
+        );
         assert_eq!(widths.loyalty, 2_200_000_000);
     }
 }

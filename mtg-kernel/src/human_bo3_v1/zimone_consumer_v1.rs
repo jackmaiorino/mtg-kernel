@@ -108,7 +108,13 @@ pub(super) fn label(
     let Some(annotated) = annotated else {
         return Ok(None);
     };
-    let ActionV1::TargetChoice { kind, finish, selected_count, .. } = annotated else {
+    let ActionV1::TargetChoice {
+        kind,
+        finish,
+        selected_count,
+        ..
+    } = annotated
+    else {
         return Ok(Some("Activate Zimone (green, blue, tap)".into()));
     };
     let purpose = match kind {
@@ -116,7 +122,9 @@ pub(super) fn label(
         AbilityKindV1::ActivateDoubleEveryKind => "Zimone's counter doubling",
     };
     if finish {
-        return Ok(Some(format!("Finish choosing {selected_count} targets for {purpose}")));
+        return Ok(Some(format!(
+            "Finish choosing {selected_count} targets for {purpose}"
+        )));
     }
     let target = match action {
         Action::ChooseTarget { target, .. } | Action::ChooseEffectTarget { target, .. } => target,
@@ -125,5 +133,8 @@ pub(super) fn label(
     let TargetRefV1::Object { object } = target else {
         return Err(Error::InvalidVisibleReference);
     };
-    Ok(Some(format!("Choose {} for {purpose}", handles.name(object)?)))
+    Ok(Some(format!(
+        "Choose {} for {purpose}",
+        handles.name(object)?
+    )))
 }

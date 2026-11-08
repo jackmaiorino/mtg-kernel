@@ -51,10 +51,14 @@ fn body(wire: &mut JsonlServerV1, serial: u64, command: CommandV1) -> Body {
 }
 
 fn tapped_lands(state: &GameState, actor: PlayerId) -> usize {
-    state.players[actor.index()].battlefield.iter().filter(|id| {
-        let object = state.objects.get(**id);
-        object.tapped && crate::card_def::CARD_DEFS[usize::from(object.card_def)].is_land
-    }).count()
+    state.players[actor.index()]
+        .battlefield
+        .iter()
+        .filter(|id| {
+            let object = state.objects.get(**id);
+            object.tapped && crate::card_def::CARD_DEFS[usize::from(object.card_def)].is_land
+        })
+        .count()
 }
 
 #[test]
@@ -71,11 +75,17 @@ fn exact_forty_card_v3_reset_pays_cast_and_both_abilities_both_seats() {
         let Body::State { state, .. } = body(
             &mut wire,
             1,
-            CommandV1::Reset { config: config.clone() },
+            CommandV1::Reset {
+                config: config.clone(),
+            },
         ) else {
             panic!("missing declared Zimone reset");
         };
-        let State::Decision { decision: wire_opening, .. } = *state else {
+        let State::Decision {
+            decision: wire_opening,
+            ..
+        } = *state
+        else {
             panic!("missing declared Zimone wire opening");
         };
         assert_eq!(wire_opening.schema, "mtg-kernel-limited-zimone-decision/v1");
@@ -107,37 +117,61 @@ fn exact_forty_card_v3_reset_pays_cast_and_both_abilities_both_seats() {
             let d = decision(&numeric);
             let rows = &d.fixture_backend_v75().candidates_v75().candidates;
             let source = zimone;
-            let allow_activation = source.is_some_and(|id| {
-                state.objects.get(id).counters.plus1_plus1 == 1
-            });
+            let allow_activation =
+                source.is_some_and(|id| state.objects.get(id).counters.plus1_plus1 == 1);
             let choose_target = |row: &crate::kaito_candidates_v75::CandidateMeaningV75| {
-                matches!(row.zimone_action, Some(ActionV1::TargetChoice {
-                    selected_count: 0, finish: false, ..
-                })) && matches!(&row.action,
+                matches!(
+                    row.zimone_action,
+                    Some(ActionV1::TargetChoice {
+                        selected_count: 0,
+                        finish: false,
+                        ..
+                    })
+                ) && matches!(&row.action,
                     Action::ChooseTarget { target: TargetRefV1::Object { object }, .. }
                     | Action::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. }
                     if source == Some(ObjectId(object.arena_id)))
             };
-            let i = rows.iter().position(choose_target)
-                .or_else(|| rows.iter().position(|row| {
-                    matches!(row.zimone_action, Some(ActionV1::TargetChoice { finish: true, .. }))
-                        || (allow_activation && !paid_double
+            let i = rows
+                .iter()
+                .position(choose_target)
+                .or_else(|| {
+                    rows.iter().position(|row| {
+                        matches!(
+                            row.zimone_action,
+                            Some(ActionV1::TargetChoice { finish: true, .. })
+                        ) || (allow_activation
+                            && !paid_double
                             && row.zimone_action == Some(ActionV1::ActivateDoubleEveryKind))
-                }))
-                .or_else(|| rows.iter().position(|row| matches!(row.action, Action::PlayLand { .. })))
-                .or_else(|| rows.iter().position(|row| {
-                    zimone.is_none() && matches!(&row.action,
+                    })
+                })
+                .or_else(|| {
+                    rows.iter()
+                        .position(|row| matches!(row.action, Action::PlayLand { .. }))
+                })
+                .or_else(|| {
+                    rows.iter().position(|row| {
+                        zimone.is_none()
+                            && matches!(&row.action,
                         Action::CastSpell { source, .. } if source.card_db_id == PRINTING)
-                }))
-                .or_else(|| rows.iter().position(|row| matches!(row.action,
-                    Action::ChooseLondonMulligan { mulligan: false, .. }
-                    | Action::ChooseAttackerInclusion { include: false, .. }
-                    | Action::ChooseBlockerInclusion { include: false, .. }
-                    | Action::ChooseTriggerOrderNext { .. }
-                    | Action::OrderTriggers { .. }
-                    | Action::Pass { .. }
-                    | Action::Discard { .. }
-                )))
+                    })
+                })
+                .or_else(|| {
+                    rows.iter().position(|row| {
+                        matches!(
+                            row.action,
+                            Action::ChooseLondonMulligan {
+                                mulligan: false,
+                                ..
+                            } | Action::ChooseAttackerInclusion { include: false, .. }
+                                | Action::ChooseBlockerInclusion { include: false, .. }
+                                | Action::ChooseTriggerOrderNext { .. }
+                                | Action::OrderTriggers { .. }
+                                | Action::Pass { .. }
+                                | Action::Discard { .. }
+                        )
+                    })
+                })
                 .expect("missing native Zimone fixture action");
             let before = tapped_lands(state, actor);
             let row = &rows[i];
@@ -145,12 +179,22 @@ fn exact_forty_card_v3_reset_pays_cast_and_both_abilities_both_seats() {
                 Action::CastSpell { source, .. } => Some(ObjectId(source.arena_id)),
                 _ => None,
             };
-            let finishing = matches!(row.zimone_action, Some(ActionV1::TargetChoice {
-                kind: AbilityKindV1::ActivateDoubleEveryKind, selected_count: 1, finish: true, ..
-            }));
+            let finishing = matches!(
+                row.zimone_action,
+                Some(ActionV1::TargetChoice {
+                    kind: AbilityKindV1::ActivateDoubleEveryKind,
+                    selected_count: 1,
+                    finish: true,
+                    ..
+                })
+            );
             if finishing {
                 let input = numeric.training_input_v1(&d).unwrap();
-                assert!(ModelV1::deterministic_fixture().forward(&input).unwrap().iter().all(|x| x.is_finite()));
+                assert!(ModelV1::deterministic_fixture()
+                    .forward(&input)
+                    .unwrap()
+                    .iter()
+                    .all(|x| x.is_finite()));
             }
             numeric.apply(&d, i as u32).unwrap();
             if let Some(id) = cast {
@@ -161,14 +205,20 @@ fn exact_forty_card_v3_reset_pays_cast_and_both_abilities_both_seats() {
             if finishing {
                 let state = numeric.fixture_state();
                 let source = zimone.unwrap();
-                assert_eq!(state.stack.last().unwrap().targets, [Target::Object(source)]);
+                assert_eq!(
+                    state.stack.last().unwrap().targets,
+                    [Target::Object(source)]
+                );
                 assert!(state.objects.get(source).tapped);
                 assert_eq!(tapped_lands(state, actor) - before, 2);
                 assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
                 paid_double = true;
             }
         }
-        assert!(finished, "declared reset did not complete Zimone's paid activation");
+        assert!(
+            finished,
+            "declared reset did not complete Zimone's paid activation"
+        );
     }
 }
 
@@ -183,12 +233,17 @@ fn paid_prefix_hidden_pair_native_human_wire_numeric_and_restore_both_seats() {
         state.objects.get_mut(first).counters.stash = 300;
         engine::step(&mut state, engine::Action::ActivateAbility(source, 0)).unwrap();
         engine::advance_until_decision(&mut state);
-        engine::step(&mut state, engine::Action::ChooseEffectTarget(Target::Object(second))).unwrap();
+        engine::step(
+            &mut state,
+            engine::Action::ChooseEffectTarget(Target::Object(second)),
+        )
+        .unwrap();
         engine::advance_until_decision(&mut state);
 
         let fixture = |state: &GameState| {
             FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
-                state.clone(), LimitedAppendixV1::Zimone,
+                state.clone(),
+                LimitedAppendixV1::Zimone,
             )
         };
         let mut altered = state.clone();
@@ -199,9 +254,12 @@ fn paid_prefix_hidden_pair_native_human_wire_numeric_and_restore_both_seats() {
         let mut human = HumanKaitoSessionV75::from_session(fixture(&state), actor.into()).unwrap();
         let mut projector = HumanKaitoProjectorV75::new(actor.into());
         let mut wire = JsonlServerV1::new();
-        wire.0.install_fixture_core(KaitoSessionV75::from_session(fixture(&state)).unwrap());
+        wire.0
+            .install_fixture_core(KaitoSessionV75::from_session(fixture(&state)).unwrap());
         let mut other_wire = JsonlServerV1::new();
-        other_wire.0.install_fixture_core(KaitoSessionV75::from_session(fixture(&altered)).unwrap());
+        other_wire
+            .0
+            .install_fixture_core(KaitoSessionV75::from_session(fixture(&altered)).unwrap());
 
         let d = decision(&numeric);
         assert_ne!(state.state_hash(), altered.state_hash());
@@ -212,23 +270,45 @@ fn paid_prefix_hidden_pair_native_human_wire_numeric_and_restore_both_seats() {
         assert!(other.restore(&save).is_err());
         let backend = d.fixture_backend_v75();
         let rows = &backend.candidates_v75().candidates;
-        assert!(rows.iter().any(|row| matches!(row.zimone_action, Some(ActionV1::TargetChoice {
-            selected_count: 1, finish: true, ..
-        }))));
-        let index = rows.iter().position(|row| {
-            matches!(row.zimone_action, Some(ActionV1::TargetChoice {
-                selected_count: 1, finish: false, ..
-            })) && matches!(&row.action,
+        assert!(rows.iter().any(|row| matches!(
+            row.zimone_action,
+            Some(ActionV1::TargetChoice {
+                selected_count: 1,
+                finish: true,
+                ..
+            })
+        )));
+        let index = rows
+            .iter()
+            .position(|row| {
+                matches!(
+                    row.zimone_action,
+                    Some(ActionV1::TargetChoice {
+                        selected_count: 1,
+                        finish: false,
+                        ..
+                    })
+                ) && matches!(&row.action,
                 Action::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. }
                 if object.arena_id == first.0)
-        }).unwrap() as u32;
+            })
+            .unwrap() as u32;
         let expected = backend.expected();
         let prompt = projector.project_current(&human, expected).unwrap();
         let human_save = human.snapshot_v75();
         let current = body(&mut wire, 1, CommandV1::Current);
         assert_eq!(current, body(&mut other_wire, 1, CommandV1::Current));
-        let Body::State { state: current, .. } = current else { panic!() };
-        let State::Decision { episode_id, authority_generation, decision: visible } = *current else { panic!() };
+        let Body::State { state: current, .. } = current else {
+            panic!()
+        };
+        let State::Decision {
+            episode_id,
+            authority_generation,
+            decision: visible,
+        } = *current
+        else {
+            panic!()
+        };
         let (projected, indices) =
             project_limited_kaito_v16(backend, expected.acting_player, visible.prompt_seq).unwrap();
         assert_eq!(*visible, projected);
@@ -236,23 +316,43 @@ fn paid_prefix_hidden_pair_native_human_wire_numeric_and_restore_both_seats() {
         assert_eq!(prompt.actions, visible.actions);
         assert_eq!(prompt.action_meanings, visible.action_meanings);
         let action_index = indices.iter().position(|&i| i == index).unwrap() as u32;
-        let human_action = HumanActionRequestV1 { prompt_seq: prompt.prompt_seq, action_index };
-        let command = CommandV1::Step {
-            episode_id, authority_generation, actor: actor.into(),
-            prompt_seq: visible.prompt_seq, action_index,
+        let human_action = HumanActionRequestV1 {
+            prompt_seq: prompt.prompt_seq,
+            action_index,
         };
-        let Body::State { snapshot_id: Some(snapshot_id), .. } =
-            body(&mut wire, 2, CommandV1::Snapshot)
-        else { panic!() };
+        let command = CommandV1::Step {
+            episode_id,
+            authority_generation,
+            actor: actor.into(),
+            prompt_seq: visible.prompt_seq,
+            action_index,
+        };
+        let Body::State {
+            snapshot_id: Some(snapshot_id),
+            ..
+        } = body(&mut wire, 2, CommandV1::Snapshot)
+        else {
+            panic!()
+        };
         let original = backend.fixture_original_index_v75(index).unwrap();
-        let native = raw.step(expected.episode_id, expected.step, original).unwrap();
+        let native = raw
+            .step(expected.episode_id, expected.step, original)
+            .unwrap();
         assert_eq!(numeric.apply(&d, index).unwrap(), native);
         projector.submit(&mut human, human_action.clone()).unwrap();
         assert_eq!(human.current_response(), native);
         assert_eq!(raw.kaito_fixture_state(), numeric.fixture_state());
-        assert!(matches!(body(&mut wire, 3, command.clone()), Body::State { receipt: Some(_), .. }));
-        assert_eq!(numeric.fixture_state().stack.last().unwrap().targets,
-            [Target::Object(second), Target::Object(first)]);
+        assert!(matches!(
+            body(&mut wire, 3, command.clone()),
+            Body::State {
+                receipt: Some(_),
+                ..
+            }
+        ));
+        assert_eq!(
+            numeric.fixture_state().stack.last().unwrap().targets,
+            [Target::Object(second), Target::Object(first)]
+        );
         assert!(numeric.fixture_state().objects.get(source).tapped);
 
         numeric.restore(&save).unwrap();
@@ -260,7 +360,10 @@ fn paid_prefix_hidden_pair_native_human_wire_numeric_and_restore_both_seats() {
         assert_eq!(decision(&numeric).packet(), d.packet());
         assert!(numeric.apply(&d, index).is_err());
         assert!(projector.submit(&mut human, human_action).is_err());
-        assert!(matches!(body(&mut wire, 4, CommandV1::Restore { snapshot_id }), Body::State { .. }));
+        assert!(matches!(
+            body(&mut wire, 4, CommandV1::Restore { snapshot_id }),
+            Body::State { .. }
+        ));
         assert!(matches!(body(&mut wire, 5, command), Body::Error { .. }));
     }
 }

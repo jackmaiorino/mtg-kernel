@@ -508,7 +508,10 @@ pub(crate) fn stack_source_reference(
             crate::state::StackItemKind::ActivatedAbility => {
                 item.v4.activated_ability_index == Some(0)
                     && item.inline_effect.as_ref()
-                        == Some(&crate::zimone_public_v1::AbilityKindV1::ActivateDoubleEveryKind.program())
+                        == Some(
+                            &crate::zimone_public_v1::AbilityKindV1::ActivateDoubleEveryKind
+                                .program(),
+                        )
             }
             _ => false,
         };

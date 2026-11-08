@@ -11,7 +11,9 @@ use crate::{
     optional_trigger_public_v1 as public,
     rl::PlayerSeatV1,
     standard_cards_v1::{StandardOpV1, StandardTargetV1},
-    state::{AbilitySourceContractV4, GameState, StackItemKind, StackTargetContractV4, Target, Zone},
+    state::{
+        AbilitySourceContractV4, GameState, StackItemKind, StackTargetContractV4, Target, Zone,
+    },
     tinybones_public_v72::{self as counters, CountersV72, IncarnationV72},
     trigger::TriggerCondition,
 };
@@ -40,7 +42,9 @@ impl AbilityKindV1 {
     fn target_spec(self) -> TargetSpec {
         TargetSpec::StandardV1(match self {
             Self::CombatPutPlusOne => StandardTargetV1::UpToTwoControlledCreatures,
-            Self::ActivateDoubleEveryKind => StandardTargetV1::UpToTwoControlledArtifactsOrCreatures,
+            Self::ActivateDoubleEveryKind => {
+                StandardTargetV1::UpToTwoControlledArtifactsOrCreatures
+            }
         })
     }
 }
@@ -116,8 +120,9 @@ fn selected_definition() -> Result<&'static CardDef, String> {
     let d = &CARD_DEFS[usize::from(PRINTING)];
     let colors = [ManaColor::G, ManaColor::U];
     let pips = colors.map(Pip::Colored);
-    if !crate::rules_meaning_graveyard_return_v61::ordinary_foreign_fields_except_activated_absent(d)
-        || d.name != NAME
+    if !crate::rules_meaning_graveyard_return_v61::ordinary_foreign_fields_except_activated_absent(
+        d,
+    ) || d.name != NAME
         || d.capability != CardCapability::Partial
         || d.cost.generic != 2
         || d.cost.x_count != 0
@@ -345,9 +350,8 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, String> {
             if o.zone == Zone::Library || (o.zone == Zone::Hand && o.owner != viewer) {
                 return None;
             }
-            public::reference(state, id, Some(viewer)).filter(|card| {
-                card.identity == (public::IdentityV1::Known { card_id: PRINTING })
-            })
+            public::reference(state, id, Some(viewer))
+                .filter(|card| card.identity == (public::IdentityV1::Known { card_id: PRINTING }))
         })
         .collect();
 
@@ -376,7 +380,9 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, String> {
     let activation = AbilityKindV1::ActivateDoubleEveryKind;
     let mut abilities = vec![];
     for (position, pending) in public::held(state).into_iter().enumerate() {
-        let Some(source) = pending.source_contract.filter(|source| source.card_def == PRINTING)
+        let Some(source) = pending
+            .source_contract
+            .filter(|source| source.card_def == PRINTING)
         else {
             continue;
         };
@@ -427,7 +433,10 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, String> {
         }
     }
     for (position, item) in state.stack.iter().enumerate() {
-        let Some(source) = item.v4.ability_source_contract.filter(|source| source.card_def == PRINTING)
+        let Some(source) = item
+            .v4
+            .ability_source_contract
+            .filter(|source| source.card_def == PRINTING)
         else {
             continue;
         };
