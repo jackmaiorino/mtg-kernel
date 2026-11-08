@@ -5527,10 +5527,8 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         accept_conqueror,
         accept_fake,
         conqueror_proof,
-        if text_mode == ObservationTextModeV2::KaitoV75Artifact
-            && surface.limited_appendix_v1() == LimitedAppendixV1::Omniscience
-        {
-            LimitedAppendixV1::Omniscience
+        if text_mode == ObservationTextModeV2::KaitoV75Artifact {
+            surface.limited_appendix_v1()
         } else {
             LimitedAppendixV1::Legacy
         },
