@@ -5,7 +5,10 @@ use crate::rl_session::{
     KaitoSessionV75, KaitoSnapshotV75,
 };
 use serde_json::{Map, Value};
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 pub struct KaitoSession {
     inner: KaitoSessionV75,
@@ -40,6 +43,7 @@ impl KaitoDecision {
 fn packet_from_current(
     candidates: &crate::kaito_candidates_v75::KaitoCandidatesV75,
     actions: &[crate::rl::ActionSemanticV1],
+    hand_facts_by_name: bool,
 ) -> Result<Packet> {
     crate::kaito_candidates_v75::validate_artifact(candidates)
         .map_err(|e| Error::Projection(e.to_string()))?;
@@ -54,7 +58,31 @@ fn packet_from_current(
     }
     // The complete observation and every typed per-action program/counter/LKI
     // annotation remain present. Raw executable pairs and index maps are never encoded.
-    let state = serde_json::to_value(candidates).map_err(|e| Error::Projection(e.to_string()))?;
+    let mut state =
+        serde_json::to_value(candidates).map_err(|e| Error::Projection(e.to_string()))?;
+    if hand_facts_by_name {
+        let observed = &candidates.observation.common.common.known_hand_cards;
+        let counts = observed.each_ref().map(|cards| {
+            let mut names = BTreeMap::<u16, usize>::new();
+            for card in cards {
+                *names.entry(card.stable.card_db_id).or_default() += 1;
+            }
+            names
+                .into_iter()
+                .map(|(id, copies)| {
+                    serde_json::json!({
+                        "card_db_id": id,
+                        "card_name": crate::card_def::CARD_DEFS[usize::from(id)].name,
+                        "minimum_copies": copies,
+                    })
+                })
+                .collect::<Vec<_>>()
+        });
+        *state
+            .pointer_mut("/observation/common/common/known_hand_cards")
+            .ok_or_else(|| Error::Projection("missing known hand facts".into()))? =
+            serde_json::json!(counts);
+    }
     let actions = candidates
         .candidates
         .iter()
@@ -98,6 +126,30 @@ impl KaitoSession {
         .map_err(|e| Error::Projection(format!("{e:?}")))
     }
 
+    /// Full-only reset for a fresh training game with name-level reveal facts.
+    pub fn reset_explicit_mainboards_hand_facts_v2(
+        episode_id: u64,
+        env_seed: u64,
+        limits: (u64, u64),
+        deck_ids: crate::rl_session::SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: crate::ids::PlayerId,
+    ) -> Result<Self> {
+        let mut session = Self::reset_explicit_mainboards(
+            episode_id,
+            env_seed,
+            limits,
+            deck_ids,
+            mainboards,
+            starting_player,
+        )?;
+        session
+            .inner
+            .enable_hand_knowledge_by_name_v2()
+            .map_err(Error::Projection)?;
+        Ok(session)
+    }
+
     pub fn sampled_clone(&self, decision: &KaitoDecision, seed: u64) -> Result<Self> {
         if !Arc::ptr_eq(&self.owner, &decision.owner) || self.generation != decision.generation {
             return Err(Error::StaleBinding);
@@ -108,6 +160,7 @@ impl KaitoSession {
         if packet_from_current(
             decision.backend.candidates_v75(),
             decision.backend.actions(),
+            self.inner.uses_hand_knowledge_by_name_v2(),
         )? != decision.packet
         {
             return Err(Error::StaleBinding);
@@ -164,7 +217,11 @@ impl KaitoSession {
         if backend.expected() != expected {
             return Err(Error::StaleBinding);
         }
-        let packet = packet_from_current(backend.candidates_v75(), backend.actions())?;
+        let packet = packet_from_current(
+            backend.candidates_v75(),
+            backend.actions(),
+            self.inner.uses_hand_knowledge_by_name_v2(),
+        )?;
         Ok(KaitoDecision {
             backend,
             packet,
@@ -186,11 +243,12 @@ impl KaitoSession {
         {
             return Err(Error::ActionRange);
         }
+        let name_facts = self.inner.uses_hand_knowledge_by_name_v2();
         self.inner.step_with_current_check(
             &decision.backend,
             selected_index,
             |candidates, actions| {
-                if packet_from_current(candidates, actions)? != decision.packet {
+                if packet_from_current(candidates, actions, name_facts)? != decision.packet {
                     return Err(Error::StaleBinding);
                 }
                 Ok(())
@@ -216,6 +274,7 @@ impl KaitoSession {
         if packet_from_current(
             decision.backend.candidates_v75(),
             decision.backend.actions(),
+            self.inner.uses_hand_knowledge_by_name_v2(),
         )? != decision.packet
         {
             return Err(Error::StaleBinding);

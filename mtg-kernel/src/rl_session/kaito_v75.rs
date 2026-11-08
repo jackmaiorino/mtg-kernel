@@ -433,6 +433,12 @@ impl KaitoSessionV75 {
     pub fn response(&self) -> FastActorResponseV1 {
         self.inner.current_response()
     }
+    pub(crate) fn enable_hand_knowledge_by_name_v2(&mut self) -> Result<(), String> {
+        self.inner.enable_hand_knowledge_by_name_v2()
+    }
+    pub(crate) fn uses_hand_knowledge_by_name_v2(&self) -> bool {
+        self.inner.state.hand_knowledge_by_name_v2
+    }
     pub fn snapshot_v75(&self) -> KaitoSnapshotV75 {
         KaitoSnapshotV75 {
             inner: self.inner.snapshot_v1(),

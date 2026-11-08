@@ -307,6 +307,14 @@ pub struct TrainingExampleV1<'a> {
     pub targets: &'a [f64],
 }
 
+/// Terminal REINFORCE for one sampled decision. The complete batch uses the
+/// pre-update model and both seats' natural W/D/L returns.
+pub struct TerminalExampleV1<'a> {
+    pub input: &'a AuthenticatedInputV1,
+    pub selected: usize,
+    pub reward: i8,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdamConfigV1 {
@@ -403,6 +411,42 @@ impl LearnerV1 {
     /// optimizer bits. The caller owns durable publication of the snapshot.
     pub fn update(&mut self, examples: &[TrainingExampleV1<'_>]) -> Result<f64> {
         let (loss, gradient) = self.model.loss_and_gradient(examples)?;
+        self.apply_gradient(loss, gradient)
+    }
+
+    /// Mean `-reward * log p(selected)` with gamma 1 and a zero critic.
+    /// Gradients from wins, draws and losses reduce in input order.
+    pub fn update_terminal(&mut self, examples: &[TerminalExampleV1<'_>]) -> Result<f64> {
+        if examples.is_empty() {
+            return Err(Error::NoDecision);
+        }
+        let mut loss = 0.;
+        let mut gradient = vec![0.; PARAMETER_COUNT_V1];
+        for example in examples {
+            if !matches!(example.reward, -1..=1) {
+                return Err(Error::ModelContract);
+            }
+            let mut targets = vec![0.; example.input.packet().actions().len()];
+            *targets
+                .get_mut(example.selected)
+                .ok_or(Error::ActionRange)? = 1.;
+            let (value, contribution) = self.model.loss_and_gradient(&[TrainingExampleV1 {
+                input: example.input,
+                targets: &targets,
+            }])?;
+            let weight = f64::from(example.reward) / examples.len() as f64;
+            loss += weight * value;
+            for (total, delta) in gradient.iter_mut().zip(contribution) {
+                *total += weight * delta;
+            }
+        }
+        self.apply_gradient(loss, gradient)
+    }
+
+    fn apply_gradient(&mut self, loss: f64, gradient: Vec<f64>) -> Result<f64> {
+        if !loss.is_finite() || gradient.iter().any(|value| !value.is_finite()) {
+            return Err(Error::NonFiniteLogit);
+        }
         let step = self.step.checked_add(1).ok_or(Error::Range)?;
         let mut parameters = self.model.parameters.clone();
         let mut first = self.first.clone();

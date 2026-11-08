@@ -432,3 +432,81 @@ fn issue454_real_actor_training_ingress_rejects_stale_and_foreign_decisions() {
         }])
         .unwrap();
 }
+
+#[test]
+fn issue552_name_facts_ignore_the_physical_reveal_copy() {
+    use crate::policy_observation_v6::tests::put;
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _, _) = scene(player);
+        let other = player.opponent();
+        state.enable_hand_knowledge_by_name_v2();
+        let first = put(&mut state, other, "Swamp", Zone::Hand);
+        let second = put(&mut state, other, "Swamp", Zone::Hand);
+        let other_name = put(&mut state, other, "Mountain", Zone::Hand);
+        let encode = |id| {
+            let mut candidate = state.clone();
+            candidate.reveal_hand_card(player, other, id).unwrap();
+            candidate
+                .reveal_hand_card(player, other, other_name)
+                .unwrap();
+            let native = FastActorSessionV1::from_kaito_v75_fixture_state(candidate);
+            let own = KaitoSession::from_session(native).unwrap();
+            let FastActorResponseV1::Decision(h) = own.current_response() else {
+                panic!("expected an acting player decision");
+            };
+            own.encode(h).unwrap().packet().clone()
+        };
+        assert_eq!(encode(first), encode(second));
+        assert_ne!(encode(first), encode(other_name));
+    }
+}
+
+#[test]
+fn issue552_signed_terminal_gradient_and_optimizer_resume() {
+    use crate::current_tree_learner_v1::{LearnerV1, ModelV1, TerminalExampleV1};
+
+    let (state, _, _) = scene(PlayerId::P0);
+    let own = KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state(state))
+        .unwrap();
+    let FastActorResponseV1::Decision(h) = own.current_response() else {
+        panic!("expected an actor decision");
+    };
+    assert!(h.legal_action_count > 1);
+    let input = own.training_input_v1(&own.encode(h).unwrap()).unwrap();
+    let initial = ModelV1::deterministic_fixture();
+    let make = || LearnerV1::new(initial.clone(), adam()).unwrap();
+    let example = |reward| TerminalExampleV1 {
+        input: &input,
+        selected: 0,
+        reward,
+    };
+    let (mut positive, mut negative, mut draw) = (make(), make(), make());
+    let win_loss = positive.update_terminal(&[example(1)]).unwrap();
+    assert_eq!(win_loss, -negative.update_terminal(&[example(-1)]).unwrap());
+    assert_eq!(draw.update_terminal(&[example(0)]).unwrap(), 0.);
+    assert_eq!(draw.model().parameters(), initial.parameters());
+    let mut changed = 0;
+    for ((&win, &loss), &before) in positive
+        .model()
+        .parameters()
+        .iter()
+        .zip(negative.model().parameters())
+        .zip(initial.parameters())
+    {
+        if win != before || loss != before {
+            assert_eq!((win - before).signum(), -(loss - before).signum());
+            changed += 1;
+        }
+    }
+    assert!(changed > 0);
+    let mut restored = LearnerV1::restore(
+        serde_json::from_slice(&serde_json::to_vec(&positive.snapshot()).unwrap()).unwrap(),
+    )
+    .unwrap();
+    let before_invalid = restored.snapshot();
+    assert!(restored.update_terminal(&[example(2)]).is_err());
+    assert_eq!(restored.snapshot(), before_invalid);
+    positive.update_terminal(&[example(-1)]).unwrap();
+    restored.update_terminal(&[example(-1)]).unwrap();
+    assert_eq!(positive.snapshot(), restored.snapshot());
+}
