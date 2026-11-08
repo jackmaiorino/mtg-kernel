@@ -1396,7 +1396,7 @@ pub enum ActionSemanticV1 {
         source: CardStableRefV1,
         x_value: u16,
     },
-    /// Rules-only Limited entry choice over the complete pinned type domain.
+    /// Native Limited entry choice over the complete pinned type domain.
     ChooseEntryCreatureTypeV60 {
         actor: PlayerSeatV1,
         entry_ordinal: u32,
@@ -2088,7 +2088,7 @@ pub fn observe_v1(
     let own_hand = state.players[acting_player.index()]
         .hand
         .iter()
-        .map(|&id| private_card(state, id, ObservationTextModeV2::FullArtifact))
+        .map(|&id| private_card(state, id, ObservationTextModeV2::FullArtifact, false))
         .collect::<Result<Vec<_>>>()?;
     let mut obs = ObservationV1 {
         schema_version: OBSERVATION_SCHEMA_VERSION_V1,
@@ -2344,7 +2344,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49(
         accepted_planes,
         false,
         None,
-        false,
+        crate::policy_surface_v5::KaitoConsumerV1::Legacy,
     )
 }
 
@@ -2359,8 +2359,11 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     accepted_planes: AcceptedPlanesV49,
     accept_fake: bool,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
-    artist: bool,
+    consumer: crate::policy_surface_v5::KaitoConsumerV1,
 ) -> Result<ObservationV2> {
+    use crate::policy_surface_v5::KaitoConsumerV1;
+    let owning_kaito = text_mode == ObservationTextModeV2::KaitoV75Artifact;
+    let chosen_type = owning_kaito && consumer == KaitoConsumerV1::ChosenType;
     if !matches!(
         text_mode,
         ObservationTextModeV2::NextFiveV59Artifact
@@ -2376,7 +2379,9 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     }
     crate::continuous_characteristics_v1::refuse_land_override_consumer(state, acting_player)
         .map_err(RlContractError)?;
-    refuse_chosen_type_mana_v60(state)?;
+    if !chosen_type {
+        refuse_chosen_type_mana_v60(state)?;
+    }
     validate_copy_prefix_for_mode_v1(state, text_mode)?;
     if !matches!(
         text_mode,
@@ -2744,8 +2749,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
                 accept_fake,
                 text_mode.complete_source_scope(),
                 conqueror_proof,
-                text_mode.complete_source_scope() == Some(CommonProjectionScopeV42::KaitoV75)
-                    && artist,
+                owning_kaito && consumer == KaitoConsumerV1::Artist,
             )?
         } else {
             engine_context_v2(
@@ -2759,7 +2763,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     let own_hand = state.players[acting_player.index()]
         .hand
         .iter()
-        .map(|&id| private_card(state, id, text_mode))
+        .map(|&id| private_card(state, id, text_mode, chosen_type))
         .collect::<Result<Vec<_>>>()?;
     Ok(ObservationV2 {
         schema_version: OBSERVATION_SCHEMA_VERSION,
@@ -2770,8 +2774,8 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         step_index,
         projection,
         own_hand,
-        known_library_cards: known_library_cards_v4(state, acting_player, text_mode)?,
-        known_hand_cards: known_hand_cards_v4(state, acting_player, text_mode)?,
+        known_library_cards: known_library_cards_v4(state, acting_player, text_mode, chosen_type)?,
+        known_hand_cards: known_hand_cards_v4(state, acting_player, text_mode, chosen_type)?,
         known_face_down_cards: known_face_down_cards_v1(state, acting_player, text_mode)?,
         visible_projection_hash: 0,
     })
@@ -2908,7 +2912,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
             },
             creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
                 .then(|| state.creatures_attacked_this_turn_v1()),
-            restricted_mana: public_restricted_mana_v1(state, text_mode)?,
+            restricted_mana: public_restricted_mana_v1(state, text_mode, false)?,
             surface: base.projection,
             policy_surface_context,
             london_mulligans: public_london_mulligans_v1(state),
@@ -2997,8 +3001,11 @@ mod effect_order_tests;
 fn public_restricted_mana_v1(
     state: &GameState,
     text_mode: ObservationTextModeV2,
+    chosen_type: bool,
 ) -> Result<Option<[Vec<PublicRestrictedManaV1>; 2]>> {
-    refuse_chosen_type_mana_v60(state)?;
+    if !chosen_type {
+        refuse_chosen_type_mana_v60(state)?;
+    }
     validate_copy_prefix_for_mode_v1(state, text_mode)?;
     // Both frozen and complete constructors project this field, even for an
     // empty mana pool. Retain their private scope through these legacy guards.
@@ -3416,7 +3423,7 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
         ),
         accept_fake,
         conqueror_proof,
-        surface.artist_consumer_v1(),
+        surface.kaito_consumer_v1(),
     )?;
     let context = policy_surface_context_v5(
         state,
@@ -4394,7 +4401,7 @@ fn common_family_observation_storage_with_proof(
             crate::chandra_observation_v74::validate_state(state)
         }
         CommonProjectionScopeV42::KaitoV75 => {
-            crate::kaito_observation_v75::validate_state_scoped(state, surface.artist_consumer_v1())
+            crate::kaito_observation_v75::validate_state_scoped(state, surface.kaito_consumer_v1())
         }
         CommonProjectionScopeV42::GenesisWaveV69 => {
             crate::genesis_wave_observation_v69::validate_state(state)
@@ -5587,7 +5594,13 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             },
             creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
                 .then(|| state.creatures_attacked_this_turn_v1()),
-            restricted_mana: public_restricted_mana_v1(state, text_mode)?,
+            restricted_mana: public_restricted_mana_v1(
+                state,
+                text_mode,
+                text_mode == ObservationTextModeV2::KaitoV75Artifact
+                    && surface.kaito_consumer_v1()
+                        == crate::policy_surface_v5::KaitoConsumerV1::ChosenType,
+            )?,
             surface: base.projection,
             policy_surface_context,
             foundations_combat: public_foundations_combat_v1(state)?,
@@ -6263,7 +6276,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                                     "known Ravenous search candidate requires V51".into(),
                                 ));
                             }
-                            cards.push(private_card(state, id, text_mode)?);
+                            cards.push(private_card(state, id, text_mode, false)?);
                         }
                     }
                     // Only observable card identity determines class order.
@@ -6825,7 +6838,7 @@ fn validate_policy_action_semantic_v5(semantic: &ActionSemanticV1) -> Result<()>
         ActionSemanticV1::ChooseEntryCreatureTypeV60 { .. }
     ) {
         return Err(RlContractError(
-            "chosen creature type requires its rules-only Limited owner".into(),
+            "chosen creature type requires its declared Limited owner".into(),
         ));
     }
     if let ActionSemanticV1::Ambiguous { reason } = semantic {
@@ -10396,9 +10409,10 @@ pub(crate) fn core_policy_action_candidates_chandra_v74(
 pub(crate) fn core_policy_action_candidates_kaito_scoped_v75(
     decision: &PolicyDecisionV5,
     state: &GameState,
-    artist: bool,
+    consumer: crate::policy_surface_v5::KaitoConsumerV1,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
-    crate::kaito_observation_v75::validate_state_scoped(state, artist).map_err(RlContractError)?;
+    crate::kaito_observation_v75::validate_state_scoped(state, consumer)
+        .map_err(RlContractError)?;
     core_policy_action_candidates_next_five_scoped_v59(
         decision,
         state,
@@ -10566,6 +10580,7 @@ fn private_card(
     state: &GameState,
     id: ObjectId,
     text_mode: ObservationTextModeV2,
+    chosen_type: bool,
 ) -> Result<CardPrivateV1> {
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
@@ -10607,10 +10622,11 @@ fn private_card(
     }
 
     if state.objects.try_get(id).is_some_and(|live| {
-        live.v4.kinship_type_v1.is_some()
-            || CARD_DEFS
-                .get(usize::from(live.card_def))
-                .is_some_and(|d| d.creature_type_entry_v1.is_some())
+        !(chosen_type && crate::banner_of_kinship_v1::entry::owns_entry_definition(live.card_def))
+            && (live.v4.kinship_type_v1.is_some()
+                || CARD_DEFS
+                    .get(usize::from(live.card_def))
+                    .is_some_and(|d| d.creature_type_entry_v1.is_some()))
     }) {
         return Err(RlContractError(
             "creature type entry requires its native-only successor".into(),
@@ -10649,6 +10665,7 @@ fn known_library_cards_v4(
     state: &GameState,
     observer: PlayerId,
     text_mode: ObservationTextModeV2,
+    chosen_type: bool,
 ) -> Result<[Vec<KnownLibraryCardV4>; 2]> {
     let mut result: [Vec<KnownLibraryCardV4>; 2] = std::array::from_fn(|_| Vec::new());
     for owner in [PlayerId::P0, PlayerId::P1] {
@@ -10669,7 +10686,7 @@ fn known_library_cards_v4(
             }
             result[owner.index()].push(KnownLibraryCardV4 {
                 position: entry.position,
-                card: private_card(state, object, text_mode)?,
+                card: private_card(state, object, text_mode, chosen_type)?,
             });
         }
     }
@@ -10680,6 +10697,7 @@ fn known_hand_cards_v4(
     state: &GameState,
     observer: PlayerId,
     text_mode: ObservationTextModeV2,
+    chosen_type: bool,
 ) -> Result<[Vec<CardPrivateV1>; 2]> {
     let mut result: [Vec<CardPrivateV1>; 2] = std::array::from_fn(|_| Vec::new());
     for owner in [PlayerId::P0, PlayerId::P1] {
@@ -10699,7 +10717,7 @@ fn known_hand_cards_v4(
                     "known hand entry does not match the live object incarnation".to_string(),
                 ));
             }
-            result[owner.index()].push(private_card(state, entry.object, text_mode)?);
+            result[owner.index()].push(private_card(state, entry.object, text_mode, chosen_type)?);
         }
     }
     Ok(result)

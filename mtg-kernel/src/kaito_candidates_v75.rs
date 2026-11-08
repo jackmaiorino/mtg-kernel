@@ -4,7 +4,7 @@
 //! and complete ordinary semantics, with mandatory typed
 //! Kaito V75 and inherited family context. This is not a session, restore capability or action dispatcher.
 use crate::{
-    artist_consumer_v1 as artist,
+    artist_consumer_v1 as artist, chosen_type_consumer_v1 as chosen_type,
     graveyard_return_public_v61::{
         DeathV61, ProgramV61, ScheduleV61, StageV61, TargetV61, TriggerV61,
     },
@@ -35,6 +35,8 @@ pub struct CandidateMeaningV75 {
     pub action: A,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artist_payment: Option<artist::PaymentActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chosen_type_answer: Option<chosen_type::AnswerV1>,
     #[serde(deserialize_with = "required_optional")]
     pub drake_activation: Option<crate::next_five_observation_v59::NextFiveActivationV59>,
     /// Complete current programs at this genuine decision, in native stage and
@@ -124,6 +126,7 @@ pub fn producer_sha256() -> String {
             include_str!("tinybones_candidates_v72.rs"),
             include_str!("kaito_candidates_v75.rs"),
             include_str!("artist_consumer_v1.rs"),
+            include_str!("chosen_type_consumer_v1.rs"),
             include_str!("kaito_observation_v75.rs"),
             include_str!("rl_session/kaito_v75.rs"),
             include_str!("current_mixed_policy_v1/kaito.rs"),
@@ -611,8 +614,8 @@ pub(crate) fn project_parts_v75(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<(KaitoCandidatesV75, NativeCandidateProjectionV75), RlContractError> {
-    if surface.artist_consumer_v1() {
-        return Err(error("Artist candidates require their owning profile"));
+    if surface.kaito_consumer_v1() != crate::policy_surface_v5::KaitoConsumerV1::Legacy {
+        return Err(error("scoped candidates require their owning profile"));
     }
     observation::validate_state(state).map_err(error)?;
     // Exact-bound source surfaces authenticate their own private scan. Owned
@@ -695,6 +698,8 @@ fn project_authenticated_parts_v75(
                 schema: annotation_schema.into(),
                 ordinal: 0,
                 artist_payment: artist::payment_action(observation.artist.as_ref(), &action)
+                    .map_err(error)?,
+                chosen_type_answer: chosen_type::answer(observation.chosen_type.as_ref(), &action)
                     .map_err(error)?,
                 selected_graveyard_target: selected_graveyard_target(&observation, &action)?,
                 drake_activation: drake_activation(&observation, &action)?,
@@ -792,7 +797,9 @@ fn project_authenticated_parts_v75(
 }
 
 fn schemas(observation: &KaitoObservationV75) -> (&'static str, &'static str) {
-    if observation.artist.is_some() {
+    if observation.chosen_type.is_some() {
+        (chosen_type::CANDIDATES_SCHEMA, chosen_type::ACTION_SCHEMA)
+    } else if observation.artist.is_some() {
         (artist::CANDIDATES_SCHEMA, artist::ACTION_SCHEMA)
     } else {
         (SCHEMA, ANNOTATION_SCHEMA)
@@ -814,6 +821,25 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
         return Err(error("V75 candidate artifact identity changed"));
     }
     let authorized = authorized_references(&value.observation)?;
+    if let Some(active) = value
+        .observation
+        .chosen_type
+        .as_ref()
+        .and_then(|facts| facts.native.active_entry_choice.as_ref())
+    {
+        if value.candidates.len() != active.domain.len()
+            || !value
+                .candidates
+                .iter()
+                .zip(&active.domain)
+                .all(|(row, creature_type)| {
+                    row.chosen_type_answer
+                        .is_some_and(|answer| answer.creature_type == *creature_type)
+                })
+        {
+            return Err(error("incomplete chosen-type candidate domain"));
+        }
+    }
     let facts = &value.observation.graveyard_return;
     let genesis_context =
         crate::genesis_wave_public_v69::choice_contexts(&value.observation.genesis_wave);
@@ -878,6 +904,9 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
             || row.schema != annotation_schema
             || row.artist_payment
                 != artist::payment_action(value.observation.artist.as_ref(), &row.action)
+                    .map_err(error)?
+            || row.chosen_type_answer
+                != chosen_type::answer(value.observation.chosen_type.as_ref(), &row.action)
                     .map_err(error)?
             || usize::try_from(row.ordinal).ok() != Some(ordinal)
             || row.vivien_activation

@@ -15,8 +15,8 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
 use crate::phase_profile::{measure_optional, RlPhaseProfileV1, RlPhaseV1};
 use crate::policy_surface_v5::{
-    FastActorInPlaceApplyErrorV1, PolicyActionV5, PolicyDecisionV5, PolicySurfaceContextIdsV5,
-    PolicySurfaceV5, POLICY_ENVIRONMENT_HASH_ALGORITHM,
+    FastActorInPlaceApplyErrorV1, KaitoConsumerV1, PolicyActionV5, PolicyDecisionV5,
+    PolicySurfaceContextIdsV5, PolicySurfaceV5, POLICY_ENVIRONMENT_HASH_ALGORITHM,
     POLICY_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2, POLICY_SURFACE_VERSION,
 };
 use crate::rl::{
@@ -537,8 +537,13 @@ pub(crate) fn kaito_candidates_v75(
     state: &crate::state::GameState,
     surface: &PolicySurfaceV5,
 ) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
-    crate::kaito_observation_v75::validate_state_scoped(state, surface.artist_consumer_v1())
-        .map_err(RlContractError)?;
+    let scope = surface.kaito_consumer_v1();
+    crate::kaito_observation_v75::validate_state_scoped(state, scope).map_err(RlContractError)?;
+    if scope == KaitoConsumerV1::ChosenType {
+        if let Some(candidates) = crate::chosen_type_consumer_v1::entry_candidates(state, origin)? {
+            return Ok(candidates);
+        }
+    }
     #[cfg(feature = "limited-fdn-fixtures")]
     if let Some((player, pending, prefix)) = surface
         .hunter_order_parts_v45(state)
@@ -561,11 +566,7 @@ pub(crate) fn kaito_candidates_v75(
     } else if inspiration_v37::is_mill(state) {
         inspiration_v37::actual_candidates(origin, state)
     } else {
-        crate::rl::core_policy_action_candidates_kaito_scoped_v75(
-            origin,
-            state,
-            surface.artist_consumer_v1(),
-        )
+        crate::rl::core_policy_action_candidates_kaito_scoped_v75(origin, state, scope)
     }
 }
 

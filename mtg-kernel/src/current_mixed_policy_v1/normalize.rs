@@ -451,6 +451,19 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         }
     }
     let mut covered = BTreeSet::new();
+    if source == Source::KaitoV75
+        && state["schema"] == crate::chosen_type_consumer_v1::CANDIDATES_SCHEMA
+    {
+        let meanings: Vec<crate::rules_meaning_chosen_type_v66::MeaningV66> =
+            serde_json::from_value(
+                state["observation"]["chosen_type"]["native"]["meanings"].clone(),
+            )
+            .map_err(|e| Error::Projection(e.to_string()))?;
+        for meaning in &meanings {
+            crate::rules_meaning_chosen_type_v66::validate(meaning).map_err(Error::Projection)?;
+            covered.insert(meaning.card_id);
+        }
+    }
     if source == Source::KaitoV75 && state["schema"] == crate::artist_consumer_v1::CANDIDATES_SCHEMA
     {
         // Only the distinct sealed actor schema supplies this printed root.

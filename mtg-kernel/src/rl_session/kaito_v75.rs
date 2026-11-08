@@ -71,7 +71,7 @@ pub(super) fn normalized_origin(
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
-    observation::validate_state_scoped(&session.state, session.surface.artist_consumer_v1())
+    observation::validate_state_scoped(&session.state, session.surface.kaito_consumer_v1())
         .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
     let actual =
         super::kaito_candidates_v75(&current.origin_decision, &session.state, &session.surface)
@@ -121,7 +121,7 @@ pub(super) fn prepare_current(
 }
 impl FastActorSessionV1 {
     pub(super) fn validate_kaito_state_v75(&self) -> Result<(), String> {
-        observation::validate_state_scoped(&self.state, self.surface.artist_consumer_v1())
+        observation::validate_state_scoped(&self.state, self.surface.kaito_consumer_v1())
     }
 
     pub(crate) fn reset_kaito_v75(
@@ -176,7 +176,14 @@ impl FastActorSessionV1 {
         mainboards: &[Vec<u16>; 2],
         state: GameState,
     ) -> Result<Self, RlSessionError> {
-        Self::initialize_kaito_consumer_v1(episode_id, limits, deck_ids, mainboards, state, false)
+        Self::initialize_kaito_consumer_v1(
+            episode_id,
+            limits,
+            deck_ids,
+            mainboards,
+            state,
+            KaitoConsumerV1::Legacy,
+        )
     }
 
     pub(super) fn initialize_kaito_consumer_v1(
@@ -185,13 +192,13 @@ impl FastActorSessionV1 {
         deck_ids: SessionDeckIdsV1,
         mainboards: &[Vec<u16>; 2],
         mut state: GameState,
-        artist: bool,
+        scope: KaitoConsumerV1,
     ) -> Result<Self, RlSessionError> {
         crate::combat_damage_v1::enable_foundations_combat_v1(&mut state)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
         crate::london_mulligan_v1::enable_london_mulligans_v1(&mut state)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
-        crate::kaito_observation_v75::validate_state_scoped(&state, artist)
+        crate::kaito_observation_v75::validate_state_scoped(&state, scope)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
         let mut session = Self {
             deck_ids,
@@ -220,9 +227,7 @@ impl FastActorSessionV1 {
             terminal: None,
         };
         session.surface.enable_hunter_order_v45();
-        if artist {
-            session.surface.enable_artist_consumer_v1();
-        }
+        session.surface.set_kaito_consumer_v1(scope);
         session.advance_to_decision_or_terminal();
         Ok(session)
     }
@@ -235,13 +240,13 @@ impl FastActorSessionV1 {
         if !restored.is_common_v40()
             || restored.flat_action_contract_mode != self.flat_action_contract_mode
             || restored.episode_id != self.episode_id
-            || restored.surface.artist_consumer_v1() != self.surface.artist_consumer_v1()
+            || restored.surface.kaito_consumer_v1() != self.surface.kaito_consumer_v1()
         {
             return Err(RlContractError("wrong Kaito snapshot owner".into()));
         }
         crate::kaito_observation_v75::validate_state_scoped(
             &restored.state,
-            restored.surface.artist_consumer_v1(),
+            restored.surface.kaito_consumer_v1(),
         )
         .map_err(RlContractError)?;
         let next_revision = self
@@ -293,7 +298,7 @@ impl FastActorSessionV1 {
         // Validate before any advancement can expire a malformed active marker.
         crate::kaito_observation_v75::validate_state_scoped(
             &self.state,
-            self.surface.artist_consumer_v1(),
+            self.surface.kaito_consumer_v1(),
         )
         .map_err(RlContractError)?;
         self.flat_action_contract_mode = FlatActionContractModeV1::KaitoV75;
@@ -338,6 +343,25 @@ impl FastActorSessionV1 {
         not(feature = "standard-magezero-fixtures")
     ))]
     pub(crate) fn from_kaito_v75_fixture_state_scoped(state: GameState, artist: bool) -> Self {
+        Self::from_kaito_consumer_fixture_state(
+            state,
+            if artist {
+                KaitoConsumerV1::Artist
+            } else {
+                KaitoConsumerV1::Legacy
+            },
+        )
+    }
+
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(crate) fn from_kaito_consumer_fixture_state(
+        state: GameState,
+        scope: KaitoConsumerV1,
+    ) -> Self {
         let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
         session.state = state;
         session.surface = PolicySurfaceV5::new_with_priority_mode_v1(
@@ -345,9 +369,7 @@ impl FastActorSessionV1 {
             SuppressionAuditMode::Off,
         );
         session.surface.enable_hunter_order_v45();
-        if artist {
-            session.surface.enable_artist_consumer_v1();
-        }
+        session.surface.set_kaito_consumer_v1(scope);
         session.environment_revision = 0;
         session.policy_step_count = 0;
         session.physical_decision_count = 0;
@@ -356,7 +378,7 @@ impl FastActorSessionV1 {
         session.flat_action_contract_mode = FlatActionContractModeV1::KaitoV75;
         session.flat_action_cache_spare = None;
         session.flat_action_cache_spare_v2 = None;
-        if let Err(error) = observation::validate_state_scoped(&session.state, artist) {
+        if let Err(error) = observation::validate_state_scoped(&session.state, scope) {
             session.terminal = Some(halted_terminal(
                 &session.deck_ids,
                 session.deck_hashes,
@@ -617,10 +639,18 @@ impl KaitoSessionV75 {
         decision: &KaitoDecisionV75,
         seed: u64,
     ) -> Result<Self, RlContractError> {
-        if self.inner.surface.artist_consumer_v1() {
-            return Err(RlContractError(
-                "Artist profile has no current-slot sampler".into(),
-            ));
+        match self.inner.surface.kaito_consumer_v1() {
+            KaitoConsumerV1::Artist => {
+                return Err(RlContractError(
+                    "Artist profile has no current-slot sampler".into(),
+                ))
+            }
+            KaitoConsumerV1::ChosenType => {
+                return Err(RlContractError(
+                    "chosen-type profile has no sampled entry-checkpoint replay".into(),
+                ))
+            }
+            KaitoConsumerV1::Legacy => {}
         }
         let before = self.validated_current(decision)?;
         let actor = self
