@@ -80,6 +80,7 @@ pub const SPELLBENCH_OBJECT_ID_DERIVATION_V1: &str = "kernel-arena-id-zone-chang
 /// Command-line flag enabling `x_kernel_flat_v4`.
 pub const SPELLBENCH_FLAG_X_KERNEL_FLAT_V4: &str = "--x-kernel-flat-v4";
 pub const SPELLBENCH_FLAG_V2_SUPPORT: &str = "--private-v2-support";
+pub const SPELLBENCH_FLAG_REVEAL_MEANING_V3: &str = "--reveal-meaning-v3";
 
 /// Opt-in behaviors of one bridge process.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -93,6 +94,8 @@ pub struct SpellbenchBridgeOptionsV1 {
     /// Private wrapper metadata. Never forwarded to an agent as an extension.
     /// It observes stack instance IDs without changing the frozen RL schema.
     pub private_v2_support: bool,
+    /// Attach viewer-local event-time reveal transcripts to private support.
+    pub reveal_meaning_v3: bool,
 }
 
 fn fnv1a64_utf8_v1(text: &str) -> u64 {
@@ -277,6 +280,7 @@ struct SpellbenchBridgeGameV1 {
     /// arena already sent in private support; the next production decision
     /// sends what follows.
     history_cursor: (usize, usize, usize),
+    reveal_cursor: [usize; 2],
     /// The producer's per-game state, when `x_kernel_infoset_v1` is on.
     infoset: Option<InfosetBridgeV1>,
     /// Amendment 43.9 (a): every `x_kernel_flat_v4` of this game carries
@@ -333,8 +337,9 @@ impl SpellbenchBridgeServerV1 {
     /// binary passes the production identity and its command-line flags).
     pub fn with_options(
         identity: SpellbenchEngineIdentityV1,
-        options: SpellbenchBridgeOptionsV1,
+        mut options: SpellbenchBridgeOptionsV1,
     ) -> Self {
+        options.private_v2_support |= options.reveal_meaning_v3;
         SpellbenchBridgeServerV1 {
             identity,
             options,
@@ -599,6 +604,7 @@ impl SpellbenchBridgeServerV1 {
                 flat_v4_scratch: FlatV4EncodeScratchV1::default(),
                 private_block_root_step: game.private_block_root_step,
                 history_cursor: game.history_cursor,
+                reveal_cursor: game.reveal_cursor,
                 // A private preview carries no payload, but presents the
                 // same flat-v4 extension as the committed point.
                 infoset: None,
@@ -846,6 +852,9 @@ impl SpellbenchBridgeServerV1 {
                 copy.enable_spellbench_neutral_choices();
             }
         }
+        if self.options.reveal_meaning_v3 {
+            session.enable_reveal_meaning_v3();
+        }
         let counts = (
             session.policy_step_count(),
             session.physical_decision_count(),
@@ -861,6 +870,7 @@ impl SpellbenchBridgeServerV1 {
             flat_v4_scratch: FlatV4EncodeScratchV1::default(),
             private_block_root_step: None,
             history_cursor: (0, 0, 0),
+            reveal_cursor: [0; 2],
             infoset: (self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1)
                 .then(InfosetBridgeV1::default),
             masked_observation: self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1,
@@ -888,6 +898,7 @@ impl SpellbenchBridgeServerV1 {
             ),
         };
         finish_infoset_v1(&mut game, &mut wire);
+        attach_reveal_meaning_v3(&mut game, wire_value_mut(&mut wire));
         game.terminal_sent = matches!(wire, WireResponseV1::Terminal(_));
         self.used_game_ids.insert(game_id.to_string());
         self.private_preview = None;
@@ -1032,6 +1043,7 @@ impl SpellbenchBridgeServerV1 {
                 );
                 let game = self.game.as_mut().expect("active game");
                 finish_infoset_v1(game, &mut wire);
+                attach_reveal_meaning_v3(game, wire_value_mut(&mut wire));
                 if matches!(wire, WireResponseV1::Terminal(_)) {
                     game.terminal_sent = true;
                 }
@@ -1101,8 +1113,9 @@ impl SpellbenchBridgeServerV1 {
             .expect("halted failure needs a game")
             .game_id
             .clone();
-        let value = self.halted_terminal_value(request_id, &game_id, counts, reason);
+        let mut value = self.halted_terminal_value(request_id, &game_id, counts, reason);
         if let Some(game) = self.game.as_mut() {
+            attach_reveal_meaning_v3(game, &mut value);
             game.terminal_sent = true;
             if let Some(infoset) = game.infoset.as_mut() {
                 write_receipt_v1(&game_id, infoset);
@@ -1138,6 +1151,23 @@ impl SpellbenchBridgeServerV1 {
 enum WireResponseV1 {
     Decision(Value),
     Terminal(Value),
+}
+
+fn wire_value_mut(wire: &mut WireResponseV1) -> &mut Value {
+    match wire {
+        WireResponseV1::Decision(value) | WireResponseV1::Terminal(value) => value,
+    }
+}
+
+fn attach_reveal_meaning_v3(game: &mut SpellbenchBridgeGameV1, response: &mut Value) {
+    if let Some(delta) = game
+        .session
+        .game_state()
+        .reveal_meaning_v3
+        .take_delta(&mut game.reveal_cursor)
+    {
+        response["extensions"]["x_kernel_v2_support"]["reveal_meaning_v3"] = delta;
+    }
 }
 
 /// AC1 strict view (lead rulings 4 and 5, test only): the bridge's own wire
@@ -1283,6 +1313,7 @@ impl BridgeMirrorV1 {
             flat_v4_scratch: FlatV4EncodeScratchV1::default(),
             private_block_root_step: self.private_block_root_step,
             history_cursor: self.history_cursor,
+            reveal_cursor: [0; 2],
             infoset: None,
             masked_observation: false,
             force_flat_v4_encode_error: false,
@@ -2681,6 +2712,7 @@ mod tests {
                 x_kernel_flat_v4: true,
                 private_v2_support: true,
                 x_kernel_infoset_v1: false,
+                reveal_meaning_v3: false,
             },
         );
         let reset = reset_line("reset", "g-private", 7);
@@ -2716,6 +2748,7 @@ mod tests {
                 x_kernel_flat_v4: true,
                 private_v2_support: true,
                 x_kernel_infoset_v1: false,
+                reveal_meaning_v3: false,
             },
         );
         let mut decision = parse_line(&server.handle_line(&reset_line("reset", "g-history", 7)));
@@ -2780,6 +2813,69 @@ mod tests {
     }
 
     #[test]
+    fn reveal_meaning_v3_wire_is_opt_in_and_preserves_terminal_and_retry() {
+        let identity = SpellbenchEngineIdentityV1::with_source_revision(None);
+        let options = SpellbenchBridgeOptionsV1 {
+            private_v2_support: true,
+            ..Default::default()
+        };
+        let mut frozen = SpellbenchBridgeServerV1::with_options(identity.clone(), options);
+        let mut enabled = SpellbenchBridgeServerV1::with_options(
+            identity,
+            SpellbenchBridgeOptionsV1 {
+                reveal_meaning_v3: true,
+                ..options
+            },
+        );
+        let mut request = reset_line("reset", "reveal-v3", 7);
+        let mut next = [0; 2];
+        let mut complete = false;
+        for step in 0..100 {
+            let expected = parse_line(&frozen.handle_line(&request));
+            let response = enabled.handle_line(&request);
+            assert_eq!(response, enabled.handle_line(&request));
+            let mut actual = parse_line(&response);
+            let terminal = actual["response_type"] == "terminal";
+            let payload = actual["extensions"]["x_kernel_v2_support"]
+                .as_object_mut()
+                .unwrap()
+                .remove("reveal_meaning_v3")
+                .unwrap();
+            assert_eq!(payload["schema"], "kernel-reveal-support/v3");
+            for (viewer, sequence) in next.iter_mut().enumerate() {
+                let view = &payload["viewers"][viewer];
+                assert_eq!(view["viewer"], viewer);
+                assert_eq!(view["transcript"]["schema"], "x_reveal_meaning_v3");
+                for operation in view["transcript"]["operations"].as_array().unwrap() {
+                    assert_eq!(operation["sequence"], *sequence);
+                    *sequence += 1;
+                }
+            }
+            if terminal {
+                assert!(actual["extensions"]["x_kernel_v2_support"]
+                    .as_object()
+                    .unwrap()
+                    .is_empty());
+                actual.as_object_mut().unwrap().remove("extensions");
+            }
+            assert_eq!(actual, expected);
+            if terminal {
+                complete = true;
+                break;
+            }
+            let selected = actual["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .position(|row| row["semantic"]["kind"] == "play_land")
+                .unwrap_or(0);
+            request = step_line_for(&format!("step-{step}"), &actual, selected);
+        }
+        assert!(complete);
+        assert!(next.into_iter().all(|count| count > 0));
+    }
+
+    #[test]
     fn private_preview_refuses_priority_and_does_not_advance_the_game() {
         let mut server = SpellbenchBridgeServerV1::with_options(
             SpellbenchEngineIdentityV1::with_source_revision(None),
@@ -2787,6 +2883,7 @@ mod tests {
                 x_kernel_flat_v4: true,
                 private_v2_support: true,
                 x_kernel_infoset_v1: false,
+                reveal_meaning_v3: false,
             },
         );
         let first = parse_line(&server.handle_line(&reset_line("reset", "g-private", 7)));
@@ -3586,6 +3683,7 @@ mod tests {
                     x_kernel_flat_v4: true,
                     private_v2_support: true,
                     x_kernel_infoset_v1: true,
+                    reveal_meaning_v3: false,
                 },
             );
             let mut line =
@@ -3713,6 +3811,7 @@ mod tests {
                     x_kernel_flat_v4: true,
                     private_v2_support: true,
                     x_kernel_infoset_v1: true,
+                    reveal_meaning_v3: false,
                 },
             );
             let mut line =
@@ -4296,6 +4395,7 @@ imported {:#?}",
             flat_v4_scratch: FlatV4EncodeScratchV1::default(),
             private_block_root_step: None,
             history_cursor: (0, 0, 0),
+            reveal_cursor: [0; 2],
             infoset: None,
             masked_observation: false,
             force_flat_v4_encode_error: false,
@@ -4445,6 +4545,7 @@ imported {:#?}",
                         x_kernel_flat_v4: true,
                         private_v2_support: true,
                         x_kernel_infoset_v1: false,
+                        reveal_meaning_v3: false,
                     },
                 );
                 let game_id = format!("v4-audit-{deck}-{game}");
