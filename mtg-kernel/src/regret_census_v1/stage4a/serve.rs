@@ -419,6 +419,9 @@ fn point_v1(req: &PointRequestV1) -> Result<Value, String> {
     let ids = crate::infoset_v1::order::imported_ids_v1(&req.payload.handles);
     let keys =
         crate::infoset_v1::order::row_keys_v1(&s, Some(&ids)).ok_or("the point has no V4 menu")?;
+    if req.payload.schema == INFOSET_SCHEMA_REVEAL_V4 {
+        return Ok(json!({"viewer_decision": true, "keys": keys, "eligible": eligible_session_v1(&s)}));
+    }
     let mut scratch = crate::agent_bridge_flat_v4_encode::FlatV4EncodeScratchV1::default();
     let encoded = crate::agent_bridge_flat_v4_encode::encode_flat_v4_tensor_v1(&s, &mut scratch)
         .map_err(|e| format!("encode: {e:?}"))?;
