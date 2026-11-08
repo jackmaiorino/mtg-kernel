@@ -70,3 +70,22 @@ failures. Durable publication and production collection remain caller work.
 Native validation is pending. No experiment, playing-strength claim or
 production admission follows from these source tests. The remaining Eternal
 transport/coverage and production collection work keep #454 and #552 open.
+
+## Eternal dynamic supplement
+
+`eternal_actor_public_v1` is an additive partial projection, not a model
+admission permit. It selects only public energy/city-blessing counters,
+Cavern's chosen subtype, Needle's publicly named printing, current stack
+uncounterability and mana spent, and Saga gained chapters. The engine writes
+the chosen-name/type ledgers at publicly observable entry choices. A named
+printing is a public choice, never evidence of a physical hidden card.
+
+References require the same incarnation in the relevant public zone before
+the public reference producer runs. Departed or recycled objects are omitted
+before reading their current definition. A current face-down source refuses
+until correspondence continuity is validated separately. A retained choice
+after a face-up transform records a public historical choice, not activation
+of an old printed ability. The remaining Eternal delayed effects, selections,
+static meanings and public continuations must be represented before complete
+consumer admission; serializing the entire Eternal state is forbidden because
+it includes unrevealed private choices.
