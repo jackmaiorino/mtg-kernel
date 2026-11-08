@@ -170,6 +170,61 @@ pub(crate) fn definition(id: u16) -> bool {
         })
 }
 
+/// The native occurrence owns the public historical spell. A later concealed
+/// incarnation never authenticates its old name. This scope is absent from
+/// predecessor owners and does not accept an arbitrary caller's snapshot.
+pub(crate) fn owns_snapshot(state: &GameState, spell: &StackItem) -> bool {
+    if !state.thousand_year_storm_consumer_v1 { return false; }
+    let mut matches = state.engine.event_history.iter().enumerate().filter(|(at, e)| {
+        match e {
+            event::CommittedEvent::ThousandYearStormV1 { journal: JournalV1::Cast { event, spell: captured, .. } } => {
+                captured.as_ref() == spell && !spell.is_copy && event.checked_add(1) == Some(*at as u64)
+                    && state.engine.event_history.get(*event as usize) == Some(&event::CommittedEvent::SpellCast {
+                        spell: spell.source, controller: spell.controller,
+                    })
+            }
+            event::CommittedEvent::ThousandYearStormV1 { journal: JournalV1::Copy { trigger, ordinal, item } } => {
+                item.as_ref() == spell && spell.is_copy && *ordinal > 0
+                    && state.engine.event_history[..*at].iter().any(|event| matches!(event,
+                        event::CommittedEvent::ThousandYearStormV1 { journal: JournalV1::Published { item, .. } }
+                            if item.v4.stack_item_id == *trigger))
+            }
+            _ => false,
+        }
+    });
+    matches.next().is_some() && matches.next().is_none()
+}
+
+pub(crate) fn historical_parent_cast(state:&GameState,origin:crate::state::SpellCopyOriginV4)->Result<Option<crate::state::CastMethodV4>,String> {
+    if !state.thousand_year_storm_consumer_v1 || origin.parent_was_copy {return Ok(None);}
+    let Some(live)=state.objects.try_get(origin.parent) else{return Ok(None)};
+    if live.zone_change_count<=origin.parent_stack_zone_change_count {return Ok(None);}
+    let mut found=None;
+    for (at,event) in state.engine.event_history.iter().enumerate() {
+        let event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Cast{spell,..}}=event else{continue};
+        let Some(source)=spell.v4.source_contract else{continue};
+        if source.source==origin.parent && source.zone_change_count==origin.parent_stack_zone_change_count {
+            if found.is_some()||source.card_def!=origin.parent_card_def||source.owner!=origin.parent_owner||source.controller!=origin.parent_controller {
+                return Err("Storm copy original parent changed".into());
+            }
+            cast_at(state,at as u64)?;
+            found=Some(source.cast_method);
+        }
+    }
+    Ok(found)
+}
+
+fn validate_observer(state: &GameState, source: AbilitySourceContractV4) -> Result<(), String> {
+    let live = state.objects.try_get(source.source).ok_or("Storm original source absent")?;
+    if !state.thousand_year_storm_consumer_v1 || live.zone_change_count == source.zone_change_count {
+        return crate::engine::validate_historical_ability_source_contract(state, source);
+    }
+    if live.zone_change_count < source.zone_change_count || live.owner != source.owner {
+        return Err("Storm original source incarnation changed".into());
+    }
+    crate::engine::validate_historical_permanent_copy_source(state, source, live)
+}
+
 /// Only successful physical casts enter this history. Copies never call the cast hook.
 /// The catalog-scoped roster includes earlier casts before an observer enters.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -283,7 +338,7 @@ pub(crate) fn record_cast(state: &mut GameState, spell: ObjectId) -> Result<(), 
     );
     Ok(())
 }
-fn cast_at(
+pub(crate) fn cast_at(
     state: &GameState,
     index: u64,
 ) -> Result<(&StackItem, &[AbilitySourceContractV4]), String> {
@@ -310,11 +365,11 @@ fn cast_at(
         {
             return Err("Storm original observer changed".into());
         }
-        crate::engine::validate_historical_ability_source_contract(state, *source)?;
+        validate_observer(state, *source)?;
     }
     Ok((spell, observers))
 }
-fn count(state: &GameState, index: u64) -> Result<u16, String> {
+pub(crate) fn count(state: &GameState, index: u64) -> Result<u16, String> {
     let (spell, _) = cast_at(state, index)?;
     let start = state.engine.event_history[..index as usize]
         .iter()
@@ -343,7 +398,7 @@ fn count(state: &GameState, index: u64) -> Result<u16, String> {
     }
     Ok(count)
 }
-fn program(state: &GameState, index: u64) -> Result<EffectOp, String> {
+pub(crate) fn program(state: &GameState, index: u64) -> Result<EffectOp, String> {
     let (spell, _) = cast_at(state, index)?;
     let mut ops = vec![EffectOp::ThousandYearStormCaptureV1 { cast: index }];
     for _ in 0..count(state, index)? {
@@ -645,7 +700,8 @@ pub(crate) fn validate_continuation(
     Ok(())
 }
 pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
-    if state.objects.iter().any(|(_,o)|matches!(o.zone,Zone::Battlefield|Zone::Stack)&&o.v4.face_down_v1.is_none()&&definition(o.card_def))
+    if state.thousand_year_storm_consumer_v1
+        || state.objects.iter().any(|(_,o)|matches!(o.zone,Zone::Battlefield|Zone::Stack)&&o.v4.face_down_v1.is_none()&&definition(o.card_def))
         ||state.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Cast{observers,..}}if !observers.is_empty())) {
         return Err("Thousand-Year Storm requires its distinct complete native consumer".into())
     }

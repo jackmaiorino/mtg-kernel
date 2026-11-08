@@ -85,6 +85,8 @@ pub(crate) fn project_limited_kaito_v16(
                 "mtg-kernel-limited-sphinx-lore-decision/v1"
             } else if observation.kykar.is_some() {
                 "mtg-kernel-limited-kykar-decision/v1"
+            } else if observation.thousand_year_storm.is_some() {
+                "mtg-kernel-limited-thousand-year-storm-decision/v1"
             } else if observation.harvester.is_some() {
                 "mtg-kernel-limited-harvester-decision/v1"
             } else if observation.loot.is_some() {

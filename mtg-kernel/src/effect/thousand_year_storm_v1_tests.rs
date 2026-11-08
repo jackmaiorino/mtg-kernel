@@ -10,7 +10,7 @@ const NAME: &str = "Thousand-Year Storm";
 fn id(name: &str) -> u16 {
     card_def::card_id_by_name(name).unwrap()
 }
-fn ready(actor: PlayerId, hidden: &str) -> GameState {
+pub(crate) fn ready(actor: PlayerId, hidden: &str) -> GameState {
     let a = [id("Forest"); 64];
     let b = [id(hidden); 64];
     let (a, b) = if actor == PlayerId::P0 {
@@ -36,12 +36,12 @@ fn ready(actor: PlayerId, hidden: &str) -> GameState {
     }
     s
 }
-fn next(s: &mut GameState) -> Decision {
+pub(crate) fn next(s: &mut GameState) -> Decision {
     let d = engine::advance_until_decision(s);
     assert!(s.engine.halted.is_none(), "{:?}", s.engine.halted);
     d
 }
-fn action(s: &mut GameState, a: Action) {
+pub(crate) fn action(s: &mut GameState, a: Action) {
     engine::step(s, a).unwrap();
     assert!(s.engine.halted.is_none());
 }
@@ -92,10 +92,10 @@ fn taps(s: &GameState, p: PlayerId) -> usize {
         })
         .count()
 }
-fn cast(s: &mut GameState, p: PlayerId, name: &str, targets: &[Target], cost: usize) -> ObjectId {
+pub(crate) fn cast(s: &mut GameState, p: PlayerId, name: &str, targets: &[Target], cost: usize) -> ObjectId {
     cast_choices(s, p, name, targets, cost, false, 0)
 }
-fn cast_choices(
+pub(crate) fn cast_choices(
     s: &mut GameState,
     p: PlayerId,
     name: &str,
@@ -170,7 +170,7 @@ fn cast_choices(
     }
     panic!("finite paid cast did not finish")
 }
-fn finish(s: &mut GameState) {
+pub(crate) fn finish(s: &mut GameState) {
     for _ in 0..512 {
         let d = next(s);
         if s.stack.is_empty()
@@ -184,13 +184,13 @@ fn finish(s: &mut GameState) {
     }
     panic!("finite Storm fixture did not settle")
 }
-fn paid_storm(s: &mut GameState, p: PlayerId) -> ObjectId {
+pub(crate) fn paid_storm(s: &mut GameState, p: PlayerId) -> ObjectId {
     let source = cast(s, p, NAME, &[], 6);
     finish(s);
     assert_eq!(s.objects.get(source).zone, Zone::Battlefield);
     source
 }
-fn bolt(s: &mut GameState, p: PlayerId) {
+pub(crate) fn bolt(s: &mut GameState, p: PlayerId) {
     cast(s, p, "Lightning Bolt", &[Target::Player(p.opponent())], 1);
     finish(s)
 }
@@ -230,7 +230,7 @@ fn cast_count(s: &GameState) -> usize {
         .filter(|e| matches!(e, event::CommittedEvent::SpellCast { .. }))
         .count()
 }
-fn waiting(s: &mut GameState) {
+pub(crate) fn waiting(s: &mut GameState) {
     for _ in 0..32 {
         let d = next(s);
         if matches!(

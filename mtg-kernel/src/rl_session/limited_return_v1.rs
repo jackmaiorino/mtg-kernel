@@ -239,6 +239,11 @@ impl FastActorSessionV1 {
         Self::initialize_limited_consumer_v1(config, reveal_facts, LimitedAppendixV1::Harvester)
     }
 
+    pub(crate) fn reset_limited_thousand_year_storm_v1(config: &crate::thousand_year_storm_consumer_v1::ResetV1, reveal_facts: bool) -> Result<Self, RlSessionError> {
+        crate::thousand_year_storm_consumer_v1::preflight(config).map_err(|e|session_error(RlSessionErrorCode::UnsupportedDeck,&e))?;
+        Self::initialize_limited_consumer_v1(config,reveal_facts,LimitedAppendixV1::ThousandYearStorm)
+    }
+
     fn initialize_limited_consumer_v1(
         config: &crate::limited_consumer_wire_v1::ResetV1,
         reveal_facts: bool,
@@ -260,6 +265,7 @@ impl FastActorSessionV1 {
         state.curator_unordered_reveal_v1 = appendix == LimitedAppendixV1::Curator;
         state.greatwurm_commit_receipts_v1 = appendix == LimitedAppendixV1::Greatwurm;
         state.harvester_commit_receipts_v1 = appendix == LimitedAppendixV1::Harvester;
+        state.thousand_year_storm_consumer_v1 = appendix == LimitedAppendixV1::ThousandYearStorm;
         Self::initialize_kaito_consumer_v1(
             config.episode_id,
             (config.max_physical_decisions, config.max_policy_steps),

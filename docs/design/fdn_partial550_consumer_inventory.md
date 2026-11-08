@@ -50,7 +50,7 @@ reusable evidence only for the mechanics they actually exercise.
 | Leyline Axe | Native: leyline_axe_v1 | Complete stack; kept-hand pregame choice and actual entry/equip/host effects |
 | Fiend Artisan | Native: engine activation/search and fiend_artisan tests | Complete stack; graveyard creature boost, mana X, sacrifice-another payment and private bounded library search |
 | Imprisoned in the Moon | Native: continuous_characteristics_v1 and imprisoned_moon tests | Complete stack; exact attachment, land-only/colorless/lost-abilities layers and granted mana |
-| Thousand-Year Storm | Native: effect/thousand_year_storm_v1 | Complete stack; original turn cast count, copied program and independently optional new targets |
+| Thousand-Year Storm | Appendix: thousand_year_storm_public_v1 | Finite owner, Human, JSONL and numeric source. Original turn cast count, captured spell choices, actual copies and independent optional target slots. Native qualification pending |
 | Time Stop | Complete source: end_turn V68 | Declared reset/profile; stack disposal, cleanup discard/expiration/repeated priority through all consumers |
 | Genesis Wave | Complete source: genesis_wave V69 | Declared reset/profile; full paid X, public reveal and simultaneous chosen-permanent entry through all consumers |
 | Vivien Reid | Complete source: vivien V70 | Declared reset/profile; private look/choice, destroy filter and persistent timestamped emblem |
@@ -592,3 +592,28 @@ The bounded learner pilot still selects Return. No Mixed learner, all-286
 fair-search run, training/evaluation result or Full promotion is qualified.
 Current-slot sampling still refuses appendix profiles. Terminal V75 responses
 carry no decision appendix even when a draw caused that terminal.
+
+## Thousand-Year Storm source candidate
+
+The distinct `fdn-thousand-year-storm-consumer/v1` owner binds exact printing
+485, its complete CardDef and trigger roster. Native physical cast occurrences
+retain prior own instant/sorcery counts, including casts before Storm entered;
+copies never increment this count. Each original spell retains its printed
+form, mode, X, kicker, paid-cost relations and original target incarnations.
+Every created copy is correlated with its native trigger and ordinal. Each
+target slot exposes the actual legal new targets and optional original target,
+with chooser-only selection progress and exact native action indices.
+
+Historical targets carry opaque incarnations and only same-generation current
+references. A scoped native cast receipt authenticates a departed spell or
+observer without consulting later hidden printing identities. Copy ancestry
+retains that original cast and effective source types. Existing owners retain
+their original validation, and the new mode is absent from old hashes/bytes.
+No completed-trigger outcome is invented from the absence of a stack item.
+
+Both-seat source fixtures cover actual 40-card paid six-mana entry, paid
+pre-observer cast counts, independent copied target decisions through numeric,
+Human and JSONL owners, model input, two hidden-world axes, snapshot/restore,
+stale actions, two target slots and copied X. Native fixture helpers retain
+their actual paid casts and are only made visible to these additional tests.
+This source has not been formatted, compiled or executed.

@@ -321,6 +321,7 @@ pub(crate) enum ConsumerV1 {
     KaitoSphinxLoreV1,
     KaitoGreatwurmV1,
     KaitoHarvesterV1,
+    KaitoThousandYearStormV1,
 }
 impl ConsumerV1 {
     pub(crate) fn for_kaito(appendix: crate::policy_surface_v5::LimitedAppendixV1) -> Self {
@@ -339,6 +340,7 @@ impl ConsumerV1 {
             LimitedAppendixV1::SphinxLore => Self::KaitoSphinxLoreV1,
             LimitedAppendixV1::Greatwurm => Self::KaitoGreatwurmV1,
             LimitedAppendixV1::Harvester => Self::KaitoHarvesterV1,
+            LimitedAppendixV1::ThousandYearStorm => Self::KaitoThousandYearStormV1,
             _ => Self::KaitoV75,
         }
     }
@@ -359,6 +361,7 @@ impl ConsumerV1 {
             | Self::KaitoCuratorV1
             | Self::KaitoKykarV1
             | Self::KaitoSphinxLoreV1
+            | Self::KaitoThousandYearStormV1
             | Self::KaitoGreatwurmV1 => {
                 crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::Base)
             }
@@ -379,7 +382,9 @@ pub(crate) fn validate_state_for_consumer(
     checked: bool,
     consumer: ConsumerV1,
 ) -> Result<(), String> {
-    crate::effect::thousand_year_storm_v1::refuse_legacy(state)?;
+    if !matches!(consumer,ConsumerV1::KaitoThousandYearStormV1) {
+        crate::effect::thousand_year_storm_v1::refuse_legacy(state)?;
+    }
     if !matches!(consumer, ConsumerV1::KaitoCuratorV1) {
         crate::effect::curator_v1::refuse_legacy(state)?;
     }

@@ -73,6 +73,8 @@ pub struct CandidateMeaningV75 {
     pub greatwurm_action: Option<crate::greatwurm_consumer_v1::ActionV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harvester_action: Option<crate::harvester_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thousand_year_storm_action: Option<crate::thousand_year_storm_consumer_v1::ActionV1>,
     #[serde(deserialize_with = "required_optional")]
     pub drake_activation: Option<crate::next_five_observation_v59::NextFiveActivationV59>,
     /// Complete current programs at this genuine decision, in native stage and
@@ -213,6 +215,9 @@ pub fn producer_sha256() -> String {
             include_str!("curator_receipts_v1.rs"),
             include_str!("harvester_consumer_v1.rs"),
             include_str!("harvester_public_v1.rs"),
+            include_str!("thousand_year_storm_public_v1.rs"),
+            include_str!("thousand_year_storm_consumer_v1.rs"),
+            include_str!("human_bo3_v1/thousand_year_storm_consumer_v1.rs"),
             include_str!("harvester_receipts_v1.rs"),
             include_str!("human_bo3_v1/harvester_consumer_v1.rs"),
             include_str!("greatwurm_consumer_v1.rs"),
@@ -851,6 +856,7 @@ fn project_authenticated_parts_v75(
                     &action,
                 )
                 .map_err(error)?,
+                thousand_year_storm_action: crate::thousand_year_storm_consumer_v1::action(observation.thousand_year_storm.as_ref(),&action).map_err(error)?,
                 harvester_action: crate::harvester_consumer_v1::action(observation.harvester.as_ref(), &action).map_err(error)?,
                 greatwurm_action: crate::greatwurm_consumer_v1::action(
                     observation.greatwurm.as_ref(),
@@ -1073,6 +1079,11 @@ fn schemas(observation: &KaitoObservationV75) -> (&'static str, &'static str) {
             crate::harvester_consumer_v1::CANDIDATES_SCHEMA,
             crate::harvester_consumer_v1::ACTION_SCHEMA,
         )
+    } else if observation.thousand_year_storm.is_some() {
+        (
+            crate::thousand_year_storm_consumer_v1::CANDIDATES_SCHEMA,
+            crate::thousand_year_storm_consumer_v1::ACTION_SCHEMA,
+        )
     } else {
         (SCHEMA, ANNOTATION_SCHEMA)
     }
@@ -1100,6 +1111,7 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
         )
         .map_err(error)?;
     }
+    if let Some(facts) = &value.observation.thousand_year_storm { crate::thousand_year_storm_consumer_v1::validate_candidate_order(facts,value.candidates.iter().map(|r|&r.action)).map_err(error)?; }
     if let Some(facts) = &value.observation.harvester {
         crate::harvester_consumer_v1::validate_candidate_order(facts, value.candidates.iter().map(|row| &row.action)).map_err(error)?;
     }
@@ -1261,6 +1273,7 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                     &row.action,
                 )
                 .map_err(error)?
+            || row.thousand_year_storm_action != crate::thousand_year_storm_consumer_v1::action(value.observation.thousand_year_storm.as_ref(),&row.action).map_err(error)?
             || row.harvester_action != crate::harvester_consumer_v1::action(value.observation.harvester.as_ref(), &row.action).map_err(error)?
             || row.greatwurm_action
                 != crate::greatwurm_consumer_v1::action(

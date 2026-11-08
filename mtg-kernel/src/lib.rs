@@ -791,6 +791,8 @@ pub(crate) mod curator_receipts_v1;
 pub(crate) mod harvester_receipts_v1;
 pub mod harvester_consumer_v1;
 pub mod harvester_public_v1;
+pub mod thousand_year_storm_public_v1;
+pub mod thousand_year_storm_consumer_v1;
 pub mod edict_consumer_v1;
 pub mod edict_public_v1;
 pub(crate) mod edict_receipts_v1;

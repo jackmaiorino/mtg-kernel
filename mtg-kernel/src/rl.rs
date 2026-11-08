@@ -2428,7 +2428,9 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact || private_scope != LimitedAppendixV1::ThousandYearStorm {
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
+    }
     if text_mode != ObservationTextModeV2::KaitoV75Artifact
         || private_scope != LimitedAppendixV1::Curator
     {
@@ -3076,7 +3078,9 @@ fn public_restricted_mana_v1(
     ) {
         crate::effect::genesis_wave_v1::refuse_legacy(state, None).map_err(RlContractError)?;
     }
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact || appendix != LimitedAppendixV1::ThousandYearStorm {
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
+    }
     if text_mode != ObservationTextModeV2::KaitoV75Artifact
         || appendix != LimitedAppendixV1::Curator
     {
@@ -5966,7 +5970,9 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
         crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact || private_scope != LimitedAppendixV1::ThousandYearStorm {
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
+    }
     if text_mode != ObservationTextModeV2::KaitoV75Artifact
         || private_scope != LimitedAppendixV1::Curator
     {
@@ -10685,6 +10691,7 @@ fn private_card(
                 && crate::progenitus_v1::definition(o.card_def))
                 || (appendix != LimitedAppendixV1::LeylineAxe
                     && crate::leyline_axe_v1::definition(o.card_def))
+                || (appendix != LimitedAppendixV1::ThousandYearStorm && crate::effect::thousand_year_storm_v1::definition(o.card_def))
                 || (appendix != LimitedAppendixV1::Harvester
                     && crate::effect::harvester_v1::definition(o.card_def))
                 || (!appendix.includes(LimitedAppendixV1::Omniscience)
@@ -12620,7 +12627,6 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             }
                             crate::effect::EffectTargetSelectionPurpose::ChooseNewlyExiledCard { .. }
                             | crate::effect::EffectTargetSelectionPurpose::ExileBatch { .. }
-                            | crate::effect::EffectTargetSelectionPurpose::CopyTarget { .. }
                             | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
                             | crate::effect::EffectTargetSelectionPurpose::DiscardDraw { .. }
@@ -12663,6 +12669,11 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             | crate::effect::EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
                                 ..
                             } => TargetSelectionPurposeV4::CardSelection,
+                            crate::effect::EffectTargetSelectionPurpose::CopyTarget { .. } => {
+                                if state.thousand_year_storm_consumer_v1 {
+                                    TargetSelectionPurposeV4::EffectTargets
+                                } else { TargetSelectionPurposeV4::CardSelection }
+                            }
                             crate::effect::EffectTargetSelectionPurpose::StandardCopyTargetV1 {
                                 ..
                             } => TargetSelectionPurposeV4::EffectTargets,
@@ -14144,7 +14155,7 @@ fn frozen_stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<T
         .collect()
 }
 
-fn target_ref(state: &GameState, target: Target) -> Result<TargetRefV1> {
+pub(crate) fn target_ref(state: &GameState, target: Target) -> Result<TargetRefV1> {
     match target {
         Target::StackItem(id) => stack_item_target_ref(state, id),
         Target::Player(player) => Ok(TargetRefV1::Player {

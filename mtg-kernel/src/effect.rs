@@ -29809,4 +29809,4 @@ pub(crate) mod fiend_artisan_v1 {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "effect/thousand_year_storm_v1_tests.rs"]
-mod thousand_year_storm_v1_tests;
+pub(crate) mod thousand_year_storm_v1_tests;

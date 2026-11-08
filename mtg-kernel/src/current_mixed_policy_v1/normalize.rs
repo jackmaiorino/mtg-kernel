@@ -451,6 +451,11 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         }
     }
     let mut covered = BTreeSet::new();
+    if source == Source::KaitoV75 && state["schema"] == crate::thousand_year_storm_consumer_v1::CANDIDATES_SCHEMA {
+        let meaning: crate::thousand_year_storm_public_v1::MeaningV1 = serde_json::from_value(state["observation"]["thousand_year_storm"]["meaning"].clone()).map_err(|e|Error::Projection(e.to_string()))?;
+        if meaning != crate::thousand_year_storm_public_v1::printed_meaning().map_err(Error::Projection)? { return Err(Error::Projection("Storm exact meaning changed".into())); }
+        covered.insert(meaning.card_id);
+    }
     if source == Source::KaitoV75 && state["schema"] == crate::harvester_consumer_v1::CANDIDATES_SCHEMA {
         let meaning: crate::harvester_public_v1::MeaningV1 = serde_json::from_value(state["observation"]["harvester"]["meaning"].clone()).map_err(|error| Error::Projection(error.to_string()))?;
         if meaning != crate::harvester_public_v1::printed_meaning().map_err(Error::Projection)? {

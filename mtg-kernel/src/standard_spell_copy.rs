@@ -10,6 +10,7 @@ pub(crate) fn validate_copy_snapshot(state: &GameState, spell: &StackItem) -> Re
         .objects
         .try_get(source.source)
         .ok_or("copy snapshot source missing")?;
+    let storm_history = effect::thousand_year_storm_v1::owns_snapshot(state, spell);
     if spell.kind != StackItemKind::Spell
         || spell.inline_effect.is_some()
         || spell.madness_offer
@@ -21,7 +22,8 @@ pub(crate) fn validate_copy_snapshot(state: &GameState, spell: &StackItem) -> Re
         || !spell.v4.cauldron_grant.is_empty()
         || spell.source != source.source
         || spell.controller != source.controller
-        || source.card_def != live.card_def
+        || (source.card_def != live.card_def
+            && !(storm_history && live.zone_change_count > source.zone_change_count))
         || source.owner != live.owner
         || source.zone != Zone::Stack
         || spell.is_copy != source.spell_copy_origin.is_some()
@@ -138,7 +140,10 @@ pub(crate) fn validate_copy_snapshot(state: &GameState, spell: &StackItem) -> Re
         } else {
             contract
         };
-        if !stack_target_contract_is_structurally_valid(state, spec, index, target, contract) {
+        let valid = if storm_history {
+            crate::state::stack_target_contract_for_storm_snapshot(state,spell,spec,index,target,contract)
+        } else { stack_target_contract_is_structurally_valid(state,spec,index,target,contract) };
+        if !valid {
             return Err("copy snapshot target contract is structurally malformed".into());
         }
     }
@@ -472,7 +477,9 @@ fn materialize_validated_copy_snapshot(
     let origin = spell.v4.source_contract.ok_or("copy source missing")?;
     let source = state.objects.push(crate::state::GameObject {
         card_def: origin.card_def,
-        name: state.objects.get(origin.source).name.clone(),
+        name: if effect::thousand_year_storm_v1::owns_snapshot(state, spell) {
+            card_def::CARD_DEFS[origin.card_def as usize].name.into()
+        } else { state.objects.get(origin.source).name.clone() },
         owner: controller,
         controller,
         zone: Zone::Stack,
