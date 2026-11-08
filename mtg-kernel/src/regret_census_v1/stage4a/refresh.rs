@@ -1780,7 +1780,7 @@ pub(super) mod tests {
                             reuse_witnesses: recording,
                             executor: ExecutionMode::Persistent,
                             node_stats: false,
-                            world: super::world::WorldMode::Fresh,
+                            world: super::super::world::WorldMode::Fresh,
                         },
                     )
                     .unwrap()
