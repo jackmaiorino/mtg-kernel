@@ -21,6 +21,8 @@ knowledge for subsequent simulated moves.
 
 The reveal-v4 schema and canonical occupants bind the new payload digest. The
 new branch has source tests that vary hidden composition and the physical copy
-shown while preserving the visible stream. Native acceptance and bridge
-wiring are pending. The bridge must consume the same viewer-local stream it
-sends to the trusted adapter, with a separate opt-in from the frozen W1 path.
+shown while preserving the visible stream. The bridge's
+`--x-kernel-infoset-reveal-v4` profile uses the flat-action lockstep state for
+canonical row mapping and the same selected-viewer journal it sends to the
+trusted adapter. It advertises a separate extension and receipt identity.
+Native acceptance and the successor entrant are pending.

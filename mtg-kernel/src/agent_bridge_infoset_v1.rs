@@ -16,9 +16,10 @@
 use crate::ids::PlayerId;
 use crate::infoset_v1::order::{canonical_ids_v1, imported_ids_v1, live_rows_v1, row_keys_v1};
 use crate::infoset_v1::{
-    export_v1, ExportErrorV1, ExportInputV1, ExportOptionsV1, PayloadV1, RefusalTallyV1,
-    INFOSET_SCHEMA_V1,
+    export_reveal_v4_from_journal, export_v1, ExportErrorV1, ExportInputV1, ExportOptionsV1,
+    PayloadV1, RefusalTallyV1, INFOSET_SCHEMA_REVEAL_V4, INFOSET_SCHEMA_V1,
 };
+use crate::reveal_meaning_v3::RevealJournalV3;
 use crate::rl::{ActionSemanticV1, PlayerSeatV1};
 use crate::rl_session::{FastActorSessionV1, RlSessionDecisionV1};
 use crate::runtime_decks::runtime_deck_by_id;
@@ -28,10 +29,12 @@ use std::collections::BTreeMap;
 /// The extension key and its command-line flag.
 pub const SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1: &str = "x_kernel_infoset_v1";
 pub const SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1: &str = "--x-kernel-infoset-v1";
+pub const SPELLBENCH_FLAG_X_KERNEL_INFOSET_REVEAL_V4: &str = "--x-kernel-infoset-reveal-v4";
 
 /// Per-game producer state of one bridge game.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct InfosetBridgeV1 {
+    reveal_v4: bool,
     /// The extension of the decision being sent, if it is eligible.
     pub(crate) pending: Option<Value>,
     /// Eligible decisions so far, per seat (the payload's viewer-local
@@ -48,6 +51,23 @@ pub(crate) struct InfosetBridgeV1 {
     /// Exported decisions whose menus the canonical keys could not pair
     /// one to one with the import's, per seat (engine-side receipt).
     pub(crate) order_map_missing: [u64; 2],
+}
+
+impl InfosetBridgeV1 {
+    pub(crate) fn reveal_v4() -> Self {
+        Self {
+            reveal_v4: true,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn extension(&self) -> &'static str {
+        if self.reveal_v4 {
+            INFOSET_SCHEMA_REVEAL_V4
+        } else {
+            SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1
+        }
+    }
 }
 
 fn seat(p: PlayerSeatV1) -> PlayerId {
@@ -102,22 +122,38 @@ pub(crate) fn delivered_v1(
     viewer: PlayerId,
     index: u64,
 ) -> Result<DeliveredV1, String> {
+    delivered(fast, viewer, index, None)
+}
+
+fn delivered(
+    fast: &FastActorSessionV1,
+    viewer: PlayerId,
+    index: u64,
+    reveal: Option<&RevealJournalV3>,
+) -> Result<DeliveredV1, String> {
     let lists = fast.deck_ids_v1().clone().map(|id| {
         runtime_deck_by_id(&id)
             .map(|d| d.card_ids.to_vec())
             .unwrap_or_default()
     });
     let game = fast.game_state();
-    let exported = export_v1(
-        &ExportInputV1 {
-            state: game,
-            journal: game.observation_journal.notes(),
-            viewer,
-            decklists: [&lists[0], &lists[1]],
-            marks: Some(&fast.infoset_marks_v1(viewer)),
-        },
-        ExportOptionsV1::default(),
-    );
+    let input = ExportInputV1 {
+        state: game,
+        journal: game.observation_journal.notes(),
+        viewer,
+        decklists: [&lists[0], &lists[1]],
+        marks: Some(&fast.infoset_marks_v1(viewer)),
+    };
+    let (schema, exported) = match reveal {
+        Some(journal) => (
+            INFOSET_SCHEMA_REVEAL_V4,
+            export_reveal_v4_from_journal(&input, journal),
+        ),
+        None => (
+            INFOSET_SCHEMA_V1,
+            export_v1(&input, ExportOptionsV1::default()),
+        ),
+    };
     Ok(match exported {
         Ok(export) => match PayloadV1::new(&export, fast, viewer, index) {
             Some(payload) => {
@@ -146,7 +182,7 @@ pub(crate) fn delivered_v1(
                 DeliveredV1::Payload {
                     map_missing: live_rows.is_none(),
                     value: json!({
-                        "schema": INFOSET_SCHEMA_V1,
+                        "schema": schema,
                         "payload_json": String::from_utf8(payload.to_bytes())
                             .map_err(|_| "engine_contract_failure:infoset payload".to_string())?,
                         "live_rows": live_rows,
@@ -161,7 +197,7 @@ pub(crate) fn delivered_v1(
                 // 43.1 part 2), so every R2 can be classified.
                 let subclass = fast.payload_refusal_detail_v1(viewer);
                 DeliveredV1::Refused {
-                    value: json!({"schema": INFOSET_SCHEMA_V1, "refusal": "R2", "refusal_detail": subclass}),
+                    value: json!({"schema": schema, "refusal": "R2", "refusal_detail": subclass}),
                     error: ExportErrorV1::Refused {
                         code: crate::infoset_v1::RefusalCodeV1::R2,
                         detail: format!("surface: {subclass}"),
@@ -176,7 +212,7 @@ pub(crate) fn delivered_v1(
             // `export`.
             let subclass = export_refusal_subclass_v1(&error);
             DeliveredV1::Refused {
-                value: json!({"schema": INFOSET_SCHEMA_V1, "refusal": error.code_name(), "refusal_detail": subclass}),
+                value: json!({"schema": schema, "refusal": error.code_name(), "refusal_detail": subclass}),
                 error,
                 subclass,
             }
@@ -191,6 +227,7 @@ pub(crate) fn infoset_extension_v1(
     fast: &FastActorSessionV1,
     decision: &RlSessionDecisionV1,
     state: &mut InfosetBridgeV1,
+    reveal: &RevealJournalV3,
 ) -> Result<(), String> {
     state.pending = None;
     state.root_ids = None;
@@ -201,7 +238,12 @@ pub(crate) fn infoset_extension_v1(
     let index = state.eligible[viewer.index()];
     state.eligible[viewer.index()] += 1;
     let seat_index = viewer.index();
-    let value = match delivered_v1(fast, viewer, index)? {
+    let result = if state.reveal_v4 {
+        delivered(fast, viewer, index, Some(reveal))?
+    } else {
+        delivered_v1(fast, viewer, index)?
+    };
+    let value = match result {
         DeliveredV1::Payload {
             value,
             ids,
@@ -220,7 +262,9 @@ pub(crate) fn infoset_extension_v1(
             subclass,
         } => {
             state.tally[seat_index].record_refusal(&error, subclass);
-            log_refusal_v1(fast, viewer, decision.step, &error, subclass);
+            if !state.reveal_v4 {
+                log_refusal_v1(fast, viewer, decision.step, &error, subclass);
+            }
             value
         }
     };
@@ -340,7 +384,12 @@ pub(crate) fn write_receipt_v1(game_id: &str, state: &mut InfosetBridgeV1) {
         state.receipt_written = true;
         let line = receipt_v1(game_id, state);
         eprintln!("{line}");
-        if let Some(dir) = std::env::var_os(RECEIPT_DIR_ENV_V1).filter(|d| !d.is_empty()) {
+        let receipt_dir = if state.reveal_v4 {
+            "REVEAL_V4_INFOSET_RECEIPT_DIR"
+        } else {
+            RECEIPT_DIR_ENV_V1
+        };
+        if let Some(dir) = std::env::var_os(receipt_dir).filter(|d| !d.is_empty()) {
             let safe: String = game_id
                 .chars()
                 .map(|c| {
@@ -353,7 +402,7 @@ pub(crate) fn write_receipt_v1(game_id: &str, state: &mut InfosetBridgeV1) {
                 .collect();
             let path = std::path::Path::new(&dir).join(format!("{safe}.bridge.json"));
             if let Err(e) = std::fs::write(&path, format!("{line}\n")) {
-                eprintln!("x_kernel_infoset_v1 receipt {}: {e}", path.display());
+                eprintln!("{} receipt {}: {e}", state.extension(), path.display());
             }
         }
     }
@@ -362,7 +411,7 @@ pub(crate) fn write_receipt_v1(game_id: &str, state: &mut InfosetBridgeV1) {
 /// The engine-side receipt line written when a game ends.
 pub(crate) fn receipt_v1(game_id: &str, state: &InfosetBridgeV1) -> String {
     json!({
-        "receipt": "x_kernel_infoset_v1",
+        "receipt": state.extension(),
         "game_id": game_id,
         "eligible": state.eligible,
         "tally": [&state.tally[0], &state.tally[1]],
@@ -383,5 +432,5 @@ pub(crate) fn preview_row_keys_v1(
     if *step != root_step {
         return None;
     }
-    Some(json!({"schema": INFOSET_SCHEMA_V1, "row_keys": row_keys_v1(fast, Some(ids))}))
+    Some(json!({"schema": state.extension(), "row_keys": row_keys_v1(fast, Some(ids))}))
 }

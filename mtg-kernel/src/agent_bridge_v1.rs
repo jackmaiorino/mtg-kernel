@@ -28,13 +28,16 @@ use crate::agent_bridge_flat_v4_encode::{
     encode_flat_v4_tensor_v1, flat_v4_extension_value_v1, FlatV4EncodeScratchV1,
     SPELLBENCH_EXTENSION_KERNEL_FLAT_V4,
 };
-pub use crate::agent_bridge_infoset_v1::SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1;
+pub use crate::agent_bridge_infoset_v1::{
+    SPELLBENCH_FLAG_X_KERNEL_INFOSET_REVEAL_V4, SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1,
+};
 use crate::agent_bridge_infoset_v1::{
     infoset_extension_v1, preview_row_keys_v1, write_receipt_v1, InfosetBridgeV1,
     SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1,
 };
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::engine::{CastMode, CostKind, OptionalCostChoice};
+use crate::infoset_v1::INFOSET_SCHEMA_REVEAL_V4;
 use crate::mana::ManaColor;
 use crate::rl::{
     parse_strict_json_value, ActionSemanticV1, CardStableRefV1, ObservationV5,
@@ -301,6 +304,7 @@ struct SpellbenchBridgeGameV1 {
 pub struct SpellbenchBridgeServerV1 {
     identity: SpellbenchEngineIdentityV1,
     options: SpellbenchBridgeOptionsV1,
+    reveal_search_v4: bool,
     game: Option<SpellbenchBridgeGameV1>,
     used_game_ids: HashSet<String>,
     last_exchange: Option<CachedSpellbenchExchangeV1>,
@@ -343,11 +347,26 @@ impl SpellbenchBridgeServerV1 {
         SpellbenchBridgeServerV1 {
             identity,
             options,
+            reveal_search_v4: false,
             game: None,
             used_game_ids: HashSet::new(),
             last_exchange: None,
             private_preview: None,
         }
+    }
+
+    /// Prospective fair-search profile using the neutral reveal stream.
+    pub fn with_reveal_search_v4(identity: SpellbenchEngineIdentityV1) -> Self {
+        let mut server = Self::with_options(
+            identity,
+            SpellbenchBridgeOptionsV1 {
+                x_kernel_flat_v4: true,
+                reveal_meaning_v3: true,
+                ..Default::default()
+            },
+        );
+        server.reveal_search_v4 = true;
+        server
     }
 
     fn identity(&self) -> &SpellbenchEngineIdentityV1 {
@@ -486,6 +505,9 @@ impl SpellbenchBridgeServerV1 {
                 }
                 if self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1 {
                     extensions.push(SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1);
+                }
+                if self.reveal_search_v4 {
+                    extensions.push(INFOSET_SCHEMA_REVEAL_V4);
                 }
                 json!({
                     "response_type": "hello_ok",
@@ -713,6 +735,7 @@ impl SpellbenchBridgeServerV1 {
         ) {
             (Some(infoset), Some(lockstep)) => {
                 preview_row_keys_v1(infoset, expected_step, lockstep.fast_session())
+                    .map(|value| (infoset.extension(), value))
             }
             _ => None,
         };
@@ -725,8 +748,8 @@ impl SpellbenchBridgeServerV1 {
             Some(support),
         ) {
             WireResponseV1::Decision(mut view) => {
-                if let Some(keys) = keys {
-                    view["extensions"][SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1] = keys;
+                if let Some((extension, keys)) = keys {
+                    view["extensions"][extension] = keys;
                 }
                 json!({"response_type": "private_preview", "protocol": SPELLBENCH_PROTOCOL_V1,
                 "request_id": request_id, "view": view})
@@ -871,8 +894,12 @@ impl SpellbenchBridgeServerV1 {
             private_block_root_step: None,
             history_cursor: (0, 0, 0),
             reveal_cursor: [0; 2],
-            infoset: (self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1)
-                .then(InfosetBridgeV1::default),
+            infoset: if self.reveal_search_v4 {
+                Some(InfosetBridgeV1::reveal_v4())
+            } else {
+                (self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1)
+                    .then(InfosetBridgeV1::default)
+            },
             masked_observation: self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1,
             #[cfg(test)]
             force_flat_v4_encode_error: false,
@@ -1339,7 +1366,7 @@ fn finish_infoset_v1(game: &mut SpellbenchBridgeGameV1, wire: &mut WireResponseV
     match wire {
         WireResponseV1::Decision(value) => {
             if let Some(extension) = infoset.pending.take() {
-                value["extensions"][SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1] = extension;
+                value["extensions"][infoset.extension()] = extension;
             }
         }
         WireResponseV1::Terminal(_) => write_receipt_v1(&game.game_id, infoset),
@@ -1429,7 +1456,12 @@ fn flat_v4_extension_v1(
     }
     *flat_v4_rows = rows;
     if let Some(infoset) = infoset.as_mut() {
-        infoset_extension_v1(lockstep.fast_session(), decision, infoset)?;
+        infoset_extension_v1(
+            lockstep.fast_session(),
+            decision,
+            infoset,
+            &session.game_state().reveal_meaning_v3,
+        )?;
     }
     Ok(Some(value))
 }

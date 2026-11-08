@@ -49,6 +49,7 @@ mod tests;
 mod transcript;
 
 pub use export::{export_reveal_v4, export_v2, export_v3, ExportInputV1, InfosetV1};
+pub(crate) use export::export_reveal_v4_from_journal;
 pub(crate) use export::{export_v1, ExportOptionsV1, MutantV1};
 pub use payload::PayloadV1;
 
