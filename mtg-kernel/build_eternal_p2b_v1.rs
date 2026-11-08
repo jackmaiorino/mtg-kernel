@@ -134,13 +134,13 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     }
 }
 
-/// Nantuko Vigilante: "Morph {1}{G}" (702.37): cast face down as a 2/2
+/// Morph (702.37): cast face down as a 2/2
 /// creature for {3} through the face-down cast that disguise uses, without
 /// disguise's ward; turning it face up is
-/// `eternal_premodern_p2b_v1::statics::morph_cost`.
+/// `eternal_premodern_p2b_v1::statics::morph_cost_of`.
 pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
-        "Nantuko Vigilante" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[], generic: 3, x_count: 0 })], condition: AltCostCondition::DisguiseFromHand })",
+        "Nantuko Vigilante" | "Birchlore Rangers" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[], generic: 3, x_count: 0 })], condition: AltCostCondition::DisguiseFromHand })",
         _ => "None",
     }
 }
@@ -182,6 +182,9 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
         "Arrogant Wurm" => "madness:2g",
         "Birds of Paradise" => "mana:any_color",
+        "Birchlore Rangers" => {
+            "mana:tap_two_controlled_elves:any_color;morph:g:face_down_2_2_no_ward"
+        }
         "Blastoderm" => "fading:3",
         "Caller of the Claw" => {
             "etb:bear_tokens_per_nontoken_creature_put_into_graveyard_this_turn"

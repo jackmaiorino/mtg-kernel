@@ -516,6 +516,7 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
         | A::PlayLand { actor, .. }
         | A::CastSpell { actor, .. }
         | A::ActivateManaAbility { actor, .. }
+        | A::ActivateManaAbilityWithTwoCostTargetsV1 { actor, .. }
         | A::ActivateAbility { actor, .. }
         | A::TurnFaceUp { actor, .. }
         | A::PlotSpell { actor, .. }
@@ -1627,6 +1628,20 @@ fn label_common(
                 mana(cost)
             )
         }
+        A::ActivateManaAbilityWithTwoCostTargetsV1 {
+            source,
+            mana_choice,
+            cost_targets: [first, second],
+            ..
+        } => {
+            format!(
+                "Activate {} to add {{{}}} by tapping {} and {}",
+                handles.name(source)?,
+                color(*mana_choice),
+                handles.name(first)?,
+                handles.name(second)?
+            )
+        }
         A::ActivateManaAbility {
             source,
             mana_choice,
@@ -1739,6 +1754,9 @@ fn label_common(
                                 handles
                                     .name(cost_target.as_ref().ok_or(Error::UnsupportedPrompt)?)?
                             )
+                        }
+                        ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(_) => {
+                            return Err(Error::UnsupportedPrompt);
                         }
                     };
                     if !matches!(

@@ -11,7 +11,9 @@ use mtg_kernel::eternal_premodern_p2b_v1 as p2b;
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
+use mtg_kernel::rl::{legal_action_candidates_v1, ActionSemanticV1};
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::surface::{SurfaceAction, SurfaceDecision};
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
@@ -821,6 +823,88 @@ fn nantuko_vigilante_is_turned_face_up_to_destroy_an_artifact_or_enchantment() {
     assert_eq!(power_toughness(&state, vigilante), (3, 2));
     settle_picking(&mut state, 0, Some(bauble));
     assert_eq!(zone(&state, bauble), Zone::Graveyard);
+}
+
+#[test]
+fn birchlore_projects_each_pair_and_pays_only_with_two_distinct_untapped_elves() {
+    let mut state = islands();
+    let ranger = put(&mut state, P0, "Birchlore Rangers", Zone::Battlefield);
+    let elf = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let other_elf = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let birds = put(&mut state, P0, "Birds of Paradise", Zone::Battlefield);
+    let theirs = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    for object in [ranger, elf, other_elf] {
+        state.objects.get_mut(object).summoning_sick = true;
+    }
+
+    let decision = SurfaceDecision::Decision(next(&mut state));
+    let rows = legal_action_candidates_v1(&decision, &state).unwrap();
+    let pairs = rows
+        .iter()
+        .filter_map(|row| match &row.record.semantic {
+            ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 {
+                source,
+                mana_choice: ManaColor::B,
+                cost_targets,
+                ..
+            } if source.arena_id == ranger.0 => Some(
+                cost_targets
+                    .clone()
+                    .map(|reference| ObjectId(reference.arena_id)),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pairs,
+        [[ranger, elf], [ranger, other_elf], [elf, other_elf]]
+    );
+
+    let before = state.state_hash();
+    for pair in [[elf, elf], [ranger, birds], [ranger, theirs]] {
+        let action = Action::ActivateManaAbilityWithTwoCostTargetsV1(ranger, ManaColor::B, pair);
+        assert!(engine::step(&mut state, action).is_err());
+        assert_eq!(state.state_hash(), before);
+    }
+
+    let selected =
+        Action::ActivateManaAbilityWithTwoCostTargetsV1(ranger, ManaColor::B, [ranger, elf]);
+    assert!(rows
+        .iter()
+        .any(|row| row.surface_action == SurfaceAction::Action(selected.clone())));
+    act(&mut state, selected);
+    assert_eq!(mana(&state, P0, ManaColor::B), 1);
+    assert!(state.stack.is_empty());
+    assert!(state.objects.get(ranger).tapped && state.objects.get(elf).tapped);
+    assert!(!state.objects.get(other_elf).tapped);
+    assert!(!state.objects.get(birds).tapped && !state.objects.get(theirs).tapped);
+    let Decision::CastSpellOrPass { mana_abilities, .. } = next(&mut state) else {
+        panic!("expected priority");
+    };
+    assert!(!mana_abilities.contains(&ranger));
+}
+
+#[test]
+fn birchlore_casts_face_down_and_turns_up_for_one_green() {
+    let mut state = islands();
+    let ranger = put(&mut state, P0, "Birchlore Rangers", Zone::Hand);
+    pool(&mut state, P0, &[], 3);
+    act(&mut state, Action::CastSpell(ranger));
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseCastMode { .. } => Action::ChooseCastMode(CastMode::Alternative),
+        other => first_answer(other),
+    });
+    assert!(state.objects.get(ranger).v4.face_down_v1.is_some());
+    assert_eq!(power_toughness(&state, ranger), (2, 2));
+    assert!(!activatable(&mut state, ranger, 255));
+
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    assert!(activatable(&mut state, ranger, 255));
+    act(&mut state, Action::ActivateAbility(ranger, 255));
+    assert!(state.objects.get(ranger).v4.face_down_v1.is_none());
+    assert_eq!(power_toughness(&state, ranger), (1, 1));
+    assert_eq!(mana(&state, P0, ManaColor::G), 0);
+    assert!(state.stack.is_empty());
 }
 
 #[test]

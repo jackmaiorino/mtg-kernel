@@ -1867,6 +1867,8 @@ pub enum Action {
     ChooseLondonBottom(ObjectId),
     /// Answers `Decision::ChooseAttackTarget`.
     ChooseAttackTarget(Target),
+    /// Activates a mana ability by tapping both selected permanents atomically.
+    ActivateManaAbilityWithTwoCostTargetsV1(ObjectId, ManaColor, [ObjectId; 2]),
 }
 
 const CHAIN_COPY_COST: Cost = Cost {
@@ -6162,7 +6164,7 @@ pub(crate) fn pay_effect_mana(
     for (id, color) in plan.treasures {
         // Use the real printed tap/sacrifice activation and committed events.
         // Resolution remains atomic: queued triggers/SBAs wait for completion.
-        if activate_mana_ability_for_with_checkpoint(state, player, id, color, None, false).is_err()
+        if activate_mana_ability_for_with_checkpoint(state, player, id, color, &[], false).is_err()
         {
             return false;
         }
@@ -10765,7 +10767,94 @@ fn rich_mana_ability_is_payable(
         ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(subtype) => {
             !sacrificeable_mana_cost_subtype(player, subtype, state).is_empty()
         }
+        ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(subtype) => {
+            untapped_subtype_mana_cost_objects(state, player, subtype)
+                .take(2)
+                .count()
+                == 2
+        }
     }
+}
+
+fn untapped_subtype_mana_cost_objects(
+    state: &GameState,
+    player: PlayerId,
+    subtype: card_def::Subtype,
+) -> impl Iterator<Item = ObjectId> + '_ {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .chain(state.players[player.opponent().index()].battlefield.iter())
+        .copied()
+        .filter(move |&candidate| {
+            let object = state.objects.get(candidate);
+            object.controller == player
+                && object.zone == Zone::Battlefield
+                && !object.tapped
+                && has_effective_subtype(state, candidate, subtype)
+        })
+}
+
+/// The unordered two-object payment menu for the printed primary ability.
+/// One sorted sequence of candidates makes each payment pair unique.
+pub(crate) fn two_object_mana_cost_candidates(
+    state: &GameState,
+    player: PlayerId,
+    source: ObjectId,
+) -> Option<Vec<ObjectId>> {
+    let object = state.objects.try_get(source)?;
+    let definition = card_def::CARD_DEFS.get(usize::from(object.card_def))?;
+    let ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(subtype) =
+        definition.mana_ability_def?.cost
+    else {
+        return None;
+    };
+    if !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+        || !crate::standard_cards_v1::mana_abilities_active(state, source, definition)
+    {
+        return None;
+    }
+    let mut candidates =
+        untapped_subtype_mana_cost_objects(state, player, subtype).collect::<Vec<_>>();
+    candidates.sort_unstable();
+    Some(candidates)
+}
+
+/// Two-object mana costs use the printed colors. Effects that replace what
+/// the source adds when tapped for mana apply only to its {T} abilities.
+pub(crate) fn two_object_mana_cost_choices(
+    state: &GameState,
+    player: PlayerId,
+    source: ObjectId,
+) -> ManaColorSetV1 {
+    let mut choices = ManaColorSetV1::new();
+    available_mana_ability_choices_unreplaced_into(player, source, state, &mut choices);
+    let object = state.objects.get(source);
+    let printed = card_def::CARD_DEFS[usize::from(object.card_def)]
+        .primary_mana_ability_choices(object.v4.chosen_color);
+    let mut result = ManaColorSetV1::new();
+    for &color in choices.as_slice() {
+        if printed.contains(&color) {
+            result.push(color);
+        }
+    }
+    result
+}
+
+pub(crate) fn granted_tap_mana_choices(state: &GameState, source: ObjectId) -> Vec<ManaColor> {
+    let object = state.objects.get(source);
+    let definition = &card_def::CARD_DEFS[usize::from(object.card_def)];
+    if object.tapped || creature_summoning_sick(state, source, definition) {
+        return Vec::new();
+    }
+    let colors = crate::standard_legends_v1::katilda_mana_colors(state, source);
+    #[cfg(feature = "eternal-fixtures")]
+    if !colors.is_empty()
+        && crate::eternal_premodern_p2a_v1::statics::produces_only_black(state, source)
+    {
+        return vec![ManaColor::B];
+    }
+    colors
 }
 
 /// The permanents `player` may sacrifice for "Sacrifice a Goblin" (Skirk
@@ -11201,7 +11290,14 @@ fn activate_mana_ability_for(
     choice: ManaColor,
     cost_target: Option<ObjectId>,
 ) -> Result<(), String> {
-    activate_mana_ability_for_with_checkpoint(state, player, source, choice, cost_target, true)
+    activate_mana_ability_for_with_checkpoint(
+        state,
+        player,
+        source,
+        choice,
+        cost_target.as_slice(),
+        true,
+    )
 }
 
 fn activate_mana_ability_for_with_checkpoint(
@@ -11209,21 +11305,30 @@ fn activate_mana_ability_for_with_checkpoint(
     player: PlayerId,
     source: ObjectId,
     choice: ManaColor,
-    cost_target: Option<ObjectId>,
+    cost_targets: &[ObjectId],
     checkpoint: bool,
 ) -> Result<(), String> {
     // Contamination: the land taps for its own ability, but the mana it
     // adds is one {B} instead (Premodern wave P2a).
     #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_premodern_p2a_v1::statics::produces_only_black(state, source) {
-        return activate_contaminated_land(state, player, source, choice, cost_target, checkpoint);
+    if cost_targets.len() != 2
+        && crate::eternal_premodern_p2a_v1::statics::produces_only_black(state, source)
+    {
+        return activate_contaminated_land(
+            state,
+            player,
+            source,
+            choice,
+            cost_targets.first().copied(),
+            checkpoint,
+        );
     }
     activate_mana_ability_unreplaced_for_with_checkpoint(
         state,
         player,
         source,
         choice,
-        cost_target,
+        cost_targets,
         checkpoint,
     )
 }
@@ -11258,7 +11363,12 @@ fn activate_contaminated_land(
     let pool_before = seat.mana_pool;
     let restricted_before = seat.restricted_mana_pool.0.len();
     activate_mana_ability_unreplaced_for_with_checkpoint(
-        state, player, source, underlying, None, false,
+        state,
+        player,
+        source,
+        underlying,
+        &[],
+        false,
     )?;
     let seat = &mut state.players[player.index()];
     let produced = seat
@@ -11283,7 +11393,7 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
     player: PlayerId,
     source: ObjectId,
     choice: ManaColor,
-    cost_target: Option<ObjectId>,
+    cost_targets: &[ObjectId],
     checkpoint: bool,
 ) -> Result<(), String> {
     let available_choices = {
@@ -11297,6 +11407,16 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
     let card_def = state.objects.get(source).card_def;
     let chosen_color = state.objects.get(source).v4.chosen_color;
     let definition = &card_def::CARD_DEFS[card_def as usize];
+    let cost_target = cost_targets.first().copied();
+    let printed_pair_cost = matches!(
+        definition.mana_ability_def.map(|ability| ability.cost),
+        Some(ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(
+            _
+        ))
+    );
+    if cost_targets.len() > 1 && !printed_pair_cost {
+        return Err("this mana ability does not have a two-object cost".into());
+    }
     if crate::continuous_characteristics_v1::land_grants_colorless_mana(state, source) {
         if cost_target.is_some() || choice != ManaColor::C {
             return Err("land override mana has no other cost or color".into());
@@ -11311,9 +11431,17 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
         }
         return Ok(());
     }
-    if crate::standard_legends_v1::katilda_mana_colors(state, source).contains(&choice) {
+    if cost_targets.len() != 2
+        && crate::standard_legends_v1::katilda_mana_colors(state, source).contains(&choice)
+    {
         if cost_target.is_some() {
             return Err("Katilda's granted mana has no other cost target".into());
+        }
+        if printed_pair_cost
+            && (state.objects.get(source).tapped
+                || creature_summoning_sick(state, source, definition))
+        {
+            return Err("granted tap mana source cannot tap".into());
         }
         event::propose_and_commit(state, ProposedEvent::tap(source));
         event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![choice]));
@@ -11414,6 +11542,16 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
         let legal_cost_targets =
             mana_ability_cost_targets_for_choice(player, source, choice, state);
         match rich.cost {
+            ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(_) => {
+                let [first, second] = cost_targets else {
+                    return Err("this mana ability needs two untapped controlled permanents".into());
+                };
+                let candidates = two_object_mana_cost_candidates(state, player, source)
+                    .ok_or("the two-object mana cost lost its source definition")?;
+                if first == second || !candidates.contains(first) || !candidates.contains(second) {
+                    return Err("the two selected permanents cannot pay this mana ability".into());
+                }
+            }
             ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature
             | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1
             | ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_) => {
@@ -11531,6 +11669,11 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
         }
 
         match rich.cost {
+            ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(_) => {
+                let mut objects = [cost_targets[0], cost_targets[1]];
+                objects.sort_unstable();
+                event::propose_and_commit_batch(state, objects.map(ProposedEvent::tap).to_vec());
+            }
             ManaAbilityCostDef::TapSelf => {
                 event::propose_and_commit(state, ProposedEvent::tap(source));
             }
@@ -11608,9 +11751,11 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_vintage_v1::restrict_produced_mana(state, player, source, choice);
     #[cfg(feature = "eternal-fixtures")]
-    crate::eternal_e5a_v1::note_tapped_for_mana(state, player, source);
+    if cost_targets.len() != 2 {
+        crate::eternal_e5a_v1::note_tapped_for_mana(state, player, source);
+    }
     #[cfg(feature = "eternal-fixtures")]
-    if state.objects.get(source).tapped {
+    if cost_targets.len() != 2 && state.objects.get(source).tapped {
         crate::eternal_pauper_e6b_v1::after_tapped_for_mana(state, source);
     }
     if state.objects.get(source).zone_change_count == source_zone_change_count {
@@ -24613,6 +24758,12 @@ pub(crate) fn step_without_linked_aura_v1(
         Action::ActivateManaAbilityWithCostTarget(id, choice, cost_target) => {
             let p = state.priority_player;
             activate_mana_ability_for(state, p, id, choice, Some(cost_target))
+        }
+        Action::ActivateManaAbilityWithTwoCostTargetsV1(source, choice, cost_targets) => {
+            let player = state.priority_player;
+            activate_mana_ability_for_with_checkpoint(
+                state, player, source, choice, &cost_targets, true,
+            )
         }
         Action::ActivateAbility(source, index) => {
             let p = state.priority_player;
