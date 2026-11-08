@@ -16,13 +16,13 @@ mod tests;
 fn error(message: impl Into<String>) -> String {
     message.into()
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum IdentityV1 {
     Known { card_id: u16 },
     FaceDown { disguised: bool },
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReferenceV1 {
     pub object: u32,
@@ -321,6 +321,7 @@ pub(crate) enum ConsumerV1 {
     KaitoSphinxLoreV1,
     KaitoGreatwurmV1,
     KaitoHarvesterV1,
+    KaitoFiendArtisanV1,
 }
 impl ConsumerV1 {
     pub(crate) fn for_kaito(appendix: crate::policy_surface_v5::LimitedAppendixV1) -> Self {
@@ -339,12 +340,20 @@ impl ConsumerV1 {
             LimitedAppendixV1::SphinxLore => Self::KaitoSphinxLoreV1,
             LimitedAppendixV1::Greatwurm => Self::KaitoGreatwurmV1,
             LimitedAppendixV1::Harvester => Self::KaitoHarvesterV1,
+            LimitedAppendixV1::FiendArtisan => Self::KaitoFiendArtisanV1,
             _ => Self::KaitoV75,
         }
     }
 
     pub(crate) fn validate_copy_prefix(self, state: &GameState) -> Result<(), String> {
         use crate::effect::KaitoCopyScopeV1 as Scope;
+        if matches!(self, Self::KaitoFiendArtisanV1) {
+            if !state.fiend_artisan_receipts_v1 {
+                return Err("Fiend Artisan owning copy scope lacks its native receipt mode".into());
+            }
+        } else {
+            crate::fiend_artisan_receipts_v1::refuse_legacy(state)?;
+        }
         match self {
             Self::Legacy => crate::effect::require_no_copied_token_abilities_v1(state),
             Self::ChandraV74 => crate::effect::require_no_copied_token_abilities_chandra_v74(state),
@@ -359,7 +368,8 @@ impl ConsumerV1 {
             | Self::KaitoCuratorV1
             | Self::KaitoKykarV1
             | Self::KaitoSphinxLoreV1
-            | Self::KaitoGreatwurmV1 => {
+            | Self::KaitoGreatwurmV1
+            | Self::KaitoFiendArtisanV1 => {
                 crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::Base)
             }
             Self::KaitoHarvesterV1 => {

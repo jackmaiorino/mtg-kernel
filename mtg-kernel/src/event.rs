@@ -322,6 +322,8 @@ pub struct ZoneChangeProposed {
     pub(crate) curator_move_owner: Option<crate::curator_receipts_v1::MoveOwnerV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) harvester_owner: Option<crate::ids::StackItemId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) fiend_search_owner: Option<crate::ids::StackItemId>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -454,6 +456,7 @@ impl ProposedEvent {
             edict_move_owner: None,
             curator_move_owner: None,
             harvester_owner: None,
+            fiend_search_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -476,6 +479,7 @@ impl ProposedEvent {
             edict_move_owner: None,
             curator_move_owner: None,
             harvester_owner: None,
+            fiend_search_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -498,6 +502,7 @@ impl ProposedEvent {
             edict_move_owner: None,
             curator_move_owner: None,
             harvester_owner: None,
+            fiend_search_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -523,6 +528,7 @@ impl ProposedEvent {
             edict_move_owner: None,
             curator_move_owner: None,
             harvester_owner: None,
+            fiend_search_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -558,6 +564,7 @@ impl ProposedEvent {
             edict_move_owner: None,
             curator_move_owner: None,
             harvester_owner: None,
+            fiend_search_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -596,6 +603,7 @@ impl ProposedEvent {
             edict_move_owner: None,
             curator_move_owner: None,
             harvester_owner: None,
+            fiend_search_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -2150,6 +2158,9 @@ pub enum CommittedEvent {
     },
     HarvesterCommitReceiptV1 {
         journal: Box<crate::harvester_receipts_v1::JournalV1>,
+    },
+    FiendArtisanConsumerReceiptV1 {
+        journal: Box<crate::fiend_artisan_receipts_v1::JournalV1>,
     },
 }
 
@@ -4564,6 +4575,12 @@ fn commit_with_entry_batch_and_source_color(
         }),
         _ => None,
     };
+    let fiend_move = match &event {
+        ProposedEvent::ZoneChange(change) => change.fiend_search_owner.map(|id| {
+            (id, crate::state::AbilitySourceContractV4::capture(state, change.object))
+        }),
+        _ => None,
+    };
     let curator_move = match &event {
         ProposedEvent::ZoneChange(change) => change.curator_move_owner.map(|cause| {
             let live = state.objects.get(change.object);
@@ -4708,6 +4725,12 @@ fn commit_with_entry_batch_and_source_color(
             ));
             return;
         }
+    }
+    if let Some((id, original)) = fiend_move {
+        crate::fiend_artisan_receipts_v1::observe_arrival_visibility(
+            state, id, original, entry_history_index,
+        );
+        crate::fiend_artisan_receipts_v1::record_move(state, id, original, entry_history_index);
     }
     if let Some((cause, original)) = curator_move {
         if crate::curator_receipts_v1::record_move(state, cause, original, entry_history_index)
@@ -7051,6 +7074,10 @@ pub fn log_targeted(
 /// change. Sacrifice triggers consume this marker instead of guessing from
 /// an ordinary battlefield-to-graveyard move.
 pub fn log_sacrifice(state: &mut GameState, object: ObjectId) {
+    log_sacrifice_owned(state, object, None);
+}
+
+pub(crate) fn log_sacrifice_owned(state: &mut GameState, object: ObjectId, fiend_input: Option<u32>) {
     let live = state.objects.get(object);
     let committed = CommittedEvent::Sacrificed {
         object,
@@ -7059,6 +7086,9 @@ pub fn log_sacrifice(state: &mut GameState, object: ObjectId) {
     };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
+    if let Some(input) = fiend_input {
+        crate::fiend_artisan_receipts_v1::observe_sacrifice_face(state, input, object);
+    }
 }
 
 /// Records that one exact permanent incarnation dealt combat damage to a

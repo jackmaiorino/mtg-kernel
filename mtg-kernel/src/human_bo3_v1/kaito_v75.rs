@@ -79,7 +79,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     greatwurm: Option<super::greatwurm_consumer_v1::HumanFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    harvester: Option<super::harvester_consumer_v1::HumanFactsV1>
+    harvester: Option<super::harvester_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fiend_artisan: Option<super::fiend_artisan_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -143,7 +145,9 @@ record!(HumanKaitoCandidateV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     greatwurm_action: Option<crate::greatwurm_consumer_v1::ActionV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    harvester_action: Option<crate::harvester_consumer_v1::ActionV1>
+    harvester_action: Option<crate::harvester_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fiend_artisan_action: Option<crate::fiend_artisan_consumer_v1::ActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -372,6 +376,9 @@ pub(super) fn choice_label(
         return Ok(Some(label));
     }
     if let Some(label) = super::sphinx_lore_consumer_v1::label(obs.sphinx_lore.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::fiend_artisan_consumer_v1::label(obs.fiend_artisan.as_ref(), a, h)? {
         return Ok(Some(label));
     }
     if let Some(label) = super::kykar_consumer_v1::label(obs.kykar.as_ref(), a, h)? {
@@ -932,6 +939,9 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::harvester_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
+    let fiend_artisan = obs.fiend_artisan.as_ref()
+        .map(|facts| super::fiend_artisan_consumer_v1::project(facts, &mut handles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
@@ -961,6 +971,7 @@ pub(super) fn project_with_handles(
                 sphinx_lore_action: r.sphinx_lore_action,
                 greatwurm_action: r.greatwurm_action,
                 harvester_action: r.harvester_action,
+                fiend_artisan_action: r.fiend_artisan_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -1247,6 +1258,8 @@ pub(super) fn project_with_handles(
                 "mtg-kernel-human-edict-decision/v1"
             } else if curator.is_some() {
                 "mtg-kernel-human-curator-decision/v1"
+            } else if fiend_artisan.is_some() {
+                "mtg-kernel-human-fiend-artisan-decision/v1"
             } else {
                 "mtg-kernel-human-kaito-decision/v75"
             }
@@ -1288,6 +1301,7 @@ pub(super) fn project_with_handles(
                 sphinx_lore,
                 greatwurm,
                 harvester,
+                fiend_artisan,
             },
             actions,
             action_meanings,
