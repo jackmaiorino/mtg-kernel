@@ -911,6 +911,42 @@ class DriverTests(unittest.TestCase):
         driver.stop_walkers()
         self.assertEqual(driver.WALKERS, {})
 
+    def test_background_walk_bounds_later_admissions_and_serves_admission(self):
+        self.addCleanup(driver.SCRATCH_INFLIGHT.clear)
+        self.scratch_campaign(projected=1000)
+        started, finish = threading.Event(), threading.Event()
+        self.addCleanup(finish.set)
+        a, b, c = (self.root / "container" / name for name in "abc")
+        with driver.SCRATCH_LOCK:
+            driver.reserve_scratch(str(a))
+
+        def slow(storage):
+            started.set()
+            if not finish.wait(5):
+                raise AssertionError("test did not finish the walk")
+            return [], 300
+
+        with patch.object(driver.native_dispatch, "accounting_bytes", side_effect=slow) as walked:
+            worker = threading.Thread(target=driver.measured_volume_walk,
+                                      args=(self.campaign, "driver-background", True))
+            worker.start()
+            self.assertTrue(started.wait(5))
+            with driver.SCRATCH_LOCK:
+                driver.reserve_scratch(str(b))
+            driver.release(self.campaign, "G1", 1, a)
+            finish.set()
+            worker.join(5)
+            self.assertFalse(worker.is_alive())
+            shared = driver.volume(self.campaign)["shared"]
+            self.assertEqual(driver.native_dispatch.shared_walk(shared)[3], 2)
+            with driver.SCRATCH_LOCK:
+                driver.reserve_scratch(str(c))
+            self.assertEqual(driver.native_dispatch.shared_walk(shared)[3], 3)
+            admission = driver.admitted(self.campaign, walk=True)
+            self.assertEqual(admission["finished_since"], 1)
+            self.assertEqual(admission["logical_bytes"], 300)
+            self.assertEqual(walked.call_count, 1)
+
     def test_a_long_volume_walk_records_driver_work_while_it_runs(self):
         self.scratch_campaign()
         touched = []
@@ -1352,11 +1388,16 @@ class DriverTests(unittest.TestCase):
                             ("G3", {"3": {"attempts": [{"attempt": 1, "native": "n-G3", "outcome": "complete"}],
                                           "disposition": "failed: invalid block (non-finite losses)"}})):
             self.campaign.save_state(run, {"run": run, "status": "running", "blocks": blocks})
-        sealed = []
-        with patch.object(driver, "seal", lambda campaign, run, block, state: sealed.append((run, block))):
-            driver.reconcile(self.campaign, ["G1", "G2", "G3"])
+        sealed, resumed = [], []
+        with patch.object(driver, "seal", lambda campaign, run, block, state: sealed.append((run, block))), \
+                patch.dict(os.environ, {driver.reservations.TOKEN_ENV: "fixture"}), \
+                patch.object(driver.reservations, "status", return_value={"token_fate": "holds"}), \
+                patch.object(driver, "start_walker", lambda campaign: resumed.append(set(driver.SCRATCH_INFLIGHT))), \
+                patch.object(driver, "WallClock"), patch.object(driver, "drive"):
+            driver.run(self.campaign, ["G1", "G2", "G3"])
         self.assertEqual(sealed, [("G1", 3)])
         self.assertEqual(driver.SCRATCH_INFLIGHT, {"n-G2"})  # counted before any admission; G3's ended for good
+        self.assertEqual(resumed, [{"n-G2"}])
 
     def test_a_finished_block_is_sealed_before_its_slot_frees(self):
         order = []

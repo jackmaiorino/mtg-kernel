@@ -94,7 +94,7 @@ ADMISSION_WAIT_SECONDS = 30
 UNCOUNTED = ("unspawned", "storage-refused", "storage-interrupted")
 MAX_UNCOUNTED_PER_LEASE = 3  # a block's uncounted storage attempts in one driver session, then a resumable stop
 STORAGE_MARKERS = ("retained plus projected storage exceeds allowance", "target-volume reserve unavailable",
-                   "storage emergency", "no space left on device", "[errno 28]")
+                   "storage admission walk is stale", "storage emergency", "no space left on device", "[errno 28]")
 RECORDS_SCHEMA = "g-references-v1/block-records"
 # Lease 1613's post-run storage kills (clean native exits, no report, no failure.json), by dispatch root.
 LEASE_1613_ROOT = "/workspace/g-references-v1/campaign/"
@@ -108,7 +108,9 @@ VOLUME_WALK_SECONDS = 600  # how long one walk of the accounting trees serves ad
 VOLUME_REWALK_SECONDS = 60  # a refusal resting on blocks finished since an older walk walks again first
 WALK_HEARTBEAT_SECONDS = 30
 WALK_HEARTBEAT_LIMIT_SECONDS = 1800  # a walk still running past this records no more work: a hung walk goes idle
-VOLUMES: dict = {}  # the shared walks (volume), per accounting roots, under SCRATCH_LOCK
+VOLUMES: dict = {}  # the shared walks, per accounting roots, under VOLUME_LOCK
+VOLUME_LOCK = threading.Lock()
+VOLUME_COUNTS = {"admitted": 0, "released": 0}
 SHARED_WALK = "volume-walk.json"  # each walk, published for the dispatchers (native_expanded_dispatch_v1)
 
 
@@ -378,7 +380,7 @@ class LeaseProgress(base.LeaseProgress):
     def unwatch(self, key: str) -> None:
         with self.lock:
             self.watched.pop(key, None)
-            for store in (self.ticks, self.marks, self.busy):
+            for store in (self.ticks, self.marks, self.busy, self.archive_sizes):
                 for name in [name for name in store if name.startswith("watched:" + key + ":")]:
                     store.pop(name, None)
 
@@ -396,7 +398,7 @@ class LeaseProgress(base.LeaseProgress):
             self.activity = stamp
         self.busy[name] = (stamp, ticks)
 
-    def observe_pack(self, key: str, entry: dict, stamp: float, table: dict) -> bool:
+    def observe_pack(self, key: str, entry: dict, stamp: float, table: dict, previous: float) -> bool:
         alive, requests = False, []
         for request in sorted(Path(entry["pack"]).glob("*.request.json")):
             try:
@@ -425,7 +427,9 @@ class LeaseProgress(base.LeaseProgress):
             # (polling every 20 ms) is not activity.
             tops = sorted((pid, base.process_start_unix(pid)) for pid, args in commands.items()
                           if pid in table and supervises(args, request))
-            if finished or waiting or not tops:
+            if not finished and not waiting:
+                self.observe_archive(processes, root, stamp)
+            if finished or waiting or not tops or base.walk_overlapped(root, previous):
                 self.ticks.pop(processes, None)
                 self.marks.pop(processes, None)
                 continue
@@ -449,12 +453,13 @@ class LeaseProgress(base.LeaseProgress):
         return entry["start"] is not None and base.process_start_unix(entry["pid"]) == entry["start"]
 
     def observe(self, stamp: float) -> bool:
+        previous = self.cpu[0]
         alive = super().observe(stamp)
         table = None
         for key, entry in list(self.watched.items()):
             if entry["pack"]:
                 table = base.process_table() if table is None else table
-                alive = self.observe_pack(key, entry, stamp, table) or alive
+                alive = self.observe_pack(key, entry, stamp, table, previous) or alive
                 continue
             roots = [Path(entry["root"])] if entry["root"] else []
             native = False
@@ -462,6 +467,7 @@ class LeaseProgress(base.LeaseProgress):
                 self.marked(f"watched:{key}:{root}:marks", root, stamp)
                 ticks = base.native_ticks(root)
                 if ticks is None:
+                    self.observe_archive(f"watched:{key}:{root}:archive", root, stamp)
                     continue
                 native, alive = True, alive or ticks >= 0
                 name = f"watched:{key}:{root}"
@@ -469,7 +475,8 @@ class LeaseProgress(base.LeaseProgress):
                     self.activity = stamp
                 self.ticks[name] = ticks
             name = f"watched:{key}:supervised"
-            if native or not self.same_supervisor(entry):  # during a native part only the native child counts
+            if (native or not self.same_supervisor(entry)
+                    or any(base.walk_overlapped(root, previous) for root in roots)):
                 self.ticks.pop(name, None)
                 continue
             table = base.process_table() if table is None else table
@@ -738,11 +745,31 @@ def records_hold(campaign: Campaign, in_flight: int = 0) -> str | None:
 
 
 def volume(campaign: Campaign) -> dict:
-    """This campaign's shared walk record (per accounting roots): logical bytes, when walked, finished since,
-    and the file where each walk is published for the dispatchers (the first campaign's state folder)."""
+    """The walk, its projections and its published record, shared per accounting root set."""
     key = tuple(campaign.raw["storage"]["accounting_roots"])
-    return VOLUMES.setdefault(key, {"logical": None, "started": 0.0, "walked": 0.0, "finished": 0,
-                                    "shared": str(campaign.state / SHARED_WALK)})
+    with VOLUME_LOCK:
+        return VOLUMES.setdefault(key, {"logical": None, "started": 0.0, "walked": 0.0, "finished": 0,
+                                        "in_flight": 0, "walker": None, "shared": str(campaign.state / SHARED_WALK)})
+
+
+def publish_volume(record: dict, blocks: int) -> None:
+    path = Path(record["shared"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    native_dispatch.publish_walk(path, record["logical"], record["started"], record["walked"], record["walker"], blocks)
+
+
+def reserve_scratch(native: str) -> None:
+    """Reserve a block under SCRATCH_LOCK and raise existing shared bounds before the block can write."""
+    with VOLUME_LOCK:
+        if native in SCRATCH_INFLIGHT:
+            return
+        for record in VOLUMES.values():
+            if record["logical"] is not None:
+                projected_blocks = record["in_flight"] + 1
+                publish_volume(record, projected_blocks)
+                record["in_flight"] = projected_blocks
+        SCRATCH_INFLIGHT.add(native)
+        VOLUME_COUNTS["admitted"] += 1
 
 
 # The incremental accounting walk. A sealed block's record folders (the retained, failed-attempt and dispatch
@@ -856,12 +883,14 @@ def walk_trees(roots, counted: dict[str, int], measure: set[str]) -> tuple[int, 
     return logical, measured
 
 
-def accounted_bytes(campaign: Campaign, publish=None) -> int:
+def accounted_bytes(campaign: Campaign, publish=None, prepare=None) -> int | None:
     """The accounting trees' logical bytes: the incremental walk (above), or the full walk (accounting_bytes)
     when nothing is sealed or static, or once a sealed folder disagreed with its seal. Walks of one process run
     one at a time (WALK_SERIAL), each with its ``publish``, so no walk returns or publishes a total after a later
     walk found a mismatch."""
     with WALK_SERIAL:
+        if prepare is not None and not prepare():
+            return None
         started = time.time()  # the measurement's own start, inside its turn: published walks stay in order
         logical = accounted_bytes_serial(campaign)
         if publish is not None:
@@ -911,27 +940,43 @@ def accounted_bytes_serial(campaign: Campaign) -> int:
     return logical
 
 
-def walk_volume(campaign: Campaign) -> None:
+def measured_volume_walk(campaign: Campaign, walker_name: str, reuse_fresh: bool) -> int | None:
+    """Measure under WALK_SERIAL, taking only VOLUME_LOCK for bounds, never SCRATCH_LOCK."""
+    record = volume(campaign)
+    baseline = {}
+
+    def prepare():
+        with VOLUME_LOCK:
+            if reuse_fresh and record["logical"] is not None and time.time() - record["walked"] <= VOLUME_WALK_SECONDS:
+                return False
+            if walker_name == "driver-background" and not SCRATCH_INFLIGHT:
+                return False
+            baseline.update(VOLUME_COUNTS, in_flight=len(SCRATCH_INFLIGHT))
+            return True
+
+    def publish(logical, measured):
+        with VOLUME_LOCK:
+            blocks = baseline["in_flight"] + VOLUME_COUNTS["admitted"] - baseline["admitted"]
+            finished = VOLUME_COUNTS["released"] - baseline["released"]
+            updated = dict(record, logical=logical, started=measured, walked=time.time(), finished=finished,
+                           in_flight=blocks, walker=walker_name)
+            publish_volume(updated, blocks)
+            record.update(updated)
+
+    return accounted_bytes(campaign, publish, prepare)
+
+
+def walk_volume(campaign: Campaign, *, reuse_fresh: bool = False) -> None:
     """Walk the accounting trees once. On the network volume a walk takes minutes (at least 325 s on
     2026-11-01, when walks per admission under the lock let the lease guard's 300 s idle bound release the
     Pod), so it runs in a helper thread while this thread records driver work every WALK_HEARTBEAT_SECONDS,
     for at most WALK_HEARTBEAT_LIMIT_SECONDS, so a hung walk still goes idle. Each walk is an event, so its
     time is measured. The caller holds SCRATCH_LOCK (release, which counts finished blocks, waits for it)."""
-    result, started, started_unix = {}, time.monotonic(), time.time()
-    record = volume(campaign)
-
-    def publish(logical, measured):  # in order with the other walks of this process (WALK_SERIAL)
-        record.update(logical=logical, started=measured, walked=time.time(), finished=0)
-        try:  # the dispatchers' emergency samples read it rather than walk (mtg-kernel#463)
-            Path(record["shared"]).parent.mkdir(parents=True, exist_ok=True)
-            native_dispatch.publish_walk(record["shared"], logical, measured, record["walked"], "driver",
-                                         len(SCRATCH_INFLIGHT))  # the caller holds SCRATCH_LOCK
-        except OSError:
-            pass  # only a shortcut: the background walker publishes too
+    result, started = {}, time.monotonic()
 
     def walk():
         try:
-            result["logical"] = accounted_bytes(campaign, publish)
+            result["logical"] = measured_volume_walk(campaign, "driver", reuse_fresh)
         except BaseException as error:
             result["error"] = error
     thread = threading.Thread(target=walk, name="volume-walk", daemon=True)
@@ -942,6 +987,8 @@ def walk_volume(campaign: Campaign) -> None:
             touch(campaign)  # the walk is the admission's work in progress
     if "error" in result:
         raise result["error"]
+    if result["logical"] is None:
+        return
     seconds = round(time.monotonic() - started, 1)
     touch(campaign)
     campaign.event(kind="volume-walk", seconds=seconds, logical=result["logical"])
@@ -952,11 +999,13 @@ def admission_record(campaign: Campaign, native: Path | None = None) -> dict | N
     walk's logical bytes and times, the blocks finished since it, the other blocks in flight (besides ``native``)
     and the shared walk file. The caller holds SCRATCH_LOCK."""
     record = volume(campaign)
-    if record["logical"] is None:
-        return None
-    return {"schema": native_dispatch.ADMISSION_SCHEMA, "logical_bytes": record["logical"],
-            "walked_unix": record["started"], "completed_unix": record["walked"], "finished_since": record["finished"],
-            "shared_walk": record["shared"], "in_flight": len(SCRATCH_INFLIGHT - {str(native)})}
+    with VOLUME_LOCK:
+        if record["logical"] is None:
+            return None
+        return {"schema": native_dispatch.ADMISSION_SCHEMA, "logical_bytes": record["logical"],
+                "walked_unix": record["started"], "completed_unix": record["walked"],
+                "finished_since": record["finished"], "shared_walk": record["shared"],
+                "in_flight": len(SCRATCH_INFLIGHT - {str(native)})}
 
 
 WALKERS: dict = {}  # accounting roots -> (thread, stop event): this process's one background walker per volume
@@ -977,7 +1026,7 @@ def start_walker(campaign: Campaign) -> None:
         if key in WALKERS and WALKERS[key][0].is_alive():
             return
         stop = threading.Event()
-        thread = threading.Thread(target=walker, args=(campaign, volume(campaign)["shared"], stop),
+        thread = threading.Thread(target=walker, args=(campaign, stop),
                                   name="volume-walker", daemon=True)
         WALKERS[key] = (thread, stop)
         thread.start()
@@ -993,20 +1042,11 @@ def stop_walkers() -> None:
         thread.join(60)
 
 
-def walker(campaign: Campaign, shared: str, stop: threading.Event) -> None:
-    storage = campaign.raw["storage"]
+def walker(campaign: Campaign, stop: threading.Event) -> None:
     while not stop.wait(WALKER_POLL_SECONDS):
-        with SCRATCH_LOCK:
-            in_flight = len(SCRATCH_INFLIGHT)
-        found = native_dispatch.shared_walk(shared)
-        if not in_flight or found is not None and time.time() - found[2] < native_dispatch.EMERGENCY_WALK_SECONDS:
-            continue
         started = time.time()
-        def publish(logical, measured):  # in order with the other walks of this process (WALK_SERIAL)
-            Path(shared).parent.mkdir(parents=True, exist_ok=True)
-            native_dispatch.publish_walk(shared, logical, measured, time.time(), "driver-background", in_flight)
         try:
-            logical = accounted_bytes(campaign, publish)
+            logical = measured_volume_walk(campaign, "driver-background", reuse_fresh=True)
         except Exception as error:  # the dispatchers walk for themselves once the record is stale
             if stop.is_set():
                 return
@@ -1015,8 +1055,9 @@ def walker(campaign: Campaign, shared: str, stop: threading.Event) -> None:
             continue
         if stop.is_set():
             return
-        campaign.event(kind="volume-walk", seconds=round(time.time() - started, 1), logical=logical,
-                       walker="background")
+        if logical is not None:
+            campaign.event(kind="volume-walk", seconds=round(time.time() - started, 1), logical=logical,
+                           walker="background")
 
 
 def admitted(campaign: Campaign, walk: bool = False, native: Path | None = None) -> dict | None:
@@ -1036,9 +1077,12 @@ def volume_logical(campaign: Campaign) -> tuple[int, int]:
     projected_additional_bytes, which admission counts, so the cap check stays a bound. The caller holds
     SCRATCH_LOCK."""
     record = volume(campaign)
-    if record["logical"] is None or time.time() - record["walked"] > VOLUME_WALK_SECONDS:
-        walk_volume(campaign)
-    return record["logical"], record["finished"]
+    with VOLUME_LOCK:
+        fresh = record["logical"] is not None and time.time() - record["walked"] <= VOLUME_WALK_SECONDS
+    if not fresh:
+        walk_volume(campaign, reuse_fresh=True)
+    with VOLUME_LOCK:
+        return record["logical"], record["finished"]
 
 
 def admit(campaign: Campaign, native: Path) -> str | None:
@@ -1079,7 +1123,10 @@ def admit(campaign: Campaign, native: Path) -> str | None:
             need = sum(max(peak, size) for size in sizes) + peak
             if need > available:
                 return f"scratch: {len(others) + 1} blocks need {need} B, {math.floor(available)} B available"
-        SCRATCH_INFLIGHT.add(str(native))
+        try:
+            reserve_scratch(str(native))
+        except OSError as error:
+            return f"retained: could not publish the storage bound: {error}"
     return None
 
 
@@ -1093,9 +1140,12 @@ def release(campaign: Campaign, run: str, block: int, native: Path) -> None:
             write_json(campaign.state / SCRATCH_LATCH, {"at": now(), "run": run, "block": block, "reason": reason})
             campaign.event(run=run, block=block, kind="scratch-latch", native=str(native))
             return
-        if str(native) in SCRATCH_INFLIGHT:
-            volume(campaign)["finished"] += 1  # its retained bytes may postdate the last walk
-        SCRATCH_INFLIGHT.discard(str(native))
+        with VOLUME_LOCK:
+            if str(native) in SCRATCH_INFLIGHT:
+                VOLUME_COUNTS["released"] += 1
+                for record in VOLUMES.values():
+                    record["finished"] += 1  # its retained bytes may postdate the last walk
+            SCRATCH_INFLIGHT.discard(str(native))
 
 
 def drain_idle(campaign: Campaign) -> float:
@@ -1518,7 +1568,7 @@ def reconcile(campaign: Campaign, runs: list[str]) -> None:
             elif entry.get("attempts") and entry["attempts"][-1].get("outcome") == "complete" \
                     and not entry.get("disposition"):  # the driver resumes it (a terminal block it skips)
                 with SCRATCH_LOCK:
-                    SCRATCH_INFLIGHT.add(entry["attempts"][-1]["native"])  # freed by its finishing step
+                    reserve_scratch(entry["attempts"][-1]["native"])  # freed by its finishing step
 
 
 def run(campaign: Campaign, runs: list[str]) -> int:
@@ -1526,6 +1576,8 @@ def run(campaign: Campaign, runs: list[str]) -> int:
     if not token or reservations.status(token).get("token_fate") != "holds":
         raise SystemExit("the campaign driver runs only inside a held host reservation")
     reconcile(campaign, runs)
+    if SCRATCH_INFLIGHT:
+        start_walker(campaign)
     clock = None
     if campaign.host() == "runpod":
         campaign.lease = LeaseProgress(campaign)
