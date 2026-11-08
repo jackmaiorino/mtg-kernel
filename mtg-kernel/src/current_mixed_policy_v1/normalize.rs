@@ -451,7 +451,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         }
     }
     let mut covered = BTreeSet::new();
-    if source == Source::KaitoV75 && state["schema"] == crate::tutelage_consumer_v1::CANDIDATES_SCHEMA {
+    if source == Source::KaitoV75 && (state["schema"] == crate::tutelage_consumer_v1::CANDIDATES_SCHEMA || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA) {
         let meaning: crate::tutelage_public_v1::MeaningV1 =
             serde_json::from_value(state["observation"]["tutelage"]["meaning"].clone())
                 .map_err(|e| Error::Projection(e.to_string()))?;
@@ -461,7 +461,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         covered.insert(meaning.card_id);
     }
     if source == Source::KaitoV75
-        && state["schema"] == crate::omniscience_consumer_v1::CANDIDATES_SCHEMA
+        && (state["schema"] == crate::omniscience_consumer_v1::CANDIDATES_SCHEMA || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA)
     {
         let meaning: crate::omniscience_public_v1::MeaningV1 =
             serde_json::from_value(state["observation"]["omniscience"]["meaning"].clone())
@@ -473,7 +473,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         }
         covered.insert(meaning.card_id);
     }
-    if source == Source::KaitoV75 && state["schema"] == crate::zimone_consumer_v1::CANDIDATES_SCHEMA
+    if source == Source::KaitoV75 && (state["schema"] == crate::zimone_consumer_v1::CANDIDATES_SCHEMA || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA)
     {
         let meaning: crate::zimone_public_v1::MeaningV1 =
             serde_json::from_value(state["observation"]["zimone"]["meaning"].clone())
@@ -486,7 +486,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         covered.insert(meaning.card_id);
     }
     if source == Source::KaitoV75
-        && state["schema"] == crate::embercleave_consumer_v1::CANDIDATES_SCHEMA
+        && (state["schema"] == crate::embercleave_consumer_v1::CANDIDATES_SCHEMA || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA)
     {
         let meaning: crate::rules_meaning_embercleave_v65::MeaningV65 =
             serde_json::from_value(state["observation"]["embercleave"]["meaning"].clone())
@@ -495,7 +495,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         covered.insert(meaning.card_id);
     }
     if source == Source::KaitoV75
-        && state["schema"] == crate::chosen_type_consumer_v1::CANDIDATES_SCHEMA
+        && (state["schema"] == crate::chosen_type_consumer_v1::CANDIDATES_SCHEMA || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA)
     {
         let meanings: Vec<crate::rules_meaning_chosen_type_v66::MeaningV66> =
             serde_json::from_value(
@@ -507,7 +507,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             covered.insert(meaning.card_id);
         }
     }
-    if source == Source::KaitoV75 && state["schema"] == crate::artist_consumer_v1::CANDIDATES_SCHEMA
+    if source == Source::KaitoV75 && (state["schema"] == crate::artist_consumer_v1::CANDIDATES_SCHEMA || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA)
     {
         // Only the distinct sealed actor schema supplies this printed root.
         let meaning: crate::rules_meaning_artist_v64::MeaningV64 =
@@ -516,7 +516,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         crate::rules_meaning_artist_v64::validate(&meaning).map_err(Error::Projection)?;
         covered.insert(meaning.card_id);
     }
-    if source == Source::KaitoV75 && state["schema"] == crate::niv_consumer_v1::CANDIDATES_SCHEMA {
+    if source == Source::KaitoV75 && (state["schema"] == crate::niv_consumer_v1::CANDIDATES_SCHEMA || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA) {
         let meaning: crate::rules_meaning_niv_mizzet_v63::MeaningV63 =
             serde_json::from_value(state["observation"]["niv"]["appendix"]["meaning"].clone())
                 .map_err(|e| Error::Projection(e.to_string()))?;
@@ -524,7 +524,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         covered.insert(meaning.card_id);
     }
     if source == Source::KaitoV75
-        && state["schema"] == crate::drakuseth_consumer_v1::CANDIDATES_SCHEMA
+        && (state["schema"] == crate::drakuseth_consumer_v1::CANDIDATES_SCHEMA || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA)
     {
         let meaning: crate::rules_meaning_drakuseth_v67::MeaningV67 =
             serde_json::from_value(state["observation"]["drakuseth"]["meaning"].clone())

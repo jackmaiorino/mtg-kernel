@@ -142,7 +142,7 @@ pub(crate) fn owns_damage_menu(
     state: &GameState,
     surface: &crate::policy_surface_v5::PolicySurfaceV5,
 ) -> bool {
-    surface.limited_appendix_v1() == crate::policy_surface_v5::LimitedAppendixV1::Drakuseth
+    surface.limited_appendix_v1().includes(crate::policy_surface_v5::LimitedAppendixV1::Drakuseth)
         && state
             .engine
             .pending_effect

@@ -388,6 +388,16 @@ pub(crate) enum LimitedAppendixV1 {
     Zimone,
     Omniscience,
     Tutelage,
+    Mixed,
+}
+
+impl LimitedAppendixV1 {
+    pub(crate) fn includes(self, family: Self) -> bool {
+        self == family || (self == Self::Mixed && matches!(family,
+            Self::Artist | Self::Niv | Self::ChosenType | Self::Drakuseth
+            | Self::Embercleave | Self::Zimone | Self::Omniscience | Self::Tutelage
+        ))
+    }
 }
 
 #[derive(Clone)]

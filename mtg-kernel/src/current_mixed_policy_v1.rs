@@ -465,6 +465,7 @@ pub fn feature_identity() -> String {
             include_str!("omniscience_public_v1.rs"),
             include_str!("human_bo3_v1/omniscience_consumer_v1.rs"),
             include_str!("tutelage_consumer_v1.rs"),
+            include_str!("limited_mixed_consumer_v1.rs"),
             include_str!("tutelage_public_v1.rs"),
             include_str!("human_bo3_v1/tutelage_consumer_v1.rs"),
             include_str!("niv_consumer_v1.rs"),

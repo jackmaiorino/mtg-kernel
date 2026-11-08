@@ -2374,7 +2374,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     } else {
         LimitedAppendixV1::Legacy
     };
-    let chosen_type = owning_kaito && consumer == LimitedAppendixV1::ChosenType;
+    let chosen_type = owning_kaito && consumer.includes(LimitedAppendixV1::ChosenType);
     if !matches!(
         text_mode,
         ObservationTextModeV2::NextFiveV59Artifact
@@ -5515,9 +5515,9 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         accept_fake,
         conqueror_proof,
         if text_mode == ObservationTextModeV2::KaitoV75Artifact
-            && surface.limited_appendix_v1() == LimitedAppendixV1::Omniscience
+            && surface.limited_appendix_v1().includes(LimitedAppendixV1::Omniscience)
         {
-            LimitedAppendixV1::Omniscience
+            surface.limited_appendix_v1()
         } else {
             LimitedAppendixV1::Legacy
         },
@@ -5622,8 +5622,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
                 state,
                 text_mode,
                 text_mode == ObservationTextModeV2::KaitoV75Artifact
-                    && surface.limited_appendix_v1()
-                        == crate::policy_surface_v5::LimitedAppendixV1::ChosenType,
+                    && surface.limited_appendix_v1().includes(crate::policy_surface_v5::LimitedAppendixV1::ChosenType),
             )?,
             surface: base.projection,
             policy_surface_context,
@@ -10617,7 +10616,7 @@ fn private_card(
             && (crate::progenitus_v1::definition(o.card_def)
                 || crate::leyline_axe_v1::definition(o.card_def)
                 || crate::effect::harvester_v1::definition(o.card_def)
-                || (appendix != LimitedAppendixV1::Omniscience
+                || (!appendix.includes(LimitedAppendixV1::Omniscience)
                     && crate::engine::omniscience_cast_v1::definition(o.card_def))
                 || crate::effect::sphinx_lore_v1::definition(o.card_def)
                 || crate::effect::greatwurm_v1::definition(o.card_def)
@@ -10653,7 +10652,7 @@ fn private_card(
     }
 
     if state.objects.try_get(id).is_some_and(|live| {
-        !(appendix == LimitedAppendixV1::ChosenType
+        !(appendix.includes(LimitedAppendixV1::ChosenType)
             && crate::banner_of_kinship_v1::entry::owns_entry_definition(live.card_def))
             && (live.v4.kinship_type_v1.is_some()
                 || CARD_DEFS
@@ -12147,7 +12146,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
     appendix: LimitedAppendixV1,
 ) -> Result<PendingEffectSemanticV4> {
-    let artist = appendix == LimitedAppendixV1::Artist
+    let artist = appendix.includes(LimitedAppendixV1::Artist)
         && pending
             .resolving_item
             .v4
@@ -12489,7 +12488,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             crate::effect::EffectTargetSelectionPurpose::CuratorCardsV1 { .. } => return Err(RlContractError("Curator requires its distinct complete consumer".into())),
                             crate::effect::EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. } => { return Err(RlContractError("Blasphemous Edict requires a distinct complete consumer".into())); }
                             crate::effect::EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. } => {
-                                if appendix != LimitedAppendixV1::Tutelage {
+                                if !appendix.includes(LimitedAppendixV1::Tutelage) {
                                     return Err(RlContractError("Tutelage mill requires its distinct complete consumer".into()));
                                 }
                                 TargetSelectionPurposeV4::LibraryOrder

@@ -680,7 +680,7 @@ pub(crate) fn capture_kaito_compat_v75(
         state,
         crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72,
         crate::optional_trigger_public_v1::ConsumerV1::for_kaito(appendix),
-        appendix == crate::policy_surface_v5::LimitedAppendixV1::ChosenType,
+        appendix.includes(crate::policy_surface_v5::LimitedAppendixV1::ChosenType),
     )
 }
 pub(crate) fn capture_chandra_compat_v74(state: &GameState) -> Result<FactsV53, RlContractError> {

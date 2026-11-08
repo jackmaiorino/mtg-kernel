@@ -789,6 +789,7 @@ pub mod omniscience_consumer_v1;
 pub mod omniscience_public_v1;
 pub mod tutelage_public_v1;
 pub mod tutelage_consumer_v1;
+pub mod limited_mixed_consumer_v1;
 pub mod own_registration_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;

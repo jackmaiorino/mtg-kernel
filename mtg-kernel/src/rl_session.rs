@@ -539,7 +539,7 @@ pub(crate) fn kaito_candidates_v75(
 ) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
     let scope = surface.limited_appendix_v1();
     crate::kaito_observation_v75::validate_state_scoped(state, scope).map_err(RlContractError)?;
-    if scope == LimitedAppendixV1::ChosenType {
+    if scope.includes(LimitedAppendixV1::ChosenType) {
         if let Some(candidates) = crate::chosen_type_consumer_v1::entry_candidates(state, origin)? {
             return Ok(candidates);
         }

@@ -147,6 +147,7 @@ pub fn producer_sha256() -> String {
             include_str!("omniscience_public_v1.rs"),
             include_str!("human_bo3_v1/omniscience_consumer_v1.rs"),
             include_str!("tutelage_consumer_v1.rs"),
+            include_str!("limited_mixed_consumer_v1.rs"),
             include_str!("tutelage_public_v1.rs"),
             include_str!("human_bo3_v1/tutelage_consumer_v1.rs"),
             include_str!("drakuseth_consumer_v1.rs"),
@@ -847,7 +848,12 @@ fn project_authenticated_parts_v75(
 }
 
 fn schemas(observation: &KaitoObservationV75) -> (&'static str, &'static str) {
-    if observation.chosen_type.is_some() {
+    if observation.schema == crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA {
+        (
+            crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA,
+            crate::limited_mixed_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.chosen_type.is_some() {
         (chosen_type::CANDIDATES_SCHEMA, chosen_type::ACTION_SCHEMA)
     } else if observation.drakuseth.is_some() {
         (
