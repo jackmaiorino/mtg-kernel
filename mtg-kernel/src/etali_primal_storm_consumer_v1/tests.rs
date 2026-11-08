@@ -202,6 +202,14 @@ fn paid_attack_repeated_free_casts_source_departure_hidden_pair_and_index_parity
         assert_eq!(result.casts[0].source.owner, actor.opponent());
         assert_eq!(result.casts[0].source.controller, actor);
         assert_eq!(result.finished, Some(false));
+        let mut omitted_cast: GameState = serde_json::from_slice(&serde_json::to_vec(&actual).unwrap()).unwrap();
+        omitted_cast.engine.event_history.retain(|event| !matches!(event,
+            E::EtaliPrimalStormReceiptV1 { journal }
+                if matches!(journal.as_ref(), receipts::JournalV1::Cast { row, .. }
+                    if row.source.source == first)));
+        assert!(omitted_cast.engine.event_history.iter().any(|event| matches!(event,
+            E::SpellCast { spell, controller } if *spell == first && *controller == actor)));
+        assert!(receipts::occurrences(&omitted_cast).is_err());
 
         let mut declined = state.clone();
         native::answer(&mut declined, NativeAction::FinishEffectSelection);

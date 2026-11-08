@@ -397,6 +397,22 @@ pub(crate) fn occurrences(state: &GameState) -> Result<Vec<Occurrence>, String> 
             last = at;
             casts.push(row);
         }
+        if let Some(batch_end) = batch_end {
+            let actual_casts = history[batch_end + 1..terminal.unwrap_or(history.len())]
+                .iter().filter_map(|event| match event {
+                    E::PublishedCastIdentityV1 { receipt }
+                        if receipt.origin_zone == Zone::Exile
+                            && exiled.iter().any(|top| top.arrival.source == receipt.spell
+                                && top.arrival.zone_change_count == receipt.origin_zone_change_count) =>
+                    {
+                        Some((receipt.spell_cast_history_index, receipt.stack_item_id))
+                    }
+                    _ => None,
+                });
+            if !actual_casts.eq(casts.iter().map(|cast| (cast.cast_at, cast.child))) {
+                return Err("Etali typed child roster omits or changes native casts".into());
+            }
+        }
         result.push(Occurrence {
             source, stack_position, id, exiled, casts, started: ops.started.is_some(),
             finished: ops.finished.map(|(_, declined)| declined), countered: ops.countered.is_some(),
