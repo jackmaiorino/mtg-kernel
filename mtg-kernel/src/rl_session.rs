@@ -537,7 +537,8 @@ pub(crate) fn kaito_candidates_v75(
     state: &crate::state::GameState,
     surface: &PolicySurfaceV5,
 ) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
-    crate::kaito_observation_v75::validate_state(state).map_err(RlContractError)?;
+    crate::kaito_observation_v75::validate_state_scoped(state, surface.artist_consumer_v1())
+        .map_err(RlContractError)?;
     #[cfg(feature = "limited-fdn-fixtures")]
     if let Some((player, pending, prefix)) = surface
         .hunter_order_parts_v45(state)
@@ -560,7 +561,11 @@ pub(crate) fn kaito_candidates_v75(
     } else if inspiration_v37::is_mill(state) {
         inspiration_v37::actual_candidates(origin, state)
     } else {
-        crate::rl::core_policy_action_candidates_kaito_v75(origin, state)
+        crate::rl::core_policy_action_candidates_kaito_scoped_v75(
+            origin,
+            state,
+            surface.artist_consumer_v1(),
+        )
     }
 }
 
@@ -8982,7 +8987,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -9039,7 +9044,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -9104,7 +9109,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -9554,7 +9559,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -9621,7 +9626,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -9692,7 +9697,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -9794,7 +9799,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -9866,7 +9871,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -10082,7 +10087,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::KaitoV75
             ) {
                 if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                    crate::kaito_observation_v75::validate_state(&self.state)
+                    self.validate_kaito_state_v75()
                 } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                     crate::chandra_observation_v74::validate_state(&self.state)
                 } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -10519,7 +10524,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {

@@ -451,6 +451,15 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         }
     }
     let mut covered = BTreeSet::new();
+    if source == Source::KaitoV75 && state["schema"] == crate::artist_consumer_v1::CANDIDATES_SCHEMA
+    {
+        // Only the distinct sealed actor schema supplies this printed root.
+        let meaning: crate::rules_meaning_artist_v64::MeaningV64 =
+            serde_json::from_value(state["observation"]["artist"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        crate::rules_meaning_artist_v64::validate(&meaning).map_err(Error::Projection)?;
+        covered.insert(meaning.card_id);
+    }
     expand(&mut state, &mut covered, source)?;
     let mut cards = BTreeSet::new();
     collect_cards(&state, &mut cards)?;

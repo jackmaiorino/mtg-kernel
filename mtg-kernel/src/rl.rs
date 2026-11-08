@@ -2736,6 +2736,8 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
                 accept_fake,
                 text_mode.complete_source_scope(),
                 conqueror_proof,
+                text_mode.complete_source_scope() == Some(CommonProjectionScopeV42::KaitoV75)
+                    && surface.artist_consumer_v1(),
             )?
         } else {
             engine_context_v2(
@@ -4382,7 +4384,9 @@ fn common_family_observation_storage_with_proof(
         CommonProjectionScopeV42::ChandraV74 => {
             crate::chandra_observation_v74::validate_state(state)
         }
-        CommonProjectionScopeV42::KaitoV75 => crate::kaito_observation_v75::validate_state(state),
+        CommonProjectionScopeV42::KaitoV75 => {
+            crate::kaito_observation_v75::validate_state_scoped(state, surface.artist_consumer_v1())
+        }
         CommonProjectionScopeV42::GenesisWaveV69 => {
             crate::genesis_wave_observation_v69::validate_state(state)
         }
@@ -10372,11 +10376,12 @@ pub(crate) fn core_policy_action_candidates_chandra_v74(
         CommonProjectionScopeV42::ChandraV74,
     )
 }
-pub(crate) fn core_policy_action_candidates_kaito_v75(
+pub(crate) fn core_policy_action_candidates_kaito_scoped_v75(
     decision: &PolicyDecisionV5,
     state: &GameState,
+    artist: bool,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
-    crate::kaito_observation_v75::validate_state(state).map_err(RlContractError)?;
+    crate::kaito_observation_v75::validate_state_scoped(state, artist).map_err(RlContractError)?;
     core_policy_action_candidates_next_five_scoped_v59(
         decision,
         state,
@@ -11594,6 +11599,7 @@ fn engine_context_v2_conqueror_inner_v49(
         false,
         None,
         None,
+        false,
     )
 }
 
@@ -11607,6 +11613,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
     accept_fake: bool,
     prepared_scope: Option<CommonProjectionScopeV42>,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
+    artist: bool,
 ) -> Result<EngineContextV2> {
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
@@ -11858,6 +11865,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     accept_fake,
                     prepared_scope,
                     conqueror_proof,
+                    artist,
                 )?
             } else {
                 pending_effect_semantic_v4(
@@ -12056,6 +12064,7 @@ fn pending_effect_semantic_v4_akroma_inner(
         false,
         None,
         None,
+        false,
     )
 }
 
@@ -12069,7 +12078,18 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
     accept_fake: bool,
     prepared_scope: Option<CommonProjectionScopeV42>,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
+    artist: bool,
 ) -> Result<PendingEffectSemanticV4> {
+    let artist = artist
+        && pending
+            .resolving_item
+            .v4
+            .ability_source_contract
+            .is_some_and(|source| source.card_def == crate::artist_consumer_v1::PRINTING_V1);
+    if artist {
+        crate::effect::perforating_artist_v1::validate_origin(state, &pending.resolving_item)
+            .map_err(RlContractError)?;
+    }
     let liliana_sacrifice = matches!(
         prepared_scope,
         Some(
@@ -12088,7 +12108,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
             "Blasphemous Edict requires its distinct complete consumer".into(),
         ));
     }
-    if pending
+    let nonland_payment = pending
         .resolving_item
         .inline_effect
         .as_ref()
@@ -12098,8 +12118,8 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                 frame,
                 crate::effect::EffectFrame::NonlandSacrificePaymentV1 { .. }
             )
-        })
-    {
+        });
+    if nonland_payment && !artist {
         return Err(RlContractError(
             "nonland sacrifice payment requires its distinct consumer".into(),
         ));
@@ -12195,8 +12215,13 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                     ordered,
                     purpose,
                 } => {
-                    if matches!(purpose, crate::effect::EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { .. }) {
-                        return Err(RlContractError("nonland sacrifice payment requires its distinct consumer".into()));
+                    if !artist && matches!(
+                        purpose,
+                        crate::effect::EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { .. }
+                    ) {
+                        return Err(RlContractError(
+                            "nonland sacrifice payment requires its distinct consumer".into(),
+                        ));
                     }
                     let chooser_private = (matches!(
                         purpose,
@@ -12399,7 +12424,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                                 return Err(RlContractError("Tutelage mill requires its distinct complete consumer".into()));
                             }
                             crate::effect::EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { .. } => {
-                                return Err(RlContractError("nonland sacrifice payment requires its distinct consumer".into()));
+                                TargetSelectionPurposeV4::CostPayment
                             }
                             crate::effect::EffectTargetSelectionPurpose::ChooseNewlyExiledCard { .. }
                             | crate::effect::EffectTargetSelectionPurpose::ExileBatch { .. }

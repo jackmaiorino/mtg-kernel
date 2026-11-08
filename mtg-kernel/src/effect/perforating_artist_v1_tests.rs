@@ -303,7 +303,7 @@ fn assert_same(a: &GameState, b: &GameState) {
         serde_json::to_vec(b).unwrap()
     );
 }
-fn paid(actor: PlayerId) -> (GameState, ObjectId) {
+pub(crate) fn paid(actor: PlayerId) -> (GameState, ObjectId) {
     let mut state = crate::extra_turn_v1::tests::ready(actor);
     crate::combat_damage_v1::enable_foundations_combat_v1(&mut state).unwrap();
     let artist = put(&mut state, actor, "Perforating Artist", Zone::Hand);
@@ -341,7 +341,7 @@ fn paid(actor: PlayerId) -> (GameState, ObjectId) {
     ));
     (state, artist)
 }
-fn raid(state: &mut GameState, actor: PlayerId, artist: ObjectId, attack: bool) {
+pub(crate) fn raid(state: &mut GameState, actor: PlayerId, artist: ObjectId, attack: bool) {
     // The support attacker is a represented genuine printing. Raid's actual
     // declaration, combat, natural End step and captured trigger are native.
     let hawk = attack.then(|| put(state, actor, "Healer's Hawk", Zone::Battlefield));

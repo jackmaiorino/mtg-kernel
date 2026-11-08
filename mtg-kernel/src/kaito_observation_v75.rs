@@ -51,6 +51,12 @@ pub struct KaitoObservationV75 {
     pub chandra: crate::chandra_public_v74::FactsV74,
     #[serde(deserialize_with = "strict_value")]
     pub kaito: crate::kaito_public_v75::FactsV75,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "strict_value"
+    )]
+    pub artist: Option<crate::artist_public_v64::FactsV64>,
     pub complete_ordinary_observation: bool,
     pub owning_consumer_admitted: bool,
     pub projection_sha256: String,
@@ -188,6 +194,9 @@ pub fn commitment(value: &KaitoObservationV75) -> Result<String, RlContractError
         .collect())
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    validate_state_scoped(state, false)
+}
+pub(crate) fn validate_state_scoped(state: &GameState, artist: bool) -> Result<(), String> {
     crate::effect::kaito_cunning_v75::validate_state(state)?;
     crate::effect::kaito_cunning_v75::validate_pending(state)?;
     crate::effect::chandra_flameshaper_v1::validate_state(state)?;
@@ -202,7 +211,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::engine::ordinary_cleanup_v1::validate(state)?;
     crate::engine::validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
-    require_supported(state, None)?;
+    require_supported(state, None, artist)?;
     crate::ravenous_observation_v51::validate_state_complete_recipient_scope(
         state,
         crate::planeswalker_v1::RecipientScopeV1::KaitoV75,
@@ -225,10 +234,18 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
 /// this closed Call scope, including a supported return of such a printing.
 /// Later-family receipt variants select only originally public mechanics; their
 /// private payloads are never scanned or published.
-pub(crate) fn require_supported(state: &GameState, viewer: Option<PlayerId>) -> Result<(), String> {
+fn require_supported(
+    state: &GameState,
+    viewer: Option<PlayerId>,
+    artist: bool,
+) -> Result<(), String> {
     use crate::{event::CommittedEvent as E, optional_trigger_public_v1 as public};
+    let artist = artist
+        .then(crate::rules_meaning_artist_v64::selected_id)
+        .transpose()?;
     let unsupported = |id: u16| {
         id >= 460
+            && artist != Some(id)
             && !crate::engine::time_stop_v1::definition(id)
             && !crate::effect::genesis_wave_v1::definition(id)
             && !crate::effect::vivien_reid_v1::definition(id)
@@ -403,7 +420,10 @@ pub(crate) fn stack_source_reference(
     } else {
         return Ok(None);
     };
-    if !selected_source(source) {
+    let artist_trigger = item.kind == crate::state::StackItemKind::TriggeredAbility
+        && source.card_def == crate::artist_consumer_v1::PRINTING_V1
+        && item.inline_effect.as_ref() == Some(&crate::effect::perforating_artist_v1::raid());
+    if !selected_source(source) && !artist_trigger {
         return Ok(None);
     }
     crate::engine::time_stop_v1::validate(state).map_err(RlContractError)?;
@@ -439,7 +459,9 @@ pub(crate) fn pending_source_reference(
     let Some(source) = pending.source_contract else {
         return Ok(None);
     };
-    if !selected_source(source) {
+    let artist_trigger = source.card_def == crate::artist_consumer_v1::PRINTING_V1
+        && pending.effect == crate::effect::perforating_artist_v1::raid();
+    if !selected_source(source) && !artist_trigger {
         return Ok(None);
     }
     crate::engine::time_stop_v1::validate(state).map_err(RlContractError)?;
@@ -471,6 +493,11 @@ pub fn observe_v75(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<KaitoObservationV75, RlContractError> {
+    if surface.artist_consumer_v1() {
+        return Err(RlContractError(
+            "Artist decisions require their owning profile".into(),
+        ));
+    }
     observe_parts_v75(state, surface, actor_and_origin, step, physical, substep)
         .map(|(value, _)| value)
 }
@@ -482,8 +509,9 @@ pub(crate) fn observe_parts_v75(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<KaitoPublicPartsV75, RlContractError> {
-    validate_state(state).map_err(RlContractError)?;
-    require_supported(state, Some(actor_and_origin.0)).map_err(RlContractError)?;
+    let artist = surface.artist_consumer_v1();
+    validate_state_scoped(state, artist).map_err(RlContractError)?;
+    require_supported(state, Some(actor_and_origin.0), artist).map_err(RlContractError)?;
     let (inherited, families) = crate::ravenous_observation_v51::observe_parts_complete_kaito_v75(
         state,
         surface,
@@ -501,7 +529,12 @@ pub(crate) fn observe_parts_v75(
     };
     common.projection_sha256 = crate::elenda_observation_v52::commitment(&common)?;
     let mut value = KaitoObservationV75 {
-        schema: SCHEMA.into(),
+        schema: if artist {
+            crate::artist_consumer_v1::OBSERVATION_SCHEMA
+        } else {
+            SCHEMA
+        }
+        .into(),
         producer_sha256: producer_sha256(),
         common,
         drake: crate::drake_public_v53::capture_kaito_compat_v75(state)?,
@@ -543,6 +576,10 @@ pub(crate) fn observe_parts_v75(
             .map_err(RlContractError)?,
         kaito: crate::kaito_public_v75::capture(state, actor_and_origin.0)
             .map_err(RlContractError)?,
+        artist: artist
+            .then(|| crate::artist_consumer_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
         complete_ordinary_observation: true,
         owning_consumer_admitted: false,
         projection_sha256: String::new(),
@@ -564,6 +601,13 @@ pub(crate) fn observe_parts_v75(
 /// Standalone checks do not prove that an untrusted sender supplied every
 /// historical row or terminal. Neither function grants action or restore authority.
 pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractError> {
+    let schema = if let Some(artist) = &value.artist {
+        crate::artist_consumer_v1::validate_facts(artist, value.common.common.acting_player)
+            .map_err(RlContractError)?;
+        crate::artist_consumer_v1::OBSERVATION_SCHEMA
+    } else {
+        SCHEMA
+    };
     crate::muldrotha_public_v71::validate_tinybones_compat_v72(&value.muldrotha)
         .map_err(RlContractError)?;
     crate::vivien_public_v70::validate_tinybones_compat_v72(&value.vivien)
@@ -651,7 +695,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             "V75 inherited family artifact identity/root order changed".into(),
         ));
     }
-    if value.schema != SCHEMA
+    if value.schema != schema
         || value.producer_sha256 != producer_sha256()
         || value.projection_sha256 != commitment(value)?
         || value.common.schema != ELENDA_COMPAT_SCHEMA
