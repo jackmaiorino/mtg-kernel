@@ -75,7 +75,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     kykar: Option<super::kykar_consumer_v1::HumanFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    sphinx_lore: Option<super::sphinx_lore_consumer_v1::HumanFactsV1>
+    sphinx_lore: Option<super::sphinx_lore_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    greatwurm: Option<super::greatwurm_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -135,7 +137,9 @@ record!(HumanKaitoCandidateV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     kykar_action: Option<crate::kykar_consumer_v1::ActionV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    sphinx_lore_action: Option<crate::sphinx_lore_consumer_v1::ActionV1>
+    sphinx_lore_action: Option<crate::sphinx_lore_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    greatwurm_action: Option<crate::greatwurm_consumer_v1::ActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -357,6 +361,7 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
+    if let Some(label) = super::greatwurm_consumer_v1::label(obs.greatwurm.as_ref(), a, h)? { return Ok(Some(label)); }
     if let Some(label) = super::sphinx_lore_consumer_v1::label(obs.sphinx_lore.as_ref(), a, h)? { return Ok(Some(label)); }
     if let Some(label) = super::kykar_consumer_v1::label(obs.kykar.as_ref(), a, h)? { return Ok(Some(label)); }
     if let Some(label) = super::loot_consumer_v1::label(obs.loot.as_ref(), a, h)? { return Ok(Some(label)); }
@@ -852,6 +857,7 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::lathril_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
+    let greatwurm = obs.greatwurm.as_ref().map(|facts| super::greatwurm_consumer_v1::project(facts, &mut handles, &mut roles)).transpose()?;
     let sphinx_lore = obs.sphinx_lore.as_ref().map(|facts| super::sphinx_lore_consumer_v1::project(facts, &mut handles, &mut roles)).transpose()?;
     let kykar = obs.kykar.as_ref().map(|facts| super::kykar_consumer_v1::project(facts, &mut handles, &mut roles)).transpose()?;
     let loot = obs.loot.as_ref().map(|facts| super::loot_consumer_v1::project(facts, &mut handles)).transpose()?;
@@ -913,6 +919,7 @@ pub(super) fn project_with_handles(
                 curator_action: r.curator_action,
                 kykar_action: r.kykar_action,
                 sphinx_lore_action: r.sphinx_lore_action,
+                greatwurm_action: r.greatwurm_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -1185,6 +1192,8 @@ pub(super) fn project_with_handles(
                 "mtg-kernel-human-lathril-decision/v1"
             } else if electroduplicate.is_some() {
                 "mtg-kernel-human-electroduplicate-decision/v1"
+            } else if greatwurm.is_some() {
+                "mtg-kernel-human-greatwurm-decision/v1"
             } else if sphinx_lore.is_some() {
                 "mtg-kernel-human-sphinx-lore-decision/v1"
             } else if kykar.is_some() {
@@ -1234,6 +1243,7 @@ pub(super) fn project_with_handles(
                 curator,
                 kykar,
                 sphinx_lore,
+                greatwurm,
             },
             actions,
             action_meanings,

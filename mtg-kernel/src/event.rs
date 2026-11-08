@@ -2133,6 +2133,9 @@ pub enum CommittedEvent {
     CuratorReceiptV1 {
         journal: Box<crate::curator_receipts_v1::JournalV1>,
     },
+    GreatwurmCommitReceiptV1 {
+        journal: Box<crate::greatwurm_receipts_v1::JournalV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

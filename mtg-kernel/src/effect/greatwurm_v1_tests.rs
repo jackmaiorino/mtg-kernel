@@ -13,7 +13,7 @@ fn id(n: &str) -> u16 {
 fn ready(p: PlayerId) -> GameState {
     ready_hidden(p, "Forest")
 }
-fn ready_hidden(p: PlayerId, hidden: &str) -> GameState {
+pub(crate) fn ready_hidden(p: PlayerId, hidden: &str) -> GameState {
     let library = [id("Forest"); 80];
     let other = [id(hidden); 80];
     let (a, b) = if p == PlayerId::P0 {
@@ -72,7 +72,7 @@ fn priority(s: &mut GameState, p: PlayerId) {
     }
     panic!("priority absent")
 }
-fn tapped(s: &GameState, p: PlayerId) -> usize {
+pub(crate) fn tapped(s: &GameState, p: PlayerId) -> usize {
     s.players[p.index()]
         .battlefield
         .iter()
@@ -117,7 +117,7 @@ fn cast(s: &mut GameState, p: PlayerId, n: &str, targets: &[Target], cost: usize
     }
     panic!("paid cast absent")
 }
-fn finish(s: &mut GameState) {
+pub(crate) fn finish(s: &mut GameState) {
     for _ in 0..48 {
         let d = next(s);
         if s.stack.is_empty() && s.engine.pending_effect.is_none() {
@@ -128,19 +128,19 @@ fn finish(s: &mut GameState) {
     panic!("stack unfinished")
 }
 
-fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
+pub(crate) fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
     let card = cast(s, p, NAME, &[], 6);
     finish(s);
     assert_eq!(s.objects.get(card).zone, Zone::Battlefield);
     assert_eq!(engine::checked_effective_pt(s, card).unwrap(), (7, 7));
     card
 }
-fn graveyard(s: &mut GameState, card: ObjectId) {
+pub(crate) fn graveyard(s: &mut GameState, card: ObjectId) {
     // Native departure setup, not an additional paid removal spell.
     event::propose_and_commit(s, event::ProposedEvent::zone_change(card, Zone::Graveyard));
     assert_eq!(s.objects.get(card).zone, Zone::Graveyard);
 }
-fn begin_graveyard(s: &mut GameState, p: PlayerId, card: ObjectId) {
+pub(crate) fn begin_graveyard(s: &mut GameState, p: PlayerId, card: ObjectId) {
     priority(s, p);
     assert!(
         matches!(next(s),Decision::CastSpellOrPass{castable_spells,..}if castable_spells.contains(&card))

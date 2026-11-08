@@ -366,6 +366,11 @@ path = "src/bin/kernel_limited_curator_env_v1.rs"
 required-features = ["limited-fdn-fixtures"]
 
 [[bin]]
+name = "kernel_limited_greatwurm_env_v1"
+path = "src/bin/kernel_limited_greatwurm_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
 name = "kernel_limited_training_v1"
 path = "src/bin/kernel_limited_training_v1.rs"
 required-features = ["limited-fdn-fixtures"]

@@ -10689,7 +10689,7 @@ fn private_card(
                 || (!appendix.includes(LimitedAppendixV1::Omniscience)
                     && crate::engine::omniscience_cast_v1::definition(o.card_def))
                 || (appendix != LimitedAppendixV1::SphinxLore && crate::effect::sphinx_lore_v1::definition(o.card_def))
-                || crate::effect::greatwurm_v1::definition(o.card_def)
+                || (appendix != LimitedAppendixV1::Greatwurm && crate::effect::greatwurm_v1::definition(o.card_def))
                 || (appendix != LimitedAppendixV1::Kykar
                     && (crate::effect::kykar_v1::definition(o.card_def)
                         || crate::effect::kykar_v1::token_definition(o.card_def))))

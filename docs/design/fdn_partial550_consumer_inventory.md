@@ -41,7 +41,7 @@ reusable evidence only for the mechanics they actually exercise.
 | Curator of Destinies | Appendix: curator_public_v1 | Finite owner, Human, JSONL and sealed numeric source. Scoped unordered reveal, chooser-only look and ordering, and actual moves. Native qualification and event-sample harvest pending |
 | Loot, Exuberant Explorer | Native: effect/loot_v1 | Complete stack; current land allowance, private top-six selection and random-bottom boundary |
 | Kykar, Zephyr Awakener | Appendix: kykar_public_v1 | Finite owner, Human, JSONL and sealed numeric source; original mode/target references, exact Spirit meaning and original exile schedules. Native qualification pending |
-| Quilled Greatwurm | Native: effect/greatwurm_v1 | Complete stack; original combat amount and graveyard six-counter payment across exact permanents |
+| Quilled Greatwurm | Appendix: greatwurm_public_v1 | Finite owner, Human, JSONL and sealed numeric source. Original combat amount, actual placement and exact six-counter graveyard payment. Native qualification and event-sample harvest pending |
 | Sphinx of Forgotten Lore | Native: effect/sphinx_lore_v1 | Complete stack; original attack target, temporary flashback grant and actual cast/payment route |
 | Omniscience | Native: engine/omniscience_cast_v1 | Complete stack; optional free hand casting and its restrictions, original route and remaining costs |
 | Abyssal Harvester | Native: effect/harvester_v1 | Complete stack; this-turn graveyard eligibility, exact exile, Nightmare copy and other-token exile batch |

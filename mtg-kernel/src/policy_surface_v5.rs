@@ -400,6 +400,7 @@ pub(crate) enum LimitedAppendixV1 {
     Curator,
     Kykar,
     SphinxLore,
+    Greatwurm,
 }
 
 impl LimitedAppendixV1 {
