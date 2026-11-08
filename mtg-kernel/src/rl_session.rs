@@ -21249,6 +21249,9 @@ pub(crate) mod chandra_v74;
 pub use chandra_v74::{ChandraDecisionV74, ChandraSessionV74, ChandraSnapshotV74};
 
 pub(crate) mod kaito_v75;
+mod limited_return_v1;
+mod eternal_actor_v1;
+pub use eternal_actor_v1::{EternalActorDecisionV1, EternalActorSessionV1, EternalActorSnapshotV1};
 #[cfg(feature = "limited-fdn-fixtures")]
 mod rules_only_v1;
 pub use kaito_v75::{KaitoDecisionV75, KaitoSessionV75, KaitoSnapshotV75};

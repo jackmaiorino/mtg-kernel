@@ -309,6 +309,9 @@ pub mod eternal_premodern_p1b_v1;
 /// Premodern The Rock, Mono-Black Control, BW Control, Stasis and Other
 /// Control card programs of the eternal catalog (wave P2a).
 pub mod eternal_premodern_p2a_v1;
+/// Premodern Survival and Madness Threshold card programs of the eternal
+/// catalog (wave P2b).
+pub mod eternal_premodern_p2b_v1;
 /// Premodern White Weenie and Mono-Red Control card programs of the eternal
 /// catalog (wave P2d).
 pub mod eternal_premodern_p2d_v1;
@@ -935,6 +938,11 @@ pub mod season_observation_v48;
 pub mod season_token_attachment_v48;
 
 pub mod current_mixed_policy_v1;
+pub mod current_tree_learner_v1;
+pub mod eternal_actor_choice_v1;
+pub mod eternal_actor_printed_v1;
+pub mod eternal_actor_public_v1;
+pub mod eternal_actor_stack_v1;
 pub mod fake_observation_v50;
 
 #[cfg(all(
@@ -1068,3 +1076,4 @@ pub mod limited_liliana_session_v14;
 pub mod limited_chandra_session_v15;
 
 pub mod limited_kaito_session_v16;
+pub mod limited_return_consumer_v1;

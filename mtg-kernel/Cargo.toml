@@ -273,6 +273,11 @@ path = "src/bin/kernel_limited_kaito_env_v16.rs"
 required-features = ["limited-fdn-fixtures"]
 
 [[bin]]
+name = "kernel_limited_return_env_v1"
+path = "src/bin/kernel_limited_return_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
 name = "kernel_limited_match_v1"
 path = "src/bin/kernel_limited_match_v1.rs"
 required-features = ["limited-fdn-fixtures"]

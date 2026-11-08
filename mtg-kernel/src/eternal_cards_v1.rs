@@ -171,6 +171,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_premodern_p1a_v1::P1aStateV1::is_empty"
     )]
     pub p1a: crate::eternal_premodern_p1a_v1::P1aStateV1,
+    /// Premodern wave P2b's state (`eternal_premodern_p2b_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_premodern_p2b_v1::P2bStateV1::is_empty"
+    )]
+    pub p2b: crate::eternal_premodern_p2b_v1::P2bStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -388,6 +394,8 @@ pub enum EternalOpV1 {
     P2dV1(crate::eternal_premodern_p2d_v1::P2dOpV1),
     /// A leaf owned by Premodern wave P1a's module.
     P1aV1(crate::eternal_premodern_p1a_v1::P1aOpV1),
+    /// A leaf owned by Premodern wave P2b's module.
+    P2bV1(crate::eternal_premodern_p2b_v1::P2bOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -445,6 +453,7 @@ impl EternalOpV1 {
             EternalOpV1::P2aV1(op) => op.contains_player_choice(),
             EternalOpV1::P2dV1(op) => op.contains_player_choice(),
             EternalOpV1::P1aV1(op) => op.contains_player_choice(),
+            EternalOpV1::P2bV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -955,6 +964,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::P2aV1(op) => crate::eternal_premodern_p2a_v1::execute(op, ctx, state),
         EternalOpV1::P2dV1(op) => crate::eternal_premodern_p2d_v1::execute(op, ctx, state),
         EternalOpV1::P1aV1(op) => crate::eternal_premodern_p1a_v1::execute(op, ctx, state),
+        EternalOpV1::P2bV1(op) => crate::eternal_premodern_p2b_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1515,6 +1525,7 @@ pub(crate) fn apply_entry_counters(
     crate::eternal_premodern_p2a_v1::statics::apply_entry_counters(state, object);
     crate::eternal_premodern_p2d_v1::apply_entry(state, object);
     crate::eternal_premodern_p1a_v1::statics::apply_entry_counters(state, object);
+    crate::eternal_premodern_p2b_v1::statics::apply_entry_counters(state, object);
     let Some(name) = definition_name(state, object) else {
         return;
     };
@@ -1699,6 +1710,9 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_premodern_p1a_v1::delayed_triggers(
         state, events,
     ));
+    triggers.extend(crate::eternal_premodern_p2b_v1::delayed_triggers(
+        state, events,
+    ));
     triggers
 }
 
@@ -1805,6 +1819,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_legacy_e9a_v1::begin_turn(state, player);
     crate::eternal_premodern_p2d_v1::begin_turn(state, player);
     crate::eternal_premodern_p1a_v1::begin_turn(state, player);
+    crate::eternal_premodern_p2b_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks

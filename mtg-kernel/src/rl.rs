@@ -1822,9 +1822,22 @@ pub fn build_deck_pair_state_environment_v2_with_starting_player_v1(
     p1_deck: &[u16],
     starting_player: PlayerId,
 ) -> std::result::Result<GameState, DeckPairBuildErrorV2> {
-    use crate::environment_randomization_v2 as env2;
     preflight_fully_supported_deck(p0_deck).map_err(DeckPairBuildErrorV2::DeckPreflight)?;
     preflight_fully_supported_deck(p1_deck).map_err(DeckPairBuildErrorV2::DeckPreflight)?;
+    build_preflighted_deck_pair_environment_v2(
+        pair_environment_seed, p0_deck, p1_deck, starting_player,
+    )
+}
+
+/// Construction only. Callers must apply their own explicit consumer preflight
+/// before calling this helper; it grants no card or observation permission.
+pub(crate) fn build_preflighted_deck_pair_environment_v2(
+    pair_environment_seed: u64,
+    p0_deck: &[u16],
+    p1_deck: &[u16],
+    starting_player: PlayerId,
+) -> std::result::Result<GameState, DeckPairBuildErrorV2> {
+    use crate::environment_randomization_v2 as env2;
     let p0_seed = env2::derive_environment_randomization_seed_v2(
         pair_environment_seed,
         env2::PhysicalOwnerV2::P0,
@@ -13135,7 +13148,7 @@ pub(crate) fn spellbench_pending_activation_public_v2(
 /// target contracts, without the completed stack-item validator. Callers
 /// either validated the completed item or ran the announcement's own prefix
 /// validator.
-fn stack_item_public_v2_from_frozen(
+pub(crate) fn stack_item_public_v2_from_frozen(
     state: &GameState,
     acting_player: PlayerId,
     stack_index: u32,

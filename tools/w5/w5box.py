@@ -296,7 +296,10 @@ class Cgroup:
         return int(self.keyed("cpu.stat")["usage_usec"])
 
     def populated(self) -> bool:
-        return self.keyed("cgroup.events").get("populated") == 1
+        try:
+            return self.keyed("cgroup.events").get("populated") == 1
+        except FileNotFoundError:
+            return False
 
     def frozen(self) -> bool:
         return self.keyed("cgroup.events").get("frozen") == 1

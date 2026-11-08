@@ -232,7 +232,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Weathered Wayfarer" => &WEATHERED_WAYFARER,
         "Wild Mongrel" => &WILD_MONGREL,
         "Withered Wretch" => &WITHERED_WRETCH,
-        _ => &[],
+        _ => super::build_eternal_p2b_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -309,7 +309,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::AnyPlayer",
             "crate::eternal_premodern_p1a_v1::vision_charm_mill",
         ),
-        _ => return None,
+        _ => return super::build_eternal_p2b_v1::special_for(name),
     })
 }
 
@@ -321,7 +321,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Goblin Ringleader" => &["Keywords::HASTE"],
         "Hypnotic Specter" => &["Keywords::FLYING"],
         "Terravore" => &["Keywords::TRAMPLE"],
-        _ => &[],
+        _ => super::build_eternal_p2b_v1::keywords_for(name),
     }
 }
 
@@ -337,7 +337,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
         "Foil" => "Some(AltCostDef { components: &[CostComponent::DiscardIslandAndAnotherCardV1], condition: AltCostCondition::Always })",
         "Thwart" => "Some(AltCostDef { components: &[CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count: 3, filter: PermanentFilterDef::LandWithSubtype(Subtype::Island) }], condition: AltCostCondition::Always })",
         "Exalted Angel" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[], generic: 3, x_count: 0 })], condition: AltCostCondition::DisguiseFromHand })",
-        _ => "None",
+        _ => super::build_eternal_p2b_v1::alt_cost_for(name),
     }
 }
 
@@ -368,7 +368,7 @@ pub(super) fn flashback_for(name: &str) -> String {
             "{1}{U}",
             ", CostComponent::ExileXCardsFromOwnGraveyardV1 { blue_only: true }",
         ),
-        _ => "None".to_string(),
+        _ => super::build_eternal_p2b_v1::flashback_for(name),
     }
 }
 
@@ -379,7 +379,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
     match name {
         "Barbarian Ring" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 1, max_activations_per_turn: None })",
         "Skirk Prospector" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(Subtype::Goblin), amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
-        _ => "None",
+        _ => super::build_eternal_p2b_v1::mana_ability_def_for(name),
     }
 }
 
@@ -491,6 +491,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Wild Mongrel" => "activated:discard:pump_1_1:becomes_chosen_color",
         "Foil" => "alt:discard_island_and_another;spell:counter_target",
         "Thwart" => "alt:return_three_islands;spell:counter_target",
-        _ => "none",
+        _ => super::build_eternal_p2b_v1::trigger_recipe_for(name),
     }
 }
