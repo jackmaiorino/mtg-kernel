@@ -42,13 +42,14 @@ use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, StackItemKind, Target, Zone};
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 
 // ---- State ------------------------------------------------------------------------
 
 /// Per-game state for this module's cards, kept inside
 /// `eternal_cards_v1::EternalStateV1`. Default (and absent from snapshots)
 /// until one of these cards needs it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct S1aStateV1 {
     /// Disruptor Flute incarnations and the definition whose name each chose.
@@ -63,6 +64,18 @@ pub struct S1aStateV1 {
     /// The turn each Carpet of Flowers incarnation last added mana.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub carpet_turns: Vec<(ObjectLinkV4, u32)>,
+}
+
+impl Hash for S1aStateV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if !self.is_empty() {
+            b"eternal-sideboard-s1a/v1".hash(state);
+            self.flute_names.hash(state);
+            self.leylines_offered.hash(state);
+            self.unpaid_casts.hash(state);
+            self.carpet_turns.hash(state);
+        }
+    }
 }
 
 impl S1aStateV1 {

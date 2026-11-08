@@ -7,12 +7,63 @@ use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, Keywords, Subtype, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
+use mtg_kernel::eternal_cards_v1::EternalStateV1;
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, StackItemKind, Step, Target, Zone};
+use std::hash::{Hash, Hasher};
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
+
+#[test]
+fn empty_sideboard_state_preserves_legacy_hash_input_and_json() {
+    #[derive(Default)]
+    struct HashInput(Vec<u8>);
+
+    impl Hasher for HashInput {
+        fn finish(&self) -> u64 {
+            0
+        }
+
+        fn write(&mut self, bytes: &[u8]) {
+            self.0.extend_from_slice(bytes);
+        }
+    }
+
+    let mut eternal = EternalStateV1 {
+        energy: [3, 0],
+        ..Default::default()
+    };
+    let mut empty = HashInput::default();
+    eternal.s1a.hash(&mut empty);
+    eternal.s1b.hash(&mut empty);
+    eternal.s1d.hash(&mut empty);
+    assert!(empty.0.is_empty());
+    let legacy_json = serde_json::to_value(&eternal).unwrap();
+    for key in ["s1a", "s1b", "s1d"] {
+        assert!(legacy_json.get(key).is_none());
+    }
+
+    eternal.s1a.leylines_offered = true;
+    eternal.s1b.noncreature_casts[0] = 1;
+    eternal.s1d.combat_skips.push(P0);
+    let mut a = HashInput::default();
+    let mut b = HashInput::default();
+    let mut d = HashInput::default();
+    eternal.s1a.hash(&mut a);
+    eternal.s1b.hash(&mut b);
+    eternal.s1d.hash(&mut d);
+    for (input, domain) in [
+        (a, b"eternal-sideboard-s1a/v1"),
+        (b, b"eternal-sideboard-s1b/v1"),
+        (d, b"eternal-sideboard-s1d/v1"),
+    ] {
+        let mut prefix = HashInput::default();
+        domain.hash(&mut prefix);
+        assert!(input.0.starts_with(&prefix.0));
+    }
+}
 
 fn def(name: &str) -> &'static CardDef {
     &CARD_DEFS[id(name) as usize]

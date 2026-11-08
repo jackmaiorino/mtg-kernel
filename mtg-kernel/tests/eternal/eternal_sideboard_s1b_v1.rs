@@ -852,14 +852,32 @@ fn deafening_silence_allows_one_noncreature_spell_per_player_each_turn() {
 #[test]
 fn deafening_silence_counts_spells_cast_before_it_entered() {
     let mut state = islands();
+    let silence = put(&mut state, P1, "Deafening Silence", Zone::Hand);
     let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 0);
     cast(&mut state, bolt, &[Target::Player(P1)]);
     settled(&mut state);
-    put(&mut state, P1, "Deafening Silence", Zone::Battlefield);
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(silence, Zone::Battlefield),
+    );
     let second = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 0);
     assert!(!castable(&mut state, second));
+}
+
+#[test]
+fn ordinary_cast_does_not_create_deafening_silence_state() {
+    let mut state = islands();
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    cast(&mut state, bolt, &[Target::Player(P1)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, bolt), Zone::Graveyard);
+    assert!(state
+        .eternal_v1
+        .as_ref()
+        .is_none_or(|eternal| eternal.s1b == Default::default()));
 }
 
 #[test]

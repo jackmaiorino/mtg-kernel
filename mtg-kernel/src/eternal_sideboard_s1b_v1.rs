@@ -23,13 +23,14 @@ use crate::state::{
 };
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 
 pub(crate) mod targets;
 
 /// Per-game state for this module's cards, kept inside
 /// `eternal_cards_v1::EternalStateV1`. Default (and absent from snapshots)
 /// until one of these cards needs it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct S1bStateV1 {
     /// The turn (its key and active player) the noncreature spell counts
@@ -56,6 +57,21 @@ pub struct S1bStateV1 {
     /// Permanents Liquimetal Coating made artifacts, with the turn.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifact_until: Vec<(ObjectLinkV4, (u32, PlayerId))>,
+}
+
+impl Hash for S1bStateV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if !self.is_empty() {
+            b"eternal-sideboard-s1b/v1".hash(state);
+            self.cast_turn.hash(state);
+            self.noncreature_casts.hash(state);
+            self.mage_names.hash(state);
+            self.leyline_offered.hash(state);
+            self.discards.hash(state);
+            self.explosives.hash(state);
+            self.artifact_until.hash(state);
+        }
+    }
 }
 
 fn is_zero_pair(pair: &[u8; 2]) -> bool {
@@ -671,6 +687,16 @@ pub(crate) fn delayed_triggers(
             .is_none_or(|live| live.zone != Zone::Stack)
             || is_creature(state, spell)
         {
+            continue;
+        }
+        let Some(silence) = card_id_by_name(DEAFENING_SILENCE) else {
+            continue;
+        };
+        let can_enter = state.objects.iter().any(|(_, object)| object.card_def == silence)
+            || [PlayerId::P0, PlayerId::P1].into_iter().any(|player| {
+                crate::eternal_outside_game_v1::outside_the_game(state, player).contains(&silence)
+            });
+        if !can_enter {
             continue;
         }
         let now = turn_now(state);

@@ -33,13 +33,14 @@ use crate::standard_cards_v1::{StandardChosenActionV1, StandardOpV1, StandardPer
 use crate::state::{GameState, ObjectLinkV4, Step, Target, Zone};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 
 // ---- State ------------------------------------------------------------------------
 
 /// Per-game state for this module's cards, kept inside
 /// `eternal_cards_v1::EternalStateV1`. Default (and absent from snapshots)
 /// until one of these cards needs it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct S1dStateV1 {
     /// Circle of Protection: Blue's shields for this turn.
@@ -52,6 +53,17 @@ pub struct S1dStateV1 {
     /// this turn (Navigator's Compass).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_land_types: Vec<ExtraLandTypeV1>,
+}
+
+impl Hash for S1dStateV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if !self.is_empty() {
+            b"eternal-sideboard-s1d/v1".hash(state);
+            self.cop_shields.hash(state);
+            self.combat_skips.hash(state);
+            self.extra_land_types.hash(state);
+        }
+    }
 }
 
 impl S1dStateV1 {
