@@ -1083,8 +1083,47 @@ pub fn publish_new_bytes_v1(
         final_name.as_ref(),
         bytes,
         expectation,
+        RecaptureV1::EveryBoundary,
         crash_point_hook_v1,
     )
+}
+
+/// [`publish_new_bytes_v1`] with only the two bracketing content readbacks:
+/// the staged file immediately before it is linked, and the final file
+/// immediately before the receipt. The readbacks right after staging and
+/// right after the final namespace sync are skipped. A change still present
+/// at the next readback is caught there with the same error kind, so the
+/// final name never gains staged bytes that were not verified and no receipt
+/// is returned for final bytes that differ; a change undone before the next
+/// readback goes unnoticed, where the full publication would reject it.
+/// Every identity, length and namespace check is unchanged. For resident
+/// reads (`verified_reads: "resident"`).
+pub fn publish_new_bytes_bracketed_v1(
+    parent: &ValidatedPublicationParentV1,
+    stage_name: impl AsRef<OsStr>,
+    final_name: impl AsRef<OsStr>,
+    bytes: &[u8],
+) -> Result<DurablePublicationReceiptV1, DurablePublicationErrorV1> {
+    let expectation = DurableFileExpectationV1::from_bytes(bytes)?;
+    publish_verified_bytes_with_hook_v1(
+        parent,
+        stage_name.as_ref(),
+        final_name.as_ref(),
+        bytes,
+        expectation,
+        RecaptureV1::Bracketing,
+        crash_point_hook_v1,
+    )
+}
+
+/// Which content readbacks a publication makes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RecaptureV1 {
+    /// After staging, before linking, after the final namespace sync and
+    /// before the receipt.
+    EveryBoundary,
+    /// Before linking and before the receipt only.
+    Bracketing,
 }
 
 /// The public publications' boundary hook: nothing outside tests, which can
@@ -1219,6 +1258,7 @@ fn publish_new_file_with_hook_v1(
         final_name,
         bytes,
         expectation,
+        RecaptureV1::EveryBoundary,
         boundary_hook,
     )
 }
@@ -1231,6 +1271,7 @@ fn publish_verified_bytes_with_hook_v1(
     final_name: &OsStr,
     verified_bytes: &[u8],
     expectation: DurableFileExpectationV1,
+    recapture: RecaptureV1,
     mut boundary_hook: impl FnMut(
         PublicationBoundaryV1,
         &Path,
@@ -1315,13 +1356,15 @@ fn publish_verified_bytes_with_hook_v1(
     })?;
     boundary_hook(PublicationBoundaryV1::StageSynced, &stage_path, &final_path)?;
 
-    recapture_exact_caller_bytes_v1(
-        &stage_path,
-        stage_identity,
-        expectation,
-        bytes,
-        DurablePublicationErrorKindV1::StageVerification,
-    )?;
+    if recapture == RecaptureV1::EveryBoundary {
+        recapture_exact_caller_bytes_v1(
+            &stage_path,
+            stage_identity,
+            expectation,
+            bytes,
+            DurablePublicationErrorKindV1::StageVerification,
+        )?;
+    }
     boundary_hook(
         PublicationBoundaryV1::StageVerified,
         &stage_path,
@@ -1365,13 +1408,15 @@ fn publish_verified_bytes_with_hook_v1(
         &stage_path,
         &final_path,
     )?;
-    recapture_exact_caller_bytes_v1(
-        &final_path,
-        stage_identity,
-        expectation,
-        bytes,
-        DurablePublicationErrorKindV1::FinalVerification,
-    )?;
+    if recapture == RecaptureV1::EveryBoundary {
+        recapture_exact_caller_bytes_v1(
+            &final_path,
+            stage_identity,
+            expectation,
+            bytes,
+            DurablePublicationErrorKindV1::FinalVerification,
+        )?;
+    }
     boundary_hook(
         PublicationBoundaryV1::FinalVerified,
         &stage_path,
@@ -1682,50 +1727,64 @@ mod tests {
             receipt
         );
 
-        for (ordinal, (target, kind)) in [
-            (
-                PublicationBoundaryV1::StageSynced,
-                DurablePublicationErrorKindV1::StageVerification,
-            ),
-            (
-                PublicationBoundaryV1::FinalNamespaceSynced,
-                DurablePublicationErrorKindV1::FinalVerification,
-            ),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let final_name = format!("changed-{ordinal}.bin");
-            let result = publish_verified_bytes_with_hook_v1(
-                &parent,
-                OsStr::new(&format!("changed-{ordinal}.stage")),
-                OsStr::new(&final_name),
-                &bytes,
-                expectation,
-                |boundary, stage_path, final_path| {
-                    if boundary == target {
-                        let path = if target == PublicationBoundaryV1::StageSynced {
-                            stage_path
-                        } else {
-                            final_path
-                        };
-                        let mut file = OpenOptions::new().write(true).open(path).unwrap();
-                        let offset = 2 * RECAPTURE_BUFFER_BYTES_V1 + 5;
-                        file.seek(SeekFrom::Start(offset as u64)).unwrap();
-                        file.write_all(&[bytes[offset] ^ 0x01]).unwrap();
-                        file.sync_all().unwrap();
-                    }
-                    Ok(())
-                },
-            );
-            assert_eq!(result.unwrap_err().kind(), kind, "{target:?}");
-            let final_path = directory.path().join(&final_name);
-            if final_path.exists() {
-                assert!(
-                    verify_existing_publication_v1(&parent, OsStr::new(&final_name), expectation)
-                        .is_err(),
-                    "changed final was accepted at {target:?}"
+        // The bracketing publication skips the readbacks right after these
+        // two boundaries; the next readback reports the same error kind.
+        for recapture in [RecaptureV1::EveryBoundary, RecaptureV1::Bracketing] {
+            for (ordinal, (target, kind)) in [
+                (
+                    PublicationBoundaryV1::StageSynced,
+                    DurablePublicationErrorKindV1::StageVerification,
+                ),
+                (
+                    PublicationBoundaryV1::FinalNamespaceSynced,
+                    DurablePublicationErrorKindV1::FinalVerification,
+                ),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let final_name = format!("changed-{ordinal}-{recapture:?}.bin");
+                let result = publish_verified_bytes_with_hook_v1(
+                    &parent,
+                    OsStr::new(&format!("changed-{ordinal}-{recapture:?}.stage")),
+                    OsStr::new(&final_name),
+                    &bytes,
+                    expectation,
+                    recapture,
+                    |boundary, stage_path, final_path| {
+                        if boundary == target {
+                            let path = if target == PublicationBoundaryV1::StageSynced {
+                                stage_path
+                            } else {
+                                final_path
+                            };
+                            let mut file = OpenOptions::new().write(true).open(path).unwrap();
+                            let offset = 2 * RECAPTURE_BUFFER_BYTES_V1 + 5;
+                            file.seek(SeekFrom::Start(offset as u64)).unwrap();
+                            file.write_all(&[bytes[offset] ^ 0x01]).unwrap();
+                            file.sync_all().unwrap();
+                        }
+                        Ok(())
+                    },
                 );
+                assert_eq!(result.unwrap_err().kind(), kind, "{target:?} {recapture:?}");
+                let final_path = directory.path().join(&final_name);
+                // A changed staged file is never linked in either mode.
+                assert!(
+                    target != PublicationBoundaryV1::StageSynced || !final_path.exists(),
+                    "changed stage was linked {recapture:?}"
+                );
+                if final_path.exists() {
+                    assert!(
+                        verify_existing_publication_v1(
+                            &parent,
+                            OsStr::new(&final_name),
+                            expectation
+                        )
+                        .is_err(),
+                        "changed final was accepted at {target:?}"
+                    );
+                }
             }
         }
     }

@@ -9,9 +9,10 @@
 //! a [`RoleScopeV1`]. A load on a thread without a scope counts as
 //! `unattributed`; nested scopes count the inner role, and each scope's wall
 //! time is inclusive of anything it encloses. Bytes are the `f32` buffers a
-//! copy duplicates (parameters, derived transposed weights and both Adam
-//! moments for a state; the model and embedding table for a policy), four
-//! bytes each.
+//! copy duplicates, four bytes each: for a state, the parameters, derived
+//! transposed weights and both Adam moments; for a policy, the embedding
+//! table and any boxed no-state-digest check model (a policy duplicate
+//! shares its model).
 //!
 //! Counters are process-wide; unit tests run in parallel threads, so there
 //! each test thread keeps its own, as the cache itself does.

@@ -175,6 +175,8 @@ fn config_v1(
         ex1: None,
         record_process_cpu: false,
         chain_ledger: None,
+        // Strict rereads, the default; resident reads (#592) are opt-in.
+        verified_reads: Default::default(),
         output_directory,
     }
 }
@@ -479,8 +481,12 @@ fn the_warm_case_resumes_the_warm_up_and_every_load_is_counted_by_role() {
     let (state_bytes, policy_bytes) = (initial.kept_state_bytes, initial.kept_policy_bytes);
     let parameter_bytes = 4 * crate::native_policy_value_net_v1::PARAMETER_COUNT_V1 as u64;
     assert!(
-        state_bytes >= 3 * parameter_bytes && policy_bytes >= parameter_bytes,
-        "a state copy holds the parameters and both moments, a policy its model"
+        state_bytes >= 3 * parameter_bytes,
+        "a state copy holds the parameters and both moments"
+    );
+    assert!(
+        0 < policy_bytes && policy_bytes < parameter_bytes,
+        "a policy copy holds its embedding table and shares its model"
     );
     let readback = count(LoadRoleV1::UpdateReadback);
     assert_eq!(

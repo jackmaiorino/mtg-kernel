@@ -32,7 +32,7 @@
 use super::fresh_initialization_source::{self, ExpandedFreshInitializationSourceV1};
 use super::loaded_source_profile_v1 as profile;
 use super::{
-    ensure, no_state_digest_v1, read_pinned_bytes, CheckpointInputExpectationV1,
+    check_pinned_v1, ensure, no_state_digest_v1, CheckpointInputExpectationV1,
     ExpandedCheckpointV1, ExpandedModelSourceV1, FrozenPlayPolicyV1, NativePolicyValueTrainStateV1,
     PinnedFileV1,
 };
@@ -181,7 +181,7 @@ pub(super) fn lookup_v1(
         KindV1::Fresh(descriptor) => {
             fresh_initialization_source::reverify_input_files_v1(descriptor)?;
             if let Some(pin) = &source.checkpoint {
-                read_pinned_bytes(pin)?;
+                check_pinned_v1(pin)?;
             }
         }
         KindV1::Converted { .. } => {
@@ -240,9 +240,9 @@ pub(super) fn lookup_flat_checkpoint_v1(
     };
     #[cfg(test)]
     FLAT_MATCHES_FOR_TEST_V1.with(|matches| matches.set(matches.get() + 1));
-    read_pinned_bytes(pin)?;
+    check_pinned_v1(pin)?;
     fresh_initialization_source::reverify_input_files_v1(descriptor)?;
-    read_pinned_bytes(pin)?;
+    check_pinned_v1(pin)?;
     serve_v1(&entry, inputs)
 }
 

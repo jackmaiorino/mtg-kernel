@@ -77,6 +77,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 const TRAJECTORY_SCHEMA: &str = "mtg-kernel-expanded-deck-trajectory/v1";
 const POPULATION_TRAJECTORY_SCHEMA: &str = "mtg-kernel-expanded-deck-trajectory/v2";
@@ -814,6 +815,10 @@ impl OpponentCacheV1 {
 /// Revalidate every external byte pin once at a collection boundary before
 /// reusing a process-cached model. Schema-specific semantic validation remains
 /// the cache miss loader's responsibility; changed bytes cannot hit that cache.
+///
+/// The import and checkpoint are read as shared bytes: with resident reads on
+/// (`verified_bytes_cache_v1`) each read checks the file's metadata and
+/// borrows the held verified bytes, without copying a 20 MB checkpoint.
 fn verify_collection_opponent_sources_v1(
     episodes: &[ExpandedEpisodeV1],
 ) -> Result<Vec<ExpandedModelSourceV1>, String> {
@@ -831,18 +836,19 @@ fn verify_collection_opponent_sources_v1(
         if source.s_learner.is_some() {
             continue;
         }
-        let bytes = read_pinned_bytes(&source.play_import)?;
+        let bytes = read_pinned_shared_v1(&source.play_import)?;
         let checkpoint_bytes = source
             .checkpoint
             .as_ref()
-            .map(read_pinned_bytes)
+            .map(read_pinned_shared_v1)
             .transpose()?;
+        let checkpoint_bytes = checkpoint_bytes.as_deref().map(Vec::as_slice);
         let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
         let schema = probe.get("schema").and_then(Value::as_str);
         // A converted source whose base trains verifies the conversion's
         // pins and the base's own, then is served like its base.
         let verified_pins = if schema == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
-            no_state_digest_v1::verify_source_pins_v1(source, &bytes, checkpoint_bytes.as_deref())?
+            no_state_digest_v1::verify_source_pins_v1(source, &bytes, checkpoint_bytes)?
         } else {
             let mut pins_ok = verify_import_pins_v1(&bytes)?;
             // A checkpoint that names a further file (a phase-1
@@ -851,7 +857,7 @@ fn verify_collection_opponent_sources_v1(
             // The process cache holds only sources whose checkpoint the same
             // probe found clean, and this pin was just verified, so a held
             // source needs no probe.
-            if let (true, Some(checkpoint)) = (pins_ok, checkpoint_bytes.as_deref()) {
+            if let (true, Some(checkpoint)) = (pins_ok, checkpoint_bytes) {
                 pins_ok = ordered_update_preparation::holds_source_v1(source)
                     || no_state_digest_v1::names_another_file_v1(checkpoint) == Ok(false);
             }
@@ -5533,10 +5539,10 @@ fn execute_update_inner_v1(
         }
         CheckpointRecordFormatV1::V2 => checkpoint_container_v1::encode_v1(&checkpoint)?,
     };
-    let checkpoint_pin = publish_json_bytes_v1(
+    let checkpoint_pin = publish_json_shared_v1(
         &output_directory,
         "checkpoint.json",
-        &record_envelope.seal_owned_v1(record)?,
+        &Arc::new(record_envelope.seal_owned_v1(record)?),
     )?;
     // Readback exercises the real same-format continuation loader.
     let resumed_source = ExpandedModelSourceV1 {
@@ -5754,14 +5760,14 @@ fn read_trajectory_batch_v1(
 /// typed reader of a checkpoint accepts either format with unchanged
 /// semantics; hot paths use [`read_checkpoint_v1`] instead.
 fn read_pinned<T: for<'de> Deserialize<'de>>(pin: &PinnedFileV1) -> Result<T, String> {
-    let bytes = read_pinned_bytes(pin)?;
+    let bytes = read_pinned_shared_v1(pin)?;
     serde_json::from_slice(&checkpoint_container_v1::json_document_v1(&bytes)?).map_err(err)
 }
 
 /// A pinned checkpoint, from either format, decoded directly (design 4.1,
 /// the direct-decode interface).
 fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String> {
-    checkpoint_container_v1::parse_checkpoint_v1(&read_pinned_bytes(pin)?)
+    checkpoint_container_v1::parse_checkpoint_v1(&read_pinned_shared_v1(pin)?)
 }
 
 /// Metadata fields of a pinned checkpoint, parsed from a v1 document or a
@@ -5769,12 +5775,65 @@ fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String
 fn read_checkpoint_metadata_v1<T: for<'de> Deserialize<'de>>(
     pin: &PinnedFileV1,
 ) -> Result<T, String> {
-    let bytes = read_pinned_bytes(pin)?;
+    let bytes = read_pinned_shared_v1(pin)?;
     serde_json::from_slice(&checkpoint_container_v1::metadata_view_v1(&bytes)?).map_err(err)
 }
 
 fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
     read_pinned_bytes_in_v1(verified_bytes_cache_v1::global_v1(), pin)
+}
+
+/// `read_pinned_bytes` returning shared bytes: with resident reads on and the
+/// pin's bytes held, the held allocation itself (no copy); otherwise exactly
+/// `read_pinned_bytes`'s bytes.
+fn read_pinned_shared_v1(pin: &PinnedFileV1) -> Result<Arc<Vec<u8>>, String> {
+    read_pinned_shared_in_v1(verified_bytes_cache_v1::global_v1(), pin)
+}
+
+/// `read_pinned_shared_v1` against the verified-bytes cache `cache`.
+fn read_pinned_shared_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    pin: &PinnedFileV1,
+) -> Result<Arc<Vec<u8>>, String> {
+    if cache.resident_v1() {
+        let metadata = fs::metadata(&pin.path).map_err(err)?;
+        ensure(
+            metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
+            "input is not a bounded regular file",
+        )?;
+        if let Some(held) = cache.resident_bytes_v1(&pin.path, &pin.sha256, metadata.len()) {
+            return Ok(held);
+        }
+    }
+    read_pinned_bytes_in_v1(cache, pin).map(Arc::new)
+}
+
+/// `read_pinned_bytes` for a caller that only needs the check: with resident
+/// reads on and the pin's bytes held, the metadata checks run and the held
+/// bytes are not copied; otherwise exactly `read_pinned_bytes`.
+fn check_pinned_v1(pin: &PinnedFileV1) -> Result<(), String> {
+    check_pinned_in_v1(verified_bytes_cache_v1::global_v1(), pin)
+}
+
+/// `check_pinned_v1` against the verified-bytes cache `cache`.
+fn check_pinned_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    pin: &PinnedFileV1,
+) -> Result<(), String> {
+    if cache.resident_v1() {
+        let metadata = fs::metadata(&pin.path).map_err(err)?;
+        ensure(
+            metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
+            "input is not a bounded regular file",
+        )?;
+        if cache
+            .resident_bytes_v1(&pin.path, &pin.sha256, metadata.len())
+            .is_some()
+        {
+            return Ok(());
+        }
+    }
+    read_pinned_bytes_in_v1(cache, pin).map(drop)
 }
 
 /// `read_pinned_bytes` against the verified-bytes cache `cache`.
@@ -5787,6 +5846,11 @@ fn read_pinned_bytes_in_v1(
         metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
         "input is not a bounded regular file",
     )?;
+    // Resident reads: bytes this process verified against this pin, of the
+    // file's exact length (`verified_bytes_cache_v1`).
+    if let Some(held) = cache.resident_bytes_v1(&pin.path, &pin.sha256, metadata.len()) {
+        return Ok(held.as_ref().clone());
+    }
     let bytes = fs::read(&pin.path).map_err(err)?;
     // Bytes equal to bytes this process already verified against this pin
     // have its digest (`verified_bytes_cache_v1`); anything else is hashed as
@@ -5938,22 +6002,61 @@ fn publish_json_bytes_in_v1(
     name: &str,
     bytes: &[u8],
 ) -> Result<PinnedFileV1, String> {
-    ensure(
-        bytes.len() as u64 <= MAX_FILE_BYTES,
-        "output exceeds file size limit",
-    )?;
-    let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
-    let receipt =
-        publish_new_bytes_v1(&parent, format!(".{name}.stage"), name, bytes).map_err(err)?;
-    let pin = PinnedFileV1 {
-        path: directory.join(name),
-        sha256: hex(&receipt.sha256()),
-    };
+    let pin = publish_json_unrecorded_v1(cache, directory, name, bytes)?;
     // The receipt's digest was computed from `bytes`, and the publication
     // recaptured the file byte for byte: this process's later reads of the
     // pin compare instead of hashing (`verified_bytes_cache_v1`).
     cache.record_verified_v1(&pin.path, &pin.sha256, bytes);
     Ok(pin)
+}
+
+/// `publish_json_bytes_v1` for bytes the caller shares: the verified-bytes
+/// cache holds the same allocation instead of a copy. Same publication.
+fn publish_json_shared_v1(
+    directory: &Path,
+    name: &str,
+    bytes: &Arc<Vec<u8>>,
+) -> Result<PinnedFileV1, String> {
+    publish_json_shared_in_v1(verified_bytes_cache_v1::global_v1(), directory, name, bytes)
+}
+
+/// `publish_json_shared_v1` recording into the verified-bytes cache `cache`.
+fn publish_json_shared_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    directory: &Path,
+    name: &str,
+    bytes: &Arc<Vec<u8>>,
+) -> Result<PinnedFileV1, String> {
+    let pin = publish_json_unrecorded_v1(cache, directory, name, bytes)?;
+    cache.record_verified_shared_v1(&pin.path, &pin.sha256, Arc::clone(bytes));
+    Ok(pin)
+}
+
+/// The publication both `publish_json_*` share; the caller records the bytes.
+fn publish_json_unrecorded_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    directory: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<PinnedFileV1, String> {
+    ensure(
+        bytes.len() as u64 <= MAX_FILE_BYTES,
+        "output exceeds file size limit",
+    )?;
+    let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
+    // Resident reads also skip the two non-bracketing readbacks
+    // (`publish_new_bytes_bracketed_v1`).
+    let stage = format!(".{name}.stage");
+    let receipt = if cache.resident_v1() {
+        crate::durable_publication_v1::publish_new_bytes_bracketed_v1(&parent, stage, name, bytes)
+    } else {
+        publish_new_bytes_v1(&parent, stage, name, bytes)
+    }
+    .map_err(err)?;
+    Ok(PinnedFileV1 {
+        path: directory.join(name),
+        sha256: hex(&receipt.sha256()),
+    })
 }
 
 #[cfg(test)]
