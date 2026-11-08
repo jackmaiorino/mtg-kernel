@@ -275,6 +275,93 @@ fn resolve_piles(s: &mut GameState, p: PlayerId, down: &[ObjectId], choose_down:
     assert_eq!(finish(&mut copy), ordered);
     assert_eq!(s, &copy);
 }
+
+#[test]
+fn closed_list_v2_curator_order_reconstructs_only_public_library_receipts() {
+    use crate::limited_match_v1::{pimc_choose_v1, sample_world_v1, LimitedBeliefV1, WorldModeV1};
+    use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let other = actor.opponent();
+        let mut state = ready(
+            actor,
+            &[
+                "Forest", "Island", "Plains", "Swamp", "Mountain", "Forest", "Island", "Swamp",
+            ],
+        );
+        state.enable_hand_knowledge_by_name_v2();
+        paid_to_trigger(&mut state, actor);
+        let prefix = partition_prompt(&mut state, actor);
+        partition(&mut state, &prefix[..2]);
+        pile_prompt(&mut state, actor, 2, 3);
+        engine::step(&mut state, Action::ChooseEffectBoolean(true)).unwrap();
+        assert!(
+            matches!(next(&mut state), Decision::ChooseEffectTargets { player, .. } if player == actor)
+        );
+        let mut variant = state.clone();
+        // The other seat also looked at an unrelated private position. It is
+        // outside the disclosed pile and must not enter the sampled branch.
+        let object = variant.players[actor.index()].library[6];
+        variant.library_knowledge[other.index()][actor.index()].push(
+            crate::state::LibraryKnowledgeEntry {
+                position: 6,
+                object,
+                zone_change_count: variant.objects.get(object).zone_change_count,
+            },
+        );
+        assert_ne!(state, variant);
+
+        let session = |state| {
+            let deck = vec![id("Forest"); 40];
+            let mut session = FastActorSessionV1::reset_rules_only_v1(
+                552,
+                552,
+                (4_000, 1 << 20),
+                ["first".into(), "second".into()],
+                [deck.clone(), deck],
+                actor,
+                |_| true,
+            )
+            .unwrap();
+            session.install_rules_only_test_state_v1(state);
+            session
+        };
+        let left = session(state);
+        let right = session(variant);
+        let FastActorResponseV1::Decision(decision) = left.current_response() else {
+            panic!(
+                "Curator order fixture did not produce a decision: {:?}",
+                left.current_response()
+            );
+        };
+        assert!(decision.legal_action_count > 1);
+        let mut deck = vec![id("Forest"); 32];
+        deck.extend([id("Island"); 10]);
+        deck.extend([id("Mountain"); 10]);
+        let belief = LimitedBeliefV1::new([deck]);
+        let world = |s| sample_world_v1(s, WorldModeV1::ClosedListV2, Some(&belief), 552).unwrap();
+        let left_world = world(&left);
+        let right_world = world(&right);
+        assert_eq!(left_world.game_state(), right_world.game_state());
+        let positions: Vec<_> = left_world
+            .game_state()
+            .known_library_cards(other, actor)
+            .iter()
+            .map(|entry| entry.position)
+            .collect();
+        assert_eq!(positions, [2, 3, 4]);
+        let search =
+            |s| pimc_choose_v1(s, 4, 4, WorldModeV1::ClosedListV2, Some(&belief), 552).unwrap();
+        let result = search(&left);
+        assert_eq!(result, search(&right));
+        assert_eq!(result.1.rejected, 0);
+        assert_eq!(
+            result.1.rollout_errors, 0,
+            "{:?}",
+            result.1.first_rollout_error
+        );
+    }
+}
 #[test]
 fn genuine_paid_complete_printing_uncounterable_and_zero_to_five_piles_restore_both_seats() {
     assert_eq!(id(NAME), 472);
