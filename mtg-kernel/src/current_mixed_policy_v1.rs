@@ -468,6 +468,8 @@ pub fn feature_identity() -> String {
             include_str!("human_bo3_v1/omniscience_consumer_v1.rs"),
             include_str!("tutelage_consumer_v1.rs"),
             include_str!("limited_mixed_consumer_v1.rs"),
+            include_str!("limited_full_pool_consumer_v1.rs"),
+            crate::limited_full_pool_consumer_v1::FROZEN_POOL_JSON_V1,
             include_str!("tutelage_public_v1.rs"),
             include_str!("human_bo3_v1/tutelage_consumer_v1.rs"),
             include_str!("moon_consumer_v1.rs"),

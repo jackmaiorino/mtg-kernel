@@ -1232,7 +1232,9 @@ pub(super) fn project_with_handles(
         .collect::<Result<_, Error>>()?;
     Ok((
         HumanDecisionKaitoV75 {
-            schema: if obs.schema == crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA {
+            schema: if obs.schema == crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA {
+                crate::limited_full_pool_consumer_v1::HUMAN_DECISION_SCHEMA
+            } else if obs.schema == crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA {
                 "mtg-kernel-human-mixed-fdn-decision/v1"
             } else if chosen_type.is_some() {
                 "mtg-kernel-human-chosen-type-decision/v1"

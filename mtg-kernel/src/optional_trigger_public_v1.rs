@@ -311,6 +311,7 @@ pub(crate) enum ConsumerV1 {
     KaitoOmniscienceV1,
     KaitoTutelageV1,
     KaitoMixedV1,
+    KaitoFullPoolV1,
     KaitoLeylineAxeV1,
     KaitoProgenitusV1,
     KaitoAberrationV1,
@@ -332,6 +333,7 @@ impl ConsumerV1 {
             LimitedAppendixV1::Omniscience => Self::KaitoOmniscienceV1,
             LimitedAppendixV1::Tutelage => Self::KaitoTutelageV1,
             LimitedAppendixV1::Mixed => Self::KaitoMixedV1,
+            LimitedAppendixV1::FullPool => Self::KaitoFullPoolV1,
             LimitedAppendixV1::LeylineAxe => Self::KaitoLeylineAxeV1,
             LimitedAppendixV1::Progenitus => Self::KaitoProgenitusV1,
             LimitedAppendixV1::Aberration => Self::KaitoAberrationV1,
@@ -351,7 +353,7 @@ impl ConsumerV1 {
 
     pub(crate) fn validate_copy_prefix(self, state: &GameState) -> Result<(), String> {
         use crate::effect::KaitoCopyScopeV1 as Scope;
-        if matches!(self, Self::KaitoFiendArtisanV1) {
+        if matches!(self, Self::KaitoFiendArtisanV1 | Self::KaitoFullPoolV1) {
             if !state.fiend_artisan_receipts_v1 {
                 return Err("Fiend Artisan owning copy scope lacks its native receipt mode".into());
             }
@@ -377,6 +379,9 @@ impl ConsumerV1 {
             | Self::KaitoFiendArtisanV1 => {
                 crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::Base)
             }
+            Self::KaitoFullPoolV1 => {
+                crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::FullPool)
+            }
             Self::KaitoEtaliV1 => {
                 crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::Etali)
             }
@@ -397,37 +402,37 @@ pub(crate) fn validate_state_for_consumer(
     checked: bool,
     consumer: ConsumerV1,
 ) -> Result<(), String> {
-    if !matches!(consumer,ConsumerV1::KaitoThousandYearStormV1) {
+    if !matches!(consumer, ConsumerV1::KaitoThousandYearStormV1 | ConsumerV1::KaitoFullPoolV1) {
         crate::effect::thousand_year_storm_v1::refuse_legacy(state)?;
     }
-    if !matches!(consumer, ConsumerV1::KaitoCuratorV1) {
+    if !matches!(consumer, ConsumerV1::KaitoCuratorV1 | ConsumerV1::KaitoFullPoolV1) {
         crate::effect::curator_v1::refuse_legacy(state)?;
     }
-    if !matches!(consumer, ConsumerV1::KaitoSphinxLoreV1) {
+    if !matches!(consumer, ConsumerV1::KaitoSphinxLoreV1 | ConsumerV1::KaitoFullPoolV1) {
         crate::effect::sphinx_lore_v1::refuse_legacy(state)?;
     }
     if !matches!(
         consumer,
-        ConsumerV1::KaitoOmniscienceV1 | ConsumerV1::KaitoMixedV1
+        ConsumerV1::KaitoOmniscienceV1 | ConsumerV1::KaitoMixedV1 | ConsumerV1::KaitoFullPoolV1
     ) {
         crate::engine::omniscience_cast_v1::refuse_legacy(state)?;
     }
-    if matches!(consumer, ConsumerV1::KaitoProgenitusV1) {
+    if matches!(consumer, ConsumerV1::KaitoProgenitusV1 | ConsumerV1::KaitoFullPoolV1) {
         crate::progenitus_v1::validate(state)?;
     } else {
         crate::progenitus_v1::refuse_legacy(state)?;
     }
-    if !matches!(consumer, ConsumerV1::KaitoGreatwurmV1) {
+    if !matches!(consumer, ConsumerV1::KaitoGreatwurmV1 | ConsumerV1::KaitoFullPoolV1) {
         crate::effect::greatwurm_v1::refuse_legacy(state)?;
     }
-    if !matches!(consumer, ConsumerV1::KaitoKykarV1) {
+    if !matches!(consumer, ConsumerV1::KaitoKykarV1 | ConsumerV1::KaitoFullPoolV1) {
         crate::effect::kykar_v1::refuse_legacy(state)?;
     }
-    if !matches!(consumer, ConsumerV1::KaitoLootV1) {
+    if !matches!(consumer, ConsumerV1::KaitoLootV1 | ConsumerV1::KaitoFullPoolV1) {
         crate::effect::loot_v1::refuse_legacy(state)?;
     }
     consumer.validate_copy_prefix(state)?;
-    if !matches!(consumer, ConsumerV1::KaitoLathrilV1)
+    if !matches!(consumer, ConsumerV1::KaitoLathrilV1 | ConsumerV1::KaitoFullPoolV1)
         && (state.objects.iter().any(|(_, o)| {
             matches!(o.zone, Zone::Battlefield | Zone::Stack)
                 && o.v4.face_down_v1.is_none()
@@ -461,7 +466,7 @@ pub(crate) fn validate_state_for_consumer(
             .get(usize::from(definition))
             .is_some_and(|d| d.name == "Consuming Aberration")
     };
-    if !matches!(consumer, ConsumerV1::KaitoAberrationV1)
+    if !matches!(consumer, ConsumerV1::KaitoAberrationV1 | ConsumerV1::KaitoFullPoolV1)
         && (state.objects.iter().any(|(_, o)| {
             matches!(o.zone, Zone::Battlefield | Zone::Stack)
                 && o.v4.face_down_v1.is_none()
@@ -484,7 +489,7 @@ pub(crate) fn validate_state_for_consumer(
 
     if !matches!(
         consumer,
-        ConsumerV1::KaitoTutelageV1 | ConsumerV1::KaitoMixedV1
+        ConsumerV1::KaitoTutelageV1 | ConsumerV1::KaitoMixedV1 | ConsumerV1::KaitoFullPoolV1
     ) && (state.objects.iter().any(|(_, object)| {
         matches!(object.zone, Zone::Battlefield | Zone::Stack)
             && object.v4.face_down_v1.is_none()

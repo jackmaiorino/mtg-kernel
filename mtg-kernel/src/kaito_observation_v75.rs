@@ -165,6 +165,8 @@ pub fn producer_sha256() -> String {
             include_str!("tinybones_observation_v72.rs"),
             include_str!("kaito_observation_v75.rs"),
             include_str!("limited_mixed_consumer_v1.rs"),
+            include_str!("limited_full_pool_consumer_v1.rs"),
+            crate::limited_full_pool_consumer_v1::FROZEN_POOL_JSON_V1,
             include_str!("leyline_axe_public_v1.rs"),
             include_str!("leyline_axe_v1.rs"),
             include_str!("lathril_public_v1.rs"),
@@ -296,6 +298,9 @@ pub(crate) fn validate_state_scoped(
     state: &GameState,
     appendix: LimitedAppendixV1,
 ) -> Result<(), String> {
+    if appendix == LimitedAppendixV1::FullPool {
+        crate::limited_full_pool_consumer_v1::require_native_modes(state)?;
+    }
     crate::effect::kaito_cunning_v75::validate_state(state)?;
     crate::effect::kaito_cunning_v75::validate_pending(state)?;
     crate::effect::chandra_flameshaper_v1::validate_state(state)?;
@@ -320,45 +325,45 @@ pub(crate) fn validate_state_scoped(
     if appendix.includes(LimitedAppendixV1::Tutelage) {
         crate::tutelage_public_v1::require_receipts(state)?;
     }
-    if appendix == LimitedAppendixV1::Moon {
+    if appendix.includes(LimitedAppendixV1::Moon) {
         crate::moon_public_v1::validate_state(state)?;
     }
-    if appendix == LimitedAppendixV1::LeylineAxe {
+    if appendix.includes(LimitedAppendixV1::LeylineAxe) {
         crate::leyline_axe_v1::validate(state)?;
     }
-    if appendix == LimitedAppendixV1::Lathril {
+    if appendix.includes(LimitedAppendixV1::Lathril) {
         crate::lathril_public_v1::validate_native_receipts(state)?;
     }
-    if appendix == LimitedAppendixV1::Edict {
+    if appendix.includes(LimitedAppendixV1::Edict) {
         crate::edict_public_v1::validate_native(state)?;
     }
-    if appendix == LimitedAppendixV1::Curator {
+    if appendix.includes(LimitedAppendixV1::Curator) {
         crate::curator_public_v1::validate_native(state)?;
     } else if state.curator_unordered_reveal_v1 {
         return Err("Curator unordered reveal requires its distinct owning profile".into());
     }
-    if appendix == LimitedAppendixV1::Greatwurm {
+    if appendix.includes(LimitedAppendixV1::Greatwurm) {
         crate::greatwurm_public_v1::validate_native(state)?;
     } else if state.greatwurm_commit_receipts_v1 {
         return Err("Greatwurm native receipts require its distinct owning profile".into());
     }
-    if appendix == LimitedAppendixV1::Harvester {
+    if appendix.includes(LimitedAppendixV1::Harvester) {
         crate::harvester_public_v1::validate_native(state)?;
     } else if state.harvester_commit_receipts_v1 {
         return Err("Harvester native receipts require its distinct owning profile".into());
     }
-    if appendix == LimitedAppendixV1::FiendArtisan {
+    if appendix.includes(LimitedAppendixV1::FiendArtisan) {
         crate::fiend_artisan_receipts_v1::activations(state)?;
     } else {
         crate::fiend_artisan_receipts_v1::refuse_legacy(state)?;
     }
-    if appendix == LimitedAppendixV1::Etali {
+    if appendix.includes(LimitedAppendixV1::Etali) {
         let rows = crate::etali_primal_storm_receipts_v1::occurrences(state)?;
         crate::etali_primal_storm_receipts_v1::validate_current(state, &rows)?;
     } else if crate::etali_primal_storm_receipts_v1::has_receipts(state) {
         return Err("Etali native receipts require its distinct complete consumer".into());
     }
-    if appendix == LimitedAppendixV1::ThousandYearStorm { crate::thousand_year_storm_public_v1::validate_native(state)?; }
+    if appendix.includes(LimitedAppendixV1::ThousandYearStorm) { crate::thousand_year_storm_public_v1::validate_native(state)?; }
     else if state.thousand_year_storm_consumer_v1 { return Err("Storm native mode requires its distinct owning profile".into()); }
     crate::ravenous_observation_v51::validate_state_complete_recipient_scope(
         state,
@@ -389,9 +394,10 @@ fn require_supported(
 ) -> Result<(), String> {
     use crate::{event::CommittedEvent as E, optional_trigger_public_v1 as public};
     let selected = match appendix {
-        LimitedAppendixV1::Legacy | LimitedAppendixV1::ChosenType | LimitedAppendixV1::Mixed => {
-            None
-        }
+        LimitedAppendixV1::Legacy
+        | LimitedAppendixV1::ChosenType
+        | LimitedAppendixV1::Mixed
+        | LimitedAppendixV1::FullPool => None,
         LimitedAppendixV1::Artist => Some(crate::rules_meaning_artist_v64::selected_id()?),
         LimitedAppendixV1::Niv => Some(crate::rules_meaning_niv_mizzet_v63::selected_id()?),
         LimitedAppendixV1::Drakuseth => Some(crate::rules_meaning_drakuseth_v67::selected_id()?),
@@ -420,12 +426,16 @@ fn require_supported(
         LimitedAppendixV1::Etali => Some(crate::etali_primal_storm_public_v1::selected_id()?),
         LimitedAppendixV1::ThousandYearStorm => Some(crate::thousand_year_storm_public_v1::selected_id()?),
     };
+    let full_pool = (appendix == LimitedAppendixV1::FullPool)
+        .then(crate::limited_full_pool_consumer_v1::declared_printings_v1)
+        .transpose()?;
     let unsupported = |id: u16| {
         id >= 460
+            && !full_pool.is_some_and(|printings| printings.contains(&id))
             && !(appendix == LimitedAppendixV1::Mixed
                 && crate::limited_mixed_consumer_v1::PARTIAL_PRINTINGS_V1.contains(&id))
             && selected != Some(id)
-            && !(appendix == LimitedAppendixV1::Kykar
+            && !(appendix.includes(LimitedAppendixV1::Kykar)
                 && crate::effect::kykar_v1::token_definition(id))
             && !(appendix.includes(LimitedAppendixV1::ChosenType)
                 && crate::banner_of_kinship_v1::entry::owns_entry_definition(id))
@@ -515,23 +525,23 @@ fn require_supported(
             | E::LathrilCombatResolvedV1 { .. }
             | E::LathrilCombatCounteredV1 { .. }
             | E::LathrilCombatObservedV1 { .. }
-            | E::LathrilReceiptV1 { .. } => appendix != LimitedAppendixV1::Lathril,
-            E::BlasphemousEdictReceiptV1 { .. } => appendix != LimitedAppendixV1::Edict,
+            | E::LathrilReceiptV1 { .. } => !appendix.includes(LimitedAppendixV1::Lathril),
+            E::BlasphemousEdictReceiptV1 { .. } => !appendix.includes(LimitedAppendixV1::Edict),
             E::FiendArtisanInputV1 { .. }
             | E::FiendArtisanPaidV1 { .. }
             | E::FiendArtisanSearchStartedV1 { .. }
             | E::FiendArtisanSearchFinishedV1 { .. }
-            | E::FiendArtisanConsumerReceiptV1 { .. } => appendix != LimitedAppendixV1::FiendArtisan,
-            E::EtaliPrimalStormReceiptV1 { .. } => appendix != LimitedAppendixV1::Etali,
+            | E::FiendArtisanConsumerReceiptV1 { .. } => !appendix.includes(LimitedAppendixV1::FiendArtisan),
+            E::EtaliPrimalStormReceiptV1 { .. } => !appendix.includes(LimitedAppendixV1::Etali),
             E::CuratorEnteredV1 { .. }
             | E::CuratorCollectedV1 { .. }
             | E::CuratorPublishedV1 { .. }
             | E::CuratorFinishedV1 { .. }
             | E::CuratorProgressV1 { .. }
-            | E::CuratorReceiptV1 { .. } => appendix != LimitedAppendixV1::Curator,
+            | E::CuratorReceiptV1 { .. } => !appendix.includes(LimitedAppendixV1::Curator),
             E::SphinxLoreV1 { .. }
             | E::SphinxLoreCastOptionsV1 { .. }
-            | E::SphinxLoreCastSelectedV1 { .. } => appendix != LimitedAppendixV1::SphinxLore,
+            | E::SphinxLoreCastSelectedV1 { .. } => !appendix.includes(LimitedAppendixV1::SphinxLore),
             E::GreatwurmCounterInputV1 { .. }
             | E::GreatwurmCounterPaymentV1 { .. }
             | E::GreatwurmCombatCaptureV1 { .. }
@@ -539,15 +549,15 @@ fn require_supported(
             | E::GreatwurmCollectedV1 { .. }
             | E::GreatwurmPublishedV1 { .. }
             | E::GreatwurmFinishedV1 { .. }
-            | E::GreatwurmCommitReceiptV1 { .. } => appendix != LimitedAppendixV1::Greatwurm,
+            | E::GreatwurmCommitReceiptV1 { .. } => !appendix.includes(LimitedAppendixV1::Greatwurm),
             E::HarvesterCommitReceiptV1 { .. }
             | E::HarvesterResolvedV1 { .. }
             | E::NightmareCopyEnteredV1 { .. }
-            | E::NightmareCopyLayerV1 { .. } => appendix != LimitedAppendixV1::Harvester,
-            E::ThousandYearStormV1 { journal: crate::effect::thousand_year_storm_v1::JournalV1::Cast { observers, .. } } => !observers.is_empty() && appendix != LimitedAppendixV1::ThousandYearStorm,
-            E::ThousandYearStormV1 { journal: crate::effect::thousand_year_storm_v1::JournalV1::Published { .. } | crate::effect::thousand_year_storm_v1::JournalV1::Copy { .. } | crate::effect::thousand_year_storm_v1::JournalV1::CastForm { .. } | crate::effect::thousand_year_storm_v1::JournalV1::TargetFaces { .. } } => appendix != LimitedAppendixV1::ThousandYearStorm,
+            | E::NightmareCopyLayerV1 { .. } => !appendix.includes(LimitedAppendixV1::Harvester),
+            E::ThousandYearStormV1 { journal: crate::effect::thousand_year_storm_v1::JournalV1::Cast { observers, .. } } => !observers.is_empty() && !appendix.includes(LimitedAppendixV1::ThousandYearStorm),
+            E::ThousandYearStormV1 { journal: crate::effect::thousand_year_storm_v1::JournalV1::Published { .. } | crate::effect::thousand_year_storm_v1::JournalV1::Copy { .. } | crate::effect::thousand_year_storm_v1::JournalV1::CastForm { .. } | crate::effect::thousand_year_storm_v1::JournalV1::TargetFaces { .. } } => !appendix.includes(LimitedAppendixV1::ThousandYearStorm),
             E::KykarExiledV1 { .. } | E::KykarDelayedCollectedV1 { .. } => {
-                appendix != LimitedAppendixV1::Kykar
+                !appendix.includes(LimitedAppendixV1::Kykar)
             }
 
             _ => false,
@@ -880,10 +890,10 @@ pub(crate) fn observe_parts_v75(
     let appendix = surface.limited_appendix_v1();
     validate_state_scoped(state, appendix).map_err(RlContractError)?;
     require_supported(state, Some(actor_and_origin.0), appendix).map_err(RlContractError)?;
-    let appendix_consumer = if appendix == LimitedAppendixV1::Mixed {
-        crate::optional_trigger_public_v1::ConsumerV1::KaitoMixedV1
-    } else {
-        crate::optional_trigger_public_v1::ConsumerV1::Legacy
+    use crate::optional_trigger_public_v1::ConsumerV1;
+    let appendix_consumer = match appendix {
+        LimitedAppendixV1::Mixed | LimitedAppendixV1::FullPool => ConsumerV1::for_kaito(appendix),
+        _ => ConsumerV1::Legacy,
     };
     let (inherited, families) = crate::ravenous_observation_v51::observe_parts_complete_kaito_v75(
         state,
@@ -913,6 +923,7 @@ pub(crate) fn observe_parts_v75(
             LimitedAppendixV1::Omniscience => crate::omniscience_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Tutelage => crate::tutelage_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Mixed => crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::FullPool => crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Moon => crate::moon_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::LeylineAxe => crate::leyline_axe_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Progenitus => crate::progenitus_consumer_v1::OBSERVATION_SCHEMA,
@@ -1057,71 +1068,71 @@ pub(crate) fn observe_parts_v75(
             .then(|| crate::tutelage_public_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
-        moon: (appendix == LimitedAppendixV1::Moon)
+        moon: (appendix.includes(LimitedAppendixV1::Moon))
             .then(|| crate::moon_public_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
-        leyline_axe: (appendix == LimitedAppendixV1::LeylineAxe)
+        leyline_axe: (appendix.includes(LimitedAppendixV1::LeylineAxe))
             .then(|| crate::leyline_axe_public_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
-        progenitus: (appendix == LimitedAppendixV1::Progenitus)
+        progenitus: (appendix.includes(LimitedAppendixV1::Progenitus))
             .then(|| crate::progenitus_public_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
-        aberration: (appendix == LimitedAppendixV1::Aberration)
+        aberration: (appendix.includes(LimitedAppendixV1::Aberration))
             .then(|| crate::aberration_public_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
-        lathril: (appendix == LimitedAppendixV1::Lathril)
+        lathril: (appendix.includes(LimitedAppendixV1::Lathril))
             .then(|| crate::lathril_public_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
-        electroduplicate: (appendix == LimitedAppendixV1::Electroduplicate)
+        electroduplicate: (appendix.includes(LimitedAppendixV1::Electroduplicate))
             .then(|| crate::electroduplicate_public_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
-        edict: (appendix == LimitedAppendixV1::Edict)
+        edict: (appendix.includes(LimitedAppendixV1::Edict))
             .then(|| crate::edict_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1))
             .transpose()
             .map_err(RlContractError)?,
-        loot: (appendix == LimitedAppendixV1::Loot)
+        loot: (appendix.includes(LimitedAppendixV1::Loot))
             .then(|| crate::loot_public_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
-        curator: (appendix == LimitedAppendixV1::Curator)
+        curator: (appendix.includes(LimitedAppendixV1::Curator))
             .then(|| crate::curator_public_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
-        kykar: (appendix == LimitedAppendixV1::Kykar)
+        kykar: (appendix.includes(LimitedAppendixV1::Kykar))
             .then(|| crate::kykar_public_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
-        sphinx_lore: (appendix == LimitedAppendixV1::SphinxLore)
+        sphinx_lore: (appendix.includes(LimitedAppendixV1::SphinxLore))
             .then(|| crate::sphinx_lore_public_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
-        greatwurm: (appendix == LimitedAppendixV1::Greatwurm)
+        greatwurm: (appendix.includes(LimitedAppendixV1::Greatwurm))
             .then(|| {
                 crate::greatwurm_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1)
             })
             .transpose()
             .map_err(RlContractError)?,
-        harvester: (appendix == LimitedAppendixV1::Harvester)
+        harvester: (appendix.includes(LimitedAppendixV1::Harvester))
             .then(|| {
                 crate::harvester_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1)
             })
             .transpose()
             .map_err(RlContractError)?,
-        fiend_artisan: (appendix == LimitedAppendixV1::FiendArtisan)
+        fiend_artisan: (appendix.includes(LimitedAppendixV1::FiendArtisan))
             .then(|| crate::fiend_artisan_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1))
             .transpose()
             .map_err(RlContractError)?,
-        etali: (appendix == LimitedAppendixV1::Etali)
+        etali: (appendix.includes(LimitedAppendixV1::Etali))
             .then(|| crate::etali_primal_storm_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1))
             .transpose()
             .map_err(RlContractError)?,
-        thousand_year_storm: (appendix == LimitedAppendixV1::ThousandYearStorm).then(||crate::thousand_year_storm_public_v1::capture(state,actor_and_origin.0)).transpose().map_err(RlContractError)?,
+        thousand_year_storm: (appendix.includes(LimitedAppendixV1::ThousandYearStorm)).then(||crate::thousand_year_storm_public_v1::capture(state,actor_and_origin.0)).transpose().map_err(RlContractError)?,
         complete_ordinary_observation: true,
         owning_consumer_admitted: false,
         projection_sha256: String::new(),
@@ -1170,6 +1181,82 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
         &value.etali,
         &value.thousand_year_storm,
     ) {
+        (
+            Some(artist),
+            Some(niv),
+            Some(chosen_type),
+            Some(drakuseth),
+            Some(embercleave),
+            Some(zimone),
+            Some(omniscience),
+            Some(tutelage),
+            Some(moon),
+            Some(leyline_axe),
+            Some(progenitus),
+            Some(aberration),
+            Some(lathril),
+            Some(electroduplicate),
+            Some(edict),
+            Some(loot),
+            Some(curator),
+            Some(kykar),
+            Some(sphinx_lore),
+            Some(greatwurm),
+            Some(harvester),
+            Some(fiend_artisan),
+            Some(etali),
+            Some(thousand_year_storm),
+        ) if value.schema == crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA => {
+            crate::artist_consumer_v1::validate_facts(artist, actor)
+                .map_err(RlContractError)?;
+            crate::niv_consumer_v1::validate_facts(niv, actor)
+                .map_err(RlContractError)?;
+            crate::chosen_type_consumer_v1::validate_facts(chosen_type, actor)
+                .map_err(RlContractError)?;
+            crate::drakuseth_consumer_v1::validate_facts(drakuseth, actor)
+                .map_err(RlContractError)?;
+            crate::embercleave_consumer_v1::validate_facts(embercleave, actor)
+                .map_err(RlContractError)?;
+            crate::zimone_consumer_v1::validate_facts(zimone, actor)
+                .map_err(RlContractError)?;
+            crate::omniscience_consumer_v1::validate_facts(omniscience, actor)
+                .map_err(RlContractError)?;
+            crate::tutelage_consumer_v1::validate_facts(tutelage, actor)
+                .map_err(RlContractError)?;
+            crate::moon_consumer_v1::validate_facts(moon, actor)
+                .map_err(RlContractError)?;
+            crate::leyline_axe_consumer_v1::validate_facts(leyline_axe, actor)
+                .map_err(RlContractError)?;
+            crate::progenitus_consumer_v1::validate_facts(progenitus, actor)
+                .map_err(RlContractError)?;
+            crate::aberration_consumer_v1::validate_facts(aberration, actor)
+                .map_err(RlContractError)?;
+            crate::lathril_consumer_v1::validate_facts(lathril, actor)
+                .map_err(RlContractError)?;
+            crate::electroduplicate_consumer_v1::validate_facts(electroduplicate, actor)
+                .map_err(RlContractError)?;
+            crate::edict_consumer_v1::validate_facts(edict, actor)
+                .map_err(RlContractError)?;
+            crate::loot_consumer_v1::validate_facts(loot, actor)
+                .map_err(RlContractError)?;
+            crate::curator_consumer_v1::validate_facts(curator, actor)
+                .map_err(RlContractError)?;
+            crate::kykar_consumer_v1::validate_facts(kykar, actor)
+                .map_err(RlContractError)?;
+            crate::sphinx_lore_consumer_v1::validate_facts(sphinx_lore, actor)
+                .map_err(RlContractError)?;
+            crate::greatwurm_consumer_v1::validate_facts(greatwurm, actor)
+                .map_err(RlContractError)?;
+            crate::harvester_consumer_v1::validate_facts(harvester, actor)
+                .map_err(RlContractError)?;
+            crate::fiend_artisan_consumer_v1::validate_facts(fiend_artisan, actor)
+                .map_err(RlContractError)?;
+            crate::etali_primal_storm_consumer_v1::validate_facts(etali, actor)
+                .map_err(RlContractError)?;
+            crate::thousand_year_storm_consumer_v1::validate_facts(thousand_year_storm, actor)
+                .map_err(RlContractError)?;
+            crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA
+        }
         (
             Some(artist),
             Some(niv),

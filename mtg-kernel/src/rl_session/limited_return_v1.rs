@@ -262,6 +262,27 @@ impl FastActorSessionV1 {
         Self::initialize_limited_consumer_v1(config,reveal_facts,LimitedAppendixV1::ThousandYearStorm)
     }
 
+    pub(crate) fn reset_limited_full_pool_v1(
+        config: &crate::limited_full_pool_consumer_v1::ResetV1,
+        reveal_facts: bool,
+    ) -> Result<Self, RlSessionError> {
+        crate::limited_full_pool_consumer_v1::preflight(config)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        Self::initialize_limited_consumer_v1(config, reveal_facts, LimitedAppendixV1::FullPool)
+    }
+
+    pub(crate) fn enable_limited_native_modes_v1(
+        state: &mut GameState,
+        appendix: LimitedAppendixV1,
+    ) {
+        state.curator_unordered_reveal_v1 = appendix.includes(LimitedAppendixV1::Curator);
+        state.greatwurm_commit_receipts_v1 = appendix.includes(LimitedAppendixV1::Greatwurm);
+        state.harvester_commit_receipts_v1 = appendix.includes(LimitedAppendixV1::Harvester);
+        state.fiend_artisan_receipts_v1 = appendix.includes(LimitedAppendixV1::FiendArtisan);
+        state.etali_commit_receipts_v1 = appendix.includes(LimitedAppendixV1::Etali);
+        state.thousand_year_storm_consumer_v1 = appendix.includes(LimitedAppendixV1::ThousandYearStorm);
+    }
+
     fn initialize_limited_consumer_v1(
         config: &crate::limited_consumer_wire_v1::ResetV1,
         reveal_facts: bool,
@@ -280,12 +301,7 @@ impl FastActorSessionV1 {
         if reveal_facts {
             state.reveal_knowledge_v4 = Some(Default::default());
         }
-        state.curator_unordered_reveal_v1 = appendix == LimitedAppendixV1::Curator;
-        state.greatwurm_commit_receipts_v1 = appendix == LimitedAppendixV1::Greatwurm;
-        state.harvester_commit_receipts_v1 = appendix == LimitedAppendixV1::Harvester;
-        state.fiend_artisan_receipts_v1 = appendix == LimitedAppendixV1::FiendArtisan;
-        state.etali_commit_receipts_v1 = appendix == LimitedAppendixV1::Etali;
-        state.thousand_year_storm_consumer_v1 = appendix == LimitedAppendixV1::ThousandYearStorm;
+        Self::enable_limited_native_modes_v1(&mut state, appendix);
         Self::initialize_kaito_consumer_v1(
             config.episode_id,
             (config.max_physical_decisions, config.max_policy_steps),
