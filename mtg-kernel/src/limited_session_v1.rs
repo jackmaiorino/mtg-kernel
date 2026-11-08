@@ -296,6 +296,9 @@ pub struct LimitedReplyV1 {
     pub mulligan_rules: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observation_rules: Option<String>,
+    /// Public capability, never an identity or count from either private list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outside_game_rules: Option<String>,
     /// The current chooser's outside-game choices in effect-option order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outside_game_options: Option<Vec<crate::eternal_outside_game_v1::OutsideGameOptionV1>>,
@@ -315,6 +318,7 @@ impl LimitedReplyV1 {
             combat_rules: None,
             mulligan_rules: None,
             observation_rules: None,
+            outside_game_rules: None,
             outside_game_options: None,
             request_id,
             kernel_version: KERNEL_VERSION.to_string(),
@@ -340,6 +344,9 @@ impl LimitedReplyV1 {
         };
         let mut reply = Self::new(Some(request_id), body);
         reply.outside_game_options = outside_game_options;
+        reply.outside_game_rules =
+            crate::eternal_outside_game_v1::outside_game_profile(session.game_state())
+                .map(str::to_string);
         reply
     }
 
@@ -550,7 +557,7 @@ impl LimitedJsonlServerV1 {
                         deck_ids,
                         [&ids[0], &ids[1]],
                         companions,
-                        outside,
+                        outside_the_game.as_ref().map(|_| outside),
                         self.priority_mode,
                         self.foundations_combat,
                         true,
@@ -562,7 +569,7 @@ impl LimitedJsonlServerV1 {
                         "unsupported_deck",
                         "companions need the London mulligan schema",
                     );
-                } else if outside.iter().any(|cards| !cards.is_empty()) {
+                } else if outside_the_game.is_some() {
                     return LimitedReplyV1::error(
                         Some(request_id),
                         "unsupported_deck",

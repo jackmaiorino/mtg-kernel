@@ -57,6 +57,7 @@ fn empty_outside_game_state_preserves_legacy_hash_input_and_json() {
 
     // A real sideboard still binds identities, quantities and owning seats.
     let one = OutsideGameStateV1 {
+        enabled: true,
         cards: [vec![id("Gamble")], vec![]],
     };
     let original = input(&one);
@@ -66,7 +67,13 @@ fn empty_outside_game_state_preserves_legacy_hash_input_and_json() {
         [vec![id("Gamble"); 2], vec![]],
         [vec![], vec![id("Gamble")]],
     ] {
-        assert_ne!(input(&OutsideGameStateV1 { cards }), original);
+        assert_ne!(
+            input(&OutsideGameStateV1 {
+                enabled: true,
+                cards,
+            }),
+            original
+        );
     }
 }
 
@@ -243,6 +250,22 @@ fn burning_wish_puts_a_sorcery_from_outside_the_game_into_its_owners_hand() {
     );
     assert_eq!(outside_the_game(&state, P1), &[id("Gamble")]);
     assert_eq!(state.objects.get(wish).zone, Zone::Exile);
+
+    // The explicit public profile survives removing its last private card.
+    let mut state = islands();
+    set_outside_the_game(&mut state, [vec![id("Gamble")], Vec::new()]);
+    let wish = put(&mut state, P0, "Burning Wish", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast(&mut state, wish);
+    choose_option(&mut state, P0, 2, 1);
+    settled(&mut state);
+    assert!(outside_the_game(&state, P0).is_empty());
+    assert!(outside_the_game(&state, P1).is_empty());
+    assert_eq!(
+        mtg_kernel::eternal_outside_game_v1::outside_game_profile(&state),
+        Some("outside-the-game/v1")
+    );
+    known_hand_card(&state, P0, "Gamble");
 
     // Declining keeps the zone and still exiles the wish.
     let mut state = islands();
@@ -468,12 +491,17 @@ fn session_reset_takes_each_seats_cards_outside_the_game() {
         plain["decision"]["deck_hashes"]
     );
     assert!(with.get("outside_game_options").is_none());
+    assert!(plain.get("outside_game_rules").is_none());
+    assert_eq!(with["outside_game_rules"], "outside-the-game/v1");
     let empty = reset(
         &mut LimitedJsonlServerV1::new_with_london_mulligans_v1(),
         4,
         Some(json!([[], []])),
     );
     assert_eq!(empty["decision"]["deck_ids"], plain["decision"]["deck_ids"]);
+    assert_eq!(empty["outside_game_rules"], with["outside_game_rules"]);
+    // Only the public mode differs; private identities and counts do not.
+    assert_eq!(empty, with);
 
     // Tokens, unknown names and the pre-London schemas are refused.
     for outside in [

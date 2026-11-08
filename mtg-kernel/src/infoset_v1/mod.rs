@@ -34,6 +34,8 @@ mod fixtures;
 #[cfg(test)]
 mod harness;
 #[cfg(test)]
+mod outside_game;
+#[cfg(test)]
 mod paidcost;
 #[cfg(test)]
 mod realize;

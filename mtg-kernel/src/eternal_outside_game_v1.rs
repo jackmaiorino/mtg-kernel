@@ -4,10 +4,11 @@
 //!
 //! A best-of-three game's outside-the-game cards are its sideboard without a
 //! companion in use (`eternal_bo3_v1`); a custom-deck session receives them
-//! at reset. The list lives in module state, never in a zone list, so no
-//! public projection or opponent observation sees it. A card leaves it only
+//! at reset. The list lives in module state, never in a zone list. The public
+//! profile is announced without names or counts; unsupported infoset exports
+//! refuse before canonicalization. A card leaves the list only
 //! when an effect reveals it and puts it into its owner's hand; the new hand
-//! card is then known to the opponent. Best-of-one games have an empty list,
+//! card is then known to the opponent. Best-of-one games omit the profile,
 //! so every wish there finds nothing, as before.
 //!
 //! Choices among outside-the-game cards are effect options in card id order
@@ -30,13 +31,25 @@ use crate::state::{GameObject, GameState, ObjectStateV4, Target, Zone};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
-/// Each player's cards outside the game, sorted by card id. Absent from the
-/// eternal state until a game has any.
+/// Each player's cards outside the game, sorted by card id. The explicit
+/// public profile stays enabled even if both private lists become empty.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutsideGameStateV1 {
+    #[serde(default = "enabled_profile", skip_serializing_if = "is_false")]
+    pub enabled: bool,
     #[serde(default)]
     pub cards: [Vec<u16>; 2],
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+// A present historical record denotes an explicit profile. The enclosing
+// EternalStateV1 still uses Default (disabled) when the whole field is absent.
+fn enabled_profile() -> bool {
+    true
 }
 
 impl Hash for OutsideGameStateV1 {
@@ -45,6 +58,7 @@ impl Hash for OutsideGameStateV1 {
         // nothing, including no empty-vector lengths, to preserve its old hash.
         if !self.is_empty() {
             b"outside-the-game/v1".hash(state);
+            self.enabled.hash(state);
             self.cards.hash(state);
         }
     }
@@ -52,25 +66,33 @@ impl Hash for OutsideGameStateV1 {
 
 impl OutsideGameStateV1 {
     pub(crate) fn is_empty(&self) -> bool {
-        self.cards.iter().all(Vec::is_empty)
+        !self.enabled && self.cards.iter().all(Vec::is_empty)
     }
 }
 
-/// Gives each player their cards outside the game before the game begins.
-/// Empty lists leave the state untouched, so best-of-one games keep their
-/// snapshots and hashes.
+/// Opts into the public outside-game profile before the game begins. Lists
+/// and their sizes stay private. Legacy best-of-one callers do not call this.
 pub fn set_outside_the_game(state: &mut GameState, cards: [Vec<u16>; 2]) {
-    if cards.iter().all(Vec::is_empty) {
-        return;
-    }
     let outside = &mut state
         .eternal_v1
         .get_or_insert_with(Default::default)
         .outside_game;
+    outside.enabled = true;
     for (player, mut list) in cards.into_iter().enumerate() {
         list.sort_unstable();
         outside.cards[player] = list;
     }
+}
+
+/// Public capability only, independent of either private list's contents.
+/// Nonempty snapshots from the draft before the explicit flag also refuse
+/// unsupported exports rather than copying their private cards.
+pub fn outside_game_profile(state: &GameState) -> Option<&'static str> {
+    state
+        .eternal_v1
+        .as_ref()
+        .filter(|eternal| !eternal.outside_game.is_empty())
+        .map(|_| "outside-the-game/v1")
 }
 
 /// `player`'s cards outside the game, sorted by card id.
@@ -500,9 +522,11 @@ pub(crate) fn execute(op: &OutsideGameOpV1, ctx: &ExecCtx, state: &mut GameState
 /// their hand as a new object, known to the opponent. A card no longer
 /// outside the game is not put anywhere.
 fn put_into_hand(state: &mut GameState, owner: PlayerId, card: u16) -> Option<ObjectId> {
-    let list = &mut state.eternal_v1.as_mut()?.outside_game.cards[owner.index()];
+    let outside = &mut state.eternal_v1.as_mut()?.outside_game;
+    let list = &mut outside.cards[owner.index()];
     let position = list.iter().position(|&listed| listed == card)?;
     list.remove(position);
+    outside.enabled = true;
     let id = state.objects.push(GameObject {
         card_def: card,
         name: CARD_DEFS[usize::from(card)].object_name.into(),
