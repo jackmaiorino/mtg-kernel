@@ -183,6 +183,16 @@ fn v2_face_down_exile_to_hidden_zones_never_reveals_the_name() {
             .each_ref()
             .map(|s| export_v2(&input(s, &lists)).unwrap());
         assert_eq!(out[0].bytes, out[1].bytes);
+        if to == Zone::Hand {
+            // Later explicit reveals remain visible despite the native helper's old row.
+            let st = &mut worlds[0];
+            st.reveal_hand_card(PlayerId::P1, PlayerId::P0, hand[0])
+                .unwrap();
+            let p = super::projection::project_v2(st, st.observation_journal.notes(), PlayerId::P1);
+            assert_eq!(p.hand_facts.len(), 1);
+            assert!(p.hand_facts[0].known);
+            assert_eq!(p.hand_facts[0].card_def, st.objects.get(hand[0]).card_def);
+        }
     }
 }
 

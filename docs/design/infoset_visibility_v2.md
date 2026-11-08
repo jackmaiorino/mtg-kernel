@@ -21,6 +21,12 @@ it: v2 refuses a history with missing provenance rather than inferring old
 visibility from a current object. Existing serialized snapshots remain valid
 for their historical v1 contract.
 
+The historical move-to-hand helper also emits a reveal for concealed exile.
+V2 ignores reveal notes anchored inside a move that concealed the identity;
+a genuine reveal after that move commits remains readable. Any explicit
+reveal sharing the concealed move's exact anchor is conservatively ignored,
+since the old journal cannot distinguish it from the helper's false reveal.
+
 The canonical allocator currently represents unknown slots only in hands and
 libraries. V2 therefore returns the same R2 refusal for every active public
 face-down object whose identity the viewer cannot inspect. This check occurs
