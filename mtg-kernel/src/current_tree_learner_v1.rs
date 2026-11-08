@@ -54,17 +54,25 @@ impl AuthenticatedInputV1 {
         let flags = actions
             .iter()
             .map(|action| {
-                let value =
-                    serde_json::to_value(action).map_err(|e| Error::Projection(e.to_string()))?;
+                use crate::rl::ActionSemanticV1 as A;
                 let mut flags = [false; 6];
-                for (i, key) in ACTION_FLAGS_V1.iter().enumerate() {
-                    if let Some(value) = value.get(key) {
-                        flags[i] = value.as_bool().ok_or(Error::ModelContract)?;
-                    }
+                match action {
+                    A::ChooseKicker { pay, .. }
+                    | A::ChooseSpellCopyPayment { pay, .. }
+                    | A::ChooseDivineKickerV44 { pay, .. } => flags[0] = *pay,
+                    A::ChooseSpellCopyRetarget { change_target, .. } => flags[1] = *change_target,
+                    A::ChooseOptionalCostUse { use_cost, .. } => flags[2] = *use_cost,
+                    A::ChooseMadnessCast { cast_it, .. } => flags[3] = *cast_it,
+                    A::ChooseEffectBoolean { value, .. } => flags[4] = *value,
+                    // FlatV7's VALUE bit represents the London mulligan choice.
+                    A::ChooseLondonMulligan { mulligan, .. } => flags[4] = *mulligan,
+                    A::ChooseAttackerInclusion { include, .. }
+                    | A::ChooseBlockerInclusion { include, .. } => flags[5] = *include,
+                    _ => {}
                 }
-                Ok(flags)
+                flags
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect();
         Ok(Self {
             packet,
             flags,

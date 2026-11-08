@@ -296,6 +296,18 @@ fn issue454_authenticated_ingress_maps_all_six_typed_action_flags() {
             expected[index] = bit;
             assert_eq!(input.action_flags(), &[expected; 2]);
         }
+        let london = A::ChooseLondonMulligan {
+            actor,
+            mulligan_count: 0,
+            mulligan: bit,
+        };
+        let input =
+            AuthenticatedInputV1::from_current(packet.packet().clone(), &[london.clone(), london])
+                .unwrap();
+        assert_eq!(
+            input.action_flags(),
+            &[[false, false, false, false, bit, false]; 2]
+        );
     }
 }
 
