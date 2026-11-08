@@ -1187,6 +1187,13 @@ pub(crate) fn activation_allowed(
             name,
             ability_index,
         )
+        && crate::eternal_sideboard_s1d_v1::statics::activation_allowed(
+            state,
+            source,
+            name,
+            ability_index,
+        )
+        && crate::eternal_sideboard_s1a_v1::statics::activation_allowed(state, source)
 }
 
 /// Anointed Peacekeeper: definitions named by a Peacekeeper whose printed
@@ -1681,6 +1688,7 @@ pub(crate) fn prevents_untap_step(state: &GameState, object: ObjectId) -> bool {
         || crate::eternal_premodern_p1b_v1::statics::prevents_untap_step(state, object)
         || crate::eternal_premodern_p2a_v1::statics::prevents_untap_step(state, object)
         || crate::eternal_premodern_p1a_v1::statics::prevents_untap_step(state, object)
+        || crate::eternal_sideboard_s1a_v1::statics::prevents_untap_step(state, object)
 }
 
 /// Applies a Time Vault skip to the turn about to begin for the now-active

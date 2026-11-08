@@ -745,6 +745,11 @@ pub(super) fn selected_spell_mana_costs_v1(
         selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
             crate::eternal_pauper_e8b_v1::spell_cost_reduction(state, definition, player),
         );
+        // Sailors' Bane costs {1} less per instant, sorcery and Adventure
+        // card in its owner's graveyard and exile (wave S1b).
+        selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
+            crate::eternal_sideboard_s1b_v1::spell_cost_reduction(state, definition, player),
+        );
         // Goblin Warchief: Goblin spells cost {1} less (wave P1a).
         selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
             crate::eternal_premodern_p1a_v1::statics::spell_cost_reduction(
@@ -903,8 +908,13 @@ fn selected_spell_mana_costs_for_source_grant_v1(
             crate::eternal_cards_v1::outside_hand_cast_reduction(state, source, player),
         );
         // Anointed Peacekeeper: spells with the chosen name cost {2} more.
+        // Disruptor Flute: spells with the chosen name cost {3} more.
         selected.own_generic_increase =
-            crate::eternal_vintage_v1::spell_tax(state, definition.object_name, player);
+            crate::eternal_vintage_v1::spell_tax(state, definition.object_name, player)
+                .saturating_add(crate::eternal_sideboard_s1a_v1::statics::flute_spell_tax(
+                    state,
+                    definition.object_name,
+                ));
         // Retrace (Wrenn and Six's emblem): discard a land card in addition
         // to the other costs.
         if matches!(method, CastMethodV4::Normal | CastMethodV4::Alternative)

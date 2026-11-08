@@ -396,11 +396,48 @@ pub enum StandardTargetV1 {
     /// (`eternal_premodern_p2c_v1::targets`).
     PlayerThenUpToTwoOfTheirGraveyardCardsV1,
     TwoLandsV1,
+    /// A filter of eternal wave S1d (`eternal_sideboard_s1d_v1::targets`).
+    S1dV1(crate::eternal_sideboard_s1d_v1::targets::S1dTargetV1),
+    /// "Target creature or planeswalker with mana value N or less" (Long
+    /// Goodbye). Wave S1c's filters follow
+    /// (`eternal_sideboard_s1c_v1::targets`).
+    CreatureOrPlaneswalkerManaValueAtMostV1(u8),
+    /// "Target creature or enchantment an opponent controls" (Feed the
+    /// Swarm).
+    OpponentCreatureOrEnchantmentV1,
+    /// "Target noncreature artifact or noncreature enchantment" (Haywire
+    /// Mite). Sideboard wave S1a's filters follow
+    /// (`eternal_sideboard_s1a_v1::targets`).
+    NoncreatureArtifactOrEnchantmentV1,
+    /// "Target black or red permanent" (Celestial Purge).
+    BlackOrRedPermanentV1,
+    /// "Target creature with power or toughness 1 or less" (Warping Wail).
+    CreaturePowerOrToughnessAtMostOneV1,
+    /// "Up to two target artifacts and/or enchantments" (Force of Vigor).
+    UpToTwoArtifactsOrEnchantmentsV1,
+    /// "Target enchantment, instant, or sorcery spell" (Swan Song).
+    EnchantmentInstantOrSorcerySpellV1,
+    /// "Target card in a graveyard other than a basic land card" (Surgical
+    /// Extraction).
+    NonbasicLandCardInAGraveyardV1,
+    /// "4 damage divided among any number of target creatures"
+    /// (Pyrokinesis): four picks, one point each. Wave S1b's filters follow
+    /// (`eternal_sideboard_s1b_v1::targets`); Stern Dismissal and Extirpate
+    /// use S1c's and S1a's filters above.
+    DividedFourDamageCreaturesV1,
+    /// "Target creature or Vehicle you control" (Perilous Snare).
+    ControlledCreatureOrVehicleV1,
 }
 
 impl StandardTargetV1 {
     /// How many targets this filter takes, and how many at least.
     pub(crate) fn counts(self) -> (u8, u8) {
+        if let Some(counts) = crate::eternal_sideboard_s1d_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_sideboard_s1b_v1::targets::counts(self) {
+            return counts;
+        }
         if let Some(counts) = crate::eternal_legacy_e9a_v1::targets::counts(self) {
             return counts;
         }
@@ -414,6 +451,9 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p2c_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_sideboard_s1a_v1::targets::counts(self) {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p1a_v1::targets::counts(self) {
@@ -560,8 +600,10 @@ impl StandardTargetV1 {
                 | Self::ArtifactCardInOwnGraveyardManaValueAtMostV1(_)
                 | Self::CreatureCardInAGraveyardV1
                 | Self::UpToThreeLandCardsInOwnGraveyardV1
-        ) || crate::eternal_vintage_e7b_v1::targets::in_graveyard(self)
+        ) || crate::eternal_sideboard_s1d_v1::targets::in_graveyard(self)
+            || crate::eternal_vintage_e7b_v1::targets::in_graveyard(self)
             || crate::eternal_legacy_e9a_v1::targets::in_graveyard(self)
+            || crate::eternal_sideboard_s1a_v1::targets::in_graveyard(self)
     }
 
     /// Wave E7a's filters (`eternal_legacy_e7a_v1`).
@@ -583,7 +625,9 @@ impl StandardTargetV1 {
             Self::InstantOrSorcerySpellV1
                 | Self::SpellWithSingleTargetV1
                 | Self::TriggeredAbilityOrColorlessSpellV1
-        ) || crate::eternal_vintage_e7b_v1::targets::on_stack(self)
+        ) || crate::eternal_sideboard_s1d_v1::targets::on_stack(self)
+            || crate::eternal_vintage_e7b_v1::targets::on_stack(self)
+            || crate::eternal_sideboard_s1a_v1::targets::on_stack(self)
     }
 }
 
@@ -776,6 +820,9 @@ fn stack_spell_matches(
                 || crate::engine::stack_spell_has_type(state, item, CardType::Sorcery)
         }
         StandardTargetV1::SpellWithSingleTargetV1 => item.targets.len() == 1,
+        StandardTargetV1::EnchantmentInstantOrSorcerySpellV1 => {
+            crate::eternal_sideboard_s1a_v1::targets::spell_matches(state, item)
+        }
         StandardTargetV1::OpponentSpellOrNonlandPermanentV1 => item.controller != controller,
         StandardTargetV1::TriggeredAbilityOrColorlessSpellV1 => {
             // Painter's Servant colors every spell (eternal wave E9a).
@@ -795,6 +842,11 @@ pub(crate) fn legal_targets(
     prefix: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
+    if let Some(targets) =
+        crate::eternal_sideboard_s1d_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
     if let Some(targets) = eternal_e5a_legal_targets(target, controller, prefix, state) {
         return targets;
     }
@@ -809,6 +861,11 @@ pub(crate) fn legal_targets(
     if let Some(targets) = crate::eternal_legacy_e8a_v1::targets::legal_targets(
         target, controller, source, prefix, state,
     ) {
+        return targets;
+    }
+    if let Some(targets) =
+        crate::eternal_sideboard_s1b_v1::targets::legal_targets(target, controller, prefix, state)
+    {
         return targets;
     }
     if let Some(targets) =
@@ -842,7 +899,17 @@ pub(crate) fn legal_targets(
         return targets;
     }
     if let Some(targets) =
+        crate::eternal_sideboard_s1a_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
         crate::eternal_premodern_p1a_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
+        crate::eternal_sideboard_s1c_v1::targets::legal_targets(target, controller, prefix, state)
     {
         return targets;
     }
@@ -1036,7 +1103,17 @@ pub(crate) fn target_matches(
         return false;
     };
     if let Some(matches) =
+        crate::eternal_sideboard_s1d_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
         crate::eternal_vintage_e7b_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
+        crate::eternal_sideboard_s1b_v1::targets::target_matches(target, controller, object, state)
     {
         return matches;
     }
@@ -1077,7 +1154,17 @@ pub(crate) fn target_matches(
         return matches;
     }
     if let Some(matches) =
+        crate::eternal_sideboard_s1a_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
         crate::eternal_premodern_p1a_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
+        crate::eternal_sideboard_s1c_v1::targets::target_matches(target, controller, object, state)
     {
         return matches;
     }
@@ -1281,6 +1368,22 @@ pub(crate) fn target_matches(
         // Answered by `eternal_premodern_p2c_v1::targets` above.
         StandardTargetV1::PlayerThenUpToTwoOfTheirGraveyardCardsV1
         | StandardTargetV1::TwoLandsV1 => false,
+        // Answered by `eternal_sideboard_s1d_v1::targets` above.
+        StandardTargetV1::S1dV1(_) => false,
+        // Answered by `eternal_sideboard_s1c_v1::targets` above.
+        StandardTargetV1::CreatureOrPlaneswalkerManaValueAtMostV1(_)
+        | StandardTargetV1::OpponentCreatureOrEnchantmentV1 => false,
+        // Answered by `eternal_sideboard_s1a_v1::targets` above or, for a
+        // spell on the stack, by `stack_spell_matches`.
+        StandardTargetV1::NoncreatureArtifactOrEnchantmentV1
+        | StandardTargetV1::BlackOrRedPermanentV1
+        | StandardTargetV1::CreaturePowerOrToughnessAtMostOneV1
+        | StandardTargetV1::UpToTwoArtifactsOrEnchantmentsV1
+        | StandardTargetV1::EnchantmentInstantOrSorcerySpellV1
+        | StandardTargetV1::NonbasicLandCardInAGraveyardV1 => false,
+        // Answered by `eternal_sideboard_s1b_v1::targets` above.
+        StandardTargetV1::DividedFourDamageCreaturesV1
+        | StandardTargetV1::ControlledCreatureOrVehicleV1 => false,
     }
 }
 

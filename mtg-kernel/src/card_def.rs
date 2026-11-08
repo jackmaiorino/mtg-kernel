@@ -453,6 +453,13 @@ pub enum Subtype {
     Saproling = 280,
     /// Appended for Premodern wave P2c (Battlefield Scrounger).
     Centaur = 281,
+    /// Appended for the eternal catalog's wave S1b (Gaddock Teeg), with
+    /// stable ids 320 to 339 reserved for that wave.
+    Kithkin = 320,
+    Advisor = 321,
+    /// Appended for the eternal catalog's wave S1d.
+    Rhino = 361,
+    Flagbearer = 362,
 }
 
 impl Subtype {
@@ -835,6 +842,14 @@ impl Subtype {
         Subtype::Saproling,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Centaur,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Kithkin,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Advisor,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Rhino,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Flagbearer,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1078,6 +1093,10 @@ impl Subtype {
             260 => Subtype::Masticore,
             280 => Subtype::Saproling,
             281 => Subtype::Centaur,
+            320 => Subtype::Kithkin,
+            321 => Subtype::Advisor,
+            361 => Subtype::Rhino,
+            362 => Subtype::Flagbearer,
             _ => return None,
         })
     }
@@ -1300,6 +1319,10 @@ impl Subtype {
             Subtype::Masticore => true,
             Subtype::Saproling => true,
             Subtype::Centaur => true,
+            Subtype::Kithkin => true,
+            Subtype::Advisor => true,
+            Subtype::Rhino => true,
+            Subtype::Flagbearer => true,
         }
     }
 
@@ -1407,6 +1430,10 @@ impl Subtype {
                     | Subtype::Masticore
                     | Subtype::Saproling
                     | Subtype::Centaur
+                    | Subtype::Kithkin
+                    | Subtype::Advisor
+                    | Subtype::Rhino
+                    | Subtype::Flagbearer
             )
         {
             return true;
@@ -2378,6 +2405,10 @@ pub enum AltCostCondition {
     /// "If an opponent cast three or more spells this turn" (Mindbreak
     /// Trap). Appended for the eternal catalog.
     OpponentCastThreeSpellsThisTurnV1,
+    /// Ravenous Trap: "If an opponent had three or more cards put into their
+    /// graveyard from anywhere this turn". Appended for the eternal catalog's
+    /// wave S1c.
+    OpponentThreeCardsToGraveyardThisTurnV1,
     /// Dash (702.109): cast from hand for this cost; the permanent gains
     /// haste and returns to its owner's hand at the beginning of the next
     /// end step (Ragavan, `eternal_vintage_e7b_v1`). Appended for the
@@ -2394,6 +2425,9 @@ pub enum AltCostCondition {
     /// "If this spell is the first spell you've cast this game" (Once Upon a
     /// Time, `eternal_legacy_e8a_v1`). Appended for the eternal catalog.
     FirstSpellThisGameV1,
+    /// "If an opponent controls a Plains and you control a Swamp" (Massacre,
+    /// `eternal_sideboard_s1a_v1`). Appended for the eternal catalog.
+    OpponentPlainsYouSwampV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -2815,6 +2849,9 @@ pub enum DynamicCountDef {
     /// One iff there are ten or more creature cards in all graveyards
     /// together (Avatar of Woe). Appended for the eternal catalog.
     TenCreatureCardsInAllGraveyardsV1,
+    /// One iff a chosen spell target is a blue spell on the stack (Mystical
+    /// Dispute). Appended for the eternal catalog's wave S1c.
+    SpellTargetsBlueSpellV1,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at

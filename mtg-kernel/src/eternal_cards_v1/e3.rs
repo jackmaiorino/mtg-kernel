@@ -37,6 +37,8 @@ pub(crate) const THASSAS_ORACLE: &str = "Thassa's Oracle";
 pub(crate) const BRAIN_FREEZE: &str = "Brain Freeze";
 pub(crate) const TENDRILS_OF_AGONY: &str = "Tendrils of Agony";
 pub(crate) const GALVANIC_RELAY: &str = "Galvanic Relay";
+pub(crate) const GRAPESHOT: &str = "Grapeshot";
+pub(crate) const EMPTY_THE_WARRENS: &str = "Empty the Warrens";
 
 /// Per-game state of the E3 cards, inside `EternalStateV1::e3`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -285,6 +287,8 @@ pub enum E3ChoiceKindV1 {
     E8aV1(crate::eternal_legacy_e8a_v1::E8aChoiceV1),
     /// A wave E9b choice (`eternal_e9b_v1`).
     E9bV1(crate::eternal_e9b_v1::E9bChoiceV1),
+    /// A wave S1c choice (`eternal_sideboard_s1c_v1`).
+    S1cV1(crate::eternal_sideboard_s1c_v1::S1cChoiceV1),
     /// A wave E9a choice (`eternal_legacy_e9a_v1`).
     E9aV1(crate::eternal_legacy_e9a_v1::E9aChoiceV1),
     /// A Premodern wave P1b choice (`eternal_premodern_p1b_v1`).
@@ -341,6 +345,9 @@ impl E3ChoiceV1 {
             return kind.chooser_private();
         }
         if let E3ChoiceKindV1::E9bV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
+        if let E3ChoiceKindV1::S1cV1(kind) = &self.kind {
             return kind.chooser_private();
         }
         if let E3ChoiceKindV1::E9aV1(kind) = &self.kind {
@@ -402,6 +409,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E8bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E8aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9bV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::S1cV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P1bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P2aV1(kind) => kind.public_purpose(),
@@ -458,6 +466,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E8bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E8aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9bV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::S1cV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P2aV1(kind) => out.extend(kind.referenced_bindings()),
@@ -768,6 +777,13 @@ pub(crate) fn finish_selection(
         E3ChoiceKindV1::E9bV1(kind) => {
             crate::eternal_e9b_v1::finish_selection(state, continuation, choice, kind, bindings)
         }
+        E3ChoiceKindV1::S1cV1(kind) => crate::eternal_sideboard_s1c_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
     }
 }
 
@@ -1069,6 +1085,15 @@ pub(crate) fn drive(
             crate::eternal_legacy_e8a_v1::drive(state, continuation, op, path)
         }
         EternalOpV1::E9bV1(op) => crate::eternal_e9b_v1::drive(state, continuation, op, path),
+        EternalOpV1::S1dV1(op) => {
+            crate::eternal_sideboard_s1d_v1::drive(state, continuation, op, path)
+        }
+        EternalOpV1::S1cV1(op) => {
+            crate::eternal_sideboard_s1c_v1::drive(state, continuation, op, path)
+        }
+        EternalOpV1::S1bV1(op) => {
+            crate::eternal_sideboard_s1b_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::E9aV1(op) => {
             crate::eternal_legacy_e9a_v1::drive(state, continuation, op, path)
         }
@@ -1843,7 +1868,8 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         THE_ONE_RING => &THE_ONE_RING_TRIGGERS,
         CHROME_MOX => &CHROME_MOX_TRIGGERS,
-        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY => &FLUSTERSTORM_TRIGGERS,
+        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY | GRAPESHOT
+        | EMPTY_THE_WARRENS => &FLUSTERSTORM_TRIGGERS,
         THASSAS_ORACLE => &THASSAS_ORACLE_TRIGGERS,
         EMRAKUL => &EMRAKUL_TRIGGERS,
         ATRAXA => &ATRAXA_TRIGGERS,
@@ -1857,8 +1883,8 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     match name {
         dungeons::ACERERAK => Some(dungeons::trigger_target_spec(effect)),
         THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM | BRAIN_FREEZE
-        | TENDRILS_OF_AGONY | GALVANIC_RELAY | THASSAS_ORACLE | EMRAKUL | ATRAXA
-        | RAPH_AND_MIKEY => Some(TargetSpec::None),
+        | TENDRILS_OF_AGONY | GALVANIC_RELAY | GRAPESHOT | EMPTY_THE_WARRENS | THASSAS_ORACLE
+        | EMRAKUL | ATRAXA | RAPH_AND_MIKEY => Some(TargetSpec::None),
         _ => None,
     }
 }
@@ -2074,6 +2100,8 @@ pub(crate) fn player_targetable(
     !player_protected(state, player)
         // Solitary Confinement: "You have shroud." (Premodern wave P1b)
         && !crate::eternal_premodern_p1b_v1::statics::player_has_shroud(state, player)
+        // Leyline of Sanctity: "You have hexproof." (wave S1b)
+        && (controller == player || !crate::eternal_sideboard_s1b_v1::player_hexproof(state, player))
         && (controller == player
             || active_veils(state, player).next().is_none()
             || !source_blue_or_black(state, source))
@@ -2224,6 +2252,8 @@ pub(crate) fn has_storm(name: &str) -> bool {
         || name == BRAIN_FREEZE
         || name == TENDRILS_OF_AGONY
         || name == GALVANIC_RELAY
+        || name == GRAPESHOT
+        || name == EMPTY_THE_WARRENS
 }
 
 /// Whether a Storm trigger copies a targeted spell, whose copies may choose
@@ -2409,7 +2439,8 @@ pub(crate) fn delayed_triggers(
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     match name {
         CITY_OF_TRAITORS => *effect == sacrifice_source(),
-        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY => {
+        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY | GRAPESHOT
+        | EMPTY_THE_WARRENS => {
             matches!(effect, EffectOp::CreateStormCopies { .. })
         }
         dungeons::ACERERAK => dungeons::delayed_effect_matches(effect),
@@ -2450,6 +2481,10 @@ pub(crate) fn cant_attack(state: &GameState, object: ObjectId) -> bool {
     }
     // Veteran Brawlers (wave P2d).
     if crate::eternal_premodern_p2d_v1::statics::cant_attack(state, object) {
+        return true;
+    }
+    // Light of Day (wave S1c).
+    if crate::eternal_sideboard_s1c_v1::statics::cant_attack(state, object) {
         return true;
     }
     e3(state).is_some_and(|e3| {

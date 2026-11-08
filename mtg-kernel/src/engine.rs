@@ -3893,6 +3893,27 @@ fn legal_targets_for_controller_from_source_unframed(
     source: Option<TargetingSource>,
     state: &GameState,
 ) -> Vec<Target> {
+    #[allow(unused_mut)]
+    let mut legal = legal_targets_unrestricted_v1(spec, targets_chosen, controller, source, state);
+    // Standard Bearer and Coalition Honor Guard: Flagbearers must be chosen.
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1d_v1::statics::restrict_to_flagbearers(
+        state,
+        controller,
+        targets_chosen,
+        target_count(spec) as usize,
+        &mut legal,
+    );
+    legal
+}
+
+fn legal_targets_unrestricted_v1(
+    spec: TargetSpec,
+    targets_chosen: &[Target],
+    controller: PlayerId,
+    source: Option<TargetingSource>,
+    state: &GameState,
+) -> Vec<Target> {
     if spec
         == TargetSpec::StandardV1(
             crate::standard_cards_v1::StandardTargetV1::OneToThreeDistinctAnyTargetsV1,
@@ -7381,6 +7402,8 @@ fn commit_cost_components_from_plan_v1(
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_vintage_e7b_v1::statics::note_discard(state, source);
                 #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_sideboard_s1b_v1::note_discard(state, source);
+                #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_premodern_p1a_v1::note_cycled(state, source);
                 event::propose_and_commit(
                     state,
@@ -7951,6 +7974,14 @@ fn alt_cost_condition_met(
         card_def::AltCostCondition::OpponentCastThreeSpellsThisTurnV1 => {
             state.players[player.opponent().index()].spells_cast_this_turn >= 3
         }
+        // Ravenous Trap (eternal wave S1c).
+        card_def::AltCostCondition::OpponentThreeCardsToGraveyardThisTurnV1 => {
+            cfg!(feature = "eternal-fixtures")
+                && crate::eternal_sideboard_s1c_v1::statics::opponent_cards_to_graveyard_this_turn(
+                    state,
+                    player.opponent(),
+                ) >= 3
+        }
         card_def::AltCostCondition::DashV1 => origin_zone == Zone::Hand,
         // Teamwork's creatures are chosen and checked by the convoke
         // selection (`standard_cast_convoke`).
@@ -7960,6 +7991,12 @@ fn alt_cost_condition_met(
         card_def::AltCostCondition::FirstSpellThisGameV1 => {
             cfg!(feature = "eternal-fixtures")
                 && crate::eternal_legacy_e8a_v1::first_spell_this_game(state, player)
+        }
+        // Massacre: "If an opponent controls a Plains and you control a
+        // Swamp".
+        card_def::AltCostCondition::OpponentPlainsYouSwampV1 => {
+            cfg!(feature = "eternal-fixtures")
+                && crate::eternal_sideboard_s1a_v1::statics::massacre_free(state, player)
         }
         card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
             let subtype_id = subtype.stable_id();
@@ -9003,6 +9040,9 @@ fn spell_cost_generic_modifiers_v1(
             .saturating_add(crate::eternal_premodern_p2d_v1::statics::spell_tax(
                 state, types,
             ))
+            .saturating_add(crate::eternal_sideboard_s1a_v1::statics::spell_tax(
+                state, caster,
+            ))
     } else {
         increase
     };
@@ -9167,6 +9207,19 @@ pub(crate) fn normal_cast_reduction_count(
                     .is_some_and(|object| object.zone == Zone::Battlefield && object.tapped)
             }))
         }
+        card_def::DynamicCountDef::SpellTargetsBlueSpellV1 => {
+            let blue = card_def::mana_color_mask(ManaColor::U);
+            u32::from(targets.iter().any(|target| {
+                let Target::Object(id) = target else {
+                    return false;
+                };
+                state
+                    .objects
+                    .try_get(*id)
+                    .is_some_and(|object| object.zone == Zone::Stack)
+                    && object_color_mask(state, *id) & blue != 0
+            }))
+        }
         card_def::DynamicCountDef::SpellTargetsTappedCreature => {
             u32::from(targets.iter().any(|target| {
                 let Target::Object(id) = target else {
@@ -9212,6 +9265,7 @@ fn normal_cast_cost_depends_on_targets(def: &card_def::CardDef) -> bool {
             reducer.count,
             card_def::DynamicCountDef::SpellTargetsTappedCreature
                 | card_def::DynamicCountDef::SpellTargetsTappedPermanentV1
+                | card_def::DynamicCountDef::SpellTargetsBlueSpellV1
         )
     })
 }
@@ -9929,6 +9983,8 @@ fn maximum_payable_x(
                     state,
                 )
             })
+            // Toxic Deluge: at most the life its caster has (wave S1b).
+            .or_else(|| crate::eternal_sideboard_s1b_v1::life_x_cap(def, pending.controller, state))
             .unwrap_or(u8::MAX);
     let payable = |x| {
         pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
@@ -10148,6 +10204,11 @@ fn is_castable_now(
     // Grafdigger's Cage, and Gaea's Will's missing mana cost.
     #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_legacy_e7a_v1::cast_prohibited(state, player, id) {
+        return false;
+    }
+    // Lavinia, Azorius Renegade (eternal wave S1a).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1a_v1::statics::cast_prohibited(state, player, id, cast_method) {
         return false;
     }
     // Teferi, Time Raveler: an opponent casts spells only at sorcery speed.
@@ -13294,6 +13355,7 @@ fn commit_discarded_cards(state: &mut GameState, chosen: &[ObjectId]) {
     #[cfg(feature = "eternal-fixtures")]
     for &id in chosen {
         crate::eternal_vintage_e7b_v1::statics::note_discard(state, id);
+        crate::eternal_sideboard_s1b_v1::note_discard(state, id);
     }
     // All cards belong to one discard instruction. Capture original hand
     // incarnations and replacement destinations before moving any member.
@@ -14870,7 +14932,18 @@ pub(crate) fn validate_pending_cast(
     } else {
         Some(0)
     };
+    // Bolas's Citadel: a spell cast from the library this way pays life
+    // rather than its mana cost, so its own alternative cost (Force of Will's)
+    // is no choice; `begin_cast_ex` seeds the normal mode for it.
+    let citadel_cast = cfg!(feature = "eternal-fixtures")
+        && pending.origin_zone == Zone::Library
+        && crate::eternal_e5a_v1::permissions::citadel_cast(
+            state,
+            pending.spell,
+            pending.controller,
+        );
     let has_cast_mode_choice = def.alt_cost.is_some()
+        && !citadel_cast
         && (!resolution_cast_v1::free_cast(state, pending.spell)
             || crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Alternative)
                 .is_some());
@@ -21124,6 +21197,13 @@ fn advance_step(state: &mut GameState) {
     if state.step == Step::EndCombat {
         state.engine.combat.reset_preserving_rules();
     }
+    // Stonehorn Dignitary: "target opponent skips their next combat phase."
+    #[cfg(feature = "eternal-fixtures")]
+    if next == Step::BeginCombat
+        && crate::eternal_sideboard_s1d_v1::statics::take_combat_skip(state, state.active_player)
+    {
+        next = Step::Main2;
+    }
     // Solitary Confinement: "Skip your draw step." (Premodern wave P1b)
     #[cfg(feature = "eternal-fixtures")]
     if next == Step::Draw
@@ -21966,6 +22046,13 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
     {
         return true;
     }
+    // Liquimetal Coating: "becomes an artifact in addition to its other
+    // types" (wave S1b).
+    #[cfg(feature = "eternal-fixtures")]
+    if card_type == CardType::Artifact && crate::eternal_sideboard_s1b_v1::artifact_added(state, id)
+    {
+        return true;
+    }
     if crate::standard_cards_v1::kaito_is_creature(state, id) {
         return card_type == CardType::Creature;
     }
@@ -22380,6 +22467,11 @@ fn checked_effective_stat(
             state, id,
         )))?;
     }
+    // Dread of Night: "White creatures get -1/-1." (eternal wave S1a)
+    #[cfg(feature = "eternal-fixtures")]
+    add(i128::from(
+        crate::eternal_sideboard_s1a_v1::statics::pt_modifier(state, id),
+    ))?;
     #[cfg(feature = "standard-magezero-fixtures")]
     {
         add(crate::standard_keywords_v1::controlled_forest_boost(
@@ -23543,6 +23635,17 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_legacy_e7a_v1::is_extra_forest(state, id) {
         subtype_ids.push(card_def::Subtype::Forest.stable_id());
+    }
+    // Navigator's Compass: a basic land type in addition to the others.
+    #[cfg(feature = "eternal-fixtures")]
+    for subtype in crate::eternal_sideboard_s1d_v1::statics::extra_land_types(state, id) {
+        subtype_ids.push(subtype.stable_id());
+    }
+    // Urborg, Tomb of Yawgmoth: "Each land is a Swamp in addition to its
+    // other land types." (eternal wave S1c)
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1c_v1::statics::is_extra_swamp(state, id) {
+        subtype_ids.push(card_def::Subtype::Swamp.stable_id());
     }
     subtype_ids.sort_unstable();
     if crate::continuous_characteristics_v1::land_type_timestamp(state, id).is_some()
@@ -28157,6 +28260,14 @@ fn finalize_owned_cast(
         payment.restricted_pool_used(),
     );
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
+    // Lavinia, Azorius Renegade: a spell cast with no mana spent.
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1a_v1::statics::note_mana_spent(
+        state,
+        pending.spell,
+        pending.controller,
+        mana_spent,
+    );
     let greatwurm_payment_v1 = greatwurm_cast_v1::record_paid(state, greatwurm_payment_input)?;
     let sphinx_lore_cast_v1 = sphinx_lore_cast_v1::record_finalized(state, &pending)?;
     let omniscience_cast_v1 = omniscience_cast_v1::record_finalized(state, &pending)?;
@@ -28356,6 +28467,14 @@ fn finalize_owned_cast(
     crate::extra_turn_v1::record_publication(state, stack_item_id);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::e3::note_cast(state, stack_item_id);
+    // Toxic Deluge: "As an additional cost to cast this spell, pay X life."
+    #[cfg(feature = "eternal-fixtures")]
+    if x_value > 0 && crate::eternal_sideboard_s1b_v1::pays_life_for_x(def) {
+        event::propose_and_commit(
+            state,
+            ProposedEvent::life_loss(pending.controller, i32::from(x_value)),
+        );
+    }
     crate::faebloom_trick_v43::publish_spell(state, stack_item_id)?;
     crate::fake_your_own_death_v50::spell_custody::publish_spell(state, stack_item_id)?;
     if matches!(
@@ -29017,6 +29136,11 @@ fn push_paid_activation(
             pending.ability_index,
         );
         crate::eternal_premodern_p2a_v1::statics::activation_paid(
+            state,
+            pending.source,
+            pending.ability_index,
+        );
+        crate::eternal_sideboard_s1d_v1::statics::activation_paid(
             state,
             pending.source,
             pending.ability_index,

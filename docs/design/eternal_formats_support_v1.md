@@ -404,6 +404,124 @@ New, each built once in the first wave that needs it:
   `E3ChoiceKindV1::E9aV1`. Tolaria's banding loss changes nothing: no card here has
   banding.
 
+- S1a, built in `src/eternal_sideboard_s1a_v1.rs` (with `statics` and `targets` submodules)
+  and `build_eternal_s1a_v1.rs`, linked late in the recipe chains (before S1b and E9b): Legacy
+  sideboard cards. Rest in Peace, Leyline of the Void and Containment Priest join the zone-change
+  replacement hook Dauthi Voidwalker uses (exile instead of a graveyard; exile a nontoken
+  creature entering from anywhere but the stack). Leyline's opening-hand permission is offered
+  as the first upkeep begins, as Chancellor of the Annex's reveal is. Disruptor Flute names a
+  card as Anointed Peacekeeper does: spells with the name cost {3} more (own-spell increase) and
+  its non-mana activated abilities are prohibited like Pithing Needle's. Choke is an untap-step
+  prohibition, Defense Grid a spell tax by the caster's turn, Dread of Night a power/toughness
+  modifier. Mass effects (Rough // Tumble, a split card through the Adventure form; Brotherhood's
+  End; Meltdown; Serenity; Massacre's -2/-2 on exact incarnations) are `S1aOpV1` leaves, and
+  Massacre adds `AltCostCondition::OpponentPlainsYouSwampV1`. Lavinia's cast restriction is a
+  cast prohibition (X judged as 0), and her counter reads the mana a cast spent
+  (`payment.commit`), recorded only while she is in play. Carpet of Flowers is queued by the
+  main-phase hook as a choice of color and amount, clamped to the Islands at resolution.
+  Surgical Extraction exiles every same-named card of the owner's graveyard, hand and library
+  and shuffles. New target shapes: noncreature artifact or enchantment, black or red permanent,
+  creature with power or toughness 1 or less, up to two artifacts and/or enchantments, an
+  enchantment, instant or sorcery spell, and a non-basic-land card in a graveyard.
+
+  Known gaps: Surgical Extraction's "any number" always takes every match. Lavinia judges X
+  as 0 and does not restrict casts made during resolution. Left out of the wave: Damping
+  Sphere (its land replacement spans the mana planner and every mana yield path), Collective
+  Brutality (escalate), Stronghold Gambit, Alpine Moon, Ghost Vacuum, Drop of Honey, Triumph
+  of Saint Katherine (miracle is Terminus-only and its cost needs generic mana) and From the
+  Ashes.
+- S1b, built in `src/eternal_sideboard_s1b_v1.rs` (with a `targets` submodule) and
+  `build_eternal_s1b_v1.rs`, linked last in the recipe chains (after S1a, before E9b; E6a's
+  kicker cost after S1d; E7a's alternative and ward costs): 26 of the 37 remaining Legacy
+  sideboard cards, the ones whose programs fit the existing primitives. Storm gains Grapeshot and Empty the Warrens
+  (E3's list) and dredge gains Shenanigans (E7b's table). Toxic Deluge's "pay X life" is
+  announced like Sickening Dreams' discard count (X up to the caster's life) and the life is
+  paid as the cast completes. Stony Silence reuses Null Rod's activation prohibition, and
+  Metallic Rebuke joins Kappa Cannoneer's improvise. Deafening Silence counts noncreature
+  spells per player and turn in module state (spells cast before it entered count);
+  Gaddock Teeg (new Kithkin and Advisor subtypes, stable ids 320 and 321), Meddling Mage and
+  Deafening Silence add to the E7a cast prohibition hook. Meddling Mage names a nonland card as
+  its resolving creature spell enters (Anointed Peacekeeper's letter, then name choice), so a
+  Mage that enters any other way names nothing. Sailors' Bane's reduction joins the spell cost
+  reductions of E8b and P1a. Temporary Lockdown and Perilous Snare use the linked "until this
+  leaves" exile (Lockdown records one link per exiled permanent). Perilous Snare starts the
+  Standard speed designation and its counter ability is gated to speed 4 by the activation
+  restriction hook. Tourach, Dread Cantor sees opponents' discards through the E7b discard
+  hook, its kicker uses E6a's kicker table, and protection from white joins the printed
+  protection mask. Extirpate's split second joins Legolas's Quick Reflexes' check. Leyline of
+  Sanctity is offered from an opening hand as the first upkeep begins (Chancellor of the
+  Annex's shape) and gives its controller hexproof through the E3 player targeting check.
+  Engineered Explosives records the colors its cast spent (Prismatic Ending's hook) as its
+  sunburst charge counters and keeps the count for the sacrificed incarnation's ability.
+  Liquimetal Coating records permanents that are artifacts this turn; the effective type
+  check reads it. New target filters: four-point divided damage among creatures (Pyrokinesis)
+  and a creature or Vehicle you control (Perilous Snare); Stern Dismissal and Extirpate use
+  S1c's and S1a's filters.
+  Not in this wave: Mycosynth Lattice (mana of any color needs a payment-planner change),
+  Extinguisher Battleship (station), Cityscape Leveler (unearth, Powerstone), Invasion
+  Submersible (waterbend, exhaust), Summon: Bahamut, Keen-Eyed Curator, Outland Liberator
+  (day and night), Fiery Confluence (choose three with repeats and per-instance targets),
+  Kiora's Dismissal (strive), Eowyn (a target filter that reads the source's power) and
+  Unlicensed Hearse (a single-graveyard target filter).
+- S1c (issue #365, Vintage-only sideboard cards), built in `src/eternal_sideboard_s1c_v1.rs`
+  (with a `targets` submodule) and `build_eternal_s1c_v1.rs`, linked late in the recipe
+  chains (after E8a and S1d, before S1a, S1b and E9b). Bounce-all (Hurkyl's Recall, Rebuild with
+  its cycling), Virtue's Ruin's destroy-all, Feed the Swarm's life loss (the destroyed
+  permanent's mana value), Lithomantic Barrage's 5 damage to a white and/or blue target,
+  Dark Petition's spell mastery mana and Wurmcoil Engine's two tokens (deathtouch and
+  lifelink Wurms) are module leaves. Spell Snare is a mana value 2 spell target; Mystical
+  Dispute's {2} reduction is `DynamicCountDef::SpellTargetsBlueSpellV1`; Snapback reuses
+  the blue-card exile alternative cost; Ravenous Trap adds
+  `AltCostCondition::OpponentThreeCardsToGraveyardThisTurnV1`, which counts the
+  opponent's cards moved to a graveyard since the last upkeep began. New target shapes
+  (`StandardTargetV1`): a creature or planeswalker with mana value N or less (Long
+  Goodbye) and a creature or enchantment an opponent controls (Feed the Swarm). Light of
+  Day's attack and block ban are engine hooks, Urborg extends Yavimaya's extra land type
+  and mana ability to Swamps, and Sphinx of the Steel Wind adds protection from red and
+  green to the color protection mask. Hullbreacher replaces an opponent's draw (except
+  their first draw step draw, tracked by Bowmasters' draw step marker) with a Treasure for
+  its controller in `propose_and_commit_inner`. Argentum Masticore's upkeep trigger is
+  two selections (`E3ChoiceKindV1::S1cV1`): the card to discard (or none, sacrificing
+  it), then the reflexive destroy target among the opponent's nonland permanents with
+  mana value at most the discarded card's; it shares Stonecoil Serpent's protection from
+  multicolored and uses the Masticore creature type (stable id 260 from P2b). Not in this wave:
+  Archon of Absolution and Overencumbered (attack costs and taxes have no engine path),
+  Azure Beastbinder, Unable to Scream and Suspend (timed or aura-based ability removal
+  with new characteristics), Apostle's Blessing (protection from artifacts), Sickening
+  Shoal (X tied to an exiled card), Darksteel Angel (cannot lose the game) and Portal to
+  Phyrexia (subtype grant on reanimation).
+  Known gap: Hullbreacher replaces a draw before dredge can, so the drawing player does
+  not choose the order of the two replacements.
+- S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
+  `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
+  S1c, S1a, S1b and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload
+  (Vandalblast, Electrickery) is the Adventure form of the card that split cards
+  use, cast from hand with the overload cost, sending the card to the graveyard,
+  with no targets and the printed mana value on the stack (118.9c). Circle of
+  Protection: Blue offers a choice among the blue objects in the public zones and
+  records a shield (source incarnation, player, turn) that the damage replacement
+  pass uses up. Flagbearer (Standard Bearer, Coalition Honor Guard) filters the
+  legal targets of the last target slot of a spell or ability being announced
+  against the opponent of the Flagbearer's controller. Stonehorn Dignitary's skip
+  is a pending flag the step machine reads as the combat phase would begin.
+  Spreading Seas joins wave E8a's land-type setter (the enchanted land is an
+  Island and loses its other land types and abilities); Navigator's Compass adds
+  a land type and its mana ability until end of turn, the way Yavimaya does for
+  Forests. Waterbend is an option list (tap an artifact or creature, or pay the
+  rest with mana) that offers only completable branches. Martyr of Sands is one
+  ability per X from 1 to 10, offered when the hand holds X white cards, which are
+  revealed as the ability is put on the stack. Call Damage Control is one spell
+  with up to two target cards of different types from the graveyard (artifact,
+  creature, enchantment or land), each returned independently. New target shapes
+  are `StandardTargetV1::S1dV1`. Rhino and Flagbearer use new stable ids 361 and 362;
+  Nylea's Disciple uses Centaur's existing stable id 281 from P2c.
+  Known gaps: Martyr of Sands reveals the first X white cards of the hand rather
+  than a chosen set; Flagbearer's restriction is exact for single-target spells
+  and abilities and, for several targets, applies only to the last slot; a spell
+  cast from the graveyard or by a free cast cannot be overloaded (Overload is an
+  alternative cost); Circle of Protection: Blue cannot name a source in a hand or
+  a library; policy observation v5 does not show the shields.
+
 ## Card contract and verification
 
 Each card follows the existing contract: `engine_capability` Full only when every
@@ -493,6 +611,16 @@ picks two different names one at a time and the opponent picks between them by i
 Limited reply includes `outside_game_options` for the chooser in effect-option order. The
 opponent's Extrapolate menu lists the two revealed card definitions, and the other sideboard
 cards remain private.
+
+S1 progress (census after each wave; full 75 share, then missing sideboard cards):
+
+| Wave | Cards | Pauper | Legacy | Vintage |
+| --- | ---: | --- | --- | --- |
+| Baseline | | 45.5%, 32 | 5.9%, 69 | 0.7%, 36 |
+| S1d (Pauper) | 31 | 94.9%, 1 | 5.9%, 69 | 0.7%, 36 |
+| S1c (Vintage) | 17 | 94.9%, 1 | 5.9%, 69 | 5.9%, 19 |
+| S1a (Legacy) | 24 | 95.2%, 0 | 46.0%, 46 | 25.7%, 14 |
+| S1b (Legacy) | 26 | 95.2%, 0 | 52.7%, 20 | 44.3%, 10 |
 
 ## Execution
 

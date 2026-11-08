@@ -42,6 +42,14 @@ mod eternal_premodern_p2c_v1;
 mod eternal_premodern_p2d_v1;
 #[path = "eternal/eternal_public_shroud_v1.rs"]
 mod eternal_public_shroud_v1;
+#[path = "eternal/eternal_sideboard_s1a_v1.rs"]
+mod eternal_sideboard_s1a_v1;
+#[path = "eternal/eternal_sideboard_s1b_v1.rs"]
+mod eternal_sideboard_s1b_v1;
+#[path = "eternal/eternal_sideboard_s1c_v1.rs"]
+mod eternal_sideboard_s1c_v1;
+#[path = "eternal/eternal_sideboard_s1d_v1.rs"]
+mod eternal_sideboard_s1d_v1;
 #[path = "eternal/eternal_vintage_e4_v1.rs"]
 mod eternal_vintage_e4_v1;
 #[path = "eternal/eternal_vintage_e4b_v1.rs"]

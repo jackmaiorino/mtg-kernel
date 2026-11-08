@@ -2850,6 +2850,13 @@ pub fn apply_replacements(
         if !damage_cannot_be_prevented && crate::crystal_barricade_v1::prevents(state, damage) {
             return None;
         }
+        // Circle of Protection: Blue (wave S1d).
+        #[cfg(feature = "eternal-fixtures")]
+        if !damage_cannot_be_prevented
+            && crate::eternal_sideboard_s1d_v1::statics::consume_circle_shield(state, damage)
+        {
+            return None;
+        }
         // Moment's Peace, Ethereal Haze and Tangle.
         #[cfg(feature = "eternal-fixtures")]
         if !damage_cannot_be_prevented
@@ -3757,6 +3764,17 @@ pub(crate) fn propose_and_commit_crystal_life_gain_owned(
 fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
     if crate::effect::temporary_control_v1::authority::validate(state).is_err() {
         return;
+    }
+    // Hullbreacher: an opponent's draw (other than the first of their draw
+    // step) becomes a Treasure token for its controller (eternal wave S1c).
+    #[cfg(feature = "eternal-fixtures")]
+    if let ProposedEvent::Draw(draw) = &event {
+        if let Some(owner) =
+            crate::eternal_sideboard_s1c_v1::statics::hullbreacher_replaces_draw(state, draw.player)
+        {
+            crate::eternal_sideboard_s1c_v1::statics::create_treasure(state, owner);
+            return;
+        }
     }
     if matches!(&event,ProposedEvent::CreateToken(t) if !crate::doubling_season_v48::sources(state,t.controller).is_empty())
     {
@@ -5279,6 +5297,9 @@ fn materialize_event_v1(
             // Dauthi Voidwalker exiles instead, with a void counter.
             #[cfg(feature = "eternal-fixtures")]
             crate::eternal_e9b_v1::replace_zone_change(state, &mut z, !mode.is_scene());
+            // Rest in Peace, Leyline of the Void and Containment Priest.
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_sideboard_s1a_v1::statics::replace_zone_change(state, &mut z);
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
             let from = state.objects.get(z.object).zone;

@@ -310,6 +310,18 @@ pub(crate) fn katilda_mana_colors(
                 colors.push(color);
             }
         }
+        // Navigator's Compass (wave S1d).
+        for color in crate::eternal_sideboard_s1d_v1::statics::granted_mana_colors(state, object) {
+            if !colors.contains(&color) {
+                colors.push(color);
+            }
+        }
+        // Urborg, Tomb of Yawgmoth's Swamps (wave S1c).
+        for color in crate::eternal_sideboard_s1c_v1::statics::granted_mana_colors(state, object) {
+            if !colors.contains(&color) {
+                colors.push(color);
+            }
+        }
         // Harbinger of the Seas' Islands; Valgavoth's Lair's chosen color.
         for color in crate::eternal_legacy_e8a_v1::statics::granted_mana_colors(state, object) {
             if !colors.contains(&color) {

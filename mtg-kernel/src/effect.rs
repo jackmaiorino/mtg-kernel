@@ -12735,7 +12735,10 @@ pub(crate) fn resumable_program_supported(op: &EffectOp) -> bool {
 
 /// Regeneration (wave E7b): the objects of a destroy that regenerate
 /// instead are left out of it.
-fn without_regenerated_v1(state: &mut GameState, objects: Vec<ObjectId>) -> Vec<ObjectId> {
+pub(crate) fn without_regenerated_v1(
+    state: &mut GameState,
+    objects: Vec<ObjectId>,
+) -> Vec<ObjectId> {
     if !cfg!(feature = "eternal-fixtures") {
         return objects;
     }
@@ -18390,6 +18393,8 @@ pub(crate) fn battlefield_exile_until_source_leaves(card_def: u16) -> bool {
             | "Portable Hole"
             | "Leyline Binding"
             | "Static Prison"
+            | "Temporary Lockdown"
+            | "Perilous Snare"
     )
 }
 

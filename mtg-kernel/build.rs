@@ -38,6 +38,10 @@ mod build_eternal_p2a_v1;
 mod build_eternal_p2b_v1;
 mod build_eternal_p2c_v1;
 mod build_eternal_p2d_v1;
+mod build_eternal_s1a_v1;
+mod build_eternal_s1b_v1;
+mod build_eternal_s1c_v1;
+mod build_eternal_s1d_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
 mod build_standard_v1;
@@ -2862,6 +2866,8 @@ enum StackSpellFilter {
     Creature,
     /// "Target spell with mana value 1" (Mental Misstep).
     ManaValueOneV1,
+    /// "Target spell with mana value 2" (Spell Snare).
+    ManaValueTwoV1,
 }
 
 impl MillPlayer {
@@ -2884,6 +2890,7 @@ impl StackSpellFilter {
             StackSpellFilter::Artifact => "artifact",
             StackSpellFilter::Creature => "creature",
             StackSpellFilter::ManaValueOneV1 => "mana_value_1",
+            StackSpellFilter::ManaValueTwoV1 => "mana_value_2",
         }
     }
 
@@ -2899,6 +2906,7 @@ impl StackSpellFilter {
             StackSpellFilter::Artifact => "TargetSpec::ArtifactSpellOnStack",
             StackSpellFilter::Creature => "TargetSpec::CreatureSpellOnStack",
             StackSpellFilter::ManaValueOneV1 => "TargetSpec::SpellWithManaValueV1(1)",
+            StackSpellFilter::ManaValueTwoV1 => "TargetSpec::SpellWithManaValueV1(2)",
         }
     }
 }
@@ -4956,7 +4964,10 @@ fn alt_cost_for(name: &str) -> &'static str {
         "Overlord of the Mistmoors" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::W), Pip::Colored(ManaColor::W)], generic: 2, x_count: 0 })], condition: AltCostCondition::ImpendingFromHand { time_counters: 4 } })",
         "Nova Hellkite" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 2, x_count: 0 })], condition: AltCostCondition::WarpFromHand })",
         _ => match build_standard_v1::alt_cost_for(name) {
-            "None" => build_eternal_v1::alt_cost_for(name),
+            "None" => match build_eternal_s1d_v1::alt_cost_for(name) {
+                "None" => build_eternal_v1::alt_cost_for(name),
+                alt => alt,
+            },
             alt => alt,
         },
     }
@@ -5117,7 +5128,14 @@ fn escape_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => build_eternal_v1::escape_for(name),
+        _ => {
+            let s1d = build_eternal_s1d_v1::escape_for(name);
+            if s1d == "None" {
+                build_eternal_v1::escape_for(name)
+            } else {
+                s1d
+            }
+        }
     }
 }
 
@@ -7213,7 +7231,10 @@ fn adventure_for(name: &str) -> String {
         "Fang Dragon" => {
             "Some(AdventureDef { name: \"Forktail Sweep\", cost: Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 1, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: ability_effect_damage_all_creatures_opponent_controlled_1 })".to_string()
         }
-        _ => build_eternal_p2c_v1::adventure_for(name),
+        _ => match build_eternal_s1d_v1::adventure_for(name) {
+            "None" => build_eternal_p2c_v1::adventure_for(name),
+            adventure => adventure.to_string(),
+        },
     }
 }
 
@@ -7236,7 +7257,8 @@ fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
             amount: 1,
             filter: CreatureEffectFilterRecipe::OpponentControlled,
         }),
-        _ => build_eternal_p2c_v1::adventure_effect_recipe_for(name),
+        _ => build_eternal_s1d_v1::adventure_effect_recipe_for(name)
+            .or_else(|| build_eternal_p2c_v1::adventure_effect_recipe_for(name)),
     }
 }
 
@@ -7250,7 +7272,8 @@ fn adventure_face_name_for(name: &str) -> Option<&'static str> {
         "Imodane's Recruiter" => Some("Train Troops"),
         "Virtue of Loyalty" => Some("Ardenvale Fealty"),
         "Fang Dragon" => Some("Forktail Sweep"),
-        _ => build_eternal_p2c_v1::adventure_face_name_for(name),
+        _ => build_eternal_s1d_v1::adventure_face_name_for(name)
+            .or_else(|| build_eternal_p2c_v1::adventure_face_name_for(name)),
     }
 }
 
@@ -7394,7 +7417,10 @@ fn attachment_for(name: &str) -> &'static str {
         "Monster Role Token" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::TRAMPLE, per_controlled_subtype: None }))",
         "Zoetic Glyph" => "Some(AttachmentDef::AuraArtifactAnimation(AnimationDef { power:5, toughness:4, artifact:false, colors:&[], subtypes:&[Subtype::Golem], keywords:Keywords::NONE, until_end_of_turn:false }))",
         "Blanchwood Armor" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::NONE, per_controlled_subtype: Some(Subtype::Forest) }))",
-        _ => build_eternal_e6a_v1::attachment_for(name),
+        _ => match build_eternal_s1d_v1::attachment_for(name) {
+            "None" => build_eternal_e6a_v1::attachment_for(name),
+            attachment => attachment,
+        },
     }
 }
 
@@ -11542,6 +11568,10 @@ fn subtype_variant(t: &str) -> &'static str {
         "Masticore" => "Subtype::Masticore",
         "Saproling" => "Subtype::Saproling",
         "Centaur" => "Subtype::Centaur",
+        "Kithkin" => "Subtype::Kithkin",
+        "Advisor" => "Subtype::Advisor",
+        "Rhino" => "Subtype::Rhino",
+        "Flagbearer" => "Subtype::Flagbearer",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",
