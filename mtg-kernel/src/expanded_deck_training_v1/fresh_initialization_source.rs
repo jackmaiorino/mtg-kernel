@@ -383,6 +383,10 @@ pub(super) fn read_actual_in_v1(
         metadata.is_file() && metadata.len() <= cap as u64,
         "fresh input is not a bounded regular file",
     )?;
+    // Resident reads (`verified_bytes_cache_v1`).
+    if let Some(held) = cache.resident_bytes_v1(&pin.path, &pin.sha256, metadata.len()) {
+        return Ok(held.as_ref().clone());
+    }
     let mut bytes = Vec::new();
     file.take(cap as u64 + 1)
         .read_to_end(&mut bytes)

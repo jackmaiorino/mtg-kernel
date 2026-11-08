@@ -42,11 +42,30 @@ use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 const SCHEMA: &str = "mtg-kernel-native-expanded-training-run/v1";
 const SMALL_CAP: u64 = 16 * 1024 * 1024;
 const ARTIFACT_CAP: u64 = 512 * 1024 * 1024;
+
+/// How a run's process rereads files it already verified (`verified_reads`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VerifiedReadsV1 {
+    /// Every read reads the file in full (the default; never serialized).
+    #[default]
+    Reread,
+    /// Resident reads (`verified_bytes_cache_v1`).
+    Resident,
+}
+
+impl VerifiedReadsV1 {
+    /// The serde skip predicate: absence and an explicit `"reread"` share bytes.
+    pub fn is_reread(&self) -> bool {
+        matches!(self, Self::Reread)
+    }
+}
 
 fn default_collection_workers() -> usize {
     1
@@ -403,6 +422,15 @@ pub struct NativeExpandedTrainingRunV1 {
         skip_serializing_if = "crate::expanded_deck_training_v1::RecordEnvelopeV1::is_none"
     )]
     pub record_envelope: crate::expanded_deck_training_v1::RecordEnvelopeV1,
+    /// Config-driven; absent means `reread`, which is never serialized, so
+    /// every existing config keeps its wire bytes and its run identity.
+    /// `"resident"` turns on resident reads for this process
+    /// (`verified_bytes_cache_v1`): bytes it already verified against a pin
+    /// are reused instead of reread, and publications keep only their
+    /// bracketing readbacks. Every state and every published byte is the
+    /// same; it moves less memory traffic per update.
+    #[serde(default, skip_serializing_if = "VerifiedReadsV1::is_reread")]
+    pub verified_reads: VerifiedReadsV1,
     /// Config-driven; default `TerminalReinforceValueV3` keeps every
     /// existing config, its wire bytes, and its run identity byte-identical.
     /// See `ExpandedLossSelectionV1`.
@@ -879,10 +907,16 @@ fn verify_pin_in_v1(
     pin: &PinnedFileV1,
 ) -> Result<(), String> {
     let mut file = File::open(&pin.path).map_err(err)?;
-    check(
-        file.metadata().map_err(err)?.is_file(),
-        "pinned artifact is not a file",
-    )?;
+    let metadata = file.metadata().map_err(err)?;
+    check(metadata.is_file(), "pinned artifact is not a file")?;
+    // Resident reads: held verified bytes of the file's exact length stand
+    // for the read (`verified_bytes_cache_v1`).
+    if cache
+        .resident_bytes_v1(&pin.path, &pin.sha256, metadata.len())
+        .is_some_and(|held| held.len() as u64 <= ARTIFACT_CAP)
+    {
+        return Ok(());
+    }
     let held = cache.held_v1(&pin.path, &pin.sha256);
     verify_pin_stream_v1(&mut file, held.as_deref().map(Vec::as_slice), &pin.sha256)?;
     Ok(())
@@ -948,15 +982,29 @@ fn read_pin(pin: &PinnedFileV1) -> Result<Value, String> {
 }
 /// A sealed record (`record_envelope_v1`) is parsed from its opened bytes.
 fn read_pin_bounded(pin: &PinnedFileV1, cap: u64) -> Result<Value, String> {
-    let bytes = read_pin_bounded_bytes(pin, cap)?;
+    let bytes = read_pin_bounded_shared_v1(pin, cap)?;
     let record = crate::expanded_deck_training_v1::record_envelope_v1::open_v1(&bytes, cap)?;
     serde_json::from_slice(&record).map_err(err)
 }
-/// `read_pin_bounded`'s checks, returning the verified bytes.
-fn read_pin_bounded_bytes(pin: &PinnedFileV1, cap: u64) -> Result<Vec<u8>, String> {
-    read_pin_bounded_bytes_in_v1(verified_bytes_cache_v1::global_v1(), pin, cap)
+/// `read_pin_bounded`'s checks, returning the verified bytes as shared bytes:
+/// with resident reads on and the pin's bytes held, the held allocation
+/// itself (no copy); otherwise a full read (`read_pin_bounded_bytes_in_v1`).
+fn read_pin_bounded_shared_v1(pin: &PinnedFileV1, cap: u64) -> Result<Arc<Vec<u8>>, String> {
+    let cache = verified_bytes_cache_v1::global_v1();
+    if cache.resident_v1() {
+        let file = File::open(&pin.path).map_err(err)?;
+        let meta = file.metadata().map_err(err)?;
+        check(
+            meta.is_file() && meta.len() <= cap,
+            "artifact is not a bounded regular file",
+        )?;
+        if let Some(held) = cache.resident_bytes_v1(&pin.path, &pin.sha256, meta.len()) {
+            return Ok(held);
+        }
+    }
+    read_pin_bounded_bytes_in_v1(cache, pin, cap).map(Arc::new)
 }
-/// `read_pin_bounded_bytes` against the verified-bytes cache `cache`.
+/// `read_pin_bounded`'s full read against the verified-bytes cache `cache`.
 fn read_pin_bounded_bytes_in_v1(
     cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
     pin: &PinnedFileV1,
@@ -968,6 +1016,10 @@ fn read_pin_bounded_bytes_in_v1(
         meta.is_file() && meta.len() <= cap,
         "artifact is not a bounded regular file",
     )?;
+    // Resident reads (`verified_bytes_cache_v1`).
+    if let Some(held) = cache.resident_bytes_v1(&pin.path, &pin.sha256, meta.len()) {
+        return Ok(held.as_ref().clone());
+    }
     let mut bytes = Vec::with_capacity(meta.len() as usize);
     file.take(cap + 1).read_to_end(&mut bytes).map_err(err)?;
     check(bytes.len() as u64 <= cap, "artifact grew beyond bound")?;
@@ -1209,7 +1261,7 @@ fn validate_collection_episodes_with_sampler_v1(
             .zip(&admitted)
             .map(|(trajectory, admitted)| {
                 scope.spawn(move || -> Result<CollectionTrajectoryFieldsV1, String> {
-                    let bytes = read_pin_bounded_bytes(trajectory, ARTIFACT_CAP)?;
+                    let bytes = read_pin_bounded_shared_v1(trajectory, ARTIFACT_CAP)?;
                     admitted.check_v1(&bytes)?;
                     match take_collection_fields_v1(&trajectory.sha256, &bytes) {
                         Some(fields) => {
@@ -1699,6 +1751,9 @@ pub fn run_native_expanded_training_v1(
 ) -> Result<Value, String> {
     config.validate_v1()?;
     config.update_backend.require_compiled_v1()?;
+    if config.verified_reads == VerifiedReadsV1::Resident {
+        verified_bytes_cache_v1::global_v1().enable_resident_v1();
+    }
     // Masked runs compare every update's frozen digest with the initial source's.
     let line_b_frozen_sha256 = config
         .line_b
@@ -2338,6 +2393,7 @@ mod tests {
             }],
             record_format: Default::default(),
             record_envelope: Default::default(),
+            verified_reads: Default::default(),
             learning_rate: 0.00001,
             value_coefficient: 0.5,
             update_backend: ExpandedUpdateBackendV1::Cpu,
@@ -2626,6 +2682,165 @@ mod tests {
                 .unwrap_err()
                 .contains("record_envelope requires parallel collection"));
         }
+    }
+
+    #[test]
+    fn verified_reads_default_preserves_the_config_wire() {
+        let default = schedule();
+        assert!(default.verified_reads.is_reread());
+        let default_value = value(&default).unwrap();
+        assert!(default_value.get("verified_reads").is_none());
+        let mut explicit = default.clone();
+        explicit.verified_reads = VerifiedReadsV1::Resident;
+        let explicit_value = value(&explicit).unwrap();
+        assert_eq!(explicit_value["verified_reads"], "resident");
+        assert_ne!(identity(&explicit).unwrap(), identity(&default).unwrap());
+        let mut stripped = explicit_value.clone();
+        stripped.as_object_mut().unwrap().remove("verified_reads");
+        assert_eq!(stripped, default_value);
+        let mut reread = explicit_value.clone();
+        reread["verified_reads"] = json!("reread");
+        let parsed: NativeExpandedTrainingRunV1 = serde_json::from_value(reread).unwrap();
+        assert_eq!(value(&parsed).unwrap(), default_value);
+        let mut unknown = explicit_value;
+        unknown["verified_reads"] = json!("trusted");
+        assert!(serde_json::from_value::<NativeExpandedTrainingRunV1>(unknown).is_err());
+    }
+
+    const RESIDENT_READS_CHILD_ENV_V1: &str = "MTG_KERNEL_RESIDENT_READS_CHILD_V1";
+
+    /// Resident reads change memory traffic and nothing else. The mode is a
+    /// process switch that only turns on, so the comparison runs in a child
+    /// process (`resident_reads_child_v1`), never beside other tests.
+    #[test]
+    fn resident_reads_run_keeps_every_state_and_byte() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "native_expanded_training_run_v1::tests::resident_reads_child_v1",
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(RESIDENT_READS_CHILD_ENV_V1, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "child failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// The child of `resident_reads_run_keeps_every_state_and_byte`: a plain
+    /// parallel run, then the same run with resident reads (partial, resumed,
+    /// then revalidated as complete) in the same process. Every iteration
+    /// reaches the same states and update records, every trajectory holds the
+    /// same decisions (iteration 0's the same bytes), every checkpoint the same
+    /// tensors. Skipped unless the parent set its environment variable.
+    #[test]
+    #[ignore = "run by resident_reads_run_keeps_every_state_and_byte in a child process"]
+    fn resident_reads_child_v1() {
+        use crate::expanded_deck_training_v1::checkpoint_container_v1::parse_checkpoint_v1;
+        if std::env::var(RESIDENT_READS_CHILD_ENV_V1).as_deref() != Ok("1") {
+            return;
+        }
+        let plain = parallel_two_iteration_config_v1("resident");
+        let mut resident = plain.clone();
+        resident.verified_reads = VerifiedReadsV1::Resident;
+        resident.output_directory = plain.output_directory.with_file_name("run-resident");
+        let _ = fs::remove_dir_all(&plain.output_directory);
+        let _ = fs::remove_dir_all(&resident.output_directory);
+        let plain_result = run_native_expanded_training_v1(&plain, None).unwrap();
+        assert!(!verified_bytes_cache_v1::global_v1().resident_v1());
+        let partial = run_native_expanded_training_v1(&resident, Some(1)).unwrap();
+        assert!(verified_bytes_cache_v1::global_v1().resident_v1());
+        assert_eq!(partial["complete"], false);
+        let resident_result = run_native_expanded_training_v1(&resident, None).unwrap();
+        assert_eq!(resident_result["complete"], true);
+        for field in ["state_sha256", "adam_step"] {
+            assert_eq!(
+                resident_result["actual_identity"][field], plain_result["actual_identity"][field],
+                "{field}"
+            );
+        }
+        for index in 0..2 {
+            let plain_receipt = iteration_receipt_v1(&plain_result, index);
+            let resident_receipt = iteration_receipt_v1(&resident_result, index);
+            // Every identity field but the checkpoint file's digest: the
+            // checkpoint names its run's own trajectory paths.
+            let identity = |receipt: &Value| {
+                let mut identity = receipt["output_identity"].clone();
+                identity
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("checkpoint_sha256");
+                identity
+            };
+            assert_eq!(identity(&resident_receipt), identity(&plain_receipt));
+            let plain_update = read_pin(&parse_pin(&plain_receipt, "update").unwrap()).unwrap();
+            let resident_update =
+                read_pin(&parse_pin(&resident_receipt, "update").unwrap()).unwrap();
+            for field in [
+                "after_state_sha256",
+                "before_state_sha256",
+                "adam_step",
+                "loss",
+            ] {
+                assert_eq!(resident_update[field], plain_update[field], "{field}");
+            }
+            let trajectories = |receipt: &Value| -> Vec<PinnedFileV1> {
+                let collection = read_pin(&parse_pin(receipt, "collection").unwrap()).unwrap();
+                serde_json::from_value(collection["trajectories"].clone()).unwrap()
+            };
+            let (plain_pins, resident_pins) = (
+                trajectories(&plain_receipt),
+                trajectories(&resident_receipt),
+            );
+            assert_eq!(plain_pins.len(), resident_pins.len());
+            for (plain_pin, resident_pin) in plain_pins.iter().zip(&resident_pins) {
+                let plain_file = fs::read(&plain_pin.path).unwrap();
+                let resident_file = fs::read(&resident_pin.path).unwrap();
+                assert_eq!(digest(&resident_file), resident_pin.sha256);
+                if index == 0 {
+                    assert!(resident_file == plain_file, "iteration 0 trajectory bytes");
+                } else {
+                    // Later trajectories name the run's own checkpoint path.
+                    let plain_document: Value = serde_json::from_slice(&plain_file).unwrap();
+                    let resident_document: Value = serde_json::from_slice(&resident_file).unwrap();
+                    assert_eq!(
+                        resident_document["decisions"], plain_document["decisions"],
+                        "iteration {index} trajectory decisions"
+                    );
+                }
+            }
+            let checkpoint = |update: &Value| {
+                let pin = parse_pin(update, "checkpoint").unwrap();
+                let file = fs::read(&pin.path).unwrap();
+                assert_eq!(digest(&file), pin.sha256);
+                serde_json::to_value(parse_checkpoint_v1(&file).unwrap()).unwrap()
+            };
+            let (plain_checkpoint, resident_checkpoint) =
+                (checkpoint(&plain_update), checkpoint(&resident_update));
+            for field in [
+                "state_sha256",
+                "adam_step",
+                "parameters",
+                "first_moments",
+                "second_moments",
+            ] {
+                assert!(
+                    resident_checkpoint[field] == plain_checkpoint[field],
+                    "iteration {index} checkpoint {field}"
+                );
+            }
+        }
+        // A completed resident run revalidates as complete.
+        let again = run_native_expanded_training_v1(&resident, None).unwrap();
+        assert_eq!(again, resident_result);
+        fs::remove_dir_all(&plain.output_directory).unwrap();
+        fs::remove_dir_all(&resident.output_directory).unwrap();
     }
 
     /// The envelope changes the bytes on disk and nothing else: every
@@ -3333,6 +3548,7 @@ mod tests {
             iterations,
             record_format: Default::default(),
             record_envelope: Default::default(),
+            verified_reads: Default::default(),
             learning_rate: 0.0003,
             value_coefficient: 0.5,
             update_backend,
