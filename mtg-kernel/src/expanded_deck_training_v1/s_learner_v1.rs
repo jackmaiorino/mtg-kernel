@@ -82,10 +82,16 @@ pub const S_LEARNER_SOURCE_SCHEMA_V1: &str = "w5-s-learner/v1";
 pub const S_LEARNER_CHECKPOINT_SCHEMA_V1: &str = "w5-s-learner-checkpoint/v1";
 /// The S container file each update publishes beside its record.
 pub const S_LEARNER_STATE_FILE_V1: &str = "s-train-state.bin";
+pub(super) const S_PARALLEL_UPDATE_BACKEND_V1: &str = "native-cpu-exact-parallel-s";
 /// The net-8 loader's refusal of an S source.
 pub(super) const S_LEARNER_NET8_REFUSAL_V1: &str =
     "an S learner source loads only through the S learner paths (Collect, CollectParallel, \
      Update, UpdatePrepared and inference); this command is net-8's";
+
+pub(super) fn record_parallel_update_execution_v1(document: &mut Value, workers: usize) {
+    document["numerical_backend"] = json!(S_PARALLEL_UPDATE_BACKEND_V1);
+    document["s_learner_workers_requested"] = json!(workers);
+}
 
 /// The `s_learner` member of a source.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -746,8 +752,7 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
     result["behavior_replay_seconds"] = json!(behavior_replay_seconds);
     result["learner_update_seconds"] = json!(learner_update_seconds);
     if learner_workers > 1 {
-        result["numerical_backend"] = json!("native-cpu-exact-parallel-s");
-        result["s_learner_workers_requested"] = json!(learner_workers);
+        record_parallel_update_execution_v1(&mut result, learner_workers);
     }
     result["checkpoint_io_seconds"] = json!(checkpoint_started.elapsed().as_secs_f64());
     result["update_elapsed_seconds"] = json!(started.elapsed().as_secs_f64());
