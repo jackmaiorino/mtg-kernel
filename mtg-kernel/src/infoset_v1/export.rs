@@ -504,6 +504,7 @@ fn tracked_order(
     projection: &ProjectionV1,
     l3: bool,
     opp_hand: Option<&[ObjectId]>,
+    recovery_v3: bool,
 ) -> Result<Vec<ObjectId>, ExportErrorV1> {
     let mut keyed: Vec<((usize, u32), ObjectId)> = state
         .objects
@@ -524,8 +525,32 @@ fn tracked_order(
         return Ok(out);
     }
     keyed.sort_by_key(|(key, _)| *key);
-    if keyed.windows(2).any(|w| w[0].0 == w[1].0) {
-        return Err(refuse(RefusalCodeV1::R2, R2_ORDER_DETAIL_V1));
+    let mut start = 0;
+    while start < keyed.len() {
+        let mut end = start + 1;
+        while end < keyed.len() && keyed[end].0 == keyed[start].0 {
+            end += 1;
+        }
+        if end - start > 1 {
+            let owners: BTreeSet<_> = keyed[start..end]
+                .iter()
+                .map(|(_, id)| state.objects.get(*id).owner.index())
+                .collect();
+            let public_rollbacks = keyed[start..end].iter().all(|(_, id)| {
+                is_public(state.objects.get(*id).zone)
+                    && projection.current_span(*id).is_some_and(|span| {
+                        span.start_pos == u32::MAX
+                            && span.start_event == state.engine.event_history.len()
+                    })
+            });
+            if !recovery_v3 || !public_rollbacks || owners.len() != end - start {
+                return Err(refuse(RefusalCodeV1::R2, R2_ORDER_DETAIL_V1));
+            }
+            // Only public owner seats break this synthetic rollback tie.
+            // Equal-owner copies still refuse; no native order is consulted.
+            keyed[start..end].sort_by_key(|(_, id)| state.objects.get(*id).owner.index());
+        }
+        start = end;
     }
     let mut out: Vec<ObjectId> = keyed.into_iter().map(|(_, id)| id).collect();
     out.extend(opp_hand.unwrap_or(&[]).iter().copied());
@@ -757,20 +782,53 @@ pub(crate) fn export_v1(
     input: &ExportInputV1<'_>,
     options: ExportOptionsV1,
 ) -> Result<InfosetV1, ExportErrorV1> {
-    export_versioned(input, options, false)
+    export_versioned(input, options, false, false)
 }
 
 /// Opt in to event-time identity visibility. Historical v1 remains unchanged.
 /// Active face-down public objects refuse until the canonical allocator can
 /// represent them. A snapshot without visibility provenance also refuses.
 pub fn export_v2(input: &ExportInputV1<'_>) -> Result<InfosetV1, ExportErrorV1> {
-    export_versioned(input, ExportOptionsV1::default(), true)
+    export_versioned(input, ExportOptionsV1::default(), true, false)
+}
+
+/// Opt in to bounded recovery from historical export refusals (#579).
+/// This successor retains v2 event-time visibility and preserves v1/v2.
+pub fn export_v3(input: &ExportInputV1<'_>) -> Result<InfosetV1, ExportErrorV1> {
+    export_versioned(input, ExportOptionsV1::default(), true, true)
+}
+
+/// The audited W1 pool has no persistent damage-identity custody consumer.
+/// Gate by public decklists and operation phase, never by a private object's
+/// membership in a retained ledger. Other pools keep the historical refusal.
+pub(super) fn damage_pool_audited_v3(decklists: [&[u16]; 2], digest: &str) -> bool {
+    digest == "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851"
+        && decklists.iter().all(|deck| {
+            deck.iter().all(|card| {
+                crate::runtime_decks::RUNTIME_DECKS
+                    .iter()
+                    .any(|known| known.card_ids.contains(card))
+            })
+        })
+}
+
+fn damage_history_ready_v3(input: &ExportInputV1<'_>) -> bool {
+    let state = input.state;
+    damage_pool_audited_v3(
+        input.decklists,
+        crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256,
+    ) && state.stack.is_empty()
+        && state.engine.pending_cast.is_none()
+        && state.engine.pending_activation.is_none()
+        && state.engine.pending_effect.is_none()
+        && state.engine.pending_triggers.is_empty()
 }
 
 fn export_versioned(
     input: &ExportInputV1<'_>,
     options: ExportOptionsV1,
     visibility_v2: bool,
+    recovery_v3: bool,
 ) -> Result<InfosetV1, ExportErrorV1> {
     let state = input.state;
     let v = input.viewer;
@@ -1367,6 +1425,7 @@ fn export_versioned(
         &projection,
         is(MutantV1::L3),
         (!is(MutantV1::L14)).then_some(opp_hand_tracked.as_slice()),
+        recovery_v3,
     )?;
     if is(MutantV1::L8) || is(MutantV1::L14) {
         // Mutant L8's bound copies take `C:` handles (invented continuity);
@@ -1525,6 +1584,13 @@ fn export_versioned(
             .min_by_key(|d| name_key(*d))
             .unwrap_or(0)
     };
+    let damage_ready = recovery_v3 && damage_history_ready_v3(input);
+    let damage_event = |e: usize| {
+        matches!(
+            state.engine.event_history[e],
+            crate::event::CommittedEvent::Damage { .. }
+        )
+    };
     let event_kind_ok = |e: usize| -> bool {
         matches!(
             state.engine.event_history[e],
@@ -1544,6 +1610,7 @@ fn export_versioned(
                     state.engine.event_history[e],
                     crate::event::CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange { .. }
                 ))
+            || (damage_ready && damage_event(e))
     };
     let mut timestamps: BTreeSet<u64> = BTreeSet::new();
     let pinned_set: BTreeSet<ObjectId> = pinned_untracked.iter().copied().collect();
@@ -1615,7 +1682,15 @@ fn export_versioned(
                     }
                     let named = match r.class {
                         ClassV1::Event(e) => {
-                            if event_kind_ok(e) {
+                            if recovery_v3 && damage_event(e) {
+                                // Keep identities already justified through
+                                // this historical event. An unnamed endpoint
+                                // receives the ordinary per-reference H slot.
+                                let item = projection.event_items[e];
+                                projection.tracked_after(o, item)
+                                    && item > 0
+                                    && projection.tracked_after(o, item - 1)
+                            } else if event_kind_ok(e) {
                                 projection.event_observed[e].contains(&o)
                             } else {
                                 let item = projection.event_items[e];
@@ -1876,7 +1951,9 @@ fn export_versioned(
     if !hand.reveal.is_empty() || reveal_used.get() {
         return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_REVEAL_DETAIL));
     }
-    let schema = if visibility_v2 {
+    let schema = if recovery_v3 {
+        super::INFOSET_SCHEMA_V3
+    } else if visibility_v2 {
         super::INFOSET_SCHEMA_V2
     } else {
         INFOSET_SCHEMA_V1

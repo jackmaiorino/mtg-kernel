@@ -91,7 +91,7 @@ impl PayloadV1 {
         let p: Self = serde_json::from_slice(bytes).map_err(|e| format!("payload: {e}"))?;
         if !matches!(
             p.schema.as_str(),
-            INFOSET_SCHEMA_V1 | super::INFOSET_SCHEMA_V2
+            INFOSET_SCHEMA_V1 | super::INFOSET_SCHEMA_V2 | super::INFOSET_SCHEMA_V3
         ) {
             return Err(format!("payload schema {}", p.schema));
         }
@@ -103,7 +103,7 @@ impl PayloadV1 {
     pub fn import(&self) -> Result<FastActorSessionV1, String> {
         if !matches!(
             self.schema.as_str(),
-            INFOSET_SCHEMA_V1 | super::INFOSET_SCHEMA_V2
+            INFOSET_SCHEMA_V1 | super::INFOSET_SCHEMA_V2 | super::INFOSET_SCHEMA_V3
         ) {
             return Err(format!("payload schema {}", self.schema));
         }
