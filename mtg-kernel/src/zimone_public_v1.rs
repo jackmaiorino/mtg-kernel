@@ -1,8 +1,8 @@
 //! Zimone's exact printed meaning and viewer-visible counter context.
 use crate::{
     card_def::{
-        self, ActivationTargetFilter, CardCapability, CardType, CostComponent, Keywords, Subtype,
-        Supertype, TargetSpec, CARD_DEFS,
+        self, ActivationTargetFilter, CardCapability, CardDef, CardType, CostComponent, Keywords,
+        Subtype, Supertype, TargetSpec, CARD_DEFS,
     },
     effect::{EffectOp, ObjectRef},
     engine,
@@ -105,7 +105,7 @@ pub fn producer_sha256() -> String {
     .clone()
 }
 
-pub fn printed_meaning() -> Result<MeaningV1, String> {
+fn selected_definition() -> Result<&'static CardDef, String> {
     if !cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
@@ -171,6 +171,16 @@ pub fn printed_meaning() -> Result<MeaningV1, String> {
     {
         return Err("Zimone native combat trigger changed".into());
     }
+    Ok(d)
+}
+
+pub(crate) fn selected_id() -> Result<u16, String> {
+    selected_definition().map(|_| PRINTING)
+}
+
+pub fn printed_meaning() -> Result<MeaningV1, String> {
+    let d = selected_definition()?;
+    let colors = [ManaColor::G, ManaColor::U];
     Ok(MeaningV1 {
         schema: MEANING_SCHEMA.into(),
         producer_sha256: producer_sha256(),
@@ -223,7 +233,7 @@ pub struct TargetV1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StageV1 {
     HeldCombat,
-    ChoosingCombatTargets,
+    OrderedCombat,
     PendingActivation,
     Published,
 }
@@ -386,7 +396,7 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, String> {
             source,
             combat,
             if pending.placement_ordered {
-                StageV1::ChoosingCombatTargets
+                StageV1::OrderedCombat
             } else {
                 StageV1::HeldCombat
             },

@@ -119,7 +119,7 @@ fn next_own_main(state: &mut GameState, actor: PlayerId) {
     panic!("next genuine own main phase missing");
 }
 
-fn paid_ready(actor: PlayerId) -> (GameState, ObjectId) {
+pub(crate) fn paid_ready(actor: PlayerId) -> (GameState, ObjectId) {
     let mut state = ready(actor);
     let source = paid(&mut state, actor, "Zimone, Paradox Sculptor");
     priority(&mut state, actor);
