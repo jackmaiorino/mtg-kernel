@@ -2388,8 +2388,13 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
     }
-    crate::continuous_characteristics_v1::refuse_land_override_consumer(state, acting_player)
+    let allowed_moon = (private_scope == LimitedAppendixV1::Moon)
+        .then(crate::moon_public_v1::selected_id)
+        .transpose()
         .map_err(RlContractError)?;
+    crate::continuous_characteristics_v1::require_land_override_scope(
+        state, acting_player, allowed_moon,
+    ).map_err(RlContractError)?;
     if !chosen_type {
         refuse_chosen_type_mana_v60(state)?;
     }

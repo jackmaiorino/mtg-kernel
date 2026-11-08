@@ -389,6 +389,7 @@ pub(crate) enum LimitedAppendixV1 {
     Omniscience,
     Tutelage,
     Mixed,
+    Moon,
 }
 
 impl LimitedAppendixV1 {

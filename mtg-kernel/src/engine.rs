@@ -37353,7 +37353,7 @@ mod fiend_artisan_v1_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "engine/imprisoned_moon_v1_tests.rs"]
-mod imprisoned_moon_v1_tests;
+pub(crate) mod imprisoned_moon_v1_tests;
 
 #[cfg(all(
     test,
