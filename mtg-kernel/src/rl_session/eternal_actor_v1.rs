@@ -69,7 +69,8 @@ mod tests {
                 )
                 .unwrap();
                 for step in 0..8 {
-                    let FastActorResponseV1::Decision(header) = session.current_response().unwrap() else {
+                    let FastActorResponseV1::Decision(header) = session.current_response().unwrap()
+                    else {
                         panic!("unexpected early terminal {name}/{starting_player:?}/{step}");
                     };
                     let decision = session.encode(header).unwrap_or_else(|error| {
@@ -217,15 +218,21 @@ impl EternalActorSessionV1 {
             let mut types: Vec<crate::card_def::Subtype> = Vec::new();
             for id in cards {
                 let def = &crate::card_def::CARD_DEFS[usize::from(*id)];
-                if !def.has_type(crate::card_def::CardType::Creature) { continue; }
+                if !def.has_type(crate::card_def::CardType::Creature) {
+                    continue;
+                }
                 for subtype in def.subtypes {
-                    if subtype.is_creature_type() && !types.iter().any(|known| known.same_subtype_as(*subtype)) {
+                    if subtype.is_creature_type()
+                        && !types.iter().any(|known| known.same_subtype_as(*subtype))
+                    {
                         types.push(*subtype);
                     }
                 }
             }
             types.sort_by_key(|subtype| subtype.stable_id());
-            if types.is_empty() { types.push(crate::card_def::Subtype::CREATURE_TYPES[0]); }
+            if types.is_empty() {
+                types.push(crate::card_def::Subtype::CREATURE_TYPES[0]);
+            }
             types
         }));
         let inner = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_v1(
@@ -239,12 +246,15 @@ impl EternalActorSessionV1 {
         })
     }
     fn require_entry_visibility(&self) -> ActorResult<()> {
-        if self.inner.current.as_ref().is_some_and(|current| current.candidates.iter().any(|candidate| {
-            matches!(&candidate.semantic, ActionSemanticV1::ChooseEffectOption { source, .. }
+        if self.inner.current.as_ref().is_some_and(|current| {
+            current.candidates.iter().any(|candidate| {
+                matches!(&candidate.semantic, ActionSemanticV1::ChooseEffectOption { source, .. }
                 if crate::card_def::CARD_DEFS.get(usize::from(source.card_db_id))
                     .is_some_and(|def| def.name == "Pithing Needle"))
-        })) {
-            crate::eternal_actor_public_v1::require_continuous_needle_sources(&self.inner.state).map_err(projection)?;
+            })
+        }) {
+            crate::eternal_actor_public_v1::require_continuous_needle_sources(&self.inner.state)
+                .map_err(projection)?;
         }
         Ok(())
     }
@@ -363,9 +373,12 @@ impl EternalActorSessionV1 {
             .map(|candidate| {
                 Ok((
                     candidate.semantic.clone(),
-                    crate::eternal_actor_public_v1::entry_option_v1(state, &candidate.semantic,
-                        Some(&self.own_deck_types[current.actor.index()]))
-                        .map_err(projection)?,
+                    crate::eternal_actor_public_v1::entry_option_v1(
+                        state,
+                        &candidate.semantic,
+                        Some(&self.own_deck_types[current.actor.index()]),
+                    )
+                    .map_err(projection)?,
                 ))
             })
             .collect::<ActorResult<Vec<_>>>()?;
@@ -412,8 +425,7 @@ impl EternalActorSessionV1 {
             return Err(Error::ActionRange);
         }
         let generation = self.generation.checked_add(1).ok_or(Error::Range)?;
-        self
-            .inner
+        self.inner
             .step(
                 decision.expected.episode_id,
                 decision.expected.step,
