@@ -824,7 +824,9 @@ mod wildwood_capture_v1;
 mod wildwood_scourge_v1;
 pub mod win_search_v1;
 pub mod xmage_observed_inference_v1;
+pub mod zimone_consumer_v1;
 mod zimone_paradox_sculptor_v1;
+pub mod zimone_public_v1;
 
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
 

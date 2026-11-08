@@ -81,6 +81,8 @@ pub struct KaitoObservationV75 {
         deserialize_with = "strict_value"
     )]
     pub embercleave: Option<crate::embercleave_public_v65::FactsV65>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zimone: Option<crate::zimone_public_v1::FactsV1>,
     pub complete_ordinary_observation: bool,
     pub owning_consumer_admitted: bool,
     pub projection_sha256: String,
@@ -290,6 +292,7 @@ fn require_supported(
         LimitedAppendixV1::Embercleave => {
             Some(crate::rules_meaning_embercleave_v65::selected_id()?)
         }
+        LimitedAppendixV1::Zimone => Some(crate::zimone_public_v1::selected_id()?),
     };
     let unsupported = |id: u16| {
         id >= 460
@@ -495,11 +498,29 @@ pub(crate) fn stack_source_reference(
             .inline_effect
             .as_ref()
             .is_some_and(crate::embercleave_consumer_v1::is_attachment_program);
+    let zimone_counters = source.card_def == crate::zimone_public_v1::PRINTING
+        && item.v4.granted_by.is_none()
+        && match item.kind {
+            crate::state::StackItemKind::TriggeredAbility => {
+                item.inline_effect.as_ref()
+                    == Some(&crate::zimone_public_v1::AbilityKindV1::CombatPutPlusOne.program())
+            }
+            crate::state::StackItemKind::ActivatedAbility => {
+                item.v4.activated_ability_index == Some(0)
+                    && item.inline_effect.as_ref()
+                        == Some(
+                            &crate::zimone_public_v1::AbilityKindV1::ActivateDoubleEveryKind
+                                .program(),
+                        )
+            }
+            _ => false,
+        };
     if !selected_source(source)
         && !artist_trigger
         && !drakuseth_trigger
         && !niv_trigger
         && !embercleave_attachment
+        && !zimone_counters
     {
         return Ok(None);
     }
@@ -549,11 +570,15 @@ pub(crate) fn pending_source_reference(
     let embercleave_attachment = source.card_def == crate::embercleave_consumer_v1::PRINTING_V1
         && pending.granted_by.is_none()
         && crate::embercleave_consumer_v1::is_attachment_program(&pending.effect);
+    let zimone_trigger = source.card_def == crate::zimone_public_v1::PRINTING
+        && pending.granted_by.is_none()
+        && pending.effect == crate::zimone_public_v1::AbilityKindV1::CombatPutPlusOne.program();
     if !selected_source(source)
         && !artist_trigger
         && !drakuseth_trigger
         && !niv_trigger
         && !embercleave_attachment
+        && !zimone_trigger
     {
         return Ok(None);
     }
@@ -629,6 +654,7 @@ pub(crate) fn observe_parts_v75(
             LimitedAppendixV1::ChosenType => crate::chosen_type_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Drakuseth => crate::drakuseth_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Embercleave => crate::embercleave_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Zimone => crate::zimone_consumer_v1::OBSERVATION_SCHEMA,
         }
         .into(),
         producer_sha256: producer_sha256(),
@@ -695,6 +721,10 @@ pub(crate) fn observe_parts_v75(
             .then(|| crate::embercleave_consumer_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
+        zimone: (appendix == LimitedAppendixV1::Zimone)
+            .then(|| crate::zimone_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
         complete_ordinary_observation: true,
         owning_consumer_admitted: false,
         projection_sha256: String::new(),
@@ -723,30 +753,35 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
         &value.chosen_type,
         &value.drakuseth,
         &value.embercleave,
+        &value.zimone,
     ) {
-        (Some(artist), None, None, None, None) => {
+        (Some(artist), None, None, None, None, None) => {
             crate::artist_consumer_v1::validate_facts(artist, actor).map_err(RlContractError)?;
             crate::artist_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, Some(niv), None, None, None) => {
+        (None, Some(niv), None, None, None, None) => {
             crate::niv_consumer_v1::validate_facts(niv, actor).map_err(RlContractError)?;
             crate::niv_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, Some(chosen_type), None, None) => {
+        (None, None, Some(chosen_type), None, None, None) => {
             crate::chosen_type_consumer_v1::validate_facts(chosen_type, actor)
                 .map_err(RlContractError)?;
             crate::chosen_type_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, Some(facts), None) => {
+        (None, None, None, Some(facts), None, None) => {
             crate::drakuseth_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::drakuseth_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, Some(facts)) => {
+        (None, None, None, None, Some(facts), None) => {
             crate::embercleave_consumer_v1::validate_facts(facts, actor)
                 .map_err(RlContractError)?;
             crate::embercleave_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None) => SCHEMA,
+        (None, None, None, None, None, Some(facts)) => {
+            crate::zimone_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::zimone_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (None, None, None, None, None, None) => SCHEMA,
         _ => return Err(RlContractError("mixed appendix profiles".into())),
     };
     crate::muldrotha_public_v71::validate_tinybones_compat_v72(&value.muldrotha)

@@ -479,6 +479,10 @@ fn closed_fields(d: &CardDef) {
     } = d;
 }
 pub(crate) fn ordinary_foreign_fields_absent(d: &CardDef) -> bool {
+    d.activated_abilities.is_empty() && ordinary_foreign_fields_except_activated_absent(d)
+}
+
+pub(crate) fn ordinary_foreign_fields_except_activated_absent(d: &CardDef) -> bool {
     closed_fields(d);
     d.object_name == d.name
         && !d.is_land
@@ -492,7 +496,6 @@ pub(crate) fn ordinary_foreign_fields_absent(d: &CardDef) -> bool {
         && d.controlled_counter_keyword.is_none()
         && d.game_outcome_protection_v1.is_none()
         && d.controlled_creature_grant.is_none()
-        && d.activated_abilities.is_empty()
         && (d.mana_ability)().is_none()
         && d.alt_cost.is_none()
         && d.kicker_cost.is_none()
