@@ -68,7 +68,7 @@ def run(plan_path):
     # Price it explicitly because the best learner and collector counts can differ.
     if plan.get("include_production_workers", False) and (4, 2) not in worker_settings:
         worker_settings.append((4, 2))
-    trials, choices, settings = {}, {}, {}
+    trials, choices, settings, observations = {}, {}, {}, {}
 
     def execute(path, qualification):
         # Each supported attempt owns fresh monitor/signal state and affinity.
@@ -136,10 +136,25 @@ def run(plan_path):
         trials[name] = reports
         ranked = [(dispatch.projected_seconds(report, config, "training"), pin, report)
                   for pin, report in reports]
-        _, selected, best = min(ranked, key=lambda row: row[0])
+        # The dispatch gate accepts one qualification per collector count.
+        # Keep every measured setting and submit each count's fastest preparation setting.
+        fastest_by_count = {}
+        for row in ranked:
+            count = row[2]["placement"]["workers"]
+            if count not in fastest_by_count or row[0] < fastest_by_count[count][0]:
+                fastest_by_count[count] = row
+        canonical = [fastest_by_count[count] for count in sorted(fastest_by_count)]
+        _, selected, best = min(canonical, key=lambda row: row[0])
         family = dispatch.workload(config, "training")
+        observations[name] = write(root / f"observations-{name}.json", {
+            "schema": "s-parallel-qualification-observations/v1", "runtime": runtime_pins[name],
+            "workload": family, "fingerprint": reference,
+            "settings": [{"report": pin, "placement": report["placement"],
+                          "projected_seconds": seconds} for seconds, pin, report in ranked],
+            "canonical_reports": [pin for _, pin, _ in canonical],
+        })
         choice = {"schema": dispatch.CHOICE, "inventory": inventory,
-                  "qualifications": [pin for pin, _ in reports],
+                  "qualifications": [pin for _, pin, _ in canonical],
                   "selected": {family: selected}}
         choices[name] = write(root / f"choice-{name}.json", choice)
         settings[name] = best["placement"]
@@ -187,7 +202,7 @@ def run(plan_path):
     write(root / "RESULT.json", {
         "schema": "s-parallel-qualification/v1", "complete": True,
         "plan": dispatch.pin(plan_path), "config": plan["config"],
-        "runtimes": runtime_pins, "choices": choices, "trials": rows,
+        "runtimes": runtime_pins, "choices": choices, "observations": observations, "trials": rows,
         "native_speedup": means["baseline"] / means["candidate"],
         "recovery_inclusive_speedup": recovery["baseline"] / recovery["candidate"],
         "full_adam_states_bit_identical": True,
