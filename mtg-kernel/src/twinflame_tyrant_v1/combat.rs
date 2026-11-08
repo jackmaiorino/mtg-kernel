@@ -550,7 +550,10 @@ fn perform(state: &mut GameState, kind: InputKindV38, chosen: bool) -> Result<()
     after.latest = index;
     let saved = (!complete).then_some(after);
     let indices = |kind: u8| {
-        state.engine.event_history.range_v2(start..)
+        state
+            .engine
+            .event_history
+            .range_v2(start..)
             .iter()
             .enumerate()
             .filter_map(|(offset, event)| {

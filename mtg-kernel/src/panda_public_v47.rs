@@ -438,7 +438,7 @@ fn capture_ordinary(state: &GameState) -> Result<FactsV47, RlContractError> {
                                 let end = usize::try_from(operation).map_err(|_| {
                                     RlContractError("Panda operation exceeds usize".into())
                                 })?;
-for entry in state.engine.event_history.range_v2(start + 1..end) {
+                                for entry in state.engine.event_history.range_v2(start + 1..end) {
                                     if let CommittedEvent::PlusOneCountersAdded {
                                         object,
                                         zone_change_count,

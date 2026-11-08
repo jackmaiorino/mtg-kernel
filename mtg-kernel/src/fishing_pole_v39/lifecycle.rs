@@ -387,7 +387,10 @@ pub(crate) fn record_paid(
     }
     let pole = pole.ok_or("Fishing selected grant absent")?;
     let tap = |object| {
-        state.engine.event_history.range_v2(start..)
+        state
+            .engine
+            .event_history
+            .range_v2(start..)
             .iter()
             .enumerate()
             .filter_map(|(i, e)| {
@@ -1139,7 +1142,9 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         item.controller,
                         1,
                     )?;
-                    let actual = state.engine.event_history
+                    let actual = state
+                        .engine
+                        .event_history
                         .range_v2(change.unwrap() as usize + 1..*closed as usize)
                         .iter()
                         .filter_map(|event| match event {

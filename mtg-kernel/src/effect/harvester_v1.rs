@@ -793,7 +793,7 @@ pub(super) fn execute(
         if state.engine.halted.is_some() {
             return Err("Harvester token entry halted".into());
         }
-for event in state.engine.event_history.range_v2(start..) {
+        for event in state.engine.event_history.range_v2(start..) {
             if let event::CommittedEvent::CreateToken {
                 object,
                 token_def,

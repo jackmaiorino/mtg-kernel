@@ -287,12 +287,15 @@ fn validate_open_turn(state: &GameState, capture: u64) -> Result<(), String> {
     Ok(())
 }
 fn historical_loss_flags(state: &GameState, before: usize) -> Result<[bool; 2], String> {
-    let anchor = state.engine.event_history.range_v2(..before)
+    let anchor = state
+        .engine
+        .event_history
+        .range_v2(..before)
         .iter()
         .rposition(|e| matches!(e, CommittedEvent::LifeLossTurnBeganV1 { .. }))
         .ok_or("Stromkirk resolution lost actual life-loss anchor")?;
     let mut flags = [false; 2];
-for event in state.engine.event_history.range_v2(anchor + 1..before) {
+    for event in state.engine.event_history.range_v2(anchor + 1..before) {
         if let Some(player) = crate::life_loss_turn_v1::committed_loss_player(event) {
             flags[player.index()] = true;
         }

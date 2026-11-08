@@ -20852,7 +20852,10 @@ fn execute_with_native_row_v1(
                 state,
                 event::ProposedEvent::life_loss(opponent, i32::from(ctx.x_value)),
             );
-            let lost = state.engine.event_history.range_v2(start..)
+            let lost = state
+                .engine
+                .event_history
+                .range_v2(start..)
                 .iter()
                 .filter_map(|event| match event {
                     event::CommittedEvent::LifeLoss { player, amount } if *player == opponent => {
@@ -22641,7 +22644,10 @@ fn execute_with_native_row_v1(
                 if !source_live {
                     return;
                 }
-                let creations = state.engine.event_history.range_v2(start..)
+                let creations = state
+                    .engine
+                    .event_history
+                    .range_v2(start..)
                     .iter()
                     .enumerate()
                     .filter_map(|(offset, event)| match event {
@@ -25001,7 +25007,10 @@ mod tests {
                 assert_eq!(branch.objects.get(opponent_card).zone, Zone::Graveyard);
                 assert_eq!(branch.objects.get(retained_hand.unwrap()).zone, Zone::Hand);
                 assert_eq!(
-                    branch.engine.event_history.range_v2(start..)
+                    branch
+                        .engine
+                        .event_history
+                        .range_v2(start..)
                         .iter()
                         .filter(|event| matches!(
                             event,
@@ -25136,7 +25145,10 @@ mod tests {
                     assert_eq!(branch.objects.get(id).zone, Zone::Graveyard);
                 }
                 assert_eq!(
-                    branch.engine.event_history.range_v2(start..)
+                    branch
+                        .engine
+                        .event_history
+                        .range_v2(start..)
                         .iter()
                         .filter(|event| matches!(
                             event,
@@ -25285,7 +25297,10 @@ mod tests {
                 assert_eq!(branch.objects.get(second).damage, 4);
                 assert!(branch.objects.get(first).v4.deathtouch_damage);
                 assert_eq!(branch.players[player.index()].life, 24);
-                let damage = branch.engine.event_history.range_v2(start..)
+                let damage = branch
+                    .engine
+                    .event_history
+                    .range_v2(start..)
                     .iter()
                     .filter_map(|event| match event {
                         CommittedEvent::Damage {
@@ -25474,7 +25489,10 @@ mod tests {
                             &mut state,
                         );
                         assert!(state.engine.halted.is_none());
-                        let created = state.engine.event_history.range_v2(start..)
+                        let created = state
+                            .engine
+                            .event_history
+                            .range_v2(start..)
                             .iter()
                             .enumerate()
                             .filter_map(|(i, event)| match event {
@@ -25490,7 +25508,10 @@ mod tests {
                             })
                             .collect::<Vec<_>>();
                         assert_eq!(created.len(), count as usize);
-                        let observed = state.engine.event_history.range_v2(start..)
+                        let observed = state
+                            .engine
+                            .event_history
+                            .range_v2(start..)
                             .iter()
                             .enumerate()
                             .filter_map(|(i, event)| match event {
@@ -26963,7 +26984,10 @@ fn tutelage_remaining_v1(
     let mut linked = None;
     let mut cursor = start_index + 1;
     while cursor < state.engine.event_history.len() {
-        let batch_index = state.engine.event_history.range_v2(cursor..)
+        let batch_index = state
+            .engine
+            .event_history
+            .range_v2(cursor..)
             .iter()
             .position(|entry| {
                 matches!(
@@ -29463,7 +29487,10 @@ pub(crate) mod fiend_artisan_v1 {
             return Err("Fiend original selected activation changed".into());
         }
         let sacrificed = p.object_cost_chosen[0];
-let segment = state.engine.event_history.range_v2(input_index as usize + 1..at);
+        let segment = state
+            .engine
+            .event_history
+            .range_v2(input_index as usize + 1..at);
         if sacrificed.object == item.source
             || sacrificed.expected_zone != Zone::Battlefield
             || !segment

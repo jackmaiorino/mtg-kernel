@@ -793,7 +793,10 @@ struct ChainPrefixesV2 {
 
 impl Default for ChainPrefixesV2 {
     fn default() -> Self {
-        Self { strides: SharedSequence::new(|_| 0), recent: Vec::new() }
+        Self {
+            strides: SharedSequence::new(|_| 0),
+            recent: Vec::new(),
+        }
     }
 }
 
@@ -806,18 +809,25 @@ const CHAIN_V2_STRIDE: usize = 64;
 
 impl ChainV2 {
     fn get(&self) -> ChainPrefixesV2 {
-        self.0
-            .lock()
-            .map(|chain| chain.clone())
-            .unwrap_or_default()
+        self.0.lock().map(|chain| chain.clone()).unwrap_or_default()
     }
 
     /// The longest chained prefix of at most `len` events.
     fn longest(&self, len: usize) -> Option<(usize, Sha256)> {
         let prefixes = self.get();
-        let end = prefixes.strides.partition_point(|(covered, _)| *covered <= len);
-        let stride = end.checked_sub(1).and_then(|i| prefixes.strides.get(i)).cloned();
-        let recent = prefixes.recent.iter().rev().find(|(covered, _)| *covered <= len).cloned();
+        let end = prefixes
+            .strides
+            .partition_point(|(covered, _)| *covered <= len);
+        let stride = end
+            .checked_sub(1)
+            .and_then(|i| prefixes.strides.get(i))
+            .cloned();
+        let recent = prefixes
+            .recent
+            .iter()
+            .rev()
+            .find(|(covered, _)| *covered <= len)
+            .cloned();
         match (stride, recent) {
             (Some(a), Some(b)) => Some(if a.0 >= b.0 { a } else { b }),
             (a, b) => a.or(b),
@@ -830,7 +840,9 @@ impl ChainV2 {
             return;
         };
         if let Ok(mut slot) = self.0.lock() {
-            let before = slot.strides.partition_point(|(covered, _)| *covered < shortest);
+            let before = slot
+                .strides
+                .partition_point(|(covered, _)| *covered < shortest);
             slot.strides.truncate(before);
             slot.recent.retain(|(covered, _)| *covered < shortest);
             for checkpoint in chains {
@@ -943,14 +955,24 @@ pub struct EventHistoryIterV2<'a> {
 impl<'a> Iterator for EventHistoryIterV2<'a> {
     type Item = &'a CommittedEvent;
 
-    fn next(&mut self) -> Option<Self::Item> { self.inner.next() }
-    fn size_hint(&self) -> (usize, Option<usize>) { self.inner.size_hint() }
-    fn nth(&mut self, n: usize) -> Option<Self::Item> { self.inner.nth(n) }
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        self.inner.nth(n)
+    }
 }
 
 impl DoubleEndedIterator for EventHistoryIterV2<'_> {
-    fn next_back(&mut self) -> Option<Self::Item> { self.inner.next_back() }
-    fn nth_back(&mut self, n: usize) -> Option<Self::Item> { self.inner.nth_back(n) }
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.inner.next_back()
+    }
+    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
+        self.inner.nth_back(n)
+    }
 }
 
 impl ExactSizeIterator for EventHistoryIterV2<'_> {}
@@ -966,24 +988,36 @@ pub struct EventHistoryRangeV2<'a> {
 }
 
 impl<'a> EventHistoryRangeV2<'a> {
-    pub fn len(&self) -> usize { self.end - self.start }
-    pub fn is_empty(&self) -> bool { self.start == self.end }
-    pub fn iter(&self) -> EventHistoryIterV2<'a> {
-        EventHistoryIterV2 { inner: self.history.events.range(self.start..self.end) }
+    pub fn len(&self) -> usize {
+        self.end - self.start
     }
-    pub fn to_vec(&self) -> Vec<CommittedEvent> { self.iter().cloned().collect() }
+    pub fn is_empty(&self) -> bool {
+        self.start == self.end
+    }
+    pub fn iter(&self) -> EventHistoryIterV2<'a> {
+        EventHistoryIterV2 {
+            inner: self.history.events.range(self.start..self.end),
+        }
+    }
+    pub fn to_vec(&self) -> Vec<CommittedEvent> {
+        self.iter().cloned().collect()
+    }
 }
 
 impl<'a> IntoIterator for EventHistoryRangeV2<'a> {
     type Item = &'a CommittedEvent;
     type IntoIter = EventHistoryIterV2<'a>;
-    fn into_iter(self) -> Self::IntoIter { self.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
 }
 
 impl<'a> IntoIterator for &EventHistoryRangeV2<'a> {
     type Item = &'a CommittedEvent;
     type IntoIter = EventHistoryIterV2<'a>;
-    fn into_iter(self) -> Self::IntoIter { self.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
 }
 
 impl PartialEq for EventHistoryRangeV2<'_> {
@@ -1019,7 +1053,9 @@ pub trait EventHistoryIndexV2 {
 
 impl EventHistoryIndexV2 for usize {
     type Output = CommittedEvent;
-    fn get(self, history: &EventHistoryV1) -> Option<&Self::Output> { history.events.get(self) }
+    fn get(self, history: &EventHistoryV1) -> Option<&Self::Output> {
+        history.events.get(self)
+    }
     fn get_mut(self, history: &mut EventHistoryV1) -> Option<&mut Self::Output> {
         history.deref_mut().get_mut(self)
     }
@@ -1040,14 +1076,20 @@ macro_rules! contiguous_history_index_v2 {
 }
 
 contiguous_history_index_v2!(
-    std::ops::Range<usize>, std::ops::RangeFrom<usize>, std::ops::RangeTo<usize>,
-    std::ops::RangeFull, std::ops::RangeInclusive<usize>, std::ops::RangeToInclusive<usize>,
+    std::ops::Range<usize>,
+    std::ops::RangeFrom<usize>,
+    std::ops::RangeTo<usize>,
+    std::ops::RangeFull,
+    std::ops::RangeInclusive<usize>,
+    std::ops::RangeToInclusive<usize>,
     (Bound<usize>, Bound<usize>),
 );
 
 impl<I: EventHistoryIndexV2> Index<I> for EventHistoryV1 {
     type Output = I::Output;
-    fn index(&self, index: I) -> &Self::Output { index.get(self).expect("history index out of bounds") }
+    fn index(&self, index: I) -> &Self::Output {
+        index.get(self).expect("history index out of bounds")
+    }
 }
 
 impl<I: EventHistoryIndexV2> IndexMut<I> for EventHistoryV1 {
@@ -1067,22 +1109,34 @@ impl EventHistoryV1 {
         }
     }
 
-    pub fn len(&self) -> usize { self.events.len() }
-    pub fn is_empty(&self) -> bool { self.events.is_empty() }
+    pub fn len(&self) -> usize {
+        self.events.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
     /// Exact prefix equality, skipping shared immutable history subtrees.
     pub fn common_prefix_len_v2(&self, other: &Self) -> usize {
         self.events.common_prefix_len(&other.events)
     }
     pub fn iter(&self) -> EventHistoryIterV2<'_> {
-        EventHistoryIterV2 { inner: self.events.iter() }
+        EventHistoryIterV2 {
+            inner: self.events.iter(),
+        }
     }
-    pub fn get<I: EventHistoryIndexV2>(&self, index: I) -> Option<&I::Output> { index.get(self) }
+    pub fn get<I: EventHistoryIndexV2>(&self, index: I) -> Option<&I::Output> {
+        index.get(self)
+    }
     pub fn get_mut<I: EventHistoryIndexV2>(&mut self, index: I) -> Option<&mut I::Output> {
         index.get_mut(self)
     }
-    pub fn first(&self) -> Option<&CommittedEvent> { self.events.get(0) }
+    pub fn first(&self) -> Option<&CommittedEvent> {
+        self.events.get(0)
+    }
     pub fn last(&self) -> Option<&CommittedEvent> {
-        self.len().checked_sub(1).and_then(|index| self.events.get(index))
+        self.len()
+            .checked_sub(1)
+            .and_then(|index| self.events.get(index))
     }
     pub fn get_range_v2(&self, range: impl RangeBounds<usize>) -> Option<EventHistoryRangeV2<'_>> {
         let start = match range.start_bound() {
@@ -1095,10 +1149,15 @@ impl EventHistoryV1 {
             Bound::Excluded(&end) => end,
             Bound::Included(&end) => end.checked_add(1)?,
         };
-        (start <= end && end <= self.len()).then_some(EventHistoryRangeV2 { history: self, start, end })
+        (start <= end && end <= self.len()).then_some(EventHistoryRangeV2 {
+            history: self,
+            start,
+            end,
+        })
     }
     pub fn range_v2(&self, range: impl RangeBounds<usize>) -> EventHistoryRangeV2<'_> {
-        self.get_range_v2(range).expect("history range out of bounds")
+        self.get_range_v2(range)
+            .expect("history range out of bounds")
     }
 
     /// Whether an event of one of `kinds` may be in the history: false only
@@ -1197,8 +1256,11 @@ impl EventHistoryV1 {
         let len = len.min(self.events.len());
         let events = self.events.prefix(len);
         let mut prefix = Self {
-            counts: events.counts(), events, stale: false,
-            chain: self.chain.clone(), prefix: self.prefix.clone(),
+            counts: events.counts(),
+            events,
+            stale: false,
+            chain: self.chain.clone(),
+            prefix: self.prefix.clone(),
         };
         prefix.chain.keep(len);
         prefix.prefix.keep(len);

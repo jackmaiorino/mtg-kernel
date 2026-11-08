@@ -351,7 +351,7 @@ impl ObserverInputV49 {
         }
         // `original` is read below only for turn, step, active player and
         // life totals, none of which depend on its history.
-observed.engine.event_history = state.engine.event_history.prefix_v1(end);
+        observed.engine.event_history = state.engine.event_history.prefix_v1(end);
         if original.turn_key_v1() != observed.turn_key_v1()
             || original.active_player != observed.active_player
             || original.step != observed.step
@@ -359,7 +359,7 @@ observed.engine.event_history = state.engine.event_history.prefix_v1(end);
             return Err("Conqueror observer input crossed an engine step".into());
         }
         let mut life = [original.players[0].life, original.players[1].life];
-for event in state.engine.event_history.range_v2(start..end) {
+        for event in state.engine.event_history.range_v2(start..end) {
             match event {
                 CommittedEvent::LifeLoss { player, amount }
                 | CommittedEvent::Damage {

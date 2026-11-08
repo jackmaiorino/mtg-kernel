@@ -252,7 +252,10 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
     {
         return Err("fixed damage payment changed departure identity or cost".into());
     }
-let between = state.engine.event_history.range_v2(p.departure as usize + 1..index);
+    let between = state
+        .engine
+        .event_history
+        .range_v2(p.departure as usize + 1..index);
     let sacrifice = between
         .iter()
         .position(|e| {
@@ -260,7 +263,7 @@ let between = state.engine.event_history.range_v2(p.departure as usize + 1..inde
         if *object==s.source && *controller_before==s.controller)
         })
         .ok_or("fixed damage lost actual sacrifice")?;
-if !between.iter().skip(sacrifice + 1).any(|e| {
+    if !between.iter().skip(sacrifice + 1).any(|e| {
         matches!(e,CommittedEvent::ZoneChange {object,from:Zone::Battlefield,controller_before,..}
         if *object==s.source && *controller_before==s.controller)
     }) {

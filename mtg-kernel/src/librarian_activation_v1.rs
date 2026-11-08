@@ -151,7 +151,7 @@ pub(crate) fn record_resolved(
         .v4
         .ability_source_contract
         .ok_or("Librarian source lost")?;
-let rows = state.engine.event_history.range_v2(start..);
+    let rows = state.engine.event_history.range_v2(start..);
     let draws: Vec<_> = rows
         .iter()
         .enumerate()

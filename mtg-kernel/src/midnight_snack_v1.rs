@@ -161,7 +161,10 @@ pub(crate) fn gained_this_turn(state: &GameState, player: PlayerId) -> Result<u1
     {
         return Err("Midnight Snack turn boundary changed".into());
     }
-    state.engine.event_history.range_v2(boundary + 1..)
+    state
+        .engine
+        .event_history
+        .range_v2(boundary + 1..)
         .iter()
         .filter_map(crate::snack_wide_life_v59::positive_gain)
         .filter(|(gained, _)| *gained == player)

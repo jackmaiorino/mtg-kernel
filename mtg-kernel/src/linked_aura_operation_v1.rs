@@ -1172,7 +1172,10 @@ fn record_answer(
     host: EffectObjectBinding,
     start: usize,
 ) -> Result<(), String> {
-    let returned = state.engine.event_history.range_v2(start..)
+    let returned = state
+        .engine
+        .event_history
+        .range_v2(start..)
         .iter()
         .position(|event| {
             matches!(event,

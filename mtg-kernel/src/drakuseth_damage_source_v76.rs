@@ -140,11 +140,17 @@ fn publication(state: &GameState, id: StackItemId) -> Result<(u32, &StackItem), 
     // Consistency with a genuine declaration is not an occurrence join. The
     // publication itself is emitted by native placement, never reconstructed
     // from this descriptive history or its cardinality.
-    if !state.engine.event_history.range_v2(..at as usize).iter().any(|e| {
-        matches!(e,
+    if !state
+        .engine
+        .event_history
+        .range_v2(..at as usize)
+        .iter()
+        .any(|e| {
+            matches!(e,
         E::DeclaredAttacker{source:s,source_zone_change_count:g,controller:c}
         if *s==source.source && *g==source.zone_change_count && *c==source.controller)
-    }) {
+        })
+    {
         return Err("Drakuseth publication lacks its original declaration".into());
     }
     Ok((at, item))
@@ -233,11 +239,16 @@ fn departure(
         || snapshot.owner != s.owner
         || snapshot.controller != s.controller
         || snapshot.zone_change_count != s.zone_change_count
-        || !state.engine.event_history.range_v2(at + 1..).iter().any(|e| {
-            matches!(e,
+        || !state
+            .engine
+            .event_history
+            .range_v2(at + 1..)
+            .iter()
+            .any(|e| {
+                matches!(e,
             E::ZoneChange{object,from:Zone::Battlefield,to,controller_before}
             if *object==s.source && *to!=Zone::Battlefield && *controller_before==s.controller)
-        })
+            })
     {
         return Err("Drakuseth departure lost original incarnation or actual zone move".into());
     }

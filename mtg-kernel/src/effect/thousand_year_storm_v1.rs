@@ -316,7 +316,10 @@ fn cast_at(
 }
 fn count(state: &GameState, index: u64) -> Result<u16, String> {
     let (spell, _) = cast_at(state, index)?;
-    let start = state.engine.event_history.range_v2(..index as usize)
+    let start = state
+        .engine
+        .event_history
+        .range_v2(..index as usize)
         .iter()
         .rposition(|e| matches!(e, event::CommittedEvent::LifeLossTurnBeganV1 { .. }))
         .map_or(0, |i| i + 1);
@@ -684,7 +687,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 validate_published(state, item)?;
             }
             JournalV1::Copy { trigger, .. } => {
-                let rows = state.engine.event_history.range_v2(..index)
+                let rows = state
+                    .engine
+                    .event_history
+                    .range_v2(..index)
                     .iter()
                     .filter_map(|e| match e {
                         event::CommittedEvent::ThousandYearStormV1 {

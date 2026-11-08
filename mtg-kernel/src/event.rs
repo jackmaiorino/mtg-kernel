@@ -3149,7 +3149,10 @@ pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(
         if *index as usize != at || installations.is_empty() {
             return Err(installations.first().map_or(ObjectId(0), |r| r.source));
         }
-        let expected: Vec<_> = state.engine.event_history.range_v2(..at)
+        let expected: Vec<_> = state
+            .engine
+            .event_history
+            .range_v2(..at)
             .iter()
             .filter_map(|e| {
                 let CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement } = e else {
@@ -9995,7 +9998,10 @@ pub(crate) fn lathril_damage_v1(
         || *amount <= 0
         || amount != captured_amount
         || recipient != player
-        || !state.engine.event_history.range_v2(damage_index + 1..index)
+        || !state
+            .engine
+            .event_history
+            .range_v2(damage_index + 1..index)
             .iter()
             .all(|entry| {
                 matches!(entry,

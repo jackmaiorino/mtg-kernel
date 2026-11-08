@@ -321,7 +321,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             CommittedEvent::SourcePowerActivationFinishedV1 {stack_item_id} if *stack_item_id==id)
             })
             .count();
-        if state.engine.event_history.range_v2(..receipt_index)
+        if state
+            .engine
+            .event_history
+            .range_v2(..receipt_index)
             .iter()
             .any(|event| {
                 matches!(event,

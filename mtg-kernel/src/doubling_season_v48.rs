@@ -1115,7 +1115,10 @@ pub(crate) fn record_token_creation(
     if original.is_empty() {
         return Ok(());
     }
-    let created = state.engine.event_history.range_v2(start..)
+    let created = state
+        .engine
+        .event_history
+        .range_v2(start..)
         .iter()
         .enumerate()
         .filter_map(|(i, event)| {
@@ -1404,7 +1407,7 @@ pub(crate) fn expected_tokens(
     validate_token_journals(state)?;
     let mut expected = original;
     let mut seen = 0;
-for event in state.engine.event_history.range_v2(start..end) {
+    for event in state.engine.event_history.range_v2(start..end) {
         let crate::event::CommittedEvent::TokenCreationReplacementV48 { creation: c } = event
         else {
             continue;

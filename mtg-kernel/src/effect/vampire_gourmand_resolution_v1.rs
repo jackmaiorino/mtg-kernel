@@ -317,8 +317,10 @@ fn validate_cost_operations(
         if operation.result.source_before.owner != source.owner {
             return Err("Gourmand operation changed source owner".into());
         }
-        let events =
-state.engine.event_history.range_v2(operation.boundary_history_index as usize + 1..index);
+        let events = state
+            .engine
+            .event_history
+            .range_v2(operation.boundary_history_index as usize + 1..index);
         match operation.result.selected {
             None => {
                 if operation.result.sacrifice_history_index.is_some()

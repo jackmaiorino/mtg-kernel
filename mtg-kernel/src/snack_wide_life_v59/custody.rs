@@ -440,7 +440,9 @@ fn validate_gain(state: &GameState, at: u64) -> Result<u64, String> {
             Ok(())
         },
     )?;
-if replay.engine.event_history.range_v2(start..) != state.engine.event_history.range_v2(start..at as usize) {
+    if replay.engine.event_history.range_v2(start..)
+        != state.engine.event_history.range_v2(start..at as usize)
+    {
         return Err("Conqueror gain and its actual downstream captures changed".into());
     }
     Ok(*removal)

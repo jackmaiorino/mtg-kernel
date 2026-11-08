@@ -117,7 +117,10 @@ pub(crate) fn pay_and_capture(
     }
     let payment_begin = state.engine.event_history.len();
     crate::event::commit_sacrifice_death_group_v1(state, &[chosen.object]);
-    result.sacrifice_history_index = state.engine.event_history.range_v2(payment_begin..)
+    result.sacrifice_history_index = state
+        .engine
+        .event_history
+        .range_v2(payment_begin..)
         .iter()
         .position(
             |e| matches!(e, CommittedEvent::Sacrificed { object, .. } if *object == chosen.object),
@@ -144,7 +147,10 @@ pub(crate) fn pay_and_capture(
         state,
         crate::event::ProposedEvent::draw(source.controller),
     );
-    result.draw_history_index = state.engine.event_history.range_v2(draw_begin..)
+    result.draw_history_index = state
+        .engine
+        .event_history
+        .range_v2(draw_begin..)
         .iter()
         .position(
             |e| matches!(e, CommittedEvent::Draw { player, .. } if *player == source.controller),

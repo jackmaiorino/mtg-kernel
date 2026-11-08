@@ -19,7 +19,11 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-#[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,22 +163,35 @@ struct ReplayKeys {
 }
 impl Default for ReplayKeys {
     fn default() -> Self {
-        Self { entries: crate::event_history_v1::SharedSequence::new(|_| 0) }
+        Self {
+            entries: crate::event_history_v1::SharedSequence::new(|_| 0),
+        }
     }
 }
 impl ReplayKeys {
     fn get(&self, position: &u64) -> Option<&ReplayKey> {
         let at = self.entries.partition_point(|(index, _)| index < position);
-        self.entries.get(at).filter(|(index, _)| index == position).map(|(_, key)| key)
+        self.entries
+            .get(at)
+            .filter(|(index, _)| index == position)
+            .map(|(_, key)| key)
     }
     fn insert(&mut self, position: u64, key: ReplayKey) {
-        debug_assert!(self.entries.iter().next_back().is_none_or(|(last, _)| *last < position));
+        debug_assert!(self
+            .entries
+            .iter()
+            .next_back()
+            .is_none_or(|(last, _)| *last < position));
         self.entries.push((position, key));
     }
     fn prefix(&self, covered: usize) -> Self {
         let covered = u64::try_from(covered).expect("bounded replay prefix length");
-        let count = self.entries.partition_point(|(position, _)| *position < covered);
-        Self { entries: self.entries.prefix(count) }
+        let count = self
+            .entries
+            .partition_point(|(position, _)| *position < covered);
+        Self {
+            entries: self.entries.prefix(count),
+        }
     }
 }
 #[derive(Default)]
@@ -360,7 +377,9 @@ fn replay_keys(history: &crate::event_history_v1::EventHistoryV1) -> ReplayKeys 
     // Move the data out before any equality, serde, cloning, or other work.
     // A reentrant request sees an empty cache; panic merely loses acceleration.
     let mut retained = REPLAY_PREFIX.with(|cache| cache.take());
-    let matching = retained.history.as_ref()
+    let matching = retained
+        .history
+        .as_ref()
         .map_or(0, |previous| previous.common_prefix_len_v2(history))
         .min(retained.rows.len());
     // A shorter input or the first typed mismatch invalidates every later row.
@@ -489,13 +508,20 @@ pub(super) fn original_replay_keys_for_test(
 pub(super) fn replay_prefix_probe_for_test(
     history: &[CommittedEvent],
 ) -> (BTreeMap<u64, ReplayKey>, usize, usize, usize) {
-    let keys = replay_keys(&crate::event_history_v1::EventHistoryV1::from(history.to_vec()));
+    let keys = replay_keys(&crate::event_history_v1::EventHistoryV1::from(
+        history.to_vec(),
+    ));
     let (events, bytes) = REPLAY_PREFIX.with(|cache| {
         let cache = cache.borrow();
         (cache.rows.len(), cache.canonical_bytes)
     });
     let reused = REPLAY_PREFIX_REUSED.with(Cell::get);
-    (keys.entries.iter().copied().collect(), events, bytes, reused)
+    (
+        keys.entries.iter().copied().collect(),
+        events,
+        bytes,
+        reused,
+    )
 }
 
 #[cfg(all(
@@ -1084,7 +1110,10 @@ pub(crate) fn finish_combat(state: &mut GameState) -> Result<(), String> {
     };
     let original = original.clone();
     let start = usize::try_from(input).map_err(|_| "Drake batch index overflow")? + 1;
-    let damages = state.engine.event_history.range_v2(start..)
+    let damages = state
+        .engine
+        .event_history
+        .range_v2(start..)
         .iter()
         .enumerate()
         .filter_map(|(offset, e)| {
@@ -1100,7 +1129,10 @@ pub(crate) fn finish_combat(state: &mut GameState) -> Result<(), String> {
             }
         })
         .collect::<Vec<_>>();
-    let markers = state.engine.event_history.range_v2(start..)
+    let markers = state
+        .engine
+        .event_history
+        .range_v2(start..)
         .iter()
         .enumerate()
         .filter_map(|(offset, e)| {
@@ -1313,7 +1345,10 @@ pub(crate) fn record_paid(
     if item != activation_item(owner.source, id) {
         return Err("Drake paid row changed controller/source/entire program".into());
     }
-    let debits = state.engine.event_history.range_v2(owner.start..)
+    let debits = state
+        .engine
+        .event_history
+        .range_v2(owner.start..)
         .iter()
         .filter_map(journal)
         .filter(|r| matches!(r.value, JournalV1::Debit { .. }))
@@ -1761,7 +1796,8 @@ fn checked_prefix(
             .and_then(|next| next.upgrade())
             .filter(|longer| {
                 longer.covered == memo.covered + longer.added.len()
-                    && history.get_range_v2(memo.covered..longer.covered)
+                    && history
+                        .get_range_v2(memo.covered..longer.covered)
                         .is_some_and(|range| range.iter().eq(longer.added.iter()))
             });
         match longer {
@@ -1881,7 +1917,9 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
         kind: crate::event_history_v1::EventKindV1,
     ) -> crate::event_history_v1::EventHistoryRangeV2<'_> {
         if history.has_any(&[kind]) {
-            history.get_range_v2(checked..).unwrap_or_else(|| history.range_v2(..0))
+            history
+                .get_range_v2(checked..)
+                .unwrap_or_else(|| history.range_v2(..0))
         } else {
             history.range_v2(..0)
         }
@@ -2040,9 +2078,9 @@ fn leave_prefix(
     let longer = Arc::new(CheckedPrefixV1 {
         covered,
         rows,
-        added: shorter
-            .as_ref()
-            .map_or_else(Vec::new, |shorter| history.range_v2(shorter.covered..).to_vec()),
+        added: shorter.as_ref().map_or_else(Vec::new, |shorter| {
+            history.range_v2(shorter.covered..).to_vec()
+        }),
         next: Mutex::new(Weak::new()),
     });
     if let Some(shorter) = shorter {
@@ -2253,7 +2291,12 @@ fn check_row(
             {
                 return Err("Drake whole operation input/output prefix changed".into());
             }
-            if state.engine.event_history.get_range_v2(..*start as usize).is_none() {
+            if state
+                .engine
+                .event_history
+                .get_range_v2(..*start as usize)
+                .is_none()
+            {
                 return Err("Drake operation original prefix absent".into());
             }
             // The rows are every journal event in history order, so the

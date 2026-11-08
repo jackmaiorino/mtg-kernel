@@ -449,7 +449,10 @@ fn departure(state: &GameState, index: u32) -> Result<&DepartureV4, String> {
         || d.snapshot.owner != s.owner
         || d.snapshot.controller != s.controller
         || d.snapshot.zone_change_count != s.zone_change_count
-        || !state.engine.event_history.range_v2(index as usize + 1..)
+        || !state
+            .engine
+            .event_history
+            .range_v2(index as usize + 1..)
             .iter()
             .any(|e| {
                 matches!(e,

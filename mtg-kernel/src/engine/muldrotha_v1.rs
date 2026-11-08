@@ -833,7 +833,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         CommittedEvent::MuldrothaPlayedV1 { played }
                         if played.options_history_index == pending.options_history_index)
                     });
-                    let completed = state.engine.event_history.range_v2(at + 1..)
+                    let completed = state
+                        .engine
+                        .event_history
+                        .range_v2(at + 1..)
                         .iter()
                         .any(|e| match e {
                             CommittedEvent::PublishedCastIdentityV1 { receipt } => {
@@ -868,7 +871,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
             CommittedEvent::MuldrothaPlayedV1 { played } => {
                 let o = options(state, played.options_history_index)?;
-                let choice = state.engine.event_history.range_v2(..at)
+                let choice = state
+                    .engine
+                    .event_history
+                    .range_v2(..at)
                     .iter()
                     .find_map(|e| match e {
                         CommittedEvent::MuldrothaSelectedV1 { pending }

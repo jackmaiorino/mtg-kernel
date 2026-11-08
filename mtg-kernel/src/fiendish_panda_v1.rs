@@ -271,7 +271,10 @@ fn root_at(
         (CommittedEvent::FiendishPandaWideGainCaptureV59 { source: a, gain_history_index: x, .. }, CommittedEvent::FiendishPandaWideGainCaptureV59 { source: b, gain_history_index: y, .. }) if a == b && x == y)) {
         return Err("Panda wide occurrence captured twice".into());
     }
-    if state.engine.event_history.range_v2(..index)
+    if state
+        .engine
+        .event_history
+        .range_v2(..index)
         .iter()
         .any(|prior| match (prior, event) {
             (

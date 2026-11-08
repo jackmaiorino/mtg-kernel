@@ -489,7 +489,7 @@ pub fn capture(state: &GameState) -> Result<FactsV59, RlContractError> {
                             let end = usize::try_from(operation).map_err(|_| {
                                 RlContractError("wide Panda operation exceeds usize".into())
                             })?;
-for e in state.engine.event_history.range_v2(start + 1..end) {
+                            for e in state.engine.event_history.range_v2(start + 1..end) {
                                 if let Event::PlusOneCountersAdded {
                                     object,
                                     zone_change_count,

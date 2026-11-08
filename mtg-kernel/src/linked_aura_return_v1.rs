@@ -19,7 +19,10 @@ pub struct HostChoiceV1 {
 
 fn original_departure(state: &GameState, link: LinkedExileRecordV4) -> Result<usize, String> {
     let entry = crate::banishing_light_v1::validate_source(state, link.source)?;
-    state.engine.event_history.range_v2(entry + 1..)
+    state
+        .engine
+        .event_history
+        .range_v2(entry + 1..)
         .iter()
         .position(|event| {
             matches!(event, CommittedEvent::ZoneChange {

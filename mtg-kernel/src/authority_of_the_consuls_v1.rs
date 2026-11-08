@@ -538,7 +538,10 @@ pub(crate) fn resolve(state: &mut GameState, ctx: &ExecCtx, capture_history_inde
     let source = capture.source;
     let start = state.engine.event_history.len();
     event::propose_and_commit(state, ProposedEvent::life_gain(ctx.controller, 1));
-    let gain_index = state.engine.event_history.range_v2(start..)
+    let gain_index = state
+        .engine
+        .event_history
+        .range_v2(start..)
         .iter()
         .position(|event| {
             matches!(event,

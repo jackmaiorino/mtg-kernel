@@ -274,7 +274,8 @@ pub(crate) fn validate_history(state: &GameState) -> Result<(), String> {
                     || input.choice.resolution >= at as u64
                     || input.choice.resolution < n as u64
                     || n > state.engine.event_history.len()
-|| state.engine.event_history.range_v2(..n) != input.original.engine.event_history.range_v2(..)
+                    || state.engine.event_history.range_v2(..n)
+                        != input.original.engine.event_history.range_v2(..)
                     || !matches!(input.operation, OperationV1::Step(_) | OperationV1::Advance)
                     || input.original.stack != *original_stack
                     || context.ability_source_contract != Some(input.choice.source)

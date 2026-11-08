@@ -422,7 +422,7 @@ pub(crate) fn linked_paid_incarnation(
         let Some(chosen) = selected.first() else {
             return Ok(None);
         };
-let interval = state.engine.event_history.range_v2(at + 1..);
+        let interval = state.engine.event_history.range_v2(at + 1..);
         let sacrificed = interval.iter().position(|event| {
             matches!(event,
             CommittedEvent::Sacrificed { object, controller_before, .. }
@@ -936,7 +936,10 @@ fn validate_operation(
                 "Hunter live original source was rewritten as absent without a departure".into(),
             );
         }
-        let last_source_zone = state.engine.event_history.range_v2(capture as usize + 1..*input as usize)
+        let last_source_zone = state
+            .engine
+            .event_history
+            .range_v2(capture as usize + 1..*input as usize)
             .iter()
             .rev()
             .find_map(|event| match event {
@@ -956,7 +959,10 @@ fn validate_operation(
         let mut actual_sacrifices = Vec::new();
         let mut actual_departures = Vec::new();
         let mut actual_counters = Vec::new();
-        for (relative, event) in state.engine.event_history.range_v2(*input as usize + 1..operation as usize)
+        for (relative, event) in state
+            .engine
+            .event_history
+            .range_v2(*input as usize + 1..operation as usize)
             .iter()
             .enumerate()
         {
@@ -1277,7 +1283,10 @@ pub(crate) fn begin_owned(
         state.stack.push(owner.expected.clone());
         crate::effect::execute(&recipe(false), ctx, state);
         remove_borrowed(state, owner)?;
-        let draws = state.engine.event_history.range_v2(start..)
+        let draws = state
+            .engine
+            .event_history
+            .range_v2(start..)
             .iter()
             .enumerate()
             .filter_map(|(i, e)| {
@@ -1415,7 +1424,13 @@ pub(crate) fn resume_owned(
     let mut sacrifice = None;
     let mut departure = None;
     let mut counter = None;
-    for (relative, event) in state.engine.event_history.range_v2(start..).iter().enumerate() {
+    for (relative, event) in state
+        .engine
+        .event_history
+        .range_v2(start..)
+        .iter()
+        .enumerate()
+    {
         let at = (start + relative) as u64;
         match event {
             CommittedEvent::Sacrificed { object, .. } if Some(*object) == selected_object => {

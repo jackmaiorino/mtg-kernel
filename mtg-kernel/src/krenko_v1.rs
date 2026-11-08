@@ -229,7 +229,10 @@ pub(crate) fn record_paid(
     if item.v4.ability_source_contract != Some(captured_source) {
         return Err("Krenko full publication changed the private prepayment source".into());
     }
-    let taps = state.engine.event_history.range_v2(start..)
+    let taps = state
+        .engine
+        .event_history
+        .range_v2(start..)
         .iter()
         .enumerate()
         .filter_map(|(i, e)| {

@@ -360,7 +360,10 @@ mod tests {
                 assert_eq!(current.objects.get(ordinary).zone, Zone::Graveyard);
                 for (id, destination) in [(shielded, Zone::Exile), (ordinary, Zone::Graveyard)] {
                     assert_eq!(
-                        current.engine.event_history.range_v2(before..)
+                        current
+                            .engine
+                            .event_history
+                            .range_v2(before..)
                             .iter()
                             .filter(|event| matches!(event, event::CommittedEvent::ZoneChange {
                             object, from: Zone::Battlefield, to, ..

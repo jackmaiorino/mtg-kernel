@@ -48,7 +48,9 @@ fn kind_index<T, const C: usize>(value: &T, kind: fn(&T) -> usize) -> Option<usi
 
 fn add_count<const C: usize>(counts: &mut [u32; C], index: Option<usize>) {
     if let Some(index) = index {
-        counts[index] = counts[index].checked_add(1).expect("sequence kind count overflow");
+        counts[index] = counts[index]
+            .checked_add(1)
+            .expect("sequence kind count overflow");
     }
 }
 
@@ -59,7 +61,11 @@ impl<T: Clone, const C: usize> Node<T, C> {
         for value in &values {
             add_count(&mut counts, kind_index::<T, C>(value, kind));
         }
-        Self { len: values.len(), counts, body: Body::Leaf(values) }
+        Self {
+            len: values.len(),
+            counts,
+            body: Body::Leaf(values),
+        }
     }
 
     fn branch(children: Vec<Arc<Self>>) -> Self {
@@ -67,12 +73,20 @@ impl<T: Clone, const C: usize> Node<T, C> {
         let mut len = 0usize;
         let mut counts = [0u32; C];
         for child in &children {
-            len = len.checked_add(child.len).expect("sequence length overflow");
+            len = len
+                .checked_add(child.len)
+                .expect("sequence length overflow");
             for (total, count) in counts.iter_mut().zip(child.counts) {
-                *total = total.checked_add(count).expect("sequence kind count overflow");
+                *total = total
+                    .checked_add(count)
+                    .expect("sequence kind count overflow");
             }
         }
-        Self { len, counts, body: Body::Branch(children) }
+        Self {
+            len,
+            counts,
+            body: Body::Branch(children),
+        }
     }
 
     /// A carry is a sibling of the same height containing just the new item.
@@ -81,13 +95,19 @@ impl<T: Clone, const C: usize> Node<T, C> {
         if matches!(&node.body, Body::Leaf(values) if values.len() == LEAF) {
             let mut counts = [0; C];
             add_count(&mut counts, index);
-            return Some(Arc::new(Self { len: 1, counts, body: Body::Leaf(vec![value]) }));
+            return Some(Arc::new(Self {
+                len: 1,
+                counts,
+                body: Body::Leaf(vec![value]),
+            }));
         }
         let node = Arc::make_mut(node);
         match &mut node.body {
             Body::Leaf(values) => values.push(value),
             Body::Branch(children) => {
-                if let Some(carry) = Self::append(children.last_mut().expect("nonempty branch"), value, index) {
+                if let Some(carry) =
+                    Self::append(children.last_mut().expect("nonempty branch"), value, index)
+                {
                     if children.len() == FANOUT {
                         return Some(Arc::new(Self::branch(vec![carry])));
                     }
@@ -102,14 +122,18 @@ impl<T: Clone, const C: usize> Node<T, C> {
 
     fn prefix(node: &Arc<Self>, len: usize, kind: fn(&T) -> usize) -> Arc<Self> {
         debug_assert!(len > 0 && len <= node.len);
-        if len == node.len { return node.clone(); }
+        if len == node.len {
+            return node.clone();
+        }
         match &node.body {
             Body::Leaf(values) => Arc::new(Self::leaf(values[..len].to_vec(), kind)),
             Body::Branch(children) => {
                 let mut remaining = len;
                 let mut selected = Vec::new();
                 for child in children {
-                    if remaining == 0 { break; }
+                    if remaining == 0 {
+                        break;
+                    }
                     if remaining >= child.len {
                         selected.push(child.clone());
                         remaining -= child.len;
@@ -140,13 +164,23 @@ impl<T: Clone, const C: usize> Clone for SharedSequence<T, C> {
         if self.editable {
             return Self::from_vec(self.flat.get().expect("editable Vec").clone(), self.kind);
         }
-        Self { root: self.root.clone(), kind: self.kind, flat: OnceLock::new(), editable: false }
+        Self {
+            root: self.root.clone(),
+            kind: self.kind,
+            flat: OnceLock::new(),
+            editable: false,
+        }
     }
 }
 
 impl<T: Clone, const C: usize> SharedSequence<T, C> {
     pub(crate) fn new(kind: fn(&T) -> usize) -> Self {
-        Self { root: None, kind, flat: OnceLock::new(), editable: false }
+        Self {
+            root: None,
+            kind,
+            flat: OnceLock::new(),
+            editable: false,
+        }
     }
 
     /// Consumes elements into leaves without cloning them.
@@ -155,7 +189,9 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
         let mut level = Vec::new();
         loop {
             let chunk: Vec<_> = values.by_ref().take(LEAF).collect();
-            if chunk.is_empty() { break; }
+            if chunk.is_empty() {
+                break;
+            }
             level.push(Arc::new(Node::leaf(chunk, kind)));
         }
         while level.len() > 1 {
@@ -163,19 +199,31 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
             level = Vec::new();
             loop {
                 let chunk: Vec<_> = children.by_ref().take(FANOUT).collect();
-                if chunk.is_empty() { break; }
+                if chunk.is_empty() {
+                    break;
+                }
                 level.push(Arc::new(Node::branch(chunk)));
             }
         }
-        Self { root: level.pop(), kind, flat: OnceLock::new(), editable: false }
+        Self {
+            root: level.pop(),
+            kind,
+            flat: OnceLock::new(),
+            editable: false,
+        }
     }
 
     pub(crate) fn len(&self) -> usize {
-        if self.editable { self.flat.get().expect("editable Vec").len() }
-        else { self.root.as_ref().map_or(0, |node| node.len) }
+        if self.editable {
+            self.flat.get().expect("editable Vec").len()
+        } else {
+            self.root.as_ref().map_or(0, |node| node.len)
+        }
     }
 
-    pub(crate) fn is_empty(&self) -> bool { self.len() == 0 }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
     pub(crate) fn counts(&self) -> [u32; C] {
         if self.editable {
@@ -184,7 +232,9 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
                 add_count(&mut counts, kind_index::<T, C>(value, self.kind));
             }
             counts
-        } else { self.root.as_ref().map_or([0; C], |node| node.counts) }
+        } else {
+            self.root.as_ref().map_or([0; C], |node| node.counts)
+        }
     }
 
     fn leaf_at(&self, mut index: usize) -> Option<(&[T], usize)> {
@@ -193,14 +243,19 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
             return (index < values.len()).then_some((values.as_slice(), 0));
         }
         let mut node = self.root.as_deref()?;
-        if index >= node.len { return None; }
+        if index >= node.len {
+            return None;
+        }
         let mut start = 0;
         loop {
             match &node.body {
                 Body::Leaf(values) => return Some((values.as_slice(), start)),
                 Body::Branch(children) => {
                     for child in children {
-                        if index < child.len { node = child; break; }
+                        if index < child.len {
+                            node = child;
+                            break;
+                        }
                         index -= child.len;
                         start += child.len;
                     }
@@ -232,7 +287,11 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
         T: Eq,
     {
         if self.editable || other.editable {
-            return self.iter().zip(other.iter()).take_while(|(a, b)| a == b).count();
+            return self
+                .iter()
+                .zip(other.iter())
+                .take_while(|(a, b)| a == b)
+                .count();
         }
         let limit = self.len().min(other.len());
         if limit == 0 {
@@ -311,13 +370,18 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
     pub(crate) fn prefix(&self, len: usize) -> Self {
         let len = len.min(self.len());
         if self.editable {
-            return Self::from_vec(self.flat.get().expect("editable Vec")[..len].to_vec(), self.kind);
+            return Self::from_vec(
+                self.flat.get().expect("editable Vec")[..len].to_vec(),
+                self.kind,
+            );
         }
         let mut result = Self::new(self.kind);
         if len != 0 {
             let mut root = Node::prefix(self.root.as_ref().expect("nonempty tree"), len, self.kind);
             while let Body::Branch(children) = &root.body {
-                if children.len() != 1 { break; }
+                if children.len() != 1 {
+                    break;
+                }
                 root = children[0].clone();
             }
             result.root = Some(root);
@@ -326,7 +390,9 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
     }
 
     pub(crate) fn truncate(&mut self, len: usize) {
-        if len >= self.len() { return; }
+        if len >= self.len() {
+            return;
+        }
         self.repack();
         *self = self.prefix(len);
     }
@@ -343,11 +409,17 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
         } else {
             let mut counts = [0; C];
             add_count(&mut counts, index);
-            self.root = Some(Arc::new(Node { len: 1, counts, body: Body::Leaf(vec![value]) }));
+            self.root = Some(Arc::new(Node {
+                len: 1,
+                counts,
+                body: Body::Leaf(vec![value]),
+            }));
         }
     }
 
-    pub(crate) fn iter(&self) -> Iter<'_, T, C> { self.range(..) }
+    pub(crate) fn iter(&self) -> Iter<'_, T, C> {
+        self.range(..)
+    }
 
     /// Range bounds and overflow reject like slice indexing.
     pub(crate) fn range(&self, range: impl RangeBounds<usize>) -> Iter<'_, T, C> {
@@ -361,16 +433,28 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
             Bound::Excluded(&end) => end,
             Bound::Unbounded => self.len(),
         };
-        assert!(start <= end && end <= self.len(), "sequence range out of bounds");
-        Iter { sequence: self, front: start, back: end, front_leaf: None, back_leaf: None }
+        assert!(
+            start <= end && end <= self.len(),
+            "sequence range out of bounds"
+        );
+        Iter {
+            sequence: self,
+            front: start,
+            back: end,
+            front_leaf: None,
+            back_leaf: None,
+        }
     }
 
     pub(crate) fn partition_point(&self, mut predicate: impl FnMut(&T) -> bool) -> usize {
         let (mut left, mut right) = (0, self.len());
         while left < right {
             let middle = left + (right - left) / 2;
-            if predicate(self.get(middle).expect("in-bounds midpoint")) { left = middle + 1; }
-            else { right = middle; }
+            if predicate(self.get(middle).expect("in-bounds midpoint")) {
+                left = middle + 1;
+            } else {
+                right = middle;
+            }
         }
         left
     }
@@ -411,15 +495,22 @@ pub(crate) struct Iter<'a, T: Clone, const C: usize> {
 
 impl<T: Clone, const C: usize> Clone for Iter<'_, T, C> {
     fn clone(&self) -> Self {
-        Self { sequence: self.sequence, front: self.front, back: self.back,
-            front_leaf: self.front_leaf, back_leaf: self.back_leaf }
+        Self {
+            sequence: self.sequence,
+            front: self.front,
+            back: self.back,
+            front_leaf: self.front_leaf,
+            back_leaf: self.back_leaf,
+        }
     }
 }
 
 impl<'a, T: Clone, const C: usize> Iterator for Iter<'a, T, C> {
     type Item = &'a T;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.front == self.back { return None; }
+        if self.front == self.back {
+            return None;
+        }
         let index = self.front;
         self.front += 1;
         let (leaf, start) = match self.front_leaf {
@@ -432,7 +523,10 @@ impl<'a, T: Clone, const C: usize> Iterator for Iter<'a, T, C> {
         };
         Some(&leaf[index - start])
     }
-    fn size_hint(&self) -> (usize, Option<usize>) { let len = self.len(); (len, Some(len)) }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.len();
+        (len, Some(len))
+    }
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
         self.front = self.front.saturating_add(n).min(self.back);
         self.next()
@@ -441,7 +535,9 @@ impl<'a, T: Clone, const C: usize> Iterator for Iter<'a, T, C> {
 
 impl<T: Clone, const C: usize> DoubleEndedIterator for Iter<'_, T, C> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.front == self.back { return None; }
+        if self.front == self.back {
+            return None;
+        }
         self.back -= 1;
         let index = self.back;
         let (leaf, start) = match self.back_leaf {
@@ -460,7 +556,9 @@ impl<T: Clone, const C: usize> DoubleEndedIterator for Iter<'_, T, C> {
     }
 }
 impl<T: Clone, const C: usize> ExactSizeIterator for Iter<'_, T, C> {
-    fn len(&self) -> usize { self.back - self.front }
+    fn len(&self) -> usize {
+        self.back - self.front
+    }
 }
 impl<T: Clone, const C: usize> FusedIterator for Iter<'_, T, C> {}
 
@@ -469,7 +567,9 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    fn kind(value: &usize) -> usize { value % 3 }
+    fn kind(value: &usize) -> usize {
+        value % 3
+    }
     fn oracle(tree: &SharedSequence<usize, 3>, values: &[usize]) {
         assert_eq!(tree.len(), values.len());
         assert_eq!(tree.is_empty(), values.is_empty());
@@ -477,9 +577,21 @@ mod tests {
         assert!(tree.iter().rev().eq(values.iter().rev()));
         assert_eq!(tree.get(values.len()), None);
         let mut counts = [0; 3];
-        for value in values { counts[kind(value)] += 1; }
+        for value in values {
+            counts[kind(value)] += 1;
+        }
         assert_eq!(tree.counts(), counts);
-        for index in [0, 1, 63, 64, 65, 2047, 2048, 2049, values.len().saturating_sub(1)] {
+        for index in [
+            0,
+            1,
+            63,
+            64,
+            65,
+            2047,
+            2048,
+            2049,
+            values.len().saturating_sub(1),
+        ] {
             assert_eq!(tree.get(index), values.get(index));
         }
     }
@@ -490,14 +602,29 @@ mod tests {
             let values: Vec<_> = (0..len).collect();
             let built = SharedSequence::<_, 3>::from_vec(values.clone(), kind);
             let mut pushed = SharedSequence::<_, 3>::new(kind);
-            for value in &values { pushed.push(*value); }
+            for value in &values {
+                pushed.push(*value);
+            }
             oracle(&built, &values);
             oracle(&pushed, &values);
-            for cut in [0, 1, 63, 64, 65, len / 2, len.saturating_sub(1), len, len + 17] {
+            for cut in [
+                0,
+                1,
+                63,
+                64,
+                65,
+                len / 2,
+                len.saturating_sub(1),
+                len,
+                len + 17,
+            ] {
                 let mut prefix = built.prefix(cut);
                 let mut expected = values[..cut.min(len)].to_vec();
                 oracle(&prefix, &expected);
-                for value in len..len + 70 { prefix.push(value); expected.push(value); }
+                for value in len..len + 70 {
+                    prefix.push(value);
+                    expected.push(value);
+                }
                 oracle(&prefix, &expected);
                 let mut truncated = pushed.clone();
                 truncated.truncate(cut);
@@ -525,40 +652,76 @@ mod tests {
             assert!(a.eq(b));
         }
         assert!(tree.range(63..=65).eq(values[63..=65].iter()));
-        assert!(tree.range((Bound::Excluded(63), Bound::Unbounded)).eq(values[64..].iter()));
+        assert!(tree
+            .range((Bound::Excluded(63), Bound::Unbounded))
+            .eq(values[64..].iter()));
         for target in [0, 1, 63, 64, 65, 2048, 4098, 4099, 5000] {
-            assert_eq!(tree.partition_point(|x| *x < target), values.partition_point(|x| *x < target));
+            assert_eq!(
+                tree.partition_point(|x| *x < target),
+                values.partition_point(|x| *x < target)
+            );
         }
     }
 
     #[derive(Debug)]
-    struct Counted { value: usize, clones: Arc<AtomicUsize> }
+    struct Counted {
+        value: usize,
+        clones: Arc<AtomicUsize>,
+    }
     impl Clone for Counted {
         fn clone(&self) -> Self {
             self.clones.fetch_add(1, Ordering::Relaxed);
-            Self { value: self.value, clones: self.clones.clone() }
+            Self {
+                value: self.value,
+                clones: self.clones.clone(),
+            }
         }
     }
-    fn counted_kind(value: &Counted) -> usize { value.value % 3 }
+    fn counted_kind(value: &Counted) -> usize {
+        value.value % 3
+    }
 
     #[test]
     fn fork_prefix_and_append_clone_at_most_one_bounded_leaf() {
         let clones = Arc::new(AtomicUsize::new(0));
-        let values = (0..65539).map(|value| Counted { value, clones: clones.clone() }).collect();
+        let values = (0..65539)
+            .map(|value| Counted {
+                value,
+                clones: clones.clone(),
+            })
+            .collect();
         let tree = SharedSequence::<_, 3>::from_vec(values, counted_kind);
         assert_eq!(clones.load(Ordering::Relaxed), 0);
-        for cut in [1, 63, 64, 65, 2047, 2048, 2049, 65536, 65538, 65539, usize::MAX] {
+        for cut in [
+            1,
+            63,
+            64,
+            65,
+            2047,
+            2048,
+            2049,
+            65536,
+            65538,
+            65539,
+            usize::MAX,
+        ] {
             clones.store(0, Ordering::Relaxed);
             let mut prefix = tree.prefix(cut);
             assert!(clones.load(Ordering::Relaxed) < LEAF);
             let mut fork = prefix.clone();
             let before = clones.load(Ordering::Relaxed);
-            fork.push(Counted { value: 99, clones: clones.clone() });
+            fork.push(Counted {
+                value: 99,
+                clones: clones.clone(),
+            });
             assert!(clones.load(Ordering::Relaxed) - before < LEAF);
             assert_eq!(prefix.len(), cut.min(tree.len()));
             assert_eq!(fork.len(), prefix.len() + 1);
             let before = clones.load(Ordering::Relaxed);
-            prefix.push(Counted { value: 100, clones: clones.clone() });
+            prefix.push(Counted {
+                value: 100,
+                clones: clones.clone(),
+            });
             assert!(clones.load(Ordering::Relaxed) - before < LEAF);
         }
         assert_eq!(tree.len(), 65539);
@@ -577,21 +740,27 @@ mod tests {
             values.retain(|value| value % 7 != 0);
             values.extend([17, 18, 19]);
         };
-        edit(tree.as_mut_vec()); edit(&mut expected);
+        edit(tree.as_mut_vec());
+        edit(&mut expected);
         oracle(&tree, &expected);
         oracle(&tree.clone(), &expected);
         oracle(&tree.prefix(65), &expected[..65]);
         tree.repack();
         assert!(!tree.editable && tree.flat.get().is_none());
         oracle(&tree, &expected);
-        tree.as_mut_vec().push(33); expected.push(33);
-        tree.push(34); expected.push(34);
+        tree.as_mut_vec().push(33);
+        expected.push(33);
+        tree.push(34);
+        expected.push(34);
         oracle(&tree, &expected);
-        tree.as_mut_vec().reverse(); expected.reverse();
-        tree.truncate(66); expected.truncate(66);
+        tree.as_mut_vec().reverse();
+        expected.reverse();
+        tree.truncate(66);
+        expected.truncate(66);
         oracle(&tree, &expected);
         oracle(&original, &(0..2050).collect::<Vec<_>>());
-        let mut no_counts = SharedSequence::<usize, 0>::from_vec((0..3000).collect(), |_| panic!("kind called"));
+        let mut no_counts =
+            SharedSequence::<usize, 0>::from_vec((0..3000).collect(), |_| panic!("kind called"));
         no_counts.push(3000);
         no_counts.truncate(65);
         no_counts.as_mut_vec().push(66);
@@ -603,8 +772,15 @@ mod tests {
     #[test]
     fn repack_moves_cold_elements_without_cloning() {
         let clones = Arc::new(AtomicUsize::new(0));
-        let mut tree = SharedSequence::<_, 3>::from_vec((0..3000).map(|value|
-            Counted { value, clones: clones.clone() }).collect(), counted_kind);
+        let mut tree = SharedSequence::<_, 3>::from_vec(
+            (0..3000)
+                .map(|value| Counted {
+                    value,
+                    clones: clones.clone(),
+                })
+                .collect(),
+            counted_kind,
+        );
         tree.as_mut_vec().swap(0, 2999);
         clones.store(0, Ordering::Relaxed);
         tree.repack();
@@ -615,10 +791,15 @@ mod tests {
     #[test]
     fn invalid_range_panics_like_a_slice() {
         let tree = SharedSequence::<_, 3>::from_vec(vec![0, 1, 2], kind);
-        for bounds in [(Bound::Included(3), Bound::Excluded(2)),
+        for bounds in [
+            (Bound::Included(3), Bound::Excluded(2)),
             (Bound::Unbounded, Bound::Included(3)),
-            (Bound::Excluded(usize::MAX), Bound::Unbounded)] {
-            assert!(std::panic::catch_unwind(|| { tree.range(bounds); }).is_err());
+            (Bound::Excluded(usize::MAX), Bound::Unbounded),
+        ] {
+            assert!(std::panic::catch_unwind(|| {
+                tree.range(bounds);
+            })
+            .is_err());
         }
     }
 
@@ -631,7 +812,9 @@ mod tests {
             let values: Vec<_> = (0..len).collect();
             let tree = SharedSequence::<_, 3>::from_vec(values.clone(), kind);
             let mut separate = SharedSequence::<_, 3>::new(kind);
-            for value in &values { separate.push(*value); }
+            for value in &values {
+                separate.push(*value);
+            }
             assert_eq!(tree.common_prefix_len(&tree.clone()), len);
             assert_eq!(tree.common_prefix_len(&separate), len);
             for cut in [0, 1, 63, 64, 65, 2047, 2048, 2049, len / 2, len, len + 1] {
@@ -679,7 +862,10 @@ mod tests {
     }
 
     #[derive(Clone)]
-    struct Compared { value: usize, comparisons: Arc<AtomicUsize> }
+    struct Compared {
+        value: usize,
+        comparisons: Arc<AtomicUsize>,
+    }
     impl PartialEq for Compared {
         fn eq(&self, other: &Self) -> bool {
             self.comparisons.fetch_add(1, Ordering::Relaxed);
@@ -692,25 +878,55 @@ mod tests {
     fn shared_prefix_skips_whole_subtrees_not_just_equal_leaves() {
         let comparisons = Arc::new(AtomicUsize::new(0));
         let len = 262147;
-        let tree = SharedSequence::<_, 0>::from_vec((0..len).map(|value| Compared {
-            value, comparisons: comparisons.clone(),
-        }).collect(), |_| panic!("zero-count sequence must not classify values"));
+        let tree = SharedSequence::<_, 0>::from_vec(
+            (0..len)
+                .map(|value| Compared {
+                    value,
+                    comparisons: comparisons.clone(),
+                })
+                .collect(),
+            |_| panic!("zero-count sequence must not classify values"),
+        );
         let mut visits = 0;
-        assert_eq!(tree.common_prefix_len_inner(&tree.clone(), || visits += 1), len);
+        assert_eq!(
+            tree.common_prefix_len_inner(&tree.clone(), || visits += 1),
+            len
+        );
         assert_eq!(visits, 1);
         assert_eq!(comparisons.load(Ordering::Relaxed), 0);
-        for cut in [1, 63, 64, 2047, 2048, 2049, 65535, 65536, 65537, len - 1, len] {
+        for cut in [
+            1,
+            63,
+            64,
+            2047,
+            2048,
+            2049,
+            65535,
+            65536,
+            65537,
+            len - 1,
+            len,
+        ] {
             let prefix = tree.prefix(cut);
             let mut appended = prefix.clone();
-            appended.push(Compared { value: usize::MAX, comparisons: comparisons.clone() });
+            appended.push(Compared {
+                value: usize::MAX,
+                comparisons: comparisons.clone(),
+            });
             for (left, right, expected) in [
-                (&tree, &prefix, cut), (&prefix, &tree, cut),
-                (&tree, &appended, cut), (&appended, &tree, cut),
-                (&prefix, &appended, cut), (&appended, &prefix, cut),
+                (&tree, &prefix, cut),
+                (&prefix, &tree, cut),
+                (&tree, &appended, cut),
+                (&appended, &tree, cut),
+                (&prefix, &appended, cut),
+                (&appended, &prefix, cut),
             ] {
                 comparisons.store(0, Ordering::Relaxed);
                 let mut visits = 0;
-                assert_eq!(left.common_prefix_len_inner(right, || visits += 1), expected);
+                assert_eq!(
+                    left.common_prefix_len_inner(right, || visits += 1),
+                    expected
+                );
                 assert!(comparisons.load(Ordering::Relaxed) <= LEAF, "cut={cut}");
                 // This is far below the >4096 leaf visits a leaf-by-leaf
                 // identity traversal would need for the long shared prefix.

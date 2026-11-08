@@ -151,7 +151,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         if begin >= at || observers.is_empty() {
             return Err("Stromkirk observer occurrence is empty or out of order".into());
         }
-        let anchor = state.engine.event_history.range_v2(..begin)
+        let anchor = state
+            .engine
+            .event_history
+            .range_v2(..begin)
             .iter()
             .rfind(|e| matches!(e, CommittedEvent::LifeLossTurnBeganV1 { .. }));
         if anchor
@@ -162,11 +165,17 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         {
             return Err("Stromkirk observer lost its original turn anchor".into());
         }
-        let anchor_at = state.engine.event_history.range_v2(..begin)
+        let anchor_at = state
+            .engine
+            .event_history
+            .range_v2(..begin)
             .iter()
             .rposition(|e| matches!(e, CommittedEvent::LifeLossTurnBeganV1 { .. }))
             .unwrap();
-        if !state.engine.event_history.range_v2(anchor_at + 1..begin)
+        if !state
+            .engine
+            .event_history
+            .range_v2(anchor_at + 1..begin)
             .iter()
             .any(|e| {
                 crate::life_loss_turn_v1::committed_loss_player(e) == Some(active_player.opponent())

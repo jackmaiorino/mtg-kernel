@@ -30487,7 +30487,10 @@ mod tests {
                     &components,
                     &chosen
                 ));
-                let existing_order = state.engine.event_history.range_v2(history_start..)
+                let existing_order = state
+                    .engine
+                    .event_history
+                    .range_v2(history_start..)
                     .iter()
                     .filter_map(|event| match event {
                         CommittedEvent::Sacrificed { object, .. } => Some((0, *object)),

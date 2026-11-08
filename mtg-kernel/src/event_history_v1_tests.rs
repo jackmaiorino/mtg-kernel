@@ -15,7 +15,9 @@ fn upkeep() -> CommittedEvent {
 
 fn counted(history: &EventHistoryV1) -> bool {
     let mut counts = [0; EVENT_KIND_COUNT_V1];
-    for event in history.iter() { counts[event.kind_v1() as usize] += 1; }
+    for event in history.iter() {
+        counts[event.kind_v1() as usize] += 1;
+    }
     !history.stale && history.counts == counts
 }
 
@@ -95,11 +97,15 @@ fn logical_ranges_and_shared_prefixes_preserve_vec_observations() {
     }
     assert_eq!(history.range_v2(63..=64).to_vec(), events[63..65]);
     assert_eq!(
-        history.range_v2((Bound::Excluded(62), Bound::Included(64))).to_vec(),
+        history
+            .range_v2((Bound::Excluded(62), Bound::Included(64)))
+            .to_vec(),
         events[63..65]
     );
     assert!(history.get_range_v2(0..4166).is_none());
-    assert!(history.get_range_v2((Bound::Included(2), Bound::Excluded(1))).is_none());
+    assert!(history
+        .get_range_v2((Bound::Included(2), Bound::Excluded(1)))
+        .is_none());
     assert!(history.get_range_v2(..=usize::MAX).is_none());
     let prefix = history.prefix_v1(2049);
     history.push(upkeep());
@@ -1021,11 +1027,21 @@ fn a_prefix_copy_resumes_its_chain_and_digests_like_a_plain_copy() {
     assert_eq!(cache.strides.len() + cache.recent.len(), CHAIN_V2_PREFIXES);
     for len in [0, 1, 4, 10, 37, 59, 60, 61] {
         let prefix = history.prefix_v1(len);
-        let plain = EventHistoryV1::from(history.iter().take(len.min(60)).cloned().collect::<Vec<_>>());
+        let plain = EventHistoryV1::from(
+            history
+                .iter()
+                .take(len.min(60))
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
         assert_eq!(*prefix, *plain);
         assert!(counted(&prefix));
         let cache = prefix.chain.get();
-        assert!(cache.strides.iter().chain(cache.recent.iter()).all(|(covered, _)| *covered <= len));
+        assert!(cache
+            .strides
+            .iter()
+            .chain(cache.recent.iter())
+            .all(|(covered, _)| *covered <= len));
         assert_eq!(prefix.chain_digest_v2(), plain.chain_digest_v2());
     }
     // A kept prefix state is resumed, not recomputed from the first event.

@@ -602,7 +602,10 @@ pub(crate) fn collect(
             // Native step entry immediately collects its begin event. A missing
             // one-shot marker cannot be repaired by a later equal-valued step:
             // BeginningEndStep values do not carry an occurrence identifier.
-            if state.engine.event_history.range_v2(end + 1..)
+            if state
+                .engine
+                .event_history
+                .range_v2(end + 1..)
                 .iter()
                 .any(|e| matches!(e, event::CommittedEvent::BeginningEndStep { .. }))
             {
