@@ -319,10 +319,15 @@ fn learn_uses_the_madness_discard_path() {
         &mut state,
         Action::ChooseEffectTarget(Target::Object(temper)),
     );
-    if state.objects.get(temper).zone == Zone::Hand {
-        act(&mut state, Action::FinishEffectSelection);
-    }
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseMadnessCast { player: P0, card }) if card == temper
+    ));
     assert_eq!(state.objects.get(temper).zone, Zone::Exile);
+    assert_eq!(hand_cards(&state, P0), vec![id("Island")]);
+    act(&mut state, Action::ChooseMadnessCast(false));
+    settled(&mut state);
+    assert_eq!(state.objects.get(temper).zone, Zone::Graveyard);
 }
 
 #[test]
