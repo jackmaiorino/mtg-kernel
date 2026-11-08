@@ -320,15 +320,15 @@ remain pending.
 
 ## Composed source checkpoint (2026-11-08)
 
-The source candidate at `e4501b50d167d8de4e283be309c5f7f41d2bf377` covers
-21 of the 36 Partial booster printings in eleven finite profiles: Return (3),
+The source candidate at `0b897f060510633466d9a5a0426f95d21b05dae5` covers
+22 of the 36 Partial booster printings in twelve finite profiles: Return (3),
 V68-V75 (8), Artist (1), Chosen Type (2), Niv (1), Drakuseth (1),
-Embercleave (1), Zimone (1), Omniscience (1), Tutelage (1), and Moon (1).
-Fifteen original Partial consumer gaps remain. Catalog tiers are unchanged.
+Embercleave (1), Zimone (1), Omniscience (1), Tutelage (1), Moon (1), and
+Leyline Axe (1). Fourteen original Partial consumer gaps remain. Catalog tiers are unchanged.
 This is source coverage; the complete composition is not natively qualified.
 
 The additional `fdn-mixed-consumer/v1` owner composes the first twenty
-printings, excluding Moon. It authenticates every represented native printed
+printings, excluding Moon and Leyline Axe. It authenticates every represented native printed
 definition before reset and retains the real declared deck IDs. Its exact
 Mixed capability enables all eight existing appendices together. Its distinct
 observation and candidate schemas require all eight facts; single-family
@@ -349,6 +349,16 @@ cover paid 40-card resets, hidden-world parity, exact action indices, restore,
 and a paid spell whose original target departs and returns. The native paid
 Aura-copy fixture also checks the new public facts. Native validation is pending.
 
+Leyline Axe has its own `fdn-leyline-axe-consumer/v1` profile. The current
+chooser sees only its actual opening-hand option; the roster, declines and
+ordinal remain private. Public accepted entries require real native
+Hand-to-Battlefield receipts. Casts, paid equip, original targets and current
+host bonuses retain their native source contracts. Review caught an extension
+caller dropping the Axe scope; `e7eeea3ba5fa0b3e41fd3f071484fb05193ef9ea`
+repairs that caller. Integration keeps the copy-prefix exception exclusive to
+Axe and preserves Mixed's Chosen Type restricted-mana scope. Its kept-hand,
+paid-cast/equip, hidden-pair and restore fixtures are unrun.
+
 The composition retains the complete histories for Chosen Type, Niv,
 Drakuseth, Embercleave, Zimone, Omniscience and Tutelage. The latter's new
 native receipt records actual post-replacement mill members and the original
@@ -359,7 +369,9 @@ The unrelated #474 performance candidate is excluded.
 
 Source verification: pinned Rust 1.94.1 formatting passed through the
 Tutelage checkpoint `98ee9ab7e9ee66e76d6481fa6d5a426f71e1df73`.
-The Mixed and Moon changes await their queued one-core format pass.
+The Mixed and Moon changes await their queued one-core format pass in the
+separate stable 21-printing diagnostic candidate. The Axe successor is
+committed separately; it has not displaced that pending check.
 Read-only review of Mixed `ac74b5322218e00cd0b33d65151efecf9ce29ace`
 found no blocking source issue in the explicit scope, candidate bindings,
 normalization, or fixture call signatures. Root reviewed the Moon printing,
@@ -377,9 +389,11 @@ Its fresh 28-case recovery/reveal/privacy run is pending. None of these
 predecessor results qualifies the larger Limited composition.
 
 The next guarded Limited job must first complete a type check and the focused
-consumer fixtures before building all eleven individual-profile binaries and
+consumer fixtures before building all twelve individual-profile binaries and
 the Mixed binary. Filters include `limited_mixed_consumer_v1::tests::`,
 `moon_consumer_v1::tests::`, `chosen_type_consumer_v1::tests::`,
+`leyline_axe_consumer_v1::tests::`, `leyline_axe_v1::tests::`,
+`rl::complete_copy_prefix_scope_tests::`,
 `niv_consumer_v1::tests::`, `niv_mizzet_public_v63::tests::`,
 `drakuseth_consumer_v1::tests::`, `artist_consumer_v1::tests::`,
 `limited_return_consumer_v1::tests::`, `limited_v68_v75_consumer_v1::tests::`,
