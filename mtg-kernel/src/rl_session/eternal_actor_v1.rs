@@ -219,7 +219,7 @@ impl EternalActorSessionV1 {
                 let def = &crate::card_def::CARD_DEFS[usize::from(*id)];
                 if !def.has_type(crate::card_def::CardType::Creature) { continue; }
                 for subtype in def.subtypes {
-                    if subtype.is_creature_type() && !types.iter().any(|known| known.same_subtype_as(subtype)) {
+                    if subtype.is_creature_type() && !types.iter().any(|known| known.same_subtype_as(*subtype)) {
                         types.push(*subtype);
                     }
                 }
