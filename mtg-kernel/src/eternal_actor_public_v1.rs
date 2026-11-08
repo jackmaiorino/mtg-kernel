@@ -38,15 +38,26 @@ pub struct SagaAbilitiesV1 {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct PublicLinkV1 {
+    pub source: CardStableRefV1,
+    pub target: CardStableRefV1,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PublicChoicesV1 {
     pub schema: String,
     pub energy: [u32; 2],
     pub city_blessing: [bool; 2],
+    /// Derived from public cast events, never the card-conditional E8a ledger.
+    pub has_cast_spell: [bool; 2],
     pub cavern_types: Vec<ChosenTypeV1>,
     pub needle_names: Vec<ChosenNameV1>,
     pub uncounterable_spells: Vec<CardStableRefV1>,
     pub cast_mana: Vec<CastManaV1>,
     pub saga_abilities: Vec<SagaAbilitiesV1>,
+    pub prepare_copies: Vec<PublicLinkV1>,
+    pub animate_dead_waiting: Vec<PublicLinkV1>,
+    pub animate_dead_attached: Vec<PublicLinkV1>,
 }
 
 /// Check public zone and exact incarnation before asking for a projected
@@ -60,7 +71,10 @@ fn current_public(
     link: ObjectLinkV4,
     zone: Zone,
 ) -> Result<Option<CardStableRefV1>, RlContractError> {
-    if !matches!(zone, Zone::Battlefield | Zone::Stack) {
+    if !matches!(
+        zone,
+        Zone::Battlefield | Zone::Stack | Zone::Graveyard | Zone::Exile
+    ) {
         return Err(RlContractError("nonpublic Eternal link zone".into()));
     }
     let Some(object) = state.objects.try_get(link.object) else {
@@ -84,17 +98,50 @@ pub fn capture_v1(state: &GameState) -> Result<PublicChoicesV1, RlContractError>
         schema: SCHEMA_V1.into(),
         energy: [0; 2],
         city_blessing: [false; 2],
+        has_cast_spell: [false; 2],
         cavern_types: Vec::new(),
         needle_names: Vec::new(),
         uncounterable_spells: Vec::new(),
         cast_mana: Vec::new(),
         saga_abilities: Vec::new(),
+        prepare_copies: Vec::new(),
+        animate_dead_waiting: Vec::new(),
+        animate_dead_attached: Vec::new(),
     };
+    for event in state.engine.event_history.iter() {
+        if let crate::event::CommittedEvent::SpellCast { controller, .. } = event {
+            out.has_cast_spell[controller.index()] = true;
+        }
+    }
     let Some(eternal) = &state.eternal_v1 else {
         return Ok(out);
     };
     out.energy = eternal.energy;
     out.city_blessing = eternal.e5b.city_blessing;
+    for &(source, copy) in &eternal.e7b.prepared {
+        let Some(object) = state.objects.try_get(copy) else {
+            return Err(RlContractError("missing public prepare copy".into()));
+        };
+        if object.zone != Zone::Exile {
+            return Err(RlContractError(
+                "unrepresented prepare copy lifecycle".into(),
+            ));
+        }
+        let target = ObjectLinkV4 {
+            object: copy,
+            zone_change_count: object.zone_change_count,
+        };
+        out.prepare_copies
+            .push(public_link(state, source, target, Zone::Exile)?);
+    }
+    for &(source, target) in &eternal.e7a.animating {
+        out.animate_dead_waiting
+            .push(public_link(state, source, target, Zone::Graveyard)?);
+    }
+    for &(source, target) in &eternal.e7a.animated {
+        out.animate_dead_attached
+            .push(public_link(state, source, target, Zone::Battlefield)?);
+    }
     if let Some(e3) = &eternal.e3 {
         for &(link, chosen_type) in &e3.cavern_types {
             if let Some(source) = current_public(state, link, Zone::Battlefield)? {
@@ -144,6 +191,23 @@ pub fn capture_v1(state: &GameState) -> Result<PublicChoicesV1, RlContractError>
     Ok(out)
 }
 
+fn public_link(
+    state: &GameState,
+    source: ObjectLinkV4,
+    target: ObjectLinkV4,
+    target_zone: Zone,
+) -> Result<PublicLinkV1, RlContractError> {
+    // A departed source can leave a delayed active effect. Do not silently
+    // omit it or reuse a hidden new incarnation as its historical identity.
+    let source = current_public(state, source, Zone::Battlefield)?.ok_or_else(|| {
+        RlContractError("departed Eternal link needs public historical source".into())
+    })?;
+    let target = current_public(state, target, target_zone)?.ok_or_else(|| {
+        RlContractError("departed Eternal link needs lifecycle projection".into())
+    })?;
+    Ok(PublicLinkV1 { source, target })
+}
+
 #[cfg(all(test, feature = "eternal-fixtures"))]
 mod tests {
     use super::*;
@@ -151,6 +215,65 @@ mod tests {
         ids::PlayerId,
         policy_observation_v6::tests::{put, ready_state_for},
     };
+
+    #[test]
+    fn issue454_public_cast_fact_ignores_hidden_conditional_ledgers() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(player);
+            let spell = put(&mut state, player, "Ponder", Zone::Stack);
+            crate::event::log_spell_cast(&mut state, spell, player);
+            let baseline = capture_v1(&state).unwrap();
+            assert!(baseline.has_cast_spell[player.index()]);
+            let hidden = put(&mut state, player.opponent(), "Island", Zone::Library);
+            for hidden_name in ["Island", "Once Upon a Time"] {
+                state.objects.get_mut(hidden).card_def =
+                    crate::card_def::card_id_by_name(hidden_name).unwrap();
+                for ledger in [[false, false], [true, true]] {
+                    state
+                        .eternal_v1
+                        .get_or_insert_with(Default::default)
+                        .e8a
+                        .spells_cast = ledger;
+                    assert_eq!(capture_v1(&state).unwrap(), baseline);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn issue454_public_attachment_links_preserve_operands_and_refuse_departure() {
+        let mut state = ready_state_for(PlayerId::P0);
+        let aura = put(&mut state, PlayerId::P0, "Animate Dead", Zone::Battlefield);
+        let creature = put(
+            &mut state,
+            PlayerId::P1,
+            "Goblin Boarders",
+            Zone::Battlefield,
+        );
+        let link = |object| ObjectLinkV4 {
+            object,
+            zone_change_count: 0,
+        };
+        state
+            .eternal_v1
+            .get_or_insert_with(Default::default)
+            .e7a
+            .animated
+            .push((link(aura), link(creature)));
+        let public = capture_v1(&state).unwrap();
+        assert_eq!(public.animate_dead_attached[0].source.arena_id, aura.0);
+        assert_eq!(public.animate_dead_attached[0].target.arena_id, creature.0);
+        state.objects.get_mut(aura).zone = Zone::Hand;
+        state.objects.get_mut(aura).zone_change_count += 1;
+        for hidden_name in ["Island", "Forest"] {
+            state.objects.get_mut(aura).card_def =
+                crate::card_def::card_id_by_name(hidden_name).unwrap();
+            assert_eq!(
+                capture_v1(&state).unwrap_err().0,
+                "departed Eternal link needs public historical source"
+            );
+        }
+    }
 
     #[test]
     fn issue454_entry_handlers_publish_choices_and_concealed_sources_refuse_uniformly() {
