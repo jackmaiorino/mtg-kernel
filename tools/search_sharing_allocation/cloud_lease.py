@@ -268,14 +268,14 @@ def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provi
         if existing or malformed:
             finish()
             raise ValueError("a Pod with this lease's name already exists: " + ",".join(existing or ["(malformed entry)"]))
-        if clock() - observed_epoch > FUNDING_MAX_AGE_SECONDS:
-            raise ValueError("funding observation older than 120 s at the POST")
         body = copy.deepcopy(read(root / "lease/create-request-template.json"))
         metadata = read(root / "preparation.json")
         body["env"]["RUNPOD_API_KEY"] = key
         body["env"]["SSH_PUBLIC_KEY"] = Path(metadata["public_key_path"]).read_text().strip()
         # under the store lock, and refused once the guardian has completed (I4)
-        external_guard.record_create_attempt(root / "lease", {"epoch": clock(), "exact_name": lease["name"]})
+        external_guard.record_create_attempt(root / "lease", {"epoch": clock(), "exact_name": lease["name"]},
+                                             funding_observed=observed_epoch, funding_max_age=FUNDING_MAX_AGE_SECONDS,
+                                             clock=clock)
         # ---- the POST: the raw returned ID is retained by the client whatever its name (I1) ----
         returned = None; post_error = None
         try:
@@ -297,8 +297,16 @@ def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provi
             recorded = sorted(owned)[0]; source = entries.get(recorded); reconciled = True
         if recorded:
             client.retain(recorded, "receipt")
-            best_effort(root / "lease/created-pod.json", dict({"id": recorded, "name": lease["name"]},
-                        **({"reconciled_exact_name": True} if reconciled else {})))
+            receipt = {"id": recorded, "name": lease["name"]}
+            if reconciled:
+                receipt["reconciled_exact_name"] = True
+            try:
+                external_guard.record_created_pod(client.folder, receipt, writer=write)
+            except (external_guard.ReleaseClaimed, external_guard.StoreClosed):
+                client.register([recorded])
+                raise
+            except OSError:
+                pass  # the durable handoff can carry custody if the receipt write failed
         released = finish()   # I4: IDs not handed off are deleted and verified absent here, or this fails loudly
         if recorded in released:
             raise RuntimeError("create handoff failed; the Pod was deleted and verified absent")
@@ -464,6 +472,11 @@ def verify_absent(root, *, key=None, pods=None, provider=None, clock=time.time, 
             ids = set(external_guard.known_pods(root))   # strict: any unreadable record raises (I2)
             for pod_id in ids:
                 client.mark_persisted(pod_id, hold=False)   # read from its own durable record; reported, not held
+            claims = external_guard.release_claims(client.folder)
+            raw_id = external_guard.returned_post_id(root)
+            ids.update(claims)
+            if raw_id is not None:
+                ids.add(raw_id)
             receipt_id, receipt_error = external_guard.receipt_state(root)
             if receipt_error:
                 raise ValueError(receipt_error)
@@ -478,7 +491,7 @@ def verify_absent(root, *, key=None, pods=None, provider=None, clock=time.time, 
                             client.mark_durable(fallback, hold=False)
             ids_ok = all(external_guard.valid_id(pod_id) for pod_id in ids)
         except Exception:  # noqa: BLE001 - unreadable retained IDs: never absence
-            ids, ids_ok = set(), False
+            ids, ids_ok, claims, raw_id = set(), False, set(), None
         initial = set(ids)
         observations = []
         for i in range(2):
@@ -508,15 +521,20 @@ def verify_absent(root, *, key=None, pods=None, provider=None, clock=time.time, 
             observations[1]["epoch"] - observations[0]["epoch"] >= ABSENT_SPACING_SECONDS
         completion = root / "external-guard-completion.json"
         try:
-            guard_done = completion.exists() and read(completion).get("absent_confirmations") == 2
+            with external_guard.locked_store(client.folder, "verify release", wait=0) as state:
+                unresolved = external_guard.create_unresolved(root) or external_guard.ambiguous_unresolved(root)
+                guard_done = state == "closed" and read(completion).get("absent_confirmations") == 2
+                stable_store = (not external_guard.observation_intents(client.folder)
+                                and external_guard.release_claims(client.folder) == claims
+                                and external_guard.returned_post_id(root) == raw_id)
         except Exception:  # noqa: BLE001
-            guard_done = False
-        if absent:   # this check's own two spaced observations (I5): on a closed store they settle its IDs
+            guard_done = stable_store = False
+        if absent and stable_store:   # this check's own evidence settles its IDs only for the observed store
             client.verified_absent |= ids
         unpersisted = sorted(client.unpersisted - client.verified_absent)   # the exit releases these, or fails (I4)
-        released = absent and guard_done and not unresolved and not unpersisted
+        released = absent and guard_done and stable_store and not unresolved and not unpersisted
         record = {"observations": observations, "provider_absent_twice": absent, "guardian_completion": guard_done,
-                  "create_unresolved": unresolved, "retained_ids": sorted(ids), "discovered_ids": discovered,
+                  "store_stable": stable_store, "create_unresolved": unresolved, "retained_ids": sorted(ids), "discovered_ids": discovered,
                   "unpersisted_ids": unpersisted, "released": released}
         best_effort(root / "verify-absent.json", record)
         if not released:
