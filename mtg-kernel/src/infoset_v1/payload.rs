@@ -49,7 +49,10 @@ fn reveal_hand_v4(state: &GameState, viewer: PlayerId) -> Option<Vec<RevealHandM
         .hand(viewer.opponent())
         .map(|(def, minimum)| {
             Some(RevealHandMinimumV4 {
-                card_name: crate::card_def::CARD_DEFS.get(usize::from(def))?.name.into(),
+                card_name: crate::card_def::CARD_DEFS
+                    .get(usize::from(def))?
+                    .name
+                    .into(),
                 minimum,
             })
         })
@@ -58,7 +61,10 @@ fn reveal_hand_v4(state: &GameState, viewer: PlayerId) -> Option<Vec<RevealHandM
     Some(facts)
 }
 
-pub(super) fn validate_reveal_knowledge_v4(state: &GameState, viewer: PlayerId) -> Result<(), String> {
+pub(super) fn validate_reveal_knowledge_v4(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<(), String> {
     let knowledge = state
         .reveal_knowledge_v4
         .as_ref()

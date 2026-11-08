@@ -92,7 +92,12 @@ impl InfosetBridgeV1 {
             let purpose = support["choice"]["purpose"].as_str().filter(|&purpose| {
                 matches!(
                     purpose,
-                    "scry" | "look_select" | "look" | "reveal_partition" | "mill" | "put_on_top"
+                    "scry"
+                        | "look_select"
+                        | "look"
+                        | "reveal_partition"
+                        | "mill"
+                        | "put_on_top"
                         | "discard_order"
                 )
             });
@@ -109,14 +114,11 @@ impl InfosetBridgeV1 {
             .as_ref()
             .is_none_or(|root| root.identity != identity)
         {
-            self.reveal_group_v4 = self
-                .root_ids
-                .as_ref()
-                .map(|(step, ids)| RevealGroupRootV4 {
-                    identity,
-                    step: *step,
-                    ids: ids.clone(),
-                });
+            self.reveal_group_v4 = self.root_ids.as_ref().map(|(step, ids)| RevealGroupRootV4 {
+                identity,
+                step: *step,
+                ids: ids.clone(),
+            });
         }
         let root = self.reveal_group_v4.as_ref()?;
         Some(json!({"root_step": root.step, "row_keys": row_keys_v1(fast, Some(&root.ids))}))

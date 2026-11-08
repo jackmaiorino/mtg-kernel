@@ -28,12 +28,12 @@ use crate::agent_bridge_flat_v4_encode::{
     encode_flat_v4_tensor_v1, flat_v4_extension_value_v1, FlatV4EncodeScratchV1,
     SPELLBENCH_EXTENSION_KERNEL_FLAT_V4,
 };
-pub use crate::agent_bridge_infoset_v1::{
-    SPELLBENCH_FLAG_X_KERNEL_INFOSET_REVEAL_V4, SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1,
-};
 use crate::agent_bridge_infoset_v1::{
     infoset_extension_v1, preview_row_keys_v1, write_receipt_v1, InfosetBridgeV1,
     SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1,
+};
+pub use crate::agent_bridge_infoset_v1::{
+    SPELLBENCH_FLAG_X_KERNEL_INFOSET_REVEAL_V4, SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1,
 };
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::engine::{CastMode, CostKind, OptionalCostChoice};
@@ -3728,7 +3728,9 @@ mod tests {
             let raw = parse_line(&server.handle_line(&request));
             assert_eq!(raw["response_type"], "decision", "{raw}");
             let extensions = &raw["extensions"];
-            assert!(extensions.get(SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1).is_none());
+            assert!(extensions
+                .get(SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1)
+                .is_none());
             let support = &extensions["x_kernel_v2_support"]["reveal_meaning_v3"];
             for (viewer, reducer) in reducers.iter_mut().enumerate() {
                 reducer
@@ -3739,8 +3741,8 @@ mod tests {
                 let payload = PayloadV1::from_bytes(text.as_bytes()).unwrap();
                 let imported = payload.import().unwrap();
                 let viewer = crate::ids::PlayerId(payload.viewer);
-                let knowledge = &imported.game_state().reveal_knowledge_v4.as_ref().unwrap()
-                    [viewer.index()];
+                let knowledge =
+                    &imported.game_state().reveal_knowledge_v4.as_ref().unwrap()[viewer.index()];
                 assert_eq!(
                     knowledge
                         .hand(viewer.opponent())

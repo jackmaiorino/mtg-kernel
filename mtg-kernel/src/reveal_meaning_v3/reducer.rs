@@ -113,7 +113,10 @@ impl RevealReducerV3 {
     }
 
     pub(crate) fn possible_eventless_moves(&self, owner: PlayerId) -> Vec<u16> {
-        self.possible_eventless_moves[owner.index()].iter().copied().collect()
+        self.possible_eventless_moves[owner.index()]
+            .iter()
+            .copied()
+            .collect()
     }
 
     /// Validate and absorb one prefix or delta, atomically. Exact re-delivery

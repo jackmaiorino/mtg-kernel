@@ -1750,10 +1750,16 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
     {
         return Err("reused-action modes require interchange off".into());
     }
-    if matches!(cfg.mode.as_str(), serve::SERVE_MODE | serve::REVEAL_SERVE_MODE) {
+    if matches!(
+        cfg.mode.as_str(),
+        serve::SERVE_MODE | serve::REVEAL_SERVE_MODE
+    ) {
         return serve::run_pool(cfg);
     }
-    if matches!(cfg.mode.as_str(), serve::WORKER_MODE | serve::REVEAL_WORKER_MODE) {
+    if matches!(
+        cfg.mode.as_str(),
+        serve::WORKER_MODE | serve::REVEAL_WORKER_MODE
+    ) {
         return serve::run_worker(policy, cfg.mode == serve::REVEAL_WORKER_MODE);
     }
     if cfg.mode == serve_ac2::AC2_MODE {

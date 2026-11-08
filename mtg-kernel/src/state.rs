@@ -3322,7 +3322,9 @@ impl GameState {
         let owner = card.owner;
         let def = card.card_def;
         let name = crate::card_def::CARD_DEFS[usize::from(def)].name;
-        let named = self.reveal_meaning_v3.departure(object, owner, name, to, named);
+        let named = self
+            .reveal_meaning_v3
+            .departure(object, owner, name, to, named);
         if let Some(knowledge) = &mut self.reveal_knowledge_v4 {
             let observer = owner.opponent();
             knowledge[observer.index()].depart(owner, named.then_some(def), 1);

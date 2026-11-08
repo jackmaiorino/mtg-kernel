@@ -448,7 +448,10 @@ fn reveal_v4_detaches_an_unread_payment_after_a_repeated_reveal() {
         state.reveal_hand_card(viewer, owner, shown).unwrap();
         state.reveal_hand_card(viewer, owner, shown).unwrap();
         mark(&state, &mut marks);
-        propose_and_commit(&mut state, ProposedEvent::zone_change(departure, Zone::Graveyard));
+        propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(departure, Zone::Graveyard),
+        );
         state.engine.pending_triggers.clear();
         let input = ExportInputV1 {
             state: &state,

@@ -262,7 +262,10 @@ pub(super) fn mark_detached_receipts_v4(
             let row = tagged["stack"][index]["v4"]["paid_cost_refs"][position]
                 .as_object_mut()
                 .ok_or_else(|| refuse(RefusalCodeV1::R2, "public paid-cost receipt shape"))?;
-            row.insert(super::rewrite::DETACHED_PAID_V4.into(), json!(detached.len()));
+            row.insert(
+                super::rewrite::DETACHED_PAID_V4.into(),
+                json!(detached.len()),
+            );
             detached.push((receipt.owner, receipt.card_def));
         }
     }
@@ -958,7 +961,9 @@ fn export_versioned(
         // Search arrivals and continuously public non-stack transfers now
         // have positive evidence. Other reference, epoch and seam checks
         // still apply, including for a potentially ambiguous stack return.
-        projection.revealed.clone_from(&evidence.possible_eventless_moves);
+        projection
+            .revealed
+            .clone_from(&evidence.possible_eventless_moves);
     }
     // Step 1.
     invariants(state, &projection, input.decklists)?;

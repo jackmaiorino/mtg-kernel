@@ -163,14 +163,18 @@ fn reveal_v4_real_aborted_cast_refills_by_public_name_in_paired_worlds() {
         vec![target_def, island],
     ];
     let world = |library: [u16; 4]| {
-        let mut state = GameState::new_from_libraries(&library, &decks[1], crate::rl::card_name, 543);
+        let mut state =
+            GameState::new_from_libraries(&library, &decks[1], crate::rl::card_name, 543);
         state.reveal_meaning_v3.enable();
         state.step = Step::Main1;
         for _ in 0..2 {
             propose_and_commit(&mut state, ProposedEvent::draw(owner));
         }
         let target = state.players[viewer.index()].library[0];
-        propose_and_commit(&mut state, ProposedEvent::zone_change(target, Zone::Battlefield));
+        propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(target, Zone::Battlefield),
+        );
         let spell = state.players[owner.index()]
             .hand
             .iter()
@@ -205,6 +209,9 @@ fn reveal_v4_real_aborted_cast_refills_by_public_name_in_paired_worlds() {
     );
     let known = exported.state.known_hand_cards(viewer, owner);
     assert_eq!(known.len(), 1);
-    assert_eq!(exported.state.objects.get(known[0].object).card_def, spell_def);
+    assert_eq!(
+        exported.state.objects.get(known[0].object).card_def,
+        spell_def
+    );
     super::payload::validate_reveal_knowledge_v4(&exported.state, viewer).unwrap();
 }
