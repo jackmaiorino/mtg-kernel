@@ -123,6 +123,44 @@ fn reveal_v4_request_import_sample_and_worker_use_public_minima_both_seats() {
         assert_eq!(result.edges.as_ref().unwrap().len(), keys.len());
         let replay = worker_answer_v4(&policy, true, &request);
         assert_eq!(first["result"]["digest"], replay["result"]["digest"]);
+        let land = imported
+            .diagnostic_current_action_semantics()
+            .unwrap()
+            .iter()
+            .position(|action| matches!(action, crate::rl::ActionSemanticV1::PlayLand { .. }))
+            .unwrap() as u32;
+        let later = import_at_v1(&payload, &[land]).unwrap();
+        let point: PointRequestV1 = serde_json::from_value(json!({
+            "op":"point", "payload":payload, "path":[land]
+        }))
+        .unwrap();
+        assert_eq!(
+            point_v1(&point).unwrap()["keys"],
+            json!(crate::infoset_v1::order::row_keys_v1(&later, Some(&ids)).unwrap())
+        );
+        let continued = worker_answer_v4(
+            &policy,
+            true,
+            &json!({
+                "root_id":"reveal-v4/continued", "tree":0, "units":8,
+                "payload":payload, "path":[land]
+            })
+            .to_string(),
+        );
+        assert_eq!(continued["ok"], true, "{continued}");
+        assert_eq!(
+            continued["result"]["menu_sha256"],
+            menu_sha256(&later).unwrap()
+        );
+        assert!(
+            continued["result"]["transitions"].as_u64().unwrap() > 0,
+            "{continued}"
+        );
+        assert_eq!(continued["result"]["faults"], json!([]), "{continued}");
+        assert_eq!(
+            continued["result"]["edges"].as_array().unwrap().len(),
+            decision(&later).unwrap().legal_action_count as usize
+        );
         let refused = worker_answer_v4(&policy, false, &request);
         assert_eq!(refused["ok"], false);
         assert_eq!(refused["root_id"], first["root_id"]);
