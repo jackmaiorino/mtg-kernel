@@ -836,6 +836,20 @@ def iteration_fingerprint(index, item, expected, tolerant, project, resolve=chec
     timing["checkpoint_read_hash_parse_seconds"] += time.monotonic() - phase_started
     require([t["sha256"] for t in checkpoint["trajectories"]] == trajectories,
             "optimizer used different ordered trajectories")
+    if checkpoint.get("schema") == "w5-s-learner-checkpoint/v1":
+        # S publishes parameters and both Adam moments in a separate container.
+        # Bind its bytes, then remove the trial-specific path from the fingerprint.
+        phase_started = time.monotonic()
+        state = checkpoint["state"]
+        require(Path(state["path"]) == Path(update["checkpoint"]["path"]).with_name("s-train-state.bin")
+                and update["s_learner"]["state"] == state
+                and update["after_state_sha256"] == checkpoint["state_sha256"]
+                and update["adam_step"] == checkpoint["adam_step"],
+                "S checkpoint state does not bind this update")
+        state_path = resolve(state)
+        validated_files[str(state_path.resolve())] = state["sha256"]
+        checkpoint["state"] = state["sha256"]
+        timing["checkpoint_read_hash_parse_seconds"] += time.monotonic() - phase_started
     # Read the complete parameter and Adam tensors. Only the output-root
     # metadata in trajectory pins differs between serial/parallel trials.
     checkpoint["trajectories"] = trajectories

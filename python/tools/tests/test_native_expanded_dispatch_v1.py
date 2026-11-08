@@ -84,7 +84,7 @@ class AdmissionTestCase(unittest.TestCase):
                             "projected_volume_bytes": {self.root.drive.upper(): 1000}}}
 
     def trial(self, workers, seconds, e_packet=None, update_seconds=None, stdout_updates=1,
-              artifact_timing=None):
+              artifact_timing=None, s_state=None):
         """A one-update qualification report. With `update_seconds` it pins a
         stdout whose `stdout_updates` update lines carry that native timing, and
         records `artifact_timing` (by default a 1 s fingerprint and a 0.5 s
@@ -102,11 +102,19 @@ class AdmissionTestCase(unittest.TestCase):
         if e_packet is not None:
             packet = self.save(e_packet, native/"update"/"e-supported-teacher.json")
             e_supported = {"continuation": {"treatment": True}, "packet": packet}
-        checkpoint = self.save({"trajectories": [trajectory], "parameters": [123],
-                                "first_moments": [456], "second_moments": [789], "adam_step": 32401}
-                               | ({"e_supported": e_supported} if e_supported else {}),
-                               native/"checkpoint.json")
-        update = self.save({"complete": True, "checkpoint": checkpoint}
+        checkpoint_fields = {"parameters": [123], "first_moments": [456], "second_moments": [789]}
+        update_fields = {}
+        if s_state is not None:
+            state_path = native/"s-train-state.bin"
+            state_path.write_bytes(s_state)
+            state = dispatch.pin(state_path)
+            checkpoint_fields = {"schema": "w5-s-learner-checkpoint/v1", "state": state,
+                                 "state_sha256": "c" * 64}
+            update_fields = {"s_learner": {"state": state}, "after_state_sha256": "c" * 64,
+                             "adam_step": 32401}
+        checkpoint = self.save({"trajectories": [trajectory], "adam_step": 32401} | checkpoint_fields
+                               | ({"e_supported": e_supported} if e_supported else {}), native/"checkpoint.json")
+        update = self.save({"complete": True, "checkpoint": checkpoint} | update_fields
                            | ({"e_supported": {"packet": e_supported["packet"],
                                                "scheduled": e_packet["scheduled"]}} if e_supported else {}))
         receipt = self.save({"iteration": 0, "collection": collection, "update": update})
@@ -240,6 +248,34 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         actual = dispatch.output_fingerprint(dispatch.read(second["executed_config"]["path"]),
                                              "training", result, self.runtime, True)
         self.assertNotEqual(first["fingerprint"], actual)
+
+    def test_s_checkpoint_fingerprint_binds_state_bytes_across_trial_roots(self):
+        state_bytes = b"weights and full Adam state\x00\x01"
+        first = dispatch.read(self.trial(1, 10, s_state=state_bytes)["path"])
+        second = dispatch.read(self.trial(2, 6, s_state=state_bytes)["path"])
+        changed = dispatch.read(self.trial(3, 6, s_state=state_bytes + b"\x02")["path"])
+        self.assertEqual(first["fingerprint"], second["fingerprint"])
+        self.assertNotEqual(first["fingerprint"], changed["fingerprint"])
+
+        result = dispatch.read(second["native_result"]["path"])
+        receipt = dispatch.read(result["iterations"][0]["path"])
+        update = dispatch.read(receipt["update"]["path"])
+        state = update["s_learner"]["state"]
+        state_path = Path(state["path"])
+        validated = dispatch.iteration_fingerprint(0, result["iterations"][0], 1, False, False)[1]
+        self.assertEqual(validated[str(state_path.resolve())], state["sha256"])
+
+        state_path.write_bytes(b"corrupted")
+        with self.assertRaisesRegex(ValueError, "changed pinned input"):
+            dispatch.iteration_fingerprint(0, result["iterations"][0], 1, False, False)
+        state_path.unlink()
+        with self.assertRaises(FileNotFoundError):
+            dispatch.iteration_fingerprint(0, result["iterations"][0], 1, False, False)
+
+        state_path.write_bytes(state_bytes)
+        receipt["update"] = self.save(update | {"adam_step": update["adam_step"] + 1})
+        with self.assertRaisesRegex(ValueError, "does not bind this update"):
+            dispatch.iteration_fingerprint(0, self.save(receipt), 1, False, False)
 
     def test_e_packet_is_bound_by_content_not_output_root(self):
         packet = {"schema": "mtg-kernel-e-supported-teacher-packet/v1", "scheduled": 1, "valid": 1}
