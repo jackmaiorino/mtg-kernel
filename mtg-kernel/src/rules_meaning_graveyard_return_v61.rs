@@ -491,6 +491,15 @@ pub(crate) fn ordinary_foreign_fields_except_attachment_absent(d: &CardDef) -> b
 }
 
 fn ordinary_foreign_fields_core_absent(d: &CardDef) -> bool {
+    d.alt_cost.is_none() && ordinary_foreign_fields_core_except_alt_cost_absent(d)
+}
+
+pub(crate) fn ordinary_foreign_fields_except_alt_cost_absent(d: &CardDef) -> bool {
+    d.activated_abilities.is_empty() && d.attachment.is_none()
+        && ordinary_foreign_fields_core_except_alt_cost_absent(d)
+}
+
+fn ordinary_foreign_fields_core_except_alt_cost_absent(d: &CardDef) -> bool {
     closed_fields(d);
     d.object_name == d.name
         && !d.is_land
@@ -505,7 +514,6 @@ fn ordinary_foreign_fields_core_absent(d: &CardDef) -> bool {
         && d.game_outcome_protection_v1.is_none()
         && d.controlled_creature_grant.is_none()
         && (d.mana_ability)().is_none()
-        && d.alt_cost.is_none()
         && d.kicker_cost.is_none()
         && d.additional_cost.is_none()
         && d.flashback.is_none()

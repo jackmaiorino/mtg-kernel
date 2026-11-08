@@ -9743,6 +9743,20 @@ fn pending_cast_selected_mana_cost(
     }
 }
 
+pub(crate) fn edict_pending_mana_quote_v1(
+    state: &GameState,
+    pending: &PendingCast,
+    mode: CastMode,
+) -> Option<u32> {
+    let def = &card_def::CARD_DEFS[usize::from(pending.source_contract.card_def)];
+    let method = match mode {
+        CastMode::Normal => CastMethodV4::Normal,
+        CastMode::Alternative => CastMethodV4::Alternative,
+    };
+    let payment = pending_cast_quote_v1(def, pending, method, false, 0, state)?;
+    checked_spell_mana_plan_v59(state, pending.controller, &payment.mana)
+}
+
 fn pending_cast_quote_v1(
     def: &card_def::CardDef,
     pending: &PendingCast,
@@ -28123,6 +28137,15 @@ fn finalize_owned_cast(
     payment: spell_costs_v1::PreparedSpellPaymentV1,
 ) -> Result<(), String> {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let edict_input = if crate::edict_receipts_v1::is_printing(pending.source_contract.card_def) {
+        Some((
+            crate::edict_receipts_v1::creature_count(state)?,
+            payment.planned_mana_count_v1(state, pending.controller)
+                .ok_or("Edict prepared mana plan no longer validates")?,
+        ))
+    } else {
+        None
+    };
     let x_value = pending.selected_x_v59().unwrap_or(0);
     // The complete local plan was prepared before any real discard or mana
     // payment. Capture provenance inputs before consuming it exactly once.
@@ -28158,6 +28181,11 @@ fn finalize_owned_cast(
         payment.restricted_pool_used(),
     );
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
+    if let Some((creatures, quoted)) = edict_input {
+        crate::edict_receipts_v1::record_mana_committed(
+            state, &pending, cast_method, creatures, quoted, mana_spent,
+        )?;
+    }
     let greatwurm_payment_v1 = greatwurm_cast_v1::record_paid(state, greatwurm_payment_input)?;
     let sphinx_lore_cast_v1 = sphinx_lore_cast_v1::record_finalized(state, &pending)?;
     let omniscience_cast_v1 = omniscience_cast_v1::record_finalized(state, &pending)?;
@@ -28353,7 +28381,14 @@ fn finalize_owned_cast(
     .spells_cast_this_turn
     .saturating_add(1);
     crate::cast_identity_v1::publish(state, finalized_source_contract, stack_item_id);
+    let cast_at = state.engine.event_history.len();
     event::log_spell_cast(state, pending.spell, pending.controller);
+    if let Some((creatures_before, _)) = edict_input {
+        crate::edict_receipts_v1::record_paid(
+            state, stack_item_id, finalized_source_contract,
+            creatures_before, mana_spent, cast_at,
+        )?;
+    }
     crate::extra_turn_v1::record_publication(state, stack_item_id);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::e3::note_cast(state, stack_item_id);

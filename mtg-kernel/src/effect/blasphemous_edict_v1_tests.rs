@@ -13,7 +13,7 @@ use crate::{
 fn id(name: &str) -> u16 {
     card_id_by_name(name).unwrap()
 }
-fn ready(actor: PlayerId) -> GameState {
+pub(crate) fn ready(actor: PlayerId) -> GameState {
     let mut s = GameState::new_from_libraries_with_starting_player_v1(
         &[id("Swamp"); 40],
         &[id("Swamp"); 40],
@@ -31,13 +31,13 @@ fn ready(actor: PlayerId) -> GameState {
     }
     s
 }
-fn roster(s: &mut GameState, player: PlayerId, count: usize) -> Vec<ObjectId> {
+pub(crate) fn roster(s: &mut GameState, player: PlayerId, count: usize) -> Vec<ObjectId> {
     // Registered native battlefield setup, not a claim of paying for this roster.
     (0..count)
         .map(|_| put(s, player, "Llanowar Elves", Zone::Battlefield))
         .collect()
 }
-fn taps(s: &GameState, player: PlayerId) -> usize {
+pub(crate) fn taps(s: &GameState, player: PlayerId) -> usize {
     s.players[player.index()]
         .battlefield
         .iter()
@@ -118,7 +118,7 @@ fn cast(
     }
     panic!("cast did not publish")
 }
-fn finish(s: &mut GameState) {
+pub(crate) fn finish(s: &mut GameState) {
     for _ in 0..256 {
         let d = engine::advance_until_decision(s);
         assert!(s.engine.halted.is_none(), "{:?}", s.engine.halted);
@@ -173,7 +173,7 @@ fn finish(s: &mut GameState) {
     }
     panic!("native resolution did not terminate")
 }
-fn to_choice(s: &mut GameState) -> PlayerId {
+pub(crate) fn to_choice(s: &mut GameState) -> PlayerId {
     for _ in 0..8 {
         match engine::advance_until_decision(s) {
             Decision::CastSpellOrPass { .. } => engine::step(s, Action::Pass).unwrap(),
@@ -609,6 +609,12 @@ fn genuine_paid_edict_orders_stolen_creatures_by_physical_owner_after_all_choice
             .filter(|o| own.contains(o))
             .collect::<Vec<_>>();
         assert_eq!(actual, expected);
+        let receipt = &crate::edict_receipts_v1::outcomes(&s).unwrap()[0];
+        assert_eq!(receipt.graveyard[actor.index()], expected);
+        assert!(receipt.victims.iter().any(|(victim, destination)|
+            victim.binding.object == own[0]
+                && victim.owner == actor && victim.controller == actor.opponent()
+                && *destination == Some(Zone::Graveyard)));
         assert!(other
             .iter()
             .all(|&o| s.players[actor.opponent().index()].graveyard.contains(&o)));

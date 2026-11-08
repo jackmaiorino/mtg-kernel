@@ -35,7 +35,7 @@ reusable evidence only for the mechanics they actually exercise.
 | Sphinx's Tutelage | Native: event/effect draw capture and sphinxs_tutelage tests | Complete stack; original draw observer, opponent target and each actual two-card repeat condition |
 | Consuming Aberration | Native: continuous characteristics and consuming_aberration tests | Complete stack; all-zone CDA and actual opponent reveal-through-first-land batches |
 | Lathril, Blade of the Elves | Native: event/effect and lathril tests | Complete stack; final combat amount, token creation and ten-other-Elves payment references |
-| Blasphemous Edict | Native: effect and blasphemous_edict tests | Complete stack; alternate cost, APNAP thirteen-or-all selection, physical-owner graveyard ordering and simultaneous departure |
+| Blasphemous Edict | Appendix: edict_public_v1 | Source for a finite owner, Human, JSONL and sealed numeric profile. Native qualification and event-sample harvest pending |
 | Secluded Courtyard | Appendix: chosen_type_public_v66 | Complete owner/Human/wire/numeric; entry subtype and unrestricted/restricted mana, including retained original choice after departure |
 | Electroduplicate | Native: effect/copy pipeline | Complete stack; complete copiable blueprint, haste, delayed sacrifice and flashback payment |
 | Curator of Destinies | Native: effect/curator_v1 | Complete stack; private looked cards, two piles and opponent choice without concealed pile identities |
