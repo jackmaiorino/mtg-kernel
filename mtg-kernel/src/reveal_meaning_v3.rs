@@ -88,29 +88,26 @@ impl RevealJournalV3 {
         name: &str,
         meaning: RevealV3,
     ) {
+        self.reveal_group(viewer, owner, [name], meaning);
+    }
+
+    pub(crate) fn reveal_group<'a>(
+        &mut self,
+        viewer: PlayerId,
+        owner: PlayerId,
+        names: impl IntoIterator<Item = &'a str>,
+        meaning: RevealV3,
+    ) {
         let Some(viewers) = &mut self.viewers else {
             return;
         };
         let operations = &mut viewers[viewer.index()];
         let sequence = operations.len();
         let owner = seat(owner);
-        let present = || {
-            json!([{
-                "kind": "card_revealed", "owner_seat": owner,
-                "card_name": name, "meaning": "present",
-            }])
-        };
-        let moved = |card_name: Option<&str>, evidence: Value| {
-            json!([
-                {"kind": "hand_arrival", "owner_seat": owner, "card_name": card_name, "evidence": evidence},
-                {"kind": "card_revealed", "owner_seat": owner, "card_name": name,
-                    "meaning": "moved", "arrival": format!("arrival:{sequence}:0")},
-            ])
-        };
-        let events = match meaning {
+        let evidence = match meaning {
             RevealV3::Omit => return,
-            RevealV3::Present => present(),
-            RevealV3::SearchReveal => moved(None, json!({"kind": "search_reveal"})),
+            RevealV3::Present => None,
+            RevealV3::SearchReveal => Some(json!({"kind": "search_reveal"})),
             RevealV3::PublicTransfer(source) => {
                 let from_zone = match source {
                     Zone::Battlefield => "battlefield",
@@ -120,12 +117,30 @@ impl RevealJournalV3 {
                     Zone::Command => "command",
                     Zone::Hand | Zone::Library => return,
                 };
-                moved(
-                    Some(name),
-                    json!({"kind": "public_transfer", "from_zone": from_zone}),
-                )
+                Some(json!({"kind": "public_transfer", "from_zone": from_zone}))
             }
         };
+        // One atomic reveal exposes a name multiset. Order its public events
+        // by name so native hand, selection and allocation order stay private.
+        let mut names: Vec<_> = names.into_iter().collect();
+        names.sort_unstable();
+        if names.is_empty() {
+            return;
+        }
+        let mut events = Vec::new();
+        for name in names {
+            if let Some(evidence) = &evidence {
+                let arrival = format!("arrival:{sequence}:{}", events.len());
+                let arrival_name = matches!(meaning, RevealV3::PublicTransfer(_)).then_some(name);
+                events.push(json!({"kind": "hand_arrival", "owner_seat": owner,
+                    "card_name": arrival_name, "evidence": evidence}));
+                events.push(json!({"kind": "card_revealed", "owner_seat": owner,
+                    "card_name": name, "meaning": "moved", "arrival": arrival}));
+            } else {
+                events.push(json!({"kind": "card_revealed", "owner_seat": owner,
+                    "card_name": name, "meaning": "present"}));
+            }
+        }
         operations.push(json!({"sequence": sequence, "events": events}));
     }
 
@@ -338,6 +353,35 @@ mod tests {
                     {"sequence":1, "events":[{"kind":"library_shuffled", "owner_seat":"p0"}]},
                 ])
             );
+        }
+    }
+
+    #[test]
+    fn reveal_meaning_v3_atomic_groups_ignore_private_selection_order() {
+        let owner = PlayerId::P0;
+        for meaning in [RevealV3::Present, RevealV3::SearchReveal] {
+            let emit = |names: [&str; 2]| {
+                let mut state = empty();
+                let cards = names.map(|name| put(&mut state, owner, name, Zone::Hand));
+                state.note_public_hand_reveal_group_v3(owner, cards, meaning);
+                state.reveal_meaning_v3.shuffle(owner);
+                operations(&state, owner.opponent())
+            };
+            let first = emit(["Swamp", "Forest"]);
+            assert_eq!(first, emit(["Forest", "Swamp"]));
+            let reveals: Vec<_> = first[0]["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|event| event["kind"] == "card_revealed")
+                .collect();
+            assert_eq!(reveals[0]["card_name"], "Forest");
+            assert_eq!(reveals[1]["card_name"], "Swamp");
+            if matches!(meaning, RevealV3::SearchReveal) {
+                assert_eq!(reveals[0]["arrival"], "arrival:0:0");
+                assert_eq!(reveals[1]["arrival"], "arrival:0:2");
+            }
+            assert_eq!(first[1]["events"][0]["kind"], "library_shuffled");
         }
     }
 }

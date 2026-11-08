@@ -7494,14 +7494,10 @@ fn commit_cost_components_from_plan_v1(
             }
             CostComponent::RevealHandIfNoCardsWithType(_) => {
                 let hand = state.players[player.index()].hand.clone();
-                for object in hand {
-                    // spellbench-public-reveal: hand card revealed by the card rules.
-                    for observer in [PlayerId::P0, PlayerId::P1] {
-                        state
-                            .reveal_distinct_hand_card(observer, player, object)
-                            .expect("preflighted live hand card remains revealable");
-                    }
-                }
+                // spellbench-public-reveal: the paid cost shows the entire hand.
+                state
+                    .reveal_public_hand_group_v3(player, hand.into_iter())
+                    .expect("preflighted live hand card remains revealable");
             }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {}
             CostComponent::Loyalty(delta) => {

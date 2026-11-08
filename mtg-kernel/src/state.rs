@@ -3312,6 +3312,55 @@ impl GameState {
         }
     }
 
+    pub(crate) fn note_public_hand_reveal_group_v3(
+        &mut self,
+        owner: PlayerId,
+        objects: impl IntoIterator<Item = ObjectId>,
+        meaning: crate::reveal_meaning_v3::RevealV3,
+    ) {
+        if !self.reveal_meaning_v3.enabled() {
+            return;
+        }
+        let names: Vec<_> = objects
+            .into_iter()
+            .map(|object| self.objects.get(object))
+            .filter(|card| {
+                card.owner == owner
+                    && card.zone == Zone::Hand
+                    && !card.v4.is_token
+                    && card.spell_copy_origin.is_none()
+            })
+            .map(|card| crate::card_def::CARD_DEFS[usize::from(card.card_def)].name)
+            .collect();
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            self.reveal_meaning_v3
+                .reveal_group(observer, owner, names.iter().copied(), meaning);
+        }
+    }
+
+    /// An effect or paid cost visibly shows one whole group at once. The
+    /// legacy copy-bound ledger is updated in its original order.
+    #[cfg_attr(test, track_caller)]
+    pub(crate) fn reveal_public_hand_group_v3(
+        &mut self,
+        owner: PlayerId,
+        objects: impl Iterator<Item = ObjectId> + Clone,
+    ) -> Result<(), String> {
+        use crate::reveal_meaning_v3::RevealV3;
+        for object in objects.clone() {
+            for observer in [PlayerId::P0, PlayerId::P1] {
+                self.reveal_distinct_hand_card_with_meaning_v3(
+                    observer,
+                    owner,
+                    object,
+                    RevealV3::Omit,
+                )?;
+            }
+        }
+        self.note_public_hand_reveal_group_v3(owner, objects, RevealV3::Present);
+        Ok(())
+    }
+
     /// A card of `owner`'s hand has just left face down to a public zone
     /// (foretell), after its move was read by name. Under
     /// [`GameState::hand_departures_by_name_v1`] the other player cannot
