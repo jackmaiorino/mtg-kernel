@@ -62,6 +62,7 @@ pub enum EntryOptionV1 {
 pub fn entry_option_v1(
     state: &GameState,
     action: &crate::rl::ActionSemanticV1,
+    known_cavern_types: Option<&[Subtype]>,
 ) -> Result<Option<EntryOptionV1>, RlContractError> {
     let crate::rl::ActionSemanticV1::ChooseEffectOption {
         actor,
@@ -98,7 +99,10 @@ pub fn entry_option_v1(
     let index = usize::from(*option_index);
     Ok(Some(match def.name {
         "Cavern of Souls" => {
-            let options = crate::eternal_cards_v1::e3::cavern_type_options(state, player);
+            // The sealed owner derives this public menu from its exact own
+            // reset mainboard. Do not inspect physical hidden library copies.
+            let options = known_cavern_types.ok_or_else(|| RlContractError(
+                "Cavern needs authenticated own-deck creature types".into()))?;
             if options.len() != usize::from(*option_count) {
                 return Err(RlContractError("stale public creature-type menu".into()));
             }
@@ -109,6 +113,7 @@ pub fn entry_option_v1(
             )
         }
         "Pithing Needle" => {
+            require_continuous_needle_sources(state)?;
             let options = crate::eternal_lurrus_v1::needle_name_options(state, player);
             if options.len() != usize::from(*option_count) {
                 return Err(RlContractError("stale public card-name menu".into()));
@@ -130,6 +135,29 @@ pub fn entry_option_v1(
         }
         _ => unreachable!(),
     }))
+}
+
+/// The legacy native Needle menu follows physical stack sources. Until a new
+/// native menu uses frozen identities, refuse every departed stack source
+/// before calling that helper. A later hidden reappearance never repairs the
+/// frozen incarnation comparison, and no current definition controls refusal.
+pub(crate) fn require_continuous_needle_sources(state: &GameState) -> Result<(), RlContractError> {
+    let refusal = || RlContractError("Needle menu needs continuous public stack sources".into());
+    for item in &state.stack {
+        let (source, zone, incarnation) = if let Some(frozen) = item.v4.source_contract {
+            (frozen.source, frozen.zone, frozen.zone_change_count)
+        } else if let Some(frozen) = item.v4.ability_source_contract {
+            (frozen.source, frozen.zone, frozen.zone_change_count)
+        } else { return Err(refusal()); };
+        if source != item.source || !matches!(zone, Zone::Battlefield | Zone::Stack | Zone::Graveyard | Zone::Exile) {
+            return Err(refusal());
+        }
+        let live = state.objects.try_get(source).ok_or_else(refusal)?;
+        if live.zone_change_count != incarnation || live.zone != zone || live.v4.face_down_v1.is_some() {
+            return Err(refusal());
+        }
+    }
+    Ok(())
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -329,6 +357,38 @@ mod tests {
         policy_observation_v6::tests::{put, ready_state_for},
     };
 
+    #[test]
+    fn issue454_needle_refuses_departed_stack_source_before_reading_hidden_definition() {
+        use crate::state::{AbilitySourceContractV4, StackItem, StackItemKind, StackStateV4};
+        for viewer in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(viewer);
+            let needle = put(&mut state, viewer, "Pithing Needle", Zone::Battlefield);
+            let source = put(&mut state, viewer.opponent(), "Wasteland", Zone::Battlefield);
+            let frozen = AbilitySourceContractV4::capture(&state, source);
+            state.stack.push(StackItem {
+                kind: StackItemKind::ActivatedAbility, source, controller: viewer.opponent(),
+                targets: Vec::new(), is_copy: false, inline_effect: None, discarded: Vec::new(),
+                is_flashback: false, mode_chosen: 0, madness_offer: false, kicked: false,
+                v4: StackStateV4 { ability_source_contract: Some(frozen), ..Default::default() },
+            });
+            let action = crate::rl::ActionSemanticV1::ChooseEffectOption {
+                actor: viewer.into(), source: crate::rl::card_ref(&state, needle).unwrap(),
+                option_index: 0, option_count: 1,
+            };
+            assert!(require_continuous_needle_sources(&state).is_ok());
+            for (zone, incarnation) in [(Zone::Hand, 1), (Zone::Library, 1), (Zone::Battlefield, 2)] {
+                for name in ["Island", "Forest", "Force of Will"] {
+                    let live = state.objects.get_mut(source);
+                    live.zone = zone;
+                    live.zone_change_count = incarnation;
+                    live.card_def = crate::card_def::card_id_by_name(name).unwrap();
+                    assert_eq!(entry_option_v1(&state, &action, None).unwrap_err().0,
+                        "Needle menu needs continuous public stack sources");
+                }
+            }
+        }
+    }
+
     fn stack_source(state: &mut GameState, player: PlayerId, name: &str) -> crate::ids::ObjectId {
         let source = put(state, player, name, Zone::Hand);
         state.players[player.index()]
@@ -443,7 +503,7 @@ mod tests {
                 option_count: options.len() as u16,
             };
             assert_eq!(
-                entry_option_v1(&state, &action).unwrap(),
+                entry_option_v1(&state, &action, Some(&options)).unwrap(),
                 Some(EntryOptionV1::CreatureType(Subtype::Eldrazi))
             );
             crate::eternal_cards_v1::e3::answer_entry_choice(&mut state, selected as u16).unwrap();
@@ -458,7 +518,7 @@ mod tests {
                 option_count: options.len() as u16,
             };
             assert_eq!(
-                entry_option_v1(&state, &action).unwrap(),
+                entry_option_v1(&state, &action, None).unwrap(),
                 Some(EntryOptionV1::CardName { printing: named })
             );
             assert!(

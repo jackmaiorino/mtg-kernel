@@ -11,6 +11,7 @@ pub struct EternalActorSessionV1 {
     inner: FastActorSessionV1,
     owner: Arc<()>,
     generation: u64,
+    own_deck_types: Arc<[Vec<crate::card_def::Subtype>; 2]>,
 }
 
 #[cfg(all(test, feature = "eternal-fixtures"))]
@@ -68,7 +69,7 @@ mod tests {
                 )
                 .unwrap();
                 for step in 0..8 {
-                    let FastActorResponseV1::Decision(header) = session.current_response() else {
+                    let FastActorResponseV1::Decision(header) = session.current_response().unwrap() else {
                         panic!("unexpected early terminal {name}/{starting_player:?}/{step}");
                     };
                     let decision = session.encode(header).unwrap_or_else(|error| {
@@ -93,6 +94,7 @@ mod tests {
                             inner: session.inner.clone(),
                             owner: Arc::new(()),
                             generation: 0,
+                            own_deck_types: session.own_deck_types.clone(),
                         };
                         assert!(matches!(
                             foreign.training_input_v1(&decision),
@@ -134,7 +136,7 @@ mod tests {
                 player,
             )
             .unwrap();
-            let FastActorResponseV1::Decision(header) = session.current_response() else {
+            let FastActorResponseV1::Decision(header) = session.current_response().unwrap() else {
                 panic!("decision");
             };
             let actor = session.inner.current.as_ref().unwrap().actor;
@@ -145,6 +147,7 @@ mod tests {
                     inner: session.inner.clone(),
                     owner: Arc::new(()),
                     generation: 0,
+                    own_deck_types: session.own_deck_types.clone(),
                 };
                 let card = variant.inner.state.objects.get_mut(hidden);
                 card.card_def = crate::card_def::card_id_by_name(name).unwrap();
@@ -210,6 +213,21 @@ impl EternalActorSessionV1 {
         for card in mainboards.iter().flatten() {
             crate::eternal_actor_printed_v1::printing_v1(*card).map_err(projection)?;
         }
+        let own_deck_types = Arc::new(mainboards.each_ref().map(|cards| {
+            let mut types: Vec<crate::card_def::Subtype> = Vec::new();
+            for id in cards {
+                let def = &crate::card_def::CARD_DEFS[usize::from(*id)];
+                if !def.has_type(crate::card_def::CardType::Creature) { continue; }
+                for subtype in def.subtypes {
+                    if subtype.is_creature_type() && !types.iter().any(|known| known.same_subtype_as(subtype)) {
+                        types.push(*subtype);
+                    }
+                }
+            }
+            types.sort_by_key(|subtype| subtype.stable_id());
+            if types.is_empty() { types.push(crate::card_def::Subtype::CREATURE_TYPES[0]); }
+            types
+        }));
         let inner = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_v1(
             episode_id, env_seed, limits.0, limits.1, deck_ids, mainboards, starting_player,
         ).map_err(|error| Error::Projection(format!("{error:?}")))?;
@@ -217,10 +235,24 @@ impl EternalActorSessionV1 {
             inner,
             owner: Arc::new(()),
             generation: 0,
+            own_deck_types,
         })
     }
-    pub fn current_response(&self) -> FastActorResponseV1 {
-        self.inner.current_response()
+    fn require_entry_visibility(&self) -> ActorResult<()> {
+        if self.inner.current.as_ref().is_some_and(|current| current.candidates.iter().any(|candidate| {
+            matches!(&candidate.semantic, ActionSemanticV1::ChooseEffectOption { source, .. }
+                if crate::card_def::CARD_DEFS.get(usize::from(source.card_db_id))
+                    .is_some_and(|def| def.name == "Pithing Needle"))
+        })) {
+            crate::eternal_actor_public_v1::require_continuous_needle_sources(&self.inner.state).map_err(projection)?;
+        }
+        Ok(())
+    }
+    pub fn current_response(&self) -> ActorResult<FastActorResponseV1> {
+        // A legacy native name-menu count is private until the successor
+        // proves its operands public, including when publishing only a header.
+        self.require_entry_visibility()?;
+        Ok(self.inner.current_response())
     }
     pub fn snapshot(&self) -> EternalActorSnapshotV1 {
         EternalActorSnapshotV1 {
@@ -237,15 +269,16 @@ impl EternalActorSessionV1 {
             inner: snapshot.inner.clone(),
             owner: self.owner.clone(),
             generation,
+            own_deck_types: self.own_deck_types.clone(),
         };
-        if let FastActorResponseV1::Decision(expected) = restored.current_response() {
+        if let FastActorResponseV1::Decision(expected) = restored.current_response()? {
             restored.encode(expected)?;
         }
         *self = restored;
         Ok(())
     }
     pub fn encode(&self, expected: FastActorDecisionV1) -> ActorResult<EternalActorDecisionV1> {
-        if self.current_response() != FastActorResponseV1::Decision(expected)
+        if self.current_response()? != FastActorResponseV1::Decision(expected)
             || self.inner.flat_action_contract_mode != FlatActionContractModeV1::V2
         {
             return Err(Error::StaleBinding);
@@ -330,7 +363,8 @@ impl EternalActorSessionV1 {
             .map(|candidate| {
                 Ok((
                     candidate.semantic.clone(),
-                    crate::eternal_actor_public_v1::entry_option_v1(state, &candidate.semantic)
+                    crate::eternal_actor_public_v1::entry_option_v1(state, &candidate.semantic,
+                        Some(&self.own_deck_types[current.actor.index()]))
                         .map_err(projection)?,
                 ))
             })
@@ -378,7 +412,7 @@ impl EternalActorSessionV1 {
             return Err(Error::ActionRange);
         }
         let generation = self.generation.checked_add(1).ok_or(Error::Range)?;
-        let response = self
+        self
             .inner
             .step(
                 decision.expected.episode_id,
@@ -387,7 +421,7 @@ impl EternalActorSessionV1 {
             )
             .map_err(|error| Error::Projection(format!("{error:?}")))?;
         self.generation = generation;
-        Ok(response)
+        self.current_response()
     }
     pub fn score_and_apply_tree_v1(
         &mut self,
