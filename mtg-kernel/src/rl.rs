@@ -12294,7 +12294,10 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             "nonland sacrifice payment requires its distinct consumer".into(),
                         ));
                     }
-                    let chooser_private = (matches!(
+                    let aberration_order = appendix == LimitedAppendixV1::Aberration
+                        && crate::effect::aberration_item_v1(&pending.resolving_item)
+                        && matches!(purpose, crate::effect::EffectTargetSelectionPurpose::OrderRevealedIntoGraveyard { .. });
+                    let chooser_private = (aberration_order || matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard
                             | crate::effect::EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. }

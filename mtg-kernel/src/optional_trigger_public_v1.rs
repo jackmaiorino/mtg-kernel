@@ -311,6 +311,7 @@ pub(crate) enum ConsumerV1 {
     KaitoOmniscienceV1,
     KaitoTutelageV1,
     KaitoMixedV1,
+    KaitoAberrationV1,
 }
 impl ConsumerV1 {
     pub(crate) fn for_kaito(appendix: crate::policy_surface_v5::LimitedAppendixV1) -> Self {
@@ -319,6 +320,7 @@ impl ConsumerV1 {
             LimitedAppendixV1::Omniscience => Self::KaitoOmniscienceV1,
             LimitedAppendixV1::Tutelage => Self::KaitoTutelageV1,
             LimitedAppendixV1::Mixed => Self::KaitoMixedV1,
+            LimitedAppendixV1::Aberration => Self::KaitoAberrationV1,
             _ => Self::KaitoV75,
         }
     }
@@ -327,7 +329,8 @@ impl ConsumerV1 {
         match self {
             Self::Legacy => crate::effect::require_no_copied_token_abilities_v1(state),
             Self::ChandraV74 => crate::effect::require_no_copied_token_abilities_chandra_v74(state),
-            Self::KaitoV75 | Self::KaitoOmniscienceV1 | Self::KaitoTutelageV1 | Self::KaitoMixedV1 => {
+            Self::KaitoV75 | Self::KaitoOmniscienceV1 | Self::KaitoTutelageV1
+            | Self::KaitoMixedV1 | Self::KaitoAberrationV1 => {
                 crate::effect::require_no_copied_token_abilities_kaito_v75(state)
             }
         }
@@ -383,7 +386,7 @@ pub(crate) fn validate_state_for_consumer(
             .get(usize::from(definition))
             .is_some_and(|d| d.name == "Consuming Aberration")
     };
-    if state.objects.iter().any(|(_, o)| {
+    if !matches!(consumer, ConsumerV1::KaitoAberrationV1) && (state.objects.iter().any(|(_, o)| {
         matches!(o.zone, Zone::Battlefield | Zone::Stack)
             && o.v4.face_down_v1.is_none()
             && aberration(o.card_def)
@@ -398,7 +401,7 @@ pub(crate) fn validate_state_for_consumer(
             p.ctx
                 .ability_source_contract
                 .is_some_and(|s| aberration(s.card_def))
-        })
+        }))
     {
         return Err("Aberration CDA and mill require a distinct complete consumer".into());
     }

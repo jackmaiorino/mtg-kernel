@@ -10351,7 +10351,7 @@ fn validate_aberration_ward_continuation_v1(
         _ => Err("Aberration Ward lost its exact native payment stage".into()),
     }
 }
-fn aberration_item_v1(item: &StackItem) -> bool {
+pub(crate) fn aberration_item_v1(item: &StackItem) -> bool {
     aberration_family_item_v1(item)
         && item.inline_effect
             == Some(EffectOp::RevealUntilCardTypeAndMill {
@@ -27506,7 +27506,7 @@ pub(crate) mod sphinxs_tutelage_v1_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "effect/consuming_aberration_v1_tests.rs"]
-mod consuming_aberration_v1_tests;
+pub(crate) mod consuming_aberration_v1_tests;
 
 fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
     state.stack.iter().any(|item| {
