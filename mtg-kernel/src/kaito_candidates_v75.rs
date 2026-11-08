@@ -39,6 +39,8 @@ pub struct CandidateMeaningV75 {
     pub chosen_type_answer: Option<chosen_type::AnswerV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drakuseth_target: Option<crate::drakuseth_consumer_v1::TargetActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embercleave_action: Option<crate::embercleave_consumer_v1::ActionV1>,
     #[serde(deserialize_with = "required_optional")]
     pub drake_activation: Option<crate::next_five_observation_v59::NextFiveActivationV59>,
     /// Complete current programs at this genuine decision, in native stage and
@@ -130,6 +132,8 @@ pub fn producer_sha256() -> String {
             include_str!("artist_consumer_v1.rs"),
             include_str!("chosen_type_consumer_v1.rs"),
             include_str!("niv_consumer_v1.rs"),
+            include_str!("embercleave_consumer_v1.rs"),
+            include_str!("human_bo3_v1/embercleave_consumer_v1.rs"),
             include_str!("drakuseth_consumer_v1.rs"),
             include_str!("drakuseth_consumer_v1/damage.rs"),
             include_str!("human_bo3_v1/drakuseth_consumer_v1.rs"),
@@ -705,6 +709,11 @@ fn project_authenticated_parts_v75(
             CandidateMeaningV75 {
                 schema: annotation_schema.into(),
                 ordinal: 0,
+                embercleave_action: crate::embercleave_consumer_v1::action(
+                    observation.embercleave.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
                 drakuseth_target: crate::drakuseth_consumer_v1::target_action(
                     observation.drakuseth.as_ref(),
                     &action,
@@ -824,6 +833,11 @@ fn schemas(observation: &KaitoObservationV75) -> (&'static str, &'static str) {
             crate::niv_consumer_v1::CANDIDATES_SCHEMA,
             crate::niv_consumer_v1::ACTION_SCHEMA,
         )
+    } else if observation.embercleave.is_some() {
+        (
+            crate::embercleave_consumer_v1::CANDIDATES_SCHEMA,
+            crate::embercleave_consumer_v1::ACTION_SCHEMA,
+        )
     } else {
         (SCHEMA, ANNOTATION_SCHEMA)
     }
@@ -925,6 +939,12 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
             || row.liliana_choices
                 != crate::liliana_public_v73::choice_contexts(&value.observation.liliana)
             || row.schema != annotation_schema
+            || row.embercleave_action
+                != crate::embercleave_consumer_v1::action(
+                    value.observation.embercleave.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
             || row.drakuseth_target
                 != crate::drakuseth_consumer_v1::target_action(
                     value.observation.drakuseth.as_ref(),

@@ -436,7 +436,7 @@ fn genuine_paid_flash_on_opponents_turn_and_targetless_entry_both_seats() {
     }
 }
 
-fn waiting_from(
+pub(crate) fn waiting_from(
     actor: PlayerId,
     mut state: GameState,
 ) -> (GameState, ObjectId, ObjectId, ObjectId) {

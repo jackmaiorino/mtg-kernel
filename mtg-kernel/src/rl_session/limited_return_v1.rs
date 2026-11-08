@@ -73,6 +73,15 @@ impl FastActorSessionV1 {
         )
     }
 
+    pub(crate) fn reset_limited_embercleave_v1(
+        config: &crate::embercleave_consumer_v1::ResetV1,
+        reveal_facts: bool,
+    ) -> Result<Self, RlSessionError> {
+        crate::embercleave_consumer_v1::preflight(config)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        Self::initialize_limited_consumer_v1(config, reveal_facts, LimitedAppendixV1::Embercleave)
+    }
+
     fn initialize_limited_consumer_v1(
         config: &crate::limited_consumer_wire_v1::ResetV1,
         reveal_facts: bool,

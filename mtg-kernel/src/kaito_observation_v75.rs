@@ -75,6 +75,12 @@ pub struct KaitoObservationV75 {
         deserialize_with = "strict_value"
     )]
     pub drakuseth: Option<crate::drakuseth_consumer_v1::FactsV1>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "strict_value"
+    )]
+    pub embercleave: Option<crate::embercleave_public_v65::FactsV65>,
     pub complete_ordinary_observation: bool,
     pub owning_consumer_admitted: bool,
     pub projection_sha256: String,
@@ -281,6 +287,9 @@ fn require_supported(
         LimitedAppendixV1::Artist => Some(crate::rules_meaning_artist_v64::selected_id()?),
         LimitedAppendixV1::Niv => Some(crate::rules_meaning_niv_mizzet_v63::selected_id()?),
         LimitedAppendixV1::Drakuseth => Some(crate::rules_meaning_drakuseth_v67::selected_id()?),
+        LimitedAppendixV1::Embercleave => {
+            Some(crate::rules_meaning_embercleave_v65::selected_id()?)
+        }
     };
     let unsupported = |id: u16| {
         id >= 460
@@ -475,7 +484,15 @@ pub(crate) fn stack_source_reference(
     let drakuseth_trigger = source.card_def == crate::drakuseth_consumer_v1::PRINTING_V1
         && item.kind == crate::state::StackItemKind::TriggeredAbility
         && item.inline_effect.as_ref() == Some(&crate::standard_cards_v1::drakuseth_attack_v1());
-    if !selected_source(source) && !artist_trigger && !drakuseth_trigger && !niv_trigger {
+    let embercleave_attachment = source.card_def == crate::embercleave_consumer_v1::PRINTING_V1
+        && item.v4.granted_by.is_none()
+        && matches!(item.kind, crate::state::StackItemKind::ActivatedAbility
+            | crate::state::StackItemKind::TriggeredAbility)
+        && item.inline_effect.as_ref()
+            .is_some_and(crate::embercleave_consumer_v1::is_attachment_program);
+    if !selected_source(source) && !artist_trigger && !drakuseth_trigger && !niv_trigger
+        && !embercleave_attachment
+    {
         return Ok(None);
     }
     crate::engine::time_stop_v1::validate(state).map_err(RlContractError)?;
@@ -521,7 +538,12 @@ pub(crate) fn pending_source_reference(
     let drakuseth_trigger = source.card_def == crate::drakuseth_consumer_v1::PRINTING_V1
         && pending.granted_by.is_none()
         && pending.effect == crate::standard_cards_v1::drakuseth_attack_v1();
-    if !selected_source(source) && !artist_trigger && !drakuseth_trigger && !niv_trigger {
+    let embercleave_attachment = source.card_def == crate::embercleave_consumer_v1::PRINTING_V1
+        && pending.granted_by.is_none()
+        && crate::embercleave_consumer_v1::is_attachment_program(&pending.effect);
+    if !selected_source(source) && !artist_trigger && !drakuseth_trigger && !niv_trigger
+        && !embercleave_attachment
+    {
         return Ok(None);
     }
     crate::engine::time_stop_v1::validate(state).map_err(RlContractError)?;
@@ -595,6 +617,7 @@ pub(crate) fn observe_parts_v75(
             LimitedAppendixV1::Niv => crate::niv_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::ChosenType => crate::chosen_type_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Drakuseth => crate::drakuseth_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Embercleave => crate::embercleave_consumer_v1::OBSERVATION_SCHEMA,
         }
         .into(),
         producer_sha256: producer_sha256(),
@@ -657,6 +680,10 @@ pub(crate) fn observe_parts_v75(
             .then(|| crate::drakuseth_consumer_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
+        embercleave: (appendix == LimitedAppendixV1::Embercleave)
+            .then(|| crate::embercleave_consumer_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
         complete_ordinary_observation: true,
         owning_consumer_admitted: false,
         projection_sha256: String::new(),
@@ -684,25 +711,30 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
         &value.niv,
         &value.chosen_type,
         &value.drakuseth,
+        &value.embercleave,
     ) {
-        (Some(artist), None, None, None) => {
+        (Some(artist), None, None, None, None) => {
             crate::artist_consumer_v1::validate_facts(artist, actor).map_err(RlContractError)?;
             crate::artist_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, Some(niv), None, None) => {
+        (None, Some(niv), None, None, None) => {
             crate::niv_consumer_v1::validate_facts(niv, actor).map_err(RlContractError)?;
             crate::niv_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, Some(chosen_type), None) => {
+        (None, None, Some(chosen_type), None, None) => {
             crate::chosen_type_consumer_v1::validate_facts(chosen_type, actor)
                 .map_err(RlContractError)?;
             crate::chosen_type_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, Some(facts)) => {
+        (None, None, None, Some(facts), None) => {
             crate::drakuseth_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::drakuseth_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None) => SCHEMA,
+        (None, None, None, None, Some(facts)) => {
+            crate::embercleave_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::embercleave_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (None, None, None, None, None) => SCHEMA,
         _ => return Err(RlContractError("mixed appendix profiles".into())),
     };
     crate::muldrotha_public_v71::validate_tinybones_compat_v72(&value.muldrotha)

@@ -532,4 +532,4 @@ pub fn validate(state: &GameState, viewer: PlayerId, value: &FactsV65) -> Result
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-mod tests;
+pub(crate) mod tests;

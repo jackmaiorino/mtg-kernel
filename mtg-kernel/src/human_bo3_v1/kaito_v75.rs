@@ -45,7 +45,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     niv: Option<HumanNivFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    drakuseth: Option<super::drakuseth_consumer_v1::HumanFactsV1>
+    drakuseth: Option<super::drakuseth_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    embercleave: Option<super::embercleave_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -75,7 +77,9 @@ record!(HumanKaitoCandidateV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     chosen_type_answer: Option<crate::chosen_type_consumer_v1::AnswerV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    drakuseth_target: Option<crate::drakuseth_consumer_v1::TargetActionV1>
+    drakuseth_target: Option<crate::drakuseth_consumer_v1::TargetActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    embercleave_action: Option<crate::embercleave_consumer_v1::ActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -297,6 +301,29 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
+    if let Some(embercleave) = crate::embercleave_consumer_v1::action(obs.embercleave.as_ref(), a)
+        .map_err(|_| Error::InvalidVisibleReference)?
+    {
+        use crate::embercleave_consumer_v1::ActionV1;
+        use crate::embercleave_public_v65::AbilityKindV65;
+        return Ok(Some(match embercleave {
+            ActionV1::CastQuote { generic_due_now, retained_red_pips, .. } => {
+                format!("Cast Embercleave (current printed quote {generic_due_now} generic, {retained_red_pips} red)")
+            }
+            ActionV1::ActivateEquip { printed_generic_cost } => {
+                format!("Activate Embercleave equip {printed_generic_cost}")
+            }
+            ActionV1::AttachTarget { kind, .. } => {
+                let ActionSemanticV1::ChooseTarget { target: TargetRefV1::Object { object }, .. } = a
+                    else { return Err(Error::InvalidVisibleReference) };
+                let route = match kind {
+                    AbilityKindV65::EntryAttach => "entry attachment",
+                    AbilityKindV65::Equip => "equip",
+                };
+                format!("Choose {} for Embercleave {route}", h.name(object)?)
+            }
+        }));
+    }
     if let Some(answer) = crate::chosen_type_consumer_v1::answer(obs.chosen_type.as_ref(), a)
         .map_err(|_| Error::InvalidVisibleReference)?
     {
@@ -695,6 +722,9 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::drakuseth_consumer_v1::capture(facts, &mut handles, &mut roles))
         .transpose()?;
+    let embercleave = obs.embercleave.as_ref()
+        .map(|facts| super::embercleave_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
@@ -707,6 +737,7 @@ pub(super) fn project_with_handles(
                 artist_payment: r.artist_payment,
                 chosen_type_answer: r.chosen_type_answer,
                 drakuseth_target: r.drakuseth_target,
+                embercleave_action: r.embercleave_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -957,6 +988,8 @@ pub(super) fn project_with_handles(
                 "mtg-kernel-human-artist-decision/v1"
             } else if niv.is_some() {
                 "mtg-kernel-human-niv-decision/v1"
+            } else if embercleave.is_some() {
+                "mtg-kernel-human-embercleave-decision/v1"
             } else {
                 "mtg-kernel-human-kaito-decision/v75"
             }
@@ -981,6 +1014,7 @@ pub(super) fn project_with_handles(
                 chosen_type,
                 niv,
                 drakuseth,
+                embercleave,
             },
             actions,
             action_meanings,
