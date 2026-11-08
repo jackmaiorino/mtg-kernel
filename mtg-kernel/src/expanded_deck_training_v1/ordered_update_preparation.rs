@@ -6,7 +6,7 @@ use super::*;
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread;
 use std::time::Instant;
 
@@ -362,6 +362,58 @@ struct CachedOpponentV1 {
 
 static OPPONENT_CACHE: OnceLock<Mutex<VecDeque<CachedOpponentV1>>> = OnceLock::new();
 
+/// What the process opponent cache holds now, for the diagnostics file
+/// (`opponent_cache_diagnostics_v1`): its bound, each entry's files (shared,
+/// not copied), the bytes of its policies' own copies, and its distinct
+/// models and their bytes.
+pub(super) struct HeldOpponentsV1 {
+    pub(super) entry_limit: usize,
+    pub(super) files: Vec<Arc<super::VerifiedFilesV1>>,
+    pub(super) policy_bytes: usize,
+    pub(super) models: usize,
+    pub(super) model_bytes: usize,
+}
+
+impl HeldOpponentsV1 {
+    /// Each entry's files, one holder per entry.
+    pub(super) fn holders_v1(&self) -> Vec<&dyn opponent_cache_diagnostics_v1::HeldFilesV1> {
+        self.files
+            .iter()
+            .map(|files| files.as_ref() as &dyn opponent_cache_diagnostics_v1::HeldFilesV1)
+            .collect()
+    }
+}
+
+pub(super) fn held_v1() -> HeldOpponentsV1 {
+    let mut held = HeldOpponentsV1 {
+        entry_limit: OPPONENT_CACHE_ENTRIES,
+        files: Vec::new(),
+        policy_bytes: 0,
+        models: 0,
+        model_bytes: 0,
+    };
+    if let Some(cache) = OPPONENT_CACHE.get() {
+        let entries = cache.lock().unwrap_or_else(PoisonError::into_inner);
+        // Every entry lives while the lock is held, so each model's
+        // identity is its own.
+        let mut models = std::collections::BTreeSet::new();
+        for entry in entries.iter() {
+            held.files.push(Arc::clone(&entry.files));
+            held.policy_bytes += opponent_cache_diagnostics_v1::policy_bytes_v1(&entry.policy);
+            let (model, bytes) = opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy);
+            if models.insert(model) {
+                held.model_bytes += bytes;
+            }
+        }
+        held.models = models.len();
+    }
+    held
+}
+
+fn file_bytes_v1(files: &super::VerifiedFilesV1) -> usize {
+    files.iter().map(|(_, bytes)| bytes.len()).sum()
+}
+
 /// Whether the cache holds `source`. Its checkpoint, if any, was probed clean
 /// of a further file when it was kept.
 pub(super) fn holds_source_v1(source: &ExpandedModelSourceV1) -> bool {
@@ -379,6 +431,9 @@ pub(super) fn load_opponent_cached_v1(
     source: &ExpandedModelSourceV1,
     revalidate: bool,
 ) -> Result<(LoadedOpponentV1, bool), String> {
+    let stats = &opponent_cache_diagnostics_v1::counters_v1().process_opponent;
+    let started = Instant::now();
+    stats.lookups.add(1);
     let cache = OPPONENT_CACHE.get_or_init(|| Mutex::new(VecDeque::new()));
     let cached = {
         let mut entries = cache
@@ -396,18 +451,33 @@ pub(super) fn load_opponent_cached_v1(
                 entries.push_back(entry);
                 Some((policy, identity, files))
             }
-            None => None,
+            None => {
+                if entries.iter().any(|entry| &entry.source == source) {
+                    stats.misses_check_setting.add(1);
+                } else {
+                    stats.misses_absent.add(1);
+                }
+                None
+            }
         }
     };
     // A changed, missing or replaced file makes the hit a miss: the full
     // load below reports exactly its own error.
+    let held = cached.is_some();
+    let revalidation_started = Instant::now();
     let cached = cached.filter(|(_, _, files)| {
         !revalidate
             || files
                 .iter()
                 .all(|(path, bytes)| no_state_digest_v1::holds_bytes_v1(path, bytes))
     });
-    if let Some((policy, identity, _)) = cached {
+    if held && revalidate {
+        stats.revalidation_nanos.add_elapsed(revalidation_started);
+    }
+    if held && cached.is_none() {
+        stats.misses_revalidation.add(1);
+    }
+    if let Some((policy, identity, files)) = cached {
         // A hit bypasses loading, so the entry's input contract is resolved
         // again: its receipt and its policy must still agree. The receipt's
         // model digest is the policy's model digest (the installed contract's,
@@ -417,9 +487,25 @@ pub(super) fn load_opponent_cached_v1(
             identity.model.feature_contract_digest == policy.model_feature_contract_digest_v1(),
             "cached opponent no-state-digest contract differs from its receipt",
         )?;
+        let fork_started = Instant::now();
+        let fork = policy.fork_for_collection_v3()?;
+        stats.fork_nanos.add_elapsed(fork_started);
+        stats.forks.add(1);
+        stats
+            .forked_policy_bytes
+            .add_usize(opponent_cache_diagnostics_v1::policy_bytes_v1(&fork));
+        if revalidate {
+            stats.hits_revalidated.add(1);
+            stats.revalidated_bytes.add_usize(file_bytes_v1(&files));
+        } else {
+            stats.hits_trusted.add(1);
+        }
+        let hit = opponent_cache_diagnostics_v1::nanos_since_v1(started);
+        stats.hit_nanos.add(hit);
+        stats.hit_max_nanos.raise(hit);
         return Ok((
             LoadedOpponentV1 {
-                policy: policy.fork_for_collection_v3()?,
+                policy: fork,
                 behavior: ExpandedSeatBehaviorV1 {
                     source: source.clone(),
                     identity,
@@ -428,10 +514,13 @@ pub(super) fn load_opponent_cached_v1(
             true,
         ));
     }
+    let load = opponent_cache_diagnostics_v1::WorkMarkV1::now_v1();
     let (policy, identity) = super::loaded_source_profile_v1::scoped_v1(
         super::loaded_source_profile_v1::LoadRoleV1::Opponent,
         || load_expanded_inference_any_math_v1(source),
     )?;
+    load.finish_v1(&stats.full_load);
+    stats.full_loads.add(1);
     // The tag is the check model the loaded policy actually holds, never a
     // setting sampled apart from its load.
     let no_state_digest_check = policy
@@ -443,11 +532,23 @@ pub(super) fn load_opponent_cached_v1(
     };
     // The files this load read, verified again; a source the cache cannot
     // re-verify exactly is not kept.
+    let capture = opponent_cache_diagnostics_v1::WorkMarkV1::now_v1();
     let files = match super::opponent_cache_files_v1(source) {
         Ok(Some(files)) => Some(Arc::new(files)),
         _ => None,
     };
-    match (policy.fork_for_collection_v3(), files) {
+    capture.finish_v1(&stats.capture);
+    if let Some(files) = &files {
+        stats.captured_bytes.add_usize(file_bytes_v1(files));
+    }
+    let fork = policy.fork_for_collection_v3();
+    if let Ok(fork) = &fork {
+        stats.forks.add(1);
+        stats
+            .forked_policy_bytes
+            .add_usize(opponent_cache_diagnostics_v1::policy_bytes_v1(fork));
+    }
+    match (fork, files) {
         (Ok(fork), Some(files)) => {
             let mut entries = cache
                 .lock()
@@ -457,10 +558,18 @@ pub(super) fn load_opponent_cached_v1(
             // letting duplicate insertions evict the rest of the roster.
             if let Some(index) = entries.iter().position(|entry| &entry.source == source) {
                 entries.remove(index);
+                stats.replaced.add(1);
             }
             while entries.len() >= OPPONENT_CACHE_ENTRIES {
-                entries.pop_front();
+                let Some(evicted) = entries.pop_front() else {
+                    break;
+                };
+                stats.evictions.add(1);
+                stats
+                    .evicted_file_bytes
+                    .add_usize(file_bytes_v1(&evicted.files));
             }
+            stats.kept.add(1);
             entries.push_back(CachedOpponentV1 {
                 source: source.clone(),
                 policy: Arc::new(policy),
@@ -477,6 +586,7 @@ pub(super) fn load_opponent_cached_v1(
             ))
         }
         (Ok(fork), None) => {
+            stats.not_kept_unverifiable.add(1);
             // Nothing kept for this descriptor may outlive a load that could
             // not re-verify it.
             cache
@@ -491,7 +601,10 @@ pub(super) fn load_opponent_cached_v1(
                 false,
             ))
         }
-        (Err(_), _) => Ok((LoadedOpponentV1 { policy, behavior }, false)),
+        (Err(_), _) => {
+            stats.not_kept_unforkable.add(1);
+            Ok((LoadedOpponentV1 { policy, behavior }, false))
+        }
     }
 }
 

@@ -17,6 +17,12 @@ It has two cases:
 - `fresh` runs `--updates` iterations from the fresh source (Adam step 0).
 - `warm` resumes a retained warmed checkpoint. The generator runs the first `--warmup-updates` iterations of the same schedule in process. The warm case then runs the next `--updates` iterations from that state.
 
+With `--pool-members`, it adds pool cases (#599), which play a W5-shaped roster of fixed opponents instead of the current learner:
+
+- The generator writes the largest pool's members under `pool/member-NN/`. Each member is a distinct, valid checkpoint container (about 15 MB) over the fresh source's import, which all members share. No private model is used.
+- `poolN` runs the `fresh` schedule, except that every slot plays a fixed member of the first N. Slot `j` of iteration `i` plays member `u64_be(sha256(json([tag, seed_root, i, j]))[0..8]) mod N`. The JSON is compact, the tag is `mtg-kernel-pool-fixture-draw/v1` and the seed root is the fixture seed in decimal. `fixture.json` records the members and every case's drawn ids.
+- Start with `--pool-members 2,18`. Add 64 only after the 18-member memory envelope is known.
+
 ## 1. Build the two arms
 
 Build the baseline (for example `origin/main`) and the candidate in separate worktrees. Use the same toolchain, profile and flags for both. Name both binaries in the results.
@@ -47,6 +53,7 @@ python3 tools/native_fixture_bench/bench.py generate --root /abs/fixture \
 - `source/` and `descriptor.json`;
 - `cases/NAME/config.json`;
 - `warmup/run/` and `warm/checkpoint.json`;
+- with `--pool-members`, `pool/member-NN/checkpoint.json`;
 - `fixture.json`, the schema `mtg-kernel-native-fixture/v1`. It holds the options, the generator's build identity and every case's config pin;
 - `generate/`, the command and logs. Generation time includes the warm-up and is not a sample.
 
@@ -79,6 +86,15 @@ For every sample, the driver records:
 - the cache diagnostics file, from `MTG_KERNEL_CACHE_DIAGNOSTICS_V1`.
 
 The driver sets `MTG_KERNEL_CACHE_DIAGNOSTICS_V1` for every sample. A build without that variable ignores it. `--env KEY=VALUE` and `--arm-env ARM:KEY=VALUE` pass extra settings to the samples.
+
+Each diagnostics line holds this process's cumulative counters, so differences between lines give one iteration's. The sections are:
+
+- `loaded_source` (#595): loads and copies by caller role;
+- `opponent_cache` (#599): the process opponent cache's lookups, hits and misses by reason, hit, reread and fork time, its full loads split into file reads, byte verification, checkpoint decoding and the rest, entries, evictions and held bytes (files, each distinct shared model once, and the policies' own copies), and the bytes its forks copied. It also holds the summed collection opponent caches and the collection boundary's pin checks;
+- `verified_bytes`: the verified-bytes memo's budget, entries, comparisons, misses by reason, hashes, records, copied bytes and evictions, and with resident reads (#592) the reads it served;
+- `retained_files`: the file bytes both caches hold now, and how much of that is duplicate content;
+- `io`: pinned file reads and checkpoint decodes;
+- `process`: peak and current resident memory and CPU seconds, on Linux (on Windows, the peak working set and CPU). On macOS these are null, and the driver's `wait4` figures cover each sample.
 
 Outputs in `--out` (absent or empty):
 

@@ -360,11 +360,12 @@ class DriverTest(unittest.TestCase):
         root = self.temp / "generated"
         with redirect_stdout(StringIO()):
             code = bench.main(["generate", "--root", str(root), "--seed", "7",
-                               "--test-binary", str(generator)])
+                               "--pool-members", "2,18", "--test-binary", str(generator)])
         self.assertEqual(code, 0)
         record = json.loads((root / "generate" / "generate.json").read_text())
         self.assertEqual(record["settings"]["MTG_NATIVE_FIXTURE_SEED"], "7")
         self.assertEqual(record["settings"]["MTG_NATIVE_FIXTURE_WARMUP_UPDATES"], "2")
+        self.assertEqual(record["settings"]["MTG_NATIVE_FIXTURE_POOL_MEMBERS"], "2,18")
         self.assertEqual(record["fixture_sha256"], bench.sha256_file(root / "fixture.json"))
         self.assertEqual(record["test_binary"]["sha256"], bench.sha256_file(generator))
         self.assertIn(bench.GENERATOR_TEST, record["command"])

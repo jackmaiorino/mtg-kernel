@@ -1371,6 +1371,17 @@ impl FrozenPlayPolicyV1 {
                 .map_or(0, |model| model.owned_f32_len_v1())
     }
 
+    /// The model this policy shares with its duplicates and forks: its
+    /// allocation's address, which tells live shared models apart, and the
+    /// `f32` values it holds (`opponent_cache_diagnostics_v1` counts each
+    /// held model once).
+    pub(crate) fn shared_model_f32_v1(&self) -> (usize, usize) {
+        (
+            std::sync::Arc::as_ptr(&self.model) as usize,
+            self.model.owned_f32_len_v1(),
+        )
+    }
+
     /// An exact duplicate of a policy in the state its loader returned it:
     /// no sampling started and no collection sampler, search forward,
     /// prediction cache, probe or trace attached. Anything else is refused.

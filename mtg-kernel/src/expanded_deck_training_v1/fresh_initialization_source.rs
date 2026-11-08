@@ -377,6 +377,7 @@ pub(super) fn read_actual_in_v1(
     cap: usize,
 ) -> Result<Vec<u8>, String> {
     actual_pin(pin)?;
+    let started = std::time::Instant::now();
     let file = File::open(&pin.path).map_err(|e| e.to_string())?;
     let metadata = file.metadata().map_err(|e| e.to_string())?;
     require(
@@ -391,6 +392,7 @@ pub(super) fn read_actual_in_v1(
     file.take(cap as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
+    super::opponent_cache_diagnostics_v1::note_file_read_v1(bytes.len(), started);
     // Bytes equal to bytes this process already verified against this pin
     // have its digest (`verified_bytes_cache_v1`); anything else is hashed as
     // before.

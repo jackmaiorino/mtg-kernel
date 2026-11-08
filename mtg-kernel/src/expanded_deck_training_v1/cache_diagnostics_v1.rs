@@ -8,7 +8,7 @@
 //!
 //! A counter family adds its report as one more entry of [`sections_v1`].
 
-use super::loaded_source_profile_v1;
+use super::{loaded_source_profile_v1, opponent_cache_diagnostics_v1};
 use serde_json::{json, Value};
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -20,7 +20,9 @@ pub(crate) const SCHEMA_V1: &str = "mtg-kernel-cache-diagnostics/v1";
 
 /// Every counter family's report, by section name.
 fn sections_v1() -> Vec<(&'static str, Value)> {
-    vec![("loaded_source", loaded_source_profile_v1::report_v1())]
+    let mut sections = vec![("loaded_source", loaded_source_profile_v1::report_v1())];
+    sections.extend(opponent_cache_diagnostics_v1::sections_v1());
+    sections
 }
 
 /// The file the environment names, read once per process.

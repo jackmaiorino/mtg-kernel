@@ -204,6 +204,7 @@ def generate(args) -> int:
         ),
         "MTG_NATIVE_FIXTURE_COLLECTION_WORKERS": str(args.collection_workers),
         "MTG_NATIVE_FIXTURE_PREPARATION_WORKERS": str(args.preparation_workers),
+        "MTG_NATIVE_FIXTURE_POOL_MEMBERS": args.pool_members,
     }
     env.update(settings)
     selector = ["--ignored", "--exact", GENERATOR_TEST, "--nocapture", "--test-threads", "1"]
@@ -1139,6 +1140,8 @@ def main(argv: list[str] | None = None) -> int:
                      help="iterations run in process for the warm case (default --updates; 0: no warm case)")
     gen.add_argument("--collection-workers", type=int, default=1)
     gen.add_argument("--preparation-workers", type=int, default=1)
+    gen.add_argument("--pool-members", default="",
+                     help="comma-separated increasing pool case sizes, e.g. 2,18 (#599); none by default")
     gen.add_argument("--test-binary", help="a built mtg-kernel lib test executable (default: cargo test)")
     gen.add_argument("--repo", default=str(Path(__file__).resolve().parents[2]),
                      help="repository root for the cargo route")

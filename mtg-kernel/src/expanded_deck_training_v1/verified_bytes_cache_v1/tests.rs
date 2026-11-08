@@ -388,3 +388,109 @@ fn resident_cache_comparisons_check_metadata_without_reading() {
     }
     fs::remove_dir_all(pin.path.parent().unwrap()).unwrap();
 }
+
+#[test]
+fn diagnostics_count_misses_by_reason_records_and_evictions() {
+    let path = Path::new("/memo/diagnostics");
+    let overhead = charge_v1(path, &sha(b"aaaa"), 0);
+    let cache = VerifiedBytesCacheV1::new_v1(2 * overhead + 8, 16);
+    let (a, b, c) = (sha(b"aaaa"), sha(b"bbbb"), sha(b"cccc"));
+    // Absent: hashed and recorded. Held and equal: compared only.
+    assert!(cache.digest_matches_v1(path, &a, b"aaaa", sha));
+    assert!(cache.digest_matches_v1(path, &a, b"aaaa", sha));
+    // Held but different: hashed, and the digest differs from the pin.
+    assert!(!cache.digest_matches_v1(path, &a, b"aaab", sha));
+    assert!(cache.digest_matches_v1(path, &b, b"bbbb", sha));
+    // A third entry is over the budget: "a", the least recently used, goes.
+    assert!(cache.digest_matches_v1(path, &c, b"cccc", sha));
+    // A re-record of a held pin is counted as one.
+    cache.record_verified_v1(path, &c, b"cccc");
+    let report = cache.diagnostics_v1();
+    let expected = serde_json::json!({
+        "budget_bytes": 2 * overhead + 8,
+        "entry_limit": 16,
+        "entries": 2,
+        "charged_bytes": 2 * overhead + 8,
+        "held_bytes": 8,
+        "peak_charged_bytes": 2 * overhead + 8,
+        "lookups": 5,
+        "lookup_hits": 2,
+        "compared_hits": 1,
+        "compared_hit_bytes": 4,
+        "misses": {"disabled": 0, "absent": 3, "differ": 1},
+        "hashed": 4,
+        "hashed_bytes": 16,
+        "hash_mismatches": 1,
+        "records": 4,
+        "recorded_bytes": 16,
+        "copied_bytes": 16,
+        "records_refused": 0,
+        "rerecords": 1,
+        "evictions": 1,
+        "evicted_bytes": 4,
+        "resident": false,
+        "resident_hits": 0,
+        "resident_hit_bytes": 0,
+    });
+    let mut timed = report.clone();
+    for key in ["compare_seconds", "hash_seconds"] {
+        assert!(timed[key].as_f64().unwrap() >= 0.0);
+        timed.as_object_mut().unwrap().remove(key);
+    }
+    assert_eq!(timed, expected);
+    // The held files are the held entries' own bytes, not copies.
+    let files = cache.held_files_v1();
+    assert_eq!(files.len(), 2);
+    for (held_path, bytes) in &files {
+        assert_eq!(held_path, path);
+        let sha256 = sha(bytes);
+        assert!(std::sync::Arc::ptr_eq(
+            bytes,
+            &cache.held_v1(path, &sha256).unwrap()
+        ));
+    }
+    // An off cache counts every lookup as a miss and refuses every record.
+    let off = VerifiedBytesCacheV1::new_v1(0, 16);
+    assert!(off.digest_matches_v1(path, &a, b"aaaa", sha));
+    let report = off.diagnostics_v1();
+    assert_eq!(report["misses"]["disabled"], 1);
+    assert_eq!(report["hashed"], 1);
+    assert_eq!(report["records"], 0);
+    assert_eq!(report["records_refused"], 1);
+}
+
+#[test]
+fn diagnostics_count_shared_records_and_resident_serves() {
+    let path = Path::new("/memo/diagnostics-resident");
+    let cache = resident_cache_v1();
+    // A shared record holds the caller's allocation: nothing is copied.
+    let shared = std::sync::Arc::new(b"shared".to_vec());
+    cache.record_verified_shared_v1(path, "s", std::sync::Arc::clone(&shared));
+    cache.record_verified_v1(path, "c", b"copied!");
+    assert!(std::sync::Arc::ptr_eq(
+        &cache.resident_bytes_v1(path, "s", 6).unwrap(),
+        &shared
+    ));
+    // A different length is read as before, and is not a resident serve.
+    assert!(cache.resident_bytes_v1(path, "c", 6).is_none());
+    assert!(cache.resident_bytes_v1(path, "c", 7).is_some());
+    let report = cache.diagnostics_v1();
+    assert_eq!(report["resident"], true);
+    let counts: Vec<u64> = [
+        "records",
+        "recorded_bytes",
+        "copied_bytes",
+        "resident_hits",
+        "resident_hit_bytes",
+        "lookups",
+        "lookup_hits",
+    ]
+    .iter()
+    .map(|key| report[*key].as_u64().unwrap())
+    .collect();
+    assert_eq!(counts, [2, 13, 7, 2, 13, 3, 3]);
+    assert_eq!(
+        VerifiedBytesCacheV1::new_v1(1 << 20, 16).diagnostics_v1()["resident"],
+        false
+    );
+}
