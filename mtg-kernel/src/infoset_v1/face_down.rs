@@ -126,18 +126,25 @@ fn v2_historical_face_down_exports_resume_after_public_zone_reset() {
 
 #[test]
 fn v2_turn_up_does_not_rewrite_the_hidden_departure() {
-    let (mut st, _) = fixture();
-    let departed = st.players[0].hand[0];
-    hidden_move(&mut st, departed, Zone::Battlefield, true);
-    st.objects.get_mut(departed).v4.face_down_v1 = None;
-    st.engine.event_history.push(CommittedEvent::TurnedFaceUp {
-        object: departed,
-        zone_change_count: st.objects.get(departed).zone_change_count,
-    });
-    let p = super::projection::project_v2(&st, st.observation_journal.notes(), PlayerId::P1);
-    assert!(p.departures.is_empty());
-    assert!(p.tracked(departed));
-    assert_eq!(p.departure_known.len(), 1);
+    let (base, lists) = fixture();
+    let hand = base.players[0].hand.clone();
+    let mut worlds = [base.clone(), base];
+    for (st, departed) in worlds.iter_mut().zip([hand[0], hand[1]]) {
+        hidden_move(st, departed, Zone::Battlefield, true);
+        st.objects.get_mut(departed).v4.face_down_v1 = None;
+        st.engine.event_history.push(CommittedEvent::TurnedFaceUp {
+            object: departed,
+            zone_change_count: st.objects.get(departed).zone_change_count,
+        });
+        let p = super::projection::project_v2(st, st.observation_journal.notes(), PlayerId::P1);
+        assert!(p.departures.is_empty());
+        assert!(p.tracked(departed));
+        assert_eq!(p.departure_known.len(), 1);
+    }
+    let out = worlds
+        .each_ref()
+        .map(|s| export_v2(&input(s, &lists)).unwrap());
+    assert_eq!(out[0].bytes, out[1].bytes);
 }
 
 #[test]
