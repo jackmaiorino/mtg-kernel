@@ -153,6 +153,47 @@ mod tests {
     };
 
     #[test]
+    fn issue454_entry_handlers_publish_choices_and_concealed_sources_refuse_uniformly() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(player);
+            let cavern = put(&mut state, player, "Cavern of Souls", Zone::Battlefield);
+            put(&mut state, player, "Goblin Boarders", Zone::Hand);
+            let options = crate::eternal_cards_v1::e3::cavern_type_options(&state, player);
+            let selected = options.iter().position(|t| *t == Subtype::Goblin).unwrap();
+            crate::eternal_cards_v1::e3::answer_entry_choice(&mut state, selected as u16).unwrap();
+            let needle = put(&mut state, player, "Pithing Needle", Zone::Battlefield);
+            let options = crate::eternal_lurrus_v1::needle_name_options(&state, player);
+            let named = crate::card_def::card_id_by_name("Cavern of Souls").unwrap();
+            let selected = options.iter().position(|id| *id == named).unwrap();
+            assert!(
+                crate::eternal_lurrus_v1::answer_entry_choice(&mut state, selected as u16).unwrap()
+            );
+            let public = capture_v1(&state).unwrap();
+            assert_eq!(public.cavern_types[0].chosen_type, Subtype::Goblin);
+            assert_eq!(public.needle_names[0].named_card_id, named);
+            // No inspection of the concealed source's underlying printing may
+            // decide whether this incomplete continuity contract accepts it.
+            for source in [cavern, needle] {
+                for hidden_name in ["Island", "Forest", "Pithing Needle"] {
+                    let mut concealed = state.clone();
+                    let object = concealed.objects.get_mut(source);
+                    object.v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+                        disguised: true,
+                        lookers: 0,
+                        hidden_by: None,
+                        hidden_by_source: None,
+                    });
+                    object.card_def = crate::card_def::card_id_by_name(hidden_name).unwrap();
+                    assert_eq!(
+                        capture_v1(&concealed).unwrap_err().0,
+                        "concealed Eternal choice source requires public continuity"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn issue454_public_choices_distinguish_names_and_types_without_hidden_definitions() {
         for player in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(player);
