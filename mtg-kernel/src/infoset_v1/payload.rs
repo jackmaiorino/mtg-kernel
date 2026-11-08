@@ -82,6 +82,8 @@ pub(super) fn validate_reveal_knowledge_v4(state: &GameState, viewer: PlayerId) 
                 let live = state.objects.try_get(row.object).filter(|card| {
                     card.owner == owner
                         && card.zone == Zone::Hand
+                        && !card.v4.is_token
+                        && card.spell_copy_origin.is_none()
                         && card.zone_change_count == row.zone_change_count
                         && state.players[owner.index()].hand.contains(&row.object)
                 });

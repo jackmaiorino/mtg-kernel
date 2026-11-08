@@ -3413,7 +3413,10 @@ impl GameState {
         for (def, minimum) in knowledge[observer.index()].hand(owner) {
             for &object in hand
                 .iter()
-                .filter(|&&id| self.objects.get(id).card_def == def)
+                .filter(|&&id| {
+                    let card = self.objects.get(id);
+                    card.card_def == def && !card.v4.is_token && card.spell_copy_origin.is_none()
+                })
                 .take(minimum)
             {
                 rows.push(HandKnowledgeEntry {
