@@ -468,7 +468,7 @@ fn issue552_reveal_v3_learner_input_ignores_hidden_same_name_multiplicity() {
 
     for player in [PlayerId::P0, PlayerId::P1] {
         let opponent = player.opponent();
-        let make = |other_first, show| {
+        let make = |other_first: bool, two_swamps: bool, show: bool| {
             let (mut state, _, _) = scene(player);
             state.reveal_knowledge_v4 = Some(Default::default());
             state.reveal_meaning_v3.enable();
@@ -476,18 +476,25 @@ fn issue552_reveal_v3_learner_input_ignores_hidden_same_name_multiplicity() {
                 put(&mut state, opponent, "Island", Zone::Hand);
             }
             let first = put(&mut state, opponent, "Swamp", Zone::Hand);
-            let second = put(&mut state, opponent, "Swamp", Zone::Hand);
+            let hidden = if two_swamps { "Swamp" } else { "Forest" };
+            let second = put(&mut state, opponent, hidden, Zone::Hand);
             if !other_first {
                 put(&mut state, opponent, "Mountain", Zone::Hand);
             }
+            assert_eq!(state.players[opponent.index()].hand.len(), 3);
             if show {
                 state
                     .reveal_distinct_hand_card(player, opponent, first)
                     .unwrap();
+                let distinct = other_first && two_swamps;
                 state
-                    .reveal_distinct_hand_card(player, opponent, if other_first { second } else { first })
+                    .reveal_distinct_hand_card(
+                        player,
+                        opponent,
+                        if distinct { second } else { first },
+                    )
                     .unwrap();
-                if other_first {
+                if distinct {
                     // Simulate a legacy copy row that overstates what the
                     // two public `present` events can establish.
                     let generation = state.objects.get(second).zone_change_count;
@@ -510,16 +517,27 @@ fn issue552_reveal_v3_learner_input_ignores_hidden_same_name_multiplicity() {
             let input = owner.training_input_v1(&bound).unwrap();
             (transcript, input)
         };
-        let (transcript_a, a) = make(false, true);
-        let (transcript_b, b) = make(true, true);
-        assert_eq!(transcript_a, transcript_b);
-        assert_eq!(a.packet(), b.packet());
-        assert_eq!(a.action_flags(), b.action_flags());
+        let (transcript_a, a) = make(false, true, true);
+        let operations = transcript_a["operations"].as_array().unwrap();
+        assert_eq!(operations.len(), 2);
+        for operation in operations {
+            let events = operation["events"].as_array().unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0]["kind"], "card_revealed");
+            assert_eq!(events[0]["card_name"], "Swamp");
+            assert_eq!(events[0]["meaning"], "present");
+        }
         let model = ModelV1::deterministic_fixture();
         let logits = model.forward(&a).unwrap();
         assert!(logits.iter().all(|value| value.is_finite()));
-        assert_eq!(logits, model.forward(&b).unwrap());
-        let (_, without_reveal) = make(false, false);
+        for (other_first, two_swamps) in [(true, true), (false, false)] {
+            let (transcript_b, b) = make(other_first, two_swamps, true);
+            assert_eq!(transcript_a, transcript_b);
+            assert_eq!(a.packet(), b.packet());
+            assert_eq!(a.action_flags(), b.action_flags());
+            assert_eq!(logits, model.forward(&b).unwrap());
+        }
+        let (_, without_reveal) = make(false, true, false);
         assert_ne!(a.packet(), without_reveal.packet());
     }
 }

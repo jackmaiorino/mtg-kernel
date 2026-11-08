@@ -29,9 +29,10 @@ four fixtures remain in the inventory and outside this bounded run.
 
 The opt-in learner owner projects sorted name minima from the shared reveal
 reducer. Opponent-hand copy rows and unresolved physical action bindings do
-not enter the learner input. The paired input fixture varies hidden name
-multiplicity and the allocation of revealed same-name copies, then compares
-authenticated inputs and logits for both seats. The rules-only closed-list V3
+not enter the learner input. The fixture compares authenticated inputs, action
+flags and logits for both seats after two identical public Swamp reveals. It
+compares equal-size hands with one or two Swamps and also varies which native
+copies the two reveals touch. The rules-only closed-list V3
 search and typed learner use separate decision entry points.
 
 The two train games start with opposite seats and sample from one immutable
