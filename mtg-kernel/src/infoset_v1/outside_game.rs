@@ -56,7 +56,10 @@ fn public_outside_game_profile_refuses_without_reading_private_cards_or_counts()
                 state.eternal_v1.as_mut().unwrap().outside_game.cards = [vec![], vec![]];
                 let restored: GameState =
                     serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-                assert_eq!(exported(&restored, &lists, viewer, v2).unwrap_err(), expected);
+                assert_eq!(
+                    exported(&restored, &lists, viewer, v2).unwrap_err(),
+                    expected
+                );
             }
         }
     }
