@@ -1565,7 +1565,7 @@ fn drawn_this_turn(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
 /// Puts `cards` on the bottom of their owner's library in order, the first
 /// highest. One card's position is public; the order of two or more is the
 /// owner's private choice (rule 401.4), so their positions stay private.
-fn put_on_bottom(state: &mut GameState, cards: &[ObjectId]) {
+pub(crate) fn put_on_bottom(state: &mut GameState, cards: &[ObjectId]) {
     for &card in cards {
         let insert = if cards.len() == 1 {
             ProposedEvent::public_library_insert(card, LibraryPlacement::Bottom)

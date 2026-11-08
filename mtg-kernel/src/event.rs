@@ -2879,6 +2879,16 @@ pub fn apply_replacements(
         {
             return None;
         }
+        // Phantom Nishoba (Premodern wave P2c): damage that can't be
+        // prevented is dealt, but the counter still comes off.
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::eternal_premodern_p2c_v1::statics::prevent_damage(
+            state,
+            damage,
+            damage_cannot_be_prevented,
+        ) {
+            return None;
+        }
     }
     loop {
         let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
@@ -6090,10 +6100,15 @@ fn batch_with_aura_token_hosts_v1(
     let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     if needs_final_zone_pt_plan_v1(state, &events) {
         let mut replaced = state.clone();
+        #[cfg(feature = "eternal-fixtures")]
+        let nishoba_batch =
+            crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(&mut replaced, &events);
         let survivors = events
             .into_iter()
             .filter_map(|event| apply_replacements(&mut replaced, event))
             .collect::<Vec<_>>();
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_premodern_p2c_v1::statics::end_damage_batch(&mut replaced, nishoba_batch);
         if let Some((_, source)) = replaced.engine.halted {
             halt_zone_pt_v1(state, source);
             return;
@@ -6146,10 +6161,15 @@ fn batch_with_aura_token_hosts_v1(
         );
         return;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    let nishoba_batch =
+        crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(state, &events);
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
         .filter_map(|e| apply_replacements(state, e))
         .collect();
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, nishoba_batch);
     commit_batch_survivors(
         state,
         survivors,

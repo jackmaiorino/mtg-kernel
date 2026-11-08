@@ -86,12 +86,17 @@ pub fn overrides_primary_mana(name: &str) -> bool {
                 | "Mudflat Village"
                 | "Starting Town"
                 | "Plaza of Heroes"
+                | "Reflecting Pool"
         )
 }
 
 pub fn primary_mana_ability_colors(name: &str) -> Vec<&'static str> {
     if let Some((primary, ..)) = verge(name) {
         return vec![primary];
+    }
+    // Reflecting Pool has no unconditional ability (Premodern wave P2c).
+    if name == "Reflecting Pool" {
+        return Vec::new();
     }
     vec!["C"]
 }
@@ -119,6 +124,14 @@ pub fn additional_mana_abilities(name: &str) -> Option<String> {
         "Plaza of Heroes" => Some(format!(
             "&[{}]",
             ["W", "U", "B", "R", "G"]
+                .map(|color| tap_for(&format!("&[ManaColor::{color}]"), "TapSelf", 0))
+                .join(", ")
+        )),
+        // Premodern wave P2c: one ability per type, each gated by a land
+        // the controller has that could produce it.
+        "Reflecting Pool" => Some(format!(
+            "&[{}]",
+            ["W", "U", "B", "R", "G", "C"]
                 .map(|color| tap_for(&format!("&[ManaColor::{color}]"), "TapSelf", 0))
                 .join(", ")
         )),
@@ -200,6 +213,9 @@ pub fn fields(name: &str, executable: bool) -> StandardLandFields {
         "Starting Town" => {
             fields.enters_tapped_unless_controller =
                 "Some(EntersTappedUnlessControllerDef::WithinOwnFirstTurns(3))".to_string();
+        }
+        "Reflecting Pool" => {
+            fields.additional_mana_ability_conditions = format!("&[{}]", ["W","U","B","R","G","C"].map(|color| format!("Some(ManaAbilityConditionDef::ControllerOtherLandCouldProduceV1(ManaColor::{color}))")).join(", "));
         }
         "Mirrex" => {
             fields.additional_mana_ability_conditions =

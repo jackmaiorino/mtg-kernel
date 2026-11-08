@@ -6285,11 +6285,15 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 sacrifice_controlled_count += 1;
                 saw_source_changing_component = true;
             }
-            CostComponent::ExileOtherCardsFromOwnGraveyard(amount) => {
+            CostComponent::ExileOtherCardsFromOwnGraveyard(amount)
+            | CostComponent::PutOtherCardsFromOwnGraveyardOnLibraryBottomV1(amount) => {
                 if *amount == 0 {
                     return false;
                 }
                 graveyard_exile_count += 1;
+                saw_source_changing_component = true;
+            }
+            CostComponent::ExileTopCardOfLibraryV1 => {
                 saw_source_changing_component = true;
             }
             CostComponent::ReturnControlledPermanentToOwnersHand(_) => {
@@ -6483,7 +6487,8 @@ fn can_pay_activation_components_with_x(
 /// "Exile three cards from your graveyard"), if it has that component.
 fn activation_graveyard_exile_needed(components: &[CostComponent]) -> Option<u8> {
     components.iter().find_map(|component| match component {
-        CostComponent::ExileOtherCardsFromOwnGraveyard(amount) => Some(*amount),
+        CostComponent::ExileOtherCardsFromOwnGraveyard(amount)
+        | CostComponent::PutOtherCardsFromOwnGraveyardOnLibraryBottomV1(amount) => Some(*amount),
         _ => None,
     })
 }
@@ -6675,9 +6680,13 @@ fn can_pay_components(
                     .count()
                     >= usize::from(*count)
             }
-            CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
+            CostComponent::ExileOtherCardsFromOwnGraveyard(n)
+            | CostComponent::PutOtherCardsFromOwnGraveyardOnLibraryBottomV1(n) => {
                 checked_graveyard_exile_candidates(player, source, state, &[])
                     .is_some_and(|candidates| candidates.len() >= usize::from(*n))
+            }
+            CostComponent::ExileTopCardOfLibraryV1 => {
+                !state.players[player.index()].library.is_empty()
             }
             CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
                 !return_permanent_cost_candidates(player, state, *filter, &[]).is_empty()
@@ -7049,7 +7058,10 @@ fn validate_cost_component_choices_v1(
         }
     }
     let graveyard_exile_needed = components.iter().find_map(|component| match component {
-        CostComponent::ExileOtherCardsFromOwnGraveyard(amount) => Some(*amount as usize),
+        CostComponent::ExileOtherCardsFromOwnGraveyard(amount)
+        | CostComponent::PutOtherCardsFromOwnGraveyardOnLibraryBottomV1(amount) => {
+            Some(*amount as usize)
+        }
         _ => None,
     });
     if let Some(needed) = graveyard_exile_needed {
@@ -7401,6 +7413,17 @@ fn commit_cost_components_from_plan_v1(
                     "sacrifice_chosen compatibility field must contain the exact graveyard picks"
                 );
                 commit_graveyard_exile(state, object_cost_chosen);
+            }
+            // Battlefield Scrounger (Premodern wave P2c).
+            CostComponent::PutOtherCardsFromOwnGraveyardOnLibraryBottomV1(n) => {
+                debug_assert_eq!(object_cost_chosen.len(), *n as usize);
+                crate::eternal_premodern_p1a_v1::put_on_bottom(state, object_cost_chosen);
+            }
+            // Phyrexian Devourer (Premodern wave P2c).
+            CostComponent::ExileTopCardOfLibraryV1 => {
+                if let Some(&top) = state.players[player.index()].library.first() {
+                    event::propose_and_commit(state, ProposedEvent::zone_change(top, Zone::Exile));
+                }
             }
             CostComponent::ReturnControlledPermanentToOwnersHand(_) => {
                 event::propose_and_commit(
@@ -9050,6 +9073,20 @@ pub(crate) fn normal_cast_reduction_count(
                     .any(|card_type| types.contains(card_type))
         })
         .count() as u32,
+        card_def::DynamicCountDef::TenCreatureCardsInAllGraveyardsV1 => {
+            let creatures = [PlayerId::P0, PlayerId::P1]
+                .into_iter()
+                .flat_map(|owner| state.players[owner.index()].graveyard.iter().copied())
+                .filter(|&card| {
+                    let live = state.objects.get(card);
+                    !live.v4.is_token
+                        && card_def::CARD_DEFS[live.card_def as usize]
+                            .types
+                            .contains(&CardType::Creature)
+                })
+                .count();
+            u32::from(creatures >= 10)
+        }
         card_def::DynamicCountDef::ControllerGraveyardAnyType(types) => state.players
             [player.index()]
         .graveyard
@@ -10816,7 +10853,7 @@ pub(crate) fn mana_ability_cost_targets_for_choice(
 
 /// Whether an additional mana ability's printed activation condition holds.
 /// Non-allocating: flat-action validation reaches it.
-fn mana_ability_condition_holds(
+pub(crate) fn mana_ability_condition_holds(
     player: PlayerId,
     source: ObjectId,
     condition: card_def::ManaAbilityConditionDef,
@@ -10839,6 +10876,12 @@ fn mana_ability_condition_holds(
         }
         card_def::ManaAbilityConditionDef::SourceEnteredThisTurn => {
             state.objects.get(source).v4.entered_battlefield_this_turn
+        }
+        card_def::ManaAbilityConditionDef::ControllerOtherLandCouldProduceV1(color) => {
+            cfg!(feature = "eternal-fixtures")
+                && crate::eternal_premodern_p2c_v1::statics::other_land_could_produce(
+                    state, player, color,
+                )
         }
     }
 }
@@ -21170,6 +21213,11 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 })
                 .collect::<Vec<_>>();
             for id in permanents {
+                // Undiscovered Paradise returns instead (Premodern wave P2c).
+                #[cfg(feature = "eternal-fixtures")]
+                if crate::eternal_premodern_p2c_v1::statics::return_at_untap(state, id) {
+                    continue;
+                }
                 let prevented_by_attachment = attachment_prevents_untap(state, id);
                 if state.objects.get(id).v4.skip_next_untap {
                     state.objects.get_mut(id).v4.skip_next_untap = false;
@@ -21910,6 +21958,13 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
     #[cfg(feature = "eternal-fixtures")]
     if let Some(answer) = crate::eternal_vintage_v1::has_type_override(state, id, card_type) {
         return answer;
+    }
+    // Life's animated lands (Premodern wave P2c).
+    #[cfg(feature = "eternal-fixtures")]
+    if card_type == CardType::Creature
+        && crate::eternal_premodern_p2c_v1::statics::is_life_land(state, id)
+    {
+        return true;
     }
     if crate::standard_cards_v1::kaito_is_creature(state, id) {
         return card_type == CardType::Creature;
@@ -28978,6 +29033,15 @@ fn push_paid_activation(
         ability_source_contract.attached_to = None;
     }
     let mut paid_cost_objects = discarded.clone();
+    // The card Phyrexian Devourer's cost exiled is the last card exiled.
+    if ability
+        .cost
+        .contains(&CostComponent::ExileTopCardOfLibraryV1)
+    {
+        if let Some(&exiled) = state.exile.last() {
+            paid_cost_objects.push(exiled);
+        }
+    }
     if counter_removal_cost(ability.cost).is_none() {
         paid_cost_objects.extend(
             pending
