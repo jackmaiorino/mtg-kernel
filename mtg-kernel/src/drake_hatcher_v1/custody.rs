@@ -588,6 +588,65 @@ pub(crate) fn enclosing_replay_active_v1() -> bool {
     VERIFYING.with(Cell::get)
 }
 
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn compare_owned_pending_replay_for_test(state: &GameState) {
+    let pending = state
+        .engine
+        .linked_aura_operation_v1
+        .pending_general_v36
+        .as_ref()
+        .unwrap();
+    let restored = Cell::new(0);
+    verification(|| {
+        crate::linked_aura_operation_v1::as_recorded(|| {
+            let factory = || {
+                restored.set(restored.get() + 1);
+                Ok((*pending.original).clone())
+            };
+            let borrowed = crate::linked_aura_operation_v1::replay_drake_enclosing_v1(
+                &pending.original,
+                &pending.operation,
+                &pending.answers,
+                true,
+            )?;
+            let owned = crate::linked_aura_operation_v1::replay_drake_enclosing_owned_v1(
+                (*pending.original).clone(),
+                &pending.operation,
+                &pending.answers,
+                true,
+                &factory,
+            )?;
+            assert_eq!(borrowed, owned);
+            assert_eq!(
+                serde_json::to_vec(&borrowed).unwrap(),
+                serde_json::to_vec(&owned).unwrap()
+            );
+            let retained = owned
+                .engine
+                .linked_aura_operation_v1
+                .pending_general_v36
+                .as_ref()
+                .unwrap();
+            assert_eq!(retained.original, pending.original);
+            assert_eq!(
+                serde_json::to_vec(&retained.original).unwrap(),
+                serde_json::to_vec(&pending.original).unwrap()
+            );
+            Ok(())
+        })
+    })
+    .unwrap();
+    assert_eq!(
+        restored.get(),
+        1,
+        "suspended replay must reconstruct its original exactly once"
+    );
+}
+
 /// Compare the actual owned replay with the retained borrowing path on all
 /// enclosing records of a recorded game, independently of the replay cache.
 #[cfg(all(
