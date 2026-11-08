@@ -1308,20 +1308,11 @@ pub fn karn_plus_one() -> EffectOp {
 
 /// Karn, the Great Creator's -2: "You may reveal an artifact card you own
 /// from outside the game or choose a face-up artifact card you own in
-/// exile. Put that card into your hand." Best-of-one mainboard games have
-/// nothing outside the game, so only exile is searched.
+/// exile. Put that card into your hand." `eternal_outside_game_v1` offers
+/// the exile choice and, in a best-of-three game, the artifact cards outside
+/// the game.
 pub fn karn_minus_two() -> EffectOp {
-    EffectOp::SelectObjectsV1 {
-        rule: crate::effect::ObjectSelectionRuleV1 {
-            player: PlayerRef::Controller,
-            zone: Zone::Exile,
-            any_player: false,
-            filter: crate::effect::ObjectSelectionFilterV1::OwnedFaceUpArtifactCardV1,
-            min: 0,
-            max: 1,
-            action: crate::effect::ObjectSelectionActionV1::MoveTo(Zone::Hand),
-        },
-    }
+    crate::eternal_outside_game_v1::karn_wish()
 }
 
 /// Tezzeret, Cruel Captain's 0.

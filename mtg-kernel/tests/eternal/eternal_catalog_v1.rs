@@ -536,12 +536,25 @@ pub(crate) struct Game {
 /// Plays one game to a natural terminal and returns its transcript hash,
 /// chosen action kinds, spells cast per seat and winner.
 pub(crate) fn play(decks: [CustomDeckV1; 2], seed: u64, policy: Policy) -> Game {
+    play_with_outside(decks, None, seed, policy)
+}
+
+/// `play` with each seat's cards outside the game, when given.
+pub(crate) fn play_with_outside(
+    decks: [CustomDeckV1; 2],
+    outside_the_game: Option<[Vec<CustomCardCountV1>; 2]>,
+    seed: u64,
+    policy: Policy,
+) -> Game {
     const MAX_STEPS: usize = 131_072;
     let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
-    let mut request = json!({"schema_version":5,"request_type":"reset","request_id":"reset",
+    let mut reset = json!({"schema_version":5,"request_type":"reset","request_id":"reset",
         "decks":decks,"episode_id":seed,"env_seed":seed,
-        "max_physical_decisions":65536,"max_policy_steps":MAX_STEPS})
-    .to_string();
+        "max_physical_decisions":65536,"max_policy_steps":MAX_STEPS});
+    if let Some(outside) = outside_the_game {
+        reset["outside_the_game"] = json!(outside);
+    }
+    let mut request = reset.to_string();
     let mut transcript = Sha256::new();
     let mut action_counts = BTreeMap::new();
     let mut casts_by_seat = [0; 2];
