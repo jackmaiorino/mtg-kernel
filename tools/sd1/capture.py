@@ -15,8 +15,13 @@ Two passes over the same jobs:
 
   capture.py jobs  --base BASE.json --parent DOSE.json --out-dir DIR --updates N [--first-update U]
                    [--chain sd1/panel] --arms ARMS.json [--panel-only] [--key-memo-mib 512]
-  capture.py run   BINARY DIR --workers W [--log-every S]
-                   runs every job whose collection.json is missing, W processes at a time, in update order
+  capture.py ladder BINARY JOB --out-dir DIR --steps 1 8 12 16
+                   throughput qualification (COMPUTE-POLICY items 2 and 4): k identical copies of one representative
+                   job run k at a time per step; completed reached states per wall second per step; writes
+                   DIR/ladder.json with the selected worker count (most completed work per second, ties to fewer)
+  capture.py run   BINARY DIR --workers W --throughput LADDER.json [--log-every S]
+                   runs every job whose collection.json is missing, W processes at a time, in update order; refuses
+                   (arms pass) without a ladder for the same binary whose selected worker count is at least W
   capture.py panel DIR --size 900 --subset 150 [--out PANEL.json]
   capture.py convert DIR --panel PANEL.json [--out FILE]
 
@@ -101,12 +106,29 @@ def jobs(base, dose, out_dir, updates, arms, first_update=0, chain='sd1/panel', 
     return out
 
 
+JOB_STAMP = 'job.sha256'
+
+
+def finished(job):
+    """Whether `job` already ran to completion with exactly these command bytes. Each output directory carries the
+    SHA-256 of the job file that produced it (written before the process starts); a finished output from another
+    command (changed arms, worlds, budgets or panel-only setting) is refused, never reused."""
+    out = Path(read(job)['output_directory'])
+    stamp = out / JOB_STAMP
+    if not (out / 'collection.json').exists():
+        if out.exists() and any(out.iterdir()) and stamp.exists() and stamp.read_text().strip() != sha256_file(job):
+            raise SystemExit(f'stop: {out} holds a partial run of another command')
+        return False
+    if not stamp.exists() or stamp.read_text().strip() != sha256_file(job):
+        raise SystemExit(f'stop: {out} was produced by another command than {job}')
+    return True
+
+
 def run(binary, out_dir, workers, log_every=300.0):
-    """Every job without a collection.json, `workers` processes at a time, started in update order. A failed job
-    stops new starts; running ones finish."""
+    """Every job not yet finished with its own command bytes, `workers` processes at a time, started in update
+    order. A failed job stops new starts; running ones finish."""
     manifest = read(Path(out_dir) / 'jobs' / 'manifest.json')
-    pending = [j for j in manifest['jobs']
-               if not Path(read(j)['output_directory'], 'collection.json').exists()]
+    pending = [j for j in manifest['jobs'] if not finished(j)]
     running, failed, done = {}, [], 0
     last = 0.0
     status = Path(out_dir) / 'status.json'
@@ -114,7 +136,9 @@ def run(binary, out_dir, workers, log_every=300.0):
     while pending or running:
         while pending and len(running) < workers and not failed:
             job = pending.pop(0)
-            Path(read(job)['output_directory']).parent.mkdir(parents=True, exist_ok=True)
+            out = Path(read(job)['output_directory'])
+            out.mkdir(parents=True, exist_ok=True)
+            (out / JOB_STAMP).write_text(sha256_file(job) + '\n', encoding='utf-8')
             log = open(Path(job).with_suffix('.log'), 'wb')
             running[job] = (subprocess.Popen([binary, job], stdout=log, stderr=subprocess.STDOUT), log)
         for job, (proc, log) in list(running.items()):
@@ -143,12 +167,90 @@ def run(binary, out_dir, workers, log_every=300.0):
         raise SystemExit(f'stop: {failed}')
 
 
+LADDER_SCHEMA = 'sd1-throughput-ladder/v1'
+
+
+def reached_states(run_dir):
+    collection = read(Path(run_dir) / 'collection.json')
+    count = 0
+    for pin in collection['ex1']['episodes']:
+        last = read(pin['path'])['attempts'][-1]
+        count += bool(last['capture_0b']['reached'])
+    return count
+
+
+def ladder(binary, job, out_dir, steps):
+    """k concurrent copies of one job per step (identical inputs, separate outputs); the identity of every copy's
+    capture (CPU and wall aside) is checked, so parallel runs reproduce the serial bytes."""
+    command = read(job)
+    rows = []
+    reference = None
+    for k in steps:
+        procs = []
+        started = time.time()
+        for i in range(k):
+            out = Path(out_dir) / f'k{k}' / f'c{i}'
+            cmd = dict(command, output_directory=out.as_posix())
+            path = Path(out_dir) / 'jobs' / f'k{k}-c{i}.json'
+            write(path, cmd)
+            log = open(path.with_suffix('.log'), 'wb')
+            procs.append((subprocess.Popen([binary, str(path)], stdout=log, stderr=subprocess.STDOUT), log, out))
+        codes = []
+        for proc, log, _ in procs:
+            codes.append(proc.wait())
+            log.close()
+        wall = time.time() - started
+        if any(codes):
+            raise SystemExit(f'stop: ladder step {k} exit codes {codes}')
+        states = 0
+        for _, _, out in procs:
+            states += reached_states(out)
+            digest = capture_digest(out)
+            reference = reference or digest
+            if digest != reference:
+                raise SystemExit(f'stop: ladder step {k} copy {out} differs from the first copy')
+        rows.append({'workers': k, 'wall_s': round(wall, 3), 'reached_states': states,
+                     'states_per_s': states / wall})
+    best = max(rows, key=lambda r: (round(r['states_per_s'], 9), -r['workers']))
+    doc = {'schema': LADDER_SCHEMA, 'binary_sha256': sha256_file(binary), 'job_sha256': sha256_file(job),
+           'steps': rows, 'selected_workers': best['workers'], 'serial_states_per_s': rows[0]['states_per_s'],
+           'speedup_vs_serial': best['states_per_s'] / rows[0]['states_per_s'], 'capture_digest': reference}
+    write(Path(out_dir) / 'ladder.json', doc)
+    return doc
+
+
+def capture_digest(run_dir):
+    """SHA-256 over every episode's capture with CPU and wall times removed."""
+    collection = read(Path(run_dir) / 'collection.json')
+    h = hashlib.sha256()
+    for pin in collection['ex1']['episodes']:
+        c = read(pin['path'])['attempts'][-1]['capture_0b']
+        for a in c.get('arms', []):
+            a.pop('cpu_s', None)
+            a.get('search', {}).pop('wall', None)
+        h.update(json.dumps(c, sort_keys=True).encode())
+    return h.hexdigest()
+
+
+def check_throughput(binary, workers, ladder_path):
+    if not ladder_path:
+        raise SystemExit('stop: a substantial run needs --throughput (capture.py ladder, COMPUTE-POLICY item 5)')
+    doc = read(ladder_path)
+    if doc.get('schema') != LADDER_SCHEMA or doc.get('binary_sha256') != sha256_file(binary):
+        raise SystemExit('stop: the throughput ladder is for another binary or not a ladder')
+    if workers > doc['selected_workers']:
+        raise SystemExit(f'stop: {workers} workers exceed the qualified {doc["selected_workers"]}')
+    return doc
+
+
 def records(out_dir):
     """Per episode in episode order (update, then slot): the natural attempt's SD1 capture as a record."""
     manifest = read(Path(out_dir) / 'jobs' / 'manifest.json')
     ordinal = 0
     for job in manifest['jobs']:
         command = read(job)
+        if not finished(job):
+            raise SystemExit(f'stop: {job} has not finished')
         collection = read(Path(command['output_directory']) / 'collection.json')
         for slot, pin in enumerate(collection['ex1']['episodes']):
             sidecar = read(pin['path'])
@@ -236,7 +338,13 @@ def main(argv=None):
     p.add_argument('binary')
     p.add_argument('out_dir')
     p.add_argument('--workers', type=int, required=True)
+    p.add_argument('--throughput')
     p.add_argument('--log-every', type=float, default=300.0)
+    p = sub.add_parser('ladder')
+    p.add_argument('binary')
+    p.add_argument('job')
+    p.add_argument('--out-dir', required=True)
+    p.add_argument('--steps', type=int, nargs='+', required=True)
     p = sub.add_parser('panel')
     p.add_argument('out_dir')
     p.add_argument('--size', type=int, default=900)
@@ -253,7 +361,12 @@ def main(argv=None):
         print(json.dumps({'jobs': len(made), 'job_set_sha256':
                           read(Path(a.out_dir) / 'jobs' / 'manifest.json')['job_set_sha256']}))
     elif a.cmd == 'run':
+        # The panel-only pass plays episodes and records states only (no search, no references): a small run.
+        if not read(Path(a.out_dir) / 'jobs' / 'manifest.json').get('panel_only'):
+            check_throughput(a.binary, a.workers, a.throughput)
         run(a.binary, a.out_dir, a.workers, a.log_every)
+    elif a.cmd == 'ladder':
+        print(json.dumps(ladder(a.binary, a.job, a.out_dir, a.steps)))
     elif a.cmd == 'panel':
         doc = panel(a.out_dir, a.size, a.subset)
         out = Path(a.out or Path(a.out_dir) / 'panel.json')

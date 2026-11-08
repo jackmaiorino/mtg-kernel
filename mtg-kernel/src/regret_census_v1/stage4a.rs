@@ -1174,6 +1174,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         return policy_ensemble::run(cfg, policy, &sh, &spec_bytes);
     }
     validate_rollout_mode(&cfg.mode, std::env::var_os(ROLLOUT_OPPONENT).is_some())?;
+    validate_world_mode(&cfg.mode, std::env::var_os(world::WORLD_ENV).is_some())?;
     let rollout = refresh::parse_rollout_opponent(std::env::var(ROLLOUT_OPPONENT), &sh.labels)?;
     let rollout_label = rollout.map(|r| sh.labels[r].clone());
     if cfg.mode == "s4a-utility-root" {
@@ -1480,7 +1481,18 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         if plain && rollout.is_some() {
             return Err(format!("{ROLLOUT_OPPONENT} requires BUDGET_ARM=search-v1"));
         }
-        let extras = refresh::BudgetExtras { rollout, ..extras };
+        let world = world::WorldMode::from_env()?;
+        if plain && world != world::WorldMode::Fresh {
+            return Err(format!(
+                "{} requires BUDGET_ARM=search-v1",
+                world::WORLD_ENV
+            ));
+        }
+        let extras = refresh::BudgetExtras {
+            rollout,
+            world,
+            ..extras
+        };
         let first = cfg.first_game as usize;
         let end = (first + cfg.games as usize).min(cases.len());
         let mut out = String::new();
@@ -1713,6 +1725,7 @@ pub(super) fn validate_executor_mode(mode: &str) -> Result<(), String> {
         return Err("POLICY_ENSEMBLE_MEMBERS is supported only for s4a-policy-ensemble".into());
     }
     validate_rollout_mode(mode, std::env::var_os(ROLLOUT_OPPONENT).is_some())?;
+    validate_world_mode(mode, std::env::var_os(world::WORLD_ENV).is_some())?;
     refresh::ExecutionMode::parse(mode, std::env::var("S4A_EXECUTOR")).map(|_| ())
 }
 
@@ -1723,6 +1736,19 @@ const ROLLOUT_OPPONENT: &str = "S4A_ROLLOUT_OPPONENT";
 /// Modes that honour `S4A_ROLLOUT_OPPONENT`: the searched budget player and
 /// the two paths that check its records.
 const ROLLOUT_MODES: [&str; 3] = ["s4a-budget", "s4a-budget-replay", "s4a-root-rebuild"];
+
+/// SD1's diagnostic world switch (`world::WORLD_ENV`) is honoured by the
+/// searched budget player only; every other mode refuses it, so ordinary
+/// collection, training and deployment never search a diagnostic world.
+fn validate_world_mode(mode: &str, set: bool) -> Result<(), String> {
+    if set && mode != "s4a-budget" {
+        return Err(format!(
+            "{} is supported only for s4a-budget",
+            world::WORLD_ENV
+        ));
+    }
+    Ok(())
+}
 
 fn validate_rollout_mode(mode: &str, set: bool) -> Result<(), String> {
     if set && !ROLLOUT_MODES.contains(&mode) {

@@ -29,8 +29,13 @@ one-sided (1 - a) upper bound sorted[R - 1 - floor(a (R - 1))]. Positive: two-si
 >= delta_P under the estimand and under gain-minimizing scoring. Excluded: one-sided 95% upper bound < delta_P under
 the estimand and under gain-maximizing scoring. Otherwise unresolved. delta_P = 0.008.
 
-  sd1_analyze.py discover --records FILE --panel PANEL.json [--out RESULT.json]
-  sd1_analyze.py confirm  --records FILE --panel PANEL.json --lock LOCK.json [--out RESULT.json]
+  sd1_analyze.py discover --records FILE --panel PANEL.json [--games G1.json G2.json] [--out RESULT.json]
+  sd1_analyze.py confirm  --lock LOCK.json [--records FILE --panel PANEL.json] [--games ...] [--out RESULT.json]
+
+Worst cases of H* and G^oracle account for selection: H*'s bounds are exact over every scoring of the nonnatural
+endings (argmax and evaluation together); G^oracle's are a valid box bound (exact when no ending is nonnatural).
+Games (section 4): S1's unit (opposing deck, seed family) within focal-deck strata, both seats and every arm
+together, equal focal-deck weights, SHA256("sd1/games/boot")[:8], the same calls at delta_G = 0.05.
 """
 from __future__ import annotations
 
@@ -224,7 +229,15 @@ def state_forms(record):
                    "pick_v2": None, "nonnatural": arm["search"].get("nonnatural", 0),
                    "completed": arm["search"].get("completed", 0), "attempted": arm["search"].get("attempted", 0),
                    "cpu_s": arm.get("cpu_s", 0.0)}
-            if arm["status"] == "ok":
+            fb = arm.get("fallback")
+            if arm["status"] != "ok" or arm.get("frozen_choice") is None:
+                # The executor's plain fallback plays p's draw; the capture records it with its own seed.
+                require(isinstance(fb, int) and fb in covered,
+                        f"episode {record['episode']} {label}: plain fallback draw missing or uncovered")
+            if arm["status"] != "ok":
+                pick = pick.plus(pick_form(fb), 1.0 / k)
+                pickv2 = pickv2.plus(pick_form(fb), 1.0 / k)
+            else:
                 require(len(arm["n"]) == width, f"episode {record['episode']} {label}: root width")
                 support = [a for a in range(width) if arm["n"][a] >= SUPPORT_MIN]
                 row["support"] = len(support)
@@ -241,15 +254,14 @@ def state_forms(record):
                 require(f == arm.get("frozen_choice"), f"episode {record['episode']} {label}: frozen_choice "
                         f"recomputed {f} differs from the engine's {arm.get('frozen_choice')}")
                 row["frozen"] = f
-                if f is not None:
-                    require(f in covered, f"episode {record['episode']} {label}: frozen pick uncovered")
-                    pick = pick.plus(pick_form(f), 1.0 / k)
+                played = f if f is not None else fb
+                require(played in covered, f"episode {record['episode']} {label}: frozen pick uncovered")
+                pick = pick.plus(pick_form(played), 1.0 / k)
                 v2 = pick_v2(arm)
                 require(v2 == arm.get("pick_v2"), f"episode {record['episode']} {label}: pick-v2 differs")
                 row["pick_v2"] = v2
-                if v2 is not None and arm["n"][v2] > 0:
-                    require(v2 in covered, f"episode {record['episode']} {label}: pick-v2 uncovered")
-                    pickv2 = pickv2.plus(pick_form(v2), 1.0 / k)
+                require(v2 in covered, f"episode {record['episode']} {label}: pick-v2 uncovered")
+                pickv2 = pickv2.plus(pick_form(v2), 1.0 / k)
             t_rows.append(row)
         forms[label] = {"tgt": tgt, "pick": pick, "pickv2": pickv2}
         tele[label] = t_rows
@@ -271,8 +283,95 @@ def state_forms(record):
         if not isinstance(t, tuple):
             for j in actions:
                 oracle.add(("q", ev, j), 0.5 * (t["q"][j] - p[j]))
-    return {"cells": cells, "arms": forms, "telemetry": tele, "hstar": hstar, "oracle": oracle,
+    bounds = {"hstar": hstar_bounds(cells, actions), "oracle": oracle_bounds(bits, p, cells, actions)}
+    return {"cells": cells, "arms": forms, "telemetry": tele, "hstar": hstar, "oracle": oracle, "bounds": bounds,
             "covered": len(actions), "full_coverage": record["references"]["full_coverage"]}
+
+
+# ---------------------------------------------------------------- selection-sensitive worst cases (H*, oracle)
+
+def cell_range(cells, half, j):
+    """A Q cell's attainable values as integer score numerators over 2n: 2w + d + 2k for k = 0..nn."""
+    w, d, nn, n = cells[("q", half, j)]
+    return 2 * w + d, 2 * w + d + 2 * nn, 2 * n
+
+
+def beats(v, j, others):
+    """v at action j is the argmax (ties to the lower index) against others: [(action, value)]."""
+    return all(v > u or (v == u and j < k) for k, u in others)
+
+
+def argmax_extreme(cells, half, j1, j2, actions, want):
+    """Extreme ('min' or 'max') of Q_half(j2) over the nonnatural scorings in which j1 is the argmax of Q_half;
+    None when no scoring makes j1 the argmax. Every other action sits at its lowest value, which only helps j1."""
+    rng = {j: cell_range(cells, half, j) for j in actions}
+    den = rng[j1][2]
+    if j1 == j2:
+        others = [(k, rng[k][0]) for k in actions if k != j1]
+        feasible = [v for v in range(rng[j1][0], rng[j1][1] + 1, 2) if beats(v, j1, others)]
+        if not feasible:
+            return None
+        return (min(feasible) if want == "min" else max(feasible)) / den
+    top = rng[j1][1]
+    others = [(k, rng[k][0]) for k in actions if k not in (j1, j2)]
+    if not beats(top, j1, others):
+        return None
+    grid = [v for v in range(rng[j2][0], rng[j2][1] + 1, 2) if beats(top, j1, [(j2, v)])]
+    if not grid:
+        return None
+    return (min(grid) if want == "min" else max(grid)) / den
+
+
+def v_extreme(cells, half, want):
+    w, d, nn, n = cells[("v", half, None)]
+    return (w + 0.5 * d + (nn if want == "max" else 0)) / n
+
+
+def hstar_bounds(cells, actions):
+    """Exact gain-minimizing and gain-maximizing H* over every scoring of the nonnatural endings, selections
+    included: j1 = argmax Q_a is evaluated on Q_b and j2 = argmax Q_b on Q_a; the halves' scorings are independent,
+    so each (j1, j2) pair is optimized half by half."""
+    out = {}
+    for direction, want, vwant in (("gmin", "min", "max"), ("gmax", "max", "min")):
+        best = None
+        for j1 in actions:
+            for j2 in actions:
+                qa = argmax_extreme(cells, "a", j1, j2, actions, want)
+                qb = argmax_extreme(cells, "b", j2, j1, actions, want)
+                if qa is None or qb is None:
+                    continue
+                v = 0.5 * (qb - v_extreme(cells, "b", vwant)) + 0.5 * (qa - v_extreme(cells, "a", vwant))
+                if best is None or (v < best if want == "min" else v > best):
+                    best = v
+        out[direction] = best
+    return out
+
+
+def oracle_bounds(bits, p, cells, actions):
+    """A valid (conservative) box bound of G^oracle over every scoring of the nonnatural endings: each q[Q_h](j) is
+    bounded over the box of Q_h (own value low and the others high for its minimum, the reverse for its maximum),
+    each evaluation cell over its range, and each product term takes its extreme corner. Exact when no nonnatural
+    ending occurred."""
+    width = len(p)
+
+    def q_at(half, j, low_self):
+        n, w, d = [0] * width, [0] * width, [0] * width
+        for k in actions:
+            cw, cd, cnn, cn = cells[("q", half, k)]
+            high = (k != j) if low_self else (k == j)
+            n[k], w[k], d[k] = cn, cw + (cnn if high else 0), cd
+        t = target_ref.target(bits, n, w, d)
+        return p[j] if isinstance(t, tuple) else t["q"][j]
+
+    lo = hi = 0.0
+    for sel, ev in (("a", "b"), ("b", "a")):
+        for j in actions:
+            dq = (q_at(sel, j, True) - p[j], q_at(sel, j, False) - p[j])
+            a, b, den = cell_range(cells, ev, j)
+            corners = [x * y for x in dq for y in (a / den, b / den)]
+            lo += 0.5 * min(corners)
+            hi += 0.5 * max(corners)
+    return {"gmin": lo, "gmax": hi}
 
 
 def statistic_forms(state):
@@ -358,22 +457,26 @@ def call(entry, delta, alpha=ALPHA):
     return "positive" if pos else ("excluded" if exc else "unresolved")
 
 
+def entry(point, reps, delta):
+    """One statistic's reported bounds, p-values and discovery call from its points and sorted replicates per
+    scoring (all three scorings: call-bearing; the estimand alone: descriptive)."""
+    count = len(next(iter(reps.values())))
+    lo, hi = lower_index(ALPHA, count), upper_index(ALPHA, count)
+    out = {"point": point, "delta": delta,
+           "lower95_two_sided": {s: reps[s][lo] for s in reps},
+           "upper95_one_sided": {s: reps[s][hi] for s in reps}}
+    if set(reps) == set(SCORINGS):
+        out["p_positive"] = {s: p_positive(reps[s], point[s], delta) for s in ("estimand", "gmin")}
+        out["p_excluded"] = {s: p_excluded(reps[s], delta) for s in ("estimand", "gmax")}
+        out["call"] = call({"point": point, "reps": reps}, delta)
+    else:
+        out["call"] = "descriptive"
+    return out
+
+
 def summarize(values, seed, replicates, delta):
     reps = bootstrap(values, seed, replicates)
-    out = {}
-    lo, hi = lower_index(ALPHA, replicates), upper_index(ALPHA, replicates)
-    for k, d in values.items():
-        point = {s: sum(xs) / len(xs) for s, xs in d.items()}
-        out[k] = {"point": point,
-                  "lower95_two_sided": {s: reps[k][s][lo] for s in d},
-                  "upper95_one_sided": {s: reps[k][s][hi] for s in d}}
-        if set(d) == set(SCORINGS):
-            out[k]["p_positive"] = {s: p_positive(reps[k][s], point[s], delta) for s in ("estimand", "gmin")}
-            out[k]["p_excluded"] = {s: p_excluded(reps[k][s], delta) for s in ("estimand", "gmax")}
-            out[k]["call"] = call({"point": point, "reps": reps[k]}, delta)
-        else:
-            out[k]["call"] = "descriptive"
-    return out
+    return {k: entry({s: sum(xs) / len(xs) for s, xs in d.items()}, reps[k], delta) for k, d in values.items()}
 
 
 # ---------------------------------------------------------------- readout rows (section 5) and triggers (section 8)
@@ -391,9 +494,15 @@ def readout(stats):
     rows = {}
     rows["Headroom"] = {"holds": pos("hstar"), "components": {"hstar positive": c("hstar")}}
     align = {qn: pos(f"T64.{qn}") and pos(f"T64-P64.{qn}") for qn in QUANTITIES}
-    rows["Alignment"] = {"holds_part_p": any(align.values()), "by_quantity": align,
-                         "locked_quantity": ("pick" if align["pick"] else ("tgt" if align["tgt"] else None)),
-                         "games": "G1 not run: the game components are evaluated when it runs"}
+    part_p = any(align.values())
+    rows["Alignment"] = {"holds_part_p": part_p, "by_quantity": align,
+                         "locked_quantity": ("pick" if align["pick"] else ("tgt" if align["tgt"] else None))}
+    if "G1:T-E2-plain" in stats:
+        games_ok = pos("G1:T-E2-plain") and pos("G1:T-E2-D-E2")
+        rows["Alignment"].update(holds=part_p and games_ok, games={"T vs plain": c("G1:T-E2-plain"),
+                                                                    "T - D": c("G1:T-E2-D-E2")})
+    else:
+        rows["Alignment"]["games"] = "G1 not run: the row is evaluated on its Part P conditions only"
     cons = {qn: pos(f"P64.{qn}") and pos(f"P64-D64.{qn}") for qn in QUANTITIES}
     rows["Consistency"] = {"holds": any(cons.values()), "by_quantity": cons}
     budget = {qn: pos(f"D256.{qn}") and pos(f"D256-D64.{qn}") for qn in QUANTITIES}
@@ -410,7 +519,12 @@ def readout(stats):
     rows["Operator"] = {"holds": op, "branch_a_arms": branch_a, "branch_b_oracle_excluded": branch_b,
                         "locked_branch": ("a" if branch_a else ("b" if branch_b else None)) if op else None,
                         "locked_arm": arm_x if op and branch_a else None}
-    rows["Opponent"] = {"holds": False, "unresolved": "G2 not run"}
+    if "G2:TRUEOPP-plain" in stats:
+        rows["Opponent"] = {"holds": pos("G2:TRUEOPP-plain") and pos("G2:TRUEOPP-SELF"),
+                            "components": {"TRUEOPP vs plain": c("G2:TRUEOPP-plain"),
+                                           "TRUEOPP - SELF": c("G2:TRUEOPP-SELF")}}
+    else:
+        rows["Opponent"] = {"holds": False, "unresolved": "G2 not run"}
     shape = pos("hstar") and all(exc(f"{x}.{qn}") for x in PRIMARY for qn in QUANTITIES)
     rows["Search shape"] = {"holds": shape}
     rows["Unresolved"] = {"holds": not any(r.get("holds") or r.get("holds_part_p") for r in rows.values())}
@@ -420,21 +534,24 @@ def readout(stats):
         "3a G1 (D, P or T at 64k or 256k has a positive G^pick)":
             any(pos(f"{x}.pick") for x in ("D64", "P64", "T64", "D256")),
         "3a P-E2 in G1 (P64 G^pick positive)": pos("P64.pick"),
+        "3b G2 (some search arm positive vs plain in G1)":
+            any(pos(f"G1:{x}-plain") for x in ("D-E2", "T-E2", "P-E2")),
     }
     return rows, triggers
 
 
 # ---------------------------------------------------------------- confirmation (Holm over locked rows)
 
-def holm(rows, values, seed, replicates, delta):
-    """rows: [{"row": name, "components": [{"stat": name, "kind": "positive"|"excluded"}]}]. Each row's p-value is
-    the largest component p-value (intersection-union, each component under its own worst case); Holm step-down at
-    familywise ALPHA over the m rows."""
-    stats = summarize(values, seed, replicates, delta)
+def holm(rows, stats):
+    """rows: [{"row": name, "components": [{"stat": name, "kind": "positive"|"excluded"}]}]; stats: every component's
+    entry (positions at delta_P, games at delta_G). Each row's p-value is the largest component p-value
+    (intersection-union, each component under its own worst case); Holm step-down at familywise ALPHA over the m
+    rows, positions and games in one family."""
     scored = []
     for r in rows:
         ps = []
         for comp in r["components"]:
+            require(comp["stat"] in stats, f"locked component {comp['stat']} was not measured")
             s = stats[comp["stat"]]
             if comp["kind"] == "positive":
                 ps.append(max(s["p_positive"].values()))
@@ -452,7 +569,7 @@ def holm(rows, values, seed, replicates, delta):
         scored[i]["confirmed"] = open_ and scored[i]["p"] <= level
         if not scored[i]["confirmed"]:
             open_ = False
-    return scored, stats
+    return scored
 
 
 # ---------------------------------------------------------------- games (section 4): S1's resampling unit
@@ -515,6 +632,39 @@ def game_calls(cases, contrasts, seed=None, replicates=REPLICATES, delta=DELTA_G
     return out
 
 
+GAME_CONTRASTS = {"G1": (("D-E2", "plain"), ("T-E2", "plain"), ("P-E2", "plain"), ("T-E2", "D-E2")),
+                  "G2": (("SELF", "plain"), ("TRUEOPP", "plain"), ("TRUEOPP", "SELF"))}
+
+
+def game_stats(blocks, seed=None, replicates=REPLICATES):
+    """blocks: {"G1": cases, "G2": cases}. Per block, every declared contrast whose arms ran, named
+    "<block>:<x>-<y>", with the estimand and both worst cases over the same resampled units, at delta_G."""
+    seed = tag_seed(GAMES_BOOT_TAG) if seed is None else seed
+    out = {}
+    for block, cases in blocks.items():
+        arms = {c["arm"] for c in cases}
+        contrasts = [(x, y) for x, y in GAME_CONTRASTS[block] if x in arms and y in arms]
+        if not contrasts:
+            continue
+        by_scoring = {sc: game_bootstrap(cases, contrasts, seed, replicates, sc)[0] for sc in SCORINGS}
+        for key in contrasts:
+            point = {sc: by_scoring[sc][key]["point"] for sc in SCORINGS}
+            reps = {sc: by_scoring[sc][key]["reps"] for sc in SCORINGS}
+            out[f"{block}:{key[0]}-{key[1]}"] = entry(point, reps, DELTA_G)
+    return out
+
+
+def load_games(paths):
+    blocks = {}
+    for path in paths or []:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        require(doc.get("schema") == "sd1-game-cases/v1" and doc.get("block") in GAME_CONTRASTS,
+                f"{path}: not an SD1 game-cases file")
+        require(doc["block"] not in blocks, f"{doc['block']} given twice")
+        blocks[doc["block"]] = doc["cases"]
+    return blocks
+
+
 # ---------------------------------------------------------------- driver
 
 def load_records(path, panel_doc):
@@ -548,7 +698,12 @@ def per_state_values(states, names=None):
     values = {}
     for name in names:
         scorings = SCORINGS if call_bearing(name) else ("estimand",)
-        values[name] = {sc: [f[name].value(s["cells"], sc) for f, s in zip(forms, states)] for sc in scorings}
+        values[name] = {}
+        for sc in scorings:
+            if name in ("hstar", "oracle") and sc != "estimand":
+                values[name][sc] = [s["bounds"][name][sc] for s in states]
+            else:
+                values[name][sc] = [f[name].value(s["cells"], sc) for f, s in zip(forms, states)]
     return values
 
 
@@ -575,16 +730,27 @@ def telemetry(states):
     return out
 
 
-def discover(records, panel_doc, replicates=REPLICATES):
+def discover(records, panel_doc, replicates=REPLICATES, games=None):
+    """Discovery on one panel. Statistics on every state use the full panel; arms measured only on the declared
+    subset (D1M, T256) are analyzed on the subset with the same bootstrap stream. Game blocks join when given."""
     states = [state_forms(r) for r in records]
     values = per_state_values(states)
     stats = summarize(values, tag_seed(BOOT_TAG), replicates, DELTA_P)
-    rows, triggers = readout(stats)
     subset = panel_doc.get("subset")
     descriptive = {}
     if subset:
-        sub = per_state_values(states[:subset])
+        sub_forms = [statistic_forms(s) for s in states[:subset]]
+        extra = sorted(set.intersection(*[set(f) for f in sub_forms]) - set(values))
+        if extra:
+            sub_stats = summarize(per_state_values(states[:subset], extra), tag_seed(BOOT_TAG), replicates, DELTA_P)
+            for k, v in sub_stats.items():
+                v["panel"] = f"declared subset (first {subset} states)"
+                stats[k] = v
+        sub = per_state_values(states[:subset], sorted(values))
         descriptive["subset_points"] = {k: sum(v["estimand"]) / subset for k, v in sub.items()}
+    if games:
+        stats.update(game_stats(games, replicates=replicates))
+    rows, triggers = readout(stats)
     return {"schema": RESULT_SCHEMA, "stage": "discovery (exploratory)", "panel_sha256": panel_doc["panel_sha256"],
             "states": len(states), "delta_p": DELTA_P, "replicates": replicates, "boot_tag": BOOT_TAG,
             "boot_seed": tag_seed(BOOT_TAG), "statistics": stats, "rows": rows, "triggers_as_evaluated": triggers,
@@ -592,14 +758,24 @@ def discover(records, panel_doc, replicates=REPLICATES):
             "law": "terminal win/loss of b512 SELF continuations only; no rating, panel score or CP7 read"}
 
 
-def confirm(records, panel_doc, lock, replicates=REPLICATES):
-    states = [state_forms(r) for r in records]
+def confirm(records, panel_doc, lock, replicates=REPLICATES, games=None):
+    """Fresh-panel and fresh-case confirmation of the locked rows (section 3.4): position components on the
+    confirmation panel at delta_P, game components on the fresh cases at delta_G, one Holm family."""
     names = sorted({c["stat"] for r in lock["rows"] for c in r["components"]})
-    values = per_state_values(states, names)
-    scored, stats = holm(lock["rows"], values, tag_seed(lock.get("boot_tag", "sd1/confirm/boot")), replicates,
-                         DELTA_P)
-    return {"schema": RESULT_SCHEMA, "stage": "confirmation", "panel_sha256": panel_doc["panel_sha256"],
-            "states": len(states), "rows": scored, "statistics": stats}
+    position = [n for n in names if ":" not in n]
+    stats = {}
+    if position:
+        require(records is not None, "position components need the confirmation panel's records")
+        states = [state_forms(r) for r in records]
+        stats.update(summarize(per_state_values(states, position),
+                               tag_seed(lock.get("boot_tag", "sd1/confirm/boot")), replicates, DELTA_P))
+    if len(position) < len(names):
+        require(bool(games), "game components need the fresh confirmation cases")
+        stats.update(game_stats(games, tag_seed(lock.get("games_boot_tag", GAMES_BOOT_TAG)), replicates))
+    scored = holm(lock["rows"], stats)
+    return {"schema": RESULT_SCHEMA, "stage": "confirmation",
+            "panel_sha256": panel_doc["panel_sha256"] if panel_doc else None,
+            "rows": scored, "statistics": {k: stats[k] for k in names if k in stats}}
 
 
 def main(argv=None):
@@ -607,19 +783,21 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("discover", "confirm"):
         p = sub.add_parser(name)
-        p.add_argument("--records", required=True)
-        p.add_argument("--panel", required=True)
+        p.add_argument("--records", required=name == "discover")
+        p.add_argument("--panel", required=name == "discover")
+        p.add_argument("--games", nargs="*", help="sd1-game-cases/v1 files (tools sd1_games.py collect)")
         p.add_argument("--out")
         if name == "confirm":
             p.add_argument("--lock", required=True)
     a = ap.parse_args(argv)
     try:
-        panel_doc = json.loads(Path(a.panel).read_text(encoding="utf-8"))
-        records = load_records(a.records, panel_doc)
+        panel_doc = json.loads(Path(a.panel).read_text(encoding="utf-8")) if a.panel else None
+        records = load_records(a.records, panel_doc) if a.records else None
+        games = load_games(a.games)
         if a.cmd == "discover":
-            result = discover(records, panel_doc)
+            result = discover(records, panel_doc, games=games)
         else:
-            result = confirm(records, panel_doc, json.loads(Path(a.lock).read_text(encoding="utf-8")))
+            result = confirm(records, panel_doc, json.loads(Path(a.lock).read_text(encoding="utf-8")), games=games)
     except AnalyzeError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

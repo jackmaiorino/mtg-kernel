@@ -5,9 +5,11 @@
 //! - **Arms:** every arm x search seed, each search under its own world
 //!   lifecycle (`world::WorldMode`), with the root's counts, seeded edge order
 //!   and both execution picks (`frozen_choice` from the engine, `pick-v2` from
-//!   the counts) in live menu order.
+//!   the counts) in live menu order; without a frozen pick, the plain
+//!   fallback's draw from p (its own seed).
 //! - **Coverage:** every legal action on a menu of at most `coverage_max`;
-//!   otherwise the arms' supported actions (n >= 8) and both picks, plus the
+//!   otherwise the arms' supported actions (n >= 8), both picks and fallback
+//!   draws, plus the
 //!   top `coverage_max` actions by p.
 //! - **References:** Q_a and Q_b per covered action and V_p's two halves,
 //!   `half_rollouts` continuations each, in the section 3.2 chance order:
@@ -220,6 +222,25 @@ impl Ex1EpisodeHookV1 {
                 let mut row = json!({"arm":arm.label,"world":arm.world,"search_seed":search_seed,
                     "seed_root":seed_root,"status":if root.is_some() {"ok"} else {"failed"},
                     "cpu_s":cpu_s,"search":record});
+                let frozen = root.as_ref().and_then(|r| r.frozen_live);
+                if frozen.is_none() {
+                    // The executor's plain fallback plays p's draw (no
+                    // supported edge, or a failed search): drawn here from
+                    // the arm's own seed and covered, so G^pick evaluates it.
+                    let [u, _, _] = sd1_rollout_seeds_v1(
+                        "sd1/fallback",
+                        &self.options.run,
+                        self.options.update,
+                        self.seed,
+                        slot,
+                        &arm.label,
+                        Some(search_seed as usize),
+                        0,
+                    );
+                    let fallback = sd1_draw_v1(&p, (u >> 11) as f64 * (1.0 / (1_u64 << 53) as f64));
+                    from_arms.insert(fallback);
+                    row["fallback"] = json!(fallback);
+                }
                 if let Some(r) = root {
                     for (a, &count) in r.n.iter().enumerate() {
                         if count >= crate::ex1_v1::EX1_SUPPORT_MIN_V1 {

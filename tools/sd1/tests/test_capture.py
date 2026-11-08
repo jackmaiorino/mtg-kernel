@@ -45,6 +45,7 @@ def fake_run(root, episodes, arms=False, mutate=None):
         job = Path(root, 'jobs', f'u{u:06d}.json')
         job.parent.mkdir(parents=True, exist_ok=True)
         job.write_text(json.dumps({'output_directory': out.as_posix()}))
+        (out / capture.JOB_STAMP).write_text(capture.sha256_file(job) + '\n')
         jobs.append(job.as_posix())
     Path(root, 'jobs', 'manifest.json').write_text(json.dumps({
         'chain': 'sd1/panel', 'source_checkpoint_sha256': 'c' * 64, 'job_set_sha256': 'j' * 64, 'jobs': jobs}))
@@ -83,6 +84,20 @@ class Capture(unittest.TestCase):
             panel = capture.panel(Path(d, 'panel'), 3, 2)
             with self.assertRaises(SystemExit):
                 capture.convert(Path(d, 'arms'), panel)
+
+
+class Stamps(unittest.TestCase):
+    def test_an_output_of_another_command_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            fake_run(Path(d, 'arms'), EPISODES, arms=True)
+            job = Path(d, 'arms', 'jobs', 'u000000.json')
+            self.assertTrue(capture.finished(job.as_posix()))
+            job.write_text(json.dumps({'output_directory': Path(d, 'arms', 'runs', 'u000000').as_posix(),
+                                       'changed': True}))
+            with self.assertRaises(SystemExit):
+                capture.finished(job.as_posix())
+            with self.assertRaises(SystemExit):
+                list(capture.records(Path(d, 'arms')))
 
 
 if __name__ == '__main__':

@@ -153,6 +153,8 @@ pub(super) struct GuideRun {
     pub(super) node_stats: bool,
     /// Opt-in root-only execution, independently of search allocation.
     pub(super) executor: ExecutionMode,
+    /// SD1's world lifecycle in every search (`BudgetExtras::world`).
+    pub(super) world: super::world::WorldMode,
 }
 
 impl GuideRun {
@@ -164,6 +166,7 @@ impl GuideRun {
         reuse_witnesses: Recording::Disabled,
         executor: ExecutionMode::Persistent,
         node_stats: false,
+        world: super::world::WorldMode::Fresh,
     };
 }
 
@@ -182,6 +185,10 @@ pub(super) struct BudgetExtras {
     /// case's scheduled opponent. The live opponent is always the scheduled
     /// one. Set by the runner after parsing (`parse` leaves it None).
     pub(super) rollout: Option<usize>,
+    /// SD1's world lifecycle in every search of the game (`S4A_WORLD`, set
+    /// by the runner after parsing; `parse` leaves it `Fresh`). Diagnostic
+    /// only: `true-v1` reads the realized hidden state.
+    pub(super) world: super::world::WorldMode,
 }
 
 /// Row field naming the rollout opponent's label, present only when
@@ -271,6 +278,7 @@ impl BudgetExtras {
             per_decision,
             node_stats,
             rollout: None,
+            world: super::world::WorldMode::Fresh,
         })
     }
 
@@ -455,6 +463,7 @@ struct Searches<'a> {
     interchange: bool,
     bestline: Option<u64>,
     keys: KeyStats,
+    world: super::world::WorldMode,
 }
 
 impl Searches<'_> {
@@ -500,9 +509,21 @@ impl Searches<'_> {
         let mut trace = None;
         #[cfg(feature = "viewer-recording-v1")]
         self.roles.set_inference_probes(trace.is_some())?;
-        let (sel, tree) =
-            self.roles
-                .select_e_diagnosed(&ctx, trace.as_mut(), 1, None, None, Some(&mut diag));
+        // `world` is `Fresh` unless the s4a-budget runner set `S4A_WORLD`;
+        // `Fresh` is exactly the default search.
+        let options = super::root_allocation::SearchOptions {
+            world: Some(self.world),
+            ..super::root_allocation::SearchOptions::default()
+        };
+        let (sel, tree) = self.roles.select_e_options(
+            &ctx,
+            trace.as_mut(),
+            1,
+            None,
+            None,
+            Some(&mut diag),
+            &options,
+        );
         #[cfg(feature = "viewer-recording-v1")]
         self.roles.set_inference_probes(false)?;
         self.keys.merge(&diag.keys);
@@ -515,6 +536,11 @@ impl Searches<'_> {
             "tree":sel.extra["tree"].clone(),"keys":diag.keys.json(),"wall":started.elapsed().as_secs_f64()}));
         if let Some(r) = self.records.last_mut() {
             add_rejections(r, &sel);
+            // Present only under a diagnostic world, so default records keep
+            // their bytes.
+            if let Some(w) = sel.extra.get("world") {
+                r["world"] = w.clone();
+            }
         }
         if !diag.key_memo.is_null() {
             if let Some(r) = self.records.last_mut() {
@@ -674,6 +700,7 @@ fn guide_inner(
         interchange: run.interchange,
         bestline: run.bestline,
         keys: KeyStats::default(),
+        world: run.world,
     };
     let (first, kept) = if run.opening {
         // From an ordinary opening: the initial search waits for the first
@@ -1084,6 +1111,7 @@ pub(super) fn budget_case_with_executor(
             reuse_witnesses,
             executor,
             node_stats: extras.node_stats,
+            world: extras.world,
         },
     )?;
     let mut row = json!({"kind":"budget_game","schema":"search-total-budget-v1/game","id":src.id,
@@ -1096,6 +1124,9 @@ pub(super) fn budget_case_with_executor(
     // Present only when set, so default rows are unchanged.
     if extras.rollout.is_some() {
         row[ROLLOUT_FIELD] = json!(sh.labels[search_opp]);
+    }
+    if extras.world != super::world::WorldMode::Fresh {
+        row["world"] = json!(extras.world.label());
     }
     // Present only when merging was on, so default rows are unchanged.
     if interchange {
@@ -1749,6 +1780,7 @@ pub(super) mod tests {
                             reuse_witnesses: recording,
                             executor: ExecutionMode::Persistent,
                             node_stats: false,
+                            world: super::world::WorldMode::Fresh,
                         },
                     )
                     .unwrap()
@@ -2128,6 +2160,7 @@ pub(super) mod tests {
                     per_decision,
                     node_stats,
                     rollout: None,
+                    ..Default::default()
                 },
             )
             .unwrap()
@@ -2849,6 +2882,7 @@ pub(super) mod tests {
                     per_decision: Some((8_000, 4_000)),
                     node_stats: false,
                     rollout,
+                    ..Default::default()
                 },
             )
             .unwrap()

@@ -61,6 +61,8 @@ def make_record(rng, episode, q_true, logits, arms, half=256, nonnatural=0.0):
                    'search': {'attempted': sum(n), 'completed': sum(n), 'nonnatural': 0}}
             row['frozen_choice'] = sa.frozen_choice(row)
             row['pick_v2'] = sa.pick_v2(row)
+            if row['frozen_choice'] is None:
+                row['fallback'] = sa_draw(rng, p)
             rows.append(row)
     return {'schema': sa.RECORD_SCHEMA, 'episode': episode, 'game': f'g{episode}', 'step': 3, 'reached': True,
             'width': width, 'policy': {'logit_bits': [bits(z) for z in logits]}, 'arms': rows, 'references': refs}
@@ -225,7 +227,8 @@ class Calls(unittest.TestCase):
             return {s: [shift + 0.001 * (i % 5) for i in range(60)] for s in sa.SCORINGS}
         values = {'big': stat(0.05), 'mid': stat(0.03), 'zero': stat(0.0)}
         rows = [{'row': r, 'components': [{'stat': r, 'kind': 'positive'}]} for r in ('zero', 'mid', 'big')]
-        scored, _ = sa.holm(rows, values, 5, REPS, sa.DELTA_P)
+        stats = sa.summarize(values, 5, REPS, sa.DELTA_P)
+        scored = sa.holm(rows, stats)
         by = {r['row']: r for r in scored}
         self.assertTrue(by['big']['confirmed'] and by['mid']['confirmed'])
         self.assertFalse(by['zero']['confirmed'])
@@ -233,8 +236,126 @@ class Calls(unittest.TestCase):
         # Intersection-union: a row with a failing component fails.
         rows = [{'row': 'both', 'components': [{'stat': 'big', 'kind': 'positive'},
                                                {'stat': 'zero', 'kind': 'positive'}]}]
-        scored, _ = sa.holm(rows, values, 5, REPS, sa.DELTA_P)
-        self.assertFalse(scored[0]['confirmed'])
+        self.assertFalse(sa.holm(rows, stats)[0]['confirmed'])
+
+
+def brute(cells, actions, bits, p):
+    """Every scoring of every nonnatural ending (cells small enough to enumerate): H* and G^oracle extremes."""
+    import itertools
+    keys = [k for k, c in cells.items() if c[2] > 0]
+    out = {'hstar': [], 'oracle': []}
+    for ks in itertools.product(*[range(cells[k][2] + 1) for k in keys]):
+        extra = dict(zip(keys, ks))
+        val = {k: (c[0] + 0.5 * c[1] + extra.get(k, 0)) / c[3] for k, c in cells.items()}
+        h = 0.0
+        for sel, ev in (('a', 'b'), ('b', 'a')):
+            best = max(actions, key=lambda j: (val[('q', sel, j)], -j))
+            h += 0.5 * (val[('q', ev, best)] - val[('v', ev, None)])
+        o = 0.0
+        width = len(p)
+        for sel, ev in (('a', 'b'), ('b', 'a')):
+            n, w, d = [0] * width, [0] * width, [0] * width
+            for j in actions:
+                c = cells[('q', sel, j)]
+                n[j], w[j], d[j] = c[3], c[0] + extra.get(('q', sel, j), 0), c[1]
+            t = sa.target_ref.target(bits, n, w, d)
+            if not isinstance(t, tuple):
+                o += 0.5 * sum((t['q'][j] - p[j]) * val[('q', ev, j)] for j in actions)
+        out['hstar'].append(h)
+        out['oracle'].append(o)
+    return {k: (min(v), max(v)) for k, v in out.items()}
+
+
+class SelectionBounds(unittest.TestCase):
+    def test_hstar_exact_and_oracle_valid_against_enumeration(self):
+        rng = random.Random(5)
+        for trial in range(25):
+            width = rng.choice((2, 3))
+            n = 8
+            cells = {}
+            for h in ('a', 'b'):
+                for j in range(width):
+                    nn = rng.randint(0, 2)
+                    w = rng.randint(0, n - nn)
+                    cells[('q', h, j)] = (w, 0, nn, n)
+                nn = rng.randint(0, 2)
+                cells[('v', h, None)] = (rng.randint(0, n - nn), 0, nn, n)
+            logits = [rng.gauss(0, 1) for _ in range(width)]
+            bits_ = [bits(z) for z in logits]
+            p, _, _ = sa.target_ref.softmax([sa.target_ref.f32(b) for b in bits_])
+            actions = list(range(width))
+            want = brute(cells, actions, bits_, p)
+            h = sa.hstar_bounds(cells, actions)
+            self.assertAlmostEqual(h['gmin'], want['hstar'][0], places=12, msg=trial)
+            self.assertAlmostEqual(h['gmax'], want['hstar'][1], places=12, msg=trial)
+            o = sa.oracle_bounds(bits_, p, cells, actions)
+            self.assertLessEqual(o['gmin'], want['oracle'][0] + 1e-12, trial)
+            self.assertGreaterEqual(o['gmax'], want['oracle'][1] - 1e-12, trial)
+
+    def test_selection_can_flip_hstar(self):
+        # Q_a: action 0 beats 1 only through nonnatural endings scored as wins; Q_b says 1 is better. The bound must
+        # reach the selection that the fixed-argmax linearization missed.
+        cells = {('q', 'a', 0): (3, 0, 4, 8), ('q', 'a', 1): (5, 0, 0, 8), ('q', 'b', 0): (1, 0, 0, 8),
+                 ('q', 'b', 1): (7, 0, 0, 8), ('v', 'a', None): (4, 0, 0, 8), ('v', 'b', None): (4, 0, 0, 8)}
+        h = sa.hstar_bounds(cells, [0, 1])
+        # j2 = argmax Q_b = 1 always; j1 = 0 is reachable (Q_a(0) up to 7/8): 1/2 (1/8 - 4/8) + 1/2 (5/8 - 4/8).
+        self.assertAlmostEqual(h['gmin'], 0.5 * (1 / 8 - 4 / 8) + 0.5 * (5 / 8 - 4 / 8))
+        self.assertLess(h['gmin'], 0.0)
+
+
+class Fallback(unittest.TestCase):
+    def test_unsupported_and_failed_searches_play_the_recorded_draw(self):
+        rng = random.Random(2)
+        thin = {'n': [3, 3], 'wins': [3, 0]}   # no edge has 8 backups: no frozen pick
+        rec = make_record(rng, 0, [0.3, 0.7], [0.0, 0.0], {'D64': [thin]}, half=16)
+        arm = rec['arms'][0]
+        self.assertIsNone(arm['frozen_choice'])
+        fb = arm['fallback']
+        st = sa.state_forms(rec)
+        want = sa.pick_form(fb)
+        self.assertEqual(st['arms']['D64']['pick'].coef, want.coef)
+        del arm['fallback']
+        with self.assertRaises(sa.AnalyzeError):
+            sa.state_forms(rec)
+        arm['fallback'] = fb
+        arm['status'] = 'failed'
+        st = sa.state_forms(rec)
+        self.assertEqual(st['arms']['D64']['pick'].coef, want.coef)
+        self.assertEqual(st['arms']['D64']['tgt'].coef, {})
+
+
+class SubsetAndGames(unittest.TestCase):
+    def test_subset_arms_are_called_on_the_subset(self):
+        rng = random.Random(9)
+        recs = []
+        for e in range(30):
+            q = [0.3, 0.6]
+            arms = {'D64': [good_root(q)], 'P64': [good_root(q)], 'T64': [good_root(q)], 'D256': [good_root(q)]}
+            if e < 10:
+                arms['D1M'] = [good_root(q)]
+            recs.append(make_record(rng, e, q, [0.0, 0.0], arms, half=64))
+        panel = {'subset': 10, 'panel_sha256': 'x'}
+        res = sa.discover(recs, panel, replicates=REPS)
+        self.assertIn('D1M.pick', res['statistics'])
+        self.assertIn('call', res['statistics']['D1M.pick'])
+        self.assertNotEqual(res['statistics']['D1M.pick']['call'], 'descriptive')
+        self.assertIn('subset', res['statistics']['D1M.pick']['panel'])
+
+    def test_games_enter_rows_triggers_and_one_holm_family(self):
+        cases = Games().cases(0.35)
+        g1 = [dict(c, arm={'plain': 'plain', 'D': 'T-E2'}[c['arm']]) for c in cases]
+        g1 += [dict(c, arm='D-E2', score=c['score'] if c['arm'] == 'plain' else c['score'])
+               for c in cases if c['arm'] == 'plain']
+        stats = sa.game_stats({'G1': g1}, seed=4, replicates=REPS)
+        self.assertEqual(stats['G1:T-E2-plain']['call'], 'positive')
+        self.assertEqual(stats['G1:T-E2-plain']['delta'], sa.DELTA_G)
+        rows, triggers = sa.readout(stats)
+        self.assertTrue(triggers['3b G2 (some search arm positive vs plain in G1)'])
+        self.assertIn('games', rows['Alignment'])
+        lock = {'rows': [{'row': 'Alignment-games', 'components': [{'stat': 'G1:T-E2-plain', 'kind': 'positive'},
+                                                                   {'stat': 'G1:T-E2-D-E2', 'kind': 'positive'}]}]}
+        res = sa.confirm(None, None, lock, replicates=REPS, games={'G1': g1})
+        self.assertTrue(res['rows'][0]['confirmed'])
 
 
 class Games(unittest.TestCase):

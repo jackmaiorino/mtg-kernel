@@ -2374,3 +2374,32 @@ fn sd1_fresh_future_world_keeps_hidden_state_and_replaces_randomness() {
         );
     }
 }
+
+/// SD1: the diagnostic world switch is honoured by the searched budget
+/// player only; every other mode refuses it, and an unset switch is `Fresh`.
+#[test]
+fn sd1_world_switch_is_budget_only() {
+    assert!(validate_world_mode("s4a-budget", true).is_ok());
+    for mode in [
+        "s4a-refresh",
+        "s4a-bank",
+        "s4a-run",
+        "s4a-budget-replay",
+        "corpus",
+    ] {
+        let refused = validate_world_mode(mode, true).unwrap_err();
+        assert!(refused.contains(world::WORLD_ENV), "{refused}");
+        assert!(validate_world_mode(mode, false).is_ok());
+    }
+    assert_eq!(
+        world::WorldMode::parse("true-v1"),
+        Ok(world::WorldMode::TrueV1)
+    );
+    assert!(world::WorldMode::parse("omniscient").is_err());
+    assert_eq!(
+        root_allocation::SearchOptions::default()
+            .world
+            .unwrap_or_default(),
+        world::WorldMode::Fresh
+    );
+}

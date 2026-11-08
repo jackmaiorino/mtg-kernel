@@ -1352,22 +1352,13 @@ impl Roles {
         // for draw). A pinned tree takes the first accepted lawful sample
         // among its own seed ordinals; none accepted ends the search
         // incomplete before any simulation.
-        let world_mode = match options.world {
-            Some(mode) => Ok(mode),
-            None => super::world::WorldMode::from_env(),
-        };
+        // Only an explicit caller setting selects a diagnostic world; nothing
+        // here reads the environment (`S4A_WORLD` is parsed by the s4a-budget
+        // runner alone), so ordinary collection and deployment stay `Fresh`.
+        let world_mode = options.world.unwrap_or_default();
         let mut world_receipt = Value::Null;
         let mut pinned: Option<FastActorSessionV1> = None;
         let mut world_ok = true;
-        let world_mode = match world_mode {
-            Ok(mode) => mode,
-            Err(e) => {
-                sel.incomplete = true;
-                sel.faults.push(e);
-                world_ok = false;
-                super::world::WorldMode::Fresh
-            }
-        };
         if world_mode == super::world::WorldMode::PinnedV1 {
             let mut attempts = 0u64;
             for j in 0..MAX_CONSECUTIVE_REJECTIONS {

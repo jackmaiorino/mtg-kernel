@@ -404,8 +404,8 @@ pub(crate) enum WorldMode {
     PinnedV1,
 }
 
-/// The environment switch for processes that cannot pass the mode per
-/// search (SD1's game harness): unset keeps `Fresh`.
+/// The environment switch of the s4a-budget runner (SD1's game harness);
+/// every other mode refuses it, and searches never read it themselves.
 pub(crate) const WORLD_ENV: &str = "S4A_WORLD";
 
 impl WorldMode {
