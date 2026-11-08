@@ -399,6 +399,7 @@ pub(crate) enum LimitedAppendixV1 {
     Loot,
     Curator,
     Kykar,
+    FiendArtisan,
 }
 
 impl LimitedAppendixV1 {

@@ -1874,7 +1874,8 @@ fn conflicts_in_scope(
             | FiendArtisanInputV1 { .. }
             | FiendArtisanPaidV1 { .. }
             | FiendArtisanSearchStartedV1 { .. }
-            | FiendArtisanSearchFinishedV1 { .. } => true,
+            | FiendArtisanSearchFinishedV1 { .. }
+            | FiendArtisanConsumerReceiptV1 { .. } => true,
             DrakeJournalV1 { .. }
             | DrakeHistoryRefV1 { .. }
             | ConquerorGainReplayBorrowV49 { .. }

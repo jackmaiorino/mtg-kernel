@@ -7357,6 +7357,7 @@ fn commit_cost_components_from_plan_v1(
     mana_plan: Option<&mana::PaymentPlan>,
 ) -> Option<u16> {
     let lathril_payment = crate::lathril_receipts_v1::payment_owner(state, source, components);
+    let fiend_payment = crate::fiend_artisan_receipts_v1::payment_owner(state, source, components);
     let mut mana_spent = 0;
     for c in components {
         match c {
@@ -7394,7 +7395,7 @@ fn commit_cost_components_from_plan_v1(
             CostComponent::SacrificeControlled { count, .. }
             | CostComponent::SacrificeOtherControlledCreatures(count) => {
                 debug_assert_eq!(object_cost_chosen.len(), usize::from(*count));
-                commit_sacrifice(state, object_cost_chosen);
+                commit_sacrifice_owned(state, object_cost_chosen, fiend_payment);
             }
             CostComponent::TapControlled { count, .. } => {
                 debug_assert_eq!(object_cost_chosen.len(), usize::from(*count));
@@ -7603,6 +7604,10 @@ fn commit_cost_components_from_plan_v1(
 /// half of a `SacrificeLands` sub-cost, once `Decision::ChooseCostTargets`
 /// has already decided *which* permanents (`PendingCast::sacrifice_chosen`).
 fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
+    commit_sacrifice_owned(state, chosen, None);
+}
+
+fn commit_sacrifice_owned(state: &mut GameState, chosen: &[ObjectId], fiend_payment: Option<u32>) {
     crate::linked_aura_operation_v1::begin_batch(state);
     if chosen.len() > 1 && crate::creature_death_capture_v1::enabled() {
         event::commit_sacrifice_death_group_v1(state, chosen);
@@ -7611,6 +7616,9 @@ fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
     }
     for &id in chosen {
         event::log_sacrifice(state, id);
+        if let Some(input) = fiend_payment {
+            crate::fiend_artisan_receipts_v1::record_sacrifice(state, input, id);
+        }
         event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
     }
     crate::linked_aura_operation_v1::end_batch(state);
@@ -19152,6 +19160,7 @@ pub(crate) fn counter_stack_item_by_id(
         }
     } else {
         state.stack.remove(position);
+        crate::fiend_artisan_receipts_v1::record_countered(state, &item);
     }
     if let Some(owner) = niv_counter {
         niv_mizzet_resolution_v1::counter(state, owner)?;
@@ -37447,7 +37456,7 @@ pub(crate) mod progenitus_v1_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "engine/fiend_artisan_v1_tests.rs"]
-mod fiend_artisan_v1_tests;
+pub(crate) mod fiend_artisan_v1_tests;
 
 #[cfg(all(
     test,

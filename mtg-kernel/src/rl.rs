@@ -1995,6 +1995,7 @@ pub fn observe_v1(
     crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
         .map_err(RlContractError)?;
     refuse_chosen_type_mana_v60(state)?;
+    crate::fiend_artisan_receipts_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
     crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
@@ -10707,6 +10708,12 @@ fn private_card(
             "Loot requires a distinct complete consumer".into(),
         ));
     }
+    if appendix != LimitedAppendixV1::FiendArtisan
+        && state.objects.try_get(id).is_some_and(|o| o.v4.face_down_v1.is_none()
+            && crate::effect::fiend_artisan_v1::definition(o.card_def))
+    {
+        return Err(RlContractError("Fiend Artisan requires its distinct complete consumer".into()));
+    }
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
             && appendix != LimitedAppendixV1::Curator
@@ -12817,7 +12824,10 @@ fn pending_activation_semantic_v2(
     engine::validate_pending_activation(state, p)
         .map_err(|error| RlContractError(format!("invalid pending activation: {error}")))?;
     let hide_object_cost =
-        acting_player != p.controller && crate::lathril_receipts_v1::pending_selected(state, p);
+        acting_player != p.controller
+            && (crate::lathril_receipts_v1::pending_selected(state, p)
+                || state.fiend_artisan_receipts_v1
+                    && crate::fiend_artisan_public_v1::pending_activation_selected(state, p));
     let object_cost_chosen = p
         .object_cost_chosen
         .iter()
