@@ -1,6 +1,9 @@
 //! Native FDN248 Thousand-Year Storm: finalized cast snapshots and independent copies.
 //! No predecessor public projection or caller-authored operation supplies authority.
 use super::*;
+mod casts;
+pub use casts::CastFormV1;
+
 pub(crate) fn definition(id: u16) -> bool {
     cfg!(all(
         feature = "limited-fdn-fixtures",
@@ -179,9 +182,7 @@ pub(crate) fn owns_snapshot(state: &GameState, spell: &StackItem) -> bool {
         match e {
             event::CommittedEvent::ThousandYearStormV1 { journal: JournalV1::Cast { event, spell: captured, .. } } => {
                 captured.as_ref() == spell && !spell.is_copy && event.checked_add(1) == Some(*at as u64)
-                    && state.engine.event_history.get(*event as usize) == Some(&event::CommittedEvent::SpellCast {
-                        spell: spell.source, controller: spell.controller,
-                    })
+                    && casts::validate_snapshot(state, *event, spell).is_ok()
             }
             event::CommittedEvent::ThousandYearStormV1 { journal: JournalV1::Copy { trigger, ordinal, item } } => {
                 item.as_ref() == spell && spell.is_copy && *ordinal > 0
@@ -246,6 +247,9 @@ pub enum JournalV1 {
         ordinal: u16,
         item: Box<StackItem>,
     },
+    CastForm {
+        form: CastFormV1,
+    },
 }
 fn enabled() -> bool {
     card_def::card_id_by_name("Thousand-Year Storm").is_some_and(definition)
@@ -272,17 +276,7 @@ fn instant_or_sorcery(spell: &StackItem) -> Result<bool, String> {
         .v4
         .source_contract
         .ok_or("Storm spell source absent")?;
-    let d = card_def::CARD_DEFS
-        .get(usize::from(source.card_def))
-        .ok_or("Storm spell definition absent")?;
-    let types = if source.cast_method == crate::state::CastMethodV4::Omen {
-        d.omen_spell_form()
-            .ok_or("Storm alternative form absent")?
-            .1
-    } else {
-        d.types
-    };
-    Ok(types.contains(&CardType::Instant) || types.contains(&CardType::Sorcery))
+    casts::instant_or_sorcery(source.card_def, source.cast_method)
 }
 pub(crate) fn record_cast(state: &mut GameState, spell: ObjectId) -> Result<(), String> {
     if !enabled() {
@@ -294,9 +288,20 @@ pub(crate) fn record_cast(state: &mut GameState, spell: ObjectId) -> Result<(), 
         .find(|r| r.kind == crate::state::StackItemKind::Spell && r.source == spell)
         .ok_or("Storm finalized cast row absent")?
         .clone();
-    if !instant_or_sorcery(&row)? {
-        return Ok(());
-    }
+    let form = if state.thousand_year_storm_consumer_v1 {
+        let event = state.engine.event_history.len().checked_sub(1).ok_or("Storm cast event absent")?;
+        let (form, eligible) = casts::capture_form(state, event, &row)?;
+        if !eligible {
+            casts::record_form(state, form);
+            return Ok(());
+        }
+        Some(form)
+    } else {
+        if !instant_or_sorcery(&row)? {
+            return Ok(());
+        }
+        None
+    };
     crate::engine::validate_copy_snapshot(state, &row)?;
     if row.is_copy {
         return Err("Storm copies cannot be recorded as casts".into());
@@ -336,6 +341,9 @@ pub(crate) fn record_cast(state: &mut GameState, spell: ObjectId) -> Result<(), 
         },
         true,
     );
+    if let Some(form) = form {
+        casts::record_form(state, form);
+    }
     Ok(())
 }
 pub(crate) fn cast_at(
@@ -357,6 +365,9 @@ pub(crate) fn cast_at(
     if state.engine.event_history.iter().filter(|e|matches!(e,event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Cast{spell:other,..}} if other.v4.stack_item_id==spell.v4.stack_item_id)).count()!=1 {
         return Err("Storm actual finalized cast was replayed".into());
     }
+    if state.thousand_year_storm_consumer_v1 {
+        casts::validate_snapshot(state, *event, spell)?;
+    }
     crate::engine::validate_copy_snapshot(state, spell)?;
     for source in observers {
         if !definition(source.card_def)
@@ -370,6 +381,7 @@ pub(crate) fn cast_at(
     Ok((spell, observers))
 }
 pub(crate) fn count(state: &GameState, index: u64) -> Result<u16, String> {
+    casts::validate_roster(state)?;
     let (spell, _) = cast_at(state, index)?;
     let start = state.engine.event_history[..index as usize]
         .iter()
@@ -701,6 +713,8 @@ pub(crate) fn validate_continuation(
 }
 pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
     if state.thousand_year_storm_consumer_v1
+        || state.engine.event_history.iter().any(|event| matches!(event,
+            event::CommittedEvent::ThousandYearStormV1 { journal: JournalV1::CastForm { .. } }))
         || state.objects.iter().any(|(_,o)|matches!(o.zone,Zone::Battlefield|Zone::Stack)&&o.v4.face_down_v1.is_none()&&definition(o.card_def))
         ||state.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Cast{observers,..}}if !observers.is_empty())) {
         return Err("Thousand-Year Storm requires its distinct complete native consumer".into())
@@ -709,12 +723,17 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
 }
 
 pub(crate) fn exact_cast_tail(state: &GameState, index: usize, spell: &StackItem) -> bool {
+    if state.thousand_year_storm_consumer_v1 {
+        return index.checked_add(3) == Some(state.engine.event_history.len())
+            && casts::validate_snapshot(state, index as u64, spell).is_ok();
+    }
     index.checked_add(2) == Some(state.engine.event_history.len())
         && matches!(state.engine.event_history.last(),Some(event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Cast{event,spell:captured,..}})if *event==index as u64 && captured.as_ref()==spell)
 }
 
 /// Structural validation of the new occurrence roster, within the existing raw-world contract.
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    casts::validate_roster(state)?;
     for (index, e) in state.engine.event_history.iter().enumerate() {
         let event::CommittedEvent::ThousandYearStormV1 { journal } = e else {
             continue;
@@ -722,6 +741,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         match journal {
             JournalV1::Cast { .. } => {
                 cast_at(state, index as u64)?;
+            }
+            JournalV1::CastForm { .. } => {
+                if !state.thousand_year_storm_consumer_v1 {
+                    return Err("Storm cast form has no owning profile".into());
+                }
             }
             JournalV1::Collected { cast } => {
                 cast_at(state, *cast)?;

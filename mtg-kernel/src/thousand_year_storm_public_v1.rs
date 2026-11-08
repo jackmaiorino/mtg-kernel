@@ -32,7 +32,8 @@ pub fn producer_sha256() -> String {
     HASH.get_or_init(|| {
         let mut hash = Sha256::new();
         for source in [SCHEMA, MEANING_SCHEMA, include_str!("thousand_year_storm_public_v1.rs"),
-            include_str!("effect/thousand_year_storm_v1.rs"), include_str!("effect/standard_copy.rs"),
+            include_str!("effect/thousand_year_storm_v1.rs"),
+            include_str!("effect/thousand_year_storm_v1/casts.rs"), include_str!("effect/standard_copy.rs"),
             include_str!("standard_spell_copy.rs"), include_str!("effect.rs"), include_str!("engine.rs"),
             include_str!("state.rs"), include_str!("trigger.rs"), include_str!("../build.rs")] {
             hash.update((source.len() as u64).to_le_bytes()); hash.update(source.as_bytes());
