@@ -246,6 +246,162 @@ mod tests {
         session
     }
 
+    fn issue567_ninjutsu_worlds(
+        actor: PlayerId,
+        enable_knowledge: impl FnOnce(&mut crate::state::GameState),
+    ) -> [[crate::state::GameState; 2]; 2] {
+        use crate::engine::{self, Action, Decision};
+        use crate::event::{self, ProposedEvent};
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state_with_turn_authority};
+        use crate::state::{Step, Zone};
+
+        let mut initial = ready_state_with_turn_authority(actor);
+        enable_knowledge(&mut initial);
+        let observer = actor.opponent();
+        let known = put(
+            &mut initial,
+            actor,
+            "Ninja of the Deep Hours",
+            Zone::Battlefield,
+        );
+        event::propose_and_commit(&mut initial, ProposedEvent::zone_change(known, Zone::Hand));
+        let hidden = put(
+            &mut initial,
+            actor,
+            "Ninja of the Deep Hours",
+            Zone::Library,
+        );
+        assert_eq!(initial.draw_card(actor), Some(hidden));
+        assert_eq!(initial.known_hand_cards(observer, actor)[0].object, known);
+
+        let attackers = ["Faerie Seer", "Faerie Miscreant"].map(|name| {
+            let id = put(&mut initial, actor, name, Zone::Battlefield);
+            initial.objects.get_mut(id).tapped = true;
+            id
+        });
+        initial.step = Step::DeclareBlockers;
+        initial.engine.combat.attackers_declared = true;
+        initial.engine.combat.blockers_declared = true;
+        initial.engine.combat.attackers = attackers.to_vec();
+        initial.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 2;
+        // Give the observer a real response, so the session cannot skip this
+        // decision as a forced pass.
+        put(&mut initial, observer, "Lightning Bolt", Zone::Hand);
+        initial.players[observer.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+
+        [known, hidden].map(|ninja| {
+            let mut state = initial.clone();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { activatable_abilities, .. }
+                    if activatable_abilities.contains(&(ninja, 0))
+            ));
+            engine::step(&mut state, Action::ActivateAbility(ninja, 0)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseCostTargets { candidates, .. } if candidates.contains(&attackers[0])
+            ));
+            engine::step(&mut state, Action::ChooseCostTarget(attackers[0])).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert_eq!(state.stack.last().unwrap().source, ninja);
+            assert_eq!(state.objects.get(ninja).zone, Zone::Hand);
+
+            if state.priority_player == actor {
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert_eq!(state.priority_player, observer);
+            let stacked = state.clone();
+            engine::step(&mut state, Action::Pass).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert!(state.stack.is_empty());
+            assert_eq!(state.objects.get(ninja).zone, Zone::Battlefield);
+            if state.priority_player == actor {
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert_eq!(state.priority_player, observer);
+            [stacked, state]
+        })
+    }
+
+    fn issue567_ninja_row_count(state: &crate::state::GameState, actor: PlayerId) -> usize {
+        let observation = crate::rl::observe_policy_v5(
+            state,
+            &crate::policy_surface_v5::PolicySurfaceV5::new(),
+            actor.opponent(),
+            0,
+            0,
+            0,
+            1,
+        )
+        .unwrap();
+        observation.known_hand_cards[actor.index()]
+            .iter()
+            .filter(|row| row.card_name == "Ninja of the Deep Hours")
+            .count()
+    }
+
+    #[test]
+    fn issue567_ambiguous_ninjutsu_reveal_has_identical_opponent_tensors() {
+        use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
+        use crate::native_flat_tensorizer_v8::NativeFlatTensorizerV8;
+
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let [known, hidden] = issue567_ninjutsu_worlds(
+                actor,
+                crate::state::GameState::enable_hand_departures_by_name_v1,
+            );
+            for ((known, hidden), expected) in known.into_iter().zip(hidden).zip([1, 0]) {
+                assert_eq!(issue567_ninja_row_count(&known, actor), expected);
+                assert_eq!(
+                    issue567_ninja_row_count(&hidden, actor),
+                    expected,
+                    "opponent of {actor:?} must see the same lower bound regardless of copy"
+                );
+                let tensors = [known, hidden].map(|state| {
+                    let session = FastActorSessionV1::from_v3_fixture_state(state);
+                    let FastActorResponseV1::Decision(current) = session.current_response() else {
+                        panic!("expected an observer response decision");
+                    };
+                    assert_eq!(current.acting_player as usize, actor.opponent().index());
+                    let mut owned = OwnedScoringV4::default();
+                    let decision = owned.encode(&session).unwrap();
+                    let mut tensor = NativeFlatDecisionTensorV2::default();
+                    let mut pairing = Vec::new();
+                    let mut tensorizer = NativeFlatTensorizerV8::default();
+                    tensorizer.set_state_digest_v1(true);
+                    tensorizer
+                        .fill(owned.view(&decision), &mut tensor, &mut pairing)
+                        .unwrap();
+                    (tensor, pairing)
+                });
+                assert_eq!(tensors[0], tensors[1], "observer tensor for {actor:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn issue567_default_and_departure_v1_retain_their_reveal_contract() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let default = issue567_ninjutsu_worlds(actor, |_| {});
+            let departure_v1 = issue567_ninjutsu_worlds(
+                actor,
+                crate::state::GameState::enable_hand_departures_by_name_v1,
+            );
+            for worlds in [default, departure_v1] {
+                let counts =
+                    worlds.map(|world| world.map(|state| issue567_ninja_row_count(&state, actor)));
+                assert_eq!(counts, [[1, 0], [2, 1]]);
+            }
+        }
+    }
+
     #[test]
     fn public_stack_actual_v4_binding_zero_parity_and_hidden_invariance() {
         use crate::native_policy_value_net_v1::stack_inputs_v1::*;
