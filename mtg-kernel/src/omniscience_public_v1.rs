@@ -1,7 +1,7 @@
 //! Exact Omniscience printing and viewer-visible native hand-cast routes.
 use crate::{
     card_def::{self, CardType},
-    engine::{self, omniscience_cast_v1 as native, Decision},
+    engine::{omniscience_cast_v1 as native, Decision},
     ids::{ObjectId, PlayerId},
     mana::{Cost, ManaColor, Pip},
     optional_trigger_public_v1 as public,

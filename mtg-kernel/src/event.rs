@@ -9982,7 +9982,7 @@ pub(crate) fn tutelage_public_pair_repeats_v1(pair: &[TutelagePublicMillMemberV1
     let [a, b] = pair else {
         return false;
     };
-    let defs = crate::card_def::CARD_DEFS;
+    let defs = &crate::card_def::CARD_DEFS;
     let a = &defs[usize::from(a.card_def)];
     let b = &defs[usize::from(b.card_def)];
     tutelage_card_pair_repeats_v1(a, b)
