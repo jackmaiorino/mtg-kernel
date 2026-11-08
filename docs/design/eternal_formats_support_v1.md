@@ -612,6 +612,16 @@ Limited reply includes `outside_game_options` for the chooser in effect-option o
 opponent's Extrapolate menu lists the two revealed card definitions, and the other sideboard
 cards remain private.
 
+An explicit `outside_the_game` reset field enables the public
+`outside_game_rules: "outside-the-game/v1"` capability, including when both
+lists are empty. The capability persists after cards leave the lists and
+through snapshot restore. Omitting the reset field preserves legacy
+best-of-one snapshots and hashes. Identities and counts never appear in the
+capability. Infoset exporters refuse this profile with one fixed R2 detail
+before projection: their canonical allocator does not yet represent hidden
+sideboards. This refusal depends on the public capability, not the remaining
+private cards. An empty, absent module extension contributes no hash bytes.
+
 S1 progress (census after each wave; full 75 share, then missing sideboard cards):
 
 | Wave | Cards | Pauper | Legacy | Vintage |

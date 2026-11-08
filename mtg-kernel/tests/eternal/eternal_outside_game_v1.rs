@@ -8,18 +8,73 @@ use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::eternal_outside_game_v1::{
     decision_options, outside_the_game, set_outside_the_game, OutsideGameOptionV1,
+    OutsideGameStateV1,
 };
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::LimitedJsonlServerV1;
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 use serde_json::{json, Value};
+use std::hash::{Hash, Hasher};
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
 fn id(name: &str) -> u16 {
     card_id_by_name(name).unwrap_or_else(|| panic!("{name}"))
+}
+
+#[test]
+fn empty_outside_game_state_preserves_legacy_hash_input_and_json() {
+    #[derive(Default)]
+    struct HashInput(Vec<u8>);
+    impl Hasher for HashInput {
+        fn finish(&self) -> u64 {
+            0
+        }
+        fn write(&mut self, bytes: &[u8]) {
+            self.0.extend_from_slice(bytes);
+        }
+    }
+    fn input(outside: &OutsideGameStateV1) -> Vec<u8> {
+        let mut state = HashInput::default();
+        outside.hash(&mut state);
+        state.0
+    }
+
+    // An absent sideboard must add no bytes even when another Eternal card
+    // has already initialized the enclosing module state.
+    assert!(input(&OutsideGameStateV1::default()).is_empty());
+    let eternal = mtg_kernel::eternal_cards_v1::EternalStateV1 {
+        energy: [3, 0],
+        ..Default::default()
+    };
+    let legacy_json = serde_json::to_value(&eternal).unwrap();
+    assert!(legacy_json.get("outside_game").is_none());
+    let restored: mtg_kernel::eternal_cards_v1::EternalStateV1 =
+        serde_json::from_value(legacy_json).unwrap();
+    assert_eq!(restored, eternal);
+
+    // A real sideboard still binds identities, quantities and owning seats.
+    let one = OutsideGameStateV1 {
+        enabled: true,
+        cards: [vec![id("Gamble")], vec![]],
+    };
+    let original = input(&one);
+    assert!(!original.is_empty());
+    for cards in [
+        [vec![id("Counterspell")], vec![]],
+        [vec![id("Gamble"); 2], vec![]],
+        [vec![], vec![id("Gamble")]],
+    ] {
+        assert_ne!(
+            input(&OutsideGameStateV1 {
+                enabled: true,
+                cards,
+            }),
+            original
+        );
+    }
 }
 
 /// A first main phase with P0 active and holding priority, both libraries
@@ -195,6 +250,22 @@ fn burning_wish_puts_a_sorcery_from_outside_the_game_into_its_owners_hand() {
     );
     assert_eq!(outside_the_game(&state, P1), &[id("Gamble")]);
     assert_eq!(state.objects.get(wish).zone, Zone::Exile);
+
+    // The explicit public profile survives removing its last private card.
+    let mut state = islands();
+    set_outside_the_game(&mut state, [vec![id("Gamble")], Vec::new()]);
+    let wish = put(&mut state, P0, "Burning Wish", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast(&mut state, wish);
+    choose_option(&mut state, P0, 2, 1);
+    settled(&mut state);
+    assert!(outside_the_game(&state, P0).is_empty());
+    assert!(outside_the_game(&state, P1).is_empty());
+    assert_eq!(
+        mtg_kernel::eternal_outside_game_v1::outside_game_profile(&state),
+        Some("outside-the-game/v1")
+    );
+    known_hand_card(&state, P0, "Gamble");
 
     // Declining keeps the zone and still exiles the wish.
     let mut state = islands();
@@ -420,12 +491,17 @@ fn session_reset_takes_each_seats_cards_outside_the_game() {
         plain["decision"]["deck_hashes"]
     );
     assert!(with.get("outside_game_options").is_none());
+    assert!(plain.get("outside_game_rules").is_none());
+    assert_eq!(with["outside_game_rules"], "outside-the-game/v1");
     let empty = reset(
         &mut LimitedJsonlServerV1::new_with_london_mulligans_v1(),
         4,
         Some(json!([[], []])),
     );
     assert_eq!(empty["decision"]["deck_ids"], plain["decision"]["deck_ids"]);
+    assert_eq!(empty["outside_game_rules"], with["outside_game_rules"]);
+    // Only the public mode differs; private identities and counts do not.
+    assert_eq!(empty, with);
 
     // Tokens, unknown names and the pre-London schemas are refused.
     for outside in [

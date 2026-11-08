@@ -5943,7 +5943,7 @@ impl RlEpisodeSessionV1 {
             deck_ids,
             card_ids,
             [None, None],
-            [Vec::new(), Vec::new()],
+            None,
             priority_mode,
             foundations_combat,
             london_mulligans,
@@ -5962,7 +5962,7 @@ impl RlEpisodeSessionV1 {
         deck_ids: SessionDeckIdsV1,
         card_ids: [&[u16]; 2],
         companions: [Option<u16>; 2],
-        outside_the_game: [Vec<u16>; 2],
+        outside_the_game: Option<[Vec<u16>; 2]>,
         priority_mode: crate::surface_v2::PriorityModeV1,
         foundations_combat: bool,
         london_mulligans: bool,
@@ -5995,7 +5995,7 @@ impl RlEpisodeSessionV1 {
         deck_ids: SessionDeckIdsV1,
         card_ids: [&[u16]; 2],
         companions: [Option<u16>; 2],
-        outside_the_game: [Vec<u16>; 2],
+        outside_the_game: Option<[Vec<u16>; 2]>,
         priority_mode: crate::surface_v2::PriorityModeV1,
         foundations_combat: bool,
         london_mulligans: bool,
@@ -6033,8 +6033,11 @@ impl RlEpisodeSessionV1 {
         if companions.iter().any(Option::is_some) {
             crate::eternal_lurrus_v1::add_companions(&mut state, companions);
         }
-        // Inert for empty lists, so best-of-one games keep their state.
-        crate::eternal_outside_game_v1::set_outside_the_game(&mut state, outside_the_game);
+        // None preserves legacy best-of-one snapshots and hashes. An explicit
+        // profile stays public even with empty or subsequently depleted lists.
+        if let Some(cards) = outside_the_game {
+            crate::eternal_outside_game_v1::set_outside_the_game(&mut state, cards);
+        }
         let deck_hashes = card_ids
             .map(|cards| fnv1a64(&serde_json::to_vec(cards).expect("card-id arrays serialize")));
         let mut session = Self {
