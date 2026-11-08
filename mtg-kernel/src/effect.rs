@@ -13949,7 +13949,12 @@ fn drive_resumable_inner_with_native_row_v1(
                             // spellbench-public-reveal: hand card revealed by the card rules.
                             for observer in [PlayerId::P0, PlayerId::P1] {
                                 state
-                                    .reveal_distinct_hand_card(observer, player, binding.object)
+                                    .reveal_distinct_hand_card_with_meaning_v3(
+                                        observer,
+                                        player,
+                                        binding.object,
+                                        crate::reveal_meaning_v3::RevealV3::SearchReveal,
+                                    )
                                     .expect("a successful searched-card move is publicly revealed");
                             }
                         }
@@ -14259,10 +14264,11 @@ fn drive_resumable_inner_with_native_row_v1(
                                     // spellbench-public-reveal: hand card revealed by the card rules.
                                     for observer in [PlayerId::P0, PlayerId::P1] {
                                         state
-                                            .reveal_distinct_hand_card(
+                                            .reveal_distinct_hand_card_with_meaning_v3(
                                                 observer,
                                                 player,
                                                 binding.object,
+                                                crate::reveal_meaning_v3::RevealV3::SearchReveal,
                                             )
                                             .map_err(|error| error.to_string())?;
                                     }
@@ -14387,7 +14393,12 @@ fn drive_resumable_inner_with_native_row_v1(
                             // spellbench-public-reveal: hand card revealed by the card rules.
                             for observer in [PlayerId::P0, PlayerId::P1] {
                                 state
-                                    .reveal_distinct_hand_card(observer, player, binding.object)
+                                    .reveal_distinct_hand_card_with_meaning_v3(
+                                        observer,
+                                        player,
+                                        binding.object,
+                                        crate::reveal_meaning_v3::RevealV3::SearchReveal,
+                                    )
                                     .expect("a successful searched-card move is publicly revealed");
                             }
                         }

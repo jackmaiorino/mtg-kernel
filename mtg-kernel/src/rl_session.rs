@@ -6397,6 +6397,11 @@ impl RlEpisodeSessionV1 {
         self.state.engine.spellbench_neutral_v1.choices = true;
     }
 
+    pub(crate) fn enable_reveal_meaning_v3(&mut self) {
+        assert_eq!(self.policy_step_count, 0, "reveal journal starts at reset");
+        self.state.reveal_meaning_v3.enable();
+    }
+
     pub fn privileged_environment_hash(&self) -> u64 {
         self.compute_environment_hash(self.current.as_ref())
             .expect("session environment serializes")

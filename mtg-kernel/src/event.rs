@@ -7161,6 +7161,7 @@ fn materialize_zone_change_v1(
     });
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
+    let source_face_down = state.objects.get(id).v4.face_down_v1.is_some();
     let nine_lives_cast_entry = to_zone == Zone::Battlefield
         && from_zone == Zone::Stack
         && crate::card_def::CARD_DEFS[usize::from(state.objects.get(id).card_def)].name
@@ -7215,6 +7216,7 @@ fn materialize_zone_change_v1(
             Zone::Battlefield => entering_face_down.is_none(),
             _ => true,
         };
+        state.record_hand_departure_v3(id, to_zone, named);
         state.forget_departing_hand_object(id, named);
     } else {
         state.forget_hand_object(id);
@@ -7522,10 +7524,18 @@ fn materialize_zone_change_v1(
         // Returning a publicly identified card to hand does not make that
         // identity secret again. The owner sees it through `own_hand`; the
         // other observer receives an incarnation-bound known-hand fact.
+        let meaning = match (from_zone, source_face_down) {
+            (Zone::Battlefield | Zone::Stack, true) => crate::reveal_meaning_v3::RevealV3::Present,
+            (
+                Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile | Zone::Command,
+                false,
+            ) => crate::reveal_meaning_v3::RevealV3::PublicTransfer(from_zone),
+            _ => crate::reveal_meaning_v3::RevealV3::Omit,
+        };
         // spellbench-public-reveal: hand card revealed by the card rules.
         for observer in [PlayerId::P0, PlayerId::P1] {
             state
-                .reveal_distinct_hand_card(observer, owner, id)
+                .reveal_distinct_hand_card_with_meaning_v3(observer, owner, id, meaning)
                 .expect("just moved this live public object into its owner's hand");
         }
     } else if to_zone == Zone::Hand && informed_observer_mask != 0 {
