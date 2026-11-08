@@ -384,6 +384,7 @@ pub(crate) enum LimitedAppendixV1 {
     Niv,
     ChosenType,
     Drakuseth,
+    Embercleave,
 }
 
 #[derive(Clone)]

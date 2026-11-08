@@ -59,6 +59,8 @@ pub(crate) fn project_limited_kaito_v16(
                 "mtg-kernel-limited-artist-decision/v1"
             } else if observation.niv.is_some() {
                 "mtg-kernel-limited-niv-decision/v1"
+            } else if observation.embercleave.is_some() {
+                "mtg-kernel-limited-embercleave-decision/v1"
             } else {
                 "mtg-kernel-limited-kaito-decision/v16"
             }

@@ -477,3 +477,4 @@ pub(crate) use limited_kaito_v16::project_limited_kaito_v16;
 pub use limited_kaito_v16::LimitedKaitoDecisionV16;
 
 mod drakuseth_consumer_v1;
+mod embercleave_consumer_v1;

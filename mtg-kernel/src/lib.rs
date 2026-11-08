@@ -194,6 +194,7 @@ pub mod creature_types_v60;
 pub mod elenda_observation_v52;
 pub mod elenda_public_v52;
 pub mod embercleave_public_v65;
+pub mod embercleave_consumer_v1;
 pub mod fake_your_own_death_v50;
 pub mod fiendish_panda_v1;
 pub mod game_outcome_observation_v41;

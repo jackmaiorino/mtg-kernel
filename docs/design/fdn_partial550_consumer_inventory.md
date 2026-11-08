@@ -292,6 +292,31 @@ The V3 learner reset installs the public name/count ledger before advance.
 The profile refuses current-slot sampling. Native qualification, including
 harvest of the new event-kind sample, remains pending.
 
+## Embercleave declared-deck source
+
+The combined16 candidate at `e38ed3068` leaves Embercleave and the 19 native
+rows in the inventory outside its consumer profiles. This source checkpoint
+adds only Embercleave462 through `fdn-embercleave-consumer/v1`. Its exact
+printed comparator gates the declared decks before the first typed menu.
+Ordinary Full cards remain eligible under the existing V75 constraints.
+Other Partial printings and token mainboard entries remain excluded.
+
+The actor facts retain the current attacker-based printed cast quote,
+finalized cast provenance, original entry and equip target bindings, current
+attachment, and effective host characteristics. The quote carries no
+historical payment claim. The numeric actions label the exact native cast,
+activation and target routes. Fixed-seat Human and
+`kernel_limited_embercleave_env_v1` use prompt-local handles and the same
+original action map. The optional V3 reset installs name/count knowledge
+before advance. The profile retains the existing appendix refusal for
+unrepresented source abilities and for current-slot sampling.
+
+The focused source fixtures cover a reduced paid combat cast and attachment
+from untouched 40-card decks, then actual paid entry and equip across all
+owners with independently initialized hidden libraries, exact indices,
+and authenticated restore. Guarded native qualification and Full promotion
+remain pending.
+
 
 ## Composed source checkpoint (2026-11-08)
 
