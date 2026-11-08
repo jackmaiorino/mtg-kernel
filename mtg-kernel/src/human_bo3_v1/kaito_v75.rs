@@ -71,7 +71,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     loot: Option<super::loot_consumer_v1::HumanFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    curator: Option<super::curator_consumer_v1::HumanFactsV1>
+    curator: Option<super::curator_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kykar: Option<super::kykar_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -127,7 +129,9 @@ record!(HumanKaitoCandidateV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     loot_action: Option<crate::loot_consumer_v1::ActionV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    curator_action: Option<crate::curator_consumer_v1::ActionV1>
+    curator_action: Option<crate::curator_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kykar_action: Option<crate::kykar_consumer_v1::ActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -349,9 +353,8 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
-    if let Some(label) = super::loot_consumer_v1::label(obs.loot.as_ref(), a, h)? {
-        return Ok(Some(label));
-    }
+    if let Some(label) = super::kykar_consumer_v1::label(obs.kykar.as_ref(), a, h)? { return Ok(Some(label)); }
+    if let Some(label) = super::loot_consumer_v1::label(obs.loot.as_ref(), a, h)? { return Ok(Some(label)); }
     if let Some(label) = super::edict_consumer_v1::label(obs.edict.as_ref(), a, h)? {
         return Ok(Some(label));
     }
@@ -844,14 +847,9 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::lathril_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
-    let loot = obs
-        .loot
-        .as_ref()
-        .map(|facts| super::loot_consumer_v1::project(facts, &mut handles))
-        .transpose()?;
-    let edict = obs
-        .edict
-        .as_ref()
+    let kykar = obs.kykar.as_ref().map(|facts| super::kykar_consumer_v1::project(facts, &mut handles, &mut roles)).transpose()?;
+    let loot = obs.loot.as_ref().map(|facts| super::loot_consumer_v1::project(facts, &mut handles)).transpose()?;
+    let edict = obs.edict.as_ref()
         .map(|facts| super::edict_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
     let leyline_axe = obs
@@ -907,6 +905,7 @@ pub(super) fn project_with_handles(
                 edict_action: r.edict_action,
                 loot_action: r.loot_action,
                 curator_action: r.curator_action,
+                kykar_action: r.kykar_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -1179,6 +1178,8 @@ pub(super) fn project_with_handles(
                 "mtg-kernel-human-lathril-decision/v1"
             } else if electroduplicate.is_some() {
                 "mtg-kernel-human-electroduplicate-decision/v1"
+            } else if kykar.is_some() {
+                "mtg-kernel-human-kykar-decision/v1"
             } else if loot.is_some() {
                 "mtg-kernel-human-loot-decision/v1"
             } else if edict.is_some() {
@@ -1222,6 +1223,7 @@ pub(super) fn project_with_handles(
                 edict,
                 loot,
                 curator,
+                kykar,
             },
             actions,
             action_meanings,
