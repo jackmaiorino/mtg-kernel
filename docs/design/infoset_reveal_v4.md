@@ -124,3 +124,51 @@ The separate process packet `b04683d` is retained unchanged. Its opening
 32-transition default is not evidence that a search produces a pick; native
 qualification must resolve that process bound before claiming searched
 buffered commits. No model, frozen entrant constant, or companion pin changed.
+
+## Process search-to-commit evidence
+
+The source follow-up from `b4cd794` makes incomplete pool replies diagnostic
+results. They retain path, transition charges, exclusions and per-tree results,
+but never count as successful searches. A successful pool reply alone also
+cannot qualify a buffered commit. The harness records real point responses
+from the unchanged companion's pool requests and observes the real adapter's
+`commit_buffer` and `native_step` calls through `super`; it does not replace
+the peer, worker, selection algorithm or any of the live commit checks.
+
+Each completed commit records its original `_group_wire` and `_group_keys`,
+root payload/step, actual live and imported row indices, every full point's
+digest, point row keys and selected key. Live and imported menus may have
+different row orders. For each actual committed point the harness requests
+the original payload at the reconstructed imported prefix from the real pool,
+checks the live/imported canonical-key bijection and translates the selected
+key to its imported index. These additional `point` requests are read-only;
+they do not search or consume transition units. A search qualifies the commit
+only if the game, seat,
+group, payload, exact path prefix, entire point key list, next picked index,
+and original completion's selected key all match. A search from another path
+on the same payload, or an unmapped search pick followed by a different fallback
+action, is insufficient. Receipts use `reveal-v4-process-qualification/v2` and
+include the matched search indices for each commit. Both starting-seat cases
+must contain a genuine successful search on a committed buffered path.
+
+The CLI keeps the same arguments and numeric bounds. `--require-buffered` is
+now required, so the existing packet wrapper's invocation remains compatible.
+The old `b04683d` wrapper and failed `f4832f` packet are preserved, not repinned
+or launched. A new invocation must use the newly qualified default-feature
+`agent_bridge_v1` and `regret_census_v1` binaries and their same-candidate
+`spellbench_kernel_catalog` output. The existing approved input remains
+`D:/decision-census-20261010/sources/a48-source.json`, SHA-256
+`5d97f7c63857f9165db3d47c6c4a3b4b0dde01dfb13c4ed960da2171b2bda6de`, with
+unchanged companion `622e3b705d8e0c91284e2ebbf02ed2f58a4f9030`. Use explicit
+`--budget 256 --max-steps 512 --require-buffered`, a new output path, and the
+lead's bounded host-slot wrapper after native prerequisite checks pass.
+The harness defaults remain 32/128; this source change does not silently
+raise them or turn an all-incomplete attempt into acceptance.
+
+Focused receipt checks are in
+`python/tools/tests/test_qualify_reveal_v4_process.py`. They cover matching
+paths, same-payload wrong paths, wrong/missing keys, unmapped picks, group
+identity, original-completion disagreement, incomplete replies and accounting.
+These pure unit cases are not native evidence. They and Python execution are
+deferred while all desktop cores are reserved; only source review and
+`git diff --check` were performed for this follow-up.
