@@ -453,9 +453,9 @@ fn require_supported(
             | E::CuratorCollectedV1 { .. }
             | E::CuratorPublishedV1 { .. }
             | E::CuratorFinishedV1 { .. }
-            | E::CuratorProgressV1 { .. }
-            | E::KykarExiledV1 { .. }
-            | E::KykarDelayedCollectedV1 { .. } => true,
+            | E::CuratorProgressV1 { .. } => true,
+            E::KykarExiledV1 { .. }
+            | E::KykarDelayedCollectedV1 { .. } => appendix != LimitedAppendixV1::Kykar,
 
             _ => false,
         });
