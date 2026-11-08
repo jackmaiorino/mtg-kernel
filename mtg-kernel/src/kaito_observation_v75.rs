@@ -85,6 +85,8 @@ pub struct KaitoObservationV75 {
     pub zimone: Option<crate::zimone_public_v1::FactsV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub omniscience: Option<crate::omniscience_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tutelage: Option<crate::tutelage_public_v1::FactsV1>,
     pub complete_ordinary_observation: bool,
     pub owning_consumer_admitted: bool,
     pub projection_sha256: String,
@@ -254,6 +256,9 @@ pub(crate) fn validate_state_scoped(
     if appendix == LimitedAppendixV1::Drakuseth {
         crate::drakuseth_damage_source_v76::validate_state(state)?;
     }
+    if appendix == LimitedAppendixV1::Tutelage {
+        crate::tutelage_public_v1::require_receipts(state)?;
+    }
     crate::ravenous_observation_v51::validate_state_complete_recipient_scope(
         state,
         crate::planeswalker_v1::RecipientScopeV1::KaitoV75,
@@ -292,6 +297,7 @@ fn require_supported(
         }
         LimitedAppendixV1::Zimone => Some(crate::zimone_public_v1::selected_id()?),
         LimitedAppendixV1::Omniscience => Some(crate::omniscience_public_v1::selected_id()?),
+        LimitedAppendixV1::Tutelage => Some(crate::tutelage_public_v1::selected_id()?),
     };
     let unsupported = |id: u16| {
         id >= 460
@@ -375,8 +381,8 @@ fn require_supported(
             | E::SphinxsTutelageCollectedV1 { .. }
             | E::SphinxsTutelagePublishedV1 { .. }
             | E::SphinxsTutelageMillStartedV1 { .. }
-            | E::SphinxsTutelageMillBatchV1 { .. }
-            | E::LathrilCombatDamageV1 { .. }
+            | E::SphinxsTutelageMillBatchV1 { .. } => appendix != LimitedAppendixV1::Tutelage,
+            E::LathrilCombatDamageV1 { .. }
             | E::LathrilCombatCollectedV1 { .. }
             | E::LathrilCombatPublishedV1 { .. }
             | E::LathrilCombatResolvedV1 { .. }
@@ -514,12 +520,22 @@ pub(crate) fn stack_source_reference(
             }
             _ => false,
         };
+    let tutelage = source.card_def == crate::tutelage_public_v1::PRINTING
+        && match item.kind {
+            crate::state::StackItemKind::TriggeredAbility => matches!(
+                item.inline_effect, Some(crate::effect::EffectOp::SphinxsTutelageMillV1 { .. })
+            ),
+            crate::state::StackItemKind::ActivatedAbility => item.v4.activated_ability_index == Some(0)
+                && item.inline_effect.as_ref().is_some_and(crate::tutelage_public_v1::activation_program),
+            _ => false,
+        };
     if !selected_source(source)
         && !artist_trigger
         && !drakuseth_trigger
         && !niv_trigger
         && !embercleave_attachment
         && !zimone_counters
+        && !tutelage
     {
         return Ok(None);
     }
@@ -572,12 +588,15 @@ pub(crate) fn pending_source_reference(
     let zimone_trigger = source.card_def == crate::zimone_public_v1::PRINTING
         && pending.granted_by.is_none()
         && pending.effect == crate::zimone_public_v1::AbilityKindV1::CombatPutPlusOne.program();
+    let tutelage = source.card_def == crate::tutelage_public_v1::PRINTING
+        && matches!(pending.effect, crate::effect::EffectOp::SphinxsTutelageMillV1 { .. });
     if !selected_source(source)
         && !artist_trigger
         && !drakuseth_trigger
         && !niv_trigger
         && !embercleave_attachment
         && !zimone_trigger
+        && !tutelage
     {
         return Ok(None);
     }
@@ -655,6 +674,7 @@ pub(crate) fn observe_parts_v75(
             LimitedAppendixV1::Embercleave => crate::embercleave_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Zimone => crate::zimone_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Omniscience => crate::omniscience_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Tutelage => crate::tutelage_consumer_v1::OBSERVATION_SCHEMA,
         }
         .into(),
         producer_sha256: producer_sha256(),
@@ -741,6 +761,10 @@ pub(crate) fn observe_parts_v75(
             })
             .transpose()
             .map_err(RlContractError)?,
+        tutelage: (appendix == LimitedAppendixV1::Tutelage)
+            .then(|| crate::tutelage_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
         complete_ordinary_observation: true,
         owning_consumer_admitted: false,
         projection_sha256: String::new(),
@@ -771,39 +795,44 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
         &value.embercleave,
         &value.zimone,
         &value.omniscience,
+        &value.tutelage,
     ) {
-        (Some(artist), None, None, None, None, None, None) => {
+        (Some(artist), None, None, None, None, None, None, None) => {
             crate::artist_consumer_v1::validate_facts(artist, actor).map_err(RlContractError)?;
             crate::artist_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, Some(niv), None, None, None, None, None) => {
+        (None, Some(niv), None, None, None, None, None, None) => {
             crate::niv_consumer_v1::validate_facts(niv, actor).map_err(RlContractError)?;
             crate::niv_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, Some(chosen_type), None, None, None, None) => {
+        (None, None, Some(chosen_type), None, None, None, None, None) => {
             crate::chosen_type_consumer_v1::validate_facts(chosen_type, actor)
                 .map_err(RlContractError)?;
             crate::chosen_type_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, Some(facts), None, None, None) => {
+        (None, None, None, Some(facts), None, None, None, None) => {
             crate::drakuseth_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::drakuseth_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, Some(facts), None, None) => {
+        (None, None, None, None, Some(facts), None, None, None) => {
             crate::embercleave_consumer_v1::validate_facts(facts, actor)
                 .map_err(RlContractError)?;
             crate::embercleave_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, Some(facts), None) => {
+        (None, None, None, None, None, Some(facts), None, None) => {
             crate::zimone_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::zimone_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, Some(facts)) => {
+        (None, None, None, None, None, None, Some(facts), None) => {
             crate::omniscience_consumer_v1::validate_facts(facts, actor)
                 .map_err(RlContractError)?;
             crate::omniscience_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None) => SCHEMA,
+        (None, None, None, None, None, None, None, Some(facts)) => {
+            crate::tutelage_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::tutelage_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (None, None, None, None, None, None, None, None) => SCHEMA,
         _ => return Err(RlContractError("mixed appendix profiles".into())),
     };
     crate::muldrotha_public_v71::validate_tinybones_compat_v72(&value.muldrotha)

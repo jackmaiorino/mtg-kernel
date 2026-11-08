@@ -1824,6 +1824,8 @@ pub enum CommittedEvent {
         previous_batch: Option<u64>,
         ordered: Vec<crate::effect::EffectObjectBinding>,
         move_start: u64,
+        #[serde(default, skip_serializing_if = "TutelageBatchOutcomeV1::is_empty")]
+        outcome: TutelageBatchOutcomeV1,
     },
     /// Only actual positive final combat damage to a player creates this receipt.
     LathrilCombatDamageV1 {
@@ -9872,6 +9874,111 @@ pub(crate) mod ravenous_amulet_paid_future_tests {
         }
     }
 }
+/// The real post-replacement public destinations at batch commit, in native
+/// move order. An attempted card returned to a concealed zone is absent.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TutelagePublicMillMemberV1 {
+    pub object: ObjectId,
+    pub generation: u32,
+    pub card_def: u16,
+    pub zone: Zone,
+    pub controller: PlayerId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TutelagePublicMillOutcomeV1 {
+    pub members: Vec<TutelagePublicMillMemberV1>,
+    pub repeat: bool,
+}
+
+/// Older native snapshots had no event-time public operand record.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TutelageBatchOutcomeV1(pub Option<TutelagePublicMillOutcomeV1>);
+
+impl TutelageBatchOutcomeV1 {
+    fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+impl std::hash::Hash for TutelageBatchOutcomeV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if let Some(outcome) = &self.0 {
+            std::hash::Hash::hash("tutelage_public_mill_outcome/v1", state);
+            std::hash::Hash::hash(outcome, state);
+        }
+    }
+}
+
+pub(crate) fn tutelage_public_outcome_v1(
+    state: &GameState,
+    index: usize,
+    target: PlayerId,
+) -> Result<Option<&TutelagePublicMillOutcomeV1>, String> {
+    let Some(CommittedEvent::SphinxsTutelageMillBatchV1 { ordered, move_start, outcome, .. }) =
+        state.engine.event_history.get(index)
+    else {
+        return Err("Tutelage outcome has no original batch".into());
+    };
+    let Some(outcome) = &outcome.0 else {
+        return Ok(None);
+    };
+    let start = usize::try_from(*move_start).map_err(|_| "Tutelage move range overflow")?;
+    let moves = state.engine.event_history.get(start..index).ok_or("Tutelage move range changed")?;
+    let mut prior = None;
+    let mut move_prior = None;
+    for member in &outcome.members {
+        let position = ordered.iter().position(|binding| {
+            binding.object == member.object
+                && binding.expected_zone == Zone::Library
+                && binding.expected_zone_change_count.checked_add(1) == Some(member.generation)
+        }).ok_or("Tutelage outcome member is outside the original pair")?;
+        let mut moved = moves.iter().enumerate().filter_map(|(i, event)| {
+            matches!(event, CommittedEvent::ZoneChange {
+                object, from: Zone::Library, to, controller_before,
+            } if *object == member.object && *to == member.zone && *controller_before == target)
+                .then_some(i)
+        });
+        let movement = moved.next().ok_or("Tutelage outcome has no exact native move")?;
+        if moved.next().is_some()
+            || prior.is_some_and(|prior| position <= prior)
+            || move_prior.is_some_and(|prior| movement <= prior)
+            || !matches!(member.zone, Zone::Graveyard | Zone::Exile | Zone::Battlefield | Zone::Stack)
+            || crate::card_def::CARD_DEFS.get(usize::from(member.card_def)).is_none()
+        {
+            return Err("Tutelage public move order or visibility changed".into());
+        }
+        prior = Some(position);
+        move_prior = Some(movement);
+    }
+    if outcome.repeat != tutelage_public_pair_repeats_v1(&outcome.members) {
+        return Err("Tutelage original native repeat answer changed".into());
+    }
+    Ok(Some(outcome))
+}
+
+pub(crate) fn tutelage_public_pair_repeats_v1(pair: &[TutelagePublicMillMemberV1]) -> bool {
+    let [a, b] = pair else {
+        return false;
+    };
+    let defs = crate::card_def::CARD_DEFS;
+    let a = &defs[usize::from(a.card_def)];
+    let b = &defs[usize::from(b.card_def)];
+    tutelage_card_pair_repeats_v1(a, b)
+}
+
+pub(crate) fn tutelage_card_pair_repeats_v1(
+    a: &crate::card_def::CardDef,
+    b: &crate::card_def::CardDef,
+) -> bool {
+    !a.has_type(crate::card_def::CardType::Land)
+        && !b.has_type(crate::card_def::CardType::Land)
+        && a.colors.iter().any(|color| *color != ManaColor::C && b.colors.contains(color))
+}
+
 pub(crate) fn is_sphinxs_tutelage_v1(card_def: u16) -> bool {
     crate::card_def::CARD_DEFS
         .get(usize::from(card_def))

@@ -45,6 +45,8 @@ pub struct CandidateMeaningV75 {
     pub zimone_action: Option<crate::zimone_consumer_v1::ActionV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub omniscience_action: Option<crate::omniscience_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tutelage_action: Option<crate::tutelage_consumer_v1::ActionV1>,
     #[serde(deserialize_with = "required_optional")]
     pub drake_activation: Option<crate::next_five_observation_v59::NextFiveActivationV59>,
     /// Complete current programs at this genuine decision, in native stage and
@@ -144,6 +146,9 @@ pub fn producer_sha256() -> String {
             include_str!("omniscience_consumer_v1.rs"),
             include_str!("omniscience_public_v1.rs"),
             include_str!("human_bo3_v1/omniscience_consumer_v1.rs"),
+            include_str!("tutelage_consumer_v1.rs"),
+            include_str!("tutelage_public_v1.rs"),
+            include_str!("human_bo3_v1/tutelage_consumer_v1.rs"),
             include_str!("drakuseth_consumer_v1.rs"),
             include_str!("drakuseth_consumer_v1/damage.rs"),
             include_str!("human_bo3_v1/drakuseth_consumer_v1.rs"),
@@ -734,6 +739,9 @@ fn project_authenticated_parts_v75(
                     &action,
                 )
                 .map_err(error)?,
+                tutelage_action: crate::tutelage_consumer_v1::action(
+                    observation.tutelage.as_ref(), &action,
+                ).map_err(error)?,
                 drakuseth_target: crate::drakuseth_consumer_v1::target_action(
                     observation.drakuseth.as_ref(),
                     &action,
@@ -868,6 +876,11 @@ fn schemas(observation: &KaitoObservationV75) -> (&'static str, &'static str) {
             crate::omniscience_consumer_v1::CANDIDATES_SCHEMA,
             crate::omniscience_consumer_v1::ACTION_SCHEMA,
         )
+    } else if observation.tutelage.is_some() {
+        (
+            crate::tutelage_consumer_v1::CANDIDATES_SCHEMA,
+            crate::tutelage_consumer_v1::ACTION_SCHEMA,
+        )
     } else {
         (SCHEMA, ANNOTATION_SCHEMA)
     }
@@ -992,6 +1005,9 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                 .map_err(error)?
             || row.artist_payment
                 != artist::payment_action(value.observation.artist.as_ref(), &row.action)
+                    .map_err(error)?
+            || row.tutelage_action
+                != crate::tutelage_consumer_v1::action(value.observation.tutelage.as_ref(), &row.action)
                     .map_err(error)?
             || row.chosen_type_answer
                 != chosen_type::answer(value.observation.chosen_type.as_ref(), &row.action)

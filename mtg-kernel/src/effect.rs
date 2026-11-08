@@ -26924,11 +26924,7 @@ fn tutelage_pair_repeats_v1(state: &GameState, pair: &[EffectObjectBinding]) -> 
     }
     let a = &crate::card_def::CARD_DEFS[usize::from(state.objects.get(pair[0].object).card_def)];
     let b = &crate::card_def::CARD_DEFS[usize::from(state.objects.get(pair[1].object).card_def)];
-    !a.has_type(CardType::Land)
-        && !b.has_type(CardType::Land)
-        && a.colors
-            .iter()
-            .any(|color| *color != ManaColor::C && b.colors.contains(color))
+    event::tutelage_card_pair_repeats_v1(a, b)
 }
 
 /// Reconstruct every completed pair from the original library and the actual
@@ -26995,6 +26991,7 @@ fn tutelage_remaining_v1(
             previous_batch,
             ordered,
             move_start,
+            ..
         } = &state.engine.event_history[batch_index]
         else {
             unreachable!()
@@ -27055,6 +27052,21 @@ fn tutelage_remaining_v1(
         // another suspended iteration. A one-card final mill always stops.
         if !tutelage_pair_repeats_v1(state, pair) {
             return Err("Tutelage continuation repeated after its stopping pair".into());
+        }
+        if let Some(outcome) = event::tutelage_public_outcome_v1(state, batch_index, player)? {
+            if !outcome.repeat
+                || outcome.members.len() != ordered.len()
+                || outcome.members.iter().zip(ordered).any(|(member, binding)| {
+                    let live = state.objects.get(binding.object);
+                    member.object != binding.object
+                        || member.card_def != live.card_def
+                        || member.controller != live.controller
+                        || member.zone != live.zone
+                        || member.generation != live.zone_change_count
+                })
+            {
+                return Err("Tutelage public outcome changed before native continuation".into());
+            }
         }
         offset += pair.len();
         linked = Some(batch_index as u64);
@@ -27251,14 +27263,21 @@ fn run_tutelage_batch_v1(
     // CR701.17c follows an actual milled card into any public destination.
     // A reveal followed by a shuffle leaves Library hidden, so it supplies no
     // characteristic operand to this condition.
-    let visible = pair.iter().copied().filter(|binding| {
+    let members = ordered.iter().filter_map(|binding| {
         let live=state.objects.get(binding.object);
-        live.v4.face_down_v1.is_none()
+        (live.v4.face_down_v1.is_none()
             && binding.expected_zone_change_count.checked_add(1)==Some(live.zone_change_count)
             && matches!(live.zone,Zone::Graveyard|Zone::Exile|Zone::Battlefield|Zone::Stack)
-            && state.engine.event_history[move_start as usize..].iter().any(|e|matches!(e,event::CommittedEvent::ZoneChange{object,from:Zone::Library,to,..}if *object==binding.object && *to==live.zone))
+            && state.engine.event_history[move_start as usize..].iter().any(|e|matches!(e,event::CommittedEvent::ZoneChange{object,from:Zone::Library,to,..}if *object==binding.object && *to==live.zone)))
+            .then_some(event::TutelagePublicMillMemberV1 {
+                object: binding.object,
+                generation: live.zone_change_count,
+                card_def: live.card_def,
+                zone: live.zone,
+                controller: live.controller,
+            })
     }).collect::<Vec<_>>();
-    let repeat = tutelage_pair_repeats_v1(state, &visible);
+    let repeat = event::tutelage_public_pair_repeats_v1(&members);
     let batch_index = state.engine.event_history.len() as u64;
     state
         .engine
@@ -27268,6 +27287,10 @@ fn run_tutelage_batch_v1(
             previous_batch: previous,
             ordered,
             move_start,
+            outcome: event::TutelageBatchOutcomeV1(Some(event::TutelagePublicMillOutcomeV1 {
+                members,
+                repeat,
+            })),
         });
     if repeat {
         pending.frames.push(EffectFrame::SphinxsTutelageMillV1 {
@@ -27471,7 +27494,7 @@ pub(crate) fn begin_owned_tutelage_v1(
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "effect/sphinxs_tutelage_v1_tests.rs"]
-mod sphinxs_tutelage_v1_tests;
+pub(crate) mod sphinxs_tutelage_v1_tests;
 
 #[cfg(all(
     test,
