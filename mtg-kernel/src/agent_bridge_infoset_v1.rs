@@ -35,6 +35,7 @@ pub const SPELLBENCH_FLAG_X_KERNEL_INFOSET_REVEAL_V4: &str = "--x-kernel-infoset
 #[derive(Debug, Clone, Default)]
 pub(crate) struct InfosetBridgeV1 {
     reveal_v4: bool,
+    reveal_group_v4: Option<RevealGroupRootV4>,
     /// The extension of the decision being sent, if it is eligible.
     pub(crate) pending: Option<Value>,
     /// Eligible decisions so far, per seat (the payload's viewer-local
@@ -53,6 +54,13 @@ pub(crate) struct InfosetBridgeV1 {
     pub(crate) order_map_missing: [u64; 2],
 }
 
+#[derive(Debug, Clone)]
+struct RevealGroupRootV4 {
+    identity: (PlayerSeatV1, String, String),
+    step: u64,
+    ids: BTreeMap<u64, u64>,
+}
+
 impl InfosetBridgeV1 {
     pub(crate) fn reveal_v4() -> Self {
         Self {
@@ -67,6 +75,51 @@ impl InfosetBridgeV1 {
         } else {
             SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1
         }
+    }
+
+    pub(crate) fn live_group_rows_v4(
+        &mut self,
+        actor: PlayerSeatV1,
+        support: &Value,
+        fast: &FastActorSessionV1,
+    ) -> Option<Value> {
+        if !self.reveal_v4 {
+            return None;
+        }
+        let identity = if let Some(instance) = support["block_declaration_instance"].as_str() {
+            Some((actor, "block".into(), instance.to_owned()))
+        } else {
+            let purpose = support["choice"]["purpose"].as_str().filter(|&purpose| {
+                matches!(
+                    purpose,
+                    "scry" | "look_select" | "look" | "reveal_partition" | "mill" | "put_on_top"
+                        | "discard_order"
+                )
+            });
+            purpose
+                .zip(support["effect_instance"].as_str())
+                .map(|(purpose, instance)| (actor, purpose.to_owned(), instance.to_owned()))
+        };
+        let Some(identity) = identity else {
+            self.reveal_group_v4 = None;
+            return None;
+        };
+        if self
+            .reveal_group_v4
+            .as_ref()
+            .is_none_or(|root| root.identity != identity)
+        {
+            self.reveal_group_v4 = self
+                .root_ids
+                .as_ref()
+                .map(|(step, ids)| RevealGroupRootV4 {
+                    identity,
+                    step: *step,
+                    ids: ids.clone(),
+                });
+        }
+        let root = self.reveal_group_v4.as_ref()?;
+        Some(json!({"root_step": root.step, "row_keys": row_keys_v1(fast, Some(&root.ids))}))
     }
 }
 

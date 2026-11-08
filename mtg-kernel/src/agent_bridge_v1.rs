@@ -1662,6 +1662,21 @@ type ObjectKeyV1 = (u32, u32);
 /// never advance the cursor.
 fn private_v2_support_with_history(game: &mut SpellbenchBridgeGameV1) -> Value {
     let mut support = private_v2_support(game);
+    let reveal_infoset = game
+        .infoset
+        .as_mut()
+        .filter(|infoset| infoset.extension() == INFOSET_SCHEMA_REVEAL_V4);
+    if let (Some(infoset), Some(lockstep)) = (reveal_infoset, game.flat_v4.as_ref()) {
+        if let RlSessionResponseV1::Decision(decision) = game.session.current_response() {
+            if let Some(rows) = infoset.live_group_rows_v4(
+                decision.acting_player,
+                &support,
+                lockstep.fast_session(),
+            ) {
+                support["reveal_v4_group_rows"] = rows;
+            }
+        }
+    }
     let state = game.session.game_state();
     let (events_from, notes_from, objects_from) = game.history_cursor;
     let events = &state.engine.event_history[events_from.min(state.engine.event_history.len())..];
@@ -3732,6 +3747,33 @@ mod tests {
                         .collect::<std::collections::BTreeMap<_, _>>(),
                     reducers[viewer.index()].hand(viewer.opponent())
                 );
+
+                // A live buffered continuation still keys its rows with
+                // the published root map after a fresh export refuses.
+                let game = server.game.as_mut().unwrap();
+                let fast = game.flat_v4.as_ref().unwrap().fast_session();
+                let infoset = game.infoset.as_mut().unwrap();
+                let support = json!({"block_declaration_instance": "fixture-block"});
+                let root = infoset
+                    .live_group_rows_v4(viewer.into(), &support, fast)
+                    .unwrap();
+                assert_eq!(root["root_step"], raw["step"]);
+                assert!(root["row_keys"].is_array());
+                assert_eq!(
+                    root["row_keys"],
+                    extensions[INFOSET_SCHEMA_REVEAL_V4]["row_keys"]
+                );
+                infoset.root_ids = None;
+                assert_eq!(
+                    infoset.live_group_rows_v4(viewer.into(), &support, fast),
+                    Some(root)
+                );
+                assert!(infoset
+                    .live_group_rows_v4(viewer.into(), &json!({}), fast)
+                    .is_none());
+                assert!(infoset
+                    .live_group_rows_v4(viewer.into(), &support, fast)
+                    .is_none());
                 return;
             }
             let selected = raw["candidates"]
