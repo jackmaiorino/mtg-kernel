@@ -689,6 +689,119 @@ pub(crate) fn compare_owned_pending_replay_for_test(state: &GameState) {
     );
 }
 
+/// Exercise actual world compression and restoration at a suspended Banner
+/// checkpoint. Arc ownership detects a new whole-history compatibility copy
+/// without exposing or trusting cache internals in production validation.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn check_logical_world_prefix_for_test(state: &GameState) {
+    // Cloning a persistent history deliberately does not carry its cold flat
+    // cache, even if earlier fixture validation had materialized that cache.
+    let state = state.clone();
+    let history = &state.engine.event_history;
+    let counts = || {
+        history
+            .iter()
+            .filter_map(|event| match event {
+                CommittedEvent::DrakeJournalV1 { record } => {
+                    Some((record.index, Arc::strong_count(record)))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = counts();
+    assert!(!before.is_empty());
+    let saved = world(&state).unwrap();
+    assert_eq!(
+        counts(),
+        before,
+        "world must not clone the outer journal into a flat compatibility cache"
+    );
+    assert!(saved.engine.event_history.is_empty());
+    let nested = &state
+        .engine
+        .linked_aura_operation_v1
+        .pending_general_v36
+        .as_ref()
+        .unwrap()
+        .original
+        .engine
+        .event_history;
+    let compressed = &saved
+        .engine
+        .linked_aura_operation_v1
+        .pending_general_v36
+        .as_ref()
+        .unwrap()
+        .original
+        .engine
+        .event_history;
+    let expected = nested
+        .iter()
+        .map(|event| match event {
+            CommittedEvent::DrakeJournalV1 { record } => CommittedEvent::DrakeHistoryRefV1 {
+                index: record.index,
+            },
+            other => other.clone(),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(compressed, &expected);
+    assert_eq!(
+        serde_json::to_vec(compressed).unwrap(),
+        serde_json::to_vec(&expected).unwrap()
+    );
+    let before_restore = counts();
+    let restored = restore_world(&saved, history, history.len()).unwrap();
+    assert_eq!(
+        counts(),
+        before_restore,
+        "restoration must not clone the outer journal into a flat compatibility cache"
+    );
+    assert_eq!(restored, state);
+    assert_eq!(
+        serde_json::to_vec(&restored).unwrap(),
+        serde_json::to_vec(&state).unwrap()
+    );
+    let first_ref = compressed
+        .iter()
+        .find_map(|event| match event {
+            CommittedEvent::DrakeHistoryRefV1 { index } => Some(*index as usize),
+            _ => None,
+        })
+        .expect("genuine checkpoint contains a nested Drake reference");
+    // A real, correctly indexed record exists in the enclosing history, but
+    // lies outside the supplied original prefix. Its presence is not authority.
+    assert_eq!(
+        restore_world(&saved, history, first_ref).unwrap_err(),
+        "Drake nested original prefix absent"
+    );
+    assert_eq!(
+        restore_world(&saved, history, history.len() + 1).unwrap_err(),
+        "Drake operation original prefix absent"
+    );
+    assert_eq!(counts(), before_restore);
+    // A later suffix must neither enter the restored original nor prevent a
+    // valid bounded restore. Exact bytes cover all other retained checkpoints.
+    let mut extended = history.clone();
+    extended.push(
+        history
+            .iter()
+            .find(|e| journal(e).is_none())
+            .unwrap()
+            .clone(),
+    );
+    let bounded = restore_world(&saved, &extended, history.len()).unwrap();
+    assert_eq!(bounded, state);
+    assert_eq!(
+        serde_json::to_vec(&bounded).unwrap(),
+        serde_json::to_vec(&state).unwrap()
+    );
+}
+
 /// Compare the actual owned replay with the retained borrowing path on all
 /// enclosing records of a recorded game, independently of the replay cache.
 #[cfg(all(
@@ -804,12 +917,12 @@ fn world(state: &GameState) -> Result<GameState, String> {
 // immutable outer index. Every non-Drake field/event remains byte-equivalent.
 fn strip_nested_receipts(
     value: &mut serde_json::Value,
-    prefix: &[CommittedEvent],
+    prefix: &crate::event_history_v1::EventHistoryV1,
 ) -> Result<(), String> {
     fn strip(
         value: &mut serde_json::Value,
         position: Option<usize>,
-        prefix: &[CommittedEvent],
+        prefix: &crate::event_history_v1::EventHistoryV1,
     ) -> Result<(), String> {
         if let Some(record) = value.get("DrakeJournalV1").and_then(|v| v.get("record")) {
             let index = record
@@ -870,7 +983,8 @@ fn restore_world(
 ) -> Result<GameState, String> {
     fn restore(
         value: &mut serde_json::Value,
-        prefix: &[CommittedEvent],
+        history: &crate::event_history_v1::EventHistoryV1,
+        prefix_len: usize,
         position: Option<usize>,
     ) -> Result<(), String> {
         if let Some(index) = value
@@ -885,7 +999,8 @@ fn restore_world(
             }
             let actual = usize::try_from(index)
                 .ok()
-                .and_then(|i| prefix.get(i))
+                .filter(|&i| i < prefix_len)
+                .and_then(|i| history.get(i))
                 .ok_or("Drake nested original prefix absent")?;
             if journal(actual).is_none_or(|r| r.index != index) {
                 return Err("Drake nested original index shifted/ambiguous".into());
@@ -898,7 +1013,7 @@ fn restore_world(
         match value {
             serde_json::Value::Array(values) => {
                 for child in values {
-                    restore(child, prefix, None)?;
+                    restore(child, history, prefix_len, None)?;
                 }
             }
             serde_json::Value::Object(values) => {
@@ -908,10 +1023,10 @@ fn restore_world(
                             .as_array_mut()
                             .ok_or("Drake nested history changed type")?;
                         for (at, event) in events.iter_mut().enumerate() {
-                            restore(event, prefix, Some(at))?;
+                            restore(event, history, prefix_len, Some(at))?;
                         }
                     } else {
-                        restore(child, prefix, None)?;
+                        restore(child, history, prefix_len, None)?;
                     }
                 }
             }
@@ -919,11 +1034,15 @@ fn restore_world(
         }
         Ok(())
     }
-    let prefix = history
-        .get(..start)
-        .ok_or("Drake operation original prefix absent")?;
+    // A slice lookup used to enforce this bound and also materialized the
+    // entire actual history. Keep the bound explicit while borrowing only
+    // referenced logical indices. In particular a valid later record cannot
+    // repair a reference outside this operation's original prefix.
+    if start > history.len() {
+        return Err("Drake operation original prefix absent".into());
+    }
     let mut value = serde_json::to_value(saved).map_err(|e| e.to_string())?;
-    restore(&mut value, prefix, None)?;
+    restore(&mut value, history, start, None)?;
     let mut input: GameState = serde_json::from_value(value).map_err(|e| e.to_string())?;
     // The prefix keeps the actual history's chained prefixes, so the replay's
     // origin digest resumes at `start` instead of rehashing every event.

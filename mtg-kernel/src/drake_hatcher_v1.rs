@@ -797,6 +797,7 @@ mod tests {
                 }
             }
             assert!(reached);
+            custody::check_logical_world_prefix_for_test(&state);
             let mut original = restored(&state);
             custody::validate(&original).unwrap();
             for mode in 0..4 {
