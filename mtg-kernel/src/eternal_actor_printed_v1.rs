@@ -213,6 +213,7 @@ pub fn printing_v1(id: u16) -> Result<Value> {
         };
     }
     field!("schema", "eternal-printed-programs/v1");
+    field!("external_rules", external_rules(d.name)?);
     field!("cost", cost);
     field!("types", types);
     field!("subtypes", subtypes);
@@ -311,6 +312,108 @@ fn costs(items: &[CostComponent]) -> Result<Vec<Value>> {
             })
         })
         .collect()
+}
+
+/// Explicit rules implemented outside the generated definition programs.
+/// Static-source rules use the owning hook's live battlefield/printed-ability
+/// predicate. This describes native behavior, including its documented limits.
+#[derive(serde::Serialize)]
+enum ExternalRule {
+    ChooseCreatureSubtypeOnEntry,
+    RestrictedChosenTypeCreatureManaMakesCastUncounterable,
+    ProhibitAllBattlefieldArtifactActivationsIncludingMana,
+    SelfPowerPerControllerGraveyardGroup {
+        cards_per_group: u8,
+        power: i16,
+    },
+    AutomaticColorlessEldraziSpellTapYield {
+        colorless: u8,
+        surplus_retains_restriction: bool,
+    },
+    ReplaceControllerEmptyLibraryDrawWithWin,
+    ManaActivationRequiresPriorityWithoutPendingCastActivationEffectOrDiscard,
+    AlternativeCastRequiresNoPreviousSpellCastThisGame,
+    ChooseVisibleCardNameOnEntry,
+    ProhibitNonmanaActivationsOfChosenEffectiveName,
+    NoncreatureSpellGenericTaxPerActiveSource {
+        generic: u8,
+    },
+    UntappedSourceRaisesFinalSpellManaCostTo {
+        minimum: u8,
+    },
+    SagaGrantedAbilityRequiresResolvedChapter {
+        chapter: u8,
+        ability: SagaAbility,
+    },
+    FaceUpPrintedLandsGainForestAndGreenTapUnlessAlreadyProducingGreen,
+    AnimateDeadGraveyardAttachmentThenReanimatedCreatureAttachment,
+    LandBackFacePlayableFromHand {
+        face: u8,
+        untapped_life_payment: u8,
+    },
+    ChargeCountersOnEntryEqualPaidX,
+    NormalCastRequiresAdditionalDiscardAlternativeDoesNot,
+}
+#[derive(serde::Serialize)]
+enum SagaAbility {
+    PrimaryColorlessMana,
+    ActivatedConstruct,
+}
+
+fn external_rules(name: &str) -> Result<Vec<ExternalRule>> {
+    use ExternalRule::*;
+    if !REPORTED_MAINBOARD_NAMES.contains(&name) {
+        return Err(unsupported());
+    }
+    Ok(match name {
+        "Cavern of Souls" => vec![
+            ChooseCreatureSubtypeOnEntry,
+            RestrictedChosenTypeCreatureManaMakesCastUncounterable,
+        ],
+        "Collector Ouphe" | "Null Rod" => {
+            vec![ProhibitAllBattlefieldArtifactActivationsIncludingMana]
+        }
+        "Dark Matter Manipulator" => vec![SelfPowerPerControllerGraveyardGroup {
+            cards_per_group: 7,
+            power: 2,
+        }],
+        "Eldrazi Temple" => vec![AutomaticColorlessEldraziSpellTapYield {
+            colorless: 2,
+            surplus_retains_restriction: true,
+        }],
+        "Jace, Wielder of Mysteries" => vec![ReplaceControllerEmptyLibraryDrawWithWin],
+        "Lion's Eye Diamond" => {
+            vec![ManaActivationRequiresPriorityWithoutPendingCastActivationEffectOrDiscard]
+        }
+        "Once Upon a Time" => vec![AlternativeCastRequiresNoPreviousSpellCastThisGame],
+        "Pithing Needle" => vec![
+            ChooseVisibleCardNameOnEntry,
+            ProhibitNonmanaActivationsOfChosenEffectiveName,
+        ],
+        "Thorn of Amethyst" => vec![NoncreatureSpellGenericTaxPerActiveSource { generic: 1 }],
+        "Trinisphere" => vec![UntappedSourceRaisesFinalSpellManaCostTo { minimum: 3 }],
+        "Urza's Saga" => vec![
+            SagaGrantedAbilityRequiresResolvedChapter {
+                chapter: 1,
+                ability: SagaAbility::PrimaryColorlessMana,
+            },
+            SagaGrantedAbilityRequiresResolvedChapter {
+                chapter: 2,
+                ability: SagaAbility::ActivatedConstruct,
+            },
+        ],
+        "Yavimaya, Cradle of Growth" => {
+            vec![FaceUpPrintedLandsGainForestAndGreenTapUnlessAlreadyProducingGreen]
+        }
+        "Animate Dead" => vec![AnimateDeadGraveyardAttachmentThenReanimatedCreatureAttachment],
+        "Bridgeworks Battle" => vec![LandBackFacePlayableFromHand {
+            face: 1,
+            untapped_life_payment: 3,
+        }],
+        "Chalice of the Void" => vec![ChargeCountersOnEntryEqualPaidX],
+        "Bitter Triumph" => vec![NormalCastRequiresAdditionalDiscardAlternativeDoesNot],
+        _ => Vec::new(),
+    })
 }
 
 fn alternative(a: &AltCostDef) -> Result<Value> {
@@ -414,6 +517,7 @@ fn trigger_condition(t: crate::trigger::TriggerCondition) -> Result<Value> {
         T::Etb => json!("Etb"),
         T::Attacks => json!("Attacks"),
         T::CastSpell => json!("CastSpell"),
+        T::CastSelf => json!("CastSelf"),
         T::LeftBattlefield => json!("LeftBattlefield"),
         T::LeftBattlefieldToGraveyard => json!("LeftBattlefieldToGraveyard"),
         T::BeginningOfUpkeep { controller_only } => {
