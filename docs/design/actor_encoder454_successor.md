@@ -131,7 +131,20 @@ choices. `eternal_actor_stack_v1` binds exact printed spell, activation and
 trigger programs, including normalized captured-counter targets. Entry menu
 indices have explicit subtype, named-printing or life-payment meanings.
 
-These components are not an admission gate. Complete resolving/pending
-program binding, canonical public-reference integration and sealed Eternal
-scoring remain work in progress. All 64 printing extractions and the new
-Eternal source/choice/stack tests still require native Eternal validation.
+The prospective `EternalActorSessionV1` now owns the native session separately,
+retains native Full-deck preflight and permits exact 60-card mainboards within
+the finite descriptor pool. It rederives the current executable menu from the
+private issued origin, captures frozen pending/resolving program metadata,
+binds every visible or publicly named printing, and normalizes references and
+unordered dynamic ledgers before scoring. Name equality has an explicit
+registry-scoped class, including transformed face names. Captured training
+inputs and apply retain owner/generation checks. Unknown or granted programs
+and unrepresented dynamic lifecycles refuse; an ordinary V5 observation alone
+does not admit a model input.
+
+The new six deck/starting-seat fixtures exercise eight decisions of sealed
+scoring and a bounded optimizer update. Separate tests check full-input
+hidden-hand variants, pending printed triggers and retarget ID permutations.
+All 64 printing extractions and these Eternal tests still require native
+validation. Whole-game reported-fixture coverage and exact-head CI remain
+outstanding. These source components are not a production qualification.
