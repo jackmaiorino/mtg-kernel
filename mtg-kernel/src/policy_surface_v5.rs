@@ -396,6 +396,7 @@ pub(crate) enum LimitedAppendixV1 {
     Lathril,
     Electroduplicate,
     Edict,
+    Loot,
 }
 
 impl LimitedAppendixV1 {

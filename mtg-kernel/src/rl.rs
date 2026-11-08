@@ -10667,7 +10667,7 @@ fn private_card(
         ));
     }
     if state.objects.try_get(id).is_some_and(|o| {
-        o.v4.face_down_v1.is_none()
+        o.v4.face_down_v1.is_none() && appendix != LimitedAppendixV1::Loot
             && CARD_DEFS[usize::from(o.card_def)].name == "Loot, Exuberant Explorer"
     }) {
         return Err(RlContractError(

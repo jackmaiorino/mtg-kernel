@@ -811,6 +811,8 @@ pub mod policy_surface_v5;
 pub(crate) mod private_physical_trajectory_core;
 pub(crate) mod private_physical_trajectory_v1;
 pub(crate) mod private_physical_trajectory_v2;
+pub mod loot_consumer_v1;
+pub mod loot_public_v1;
 pub mod progenitus_consumer_v1;
 pub mod progenitus_public_v1;
 pub mod regret_census_v1;

@@ -521,6 +521,19 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         covered.insert(meaning.card_id);
     }
     if source == Source::KaitoV75
+        && state["schema"] == crate::loot_consumer_v1::CANDIDATES_SCHEMA
+    {
+        let meaning: crate::loot_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["loot"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        if meaning != crate::loot_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Loot meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
         && state["schema"] == crate::progenitus_consumer_v1::CANDIDATES_SCHEMA
     {
         let meaning: crate::progenitus_public_v1::MeaningV1 =

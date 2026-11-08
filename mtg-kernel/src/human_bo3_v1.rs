@@ -483,6 +483,7 @@ mod embercleave_consumer_v1;
 mod leyline_axe_consumer_v1;
 mod moon_consumer_v1;
 mod omniscience_consumer_v1;
+mod loot_consumer_v1;
 mod progenitus_consumer_v1;
 mod tutelage_consumer_v1;
 mod lathril_consumer_v1;
