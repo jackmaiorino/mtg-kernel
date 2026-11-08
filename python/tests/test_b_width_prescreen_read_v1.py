@@ -24,10 +24,11 @@ TOOLS = REPO_ROOT / "python" / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-import b_width_prescreen_read_v1 as reader  # noqa: E402
+import b_width_prescreen_read_v2 as reader  # noqa: E402
 
-SHIPPED_CONFIG = REPO_ROOT / "data" / "b_width_prescreen_v1" / "config.json"
-ANALYZER_SHA256 = hashlib.sha256((TOOLS / "b_width_prescreen_read_v1.py").read_bytes()).hexdigest()
+FROZEN_CONFIG = REPO_ROOT / "data" / "b_width_prescreen_v1" / "config.json"
+SHIPPED_CONFIG = FROZEN_CONFIG.with_name("config-v2.json")
+ANALYZER_SHA256 = hashlib.sha256(Path(reader.__file__).read_bytes()).hexdigest()
 NOW = 1_800_000_000
 ENGINE = "e" * 40
 BINARY = "1" * 64
@@ -430,8 +431,11 @@ class AnalyzerTests(unittest.TestCase):
         config = json.loads(SHIPPED_CONFIG.read_bytes())
         reader.check_config(config)
         self.assertEqual(config["analyzer"]["sha256"], ANALYZER_SHA256)
-        self.assertEqual(config["analyzer"]["path"], "python/tools/b_width_prescreen_read_v1.py")
+        self.assertEqual(config["analyzer"]["path"], "python/tools/b_width_prescreen_read_v2.py")
         self.assertEqual(config["analysis"]["wall_cap_hours"], 48)
+        frozen = json.loads(FROZEN_CONFIG.read_bytes())
+        self.assertEqual(frozen["analyzer"]["sha256"], sha((REPO_ROOT / frozen["analyzer"]["path"]).read_bytes()))
+        self.assertEqual(dict(config, analyzer=frozen["analyzer"]), frozen)
 
     def test_a_known_effect_is_recovered_and_funds(self) -> None:
         tree = self.copy("known")
@@ -959,10 +963,10 @@ class AnalyzerTests(unittest.TestCase):
 
     @staticmethod
     def add_torn_attempt(tree: Tree, k: int = 2, index: int = 3,
-                         data: bytes = b'{"schema": "mtg') -> tuple[str, bytes]:
+                         data: bytes = b'{"schema": "mtg', suffix: str = "0") -> tuple[str, bytes]:
         """Retains a torn attempt record as the driver does and lists it in the chain's collection record (the
         caller re-signs)."""
-        relative = f"collect/torn-attempts/k{k}/torn-attempt-{index:04}.0"
+        relative = f"collect/torn-attempts/k{k}/torn-attempt-{index:04}.{suffix}"
         tree.path(relative).parent.mkdir(parents=True, exist_ok=True)
         tree.path(relative).write_bytes(data)
         tree.edit(f"collect/k{k}/collection.json", lambda v: v["torn_attempts"].append(
@@ -972,10 +976,12 @@ class AnalyzerTests(unittest.TestCase):
     def test_torn_attempt_records_are_required_and_bound(self) -> None:
         tree = self.copy("torn")
         relative, data = self.add_torn_attempt(tree)
+        recovered, recovered_data = self.add_torn_attempt(tree, suffix="00")
         section7 = tree.resign()
         status, read, error = run(tree, section7)
         self.assertEqual((status, read["verdict"]), (0, "FUND_B"), error)
         self.assertEqual(read["inputs"][relative], sha(data))
+        self.assertEqual(read["inputs"][recovered], sha(recovered_data))
         # A listed record that is absent is a missing input: refused, not VOID.
         tree = self.copy("torn-absent")
         relative, _ = self.add_torn_attempt(tree)
@@ -1255,6 +1261,37 @@ class AnalyzerTests(unittest.TestCase):
         self.assertEqual(status, 0, error)
         self.assertEqual(read["verdict"], "FUND_B", read.get("void_detail"))
         self.assertEqual(read["ignored_interrupted_publications"], [".k1-s1-w64.json.tmp-1234"])
+
+    def test_complete_fit_temporary_must_match_published_report(self) -> None:
+        for same in (True, False):
+            with self.subTest(same=same):
+                tree = self.copy(f"complete-temporary-{same}")
+                report = tree.path("fits/k1-s1-w64.json").read_bytes()
+                temporary = tree.path("fits/.k1-s1-w64.json.tmp-42")
+                temporary.write_bytes(report if same else b" " + report)
+                status, read, error = run(tree, self.template_section7)
+                self.assertEqual(status, 0, error)
+                self.assertEqual(read["verdict"], "FUND_B" if same else "VOID", read.get("void_detail"))
+                if not same:
+                    self.assertEqual(read["void_check"], "fits")
+                    self.assertIn(temporary.name, read["void_detail"])
+
+    def test_symlinked_record_folder_or_file_refuses(self) -> None:
+        for record in ("fits", "LAUNCH.json"):
+            with self.subTest(record=record):
+                tree = self.copy(f"symlink-{record}")
+                path = tree.path(record)
+                target = tree.root.with_name(tree.root.name + "-target")
+                is_directory = path.is_dir()
+                path.rename(target)
+                try:
+                    path.symlink_to(target, target_is_directory=is_directory)
+                except OSError as error:
+                    self.skipTest(f"cannot create test symlink: {error}")
+                status, _, error = run(tree, self.template_section7)
+                self.assertEqual(status, 2, error)
+                self.assertIn("neither a file nor a folder", error)
+                self.assertFalse(tree.path(reader.READ_NAME).exists())
 
     def test_read_once_per_root_rerender_and_refusals(self) -> None:
         tree = self.copy("once")
