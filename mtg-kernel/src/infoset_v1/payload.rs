@@ -36,7 +36,7 @@ impl PayloadV1 {
     /// (a Hunter trigger order, a discard or optional-cost reshape, or a
     /// combat object without a canonical index): the caller refuses (R2). A
     /// combat scan travels as the context's combat record (amendment 43.1).
-    pub(crate) fn new(
+    pub fn new(
         export: &InfosetV1,
         live: &FastActorSessionV1,
         viewer: PlayerId,
@@ -59,7 +59,7 @@ impl PayloadV1 {
             return None;
         }
         let mut payload = Self {
-            schema: INFOSET_SCHEMA_V1.into(),
+            schema: export.schema.into(),
             sha256: String::new(),
             state_sha256: export.sha256.clone(),
             deck_ids: live.deck_ids_v1().clone(),
@@ -89,7 +89,10 @@ impl PayloadV1 {
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         let p: Self = serde_json::from_slice(bytes).map_err(|e| format!("payload: {e}"))?;
-        if p.schema != INFOSET_SCHEMA_V1 {
+        if !matches!(
+            p.schema.as_str(),
+            INFOSET_SCHEMA_V1 | super::INFOSET_SCHEMA_V2
+        ) {
             return Err(format!("payload schema {}", p.schema));
         }
         Ok(p)
@@ -97,8 +100,11 @@ impl PayloadV1 {
 
     /// The imported session. Fails closed on any malformed field, and on a
     /// digest that does not match the canonical bytes it imports.
-    pub(crate) fn import(&self) -> Result<FastActorSessionV1, String> {
-        if self.schema != INFOSET_SCHEMA_V1 {
+    pub fn import(&self) -> Result<FastActorSessionV1, String> {
+        if !matches!(
+            self.schema.as_str(),
+            INFOSET_SCHEMA_V1 | super::INFOSET_SCHEMA_V2
+        ) {
             return Err(format!("payload schema {}", self.schema));
         }
         if self.viewer > 1 {
@@ -139,7 +145,8 @@ impl PayloadV1 {
                 &self.handles,
             )?;
         }
-        let digest = super::export::canonical_digest_v1(&state, &self.handles);
+        let digest =
+            super::export::canonical_digest_with_schema(&state, &self.handles, &self.schema);
         if digest != self.state_sha256 {
             return Err("payload state digest differs from its canonical bytes".into());
         }

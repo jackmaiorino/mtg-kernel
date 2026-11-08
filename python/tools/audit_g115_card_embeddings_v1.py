@@ -2,7 +2,7 @@
 import argparse
 from pathlib import Path
 import struct
-from prepare_postboard_qualification_v1 import BASE, REPO, read, write, pin
+from prepare_postboard_qualification_v1 import BASE, REPO, read, read_pinned_checkpoint, write, pin
 from run_postboard_pilot_v1 import verify_pin
 from phase1_breadth_v1.catalog_v1 import canonical_zones
 
@@ -20,7 +20,7 @@ def run(root):
     named={c['name']:i for i,c in enumerate(cards)}
     models={}
     for label,source in [('g115',manifest['candidate']),('a48',manifest['references']['a48'])]:
-        checkpoint=read(verify_pin(source['checkpoint']))
+        checkpoint=read_pinned_checkpoint(source['checkpoint'])
         descriptor=read(verify_pin(source['play_import']))
         initialization=read(verify_pin(descriptor['initialization']))
         initial=verify_pin(descriptor['parameters']).read_bytes()

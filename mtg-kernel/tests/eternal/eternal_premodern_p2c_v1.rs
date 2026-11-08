@@ -4,12 +4,56 @@
 
 use mtg_kernel::card_def::{card_id_by_name, CardDef, CardType, Keywords, Subtype, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
+use mtg_kernel::eternal_cards_v1::EternalStateV1;
+use mtg_kernel::eternal_premodern_p2c_v1::P2cStateV1;
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
-use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::state::{GameObject, GameState, ObjectLinkV4, ObjectStateV4, Step, Target, Zone};
+use std::hash::{Hash, Hasher};
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
+
+#[test]
+fn empty_p2c_state_preserves_legacy_hash_input_and_json() {
+    #[derive(Default)]
+    struct HashInput(Vec<u8>);
+
+    impl Hasher for HashInput {
+        fn finish(&self) -> u64 {
+            0
+        }
+
+        fn write(&mut self, bytes: &[u8]) {
+            self.0.extend_from_slice(bytes);
+        }
+    }
+
+    let mut empty_input = HashInput::default();
+    P2cStateV1::default().hash(&mut empty_input);
+    assert!(empty_input.0.is_empty());
+
+    let mut eternal = EternalStateV1 {
+        energy: [3, 0],
+        ..Default::default()
+    };
+    let legacy_json = serde_json::to_value(&eternal).unwrap();
+    assert!(legacy_json.get("p2c").is_none());
+    assert_eq!(
+        serde_json::from_value::<EternalStateV1>(legacy_json).unwrap(),
+        eternal
+    );
+
+    let mut legacy_input = HashInput::default();
+    eternal.hash(&mut legacy_input);
+    eternal.p2c.paradise_returns.push(ObjectLinkV4 {
+        object: ObjectId(7),
+        zone_change_count: 2,
+    });
+    let mut populated_input = HashInput::default();
+    eternal.hash(&mut populated_input);
+    assert_ne!(legacy_input.0, populated_input.0);
+}
 
 fn id(name: &str) -> u16 {
     card_id_by_name(name).unwrap_or_else(|| panic!("{name}"))

@@ -183,6 +183,24 @@ fn v8_conversion_of_a_trained_checkpoint_preserves_outputs_and_trains() {
         assert_eq!(saved.feature_contract_digest, FEATURE_CONTRACT_DIGEST_V8);
         assert_eq!(saved.parameters.len(), 37);
         v8_source.checkpoint = Some(checkpoint);
+        // The next update resumes this exact optimizer, not merely its step.
+        let (_, resumed) = initialize(&v8_source).unwrap();
+        let restored = resumed.snapshot_v1().unwrap();
+        for (name, expected, actual) in [
+            ("first", &saved.first_moments, &restored.first_moments),
+            ("second", &saved.second_moments, &restored.second_moments),
+        ] {
+            assert_eq!(expected.len(), 37, "{name} saved moment tensors");
+            assert_eq!(actual.len(), 37, "{name} restored moment tensors");
+            let bits: Vec<_> = actual.iter().map(ParameterBitsV1::from_native).collect();
+            assert_eq!(&bits, expected, "{label} {name} Adam moment bits");
+            assert!(
+                expected
+                    .iter()
+                    .any(|tensor| tensor.values.iter().any(|&bits| bits & 0x7fff_ffff != 0)),
+                "{label} {name} moments must be live, not only zero initialization"
+            );
+        }
     }
     let (policy, state) = initialize(&v8_source).unwrap();
     assert_eq!(

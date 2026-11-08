@@ -474,7 +474,9 @@ fn fixture_v1(label: &str) -> FixtureV1 {
 
 #[test]
 fn stages_run_resume_and_preserve_on_a_fixture_parent() {
-    let fixture = fixture_v1("stages");
+    let mut fixture = fixture_v1("stages");
+    fixture.loaded.config.fitting.learning_rate = 1e-6;
+    fixture.loaded.sha256 = sha(&serde_json::to_vec(&fixture.loaded.config).unwrap());
     let (loaded, root) = (&fixture.loaded, fixture.root.as_path());
     let chain = loaded.config.chains[0].clone();
 
@@ -602,6 +604,10 @@ fn stages_run_resume_and_preserve_on_a_fixture_parent() {
     // and present reports are kept. An incomplete interrupted publication is
     // removed.
     let w128_bytes = read_v1(&fit_path_v1(root, 1, 1, "w128")).unwrap();
+    let report_text = std::str::from_utf8(&w128_bytes).unwrap();
+    let rate_field = |value: String| format!("\"learning_rate\": {value},");
+    assert!(report_text.contains(&rate_field(serde_json::to_string(&1e-6f32).unwrap())));
+    assert!(!report_text.contains(&rate_field(serde_json::to_string(&1e-6f64).unwrap())));
     fs::remove_file(fit_path_v1(root, 1, 1, "w128")).unwrap();
     let stale = root.join("fits/.k1-s1-w128.json.tmp-4294967295");
     fs::write(&stale, b"{").unwrap();
@@ -797,24 +803,41 @@ fn an_interrupted_collection_never_replays_an_attempted_game() {
     assert!(create_new_v1(&attempt_path_v1(&games, 5), b"{}").is_err());
     fs::write(games.join(".result-0006.json.tmp-1"), b"{").unwrap();
     let torn = b"{\n  \"schema\": \"mtg-kernel-b-width-prescreen-game-at";
-    // An attempt record that does not parse while the game has result
-    // evidence (a published result, or here an interrupted result
-    // publication) was damaged after it was written: the collection refuses
-    // and dispatches nothing.
-    let damaged_original = read_v1(&attempt_path_v1(&games, 0)).unwrap();
-    for (index, evidence) in [(6, ".result-0006.json.tmp-1"), (0, "result-0000.json")] {
-        fs::write(attempt_path_v1(&games, index), torn).unwrap();
-        let error = collect_chain_stage_v1(loaded, root, &chain, 2).unwrap_err();
-        assert!(
-            error.contains("result evidence") && error.contains(evidence),
-            "{error}"
-        );
-        assert_eq!(read_v1(&attempt_path_v1(&games, index)).unwrap(), torn);
-        assert!(!torn_attempts_dir_v1(root, 1).exists());
-        assert!(!result_path_v1(&games, 3, "json").exists());
-    }
+    // Partial result evidence beside a torn attempt refuses before dispatch.
+    fs::write(attempt_path_v1(&games, 6), torn).unwrap();
+    let error = collect_chain_stage_v1(loaded, root, &chain, 2).unwrap_err();
+    assert!(
+        error.contains("result evidence") && error.contains(".result-0006.json.tmp-1"),
+        "{error}"
+    );
+    assert_eq!(read_v1(&attempt_path_v1(&games, 6)).unwrap(), torn);
+    assert!(!torn_attempts_dir_v1(root, 1).exists());
+    assert!(!result_path_v1(&games, 3, "json").exists());
     fs::remove_file(attempt_path_v1(&games, 6)).unwrap();
-    fs::write(attempt_path_v1(&games, 0), &damaged_original).unwrap();
+
+    // A published result can recover a torn attempt, but only from this build.
+    fs::write(attempt_path_v1(&games, 0), torn).unwrap();
+    let result_path = result_path_v1(&games, 0, "json");
+    let mut foreign: Value = serde_json::from_slice(&published[0]).unwrap();
+    foreign["binary_sha256"] = json!("0".repeat(64));
+    fs::write(&result_path, json_bytes_v1(&foreign).unwrap()).unwrap();
+    let error = collect_chain_stage_v1(loaded, root, &chain, 2).unwrap_err();
+    assert!(error.contains("another engine build"), "{error}");
+    assert_eq!(read_v1(&attempt_path_v1(&games, 0)).unwrap(), torn);
+    fs::write(&result_path, &published[0]).unwrap();
+    let recovered = collect_chain_limited_v1(loaded, root, &chain, 2, Some(0)).unwrap();
+    assert_eq!(recovered["collect"], json!("partial"));
+    assert_eq!(recovered["dispatched"], json!(0));
+    assert!(!attempt_path_v1(&games, 0).exists());
+    assert_eq!(
+        read_v1(&recovered_attempt_path_v1(root, 1, 0)).unwrap(),
+        torn
+    );
+    // The recovery marker also prevents a replay if that result disappears.
+    fs::remove_file(&result_path).unwrap();
+    let error = collect_chain_stage_v1(loaded, root, &chain, 2).unwrap_err();
+    assert!(error.contains("lost its published result"), "{error}");
+    fs::write(&result_path, &published[0]).unwrap();
     // A crash while writing game 7's attempt record left it torn (no result
     // evidence): the game was never dispatched, so the record is retained
     // outside the games directory and the game is played.
@@ -829,15 +852,6 @@ fn an_interrupted_collection_never_replays_an_attempted_game() {
     assert!(complete_json_v1(&whole) && !complete_json_v1(&cut));
     fs::write(attempt_path_v1(&games, 4), &cut).unwrap();
 
-    // A published result from another build is never relabelled as this one's.
-    let result_path = result_path_v1(&games, 1, "json");
-    let mut foreign: Value = serde_json::from_slice(&published[1]).unwrap();
-    foreign["binary_sha256"] = json!("0".repeat(64));
-    fs::write(&result_path, json_bytes_v1(&foreign).unwrap()).unwrap();
-    let error = collect_chain_stage_v1(loaded, root, &chain, 2).unwrap_err();
-    assert!(error.contains("another engine build"), "{error}");
-    fs::write(&result_path, &published[1]).unwrap();
-
     let resumed = collect_chain_stage_v1(loaded, root, &chain, 2).unwrap();
     assert_eq!(resumed["collect"], json!("written"));
     assert_eq!(resumed["dispatched"], json!(4));
@@ -850,6 +864,12 @@ fn an_interrupted_collection_never_replays_an_attempted_game() {
     assert_eq!(
         record.torn_attempts,
         [
+            TornAttemptV1 {
+                index: 0,
+                bytes: torn.len() as u64,
+                sha256: sha(torn),
+                path: "collect/torn-attempts/k1/torn-attempt-0000.00".into(),
+            },
             TornAttemptV1 {
                 index: 4,
                 bytes: cut.len() as u64,
@@ -1390,6 +1410,32 @@ fn within_v1<T: Send + 'static>(seconds: u64, work: impl FnOnce() -> T + Send + 
         .expect("the fit stage did not return: the queue hung")
 }
 
+#[test]
+fn a_parked_waiter_wakes_on_queue_failure() {
+    // First reserve the sole slot for chain 0. Waiting on chain 0 needs its
+    // load to finish, while waiting on chain 1 needs the slot to be released.
+    for blocked_chain in [0, 1] {
+        within_v1(30, move || {
+            let queue = [(0, 1, "w128"), (blocked_chain, 2, "w128")];
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let jobs_per_chain = if blocked_chain == 0 {
+                vec![2]
+            } else {
+                vec![1, 1]
+            };
+            let mut pool = FitQueueV1::new_v1(1, jobs_per_chain);
+            pool.parked = Some(sender);
+            assert!(matches!(pool.next_step_v1(&queue), QueueStepV1::Load(0)));
+            std::thread::scope(|scope| {
+                let worker = scope.spawn(|| pool.next_step_v1(&queue));
+                assert_eq!(receiver.recv().unwrap(), blocked_chain);
+                pool.fail_v1("test failure".into());
+                assert!(matches!(worker.join().unwrap(), QueueStepV1::Stop));
+            });
+        });
+    }
+}
+
 /// A stopped queue wakes every waiting fit and the stage returns an error
 /// promptly: a worker that cannot be started while others wait for a chain
 /// slot, and a fit that refuses while others wait. The stage then resumes
@@ -1398,8 +1444,7 @@ fn within_v1<T: Send + 'static>(seconds: u64, work: impl FnOnce() -> T + Send + 
 fn a_stopped_cross_chain_queue_wakes_its_waiting_fits() {
     let fixture = prepared_two_chain_root_v1("queue-stop", |_| {});
     let (loaded, root) = (fixture.loaded.clone(), fixture.root.clone());
-    // One resident chain: while worker 0 loads chain 1, workers 1 and 2 wait;
-    // worker 3 cannot be started.
+    // One resident chain, with a failure when starting worker 3.
     let error = within_v1(300, move || {
         let chains: Vec<&PrescreenChainV1> = loaded.config.chains.iter().collect();
         fit_cross_chain_queue_v1(&loaded, &root, &chains, 4, 1, 1, Some(3)).unwrap_err()

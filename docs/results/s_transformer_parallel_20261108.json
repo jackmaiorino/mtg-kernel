@@ -1,0 +1,251 @@
+{
+  "schema": "s-transformer-parallel-qualification-manifest/v1",
+  "date": "2026-11-08",
+  "measurement": "haley-cs-first4-q001",
+  "native_runtimes": {
+    "baseline": {
+      "engine_commit": "483c13669acee8e514b34874e60e7c1ce04ec59b",
+      "tracked_tree_sha256": "184036c26a258bb16d69cf9c41e14555fb72a3e38fa9b3f8eaf7b95bfd77e486",
+      "binary_sha256": "3182e01ffcf15b7fd26023ad0c52b4b84883fdb36dd9c7e8b7f9bbee1ebc97da"
+    },
+    "candidate": {
+      "engine_commit": "e6f91a9f255cd575612fcdf16dc5fec062635795",
+      "tracked_tree_sha256": "cc586e8290b55ebe02ffaf17aa2a937f35dae97e11a3a346ef3aee22fb2944e4",
+      "binary_sha256": "8a91fa48d9d6180729b304e2fdafe4398676decc69daccb4e00446e3d3949349"
+    }
+  },
+  "qualification_driver": {
+    "commit": "80c02c144254070218658bf450fd945545e798ca",
+    "sha256": "638eff8fd2b9951e23a092a613554107c50cd374f358cd092d2db70bc1979616"
+  },
+  "toolchain": {
+    "rustc": "1.94.1 (e408947bfd200af42db322daf0fadfe7e26d3bd1)",
+    "cargo": "1.94.1 (29ea6fb6a)",
+    "llvm": "21.1.8",
+    "target": "x86_64-pc-windows-msvc",
+    "linker": "MSVC 14.50.35725.0",
+    "release_lto": false,
+    "release_codegen_units": 16,
+    "dispatcher_python": "3.12.10"
+  },
+  "placement": {
+    "host_role": "computehost",
+    "cpu": "AMD Ryzen 9 5900XT",
+    "os": "Windows",
+    "logical_cpu_affinity": [
+      8,
+      9,
+      10,
+      11
+    ],
+    "physical_cores": 2,
+    "logical_cpus": 4,
+    "collection_workers": 4,
+    "preparation_and_learner_workers": 4,
+    "gpu_ordinal": null,
+    "process_memory_limit_bytes": 8589934592
+  },
+  "input": {
+    "original_archived_config_sha256": "770c281f505b4a15768d91715c69150521116309bede21911426f72141a774d8",
+    "rebased_first4_config_sha256": "59b2a462a743cc5b4febc8e32feb3e2087b1b4b546179c8d6bfb136bcbb49a14",
+    "initial_s_state_sha256": "6ae9b2657032cb04e47484a68e5a97b861e48f41278d9b13c680c11d934d7b88",
+    "episode_seeds_by_update": [
+      [
+        3230285927495837097,
+        8468034150591199429,
+        5443797157649950238,
+        1461950030024333423,
+        154885092383655662,
+        6323858385646599222,
+        2397441536135438557,
+        8983515624355188604,
+        6719121644773361022,
+        22021921925546304
+      ],
+      [
+        7302074781857327896,
+        6083200271308468679,
+        8900710307139875295,
+        4332997400294382567,
+        5631664363198952869,
+        8517327441358872667,
+        6567958455000191924,
+        5511236690041240692,
+        4240087800925297454,
+        1573259495376733670
+      ],
+      [
+        4168185454198923669,
+        5086432787963808663,
+        5951472305689850846,
+        3483415467593832276,
+        6391144645833818276,
+        7393506475429067265,
+        8053290977946491948,
+        3919258665941148366,
+        6341402293844498931,
+        1003593368249081911
+      ],
+      [
+        5778408161505372815,
+        4171963389024052977,
+        7212645262291271163,
+        8816933207178594422,
+        7339902695659836623,
+        661872254031135065,
+        8025525934111305802,
+        3968678798638868485,
+        3373702010397905912,
+        2209876950503084757
+      ]
+    ]
+  },
+  "method": {
+    "worker_settings_per_runtime": [
+      [
+        1,
+        1
+      ],
+      [
+        2,
+        2
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        4,
+        4
+      ],
+      [
+        4,
+        2
+      ]
+    ],
+    "qualification_updates": 10,
+    "order": [
+      "baseline",
+      "candidate",
+      "candidate",
+      "baseline"
+    ],
+    "updates_per_trial": 4,
+    "games_per_update": 10,
+    "abba_completed_games": 160
+  },
+  "trials": [
+    {
+      "name": "baseline",
+      "native_seconds": 16.67099999997299,
+      "native_and_on_host_recovery_seconds": 19.375,
+      "learner_seconds": 9.3142613,
+      "report_sha256": "743e947856f2026cfde0e18dbae5cd817abb6f48709c967f9fdf5986c4cf1391"
+    },
+    {
+      "name": "candidate",
+      "native_seconds": 12.436999999976251,
+      "native_and_on_host_recovery_seconds": 15.10899999999674,
+      "learner_seconds": 4.8499644,
+      "report_sha256": "d23b8943b2bff2da744101154c0cc7f874931403f63440542452ece2ef554285"
+    },
+    {
+      "name": "candidate",
+      "native_seconds": 12.563000000023749,
+      "native_and_on_host_recovery_seconds": 15.23399999999674,
+      "learner_seconds": 4.9636709,
+      "report_sha256": "dead5e715b18342fb8bb7054ff68baf11fde515c3f63657ee9a7f1877cfde9be"
+    },
+    {
+      "name": "baseline",
+      "native_seconds": 16.76600000000326,
+      "native_and_on_host_recovery_seconds": 19.56300000002375,
+      "learner_seconds": 9.149795000000001,
+      "report_sha256": "5696bbb4376032b5fb22677eb0cf6de30df95137cfdc68b66ba80b143a7ddb83"
+    }
+  ],
+  "means": {
+    "baseline": {
+      "native_seconds": 16.718499999988126,
+      "native_and_on_host_recovery_seconds": 19.469000000011874,
+      "learner_seconds": 9.232028150000001
+    },
+    "candidate": {
+      "native_seconds": 12.5,
+      "native_and_on_host_recovery_seconds": 15.17149999999674,
+      "learner_seconds": 4.906817650000001
+    }
+  },
+  "speedups": {
+    "native": 1.33747999999905,
+    "native_and_on_host_recovery": 1.283261378243157,
+    "learner": 1.8814695814098574
+  },
+  "parity": {
+    "all_ten_qualification_fingerprints_equal": true,
+    "all_four_abba_state_sequences_equal": true,
+    "state_container_sha256_by_update": [
+      "699a3b747b70dac06120d8f47c49d64d5a200814faa0dab00271ff8bb5d78ac9",
+      "b4ae7a4b740f0f6ed55c1af4dd5e57b523d7304b02609e641979da3bdcfcf3c0",
+      "f421e46e66e93752c1935c8504c9b83cb1ca7d765fcfd341a3f5100676d1f802",
+      "6dd7e76100574542c225702759049a3f0b174cbf2a6544ab893f1e17661905f5"
+    ],
+    "full_adam_state_digest_by_update": [
+      "06db85bd83d63a3e9823f6d77dbd6e6bf7a4036662b7dfd8b4df315367083a4e",
+      "2fd3feb3ba9f7ba6ecc629e0870abf1ecb9525fa271960387efd371bc62439ac",
+      "633037355b5b0d32965d9919e39ff98db7eb2e81667bd6beb11e726102493c58",
+      "91539731330b843b81ddc4bfb996813a007fd7adb38f06bfca57e140c2c2b22c"
+    ],
+    "raw_trajectory_byte_comparison_scope": "first update only; later checkpoint-path provenance differs"
+  },
+  "validation": {
+    "native_passed": 30,
+    "native_optional_timing_ignored": 1,
+    "focused_dispatcher_tests_passed": 4,
+    "diff_check_passed": true,
+    "hosted_ci": "queued at delivery; not claimed passed"
+  },
+  "evidence": {
+    "plan_sha256": "ef7f16341624c5af3829864d958f7bac9a38e24e11b4ac347a313dd31917bb27",
+    "result_sha256": "f4af606edaa9b9d05df8fbcbf27eaa510b0a34d9c285cb10f815f7e5e0f6035d",
+    "inbound_transport_seconds": 62.819909700076096,
+    "archive_sha256": "254675cb40527d792331d6926658f00e0ecd6b420428198efe5a9c2b21e91468",
+    "independent_custody_verification": {
+      "passed": true,
+      "receipt_sha256": "e6669d5658a93dd7ef636c292901ec3dabfd500dc0b5e57b3469465996a2d473",
+      "files": 1167,
+      "payload_bytes": 1576865382,
+      "archive_bytes": 665278906,
+      "physical_disks": [
+        {
+          "DriveLetter": "E",
+          "DiskNumber": 1
+        },
+        {
+          "DriveLetter": "D",
+          "DiskNumber": 2
+        }
+      ],
+      "timing": {
+        "remote_archive_seconds": 30.04700000002049,
+        "remote_command_seconds": 31.130709400051273,
+        "transfer_seconds": 169.41533330001403,
+        "cold_hash_and_seal_seconds": 1.3424107999308035,
+        "independent_recovery_seconds": 25.746875199954957,
+        "total_seconds": 230.73236479994375
+      }
+    }
+  },
+  "limitations": [
+    "Two observed ABBA pairs on an initial-state four-update CS prefix.",
+    "Same release settings for both binaries; LTO disabled.",
+    "No Linux fleet, later-checkpoint, larger-allocation, auxiliary-update, or playing-strength claim.",
+    "Native and on-host recovery timers exclude one-time transport and final custody work."
+  ],
+  "resource_preservation": {
+    "active_linux_chains_modified": false,
+    "desktop_human_session_modified": false,
+    "canonical_qualification_reservation_released": true,
+    "new_paid_compute_usd": 0
+  }
+}

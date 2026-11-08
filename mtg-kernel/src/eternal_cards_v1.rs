@@ -414,30 +414,31 @@ pub enum EternalOpV1 {
     E8aV1(crate::eternal_legacy_e8a_v1::E8aOpV1),
     /// A leaf owned by wave E9b's module.
     E9bV1(crate::eternal_e9b_v1::E9bOpV1),
-    /// A leaf owned by wave S1d's module.
-    S1dV1(crate::eternal_sideboard_s1d_v1::S1dOpV1),
-    /// A leaf owned by wave S1b's module.
-    S1bV1(crate::eternal_sideboard_s1b_v1::S1bOpV1),
     /// A leaf owned by wave E9a's module.
     E9aV1(crate::eternal_legacy_e9a_v1::E9aOpV1),
     /// A leaf owned by Premodern wave P1b's module.
     P1bV1(crate::eternal_premodern_p1b_v1::P1bOpV1),
     /// A leaf owned by Premodern wave P2a's module.
     P2aV1(crate::eternal_premodern_p2a_v1::P2aOpV1),
-    /// A leaf owned by Premodern wave P2c's module.
-    P2cV1(crate::eternal_premodern_p2c_v1::P2cOpV1),
     /// A leaf owned by Premodern wave P2d's module.
     P2dV1(crate::eternal_premodern_p2d_v1::P2dOpV1),
     /// A leaf owned by Premodern wave P1a's module.
     P1aV1(crate::eternal_premodern_p1a_v1::P1aOpV1),
     /// A leaf owned by Premodern wave P2b's module.
     P2bV1(crate::eternal_premodern_p2b_v1::P2bOpV1),
+    /// A leaf owned by Premodern wave P2c's module. Appended to preserve
+    /// existing stack and continuation hash discriminants.
+    P2cV1(crate::eternal_premodern_p2c_v1::P2cOpV1),
     /// A leaf owned by the outside-the-game zone's module (wishes, learn).
     OutsideGameV1(crate::eternal_outside_game_v1::OutsideGameOpV1),
-    /// A leaf owned by wave S1c's module.
-    S1cV1(crate::eternal_sideboard_s1c_v1::S1cOpV1),
     /// A leaf owned by sideboard wave S1a's module.
     S1aV1(crate::eternal_sideboard_s1a_v1::S1aOpV1),
+    /// A leaf owned by wave S1b's module.
+    S1bV1(crate::eternal_sideboard_s1b_v1::S1bOpV1),
+    /// A leaf owned by wave S1c's module.
+    S1cV1(crate::eternal_sideboard_s1c_v1::S1cOpV1),
+    /// A leaf owned by wave S1d's module.
+    S1dV1(crate::eternal_sideboard_s1d_v1::S1dOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it

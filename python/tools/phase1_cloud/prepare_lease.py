@@ -32,7 +32,8 @@ import urllib.error
 import urllib.request
 from common import encoded, pin, read, require, write, require_fresh_funding_snapshot
 from lease_guard import Provider as AccountProvider, validate
-from external_guard import LeaseClient, record_create_attempt, require_boundary, resolve_or_alert, valid_id
+from external_guard import (LeaseClient, ReleaseClaimed, StoreClosed, record_create_attempt, record_created_pod,
+                            require_boundary, resolve_or_alert, valid_id)
 from runtime_observation import IMAGE_REFERENCE
 
 KEY_PLACEHOLDER = '__INJECT_AT_POST_DO_NOT_SAVE__'
@@ -334,13 +335,11 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
     with LeaseClient(output / 'known-pods', body.get('name'), key, options.get('provider'), options.get('pods'),
                      clock, sleep, output / 'ALERT-pod-not-released.json', lease_deadline=deadline,
                      min_release_seconds=MIN_RELEASE_SECONDS) as client:
-        # Last check before the POST, after the client's setup; only the attempt record comes between.
-        require(clock() - observed_epoch <= FUNDING_MAX_AGE_SECONDS,
-                'funding observation older than %d s at the create attempt' % FUNDING_MAX_AGE_SECONDS)
         # The external guard treats an attempt without a receipt or a definite
         # refusal as a create that may have allocated a Pod no receipt names.
         # Under the store lock, and refused once the guard has completed (I4).
-        record_create_attempt(output, {'epoch': now, 'exact_name': body.get('name')})
+        record_create_attempt(output, {'epoch': now, 'exact_name': body.get('name')}, funding_observed=observed_epoch,
+                              funding_max_age=FUNDING_MAX_AGE_SECONDS, clock=clock)
         return _post_and_record(client, api, body, output, now, deadline, clock, sleep)
 
 
@@ -394,7 +393,11 @@ def _post_and_record(client, api, body, output, now, deadline, clock, sleep):
         raise error
     result = {'schema': CREATED_SCHEMA, 'created_epoch': now, **sanitized}
     # The ID is already handed off (known-pods); a failed receipt write still fails the create.
-    write(output / 'created-pod.json', result, replace=True)
+    try:
+        record_created_pod(client.folder, result, writer=write)
+    except (ReleaseClaimed, StoreClosed):
+        client.register([pod_id])
+        raise
     return result
 
 

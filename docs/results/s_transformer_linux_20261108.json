@@ -1,0 +1,275 @@
+{
+  "schema": "s-transformer-linux-qualification-manifest/v1",
+  "date": "2026-11-08",
+  "measurement": "haley-wsl-cs-first4-q001",
+  "native_runtimes": {
+    "baseline": {
+      "engine_commit": "483c13669acee8e514b34874e60e7c1ce04ec59b",
+      "tracked_tree_sha256": "184036c26a258bb16d69cf9c41e14555fb72a3e38fa9b3f8eaf7b95bfd77e486",
+      "binary_sha256": "5c4cde383bf8e9f94ec7a682079114bed7d18618ded0bfc665e9fd24c1ebeef2",
+      "binary_bytes": 77474792,
+      "runtime_sha256": "7fb85535c206b5cd93dacafe4f31550015e37472ba5aa428dc587aff7327f047"
+    },
+    "candidate": {
+      "engine_commit": "e6f91a9f255cd575612fcdf16dc5fec062635795",
+      "tracked_tree_sha256": "cc586e8290b55ebe02ffaf17aa2a937f35dae97e11a3a346ef3aee22fb2944e4",
+      "binary_sha256": "73f54bcecdfd6113e4fe4fd0cc0192fe6e4c842423dd94633a6970da4554ad2b",
+      "binary_bytes": 77094680,
+      "runtime_sha256": "00537224369e274622987726478e1ad5f61594f95df8f3b6d601e54de4e940d7"
+    }
+  },
+  "qualification_driver": {
+    "commit": "1234ae4e61574e7d4ad6cf7758e0fa793edd615a",
+    "tools_bundle_sha256": "ea95ed75b6b4e7d4c7b5cb261107806e5d142bb6a8df692693dcf10b11e39fa9",
+    "prospective_cleanup_commit": "9946f70bf0794451baf908fdea2661ccc4f800d4"
+  },
+  "toolchain": {
+    "rustc": "1.94.1 (e408947bfd200af42db322daf0fadfe7e26d3bd1)",
+    "cargo": "1.94.1 (29ea6fb6a)",
+    "llvm": "21.1.8",
+    "target": "x86_64-unknown-linux-gnu",
+    "linker_driver": {
+      "version": "GCC 12.2.0",
+      "path": "/usr/bin/x86_64-linux-gnu-gcc-12",
+      "sha256": "75e997ec62297a6484f491bae28ab0ccb489daba23e398fd10fe68e9e6f0def8"
+    },
+    "linker": {
+      "version": "GNU ld 2.40",
+      "path": "/usr/bin/x86_64-linux-gnu-ld.bfd",
+      "sha256": "f6d71a1bcd45764550a42dfaa179bc43b63ee879ec6f875bfd39fca013515da7"
+    },
+    "dispatcher_python": "3.12.14",
+    "cargo_lock_sha256": "fa9d3bfa9120b1a06452b5c9111ecfb9796aef0448de97dfc451e4fd8735a9fe",
+    "release": {
+      "lto": false,
+      "codegen_units": 16,
+      "incremental": false,
+      "jobs": 1,
+      "locked": true,
+      "binary": "native_expanded_training_run_v1",
+      "offline": true
+    },
+    "runtime_libraries": {
+      "ld-linux-x86-64.so.2": {
+        "path": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        "sha256": "02bcda52c1a5dfc236f94d9e5255b4a0e26347d8a372a5223b650e31f291ce3c"
+      },
+      "libc.so.6": {
+        "path": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "6b4a45352fd0c540a9c7c718f35ce8c8e46a4e482f9d3885a910c32d1a0e1421"
+      },
+      "libm.so.6": {
+        "path": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+        "sha256": "7f2ca87f652f56b094462474b076749e90e689d0ecb9cb63c7679820b271b4e7"
+      },
+      "libgcc_s.so.1": {
+        "path": "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+        "sha256": "2bd1552c47799ef67e701e81d4383061fd76059868e446e63560f0dd0d5ec14e"
+      }
+    }
+  },
+  "placement": {
+    "host_role": "computehost",
+    "guest_hostname": "HaleysPC",
+    "os": "Debian 12 Bookworm under WSL2",
+    "kernel_release": "6.18.54.1-microsoft-standard-WSL2",
+    "guest_vcpu_affinity": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "guest_ram_cap_gib": 12,
+    "observed_guest_memory_kib": 12251724,
+    "guest_swap_kib": 0,
+    "native_memory_limit_bytes": 8589934592,
+    "gpu_ordinal": null,
+    "baseline": {
+      "collection_workers": 3,
+      "preparation_workers": 3,
+      "learner_workers": 1
+    },
+    "candidate": {
+      "collection_workers": 4,
+      "preparation_workers": 4,
+      "learner_workers": 4
+    }
+  },
+  "input": {
+    "original_archived_config_sha256": "770c281f505b4a15768d91715c69150521116309bede21911426f72141a774d8",
+    "linux_rebased_first4_config_sha256": "93d0c4743981fbe7a2497b6c4ab1ed4ab269c7508b072ce228002421d32bbe72",
+    "fixture_rebase_sha256": "4ee83764118eb604699308afb0ad64ff652d945aafd8ccccf7b48b385ede2472",
+    "initial_s_state_sha256": "6ae9b2657032cb04e47484a68e5a97b861e48f41278d9b13c680c11d934d7b88",
+    "episode_seeds_by_update": [
+      [3230285927495837097,8468034150591199429,5443797157649950238,1461950030024333423,154885092383655662,6323858385646599222,2397441536135438557,8983515624355188604,6719121644773361022,22021921925546304],
+      [7302074781857327896,6083200271308468679,8900710307139875295,4332997400294382567,5631664363198952869,8517327441358872667,6567958455000191924,5511236690041240692,4240087800925297454,1573259495376733670],
+      [4168185454198923669,5086432787963808663,5951472305689850846,3483415467593832276,6391144645833818276,7393506475429067265,8053290977946491948,3919258665941148366,6341402293844498931,1003593368249081911],
+      [5778408161505372815,4171963389024052977,7212645262291271163,8816933207178594422,7339902695659836623,661872254031135065,8025525934111305802,3968678798638868485,3373702010397905912,2209876950503084757]
+    ]
+  },
+  "method": {
+    "worker_settings_per_runtime": [[1, 1], [2, 2], [3, 3], [4, 4], [4, 2]],
+    "qualification_updates": 10,
+    "order": [
+      "baseline",
+      "candidate",
+      "candidate",
+      "baseline"
+    ],
+    "updates_per_trial": 4,
+    "games_per_update": 10,
+    "abba_completed_games": 160,
+    "total_completed_games": 260,
+    "total_completed_updates": 26
+  },
+  "trials": [
+    {
+      "name": "baseline",
+      "native_seconds": 17.573737209000228,
+      "recovery_inclusive_seconds": 21.295317606000026,
+      "learner_seconds": 8.654298772999999,
+      "report_sha256": "6951b65c25770c5ef895f6d2f48d687910fad6da49bd8b9b90b84a856ad3d03d"
+    },
+    {
+      "name": "candidate",
+      "native_seconds": 12.875483172000258,
+      "recovery_inclusive_seconds": 16.3606483210001,
+      "learner_seconds": 4.044995721,
+      "report_sha256": "fa40c3deecc15dad83c6beb1f0ff2311ff262ca3ec9f206f811a8eaeb292bfe8"
+    },
+    {
+      "name": "candidate",
+      "native_seconds": 12.723629295000137,
+      "recovery_inclusive_seconds": 16.47831101699967,
+      "learner_seconds": 3.961096951,
+      "report_sha256": "1af1d8735f45467868a2215db4c98f7d33e7d85016c624d6bc52839a4f0968f5"
+    },
+    {
+      "name": "baseline",
+      "native_seconds": 17.67528312000013,
+      "recovery_inclusive_seconds": 21.421256133000043,
+      "learner_seconds": 8.597385134,
+      "report_sha256": "630a30587e9a91f946fcb95363303cab49ec2cbd75f5678f2e89b6192f21eee3"
+    }
+  ],
+  "metrics": {
+    "native_seconds": {
+      "baseline": 17.62451016450018,
+      "candidate": 12.799556233500198,
+      "speedup": 1.376962594872755,
+      "time_reduction_percent": 27.37638598727441
+    },
+    "recovery_inclusive_seconds": {
+      "baseline": 21.358286869500034,
+      "candidate": 16.419479668999884,
+      "speedup": 1.3007895073450262,
+      "time_reduction_percent": 23.123611133591638
+    },
+    "learner_seconds": {
+      "baseline": 8.6258419535,
+      "candidate": 4.003046336000001,
+      "speedup": 2.154819412387636,
+      "time_reduction_percent": 53.592398775916195
+    }
+  },
+  "paired_native_speedups": [
+    1.3648992410022371,
+    1.3891699223700105
+  ],
+  "parity": {
+    "matching_qualification_fingerprints": 10,
+    "first_update_fingerprint": {
+      "trajectories": [
+        "aea5eca94ebe4498d9e4f760957a0a072d2a6714a09945ac19b63098ade80ad5",
+        "b4b3cd7314f1bc28db276b8c99779766852c37c1be408f0322c93316c0af02f2",
+        "23bbd97e03542c13372998485511d56c234195ead20f2305bc38d750b2fad6ee",
+        "604663ba0846bb4cc6233881d44f7083efd3721a98d50df9bcf9c3a6db912984",
+        "af72dc2e3bc02921d2ebea0ef8aad4712d95ea85e9e13b89a0493f1432a86548",
+        "495e37e97c989d6eeaa71a98c677fad5e9381dcec2e6e17b7a84579189b86dff",
+        "73c3136ee4cbb7e452803ed8de06a4932a6cb0f8947822c801ffe02b0abe4d02",
+        "92c854f51d0ee4bda0021b56bcb51d70304db77b2502f3b8c3537097d249f5f4",
+        "9fb85768847b903dad03f2c10176701fde7d2133aee0ff8ff22dbb352bf2b7b0",
+        "d5f50f3d895d78d2f8a185948be64fc7a882ff853c739166e3cd23d7cdc47e82"
+      ],
+      "checkpoint_bits": "b501f91e568a2bf9abd0bfcfd3c77e08588089f64677debc9f0a2414b8ef7ede",
+      "non_natural_ledger": "fec2cca9417027d8acca0d88c0f2dacb44b93654218c15629f47db893bce3f85"
+    },
+    "full_adam_state_digest_by_update": [
+      "06db85bd83d63a3e9823f6d77dbd6e6bf7a4036662b7dfd8b4df315367083a4e",
+      "2fd3feb3ba9f7ba6ecc629e0870abf1ecb9525fa271960387efd371bc62439ac",
+      "633037355b5b0d32965d9919e39ff98db7eb2e81667bd6beb11e726102493c58",
+      "91539731330b843b81ddc4bfb996813a007fd7adb38f06bfca57e140c2c2b22c"
+    ],
+    "state_container_sha256_by_update": [
+      "699a3b747b70dac06120d8f47c49d64d5a200814faa0dab00271ff8bb5d78ac9",
+      "b4ae7a4b740f0f6ed55c1af4dd5e57b523d7304b02609e641979da3bdcfcf3c0",
+      "f421e46e66e93752c1935c8504c9b83cb1ca7d765fcfd341a3f5100676d1f802",
+      "6dd7e76100574542c225702759049a3f0b174cbf2a6544ab893f1e17661905f5"
+    ],
+    "abba_all_four_runs_match": true,
+    "windows_prefix_state_and_container_hashes_match": true,
+    "raw_trajectory_byte_comparison_scope": "First update only. Later checkpoint path provenance is specific to each run."
+  },
+  "validation": {
+    "linux_focused_tests_passed": 6,
+    "linux_test_log_sha256": "9924c1e715c754d64ffba774db9cbb5fa6086b4ea92ba250ae3170eaecd1408e",
+    "prospective_guardian_mocked_cleanup_checks_passed": 3,
+    "hosted_ci_at_reporting": "queued"
+  },
+  "evidence": {
+    "build_manifest_sha256": "3fb2ad204139668d049b2672359a20dcd56368d8396d3d7517825c8e727ce687",
+    "toolchain_sha256": "0beddb5236bb95344665ec94d711af32242b73e23c7323263ecf7fb3b623035e",
+    "guardian_vm_sha256": "45e90ee5ff4c087674bc56309fddedf9ead21b8aaf473cdf9b7a89fc68899c6f",
+    "stopped_preflight_archive_sha256": "d4af8f2e42dc4f2116c14904ed62ba8ed702cb17ca1d0210e68f9ce013991c58",
+    "stopped_preflight_lifetime_sha256": "551b750b7b18b626aa6c73a922ca9ed99d3ae15c236a1424e1dd8ea153a81862",
+    "plan_sha256": "3865d426fbb4e1acbed13c08fb41869d95169a903e5eda4dd42413521714782d",
+    "result_sha256": "44702e291e621e8fae2519a20e344fe7a3ad8e9b1ab7055e8ea286944aea3398",
+    "analysis_sha256": "3ec07e2abc4ca424ff9863083581eab1b581653b196bad6aeca6bfb4a9e5970a",
+    "choice_sha256": {
+      "baseline": "d3488c8d16f14b7012445383fea8a4ac52e1b4b0af56c07c7f4ee8e23d414032",
+      "candidate": "7189e4fd60effd27914d7f8f4e3f6145b9819c1dd1d4caa1a1aae716ffb0d075"
+    },
+    "observation_sha256": {
+      "baseline": "eb93a5346381322b1ad363e063a0188fffd0aa5273995bf058d76956ca0fef1a",
+      "candidate": "abd73e205fe110f81629183df82284f7e6eabfb1ce2fb9e8ea58122a2170ab02"
+    },
+    "custody": {
+      "receipt_sha256": "67593fdfaac2be91ff8ebf99e24f3d396f6c142b436a0e0023a8ee95a93da02e",
+      "archive_sha256": "2f257d0f9f656ca04a3b60b3282ee34889b87b4beacec3009c4a38714616e2a7",
+      "archive_bytes": 577814432,
+      "archive_sha_verified_on_both_disks": true,
+      "cold_volume": "E",
+      "cold_physical_disk": 1,
+      "independent_volume": "D",
+      "independent_physical_disk": 2,
+      "return_seconds": 10.2383465,
+      "return_copy_and_verify_seconds": 19.0898943
+    },
+    "restoration": {
+      "cleanup_sha256": "62338c73ae24f3ae3cce31e6ec594a3c457f66f78bc933b7d76529253cec229e",
+      "guardian_cleanup_sha256": "bad358759a234afa6eb1b01d259043fdfa108df92cf00a00c68ee81bdac5450a",
+      "windows_reservation_status_sha256": "fae01a576d3e893ddede1a11bb17579a1ca6a8c362d6a50ba6fb298e725fb505",
+      "cleanup_metadata_archive_sha256": "000ee6cb7ba2bbfc338237e5ebae43b4f339c28cff1ebacd2373bf0a43ba87d3",
+      "cleanup_metadata_archive_bytes": 7455,
+      "cleanup_metadata_members_verified": 15,
+      "checked_at": "2026-11-08T16:37:53.068543+00:00",
+      "owned_wsl_and_docker_stopped": true,
+      "canonical_windows_reservation_released": true,
+      "wslconfig_original_absent_restored": true,
+      "c_free_floor_bytes": 64424509440,
+      "c_free_verified_bytes": 67634204672,
+      "retained_guest_vhdx_allocated_bytes": 4395630592
+    }
+  },
+  "limitations": [
+    "Two observed pairs on one initial-state four-update CS prefix.",
+    "Each runtime used its own fastest measured allocation.",
+    "WSL guest vCPU affinity describes the guest. Native fleet placement requires separate qualification.",
+    "Build, evidence return and custody are outside the measured training and on-host recovery timers."
+  ],
+  "handoff": {
+    "collaboration_pr": "https://github.com/jackmaiorino/mtg-kernel-collab/pull/381",
+    "native_full_layout_qualification_required": true,
+    "acknowledgement": "pending"
+  }
+}

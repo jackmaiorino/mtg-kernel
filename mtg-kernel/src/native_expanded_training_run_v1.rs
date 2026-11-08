@@ -651,8 +651,8 @@ impl NativeExpandedTrainingRunV1 {
                         self.loss_selection,
                         ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
                     ),
-                "an S learner run requires the ordinary sequential CPU GAE update, record \
-                 format v1 and the legacy sampler, without line (b), E, SQ1 or search targets",
+                "an S learner run requires the ordinary CPU GAE update, record format v1 and \
+                 the legacy sampler, without net-8 backward modes, line (b), E, SQ1 or search targets",
             )?;
         }
         if let Some(options) = &self.e_supported {
@@ -1350,7 +1350,10 @@ fn validate_update(
             == line_b_frozen_sha256,
         "line (b) frozen tensors differ from the run's initial source",
     )?;
-    update_backend.validate_update_execution_v1(&document)?;
+    let s_parallel_workers =
+        (source.s_learner.is_some() && ex1.is_none() && preparation_workers > 1)
+            .then_some(preparation_workers);
+    update_backend.validate_update_execution_v1(&document, s_parallel_workers)?;
     validate_preparation_execution(
         &document,
         preparation_workers,
@@ -3383,7 +3386,7 @@ mod tests {
         serde_json::from_value(update["checkpoint"].clone()).unwrap()
     }
 
-    fn checkpoint_identity_v1(pin: &PinnedFileV1) -> (String, String, u64) {
+    fn checkpoint_document_v1(pin: &PinnedFileV1) -> Value {
         // The default writes containers for these kinds; read either format.
         let bytes = fs::read(&pin.path).unwrap();
         let bytes =
@@ -3393,7 +3396,11 @@ mod tests {
             } else {
                 bytes
             };
-        let checkpoint: Value = serde_json::from_slice(&bytes).unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    fn checkpoint_identity_v1(pin: &PinnedFileV1) -> (String, String, u64) {
+        let checkpoint = checkpoint_document_v1(pin);
         (
             checkpoint["feature_contract_digest"]
                 .as_str()
@@ -3497,6 +3504,26 @@ mod tests {
                 (FEATURE_CONTRACT_DIGEST_V8, FEATURE_ENCODING_DIGEST_V8)
             );
             assert_eq!(adam_step, step);
+        }
+        // The same two updates without a pause must reach identical full
+        // train states, including all optimizer moments after the next update.
+        let mut uninterrupted = v8.clone();
+        uninterrupted.output_directory = temporary_directory("flat-v8-uninterrupted").join("run");
+        let continuous = run_native_expanded_training_v1(&uninterrupted, None).unwrap();
+        for index in 0..2 {
+            let resumed = checkpoint_document_v1(&iteration_checkpoint_v1(&result, index));
+            let straight = checkpoint_document_v1(&iteration_checkpoint_v1(&continuous, index));
+            assert_eq!(
+                resumed["state_sha256"], straight["state_sha256"],
+                "update {index} state"
+            );
+            for field in ["first_moments", "second_moments"] {
+                assert_eq!(resumed[field].as_array().unwrap().len(), 37);
+                assert_eq!(
+                    resumed[field], straight[field],
+                    "update {index} {field} bits"
+                );
+            }
         }
     }
 

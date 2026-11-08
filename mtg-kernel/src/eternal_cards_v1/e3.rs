@@ -287,21 +287,21 @@ pub enum E3ChoiceKindV1 {
     E8aV1(crate::eternal_legacy_e8a_v1::E8aChoiceV1),
     /// A wave E9b choice (`eternal_e9b_v1`).
     E9bV1(crate::eternal_e9b_v1::E9bChoiceV1),
-    /// A wave S1c choice (`eternal_sideboard_s1c_v1`).
-    S1cV1(crate::eternal_sideboard_s1c_v1::S1cChoiceV1),
     /// A wave E9a choice (`eternal_legacy_e9a_v1`).
     E9aV1(crate::eternal_legacy_e9a_v1::E9aChoiceV1),
     /// A Premodern wave P1b choice (`eternal_premodern_p1b_v1`).
     P1bV1(crate::eternal_premodern_p1b_v1::P1bChoiceV1),
-    /// A Premodern wave P2c choice (`eternal_premodern_p2c_v1`).
-    P2cV1(crate::eternal_premodern_p2c_v1::P2cChoiceV1),
     /// A Premodern wave P2a choice (`eternal_premodern_p2a_v1`).
     P2aV1(crate::eternal_premodern_p2a_v1::P2aChoiceV1),
     /// A Premodern wave P1a choice (`eternal_premodern_p1a_v1`).
     P1aV1(crate::eternal_premodern_p1a_v1::P1aChoiceV1),
+    /// A Premodern wave P2c choice. Appended to preserve existing hashes.
+    P2cV1(crate::eternal_premodern_p2c_v1::P2cChoiceV1),
     /// A choice owned by the outside-the-game zone's module (Karn's exile
     /// card, learn's discard).
     OutsideGameV1(crate::eternal_outside_game_v1::OutsideGameChoiceV1),
+    /// A wave S1c choice (`eternal_sideboard_s1c_v1`).
+    S1cV1(crate::eternal_sideboard_s1c_v1::S1cChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in

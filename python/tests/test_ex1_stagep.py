@@ -177,9 +177,20 @@ class StagePTests(unittest.TestCase):
         # review r8: the claim may wait in the queue while the disk fills
         plan = self.make(self.PACKED)
         self.throughput_record("desk", name="THROUGHPUT-desk-k2.json", pack=2)
-        with mock.patch.dict(stagep.os.environ, {"STAGEP_TEST_FREE": "70e9"}):   # the outer check still sees 500 GB
-            with self.assertRaises(SystemExit) as stop:
-                stagep.main(["run", "--plan", str(self.plan), "--chain", "r2-c1", "--chain", "r2-c2", "--fast-poll"])
+        popen = stagep.subprocess.Popen
+        with (self.root / "members-stderr.txt").open("w+", encoding="utf-8") as stderr:
+            def capture_members(cmd, **kwargs):
+                self.assertIn("_members", cmd)
+                return popen(cmd, stderr=stderr, **kwargs)
+
+            with mock.patch.dict(stagep.os.environ, {"STAGEP_TEST_FREE": "70e9"}), \
+                    mock.patch.object(stagep.subprocess, "Popen", side_effect=capture_members) as launch:
+                # The outer check still sees 500 GB; only the queued child sees 70 GB.
+                with self.assertRaises(SystemExit) as stop:
+                    stagep.main(["run", "--plan", str(self.plan), "--chain", "r2-c1", "--chain", "r2-c2", "--fast-poll"])
+            launch.assert_called_once()
+            stderr.seek(0)
+            self.assertIn("plus the host reserve", stderr.read())
         self.assertNotEqual(stop.exception.code, 0)
         for name in ("r2-c1", "r2-c2"):
             self.assertEqual(stagep.completed(plan["chains"][name]["native"]), 0)

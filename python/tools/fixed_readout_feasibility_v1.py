@@ -4,6 +4,9 @@ from pathlib import Path
 import numpy as np
 import psutil
 import torch
+
+from checkpoint_container_v1 import document_from_bytes
+
 psutil.Process().nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
 torch.set_num_threads(1);torch.set_num_interop_threads(1);torch.use_deterministic_algorithms(True)
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
@@ -20,7 +23,8 @@ from scipy.optimize import linprog
 cp=Path('D:/phase1-live/campaign-002/g/block115/run/iterations/000199/attempt-000000/update/checkpoint.json')
 raw=cp.read_bytes();digest=hashlib.sha256(raw).hexdigest()
 if digest!='88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1':raise RuntimeError('checkpoint mismatch')
-c=json.loads(raw);model=KernelPolicyValueNet(cfg)
+c = document_from_bytes(raw)
+model = KernelPolicyValueNet(cfg)
 model.load_state_dict({p['name']:tensor(p['values']).reshape(p['shape']) for p in c['parameters']},strict=True);model.eval()
 for p in model.parameters():p.requires_grad_(False)
 paths=[B/'natural-hand-channel-input-001/input.json',B/'burn-tree-natural-002/on.json',B/'hand-burn-tree-natural-001/on.json']
