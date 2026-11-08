@@ -259,9 +259,11 @@ fn play(flags: &Flags) -> Result<(), String> {
         full_validation: flags.switches.contains("full-validation"),
         session: session_kind(flags)?,
     };
-    let uses_closed_list_v2 = policies.iter().any(PolicySpecV1::uses_closed_list_v2);
-    if uses_closed_list_v2 && !matches!(limits.session, SessionKindV1::RulesOnly(_)) {
-        return Err("closedlist-v2 requires -session rules-only or rules-only-all".into());
+    let uses_closed_list = policies.iter().any(PolicySpecV1::uses_versioned_closed_list);
+    let uses_closed_list_v3 = policies.iter().any(PolicySpecV1::uses_closed_list_v3);
+    if uses_closed_list && !matches!(limits.session, SessionKindV1::RulesOnly(_)) {
+        let version = if uses_closed_list_v3 { "closedlist-v3" } else { "closedlist-v2" };
+        return Err(format!("{version} requires -session rules-only or rules-only-all"));
     }
     let out = PathBuf::from(flags.get("out")?);
     let legs: u64 = if spec_a == spec_b || flags.switches.contains("single") {
@@ -293,7 +295,7 @@ fn play(flags: &Flags) -> Result<(), String> {
         }
         // A held-out deck stays held out when its file is renamed or reordered.
         let names: BTreeSet<&str> = decks.iter().map(|(name, _)| name.as_str()).collect();
-        let game_multisets: BTreeSet<_> = if uses_closed_list_v2 {
+        let game_multisets: BTreeSet<_> = if uses_closed_list {
             decks
                 .iter()
                 .map(|(_, cards)| deck_multiset(cards))
@@ -305,7 +307,7 @@ fn play(flags: &Flags) -> Result<(), String> {
             .iter()
             .filter(|(name, cards)| {
                 names.contains(name.as_str())
-                    || (uses_closed_list_v2 && game_multisets.contains(&deck_multiset(cards)))
+                    || (uses_closed_list && game_multisets.contains(&deck_multiset(cards)))
             })
             .count();
         if belief_overlap > 0 && split != "train" {
@@ -313,7 +315,7 @@ fn play(flags: &Flags) -> Result<(), String> {
                 "{belief_overlap} belief decks are games' {split:?} decks: the belief would hold the opponents' real decks"
             ));
         }
-        if uses_closed_list_v2 {
+        if uses_closed_list {
             belief_deck_contents_sha256 = Some(deck_contents_sha256(&corpus));
         }
         Some(LimitedBeliefV1::new(
@@ -404,8 +406,16 @@ fn play(flags: &Flags) -> Result<(), String> {
         "full_validation": limits.full_validation,
         "session": format!("{:?}", limits.session),
     });
-    if uses_closed_list_v2 {
-        summary["world_contract"] = json!("limited-closedlist/v2");
+    if uses_closed_list {
+        summary["world_contract"] = if uses_closed_list_v3 {
+            if policies.iter().any(PolicySpecV1::uses_closed_list_v2) {
+                json!(["limited-closedlist/v2", "limited-closedlist/v3"])
+            } else {
+                json!("limited-closedlist/v3")
+            }
+        } else {
+            json!("limited-closedlist/v2")
+        };
         summary["game_deck_contents_sha256"] = json!(deck_contents_sha256(&decks));
         summary["belief_deck_contents_sha256"] = json!(belief_deck_contents_sha256);
         summary["max_turns"] = json!(limits.max_turns);
@@ -523,7 +533,7 @@ fn play_one(
     }
     if seat_policies
         .iter()
-        .any(|policy| policy.uses_closed_list_v2())
+        .any(PolicySpecV1::uses_versioned_closed_list)
     {
         row["env_seed"] = json!(env_seed);
         row["searched_decisions"] = json!(result.searched_decisions);

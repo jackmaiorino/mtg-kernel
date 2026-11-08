@@ -1155,6 +1155,14 @@ struct FastActorCurrentDecisionV1 {
     liliana_projection_v73: Option<std::sync::Arc<liliana_v73::PreparedProjectionV73>>,
 }
 
+#[cfg(feature = "limited-fdn-fixtures")]
+pub(crate) struct LimitedClosedListRootV3 {
+    actor: PlayerId,
+    slots: [Vec<ObjectId>; 2],
+    knowledge: crate::reveal_meaning_v3::RevealKnowledgeV3,
+    known_names: Vec<u16>,
+}
+
 fn flat_player_id_v1(seat: PlayerSeatV1) -> PlayerId {
     match seat {
         PlayerSeatV1::P0 => PlayerId::P0,
@@ -8537,6 +8545,132 @@ impl FastActorSessionV1 {
         let mut sampled = self.clone();
         closed_list_v2::rewrite(&mut sampled.state, actor, slots, belief, seed)?;
         sampled.state.resample_future_randomness_for_search_v3(seed);
+        Ok(sampled)
+    }
+
+    /// Enable the public reveal journal for a fresh rules-only Limited game.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn enable_limited_reveals_v3(&mut self) -> Result<(), String> {
+        if self.flat_action_contract_mode != FlatActionContractModeV1::RulesOnlyV1
+            || self.policy_step_count != 0
+        {
+            return Err("closedlist-v3 requires a fresh rules-only session".into());
+        }
+        self.state.reveal_meaning_v3.enable();
+        Ok(())
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn limited_closed_list_root_v3(&self) -> Result<LimitedClosedListRootV3, String> {
+        use crate::kernel_native_search_opponent_v1::pending_selection_hidden_objects_v1;
+        use crate::limited_match_v1::closed_list_v2;
+        use crate::reveal_meaning_v3::RevealReducerV3;
+
+        if self.flat_action_contract_mode != FlatActionContractModeV1::RulesOnlyV1 {
+            return Err("closedlist-v3 requires a rules-only session".into());
+        }
+        let actor = self.current.as_ref().ok_or("no current decision")?.actor;
+        let opponent = actor.opponent();
+        let transcript = self
+            .state
+            .reveal_meaning_v3
+            .transcript(actor)
+            .ok_or("closedlist-v3 needs the viewer's public reveal stream")?;
+        let mut reducer = RevealReducerV3::default();
+        reducer.absorb(&transcript)?;
+        let knowledge = reducer.opponent_knowledge(actor);
+        let hand_len = self.state.players[opponent.index()].hand.len();
+        let mut known_names = Vec::new();
+        for (def, count) in knowledge.hand(opponent) {
+            if count > hand_len - known_names.len() {
+                return Err("public reveal minima exceed the hand size".into());
+            }
+            known_names.extend(std::iter::repeat_n(def, count));
+        }
+        if self.state.objects.iter().any(|(_, card)| {
+            card.v4
+                .face_down_v1
+                .is_some_and(|face| face.lookers & (1 << actor.index()) == 0)
+        }) {
+            return Err("unknown face-down identity".into());
+        }
+        let mut pinned = pending_selection_hidden_objects_v1(&self.state, actor);
+        pinned.extend(flat_action_v4::limited_public_source_pins_v3(&self.state, actor)?);
+        if pinned
+            .iter()
+            .any(|id| self.state.players[opponent.index()].hand.contains(id))
+        {
+            return Err("opponent hand selection binds physical copies".into());
+        }
+        let slots = closed_list_v2::resampled_slots(&self.state, actor, &pinned);
+        Ok(LimitedClosedListRootV3 {
+            actor,
+            slots,
+            knowledge,
+            known_names,
+        })
+    }
+
+    /// Sample only the prepared viewer's public root. Rebuild the rules-only
+    /// menu in the sample, then order its fresh bindings by the live semantics.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn limited_closed_list_clone_v3(
+        &self,
+        root: &LimitedClosedListRootV3,
+        seed: u64,
+        belief: &crate::limited_match_v1::LimitedBeliefV1,
+    ) -> Result<Self, String> {
+        use crate::limited_match_v1::closed_list_v2;
+
+        let live = self.current.as_ref().ok_or("no current decision")?;
+        if root.actor != live.actor {
+            return Err("sampled root actor differs".into());
+        }
+        let mut sampled = self.clone();
+        closed_list_v2::rewrite_names(
+            &mut sampled.state,
+            root.actor,
+            root.slots.clone(),
+            belief,
+            seed,
+            root.known_names.clone(),
+        )?;
+        let mut viewers = [Default::default(), Default::default()];
+        viewers[root.actor.index()] = root.knowledge.clone();
+        sampled.state.reveal_knowledge_v4 = Some(viewers);
+        sampled.state.reveal_meaning_v3 = Default::default();
+        sampled.state.hand_departures_by_name_v1 = false;
+        sampled.state.hand_knowledge_by_name_v2 = false;
+        sampled.state.resample_future_randomness_for_search_v3(seed);
+
+        sampled.advance_rules_only_v1();
+        let rebuilt = sampled
+            .current
+            .as_mut()
+            .ok_or("sampled root menu unavailable")?;
+        if rebuilt.actor != live.actor
+            || rebuilt.decision_kind != live.decision_kind
+            || rebuilt.substep_index != live.substep_index
+            || rebuilt.substep_count != live.substep_count
+            || rebuilt.candidates.len() != live.candidates.len()
+        {
+            return Err("sampled root menu differs".into());
+        }
+        let mut by_semantic = std::collections::HashMap::with_capacity(rebuilt.candidates.len());
+        for candidate in std::mem::take(&mut rebuilt.candidates) {
+            if by_semantic.insert(candidate.semantic.clone(), candidate).is_some() {
+                return Err("sampled root action is ambiguous".into());
+            }
+        }
+        for expected in &live.candidates {
+            let candidate = by_semantic
+                .remove(&expected.semantic)
+                .ok_or("sampled root action differs")?;
+            if candidate.policy_action != expected.policy_action {
+                return Err("sampled root binding differs".into());
+            }
+            rebuilt.candidates.push(candidate);
+        }
         Ok(sampled)
     }
 

@@ -237,6 +237,54 @@ fn closed_list_v2_ignores_hidden_definitions_reveal_copy_and_future_rng() {
 }
 
 #[test]
+fn closed_list_v3_uses_present_minima_instead_of_distinct_physical_rows() {
+    let forest = card_id_by_name("Forest").unwrap();
+    let plains = card_id_by_name("Plains").unwrap();
+    let island = card_id_by_name("Island").unwrap();
+    let mut belief_deck = vec![forest; 40];
+    belief_deck[0] = plains;
+    let belief = LimitedBeliefV1::new([belief_deck]);
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let opponent = actor.opponent();
+        let mut session = rules_only_closed_list_game([vec![plains; 40], vec![plains; 40]], actor);
+        session.enable_limited_reveals_v3().unwrap();
+        let variant = |other_copy, future_seed| {
+            session.census_edited_clone_v1(|state| {
+                let hand = state.players[opponent.index()].hand.clone();
+                state.reveal_distinct_hand_card(actor, opponent, hand[0]).unwrap();
+                state.reveal_distinct_hand_card(actor, opponent, hand[other_copy]).unwrap();
+                if other_copy != 0 {
+                    let hidden = state.objects.get_mut(hand[2]);
+                    hidden.card_def = island;
+                    hidden.name = "Island".into();
+                    hidden.v4 = ObjectStateV4::from_card_def(island);
+                }
+                state.resample_future_randomness_for_search_v3(future_seed);
+            })
+        };
+        let same_copy = variant(0, 13);
+        let two_copies = variant(1, 29);
+        assert_eq!(same_copy.game_state().known_hand_cards(actor, opponent).len(), 1);
+        assert_eq!(two_copies.game_state().known_hand_cards(actor, opponent).len(), 2);
+        let mode = WorldModeV1::ClosedListV3;
+        for seed in 0..4 {
+            let a = sample_world_v1(&same_copy, mode, Some(&belief), seed).unwrap();
+            let b = sample_world_v1(&two_copies, mode, Some(&belief), seed).unwrap();
+            assert_eq!(a.game_state(), b.game_state());
+            assert_eq!(a.game_state().known_hand_cards(actor, opponent).len(), 1);
+            assert_eq!(a.diagnostic_current_action_semantics(), session.diagnostic_current_action_semantics());
+            assert_eq!(b.diagnostic_current_action_semantics(), a.diagnostic_current_action_semantics());
+        }
+        let a = pimc_choose_v1(&same_copy, 4, 2, mode, Some(&belief), 552).unwrap();
+        let b = pimc_choose_v1(&two_copies, 4, 2, mode, Some(&belief), 552).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a.1.rejected, 0);
+        assert_eq!(a.1.rollout_errors, 0);
+        assert_eq!(a.1.visits.iter().sum::<u32>(), 4);
+    }
+}
+
+#[test]
 fn closed_list_v2_searches_opening_decisions_for_the_frozen_fdn_pool() {
     let manifest: serde_json::Value = serde_json::from_str(include_str!(
         "../../../data/limited/fdn_v1/booster_pool_v1.json"
@@ -317,6 +365,15 @@ fn closed_list_v2_refuses_invalid_belief_printings() {
 
 #[test]
 fn closed_list_v2_searches_legal_partial_cast_and_land_actions() {
+    check_partial_cast_and_land_actions(WorldModeV1::ClosedListV2);
+}
+
+#[test]
+fn closed_list_v3_rebuilds_legal_partial_cast_and_land_actions() {
+    check_partial_cast_and_land_actions(WorldModeV1::ClosedListV3);
+}
+
+fn check_partial_cast_and_land_actions(mode: WorldModeV1) {
     use crate::rl::ActionSemanticV1;
     use crate::state::Step;
 
@@ -349,6 +406,9 @@ fn closed_list_v2_searches_legal_partial_cast_and_land_actions() {
         state.step = Step::Main1;
         crate::combat_damage_v1::enable_foundations_combat_v1(&mut state).unwrap();
         state.enable_hand_knowledge_by_name_v2();
+        if mode == WorldModeV1::ClosedListV3 {
+            state.reveal_meaning_v3.enable();
+        }
         for seat in [PlayerId::P0, PlayerId::P1] {
             let player = &mut state.players[seat.index()];
             let position = player
@@ -388,7 +448,7 @@ fn closed_list_v2_searches_legal_partial_cast_and_land_actions() {
             &session,
             actions.len() as u32,
             0,
-            WorldModeV1::ClosedListV2,
+            mode,
             Some(&belief),
             552,
         )

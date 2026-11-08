@@ -411,8 +411,20 @@ fn belief_remainder(
 pub enum WorldModeV1 {
     ClosedList,
     ClosedListV2,
+    ClosedListV3,
     TrueList,
     Peek,
+}
+
+fn executable_belief_v2(belief: Option<&LimitedBeliefV1>) -> Result<&LimitedBeliefV1, String> {
+    let belief = belief.ok_or("closedlist needs a belief corpus")?;
+    if belief.is_empty() {
+        return Err("empty belief corpus".into());
+    }
+    if !belief.v2_executable {
+        return Err("belief corpus contains a non-executable printing".into());
+    }
+    Ok(belief)
 }
 
 /// One world of the current actor's information set (see the module docs).
@@ -434,13 +446,13 @@ pub fn sample_world_v1(
         }
         WorldModeV1::ClosedListV2 => {
             let belief = belief.ok_or("closedlist-v2 needs a belief corpus")?;
-            if belief.is_empty() {
-                return Err("empty belief corpus".into());
-            }
-            if !belief.v2_executable {
-                return Err("belief corpus contains a non-executable printing".into());
-            }
+            let belief = executable_belief_v2(Some(belief))?;
             session.limited_closed_list_clone_v2(seed, belief)
+        }
+        WorldModeV1::ClosedListV3 => {
+            let belief = executable_belief_v2(belief)?;
+            let root = session.limited_closed_list_root_v3()?;
+            session.limited_closed_list_clone_v3(&root, seed, belief)
         }
     }
 }
@@ -486,6 +498,9 @@ impl PolicySpecV1 {
                         None if part == "closedlist-v2" => {
                             set_world(WorldModeV1::ClosedListV2, &mut world)?
                         }
+                        None if part == "closedlist-v3" => {
+                            set_world(WorldModeV1::ClosedListV3, &mut world)?
+                        }
                         None if part == "truelist" => set_world(WorldModeV1::TrueList, &mut world)?,
                         None if part == "peek" => set_world(WorldModeV1::Peek, &mut world)?,
                         _ => return Err(format!("{spec:?}: unknown field {part:?}")),
@@ -498,7 +513,7 @@ impl PolicySpecV1 {
                     sims,
                     depth,
                     world: world.ok_or_else(|| {
-                        format!("{spec:?}: name a world mode (closedlist, closedlist-v2, truelist or peek)")
+                        format!("{spec:?}: name a world mode (closedlist, closedlist-v2, closedlist-v3, truelist or peek)")
                     })?,
                 })
             }
@@ -510,7 +525,7 @@ impl PolicySpecV1 {
         matches!(
             self,
             Self::Pimc {
-                world: WorldModeV1::ClosedList | WorldModeV1::ClosedListV2,
+                world: WorldModeV1::ClosedList | WorldModeV1::ClosedListV2 | WorldModeV1::ClosedListV3,
                 ..
             }
         )
@@ -524,6 +539,20 @@ impl PolicySpecV1 {
                 ..
             }
         )
+    }
+
+    pub fn uses_closed_list_v3(&self) -> bool {
+        matches!(
+            self,
+            Self::Pimc {
+                world: WorldModeV1::ClosedListV3,
+                ..
+            }
+        )
+    }
+
+    pub fn uses_versioned_closed_list(&self) -> bool {
+        self.uses_closed_list_v2() || self.uses_closed_list_v3()
     }
 }
 
@@ -619,6 +648,11 @@ pub fn pimc_choose_v1(
         return Ok((0, stats));
     }
     let root = seat(decision.acting_player);
+    let prepared_v3 = (world == WorldModeV1::ClosedListV3).then(|| {
+        let belief = executable_belief_v2(belief)?;
+        let public_root = session.limited_closed_list_root_v3()?;
+        Ok::<_, String>((public_root, belief))
+    });
     for sim in 0..sims {
         let total: u32 = stats.visits.iter().sum();
         let action = match stats.visits.iter().position(|&v| v == 0) {
@@ -637,11 +671,18 @@ pub fn pimc_choose_v1(
             b"mtg-kernel/limited-pimc-world/v1\0",
             &[seed, u64::from(sim)],
         );
-        let mut world_session = match sample_world_v1(session, world, belief, world_seed) {
+        let sampled = match &prepared_v3 {
+            Some(Ok((public_root, corpus))) => {
+                session.limited_closed_list_clone_v3(public_root, world_seed, corpus)
+            }
+            Some(Err(error)) => Err(error.clone()),
+            None => sample_world_v1(session, world, belief, world_seed),
+        };
+        let mut world_session = match sampled {
             Ok(w) => w,
             Err(error) => {
                 stats.rejected += 1;
-                if world == WorldModeV1::ClosedListV2 {
+                if matches!(world, WorldModeV1::ClosedListV2 | WorldModeV1::ClosedListV3) {
                     *stats.rejection_reasons.entry(error).or_default() += 1;
                 }
                 continue;
@@ -777,8 +818,16 @@ pub(crate) fn play_game_observed_v1(
         rejection_reasons: BTreeMap::new(),
     };
     let uses_closed_list_v2 = policies.iter().any(|policy| policy.uses_closed_list_v2());
-    if uses_closed_list_v2 && !matches!(limits.session, SessionKindV1::RulesOnly(_)) {
-        result.outcome = GameOutcomeV1::Error("closedlist-v2 requires a rules-only session".into());
+    let uses_closed_list_v3 = policies.iter().any(|policy| policy.uses_closed_list_v3());
+    if (uses_closed_list_v2 || uses_closed_list_v3)
+        && !matches!(limits.session, SessionKindV1::RulesOnly(_))
+    {
+        let version = if uses_closed_list_v3 {
+            "closedlist-v3"
+        } else {
+            "closedlist-v2"
+        };
+        result.outcome = GameOutcomeV1::Error(format!("{version} requires a rules-only session"));
         return result;
     }
     let identities = decks.map(|deck| {
@@ -825,6 +874,12 @@ pub(crate) fn play_game_observed_v1(
     };
     if uses_closed_list_v2 {
         if let Err(error) = session.enable_hand_knowledge_by_name_v2() {
+            result.outcome = GameOutcomeV1::Error(error);
+            return result;
+        }
+    }
+    if uses_closed_list_v3 {
+        if let Err(error) = session.enable_limited_reveals_v3() {
             result.outcome = GameOutcomeV1::Error(error);
             return result;
         }
@@ -878,7 +933,9 @@ pub(crate) fn play_game_observed_v1(
                         if result.first_rollout_error.is_none() {
                             result.first_rollout_error = stats.first_rollout_error;
                         }
-                        if *world == WorldModeV1::ClosedListV2 && decision.legal_action_count > 1 {
+                        if matches!(*world, WorldModeV1::ClosedListV2 | WorldModeV1::ClosedListV3)
+                            && decision.legal_action_count > 1
+                        {
                             result.searched_decisions += 1;
                             result.search_fallbacks += u64::from(stats.rejected == *sims);
                             for (reason, count) in stats.rejection_reasons {

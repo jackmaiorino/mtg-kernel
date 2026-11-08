@@ -31,10 +31,7 @@ pub(crate) fn rewrite(
     seed: u64,
 ) -> Result<(), String> {
     let opponent = actor.opponent();
-    let [own_library, opponent_slots] = slots;
-    let hand_len = state.players[opponent.index()].hand.len();
-    let unknown: HashSet<_> = opponent_slots.iter().copied().collect();
-    let mut known_hand: Vec<_> = state
+    let known_hand = state
         .known_hand_cards(actor, opponent)
         .iter()
         .filter(|entry| {
@@ -45,6 +42,21 @@ pub(crate) fn rewrite(
         })
         .map(|entry| state.objects.get(entry.object).card_def)
         .collect();
+    rewrite_names(state, actor, slots, belief, seed, known_hand)
+}
+
+pub(crate) fn rewrite_names(
+    state: &mut GameState,
+    actor: PlayerId,
+    slots: [Vec<ObjectId>; 2],
+    belief: &LimitedBeliefV1,
+    seed: u64,
+    mut known_hand: Vec<u16>,
+) -> Result<(), String> {
+    let opponent = actor.opponent();
+    let [own_library, opponent_slots] = slots;
+    let hand_len = state.players[opponent.index()].hand.len();
+    let unknown: HashSet<_> = opponent_slots.iter().copied().collect();
     known_hand.sort_unstable();
     if known_hand.len() > hand_len {
         return Err("invalid hand knowledge".into());

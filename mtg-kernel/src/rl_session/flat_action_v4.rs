@@ -57,7 +57,104 @@ pub(super) fn census_hidden_source_conflicts_v1(
 ) -> bool {
     // A frozen source can survive its move into a hidden zone. Relabeling
     // that physical object is unsafe even after its generation has advanced.
-    let same = |id: ObjectId, _generation: u32| changed.contains(&id);
+    retained_source_conflicts(state, |id, _| changed.contains(&id))
+}
+
+#[cfg(feature = "limited-fdn-fixtures")]
+pub(super) fn limited_public_source_pins_v3(
+    state: &crate::state::GameState,
+    viewer: crate::ids::PlayerId,
+) -> Result<Vec<ObjectId>, String> {
+    let projection = std::cell::OnceCell::new();
+    let pins = std::cell::RefCell::new(Vec::new());
+    let conflict = retained_source_conflicts(state, |id, generation| {
+        let projection = projection.get_or_init(|| {
+            crate::infoset_v1::projection::project_v2(
+                state,
+                state.observation_journal.notes(),
+                viewer,
+            )
+        });
+        let continuous = projection.tracked(id)
+            && matches!((projection.current_span(id), projection.span_of(id, generation)),
+                (Some(current), Some(observed)) if current.start_pos != u32::MAX
+                    && generation >= current.start_gen && std::ptr::eq(current, observed));
+        if continuous {
+            pins.borrow_mut().push(id);
+        }
+        !continuous
+    });
+    if conflict {
+        return Err("source lacks continuous public provenance".into());
+    }
+    let mut pins = pins.into_inner();
+    pins.sort_unstable();
+    pins.dedup();
+    Ok(pins)
+}
+
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[test]
+fn closed_list_v3_source_guard_ignores_a_hidden_alias_after_a_visible_departure() {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::{AbilitySourceContractV4, GameState, Zone};
+
+    let lembas = crate::card_def::card_id_by_name("Lembas").unwrap();
+    let island = crate::card_def::card_id_by_name("Island").unwrap();
+    for viewer in [PlayerId::P0, PlayerId::P1] {
+        let owner = viewer.opponent();
+        let mut decks = [vec![island], vec![island]];
+        decks[owner.index()] = vec![lembas, lembas];
+        let mut state = GameState::new_from_libraries(&decks[0], &decks[1], crate::rl::card_name, 552);
+        state.reveal_meaning_v3.enable();
+        let source = state.players[owner.index()].library[0];
+        propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Graveyard));
+        let contract = AbilitySourceContractV4::capture(&state, source);
+        let keep_source = |state: &mut GameState| {
+            state.engine.pending_triggers.push(crate::trigger::PendingTrigger {
+                controller: owner,
+                source,
+                effect: crate::effect::EffectOp::Sequence(Vec::new()),
+                is_madness_offer: false,
+                kicked: false,
+                target_spec: crate::card_def::TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                source_contract: Some(contract),
+                granted_by: None,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
+            });
+        };
+        let mut continuous = state.clone();
+        keep_source(&mut continuous);
+        assert_eq!(limited_public_source_pins_v3(&continuous, viewer).unwrap(), vec![source]);
+        propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+        propose_and_commit(&mut state, ProposedEvent::draw(owner));
+        let twin = state.players[owner.index()].hand.iter().copied().find(|&id| id != source).unwrap();
+        let variant = |departing| {
+            let mut sample = state.clone();
+            propose_and_commit(&mut sample, ProposedEvent::zone_change(departing, Zone::Graveyard));
+            keep_source(&mut sample);
+            sample
+        };
+        let a = variant(source);
+        let b = variant(twin);
+        assert_eq!(a.reveal_meaning_v3.transcript(viewer), b.reveal_meaning_v3.transcript(viewer));
+        assert!(!census_hidden_source_conflicts_v1(&a, &a.players[owner.index()].hand));
+        assert!(census_hidden_source_conflicts_v1(&b, &b.players[owner.index()].hand));
+        for world in [&a, &b] {
+            assert_eq!(limited_public_source_pins_v3(world, viewer),
+                       Err("source lacks continuous public provenance".into()));
+        }
+    }
+}
+
+fn retained_source_conflicts(
+    state: &crate::state::GameState,
+    same: impl Fn(ObjectId, u32) -> bool,
+) -> bool {
     let ability = |source: &crate::state::AbilitySourceContractV4| {
         same(source.source, source.zone_change_count)
             || source

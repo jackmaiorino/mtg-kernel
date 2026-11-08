@@ -18,6 +18,7 @@ Foundations combat, London mulligans and engine priority windows.
 | `random` | Uniform over the legal actions |
 | `pimc:sims=N:depth=D:closedlist` | Fair root-level determinized search (below) |
 | `pimc:sims=N:depth=D:closedlist-v2` | Rules-only search with name-level hand facts and independently seeded future shuffles |
+| `pimc:sims=N:depth=D:closedlist-v3` | Rules-only search with hand minima from the acting viewer's public reveal stream and a rebuilt sampled menu |
 | `pimc:...:truelist` | The same search over the opponent's real unseen cards, shuffled. Leaks the decklist; for comparison only |
 | `pimc:...:peek` | The same search with no redetermination. Sees every hidden card; for comparison only |
 
@@ -92,6 +93,19 @@ publicly revealed for the face-up pile. The sampled world reconstructs the recei
 positions from the pending choice. Unrelated private library knowledge of the other seat is
 discarded. A paired active Curator fixture exercises the order decision with and without that
 extra private knowledge.
+
+### Closed-list v3 for rules-only search
+
+The successor reduces the acting viewer's event-time reveal stream once per
+search root. Repeated unlinked shows establish one name minimum. Distinct
+visible arrivals and departures update that minimum during each simulation.
+The sampler drops the other viewer's live hand ledger. A retained rule source
+is pinned only if its recorded epoch is inside the same current visible span.
+Otherwise the search records a refusal independently of the source's hidden
+copy assignment. Each sampled world rebuilds the rules-only decision and must
+match the live action semantics and bindings before an index can be used.
+Native acceptance across the 286 printings is pending. Interactive roots that
+need unresolved hidden identity or source correspondence still refuse.
 
 The `smoke` command runs a bounded pair on the original DraftZero evaluation decks and replays
 it at a second worker count. Its turn-limited or decision-limited rows are engineering checks.
