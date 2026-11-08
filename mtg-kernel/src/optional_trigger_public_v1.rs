@@ -308,13 +308,24 @@ pub(crate) enum ConsumerV1 {
     Legacy,
     ChandraV74,
     KaitoV75,
+    KaitoOmniscienceV1,
 }
 impl ConsumerV1 {
+    pub(crate) fn for_kaito(appendix: crate::policy_surface_v5::LimitedAppendixV1) -> Self {
+        if appendix == crate::policy_surface_v5::LimitedAppendixV1::Omniscience {
+            Self::KaitoOmniscienceV1
+        } else {
+            Self::KaitoV75
+        }
+    }
+
     pub(crate) fn validate_copy_prefix(self, state: &GameState) -> Result<(), String> {
         match self {
             Self::Legacy => crate::effect::require_no_copied_token_abilities_v1(state),
             Self::ChandraV74 => crate::effect::require_no_copied_token_abilities_chandra_v74(state),
-            Self::KaitoV75 => crate::effect::require_no_copied_token_abilities_kaito_v75(state),
+            Self::KaitoV75 | Self::KaitoOmniscienceV1 => {
+                crate::effect::require_no_copied_token_abilities_kaito_v75(state)
+            }
         }
     }
 }
@@ -329,7 +340,9 @@ pub(crate) fn validate_state_for_consumer(
     crate::effect::thousand_year_storm_v1::refuse_legacy(state)?;
     crate::effect::curator_v1::refuse_legacy(state)?;
     crate::effect::sphinx_lore_v1::refuse_legacy(state)?;
-    crate::engine::omniscience_cast_v1::refuse_legacy(state)?;
+    if !matches!(consumer, ConsumerV1::KaitoOmniscienceV1) {
+        crate::engine::omniscience_cast_v1::refuse_legacy(state)?;
+    }
     crate::progenitus_v1::refuse_legacy(state)?;
     crate::effect::greatwurm_v1::refuse_legacy(state)?;
     crate::effect::kykar_v1::refuse_legacy(state)?;

@@ -27,7 +27,7 @@ use crate::policy_observation_v6::{
     OBSERVATION_SCHEMA_VERSION_V6,
 };
 use crate::policy_surface_v5::{
-    PolicyActionV5, PolicyDecisionV5, PolicySurfaceContextIdsV5, PolicySurfaceStageV5,
+    LimitedAppendixV1, PolicyActionV5, PolicyDecisionV5, PolicySurfaceContextIdsV5, PolicySurfaceStageV5,
     PolicySurfaceV5, POLICY_SURFACE_VERSION,
 };
 use crate::rl_session::{RlEpisodeSessionV1, RlSessionResponseV1};
@@ -2088,7 +2088,7 @@ pub fn observe_v1(
     let own_hand = state.players[acting_player.index()]
         .hand
         .iter()
-        .map(|&id| private_card(state, id, ObservationTextModeV2::FullArtifact, false))
+        .map(|&id| private_card(state, id, ObservationTextModeV2::FullArtifact, LimitedAppendixV1::Legacy))
         .collect::<Result<Vec<_>>>()?;
     let mut obs = ObservationV1 {
         schema_version: OBSERVATION_SCHEMA_VERSION_V1,
@@ -2361,8 +2361,8 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
     consumer: crate::policy_surface_v5::LimitedAppendixV1,
 ) -> Result<ObservationV2> {
-    use crate::policy_surface_v5::LimitedAppendixV1;
     let owning_kaito = text_mode == ObservationTextModeV2::KaitoV75Artifact;
+    let private_scope = if owning_kaito { consumer } else { LimitedAppendixV1::Legacy };
     let chosen_type = owning_kaito && consumer == LimitedAppendixV1::ChosenType;
     if !matches!(
         text_mode,
@@ -2763,7 +2763,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     let own_hand = state.players[acting_player.index()]
         .hand
         .iter()
-        .map(|&id| private_card(state, id, text_mode, chosen_type))
+        .map(|&id| private_card(state, id, text_mode, private_scope))
         .collect::<Result<Vec<_>>>()?;
     Ok(ObservationV2 {
         schema_version: OBSERVATION_SCHEMA_VERSION,
@@ -2774,8 +2774,8 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         step_index,
         projection,
         own_hand,
-        known_library_cards: known_library_cards_v4(state, acting_player, text_mode, chosen_type)?,
-        known_hand_cards: known_hand_cards_v4(state, acting_player, text_mode, chosen_type)?,
+        known_library_cards: known_library_cards_v4(state, acting_player, text_mode, private_scope)?,
+        known_hand_cards: known_hand_cards_v4(state, acting_player, text_mode, private_scope)?,
         known_face_down_cards: known_face_down_cards_v1(state, acting_player, text_mode)?,
         visible_projection_hash: 0,
     })
@@ -5498,6 +5498,13 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         accept_conqueror,
         accept_fake,
         conqueror_proof,
+        if text_mode == ObservationTextModeV2::KaitoV75Artifact
+            && surface.limited_appendix_v1() == LimitedAppendixV1::Omniscience
+        {
+            LimitedAppendixV1::Omniscience
+        } else {
+            LimitedAppendixV1::Legacy
+        },
     )?;
     let (mut base, policy_surface_context) =
         build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
@@ -5868,6 +5875,7 @@ fn policy_observation_extensions_conqueror_inner_v49(
         accept_conqueror,
         false,
         None,
+        LimitedAppendixV1::Legacy,
     )
 }
 
@@ -5882,6 +5890,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     accept_conqueror: bool,
     accept_fake: bool,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
+    private_scope: LimitedAppendixV1,
 ) -> Result<PolicyObservationExtensionsV6> {
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
@@ -6277,7 +6286,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                                     "known Ravenous search candidate requires V51".into(),
                                 ));
                             }
-                            cards.push(private_card(state, id, text_mode, false)?);
+                            cards.push(private_card(state, id, text_mode, private_scope)?);
                         }
                     }
                     // Only observable card identity determines class order.
@@ -6539,6 +6548,7 @@ pub(crate) fn policy_observation_extensions_ravenous_v51(
         true,
         true,
         None,
+        LimitedAppendixV1::Legacy,
     )
 }
 
@@ -6566,6 +6576,7 @@ pub(crate) fn policy_observation_extensions_fake_v50(
         true,
         true,
         None,
+        LimitedAppendixV1::Legacy,
     )
 }
 pub(crate) fn policy_observation_extensions_conqueror_v49(
@@ -10227,6 +10238,7 @@ pub(crate) fn policy_observation_extensions_prepared_v57(
         true,
         true,
         None,
+        LimitedAppendixV1::Legacy,
     )
 }
 pub(crate) fn core_policy_action_candidates_prepared_v57(
@@ -10252,6 +10264,7 @@ pub(crate) fn policy_observation_extensions_next_five_v59(
         true,
         true,
         None,
+        LimitedAppendixV1::Legacy,
     )
 }
 pub(crate) fn core_policy_action_candidates_next_five_v59(
@@ -10581,14 +10594,15 @@ fn private_card(
     state: &GameState,
     id: ObjectId,
     text_mode: ObservationTextModeV2,
-    chosen_type: bool,
+    appendix: LimitedAppendixV1,
 ) -> Result<CardPrivateV1> {
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
             && (crate::progenitus_v1::definition(o.card_def)
                 || crate::leyline_axe_v1::definition(o.card_def)
                 || crate::effect::harvester_v1::definition(o.card_def)
-                || crate::engine::omniscience_cast_v1::definition(o.card_def)
+                || (appendix != LimitedAppendixV1::Omniscience
+                    && crate::engine::omniscience_cast_v1::definition(o.card_def))
                 || crate::effect::sphinx_lore_v1::definition(o.card_def)
                 || crate::effect::greatwurm_v1::definition(o.card_def)
                 || crate::effect::kykar_v1::definition(o.card_def)
@@ -10623,7 +10637,8 @@ fn private_card(
     }
 
     if state.objects.try_get(id).is_some_and(|live| {
-        !(chosen_type && crate::banner_of_kinship_v1::entry::owns_entry_definition(live.card_def))
+        !(appendix == LimitedAppendixV1::ChosenType
+            && crate::banner_of_kinship_v1::entry::owns_entry_definition(live.card_def))
             && (live.v4.kinship_type_v1.is_some()
                 || CARD_DEFS
                     .get(usize::from(live.card_def))
@@ -10666,7 +10681,7 @@ fn known_library_cards_v4(
     state: &GameState,
     observer: PlayerId,
     text_mode: ObservationTextModeV2,
-    chosen_type: bool,
+    appendix: LimitedAppendixV1,
 ) -> Result<[Vec<KnownLibraryCardV4>; 2]> {
     let mut result: [Vec<KnownLibraryCardV4>; 2] = std::array::from_fn(|_| Vec::new());
     for owner in [PlayerId::P0, PlayerId::P1] {
@@ -10687,7 +10702,7 @@ fn known_library_cards_v4(
             }
             result[owner.index()].push(KnownLibraryCardV4 {
                 position: entry.position,
-                card: private_card(state, object, text_mode, chosen_type)?,
+                card: private_card(state, object, text_mode, appendix)?,
             });
         }
     }
@@ -10698,7 +10713,7 @@ fn known_hand_cards_v4(
     state: &GameState,
     observer: PlayerId,
     text_mode: ObservationTextModeV2,
-    chosen_type: bool,
+    appendix: LimitedAppendixV1,
 ) -> Result<[Vec<CardPrivateV1>; 2]> {
     let mut result: [Vec<CardPrivateV1>; 2] = std::array::from_fn(|_| Vec::new());
     for owner in [PlayerId::P0, PlayerId::P1] {
@@ -10718,7 +10733,7 @@ fn known_hand_cards_v4(
                     "known hand entry does not match the live object incarnation".to_string(),
                 ));
             }
-            result[owner.index()].push(private_card(state, entry.object, text_mode, chosen_type)?);
+            result[owner.index()].push(private_card(state, entry.object, text_mode, appendix)?);
         }
     }
     Ok(result)

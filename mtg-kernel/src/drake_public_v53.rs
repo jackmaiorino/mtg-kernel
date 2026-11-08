@@ -674,13 +674,13 @@ pub(crate) fn capture_tinybones_compat_v72(state: &GameState) -> Result<FactsV53
 }
 pub(crate) fn capture_kaito_compat_v75(
     state: &GameState,
-    chosen_type: bool,
+    appendix: crate::policy_surface_v5::LimitedAppendixV1,
 ) -> Result<FactsV53, RlContractError> {
     capture_for_consumer(
         state,
         crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72,
-        crate::optional_trigger_public_v1::ConsumerV1::KaitoV75,
-        chosen_type,
+        crate::optional_trigger_public_v1::ConsumerV1::for_kaito(appendix),
+        appendix == crate::policy_surface_v5::LimitedAppendixV1::ChosenType,
     )
 }
 pub(crate) fn capture_chandra_compat_v74(state: &GameState) -> Result<FactsV53, RlContractError> {
