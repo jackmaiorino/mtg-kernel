@@ -48,14 +48,10 @@ impl PreparedNonmanaActionV1 {
                 }
             }
             Self::RevealHand(objects) => {
-                for &object in objects {
-                    // spellbench-public-reveal: hand card revealed by the card rules.
-                    for observer in [PlayerId::P0, PlayerId::P1] {
-                        state
-                            .reveal_distinct_hand_card(observer, player, object)
-                            .expect("synchronous prepared hand reveal remains live");
-                    }
-                }
+                // spellbench-public-reveal: the prepared cost shows the entire hand.
+                state
+                    .reveal_public_hand_group_v3(player, objects.iter().copied())
+                    .expect("synchronous prepared hand reveal remains live");
             }
             Self::RevealHandCard(object) => {
                 // spellbench-public-reveal: the chosen creature is revealed as a cost.

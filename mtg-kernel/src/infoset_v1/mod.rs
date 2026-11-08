@@ -30,7 +30,7 @@ mod face_down;
 #[cfg(test)]
 mod fcast;
 #[cfg(test)]
-mod fixtures;
+pub(crate) mod fixtures;
 #[cfg(test)]
 mod harness;
 #[cfg(test)]
@@ -40,14 +40,19 @@ mod paidcost;
 #[cfg(test)]
 mod realize;
 #[cfg(test)]
+mod recovery;
+#[cfg(test)]
+mod reveal_v4;
+#[cfg(test)]
 mod samename;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod transcript;
 
+pub(crate) use export::export_reveal_v4_from_journal;
+pub use export::{export_reveal_v4, export_v2, export_v3, ExportInputV1, InfosetV1};
 pub(crate) use export::{export_v1, ExportOptionsV1, MutantV1};
-pub use export::{export_v2, ExportInputV1, InfosetV1};
 pub use payload::PayloadV1;
 
 use serde::Serialize;
@@ -56,6 +61,10 @@ use serde::Serialize;
 pub const INFOSET_SCHEMA_V1: &str = "x_kernel_infoset_v1";
 /// Explicit opt-in exporter with event-time face-down visibility (#568).
 pub const INFOSET_SCHEMA_V2: &str = "x_kernel_infoset_v2";
+/// Explicit opt-in successor with bounded historical-refusal recovery (#579).
+pub const INFOSET_SCHEMA_V3: &str = "x_kernel_infoset_v3";
+/// Versioned fair-search export from validated visible reveal-name facts (#543).
+pub const INFOSET_SCHEMA_REVEAL_V4: &str = "x_kernel_infoset_reveal_v4";
 
 /// Refusal predicates (design 6.7). Soaks report counts per predicate
 /// (ruling 43).

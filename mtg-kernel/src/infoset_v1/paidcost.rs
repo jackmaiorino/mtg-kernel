@@ -412,6 +412,137 @@ fn drawing_the_paid_lembas_or_its_twin_exports_alike() {
     assert_eq!(pa, Err("R1b".to_string()), "R1b refuses in both worlds");
 }
 
+#[test]
+fn reveal_v4_detaches_an_unread_payment_after_a_repeated_reveal() {
+    use crate::event::{propose_and_commit, ProposedEvent};
+
+    let policy = crate::sideboard_play_policy_v1::FrozenPlayPolicyV1::training_fixture_v4();
+    let owner = PlayerId::P0;
+    let viewer = PlayerId::P1;
+    let s = opponent_payment();
+    let mut base = s.game_state().clone();
+    let item = waiting(&base, OutletV1::Shaman).unwrap();
+    let paid = paid_object(&base, item);
+    let lembas = id("Lembas");
+    assert_eq!(base.objects.get(paid).zone, Zone::Graveyard);
+    base.stack
+        .retain(|it| base.objects.get(it.source).card_def != lembas);
+    base.engine.pending_triggers.clear();
+    let twin = library_lembas(&mut base, paid, 1)[0];
+    let lists = decklists(&s);
+    let run = |departure, shown| {
+        let mut state = base.clone();
+        state.reveal_meaning_v3.enable();
+        let mut marks = s.infoset_marks_v1(viewer);
+        let mark = |state: &GameState, marks: &mut Vec<(usize, usize)>| {
+            marks.push((
+                state.engine.event_history.len(),
+                state.observation_journal.notes().len(),
+            ));
+        };
+        propose_and_commit(&mut state, ProposedEvent::zone_change(paid, Zone::Hand));
+        mark(&state, &mut marks);
+        let library = &mut state.players[owner.index()].library;
+        let at = library.iter().position(|&object| object == twin).unwrap();
+        library.swap(0, at);
+        propose_and_commit(&mut state, ProposedEvent::draw(owner));
+        state.reveal_hand_card(viewer, owner, shown).unwrap();
+        state.reveal_hand_card(viewer, owner, shown).unwrap();
+        mark(&state, &mut marks);
+        propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(departure, Zone::Graveyard),
+        );
+        state.engine.pending_triggers.clear();
+        let input = ExportInputV1 {
+            state: &state,
+            journal: state.observation_journal.notes(),
+            viewer,
+            decklists: [&lists[0], &lists[1]],
+            marks: Some(&marks),
+        };
+        let old = wire_outcome(export_v1(&input, ExportOptionsV1::default()));
+        assert_eq!(reason(&old).as_deref(), Some("R1:same_name_hand_reveal"));
+        let v4 = super::export_reveal_v4(&input).unwrap();
+        let exported = &v4.state.stack[waiting(&v4.state, OutletV1::Shaman).unwrap()];
+        let receipt = &exported.v4.paid_cost_refs[0];
+        assert_eq!(receipt.card_def, lembas);
+        assert_eq!(receipt.zone, Zone::Graveyard);
+        assert_eq!(receipt.zone_change_count, 0);
+        assert!(matches!(
+            v4.handles[receipt.object.0 as usize],
+            HandleV1::H { named: true, .. }
+        ));
+        // Carry the recovered structural receipt across the real envelope and
+        // production worker parser/import/sampler, not just the exporter.
+        let payload = super::PayloadV1::new(&v4, &s, viewer, 0).unwrap();
+        let payload = super::PayloadV1::from_bytes(&payload.to_bytes()).unwrap();
+        let imported = payload.import().unwrap();
+        let restored = &imported.game_state().stack
+            [waiting(imported.game_state(), OutletV1::Shaman).unwrap()]
+        .v4
+        .paid_cost_refs[0];
+        assert_eq!(restored.card_def, receipt.card_def);
+        assert_eq!(restored.owner, receipt.owner);
+        let request = serde_json::json!({"root_id":"recovered-public-payment",
+            "tree":0, "units":8, "payload":payload, "path":[]})
+        .to_string();
+        let answer =
+            crate::regret_census_v1::stage4a::qualify_worker_request_v4(&policy, true, &request);
+        assert_eq!(answer["ok"], true, "{answer}");
+        assert!(
+            answer["result"]["transitions"].as_u64().unwrap() > 0,
+            "{answer}"
+        );
+        assert_eq!(
+            answer["result"]["faults"],
+            serde_json::json!([]),
+            "{answer}"
+        );
+        // This short continuation spends its transition budget before a
+        // natural terminal backup. Successful import/dispatch is not a pick.
+        assert_eq!(answer["result"]["transitions"], 8, "{answer}");
+        assert_eq!(answer["result"]["cap_reached"], true, "{answer}");
+        assert!(answer["result"]["edges"].is_null(), "{answer}");
+        (state.reveal_meaning_v3.transcript(viewer), v4.bytes)
+    };
+    assert_eq!(run(paid, twin), run(twin, paid));
+}
+
+#[test]
+fn reveal_v4_receipt_admission_ignores_a_separate_readers_hidden_alias() {
+    use super::export::mark_detached_receipts_v4;
+    use super::rewrite::{tagged_value, DETACHED_PAID_V4};
+
+    let viewer = PlayerId::P1;
+    let session = opponent_payment();
+    let mut base = session.game_state().clone();
+    let item = waiting(&base, OutletV1::Shaman).unwrap();
+    let paid = base.stack[item].v4.paid_cost_refs[0];
+    let twin = library_lembas(&mut base, paid.object, 1)[0];
+    let check = |alias| {
+        let mut state = base.clone();
+        // Preserve the unclassified item's public receipt fields while
+        // varying whether its raw reference equals the unread receipt.
+        let mut reader = state.stack[item].clone();
+        reader.inline_effect = None;
+        reader.v4.paid_cost_refs[0].object = alias;
+        let reader_index = state.stack.len();
+        state.stack.push(reader);
+        let mut tagged = tagged_value(&state);
+        let detached = mark_detached_receipts_v4(&state, &mut tagged, viewer).unwrap();
+        assert!(tagged["stack"][reader_index]["v4"]["paid_cost_refs"][0]
+            .get(DETACHED_PAID_V4)
+            .is_none());
+        let mark = tagged["stack"][item]["v4"]["paid_cost_refs"][0][DETACHED_PAID_V4]
+            .as_u64()
+            .unwrap();
+        assert_eq!(detached[mark as usize], (paid.owner, paid.card_def));
+        (detached, mark)
+    };
+    assert_eq!(check(paid.object), check(twin));
+}
+
 /// The opponent's Shaman payment for Sol round 2. V is Faeries (P1).
 /// Wildfire casts two Lembas and Krark-Clan Shaman and sacrifices one
 /// Lembas to the Shaman; the session stops at V's first decision with the
