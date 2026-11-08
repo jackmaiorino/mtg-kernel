@@ -14084,6 +14084,9 @@ fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRe
 }
 
 fn frozen_stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRefV1>> {
+    if crate::effect::thousand_year_storm_v1::owns_snapshot(state, item) {
+        return crate::effect::thousand_year_storm_v1::targets::public_refs(state, item).map_err(RlContractError);
+    }
     if item.targets.len() != item.v4.target_contracts.len() {
         return Err(RlContractError(
             "stack target vector/contract length mismatch".to_string(),

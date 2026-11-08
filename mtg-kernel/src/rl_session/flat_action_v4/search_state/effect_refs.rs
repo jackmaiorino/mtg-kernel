@@ -2166,7 +2166,7 @@ fn conflicts_in_scope(
             ThousandYearStormV1 { journal } => match journal {
                 crate::effect::thousand_year_storm_v1::JournalV1::Cast { spell, observers, .. } => s.storm_snapshot(spell) || observers.iter().any(|source| s.a(source)),
                 crate::effect::thousand_year_storm_v1::JournalV1::Collected { .. }
-                | crate::effect::thousand_year_storm_v1::JournalV1::CastForm { .. } => false,
+                | crate::effect::thousand_year_storm_v1::JournalV1::CastForm { .. } | crate::effect::thousand_year_storm_v1::JournalV1::TargetFaces { .. } => false,
                 crate::effect::thousand_year_storm_v1::JournalV1::Published { item, .. } | crate::effect::thousand_year_storm_v1::JournalV1::Copy { item, .. } => s.storm_snapshot(item),
             },
             AleshaPowerLkiV1 { .. } => scope == ReferenceScopeV68::Legacy,

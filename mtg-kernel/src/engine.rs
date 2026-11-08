@@ -90,7 +90,7 @@ mod standard_spell_copy;
 pub(crate) use standard_spell_copy::copy_snapshot_assignment_is_legal;
 pub(crate) use standard_spell_copy::{
     copy_snapshot_prefix_can_complete, copy_snapshot_replacement_targets,
-    materialize_copy_snapshot, validate_copy_snapshot,
+    materialize_copy_snapshot, materialize_storm_copy_snapshot, validate_copy_snapshot,
 };
 
 pub(crate) mod niv_mizzet_resolution_v1;
@@ -18666,6 +18666,7 @@ fn validated_stack_item_target_metadata(
             contract
         };
         if !stack_target_contract_is_structurally_valid(state, spec, target_index, target, contract)
+            && !crate::state::stack_target_contract_for_storm_snapshot(state, item, spec, target_index, target, contract)
             && !crate::fiendish_panda_v1::custody::authenticates_stale_target(
                 state,
                 item,

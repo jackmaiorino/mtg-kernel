@@ -219,6 +219,7 @@ pub fn producer_sha256() -> String {
             include_str!("rules_meaning_valkyries_call_v62.rs"),
             include_str!("effect/thousand_year_storm_v1.rs"),
             include_str!("effect/thousand_year_storm_v1/casts.rs"),
+            include_str!("effect/thousand_year_storm_v1/targets.rs"),
             include_str!("effect/standard_copy.rs"),
             include_str!("standard_spell_copy.rs"),
             include_str!("event_history_v1.rs"),
@@ -515,7 +516,7 @@ fn require_supported(
             E::HarvesterCommitReceiptV1 { .. } | E::HarvesterResolvedV1 { .. }
             | E::NightmareCopyEnteredV1 { .. } | E::NightmareCopyLayerV1 { .. } => appendix != LimitedAppendixV1::Harvester,
             E::ThousandYearStormV1 { journal: crate::effect::thousand_year_storm_v1::JournalV1::Cast { observers, .. } } => !observers.is_empty() && appendix != LimitedAppendixV1::ThousandYearStorm,
-            E::ThousandYearStormV1 { journal: crate::effect::thousand_year_storm_v1::JournalV1::Published { .. } | crate::effect::thousand_year_storm_v1::JournalV1::Copy { .. } | crate::effect::thousand_year_storm_v1::JournalV1::CastForm { .. } } => appendix != LimitedAppendixV1::ThousandYearStorm,
+            E::ThousandYearStormV1 { journal: crate::effect::thousand_year_storm_v1::JournalV1::Published { .. } | crate::effect::thousand_year_storm_v1::JournalV1::Copy { .. } | crate::effect::thousand_year_storm_v1::JournalV1::CastForm { .. } | crate::effect::thousand_year_storm_v1::JournalV1::TargetFaces { .. } } => appendix != LimitedAppendixV1::ThousandYearStorm,
             E::KykarExiledV1 { .. } | E::KykarDelayedCollectedV1 { .. } => {
                 appendix != LimitedAppendixV1::Kykar
             }

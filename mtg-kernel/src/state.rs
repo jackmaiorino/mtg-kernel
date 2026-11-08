@@ -1575,7 +1575,7 @@ fn stack_target_contract_shape(
         return true;
     };
     state.objects.try_get(object).is_some_and(|live| {
-        (live.card_def == card_def || historical_storm && (live.zone_change_count > zone_change_count || live.v4.face_down_v1.is_some()))
+        (live.card_def == card_def || historical_storm && live.zone_change_count > zone_change_count)
             && live.owner == owner
             && live.spell_copy_origin == spell_copy_origin
             && if spell_copy_origin.is_some() {

@@ -2,6 +2,8 @@
 //! No predecessor public projection or caller-authored operation supplies authority.
 use super::*;
 mod casts;
+pub(crate) mod targets;
+pub use targets::FaceV1;
 pub use casts::CastFormV1;
 
 pub(crate) fn definition(id: u16) -> bool {
@@ -193,7 +195,7 @@ pub(crate) fn owns_snapshot(state: &GameState, spell: &StackItem) -> bool {
             _ => false,
         }
     });
-    matches.next().is_some() && matches.next().is_none()
+    matches.next().is_some() && matches.next().is_none() && targets::for_snapshot(state, spell).is_ok()
 }
 
 pub(crate) fn historical_parent_cast(state:&GameState,origin:crate::state::SpellCopyOriginV4)->Result<Option<crate::state::CastMethodV4>,String> {
@@ -250,6 +252,7 @@ pub enum JournalV1 {
     CastForm {
         form: CastFormV1,
     },
+    TargetFaces { item: StackItemId, faces: Vec<FaceV1> },
 }
 fn enabled() -> bool {
     card_def::card_id_by_name("Thousand-Year Storm").is_some_and(definition)
@@ -336,13 +339,14 @@ pub(crate) fn record_cast(state: &mut GameState, spell: ObjectId) -> Result<(), 
         state,
         JournalV1::Cast {
             event: event as u64,
-            spell: Box::new(row),
+            spell: Box::new(row.clone()),
             observers,
         },
         true,
     );
     if let Some(form) = form {
         casts::record_form(state, form);
+        targets::record_cast(state, &row)?;
     }
     Ok(())
 }
@@ -714,7 +718,7 @@ pub(crate) fn validate_continuation(
 pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
     if state.thousand_year_storm_consumer_v1
         || state.engine.event_history.iter().any(|event| matches!(event,
-            event::CommittedEvent::ThousandYearStormV1 { journal: JournalV1::CastForm { .. } }))
+            event::CommittedEvent::ThousandYearStormV1 { journal: JournalV1::CastForm { .. } | JournalV1::TargetFaces { .. } }))
         || state.objects.iter().any(|(_,o)|matches!(o.zone,Zone::Battlefield|Zone::Stack)&&o.v4.face_down_v1.is_none()&&definition(o.card_def))
         ||state.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Cast{observers,..}}if !observers.is_empty())) {
         return Err("Thousand-Year Storm requires its distinct complete native consumer".into())
@@ -724,8 +728,9 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
 
 pub(crate) fn exact_cast_tail(state: &GameState, index: usize, spell: &StackItem) -> bool {
     if state.thousand_year_storm_consumer_v1 {
-        return index.checked_add(3) == Some(state.engine.event_history.len())
-            && casts::validate_snapshot(state, index as u64, spell).is_ok();
+        return index.checked_add(4) == Some(state.engine.event_history.len())
+            && casts::validate_snapshot(state, index as u64, spell).is_ok()
+            && targets::for_snapshot(state, spell).is_ok();
     }
     index.checked_add(2) == Some(state.engine.event_history.len())
         && matches!(state.engine.event_history.last(),Some(event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Cast{event,spell:captured,..}})if *event==index as u64 && captured.as_ref()==spell)
@@ -734,6 +739,7 @@ pub(crate) fn exact_cast_tail(state: &GameState, index: usize, spell: &StackItem
 /// Structural validation of the new occurrence roster, within the existing raw-world contract.
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     casts::validate_roster(state)?;
+    targets::validate_state(state)?;
     for (index, e) in state.engine.event_history.iter().enumerate() {
         let event::CommittedEvent::ThousandYearStormV1 { journal } = e else {
             continue;
@@ -742,7 +748,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             JournalV1::Cast { .. } => {
                 cast_at(state, index as u64)?;
             }
-            JournalV1::CastForm { .. } => {
+            JournalV1::CastForm { .. } | JournalV1::TargetFaces { .. } => {
                 if !state.thousand_year_storm_consumer_v1 {
                     return Err("Storm cast form has no owning profile".into());
                 }
