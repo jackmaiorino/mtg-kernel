@@ -13,7 +13,16 @@ use serde::Serialize;
 pub struct StackProgramV1 {
     pub stack_index: u32,
     pub origin: ProgramOriginV1,
-    pub program: EffectOp,
+    pub program: ProgramV1,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum ProgramV1 {
+    Printed(EffectOp),
+    CounterCapturedCastSpell {
+        /// Public stack ordinal, or absent after that exact spell has left.
+        target_stack_index: Option<u32>,
+        respects_cannot_be_countered: bool,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ProgramOriginV1 {
@@ -55,8 +64,10 @@ pub fn capture_v1(
                         ProgramOriginV1::SpellMode {
                             mode: item.mode_chosen,
                         },
-                        def.printed_mode_effect(item.mode_chosen)
-                            .ok_or_else(error)?,
+                        ProgramV1::Printed(
+                            def.printed_mode_effect(item.mode_chosen)
+                                .ok_or_else(error)?,
+                        ),
                     )
                 }
                 StackItemKind::ActivatedAbility => {
@@ -72,20 +83,17 @@ pub fn capture_v1(
                     }
                     (
                         ProgramOriginV1::PrintedActivation { ability_index },
-                        program,
+                        ProgramV1::Printed(program),
                     )
                 }
                 StackItemKind::TriggeredAbility => {
                     let program = item.inline_effect.as_ref().ok_or_else(error)?;
-                    let trigger_index = crate::trigger::triggers_for(printing)
-                        .iter()
-                        .position(|trigger| (trigger.effect)() == *program)
-                        .ok_or_else(error)?;
+                    let (trigger_index, program) = bind_trigger(state, printing, program)?;
                     (
                         ProgramOriginV1::PrintedTrigger {
                             trigger_index: trigger_index as u32,
                         },
-                        program.clone(),
+                        program,
                     )
                 }
                 _ => return Err(error()),
@@ -97,6 +105,49 @@ pub fn capture_v1(
             })
         })
         .collect()
+}
+
+fn bind_trigger(
+    state: &GameState,
+    printing: u16,
+    program: &EffectOp,
+) -> Result<(usize, ProgramV1), RlContractError> {
+    use crate::{
+        eternal_cards_v1::EternalOpV1 as E, eternal_vintage_v1::VintageOpV1 as V,
+        standard_cards_v1::StandardOpV1 as S,
+    };
+    let triggers = crate::trigger::triggers_for(printing);
+    if let Some(index) = triggers
+        .iter()
+        .position(|trigger| (trigger.effect)() == *program)
+    {
+        return Ok((index, ProgramV1::Printed(program.clone())));
+    }
+    // Vexing Bauble and Chalice materialize the publicly observed cast into
+    // an exact stack incarnation. Publish its stack position, never its raw ID.
+    if let EffectOp::StandardV1(S::EternalV1(E::VintageV1(V::CounterCastSpellV1 { spell }))) =
+        program
+    {
+        let template = EffectOp::StandardV1(S::EternalV1(E::VintageV1(V::BindCounterCastSpellV1)));
+        let index = triggers
+            .iter()
+            .position(|trigger| (trigger.effect)() == template)
+            .ok_or_else(error)?;
+        let target_stack_index = state
+            .stack
+            .iter()
+            .position(|item| item.v4.stack_item_id == *spell)
+            .map(|index| u32::try_from(index).map_err(|_| error()))
+            .transpose()?;
+        return Ok((
+            index,
+            ProgramV1::CounterCapturedCastSpell {
+                target_stack_index,
+                respects_cannot_be_countered: true,
+            },
+        ));
+    }
+    Err(error())
 }
 
 fn error() -> RlContractError {
@@ -111,6 +162,53 @@ mod tests {
         policy_observation_v6::tests::{put, ready_state_for},
         state::{StackItem, StackStateV4, Zone},
     };
+
+    #[test]
+    fn issue454_bound_counter_uses_public_stack_position_and_not_native_id() {
+        use crate::{
+            eternal_cards_v1::EternalOpV1 as E, eternal_vintage_v1::VintageOpV1 as V,
+            ids::StackItemId, standard_cards_v1::StandardOpV1 as S,
+        };
+        let mut state = ready_state_for(PlayerId::P0);
+        let source = put(&mut state, PlayerId::P0, "Ponder", Zone::Stack);
+        let counter = |id| {
+            EffectOp::StandardV1(S::EternalV1(E::VintageV1(V::CounterCastSpellV1 {
+                spell: StackItemId(id),
+            })))
+        };
+        for name in ["Vexing Bauble", "Chalice of the Void"] {
+            let printing = crate::card_def::card_id_by_name(name).unwrap();
+            let absent = bind_trigger(&state, printing, &counter(51)).unwrap();
+            assert_eq!(
+                absent,
+                bind_trigger(&state, printing, &counter(999)).unwrap()
+            );
+            let mut observed = Vec::new();
+            for id in [51, 999] {
+                state.stack = vec![StackItem {
+                    kind: StackItemKind::Spell,
+                    source,
+                    controller: PlayerId::P0,
+                    targets: Vec::new(),
+                    is_copy: false,
+                    inline_effect: None,
+                    discarded: Vec::new(),
+                    is_flashback: false,
+                    mode_chosen: 0,
+                    madness_offer: false,
+                    kicked: false,
+                    v4: StackStateV4 {
+                        stack_item_id: StackItemId(id),
+                        ..Default::default()
+                    },
+                }];
+                observed.push(bind_trigger(&state, printing, &counter(id)).unwrap());
+            }
+            assert_eq!(observed[0], observed[1]);
+            assert_ne!(observed[0], absent);
+            state.stack.clear();
+        }
+    }
 
     #[test]
     fn issue454_stack_program_distinguishes_two_wastescape_cast_triggers() {
