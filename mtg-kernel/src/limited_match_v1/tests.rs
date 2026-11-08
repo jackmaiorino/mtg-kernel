@@ -1,6 +1,7 @@
 use super::*;
 use crate::card_def::card_id_by_name;
 
+#[cfg(all(feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
 #[path = "full_pool_search_tests.rs"]
 mod full_pool_search;
 
