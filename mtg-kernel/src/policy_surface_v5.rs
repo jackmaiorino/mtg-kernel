@@ -391,6 +391,7 @@ pub(crate) enum LimitedAppendixV1 {
     Moon,
     LeylineAxe,
     Lathril,
+    Edict,
 }
 
 #[derive(Clone)]

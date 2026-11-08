@@ -796,6 +796,8 @@ pub(crate) mod lathril_receipts_v1;
 pub(crate) mod edict_receipts_v1;
 pub mod lathril_consumer_v1;
 pub mod lathril_public_v1;
+pub mod edict_consumer_v1;
+pub mod edict_public_v1;
 pub mod tutelage_consumer_v1;
 pub mod own_registration_v1;
 pub mod phase_profile;

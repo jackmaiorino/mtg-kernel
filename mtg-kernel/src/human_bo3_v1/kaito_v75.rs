@@ -59,7 +59,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     leyline_axe: Option<super::leyline_axe_consumer_v1::HumanFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    lathril: Option<super::lathril_consumer_v1::HumanFactsV1>
+    lathril: Option<super::lathril_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    edict: Option<super::edict_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -103,7 +105,9 @@ record!(HumanKaitoCandidateV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     leyline_axe_action: Option<crate::leyline_axe_consumer_v1::ActionV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    lathril_action: Option<crate::lathril_consumer_v1::ActionV1>
+    lathril_action: Option<crate::lathril_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    edict_action: Option<crate::edict_consumer_v1::ActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -325,6 +329,9 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
+    if let Some(label) = super::edict_consumer_v1::label(obs.edict.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
     if let Some(label) = super::lathril_consumer_v1::label(obs.lathril.as_ref(), a, h)? {
         return Ok(Some(label));
     }
@@ -798,6 +805,9 @@ pub(super) fn project_with_handles(
     let lathril = obs.lathril.as_ref()
         .map(|facts| super::lathril_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
+    let edict = obs.edict.as_ref()
+        .map(|facts| super::edict_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
     let leyline_axe = obs.leyline_axe.as_ref()
         .map(|facts| super::leyline_axe_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
@@ -825,6 +835,7 @@ pub(super) fn project_with_handles(
                 moon_action: r.moon_action,
                 leyline_axe_action: r.leyline_axe_action,
                 lathril_action: r.lathril_action,
+                edict_action: r.edict_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -1089,6 +1100,8 @@ pub(super) fn project_with_handles(
                 "mtg-kernel-human-leyline-axe-decision/v1"
             } else if lathril.is_some() {
                 "mtg-kernel-human-lathril-decision/v1"
+            } else if edict.is_some() {
+                "mtg-kernel-human-edict-decision/v1"
             } else {
                 "mtg-kernel-human-kaito-decision/v75"
             }
@@ -1120,6 +1133,7 @@ pub(super) fn project_with_handles(
                 moon,
                 leyline_axe,
                 lathril,
+                edict,
             },
             actions,
             action_meanings,

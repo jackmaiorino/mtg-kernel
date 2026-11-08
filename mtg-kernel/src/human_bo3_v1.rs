@@ -483,4 +483,5 @@ mod tutelage_consumer_v1;
 mod moon_consumer_v1;
 mod leyline_axe_consumer_v1;
 mod lathril_consumer_v1;
+mod edict_consumer_v1;
 mod zimone_consumer_v1;

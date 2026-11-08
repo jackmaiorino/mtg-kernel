@@ -131,10 +131,15 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
             return Err("invalid Edict original paid spell".into());
         }
     }
+    if facts.chooser_cast_quotes.is_some() && facts.chooser_sacrifice_or_order.is_some() {
+        return Err("Edict cannot announce payment and resolve simultaneously".into());
+    }
     if let Some(quotes) = &facts.chooser_cast_quotes {
         if quotes.card.controller != actor || !facts.casts.iter().any(|cast|
             cast.announcing && cast.card == quotes.card)
-            || quotes.modes.len() != 2 || quotes.modes[0].mode == quotes.modes[1].mode
+            || quotes.modes.iter().map(|quote| quote.mode).ne([
+                crate::engine::CastMode::Normal, crate::engine::CastMode::Alternative,
+            ])
             || !facts.alternate_condition_now
         {
             return Err("invalid Edict chooser-only cast quote".into());
@@ -222,7 +227,13 @@ pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<
             Ok(Some(ActionV1::ChooseCastPayment { mode: quote.mode, payable_mana_now: quote.payable_mana_now }))
         }
         Action::ChooseEffectTarget { actor, source, target, selected_count, min_targets, max_targets } => {
-            let Some(choice) = &facts.chooser_sacrifice_or_order else { return Ok(None) };
+            let Some(choice) = &facts.chooser_sacrifice_or_order else {
+                return if source.card_db_id == PRINTING {
+                    Err("Edict candidate lost its chooser's original selection".into())
+                } else {
+                    Ok(None)
+                };
+            };
             if choice.chooser != *actor || !binds(&choice.source, source)
                 || usize::from(*selected_count) != choice.selected.len()
                 || *min_targets != choice.required || *max_targets != choice.required
@@ -234,6 +245,29 @@ pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<
         }
         _ => Ok(None),
     }
+}
+
+pub(crate) fn validate_candidate_order<'a>(
+    facts: &FactsV1,
+    actions: impl ExactSizeIterator<Item = &'a Action>,
+) -> Result<(), String> {
+    if let Some(quotes) = &facts.chooser_cast_quotes {
+        if actions.len() != quotes.modes.len()
+            || !actions.zip(&quotes.modes).all(|(action, quote)| matches!(action,
+                Action::ChooseCastMode { mode, .. } if *mode == quote.mode))
+        {
+            return Err("Edict cast options changed native order".into());
+        }
+    } else if let Some(choice) = &facts.chooser_sacrifice_or_order {
+        if actions.len() != choice.legal.len()
+            || !actions.zip(&choice.legal).all(|(action, card)| matches!(action,
+                Action::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. }
+                    if binds(card, object)))
+        {
+            return Err("Edict legal selections changed native order".into());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(all(

@@ -136,6 +136,15 @@ impl FastActorSessionV1 {
         Self::initialize_limited_consumer_v1(config, reveal_facts, LimitedAppendixV1::Lathril)
     }
 
+    pub(crate) fn reset_limited_edict_v1(
+        config: &crate::edict_consumer_v1::ResetV1,
+        reveal_facts: bool,
+    ) -> Result<Self, RlSessionError> {
+        crate::edict_consumer_v1::preflight(config)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        Self::initialize_limited_consumer_v1(config, reveal_facts, LimitedAppendixV1::Edict)
+    }
+
     fn initialize_limited_consumer_v1(
         config: &crate::limited_consumer_wire_v1::ResetV1,
         reveal_facts: bool,

@@ -28354,34 +28354,40 @@ pub(crate) mod blasphemous_edict_v1 {
         // Both controllers choose before any sacrifice. The physical owners
         // then order their actual graveyard destinations, including stolen cards.
         // Replacements and all departure observers remain one native batch.
-        let victims = if pending.resolving_item.v4.source_contract
+        let edict_owner = pending.resolving_item.v4.source_contract
             .is_some_and(|source| crate::edict_receipts_v1::is_printing(source.card_def))
-        {
-            Some(crate::edict_receipts_v1::capture_victims(state, &sacrificed)?)
-        } else {
-            None
-        };
+            .then_some(pending.resolving_item.v4.stack_item_id);
         let mut committed = state.clone();
-        let sacrifice_start = committed.engine.event_history.len();
-        for b in &sacrificed {
-            event::log_sacrifice(&mut committed, b.object);
+        if edict_owner.is_some() {
+            crate::edict_receipts_v1::record_batch_begin(
+                &mut committed, &pending.resolving_item, choice.active,
+            );
         }
-        let move_start = committed.engine.event_history.len();
+        for b in &sacrificed {
+            if let Some(owner) = edict_owner {
+                crate::edict_receipts_v1::record_sacrifice(&mut committed, owner, *b)?;
+            } else {
+                event::log_sacrifice(&mut committed, b.object);
+            }
+        }
         event::propose_and_commit_batch(
             &mut committed,
             destinations
                 .into_iter()
-                .map(|b| event::ProposedEvent::zone_change(b.object, Zone::Graveyard))
+                .map(|b| {
+                    let mut proposal = event::ProposedEvent::zone_change(b.object, Zone::Graveyard);
+                    if let event::ProposedEvent::ZoneChange(change) = &mut proposal {
+                        change.edict_move_owner = edict_owner;
+                    }
+                    proposal
+                })
                 .collect(),
         );
         if committed.engine.halted.is_some() {
             return Err("Edict native sacrifice batch halted".into());
         }
-        if let Some(victims) = victims {
-            crate::edict_receipts_v1::record_batch(
-                &mut committed, &pending.resolving_item, choice.active,
-                victims, sacrifice_start, move_start,
-            )?;
+        if edict_owner.is_some() {
+            crate::edict_receipts_v1::record_batch_ended(&mut committed, &pending.resolving_item)?;
         }
         *state = committed;
         Ok(false)
@@ -28565,7 +28571,7 @@ pub(crate) mod lathril_v1_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "effect/blasphemous_edict_v1_tests.rs"]
-mod blasphemous_edict_v1_tests;
+pub(crate) mod blasphemous_edict_v1_tests;
 
 // Kept inline so the existing effect-source identities cover the complete
 // native exception/count/target/program validator and reducer.

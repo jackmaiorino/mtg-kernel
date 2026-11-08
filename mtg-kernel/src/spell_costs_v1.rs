@@ -1512,6 +1512,10 @@ impl SpellManaPaymentV1 {
 }
 
 impl PreparedSpellPaymentV1 {
+    pub(super) fn planned_mana_count_v1(&self, state: &GameState, player: PlayerId) -> Option<u32> {
+        super::checked_spell_mana_plan_v59(state, player, &self.mana.mana)
+    }
+
     /// The graveyard cards Delve will exile, in exile order.
     #[cfg(feature = "eternal-fixtures")]
     pub(super) fn delve_exiled(&self) -> &[ObjectId] {

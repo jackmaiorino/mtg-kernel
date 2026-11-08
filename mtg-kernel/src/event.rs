@@ -315,6 +315,9 @@ pub struct ZoneChangeProposed {
     /// Installs a resolving-entry flying grant on the new incarnation.
     #[serde(default, skip_serializing_if = "is_false")]
     pub battlefield_grant_flying_v1: bool,
+    /// Original Edict batch owning this proposed battlefield departure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) edict_move_owner: Option<crate::ids::StackItemId>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -434,6 +437,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            edict_move_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -453,6 +457,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            edict_move_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -472,6 +477,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            edict_move_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -494,6 +500,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            edict_move_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -526,6 +533,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            edict_move_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -561,6 +569,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            edict_move_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -4486,6 +4495,17 @@ fn commit_with_entry_batch_and_source_color(
         }
         _ => Vec::new(),
     };
+    let edict_departure = match &event {
+        ProposedEvent::ZoneChange(change) => change.edict_move_owner.map(|owner| {
+            let object = state.objects.get(change.object);
+            (owner, crate::effect::EffectObjectBinding {
+                object: change.object,
+                expected_zone: object.zone,
+                expected_zone_change_count: object.zone_change_count,
+            })
+        }),
+        _ => None,
+    };
     let Some(MaterializedEventV1 {
         committed,
         alesha_power_departure,
@@ -4629,14 +4649,8 @@ fn commit_with_entry_batch_and_source_color(
         state.engine.event_history.push(receipt);
     }
     if let Some(source) = niv_source_departure {
-        if let Some(departure_history_index) = state
-            .engine
-            .event_history
-            .len()
-            .checked_sub(1)
-            .and_then(|index| u64::try_from(index).ok())
-        {
-            if matches!(state.engine.event_history.last(),
+        if let Ok(departure_history_index) = u64::try_from(entry_history_index) {
+            if matches!(state.engine.event_history.get(entry_history_index),
                 Some(CommittedEvent::ZoneChange { object, from, to, controller_before })
                     if *object == source.source
                         && *from == source.zone
@@ -4650,6 +4664,15 @@ fn commit_with_entry_batch_and_source_color(
                 };
                 state.engine.event_history.push(receipt);
             }
+        }
+    }
+    if let Some((owner, original)) = edict_departure {
+        if crate::edict_receipts_v1::record_move(state, owner, original, entry_history_index).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                original.object,
+            ));
+            return;
         }
     }
     if !niv_mizzet_damage_captures.is_empty() {

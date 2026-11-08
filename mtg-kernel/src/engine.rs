@@ -9749,9 +9749,7 @@ pub(crate) fn edict_pending_mana_quote_v1(
         CastMode::Alternative => CastMethodV4::Alternative,
     };
     let payment = pending_cast_quote_v1(def, pending, method, false, 0, state)?;
-    let plan = payment.mana;
-    let tapped_and_restricted = u32::try_from(plan.taps.len() + plan.restricted_pool_used.len()).ok()?;
-    tapped_and_restricted.checked_add(plan.pool_used.iter().map(|&amount| u32::from(amount)).sum())
+    checked_spell_mana_plan_v59(state, pending.controller, &payment.mana)
 }
 
 fn pending_cast_quote_v1(
@@ -28123,8 +28121,12 @@ fn finalize_owned_cast(
     payment: spell_costs_v1::PreparedSpellPaymentV1,
 ) -> Result<(), String> {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-    let edict_creatures_before = if crate::edict_receipts_v1::is_printing(pending.source_contract.card_def) {
-        Some(crate::edict_receipts_v1::creature_count(state)?)
+    let edict_input = if crate::edict_receipts_v1::is_printing(pending.source_contract.card_def) {
+        Some((
+            crate::edict_receipts_v1::creature_count(state)?,
+            payment.planned_mana_count_v1(state, pending.controller)
+                .ok_or("Edict prepared mana plan no longer validates")?,
+        ))
     } else {
         None
     };
@@ -28163,6 +28165,11 @@ fn finalize_owned_cast(
         payment.restricted_pool_used(),
     );
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
+    if let Some((creatures, quoted)) = edict_input {
+        crate::edict_receipts_v1::record_mana_committed(
+            state, &pending, cast_method, creatures, quoted, mana_spent,
+        )?;
+    }
     let greatwurm_payment_v1 = greatwurm_cast_v1::record_paid(state, greatwurm_payment_input)?;
     let sphinx_lore_cast_v1 = sphinx_lore_cast_v1::record_finalized(state, &pending)?;
     let omniscience_cast_v1 = omniscience_cast_v1::record_finalized(state, &pending)?;
@@ -28360,7 +28367,7 @@ fn finalize_owned_cast(
     crate::cast_identity_v1::publish(state, finalized_source_contract, stack_item_id);
     let cast_at = state.engine.event_history.len();
     event::log_spell_cast(state, pending.spell, pending.controller);
-    if let Some(creatures_before) = edict_creatures_before {
+    if let Some((creatures_before, _)) = edict_input {
         crate::edict_receipts_v1::record_paid(
             state, stack_item_id, finalized_source_contract,
             creatures_before, mana_spent, cast_at,

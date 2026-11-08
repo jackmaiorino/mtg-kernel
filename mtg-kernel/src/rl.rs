@@ -12200,8 +12200,12 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
         state,
         &pending.resolving_item,
     );
+    let edict = appendix == LimitedAppendixV1::Edict
+        && pending.resolving_item.v4.source_contract.is_some_and(|source|
+            crate::edict_receipts_v1::is_printing(source.card_def));
     if crate::effect::blasphemous_edict_v1::selected(state, &pending.resolving_item)
         && !liliana_sacrifice
+        && !edict
     {
         return Err(RlContractError(
             "Blasphemous Edict requires its distinct complete consumer".into(),
@@ -12325,6 +12329,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                     let chooser_private = (matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard
+                            | crate::effect::EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::OrderLookedLibraryTop {
                                 ..
@@ -12383,6 +12388,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                     let redact_search_shape = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
                             | crate::effect::EffectTargetSelectionPurpose::DiscardDraw { .. }
                             | crate::effect::EffectTargetSelectionPurpose::DiscardPaymentV1 { .. }
@@ -12519,7 +12525,16 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             },
                             crate::effect::EffectTargetSelectionPurpose::ChandraExileV74{..}=>{if !matches!(prepared_scope, Some(CommonProjectionScopeV42::ChandraV74 | CommonProjectionScopeV42::KaitoV75)) {return Err(RlContractError("Chandra requires its complete V74 consumer".into()));} TargetSelectionPurposeV4::CardSelection},
                             crate::effect::EffectTargetSelectionPurpose::CuratorCardsV1 { .. } => return Err(RlContractError("Curator requires its distinct complete consumer".into())),
-                            crate::effect::EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. } => { return Err(RlContractError("Blasphemous Edict requires a distinct complete consumer".into())); }
+                            crate::effect::EffectTargetSelectionPurpose::BlasphemousEdictV1 { choice } => {
+                                if !edict {
+                                    return Err(RlContractError("Blasphemous Edict requires a distinct complete consumer".into()));
+                                }
+                                if choice.stage_for_consumer().1 {
+                                    TargetSelectionPurposeV4::LibraryOrder
+                                } else {
+                                    TargetSelectionPurposeV4::CardSelection
+                                }
+                            }
                             crate::effect::EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. } => {
                                 if appendix != LimitedAppendixV1::Tutelage {
                                     return Err(RlContractError("Tutelage mill requires its distinct complete consumer".into()));
