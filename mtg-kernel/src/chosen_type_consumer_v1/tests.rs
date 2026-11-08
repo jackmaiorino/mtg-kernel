@@ -37,7 +37,7 @@ fn config(actor: PlayerId) -> ResetV1 {
     // Pin three cards in the true seven-card opening draw using the real
     // environment shuffle. No game state or payment is modified after reset.
     for (slot, name) in
-        [39, 38, 37]
+        [0, 1, 2]
             .into_iter()
             .zip(["Secluded Courtyard", "Banner of Kinship", "Llanowar Elves"])
     {
