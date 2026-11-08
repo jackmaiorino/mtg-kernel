@@ -320,73 +320,77 @@ remain pending.
 
 ## Composed source checkpoint (2026-11-08)
 
-The source candidate at `5eb71519310b5258760b1e1fff2f0902fd44a2a9` covers
-twenty of the thirty-six Partial booster printings in ten separate finite
-profiles: Return (3), V68-V75 (8), Artist (1), Chosen Type (2), Niv (1),
-Drakuseth (1), Embercleave (1), Zimone (1), Omniscience (1), and Tutelage (1).
-Sixteen original Partial consumer gaps remain outside this composition.
-This is source coverage only.
-Catalog status remains unchanged; no combined native qualification, fair-search
-coverage, training result, or Full promotion is claimed.
+The source candidate at `e4501b50d167d8de4e283be309c5f7f41d2bf377` covers
+21 of the 36 Partial booster printings in eleven finite profiles: Return (3),
+V68-V75 (8), Artist (1), Chosen Type (2), Niv (1), Drakuseth (1),
+Embercleave (1), Zimone (1), Omniscience (1), Tutelage (1), and Moon (1).
+Fifteen original Partial consumer gaps remain. Catalog tiers are unchanged.
+This is source coverage; the complete composition is not natively qualified.
 
-Composition starts at Limited `94ca36cd93d40df1627d099adf6e5471d739be9c` and
-merges the complete chosen-type `350dae3d813036affa3e431608a9c6ee10a7270a`,
-Niv `189c35ae80fef4dfe7db090bc5599db9072a685e` (including native receipt
-`de704a7c003b6c69b90b68791938b47d3320cbbd`), and Drakuseth
-`6394da6d9b1489650af7bfecc97170f3ccc73236` histories. The separate #474
-performance candidate is excluded. Later merges add Embercleave through
-`cde12e6be6e51920b58bf0130533f8cdc65f3a21`, Zimone through
-`d04564a65047c7b2f27c3f7aa03c287cab5d5dde`, Omniscience through
-`140c0770a75ee8d3fc9a35ac8e86132a18ef008b`, and Tutelage through
-`4676515fbeed6fe38864abb070e377fee9b66cd5`.
+The additional `fdn-mixed-consumer/v1` owner composes the first twenty
+printings, excluding Moon. It authenticates every represented native printed
+definition before reset and retains the real declared deck IDs. Its exact
+Mixed capability enables all eight existing appendices together. Its distinct
+observation and candidate schemas require all eight facts; single-family
+profiles still require only their own appendix. The common captures receive
+the actual owning scope, with their original callers retaining Legacy.
+Native action indices, public references, chooser-private operands and restore
+authority remain shared with the existing typed owners. Source fixtures cover
+40-card decks containing all twenty printings and a genuinely paid Omniscience
+cast followed by Tutelage's free cast, paid activation, draw and mill in both
+seats. They check numeric, Human and wire behavior, hidden-world equality,
+original action bindings and authenticated restore. These fixtures are unrun.
 
-Conflict reconciliation uses one exclusive `LimitedAppendixV1` capability:
-Legacy, Artist, ChosenType, Niv, Drakuseth, Embercleave, Zimone, Omniscience,
-or Tutelage. Reset installs it before advance;
-restore compares the exact capability. Return and V68-V75 retain Legacy.
-Each appendix retains its own observation, candidate, Human and JSONL schemas;
-absent optional fields remain absent, and artifact validation rejects any
-mixed appendices. Chosen-type entry indices, restricted mana provenance,
-Drakuseth original target slots and replacement menus, and Niv native draw
-receipts remain in their original profile. Artist scope is passed from the
-actual `PolicySurfaceV5` caller into the common observation builder. Standalone
-legacy observation/candidate routes and appendix current-slot sampling still
-refuse the unsupported scopes. Embercleave retains its current native cast
-quote and attachment source; Zimone preserves all eighteen counter widths;
-Omniscience retains paid/free routes, captured permission and additional costs.
-Tutelage records the actual public post-replacement mill members and native
-repeat result at commit, including a repeating final pair with no remaining
-library. Old absent event fields add no hash or serialization bytes; their
-native continuation remains readable, while the new profile requires the
-new receipt. Chooser-private graveyard ordering remains viewer-scoped.
+Moon remains an exclusive `fdn-moon-consumer/v1` profile. It captures original
+cast target contracts, live two-way Aura attachment incarnations, effective
+layer results, full counters, and actual granted colorless-mana availability.
+Copied and returning Auras retain their native attachment menus. Its fixtures
+cover paid 40-card resets, hidden-world parity, exact action indices, restore,
+and a paid spell whose original target departs and returns. The native paid
+Aura-copy fixture also checks the new public facts. Native validation is pending.
 
-Source verification: pinned Rust 1.94.1 rustfmt passed for the sixteen-card
-checkpoint and separate Embercleave, Zimone and Omniscience changes. Tutelage's
-one-core formatter request received `no_room` and did not start; formatting
-remains pending. `git diff --check` passes. Read-only review found and repaired
-four Heartfire callers that still supplied a boolean instead of Legacy scope.
-The sixteen-card type-check attempt reported seven diagnostics, repaired in
-`0c277d8e`; environmental interruptions prevented a completed retry. Native
-tests and binaries have not been built or run for this twenty-card tree.
+The composition retains the complete histories for Chosen Type, Niv,
+Drakuseth, Embercleave, Zimone, Omniscience and Tutelage. The latter's new
+native receipt records actual post-replacement mill members and the original
+repeat result at commit, including a repeating final pair into an empty
+library. Old absent event fields add no hash or serialization bytes; the new
+consumer requires the receipt. Chooser-private graveyard order remains scoped.
+The unrelated #474 performance candidate is excluded.
 
-Earlier `1c3d215` passed four #552 and six #454 native checks. Its Return filter
-passed six of seven; the Call publication fixture was subsequently repaired.
-The separate #591 default-feature build passed twenty-one V4/V3/privacy cases.
-Its seven recovery checks passed six; the paid-spell fixture repair at
-`476f60ac02c15572f2189e15847a3ed1aa992d88` is included here and awaits rerun.
-None of those predecessor results qualifies this full composition.
+Source verification: pinned Rust 1.94.1 formatting passed through the
+Tutelage checkpoint `98ee9ab7e9ee66e76d6481fa6d5a426f71e1df73`.
+The Mixed and Moon changes await their queued one-core format pass.
+Read-only review of Mixed `ac74b5322218e00cd0b33d65151efecf9ce29ace`
+found no blocking source issue in the explicit scope, candidate bindings,
+normalization, or fixture call signatures. Root reviewed the Moon printing,
+original target, layer, private-information and action-binding paths while
+resolving the composition. Diff checks pass. No native pass is inferred from
+these source reviews.
 
-Next guarded Limited build must include all ten profile binaries. Focused filters:
-`chosen_type_consumer_v1::tests::`, `niv_consumer_v1::tests::`,
-`niv_mizzet_public_v63::tests::`, `drakuseth_consumer_v1::tests::`,
-`artist_consumer_v1::tests::`, `limited_return_consumer_v1::tests::`,
-`limited_v68_v75_consumer_v1::tests::`, `embercleave_consumer_v1::tests::`,
-`zimone_consumer_v1::tests::`, `omniscience_consumer_v1::tests::`,
-`tutelage_consumer_v1::tests::`, their native mechanics filters, and the
-rules-only Courtyard regression. Tutelage also needs its genuine mixed
-Progenitus replacement case. The bounded learner pilot still selects only
-Return; no mixed-appendix learner or all-286 search run is qualified.
-Run the event-history serialization tests separately from sample harvesting.
-The new Niv event sample remains provisional until native paid-fixture harvest;
-terminal V75 responses carry no decision appendix even when a draw caused
-that terminal.
+Earlier `1c3d215` passed four #552 and six #454 native checks. Its Return
+filter passed six of seven; the Call publication fixture was subsequently
+repaired. The sixteen-card type-check attempt reported seven diagnostics,
+repaired in `0c277d8e`; environmental interruptions prevented a completed retry.
+The separate #591 default-feature lane passed 21 V4/V3/privacy tests and its
+real native/companion buffered-commit process passed for both starting seats.
+Its fresh 28-case recovery/reveal/privacy run is pending. None of these
+predecessor results qualifies the larger Limited composition.
+
+The next guarded Limited job must first complete a type check and the focused
+consumer fixtures before building all eleven individual-profile binaries and
+the Mixed binary. Filters include `limited_mixed_consumer_v1::tests::`,
+`moon_consumer_v1::tests::`, `chosen_type_consumer_v1::tests::`,
+`niv_consumer_v1::tests::`, `niv_mizzet_public_v63::tests::`,
+`drakuseth_consumer_v1::tests::`, `artist_consumer_v1::tests::`,
+`limited_return_consumer_v1::tests::`, `limited_v68_v75_consumer_v1::tests::`,
+`embercleave_consumer_v1::tests::`, `zimone_consumer_v1::tests::`,
+`omniscience_consumer_v1::tests::`, `tutelage_consumer_v1::tests::`, their
+native mechanics, and the rules-only Courtyard regression. Tutelage also
+needs its genuine mixed-Progenitus replacement case. Keep event-history
+serialization tests separate from sample harvesting; the new Niv sample
+remains provisional until the paid native fixture is harvested.
+
+The bounded learner pilot still selects Return. No Mixed learner, all-286
+fair-search run, training/evaluation result or Full promotion is qualified.
+Current-slot sampling still refuses appendix profiles. Terminal V75 responses
+carry no decision appendix even when a draw caused that terminal.
