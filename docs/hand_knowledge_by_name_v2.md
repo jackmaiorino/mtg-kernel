@@ -1,0 +1,18 @@
+# Name-level hand knowledge v2
+
+[Issue #567](https://github.com/jackmaiorino/mtg-kernel/issues/567) describes a native observation leak. A player who knows one Ninja of the Deep Hours is in the opposing hand sees one or two known rows when that opponent activates Ninjutsu, depending on which physical copy was selected. An isolated in-hand reveal proves a lower bound of one copy. A named departure then removes one known copy, as in [the v1 departure opt-in](https://github.com/jackmaiorino/mtg-kernel/pull/548).
+
+`hand_knowledge_by_name_v2` is a separate opt-in for new games and reset-time native sessions. It combines v1 departure rules with the reveal rules below. Historical copy-level and departure-only modes keep their observation and snapshot behavior. V2 adds a snapshot field and state-hash tag only when enabled. A policy or experiment that adopts it must record the selected mode as part of its runtime identity.
+
+| Observable event | V2 update | Callers |
+| --- | --- | --- |
+| Reveal or inspect one card already in hand | Keep at least one row of its name. An observer cannot distinguish this from showing the same card again. | Paid hand activations, Show and Tell, dungeon punisher choice, random hand look, Cursed Scroll, Infernal Tutor |
+| Simultaneous reveal of distinct existing cards of one name | Keep at least the number shown. A prior known copy may be among them. | Desperate Ritual splice, Progenitus replacement order |
+| Reveal the entire hand | Record every shown card. The reveal establishes full multiplicity. | Hand-based costs, linked-exile and discard choices, Inquisition, Cloak and Dagger, whole-hand looks |
+| Visibly introduce a card to hand | Add the new row once per incarnation. The arrival is distinct from cards already there. | Public zone returns, library search and reveal-to-hand effects, companion, revealed dungeon draws, Miracle's just-drawn card |
+| Publicly return an aborted cast | Add the returning row once. The move into the announced stack position already decremented name-level knowledge. | `engine::abort_cast` |
+| Reveal a particular opening-hand ability | Add the row once per eligible source. Each source gets its own opening-hand opportunity. | Chancellor |
+
+Observation journal entries retain their existing sequence and meaning. For the native flat encoders, an opponent's activated ability sourced from hand gets a separate model row addressed by public stack position. This prevents the stack relation from joining to a known-hand row by the engine's private copy identity. The typed-layout source pins record the encoder source change. The feature and encoding contracts retain their semantic digests.
+
+The paired regression uses real paid Ninjutsu in both seats and checks opponent-facing rows and native tensors, including the digest and action references, while the ability is stacked and after resolution. This contract covers native policy input. Raw forensic artifacts carry engine arena handles. The `infoset_v1` export and cross-engine reveal protocol have their own versioning under [#568](https://github.com/jackmaiorino/mtg-kernel/issues/568) and [#543](https://github.com/jackmaiorino/mtg-kernel/issues/543).
