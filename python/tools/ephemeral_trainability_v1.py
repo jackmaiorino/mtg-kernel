@@ -4,6 +4,9 @@ from pathlib import Path
 import numpy as np
 import psutil
 import torch
+
+from checkpoint_container_v1 import document_from_bytes
+
 psutil.Process().nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
 torch.set_num_threads(1);torch.set_num_interop_threads(1);torch.use_deterministic_algorithms(True)
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
@@ -27,8 +30,11 @@ for seed in (0,1,2):
 results=[];pins=[]
 for block in (110,115):
     path=Path(f'D:/phase1-live/campaign-002/g/block{block}/run/iterations/000199/attempt-000000/update/checkpoint.json')
-    raw=path.read_bytes();digest=hashlib.sha256(raw).hexdigest();c=json.loads(raw);pins.append(dict(path=str(path),sha256=digest))
+    raw = path.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
     if block==115 and digest!='88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1':raise RuntimeError('g115 differs')
+    c = document_from_bytes(raw)
+    pins.append(dict(path=str(path), sha256=digest))
     params={p['name']:tensor(p['values']).reshape(p['shape']) for p in c['parameters']}
     for scope in ('all_policy','final_readout'):
         for seed in (0,1,2):

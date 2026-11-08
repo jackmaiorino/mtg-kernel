@@ -8,8 +8,7 @@ from pathlib import Path
 import subprocess
 import time
 
-from prepare_postboard_qualification_v1 import pin, read, strict_json, write
-import checkpoint_container_v1
+from prepare_postboard_qualification_v1 import pin, read, read_pinned_checkpoint, write
 
 
 def checked_pin(value):
@@ -77,7 +76,7 @@ def audit_arm(root, manifest, arm):
         assert update['adam_step'] == 32401 + index
         assert update['loss_identity'] == 'gae_advantage_value/v1'
         assert update['gpu_ordinal'] == 1 and update['checkpoint_readback']
-        checkpoint = strict_json(checkpoint_container_v1.export_v1(checked_pin(update['checkpoint'])))
+        checkpoint = read_pinned_checkpoint(update['checkpoint'])
         assert checkpoint['state_sha256'] == update['after_state_sha256']
         assert checkpoint['adam_step'] == 32401 + index
         assert checkpoint['gamma_bits'] == 1065353216
