@@ -75,6 +75,11 @@ def checked(reference):
     return Path(reference["path"])
 
 
+def plan_reference(path, digest):
+    # CLI callers may use forward slashes; receipts use pin()'s canonical path.
+    return {"path": str(Path(path).resolve(strict=True)), "sha256": digest}
+
+
 def positive(value):
     return type(value) in (int, float) and math.isfinite(value) and value > 0
 
@@ -368,13 +373,19 @@ def portable_inputs(plan):
                          for label, b in plan["binaries"].items()}}
 
 
-def bundle_qualification(plan_ref, qual_ref, overhead_ref, output):
-    load_plan(plan_ref)
-    qualification(plan_ref, qual_ref)
+def observed_overhead(overhead_ref):
     overhead = reference_json(overhead_ref)
     require(set(overhead) == {"setup_seconds", "transfer_seconds", "wait_seconds", "evidence"}
             and all(type(overhead[k]) in (int, float) and math.isfinite(overhead[k]) and overhead[k] >= 0
                     for k in ("setup_seconds", "transfer_seconds", "wait_seconds")), "invalid observed overhead")
+    reference_bytes(overhead["evidence"])
+    return overhead
+
+
+def bundle_qualification(plan_ref, qual_ref, overhead_ref, output):
+    load_plan(plan_ref)
+    qualification(plan_ref, qual_ref)
+    overhead = observed_overhead(overhead_ref)
     refs = [plan_ref, qual_ref, overhead_ref, overhead["evidence"]]
     q = reference_json(qual_ref)
     for w in (1, 2):
@@ -434,13 +445,16 @@ def select_placement(availability_ref, bundle_refs, forecast_ref, output=None, p
     return result
 
 
-def require_selection(plan_ref, selection_ref):
+def require_selection(plan_ref, selection_ref, qualification_ref):
     selected = reference_json(selection_ref)
     # Recompute from retained primary receipts; do not trust a chosen host label.
     rebuilt = select_placement(selected["availability"], [v["bundle"] for v in selected["candidates"].values()],
                                selected["forecast"], proofs=selected["proofs"])
     require(rebuilt == selected, "selection differs from primary receipts")
-    require(selected["candidates"][selected["selected"]]["plan"] == plan_ref, "this host/plan was not the fastest qualified placement")
+    chosen = selected["candidates"][selected["selected"]]
+    require(chosen["plan"] == plan_ref, "this host/plan was not the fastest qualified placement")
+    bundle = reference_json(chosen["bundle"], selected["proofs"])
+    require(bundle["qualification"] == qualification_ref, "comparison would reuse a different qualification batch")
 
 
 def normalized_window(case, label, staging, window):
@@ -481,13 +495,16 @@ def analyze(plan_ref, references, output):
           "windows": windows, "paired_windows": comparisons})
 
 
-def execute(plan_ref, output, stage, qualification_ref=None, selection_ref=None):
+def execute(plan_ref, output, stage, qualification_ref=None, selection_ref=None, overhead_ref=None):
     plan = load_plan(plan_ref)
     guarded(plan)
     inventory(plan["availability"], plan["placement"])
     if stage == "compare":
         require(selection_ref is not None, "comparison requires host selection")
-        require_selection(plan_ref, selection_ref)
+        require_selection(plan_ref, selection_ref, qualification_ref)
+    else:
+        require(overhead_ref is not None, "qualification requires pinned observed overhead")
+        observed_overhead(overhead_ref)  # Refuse missing evidence before games.
     require(not output.exists(), "fresh output directory required")
     output.mkdir(parents=True)
     storage(plan, output)
@@ -496,6 +513,8 @@ def execute(plan_ref, output, stage, qualification_ref=None, selection_ref=None)
         choice = min((1, 2), key=lambda w: read(refs[str(w)]["path"])["seconds"])
         write(output / "qualification.json", {"schema": SCHEMA, "plan": plan_ref, **refs, "selected_workers": choice})
         qualification(plan_ref, pin(output / "qualification.json"))
+        # Export before the remote wrapper drains descendants and unmaps D:.
+        bundle_qualification(plan_ref, pin(output / "qualification.json"), overhead_ref, output / "bundle.json")
     else:
         require(qualification_ref is not None, "comparison requires throughput evidence")
         workers, reused = qualification(plan_ref, qualification_ref)
@@ -533,6 +552,8 @@ def main():
             if mode == "execute":
                 p.add_argument("--stage", choices=("qualify", "compare"), required=True)
                 p.add_argument("--selection", type=Path)
+                p.add_argument("--overhead", type=Path)
+                p.add_argument("--overhead-sha")
             else:
                 p.add_argument("--remaining", type=Path, required=True)
             p.add_argument("--qualification", type=Path, required=mode == "analyze")
@@ -546,21 +567,23 @@ def main():
                                  [int(x) for x in args.reserved_cores.split(",")], args.availability,
                                  args.placement, args.remote_root)))
     elif args.mode == "bundle":
-        bundle_qualification({"path": args.plan, "sha256": args.sha256}, pin(args.qualification), pin(args.overhead), args.output)
+        bundle_qualification(plan_reference(args.plan, args.sha256), pin(args.qualification), pin(args.overhead), args.output)
     elif args.mode == "select":
         select_placement(pin(args.availability), [pin(p) for p in args.bundle], pin(args.forecast), args.output)
     elif args.mode == "_child":
-        child({"path": args.plan, "sha256": args.sha256}, args.output.resolve(), args.label, args.case, args.core)
+        child(plan_reference(args.plan, args.sha256), args.output.resolve(), args.label, args.case, args.core)
     elif args.mode == "analyze":
-        reference = {"path": args.plan, "sha256": args.sha256}
+        reference = plan_reference(args.plan, args.sha256)
         load_plan(reference)
         workers, reused = qualification(reference, pin(args.qualification))
         args.output.mkdir()
         analyze(reference, [(reused, list(CASES)[:2], workers),
                             (pin(args.remaining), list(CASES)[2:], workers)], args.output)
     else:
-        execute({"path": args.plan, "sha256": args.sha256}, args.output.resolve(), args.stage,
-                pin(args.qualification) if args.qualification else None, pin(args.selection) if args.selection else None)
+        require((args.overhead is None) == (args.overhead_sha is None), "pass overhead path and digest together")
+        execute(plan_reference(args.plan, args.sha256), args.output.resolve(), args.stage,
+                pin(args.qualification) if args.qualification else None, pin(args.selection) if args.selection else None,
+                plan_reference(args.overhead, args.overhead_sha) if args.overhead else None)
 
 
 if __name__ == "__main__":

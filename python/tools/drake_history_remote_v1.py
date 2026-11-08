@@ -195,7 +195,7 @@ def probe(root, manifest):
                                            "claim": "four filters listed per binary; no games and no native runtime-input consumer invoked"})
 
 
-def mapped(root, expected, mode, plan=None, plan_sha=None, selection=None):
+def mapped(root, expected, mode, plan=None, plan_sha=None, selection=None, overhead=None, overhead_sha=None):
     manifest = verify(root, expected)
     api = Namespace()
     identity = api.identity()
@@ -219,13 +219,16 @@ def mapped(root, expected, mode, plan=None, plan_sha=None, selection=None):
                        "--reserved-cores", ",".join(map(str, manifest["reserved_cores"]))]
         else:
             timing.require(plan and plan_sha, "timing plan required")
-            p = timing.load_plan({"path": plan, "sha256": plan_sha})
+            p = timing.load_plan(timing.plan_reference(plan, plan_sha))
             cores = p["reserved_cores"]
             payload = [sys.executable, "-B", str(Path(timing.__file__)), "execute", "--plan", plan,
                        "--sha256", plan_sha, "--output", str(root / "results" / mode), "--stage", mode]
             if mode == "compare":
                 timing.require(selection, "portable host selection required")
                 payload += ["--qualification", str(root / "results/qualify/qualification.json"), "--selection", selection]
+            else:
+                timing.require(overhead and overhead_sha, "pinned observed overhead required")
+                payload += ["--overhead", overhead, "--overhead-sha", overhead_sha]
         command = [sys.executable, "-B", str(Path(__file__).with_name("host_slots_v1.py")),
                    "timed", "--cores", ",".join(map(str, cores)), "--", *payload]
         import host_slots_v1 as slots
@@ -267,13 +270,15 @@ def main():
     p.add_argument("--plan")
     p.add_argument("--plan-sha")
     p.add_argument("--selection")
+    p.add_argument("--overhead")
+    p.add_argument("--overhead-sha")
     args = p.parse_args()
     root = owned_root(args.root)
     manifest = verify(root, args.manifest_sha)
     if args.mode == "_probe":
         probe(root, manifest)
     elif args.mode == "_mapped":
-        mapped(root, args.manifest_sha, args.stage, args.plan, args.plan_sha, args.selection)
+        mapped(root, args.manifest_sha, args.stage, args.plan, args.plan_sha, args.selection, args.overhead, args.overhead_sha)
     else:
         import host_reservation_v1 as host
         timing.require(not os.environ.get(host.TOKEN_ENV), "dedicated SSH supervisor required")
@@ -284,7 +289,7 @@ def main():
                               transport_record={"stage_sha256": args.manifest_sha}, cores=cores)
         command = [sys.executable, "-B", __file__, "_mapped", "--stage", args.mode, "--root", str(root),
                    "--manifest-sha", args.manifest_sha]
-        for name in ("plan", "plan_sha", "selection"):
+        for name in ("plan", "plan_sha", "selection", "overhead", "overhead_sha"):
             if getattr(args, name):
                 command += ["--" + name.replace("_", "-"), getattr(args, name)]
         raise SystemExit(host.supervise(record["token"], command, cwd=str(Path(__file__).parent)))

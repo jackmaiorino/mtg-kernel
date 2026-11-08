@@ -89,6 +89,7 @@ class NativeReceipts(unittest.TestCase):
             path.write_text("{}")
             reference = timing.pin(path)
             self.assertEqual(timing.checked(reference), path)
+            self.assertEqual(timing.plan_reference(path.as_posix(), reference["sha256"]), reference)
             path.write_text('{"changed":true}')
             with self.assertRaises(ValueError):
                 timing.checked(reference)

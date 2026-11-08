@@ -58,8 +58,8 @@ The existing nested Windows job helper confines every native worker to
 its assigned core at BelowNormal priority and cleans up descendants.
 
 ```text
-python -B python/tools/drake_history_timing_v1.py execute --plan D:/OWNED/plan.json --sha256 PLAN_SHA --output D:/OWNED/qualification --stage qualify
-python -B python/tools/drake_history_timing_v1.py execute --plan D:/OWNED/plan.json --sha256 PLAN_SHA --output D:/OWNED/comparison --stage compare --qualification D:/OWNED/qualification/qualification.json
+python -B python/tools/drake_history_timing_v1.py execute --plan D:/OWNED/plan.json --sha256 PLAN_SHA --output D:/OWNED/qualification --stage qualify --overhead D:/OWNED/overhead.json --overhead-sha OVERHEAD_SHA
+python -B python/tools/drake_history_timing_v1.py execute --plan D:/OWNED/plan.json --sha256 PLAN_SHA --output D:/OWNED/comparison --stage compare --qualification D:/OWNED/qualification/qualification.json --selection D:/OWNED/selection.json
 ```
 
 Qualification runs the first two cases on both binaries with one worker,
@@ -98,9 +98,11 @@ The pure parser tests do not launch games or acquire host resources.
 Native execution and serial/parallel qualification remain pending.
 
 The v2 plan adds an explicit `--placement desktop|computehost` and portable
-qualification bundles. After each host finishes its serial/parallel batch,
-`bundle --plan PLAN --sha256 SHA --qualification QUAL --overhead OVERHEAD
---output BUNDLE` retains the exact plan, native logs and hash-bound receipts.
+qualification bundles. `execute --stage qualify` requires `--overhead PATH
+--overhead-sha SHA` and automatically emits `bundle.json` after both batches,
+while the remote D: mapping is still active. This retains the exact plan,
+native logs and hash-bound receipts; no later unmapped bundle command is needed.
+The standalone `bundle` command remains available inside an active namespace.
 The overhead JSON records nonoverlapping observed `setup_seconds`,
 `transfer_seconds`, `wait_seconds` and a pinned `evidence` file. Bundles carry
 their primary receipts so copied Windows paths are not followed on another host.
