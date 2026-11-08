@@ -30,6 +30,10 @@ impl KaitoDecision {
     pub fn packet(&self) -> &Packet {
         &self.packet
     }
+    #[cfg(test)]
+    pub(crate) fn probe_actions_v1(&self) -> &[crate::rl::ActionSemanticV1] {
+        self.backend.actions()
+    }
 }
 // Pure normalization of the exact freshly validated backend input. This
 // function cannot capture another decision or acquire executable authority.
@@ -60,6 +64,20 @@ fn packet_from_current(
     normalize::encode(Source::KaitoV75, state, actions)
 }
 impl KaitoSession {
+    #[cfg(test)]
+    pub(crate) fn probe_apply_v1(&mut self, decision: &KaitoDecision, index: u32)
+        -> std::result::Result<(), (crate::current_actor_probe_v1::Stage, String)> {
+        use crate::current_actor_probe_v1::Stage;
+        if !Arc::ptr_eq(&self.owner, &decision.owner) || self.generation != decision.generation
+            || index as usize >= decision.packet.actions.len() {
+            return Err((Stage::Encoding, "stale probe owner or action range".into()));
+        }
+        self.inner.step_with_current_check(&decision.backend, index, |candidates, actions| {
+            let fresh = packet_from_current(candidates, actions).map_err(|e| (Stage::Encoding, e.to_string()))?;
+            if fresh != decision.packet { return Err((Stage::Encoding, "changed probe packet".into())); }
+            Ok(())
+        }, |error| (Stage::Encoding, error.to_string()), |error| (Stage::Engine, error.to_string())).map(|_| ())
+    }
     pub fn from_session(session: FastActorSessionV1) -> Result<Self> {
         Ok(Self::from_kaito(
             KaitoSessionV75::from_session(session).map_err(|e| Error::Projection(e.to_string()))?,

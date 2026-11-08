@@ -937,6 +937,8 @@ pub mod season_observation_v48;
 pub mod season_token_attachment_v48;
 
 pub mod current_mixed_policy_v1;
+#[cfg(test)]
+mod current_actor_probe_v1;
 pub mod current_tree_learner_v1;
 pub mod eternal_actor_choice_v1;
 pub mod eternal_actor_printed_v1;
