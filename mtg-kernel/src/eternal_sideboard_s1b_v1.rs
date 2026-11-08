@@ -692,7 +692,10 @@ pub(crate) fn delayed_triggers(
         let Some(silence) = card_id_by_name(DEAFENING_SILENCE) else {
             continue;
         };
-        let can_enter = state.objects.iter().any(|(_, object)| object.card_def == silence)
+        let can_enter = state
+            .objects
+            .iter()
+            .any(|(_, object)| object.card_def == silence)
             || [PlayerId::P0, PlayerId::P1].into_iter().any(|player| {
                 crate::eternal_outside_game_v1::outside_the_game(state, player).contains(&silence)
             });
