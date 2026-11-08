@@ -404,7 +404,7 @@ impl EternalActorSessionV1 {
                 }
                 for subtype in def.subtypes {
                     if subtype.is_creature_type()
-                        && !types.iter().any(|known| known.same_subtype_as(subtype))
+                        && !types.iter().any(|known| known.same_subtype_as(*subtype))
                     {
                         types.push(*subtype);
                     }
