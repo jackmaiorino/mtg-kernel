@@ -851,7 +851,11 @@ fn project_authenticated_parts_v75(
                     &action,
                 )
                 .map_err(error)?,
-                harvester_action: crate::harvester_consumer_v1::action(observation.harvester.as_ref(), &action).map_err(error)?,
+                harvester_action: crate::harvester_consumer_v1::action(
+                    observation.harvester.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
                 greatwurm_action: crate::greatwurm_consumer_v1::action(
                     observation.greatwurm.as_ref(),
                     &action,
@@ -1101,7 +1105,11 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
         .map_err(error)?;
     }
     if let Some(facts) = &value.observation.harvester {
-        crate::harvester_consumer_v1::validate_candidate_order(facts, value.candidates.iter().map(|row| &row.action)).map_err(error)?;
+        crate::harvester_consumer_v1::validate_candidate_order(
+            facts,
+            value.candidates.iter().map(|row| &row.action),
+        )
+        .map_err(error)?;
     }
     if let Some(facts) = &value.observation.greatwurm {
         crate::greatwurm_consumer_v1::validate_candidate_order(
@@ -1261,7 +1269,12 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                     &row.action,
                 )
                 .map_err(error)?
-            || row.harvester_action != crate::harvester_consumer_v1::action(value.observation.harvester.as_ref(), &row.action).map_err(error)?
+            || row.harvester_action
+                != crate::harvester_consumer_v1::action(
+                    value.observation.harvester.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
             || row.greatwurm_action
                 != crate::greatwurm_consumer_v1::action(
                     value.observation.greatwurm.as_ref(),

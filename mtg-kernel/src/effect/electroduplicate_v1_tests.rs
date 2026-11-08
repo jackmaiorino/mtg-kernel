@@ -1289,7 +1289,12 @@ pub(crate) fn hv_death(s: &mut GameState, p: PlayerId) -> ObjectId {
     assert!(harvester_v1::eligible(s, elf));
     elf
 }
-pub(crate) fn hv_activate(s: &mut GameState, p: PlayerId, source: ObjectId, target: ObjectId) -> StackItem {
+pub(crate) fn hv_activate(
+    s: &mut GameState,
+    p: PlayerId,
+    source: ObjectId,
+    target: ObjectId,
+) -> StackItem {
     priority(s, p);
     assert!(
         matches!(engine::advance_until_decision(s), Decision::CastSpellOrPass {activatable_abilities,..}

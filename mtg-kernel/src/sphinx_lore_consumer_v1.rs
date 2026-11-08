@@ -228,11 +228,21 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
                     crate::state::CastMethodV4::Normal,
                 ),
                 public::RouteV1::PrintedFlashback => (
-                    public::costs(def.flashback.as_ref().ok_or("Sphinx printed flashback absent")?.cost)?,
+                    public::costs(
+                        def.flashback
+                            .as_ref()
+                            .ok_or("Sphinx printed flashback absent")?
+                            .cost,
+                    )?,
                     crate::state::CastMethodV4::Flashback,
                 ),
                 public::RouteV1::Escape => (
-                    public::costs(def.escape.as_ref().ok_or("Sphinx printed escape absent")?.cost)?,
+                    public::costs(
+                        def.escape
+                            .as_ref()
+                            .ok_or("Sphinx printed escape absent")?
+                            .cost,
+                    )?,
                     crate::state::CastMethodV4::Escape,
                 ),
                 public::RouteV1::Granted { .. } => (

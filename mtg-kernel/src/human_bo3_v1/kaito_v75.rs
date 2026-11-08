@@ -365,7 +365,9 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
-    if let Some(label) = super::harvester_consumer_v1::label(obs.harvester.as_ref(), a, h)? { return Ok(Some(label)); }
+    if let Some(label) = super::harvester_consumer_v1::label(obs.harvester.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
     if let Some(label) = super::greatwurm_consumer_v1::label(obs.greatwurm.as_ref(), a, h)? {
         return Ok(Some(label));
     }
@@ -925,7 +927,11 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::curator_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
-    let harvester = obs.harvester.as_ref().map(|facts| super::harvester_consumer_v1::project(facts, &mut handles, &mut roles)).transpose()?;
+    let harvester = obs
+        .harvester
+        .as_ref()
+        .map(|facts| super::harvester_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {

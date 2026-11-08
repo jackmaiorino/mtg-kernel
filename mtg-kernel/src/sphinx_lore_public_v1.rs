@@ -306,11 +306,21 @@ pub(crate) fn options(
                 casting::RouteV1::Normal => (RouteV1::Normal, vec![CostV1::Mana(d.cost.into())]),
                 casting::RouteV1::PrintedFlashback => (
                     RouteV1::PrintedFlashback,
-                    costs(d.flashback.as_ref().ok_or("Sphinx printed flashback absent")?.cost)?,
+                    costs(
+                        d.flashback
+                            .as_ref()
+                            .ok_or("Sphinx printed flashback absent")?
+                            .cost,
+                    )?,
                 ),
                 casting::RouteV1::Escape => (
                     RouteV1::Escape,
-                    costs(d.escape.as_ref().ok_or("Sphinx printed escape absent")?.cost)?,
+                    costs(
+                        d.escape
+                            .as_ref()
+                            .ok_or("Sphinx printed escape absent")?
+                            .cost,
+                    )?,
                 ),
                 casting::RouteV1::Granted { installation } => (
                     RouteV1::Granted {

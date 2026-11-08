@@ -4702,7 +4702,10 @@ fn commit_with_entry_batch_and_source_color(
     state.engine.event_history.push(committed);
     if let Some(operation) = harvester_operation {
         if operation.record(state, entry_history_index).is_err() {
-            state.engine.halted = Some((crate::engine::UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
             return;
         }
     }

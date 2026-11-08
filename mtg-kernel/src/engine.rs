@@ -19184,10 +19184,14 @@ pub(crate) fn counter_stack_item_by_id(
             });
     }
     crate::harvester_receipts_v1::record_dispatch(
-        state, &item, crate::harvester_receipts_v1::OutcomeV1::Countered,
+        state,
+        &item,
+        crate::harvester_receipts_v1::OutcomeV1::Countered,
     );
     crate::harvester_receipts_v1::record_finished(
-        state, &item, crate::harvester_receipts_v1::OutcomeV1::Countered,
+        state,
+        &item,
+        crate::harvester_receipts_v1::OutcomeV1::Countered,
     );
     if let Some(stack_item_id) = copied_counter {
         state
@@ -20553,10 +20557,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     }
     if !targets_legal {
         crate::harvester_receipts_v1::record_dispatch(
-            state, &item, crate::harvester_receipts_v1::OutcomeV1::NoLegalTarget,
+            state,
+            &item,
+            crate::harvester_receipts_v1::OutcomeV1::NoLegalTarget,
         );
         crate::harvester_receipts_v1::record_finished(
-            state, &item, crate::harvester_receipts_v1::OutcomeV1::NoLegalTarget,
+            state,
+            &item,
+            crate::harvester_receipts_v1::OutcomeV1::NoLegalTarget,
         );
         if crate::drakuseth_damage_source_v76::record_removed(
             state,
@@ -29371,7 +29379,8 @@ fn push_paid_activation(
         ));
         return;
     }
-    if crate::harvester_receipts_v1::record_published(state, frozen.payment_history_start).is_err() {
+    if crate::harvester_receipts_v1::record_published(state, frozen.payment_history_start).is_err()
+    {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.source,

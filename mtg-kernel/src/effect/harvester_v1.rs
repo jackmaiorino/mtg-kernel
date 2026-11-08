@@ -754,23 +754,26 @@ pub(super) fn execute(
     };
     // One target: if it left/reentered or is otherwise illegal, the whole
     // ability fizzles. No token or other-Nightmare cleanup occurs.
-    let legal = crate::engine::target_contract_matches_live(state, ctx.targets[0], ctx.target_contracts[0])
-        && crate::engine::effect_target_is_legal_from_ability_source(
-            state,
-            source,
-            ctx.controller,
-            target_spec(),
-            &ctx.targets,
-            0,
-        )
-        && eligible(state, target);
+    let legal =
+        crate::engine::target_contract_matches_live(state, ctx.targets[0], ctx.target_contracts[0])
+            && crate::engine::effect_target_is_legal_from_ability_source(
+                state,
+                source,
+                ctx.controller,
+                target_spec(),
+                &ctx.targets,
+                0,
+            )
+            && eligible(state, target);
     let outcome = if legal {
         crate::harvester_receipts_v1::OutcomeV1::Resolved
     } else {
         crate::harvester_receipts_v1::OutcomeV1::NoLegalTarget
     };
     crate::harvester_receipts_v1::record_dispatch(state, item, outcome);
-    let receipt_owner = state.harvester_commit_receipts_v1.then_some(item.v4.stack_item_id);
+    let receipt_owner = state
+        .harvester_commit_receipts_v1
+        .then_some(item.v4.stack_item_id);
     if legal {
         let definition = state.objects.get(target).card_def;
         let mut proposal = event::ProposedEvent::create_token(definition, ctx.controller);
@@ -847,8 +850,15 @@ pub(super) fn execute(
             for &binding in &exiled_others {
                 validate_effect_object_binding(state, binding)?;
             }
-            event::propose_and_commit_batch(state, exiled_others.iter().map(|binding|
-                crate::harvester_receipts_v1::move_proposal(binding.object, receipt_owner)).collect());
+            event::propose_and_commit_batch(
+                state,
+                exiled_others
+                    .iter()
+                    .map(|binding| {
+                        crate::harvester_receipts_v1::move_proposal(binding.object, receipt_owner)
+                    })
+                    .collect(),
+            );
         } else {
             super::commit_zone_change_batch(state, &exiled_others, Zone::Exile, false)?;
         }

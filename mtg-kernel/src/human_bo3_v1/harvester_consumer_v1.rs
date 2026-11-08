@@ -72,70 +72,154 @@ struct HumanNightmareV1 {
 }
 
 fn name(id: u16) -> Result<String, Error> {
-    crate::card_def::CARD_DEFS.get(usize::from(id))
-        .map(|definition| definition.name.to_string()).ok_or(Error::InvalidVisibleReference)
+    crate::card_def::CARD_DEFS
+        .get(usize::from(id))
+        .map(|definition| definition.name.to_string())
+        .ok_or(Error::InvalidVisibleReference)
 }
 
-fn relation(card: &ReferenceV1, roles: &mut Incarnations) -> Result<HumanTinybonesRelationV72, Error> {
+fn relation(
+    card: &ReferenceV1,
+    roles: &mut Incarnations,
+) -> Result<HumanTinybonesRelationV72, Error> {
     roles.relation(&IncarnationV72 {
-        object: card.object, generation: card.generation, owner: card.owner,
-        controller: card.controller, zone: card.zone,
+        object: card.object,
+        generation: card.generation,
+        owner: card.owner,
+        controller: card.controller,
+        zone: card.zone,
     })
 }
 
 fn movement(row: &MovementV1, roles: &mut Incarnations) -> Result<HumanMoveV1, Error> {
     Ok(HumanMoveV1 {
-        original: roles.relation(&row.original)?, identity: row.identity.clone(),
+        original: roles.relation(&row.original)?,
+        identity: row.identity.clone(),
         actual_destination: row.actual_destination,
     })
 }
 
 pub(super) fn project(
-    facts: &FactsV1, handles: &mut Handles, roles: &mut Incarnations,
+    facts: &FactsV1,
+    handles: &mut Handles,
+    roles: &mut Incarnations,
 ) -> Result<HumanFactsV1, Error> {
-    let sources = facts.sources.iter().map(|row| href(&row.source, handles)).collect::<Result<_, _>>()?;
-    let eligible_graveyard_cards = facts.eligible_graveyard_cards.iter()
-        .map(|row| href(row, handles)).collect::<Result<_, _>>()?;
-    let chooser = facts.chooser.as_ref().map(|row| Ok::<_, Error>(HumanChoiceV1 {
-        source: href(&row.source, handles)?,
-        legal: row.legal.iter().map(|card| href(card, handles)).collect::<Result<_, _>>()?,
-    })).transpose()?;
-    let activations = facts.activations.iter().map(|row| {
-        let IdentityV1::Known { card_id } = row.original_target.identity else {
-            return Err(Error::InvalidVisibleReference);
-        };
-        Ok(HumanActivationV1 {
-            original_source: relation(&row.source.original_source, roles)?,
-            current_original_source: row.source.current_original_source.as_ref()
-                .map(|card| href(card, handles)).transpose()?,
-            stack_position: row.stack_position, original_target: relation(&row.original_target, roles)?,
-            original_target_name: name(card_id)?, entered_turn: row.entered_turn,
-            entered_active_player: row.entered_active_player, target_currently_legal: row.target_currently_legal,
-            outcome: row.outcome, target_movement: row.target_movement.as_ref()
-                .map(|move_row| movement(move_row, roles)).transpose()?,
-            created: row.created.iter().map(|birth| Ok(HumanBirthV1 {
-                original: roles.relation(&birth.original)?, copied_name: name(birth.copied_printing)?,
-                added_copiable_nightmare: birth.added_copiable_nightmare,
-            })).collect::<Result<_, Error>>()?,
-            other_nightmare_movements: row.other_nightmare_movements.iter()
-                .map(|move_row| movement(move_row, roles)).collect::<Result<_, _>>()?,
+    let sources = facts
+        .sources
+        .iter()
+        .map(|row| href(&row.source, handles))
+        .collect::<Result<_, _>>()?;
+    let eligible_graveyard_cards = facts
+        .eligible_graveyard_cards
+        .iter()
+        .map(|row| href(row, handles))
+        .collect::<Result<_, _>>()?;
+    let chooser = facts
+        .chooser
+        .as_ref()
+        .map(|row| {
+            Ok::<_, Error>(HumanChoiceV1 {
+                source: href(&row.source, handles)?,
+                legal: row
+                    .legal
+                    .iter()
+                    .map(|card| href(card, handles))
+                    .collect::<Result<_, _>>()?,
+            })
         })
-    }).collect::<Result<_, Error>>()?;
-    let nightmare_copies = facts.nightmare_copies.iter().map(|row| Ok(HumanNightmareV1 {
-        card: href(&row.card, handles)?, form: row.form.clone(), counters: row.counters.clone(),
-        tapped: row.tapped, summoning_sick: row.summoning_sick, copiable_nightmare: row.copiable_nightmare,
-    })).collect::<Result<_, Error>>()?;
-    Ok(HumanFactsV1 { meaning: facts.meaning.clone(), sources, eligible_graveyard_cards,
-        chooser, activations, nightmare_copies })
+        .transpose()?;
+    let activations = facts
+        .activations
+        .iter()
+        .map(|row| {
+            let IdentityV1::Known { card_id } = row.original_target.identity else {
+                return Err(Error::InvalidVisibleReference);
+            };
+            Ok(HumanActivationV1 {
+                original_source: relation(&row.source.original_source, roles)?,
+                current_original_source: row
+                    .source
+                    .current_original_source
+                    .as_ref()
+                    .map(|card| href(card, handles))
+                    .transpose()?,
+                stack_position: row.stack_position,
+                original_target: relation(&row.original_target, roles)?,
+                original_target_name: name(card_id)?,
+                entered_turn: row.entered_turn,
+                entered_active_player: row.entered_active_player,
+                target_currently_legal: row.target_currently_legal,
+                outcome: row.outcome,
+                target_movement: row
+                    .target_movement
+                    .as_ref()
+                    .map(|move_row| movement(move_row, roles))
+                    .transpose()?,
+                created: row
+                    .created
+                    .iter()
+                    .map(|birth| {
+                        Ok(HumanBirthV1 {
+                            original: roles.relation(&birth.original)?,
+                            copied_name: name(birth.copied_printing)?,
+                            added_copiable_nightmare: birth.added_copiable_nightmare,
+                        })
+                    })
+                    .collect::<Result<_, Error>>()?,
+                other_nightmare_movements: row
+                    .other_nightmare_movements
+                    .iter()
+                    .map(|move_row| movement(move_row, roles))
+                    .collect::<Result<_, _>>()?,
+            })
+        })
+        .collect::<Result<_, Error>>()?;
+    let nightmare_copies = facts
+        .nightmare_copies
+        .iter()
+        .map(|row| {
+            Ok(HumanNightmareV1 {
+                card: href(&row.card, handles)?,
+                form: row.form.clone(),
+                counters: row.counters.clone(),
+                tapped: row.tapped,
+                summoning_sick: row.summoning_sick,
+                copiable_nightmare: row.copiable_nightmare,
+            })
+        })
+        .collect::<Result<_, Error>>()?;
+    Ok(HumanFactsV1 {
+        meaning: facts.meaning.clone(),
+        sources,
+        eligible_graveyard_cards,
+        chooser,
+        activations,
+        nightmare_copies,
+    })
 }
 
-pub(super) fn label(facts: Option<&FactsV1>, action: &Action, handles: &Handles) -> Result<Option<String>, Error> {
-    let annotated = crate::harvester_consumer_v1::action(facts, action).map_err(|_| Error::InvalidVisibleReference)?;
+pub(super) fn label(
+    facts: Option<&FactsV1>,
+    action: &Action,
+    handles: &Handles,
+) -> Result<Option<String>, Error> {
+    let annotated = crate::harvester_consumer_v1::action(facts, action)
+        .map_err(|_| Error::InvalidVisibleReference)?;
     Ok(match (annotated, action) {
         (None, _) => None,
-        (Some(ActionV1::AnnounceTapAbility), _) => Some("Activate Abyssal Harvester's tap ability".into()),
-        (Some(ActionV1::ChooseOriginalGraveyardTarget), Action::ChooseTarget { target: TargetRefV1::Object { object }, .. }) =>
-            Some(format!("Choose {} for Abyssal Harvester", handles.name(object)?)),
+        (Some(ActionV1::AnnounceTapAbility), _) => {
+            Some("Activate Abyssal Harvester's tap ability".into())
+        }
+        (
+            Some(ActionV1::ChooseOriginalGraveyardTarget),
+            Action::ChooseTarget {
+                target: TargetRefV1::Object { object },
+                ..
+            },
+        ) => Some(format!(
+            "Choose {} for Abyssal Harvester",
+            handles.name(object)?
+        )),
         _ => return Err(Error::InvalidVisibleReference),
     })
 }

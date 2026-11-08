@@ -505,8 +505,10 @@ fn require_supported(
             | E::GreatwurmPublishedV1 { .. }
             | E::GreatwurmFinishedV1 { .. }
             | E::GreatwurmCommitReceiptV1 { .. } => appendix != LimitedAppendixV1::Greatwurm,
-            E::HarvesterCommitReceiptV1 { .. } | E::HarvesterResolvedV1 { .. }
-            | E::NightmareCopyEnteredV1 { .. } | E::NightmareCopyLayerV1 { .. } => appendix != LimitedAppendixV1::Harvester,
+            E::HarvesterCommitReceiptV1 { .. }
+            | E::HarvesterResolvedV1 { .. }
+            | E::NightmareCopyEnteredV1 { .. }
+            | E::NightmareCopyLayerV1 { .. } => appendix != LimitedAppendixV1::Harvester,
             E::KykarExiledV1 { .. } | E::KykarDelayedCollectedV1 { .. } => {
                 appendix != LimitedAppendixV1::Kykar
             }
@@ -563,7 +565,8 @@ fn captured_reference(
                 && source.card_def == crate::curator_public_v1::PRINTING
             || state.greatwurm_commit_receipts_v1
                 && source.card_def == crate::greatwurm_public_v1::PRINTING
-            || state.harvester_commit_receipts_v1 && source.card_def == crate::harvester_public_v1::PRINTING
+            || state.harvester_commit_receipts_v1
+                && source.card_def == crate::harvester_public_v1::PRINTING
         {
             source.card_def
         } else {
@@ -667,7 +670,8 @@ pub(crate) fn stack_source_reference(
             item.inline_effect,
             Some(crate::effect::EffectOp::GreatwurmCountersV1 { .. })
         );
-    let harvester = state.harvester_commit_receipts_v1 && source.card_def == crate::harvester_public_v1::PRINTING
+    let harvester = state.harvester_commit_receipts_v1
+        && source.card_def == crate::harvester_public_v1::PRINTING
         && crate::harvester_receipts_v1::selected(item);
     let kykar = crate::effect::kykar_v1::item_selected(state, item);
     let sphinx_lore = crate::effect::sphinx_lore_v1::selected(state, item);
@@ -1043,8 +1047,11 @@ pub(crate) fn observe_parts_v75(
             .transpose()
             .map_err(RlContractError)?,
         harvester: (appendix == LimitedAppendixV1::Harvester)
-            .then(|| crate::harvester_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1))
-            .transpose().map_err(RlContractError)?,
+            .then(|| {
+                crate::harvester_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1)
+            })
+            .transpose()
+            .map_err(RlContractError)?,
         complete_ordinary_observation: true,
         owning_consumer_admitted: false,
         projection_sha256: String::new(),
@@ -1679,7 +1686,29 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             crate::greatwurm_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::greatwurm_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some(facts)) => {
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+        ) => {
             crate::harvester_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::harvester_consumer_v1::OBSERVATION_SCHEMA
         }
