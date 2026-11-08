@@ -594,6 +594,7 @@ pub(super) fn start_batch(
             event::propose_and_commit_batch(&mut staged, tops.iter().map(|top|
                 crate::etali_primal_storm_receipts_v1::exile_proposal(top.object, id)
             ).collect());
+            crate::etali_primal_storm_receipts_v1::record_batch_committed(&mut staged, id, history_start)?;
         } else {
             commit_zone_change_batch(&mut staged, &tops, Zone::Exile, false)?;
         }

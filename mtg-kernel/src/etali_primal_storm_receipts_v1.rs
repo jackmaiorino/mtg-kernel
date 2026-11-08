@@ -34,6 +34,7 @@ pub enum JournalV1 {
     Attacked { source: AbilitySourceContractV4 },
     Published { attack_at: u64, item: Box<StackItem> },
     Started { id: StackItemId, expected_moves: u8 },
+    BatchCommitted { id: StackItemId, native_start: u64 },
     TopExileVisibility { id: StackItemId, arrival: AbilitySourceContractV4 },
     TopExiled { id: StackItemId, row: ExileV1 },
     Cast { id: StackItemId, row: CastV1 },
@@ -95,6 +96,12 @@ pub(crate) fn record_published(state: &mut GameState) -> Result<(), String> {
 pub(crate) fn record_batch_started(state: &mut GameState, id: StackItemId, expected: usize) -> Result<(), String> {
     let expected_moves = u8::try_from(expected).map_err(|_| "Etali native top batch width")?;
     push(state, JournalV1::Started { id, expected_moves });
+    Ok(())
+}
+
+pub(crate) fn record_batch_committed(state: &mut GameState, id: StackItemId, native_start: usize) -> Result<(), String> {
+    let native_start = u64::try_from(native_start).map_err(|_| "Etali top batch index width")?;
+    push(state, JournalV1::BatchCommitted { id, native_start });
     Ok(())
 }
 
@@ -212,6 +219,7 @@ fn original_source(state: &GameState, item: &StackItem) -> Result<AbilitySourceC
 struct Operations<'a> {
     published: Option<(usize, u64, &'a StackItem)>,
     started: Option<(usize, u8)>,
+    committed: Option<(usize, u64)>,
     exiled: Vec<(usize, ExileV1)>,
     visibility_count: usize,
     casts: Vec<(usize, CastV1)>,
@@ -245,6 +253,8 @@ pub(crate) fn occurrences(state: &GameState) -> Result<Vec<Occurrence>, String> 
                     .published.replace((at, *attack_at, item.as_ref())).is_some(),
             JournalV1::Started { id, expected_moves } =>
                 rows.entry(*id).or_default().started.replace((at, *expected_moves)).is_some(),
+            JournalV1::BatchCommitted { id, native_start } =>
+                rows.entry(*id).or_default().committed.replace((at, *native_start)).is_some(),
             JournalV1::TopExileVisibility { id, .. } => {
                 rows.entry(*id).or_default().visibility_count += 1;
                 false
@@ -298,13 +308,29 @@ pub(crate) fn occurrences(state: &GameState) -> Result<Vec<Occurrence>, String> 
         {
             return Err("Etali original occurrence changed terminal lifetime".into());
         }
-        if let Some((start, count)) = ops.started {
-            if start <= published || terminal.is_some_and(|end| end <= start)
-                || count > 2 || usize::from(count) != ops.exiled.len()
-            {
-                return Err("Etali actual native top batch lost original roster".into());
+        let batch_end = match (ops.started, ops.committed) {
+            (Some((start, count)), Some((end, native_start))) => {
+                if start <= published || start >= end
+                    || usize::try_from(native_start).ok() != Some(start)
+                    || terminal.is_some_and(|terminal| terminal <= end)
+                    || count > 2 || usize::from(count) != ops.exiled.len()
+                {
+                    return Err("Etali actual native top batch lost original roster".into());
+                }
+                let actual_moves = history[start + 1..end].iter().enumerate()
+                    .filter_map(|(offset, event)| match event {
+                        E::ZoneChange { object, from: Zone::Library, to: Zone::Exile, .. } =>
+                            Some((start + 1 + offset, *object)),
+                        _ => None,
+                    });
+                if !actual_moves.eq(ops.exiled.iter().map(|(at, row)| (at.saturating_sub(2), row.original.source))) {
+                    return Err("Etali typed top exile roster omits or changes native batch moves".into());
+                }
+                Some(end)
             }
-        }
+            (None, None) => None,
+            _ => return Err("Etali native top batch lost its commit boundary".into()),
+        };
         let mut owners = BTreeSet::new();
         let mut exiled = Vec::with_capacity(ops.exiled.len());
         let mut last = ops.started.map_or(published, |(at, _)| at);
@@ -332,6 +358,7 @@ pub(crate) fn occurrences(state: &GameState) -> Result<Vec<Occurrence>, String> 
             last = at;
             exiled.push(row);
         }
+        last = batch_end.unwrap_or(last);
         let mut cast_objects = BTreeSet::new();
         let mut casts = Vec::with_capacity(ops.casts.len());
         for (at, row) in ops.casts {

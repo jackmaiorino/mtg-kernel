@@ -211,6 +211,24 @@ fn paid_attack_repeated_free_casts_source_departure_hidden_pair_and_index_parity
         assert!(result.casts.is_empty());
         assert_eq!(declined.objects.get(first).zone, Zone::Exile);
         assert_eq!(declined.objects.get(second).zone, Zone::Exile);
+        let mut missing: GameState = serde_json::from_slice(&serde_json::to_vec(&declined).unwrap()).unwrap();
+        missing.engine.event_history.retain(|event| !matches!(event,
+            E::EtaliPrimalStormReceiptV1 { journal } if matches!(journal.as_ref(),
+                receipts::JournalV1::TopExileVisibility { arrival, .. } if arrival.source == second)
+                || matches!(journal.as_ref(),
+                    receipts::JournalV1::TopExiled { row, .. } if row.arrival.source == second)));
+        for event in missing.engine.event_history.iter_mut() {
+            if let E::EtaliPrimalStormReceiptV1 { journal } = event {
+                if let receipts::JournalV1::Started { expected_moves, .. } = journal.as_mut() {
+                    *expected_moves = 1;
+                }
+            }
+        }
+        assert_eq!(missing.engine.event_history.iter().filter(|event| matches!(event,
+            E::ZoneChange { object, from: Zone::Library, to: Zone::Exile, .. }
+                if *object == first || *object == second)).count(), 2);
+        assert!(receipts::occurrences(&missing).is_err());
+
         event::propose_and_commit(&mut declined, ProposedEvent::zone_change(first, Zone::Hand));
         let mut relabeled: GameState = serde_json::from_slice(&serde_json::to_vec(&declined).unwrap()).unwrap();
         assert!(receipts::occurrences(&relabeled).is_ok());
