@@ -359,7 +359,8 @@ The unrelated #474 performance candidate is excluded.
 
 Source verification: pinned Rust 1.94.1 formatting passed through the
 Tutelage checkpoint `98ee9ab7e9ee66e76d6481fa6d5a426f71e1df73`.
-The Mixed and Moon changes await their queued one-core format pass.
+The Mixed and Moon changes passed the pinned one-core formatter in
+`52f25a4fc9a45e200b90a4e032dd792e263159e2` (36 staged files, 17 changed).
 Read-only review of Mixed `ac74b5322218e00cd0b33d65151efecf9ce29ace`
 found no blocking source issue in the explicit scope, candidate bindings,
 normalization, or fixture call signatures. Root reviewed the Moon printing,
@@ -371,9 +372,15 @@ Earlier `1c3d215` passed four #552 and six #454 native checks. Its Return
 filter passed six of seven; the Call publication fixture was subsequently
 repaired. The sixteen-card type-check attempt reported seven diagnostics,
 repaired in `0c277d8e`; environmental interruptions prevented a completed retry.
+The guarded 52f25 library/test-code check completed with one compiler error:
+Tutelage's public repeat helper attempted to move the static CardDef array.
+`a5714aefc` borrows it instead and removes the unused Omniscience engine import.
+That failed attempt is retained; the repaired combined source awaits its retry.
 The separate #591 default-feature lane passed 21 V4/V3/privacy tests and its
 real native/companion buffered-commit process passed for both starting seats.
-Its fresh 28-case recovery/reveal/privacy run is pending. None of these
+Its fresh 28-case recovery/reveal/privacy run passed, and #591 is merged on main.
+The current composition keeps its qualified process harness and companion pin.
+None of these
 predecessor results qualifies the larger Limited composition.
 
 The next guarded Limited job must first complete a type check and the focused
