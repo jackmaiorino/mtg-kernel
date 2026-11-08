@@ -298,6 +298,109 @@ fn closed_list_v2_counts_unmodeled_face_down_roots_as_fallbacks() {
 }
 
 #[test]
+fn closed_list_v2_refuses_invalid_belief_printings() {
+    let forest = card_id_by_name("Forest").unwrap();
+    let deck = vec![forest; 40];
+    let session = rules_only_closed_list_game([deck.clone(), deck], PlayerId::P0);
+    let error = sample_world_v1(
+        &session,
+        WorldModeV1::ClosedListV2,
+        Some(&LimitedBeliefV1::new([vec![u16::MAX; 40]])),
+        99,
+    )
+    .err();
+    assert_eq!(
+        error.as_deref(),
+        Some("belief corpus contains a non-executable printing")
+    );
+}
+
+#[test]
+fn closed_list_v2_searches_legal_partial_cast_and_land_actions() {
+    use crate::rl::ActionSemanticV1;
+    use crate::state::Step;
+
+    let manifest: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../data/limited/fdn_v1/booster_pool_v1.json"
+    ))
+    .unwrap();
+    let forest = card_id_by_name("Forest").unwrap();
+    let island = card_id_by_name("Island").unwrap();
+    let turtle = card_id_by_name("Aegis Turtle").unwrap();
+    let mut opponent = vec![island; 40];
+    opponent[0] = turtle;
+    let belief = LimitedBeliefV1::new([opponent.clone()]);
+    let mut failures = Vec::new();
+    for name in manifest["card_names"].as_array().unwrap() {
+        let name = name.as_str().unwrap();
+        let id = card_id_by_name(name).unwrap();
+        if CARD_DEFS[usize::from(id)].has_full_support() {
+            continue;
+        }
+        let mut deck = vec![forest; 40];
+        deck[..2].copy_from_slice(&[id, turtle]);
+        let mut state = GameState::new_from_libraries_with_starting_player_v1(
+            &deck,
+            &opponent,
+            crate::rl::card_name,
+            552,
+            PlayerId::P0,
+        );
+        state.step = Step::Main1;
+        crate::combat_damage_v1::enable_foundations_combat_v1(&mut state).unwrap();
+        state.enable_hand_knowledge_by_name_v2();
+        for seat in [PlayerId::P0, PlayerId::P1] {
+            let player = &mut state.players[seat.index()];
+            let position = player
+                .library
+                .iter()
+                .position(|&obj| state.objects.get(obj).card_def == turtle)
+                .unwrap();
+            let obj = player.library.remove(position);
+            state.objects.get_mut(obj).zone = Zone::Battlefield;
+            player.battlefield.push(obj);
+        }
+        let player = &mut state.players[0];
+        let position = player
+            .library
+            .iter()
+            .position(|&obj| state.objects.get(obj).card_def == id)
+            .unwrap();
+        let obj = player.library.remove(position);
+        state.objects.get_mut(obj).zone = Zone::Hand;
+        player.hand.push(obj);
+        player.mana_pool.fill(20);
+
+        let mut session = rules_only_closed_list_game([deck, opponent.clone()], PlayerId::P0);
+        session.install_rules_only_test_state_v1(state);
+        let Some(actions) = session.diagnostic_current_action_semantics() else {
+            failures.push(format!("{name}: {:?}", session.current_response()));
+            continue;
+        };
+        let Some(index) = actions.iter().position(|action| {
+            matches!(action, ActionSemanticV1::CastSpell { source, .. }
+                | ActionSemanticV1::PlayLand { source, .. } if source.arena_id == obj.0)
+        }) else {
+            failures.push(format!("{name}: no cast or play action in {actions:?}"));
+            continue;
+        };
+        let (_, stats) = pimc_choose_v1(
+            &session,
+            actions.len() as u32,
+            0,
+            WorldModeV1::ClosedListV2,
+            Some(&belief),
+            552,
+        )
+        .unwrap();
+        if stats.visits[index] != 1 || stats.rollout_errors != 0 {
+            failures.push(format!("{name}: {stats:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+#[test]
 fn deals_are_deterministic_distinct_and_shared_by_both_legs() {
     for pair in 0..50 {
         let deal = deal_pair_v1(7, pair, 5).unwrap();
