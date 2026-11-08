@@ -217,6 +217,7 @@ pub fn printing_v1(id: u16) -> Result<Value> {
         };
     }
     field!("schema", "eternal-printed-programs/v1");
+    field!("name_equivalence", name_equivalence(object_name)?);
     field!("external_rules", external_rules(d.name)?);
     field!("cost", cost);
     field!("types", types);
@@ -272,7 +273,7 @@ pub fn printing_v1(id: u16) -> Result<Value> {
         "attachment",
         attachment.as_ref().map(attachment_value).transpose()?
     );
-    field!("transform_face", transform_face.as_ref().map(|f| json!({"types": f.types, "subtypes": f.subtypes, "colors": f.colors, "power": f.power, "toughness": f.toughness, "keywords": f.keywords})));
+    field!("transform_face", transform_face.as_ref().map(|f| Ok::<_, RlContractError>(json!({"name_equivalence": name_equivalence(f.name)?, "types": f.types, "subtypes": f.subtypes, "colors": f.colors, "power": f.power, "toughness": f.toughness, "keywords": f.keywords}))).transpose()?);
     field!(
         "saga",
         saga.as_ref()
@@ -285,9 +286,27 @@ pub fn printing_v1(id: u16) -> Result<Value> {
             .map(trigger)
             .collect::<Result<Vec<_>>>()?
     );
-    // Printing identity is bound by the caller; display text is not meaning.
-    let _ = object_name;
+    // Printing identity is bound by the caller. Public name equality matters
+    // to Needle, so it has an explicit class while display text stays absent.
     Ok(Value::Object(out))
+}
+
+/// Exact registry-scoped equality class, including back-face names. The
+/// feature identity binds the card database. This carries equality semantics
+/// without treating a display label as a substitute for a printed program.
+pub(crate) fn name_equivalence(name: &str) -> Result<u32> {
+    let names = CARD_DEFS
+        .iter()
+        .flat_map(|def| {
+            std::iter::once(def.object_name)
+                .chain(def.transform_face.as_ref().map(|face| face.name))
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    names
+        .into_iter()
+        .position(|candidate| candidate == name)
+        .and_then(|index| u32::try_from(index).ok())
+        .ok_or_else(unsupported)
 }
 
 fn costs(items: &[CostComponent]) -> Result<Vec<Value>> {
