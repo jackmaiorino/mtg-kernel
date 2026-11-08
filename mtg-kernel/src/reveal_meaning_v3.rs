@@ -307,12 +307,16 @@ mod tests {
                             hidden_by: None,
                             hidden_by_source: None,
                         });
-                        propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Hand));
+                        propose_and_commit(
+                            &mut state,
+                            ProposedEvent::zone_change(card, Zone::Hand),
+                        );
                         assert!(state.objects.get(card).v4.face_down_v1.is_none());
                         assert!(state.players[owner.index()].hand.contains(&card));
                         assert_eq!(
-                            crate::card_def::CARD_DEFS[usize::from(state.objects.get(card).card_def)]
-                                .name,
+                            crate::card_def::CARD_DEFS
+                                [usize::from(state.objects.get(card).card_def)]
+                            .name,
                             name
                         );
                         assert!(state.known_hand_cards(owner, owner).is_empty());
