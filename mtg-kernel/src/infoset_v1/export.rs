@@ -1536,6 +1536,14 @@ fn export_versioned(
                 // unlinked reference in it becomes an unnamed tombstone.
                 | crate::event::CommittedEvent::PublishedCastIdentityV1 { .. }
         )
+            // This marker precedes a face-down battlefield departure. It
+            // carries only an object/epoch, so v2 can preserve it with an
+            // unnamed tombstone rather than revealing the old incarnation.
+            || (visibility_v2
+                && matches!(
+                    state.engine.event_history[e],
+                    crate::event::CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange { .. }
+                ))
     };
     let mut timestamps: BTreeSet<u64> = BTreeSet::new();
     let pinned_set: BTreeSet<ObjectId> = pinned_untracked.iter().copied().collect();
