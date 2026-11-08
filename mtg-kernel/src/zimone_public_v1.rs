@@ -337,11 +337,19 @@ fn project_ability(
 }
 
 pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, String> {
+    capture_scoped(state, viewer, public::ConsumerV1::Legacy)
+}
+
+pub(crate) fn capture_scoped(
+    state: &GameState,
+    viewer: PlayerId,
+    consumer: public::ConsumerV1,
+) -> Result<FactsV1, String> {
     let meaning = printed_meaning()?;
     if state.engine.halted.is_some() {
         return Err("Zimone native state halted".into());
     }
-    public::validate_state_checked(state)?;
+    public::validate_state_for_consumer(state, true, consumer)?;
 
     let visible_printings = state
         .objects

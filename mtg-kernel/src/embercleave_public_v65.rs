@@ -319,11 +319,19 @@ fn ability(
     })
 }
 pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV65, String> {
+    capture_scoped(state, viewer, public::ConsumerV1::Legacy)
+}
+
+pub(crate) fn capture_scoped(
+    state: &GameState,
+    viewer: PlayerId,
+    consumer: public::ConsumerV1,
+) -> Result<FactsV65, String> {
     let selected = meaning::selected_id()?;
     if state.engine.halted.is_some() {
         return Err("V65 native state halted".into());
     }
-    public::validate_state_checked(state)?;
+    public::validate_state_for_consumer(state, true, consumer)?;
     state
         .validate_attachment_relations()
         .map_err(|_| "V65 invalid native attachment relation")?;

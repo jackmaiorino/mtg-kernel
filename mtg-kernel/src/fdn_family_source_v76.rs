@@ -301,6 +301,14 @@ fn trigger(
     })
 }
 pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV76, String> {
+    capture_scoped(s, v, public::ConsumerV1::Legacy)
+}
+
+pub(crate) fn capture_scoped(
+    s: &GameState,
+    v: PlayerId,
+    consumer: public::ConsumerV1,
+) -> Result<FactsV76, String> {
     if !cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
@@ -315,7 +323,7 @@ pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV76, String> {
         id,
         &CARD_DEFS[usize::from(id)],
     )?;
-    public::validate_state_checked(s)?;
+    public::validate_state_for_consumer(s, true, consumer)?;
     native::validate_state(s)?;
     crate::effect::validate_pending_effect_choice(s)?;
     if let Some(p) = &s.engine.pending_cast {

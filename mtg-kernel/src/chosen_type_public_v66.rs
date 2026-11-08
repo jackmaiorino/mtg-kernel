@@ -220,6 +220,14 @@ fn counters(state: &GameState, id: ObjectId) -> Result<CountersV66, String> {
     })
 }
 pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV66, String> {
+    capture_scoped(state, viewer, public::ConsumerV1::Legacy)
+}
+
+pub(crate) fn capture_scoped(
+    state: &GameState,
+    viewer: PlayerId,
+    consumer: public::ConsumerV1,
+) -> Result<FactsV66, String> {
     if !matches!(viewer, PlayerId::P0 | PlayerId::P1) {
         return Err("V66 unsupported viewer".into());
     }
@@ -230,7 +238,7 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV66, String> 
         .into_iter()
         .map(meaning::printed_meaning)
         .collect::<Result<Vec<_>, _>>()?;
-    public::validate_state_checked(state)?;
+    public::validate_state_for_consumer(state, true, consumer)?;
     // This authenticates the complete enclosing checkpoint when one exists,
     // otherwise the complete entry journal and all current selected sources.
     entry::validate_state(state)?;

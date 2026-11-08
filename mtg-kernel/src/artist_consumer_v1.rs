@@ -6,7 +6,7 @@ use crate::{
     human_bo3_v1::HumanKaitoSessionV75,
     ids::PlayerId,
     limited_consumer_wire_v1::ProfileWireV1,
-    optional_trigger_public_v1::{IdentityV1, ReferenceV1},
+    optional_trigger_public_v1::{ConsumerV1, IdentityV1, ReferenceV1},
     rl::{ActionSemanticV1 as Action, CardStableRefV1, PlayerSeatV1, TargetRefV1},
     rl_session::FastActorSessionV1,
     state::{GameState, Zone},
@@ -99,7 +99,15 @@ impl JsonlServerV1 {
 }
 
 pub(crate) fn capture(state: &GameState, actor: PlayerId) -> Result<FactsV64, String> {
-    let mut facts = crate::artist_public_v64::capture(state, actor)?;
+    capture_scoped(state, actor, ConsumerV1::Legacy)
+}
+
+pub(crate) fn capture_scoped(
+    state: &GameState,
+    actor: PlayerId,
+    consumer: ConsumerV1,
+) -> Result<FactsV64, String> {
+    let mut facts = crate::artist_public_v64::capture_scoped(state, actor, consumer)?;
     // An opponent's revealed Artist belongs in name/count hand knowledge.
     // Its physical slot is irrelevant to all Artist choices.
     facts

@@ -11,6 +11,7 @@ use crate::{
     ids::PlayerId,
     limited_consumer_wire_v1::ProfileWireV1,
     linked_aura_operation_v1::{GeneralChoiceV36, OperationV1},
+    optional_trigger_public_v1::ConsumerV1,
     policy_surface_v5::{PolicyActionV5, PolicyDecisionV5},
     rl::{ActionSemanticV1, CorePolicyActionCandidateV1, PlayerSeatV1, RlContractError},
     rl_session::FastActorSessionV1,
@@ -179,7 +180,15 @@ fn active_printing(state: &GameState, viewer: PlayerId) -> Result<Option<FamilyV
 }
 
 pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, String> {
-    let mut native = crate::chosen_type_public_v66::capture(state, viewer)?;
+    capture_scoped(state, viewer, ConsumerV1::Legacy)
+}
+
+pub(crate) fn capture_scoped(
+    state: &GameState,
+    viewer: PlayerId,
+    consumer: ConsumerV1,
+) -> Result<FactsV1, String> {
+    let mut native = crate::chosen_type_public_v66::capture_scoped(state, viewer, consumer)?;
     native.visible_printings.retain(|reference| {
         !matches!(reference.zone, Zone::Hand | Zone::Library) || reference.owner == native.viewer
     });

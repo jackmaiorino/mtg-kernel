@@ -6,7 +6,7 @@ use crate::{
     human_bo3_v1::HumanKaitoSessionV75,
     ids::PlayerId,
     limited_consumer_wire_v1::ProfileWireV1,
-    optional_trigger_public_v1::{IdentityV1, ReferenceV1},
+    optional_trigger_public_v1::{ConsumerV1, IdentityV1, ReferenceV1},
     rl::{ActionSemanticV1 as Action, CardStableRefV1, PlayerSeatV1, TargetRefV1},
     rl_session::FastActorSessionV1,
     state::{GameState, Zone},
@@ -101,7 +101,15 @@ impl JsonlServerV1 {
 }
 
 pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV65, String> {
-    let mut facts = crate::embercleave_public_v65::capture(state, viewer)?;
+    capture_scoped(state, viewer, ConsumerV1::Legacy)
+}
+
+pub(crate) fn capture_scoped(
+    state: &GameState,
+    viewer: PlayerId,
+    consumer: ConsumerV1,
+) -> Result<FactsV65, String> {
+    let mut facts = crate::embercleave_public_v65::capture_scoped(state, viewer, consumer)?;
     facts
         .authorized
         .retain(|card| card.zone != Zone::Hand || card.owner == facts.viewer);

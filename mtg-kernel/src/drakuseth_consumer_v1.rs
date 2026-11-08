@@ -6,7 +6,7 @@ use crate::{
     human_bo3_v1::HumanKaitoSessionV75,
     ids::PlayerId,
     limited_consumer_wire_v1::ProfileWireV1,
-    optional_trigger_public_v1::IdentityV1,
+    optional_trigger_public_v1::{ConsumerV1, IdentityV1},
     rl::PlayerSeatV1,
     rl_session::FastActorSessionV1,
     state::{GameState, Zone},
@@ -160,7 +160,15 @@ pub struct FactsV1 {
 }
 
 pub(crate) fn capture(state: &GameState, actor: PlayerId) -> Result<FactsV1, String> {
-    let mut source = crate::fdn_family_source_v76::capture(state, actor)?;
+    capture_scoped(state, actor, ConsumerV1::Legacy)
+}
+
+pub(crate) fn capture_scoped(
+    state: &GameState,
+    actor: PlayerId,
+    consumer: ConsumerV1,
+) -> Result<FactsV1, String> {
+    let mut source = crate::fdn_family_source_v76::capture_scoped(state, actor, consumer)?;
     for crate::fdn_family_source_v76::LaterFamilyV76::Drakuseth(family) in &mut source.families {
         // Public name/count knowledge is not a physical opponent-hand handle.
         family

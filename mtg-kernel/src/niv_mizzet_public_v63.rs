@@ -304,15 +304,23 @@ fn original_damage_source(
     })
 }
 pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV63, String> {
-    capture_parts(state, viewer).map(|(facts, _)| facts)
+    capture_parts_scoped(state, viewer, public::ConsumerV1::Legacy).map(|(facts, _)| facts)
 }
 
 pub(crate) fn capture_for_consumer(
     state: &GameState,
     viewer: PlayerId,
 ) -> Result<ConsumerFactsV1, String> {
+    capture_consumer_scoped(state, viewer, public::ConsumerV1::Legacy)
+}
+
+pub(crate) fn capture_consumer_scoped(
+    state: &GameState,
+    viewer: PlayerId,
+    consumer: public::ConsumerV1,
+) -> Result<ConsumerFactsV1, String> {
     let mut outcomes = crate::engine::niv_mizzet_resolution_v1::outcomes(state)?;
-    let (mut appendix, published) = capture_parts(state, viewer)?;
+    let (mut appendix, published) = capture_parts_scoped(state, viewer, consumer)?;
     appendix
         .authorized
         .retain(|card| card.zone != Zone::Hand || card.owner == appendix.viewer);
@@ -331,12 +339,13 @@ pub(crate) fn capture_for_consumer(
     Ok(ConsumerFactsV1 { appendix, results })
 }
 
-fn capture_parts(
+fn capture_parts_scoped(
     state: &GameState,
     viewer: PlayerId,
+    consumer: public::ConsumerV1,
 ) -> Result<(FactsV63, Vec<(u32, crate::ids::StackItemId)>), String> {
     let selected = meaning::selected_id()?;
-    public::validate_state_checked(state)?;
+    public::validate_state_for_consumer(state, true, consumer)?;
     state
         .validate_attachment_relations()
         .map_err(|_| "V63 invalid native attachment relation")?;
