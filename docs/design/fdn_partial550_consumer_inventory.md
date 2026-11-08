@@ -320,18 +320,18 @@ remain pending.
 
 ## Composed source checkpoint (2026-11-08)
 
-The source candidate at `8dfb44af64121f33b6d24abdb7c1afb33b2d70f9` covers
-27 of the 36 Partial booster printings in seventeen finite profiles: Return (3),
+The source candidate at `c483b1aa975773c48c249f3602fd0824289c5a78` covers
+28 of the 36 Partial booster printings in eighteen finite profiles: Return (3),
 V68-V75 (8), Artist (1), Chosen Type (2), Niv (1), Drakuseth (1),
 Embercleave (1), Zimone (1), Omniscience (1), Tutelage (1), Moon (1), and
 Leyline Axe (1), Progenitus (1), Aberration (1), Lathril (1), and
-Electroduplicate (1), and Blasphemous Edict (1). Nine original Partial consumer
+Electroduplicate (1), Blasphemous Edict (1), and Loot (1). Eight original Partial consumer
 gaps remain. Catalog tiers are unchanged.
 This is source coverage; the complete composition is not natively qualified.
 
 The additional `fdn-mixed-consumer/v1` owner composes the first twenty
 printings, excluding Moon, Leyline Axe, Progenitus, Aberration, Lathril and
-Electroduplicate and Blasphemous Edict. It authenticates every represented native printed
+Electroduplicate, Blasphemous Edict and Loot. It authenticates every represented native printed
 definition before reset and retains the real declared deck IDs. Its exact
 Mixed capability enables all eight existing appendices together. Its distinct
 observation and candidate schemas require all eight facts; single-family
@@ -412,6 +412,16 @@ these paths. Its public Human type repair is included. The genuine paid,
 hidden-pair, restore, zero-victim and stolen-order fixtures are unrun, and
 the new event-kind sample must be harvested from real native execution.
 
+Loot has its own `fdn-loot-consumer/v1` profile. Its exact printed meaning,
+effective land allowance, physical used-play count and actual paid-look
+boundary stages accompany the chooser's original top-six and eligible cards.
+Other viewers receive no private prefix or random-bottom order. Original
+source and candidate references bind choose/confirm/decline actions. Review
+of `c483b1aa975773c48c249f3602fd0824289c5a78` resolved missing scope at three
+common observation calls and the original-source action binding. Both-seat
+paid cast/activation, hidden-pair, Human/wire, restore, random-bottom and real
+extra-land-play fixtures remain unrun. This profile adds no native event kind.
+
 The composition retains the complete histories for Chosen Type, Niv,
 Drakuseth, Embercleave, Zimone, Omniscience and Tutelage. The latter's new
 native receipt records actual post-replacement mill members and the original
@@ -461,7 +471,7 @@ None of these
 predecessor results qualifies the larger Limited composition.
 
 The next guarded Limited job must first complete a type check and the focused
-consumer fixtures before building all seventeen individual-profile binaries and
+consumer fixtures before building all eighteen individual-profile binaries and
 the Mixed binary. Filters include `limited_mixed_consumer_v1::tests::`,
 `moon_consumer_v1::tests::`, `chosen_type_consumer_v1::tests::`,
 `leyline_axe_consumer_v1::tests::`, `leyline_axe_v1::tests::`,
@@ -470,6 +480,7 @@ the Mixed binary. Filters include `limited_mixed_consumer_v1::tests::`,
 `lathril_consumer_v1::tests::`, `effect::lathril_v1_tests::`,
 `electroduplicate_consumer_v1::tests::`, `effect::electroduplicate_v1_tests::`,
 `edict_consumer_v1::tests::`, `effect::blasphemous_edict_v1_tests::`,
+`loot_consumer_v1::tests::`, `effect::loot_v1::tests::`,
 `rl::complete_copy_prefix_scope_tests::`,
 `niv_consumer_v1::tests::`, `niv_mizzet_public_v63::tests::`,
 `drakuseth_consumer_v1::tests::`, `artist_consumer_v1::tests::`,
