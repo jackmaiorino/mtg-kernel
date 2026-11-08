@@ -1699,7 +1699,18 @@ fn export_versioned(
                         }
                         _ => false,
                     };
-                    let owner = state.objects.get(o).owner;
+                    let owner = match r.class {
+                        ClassV1::Event(e) if recovery_v3 && damage_event(e) && !named => state
+                            .observation_journal
+                            .damage_public_owner_v3(e, o)
+                            .ok_or_else(|| {
+                                refuse(
+                                    RefusalCodeV1::R2,
+                                    "unobserved Damage owner has no public event-time proof",
+                                )
+                            })?,
+                        _ => state.objects.get(o).owner,
+                    };
                     let def = if named {
                         state.objects.get(o).card_def
                     } else {

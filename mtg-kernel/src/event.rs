@@ -4436,6 +4436,44 @@ fn commit_with_entry_batch_and_source_color(
         }
         _ => None,
     };
+    // A Damage endpoint is attributable to its indexed public object before
+    // damage hooks can move it. Nominal zone markers and anonymous hidden
+    // sources do not suffice. A face-down battlefield permanent still has a
+    // public owner and is visibly the permanent dealing/receiving the damage;
+    // concealed exile/stack correspondence is deliberately not admitted.
+    let damage_public_owners = match &event {
+        ProposedEvent::Damage(damage) => {
+            let target = match damage.target {
+                Target::Object(object) => Some(object),
+                _ => None,
+            };
+            std::iter::once(damage.source)
+                .chain(target)
+                .filter_map(|id| {
+                    let object = state.objects.try_get(id)?;
+                    let public = match object.zone {
+                        Zone::Battlefield => state.players[object.controller.index()]
+                            .battlefield
+                            .contains(&id),
+                        Zone::Graveyard if object.v4.face_down_v1.is_none() => {
+                            state.players[object.owner.index()].graveyard.contains(&id)
+                        }
+                        Zone::Exile if object.v4.face_down_v1.is_none() => {
+                            state.exile.contains(&id)
+                        }
+                        Zone::Stack if object.v4.face_down_v1.is_none() => {
+                            state.stack.iter().any(|item| {
+                                item.kind == crate::state::StackItemKind::Spell && item.source == id
+                            })
+                        }
+                        _ => false,
+                    };
+                    public.then_some((id, object.owner))
+                })
+                .collect::<Vec<_>>()
+        }
+        _ => Vec::new(),
+    };
     let Some(MaterializedEventV1 {
         committed,
         alesha_power_departure,
@@ -4532,6 +4570,17 @@ fn commit_with_entry_batch_and_source_color(
         }
     );
     let entry_history_index = state.engine.event_history.len();
+    if let CommittedEvent::Damage { source, target, .. } = &committed {
+        for (object, owner) in damage_public_owners {
+            if object == *source || *target == Target::Object(object) {
+                state.observation_journal.record_damage_public_owner_v3(
+                    entry_history_index,
+                    object,
+                    owner,
+                );
+            }
+        }
+    }
     if let CommittedEvent::ZoneChange { object, .. } = &committed {
         let mask = concealed_exile_departure
             .filter(|(id, _)| id == object)

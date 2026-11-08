@@ -29,6 +29,15 @@ with canonical definition and epoch, only inside a bounded public scope:
   SHA-256 is `68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851`.
 - The public stack, cast/activation announcements, effect continuation, and
   pending trigger phase have finished.
+- Each unnamed endpoint has an event-time public-owner receipt from the native
+  Damage commit. The endpoint must be an indexed battlefield permanent, or a
+  face-up indexed graveyard/exile card or live stack spell. A face-down
+  battlefield permanent dealing or receiving damage has observable object
+  correspondence and owner even while its printing is concealed. Nominal zone
+  markers, hidden sources, and concealed exile/stack correspondence do not grant
+  receipts. Capture precedes damage hooks, so later hidden incarnations cannot
+  supply attribution. Export uses the receipted owner, never the hidden current
+  object's owner, for these unnamed endpoints.
 
 The guard does not inspect whether a hidden physical copy occurs in any private
 ledger. Catalog drift and other public pools retain the old refusal for this
@@ -36,11 +45,22 @@ special repair. Ordinary exports without an unobserved Damage reference retain
 their existing pool support. Completing a public operation can therefore recover
 export without clearing or replacing its old history.
 
+Missing owner receipts refuse uniformly, including synthetic hidden-library
+sources of either owner. Receipts are private exporter provenance alongside the
+v2 visibility journal, excluded from state equality, hashes, snapshots and
+observation notes. They do not contain a card definition. A restored native
+snapshot cannot recover this special history from its hidden object table.
+This is deliberately narrower than admitting every historical Damage event;
+the frozen soak's anonymous sources are not claimed recovered without a new
+producer run establishing public attribution.
+
 The consumer audit distinguishes immediate processing from future reads. Trigger
 matching, life-link-like eternal hooks, and combat marker creation consume the
 newly committed event slice. The unfinished-operation guard excludes that work.
 Life-loss/raid history queries consume player and amount; game-summary damage
-totals also consume owner, which tombstones preserve. Persistent identity custody
+totals also consume owner, which tombstones preserve only with the public proof
+above. A downstream consumer's use of owner does not license hidden attribution.
+Persistent identity custody
 in Drake, Crystal, Gorehorn, Goblin Negotiation, Greatwurm, Niv, and Lathril is
 outside the declared roster. The roster's generated Blood/Food/Treasure and
 creature tokens have no such custody mechanism; its Chain Lightning copies repeat
@@ -49,6 +69,7 @@ any of those off-roster printed mechanisms. A larger pool needs a new audit and
 versioned scope, not a check of secret runtime ledger contents.
 
 Regression coverage uses both viewer seats, reversed native allocation, retained
-paid-cost references, private library knowledge, known and unknown damage
-identities, and later export after refusal on the same continuing state. These
+paid-cost references, private library knowledge, cross-owner refusal symmetry,
+known damage identities, attributed unnamed damage, stale public-zone markers,
+and later export after refusal on the same continuing state. These
 are bounded correctness checks, not a replay or requalification of either soak.

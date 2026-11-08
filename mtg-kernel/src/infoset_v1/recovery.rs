@@ -4,7 +4,7 @@ use crate::engine::{self, Action, Decision};
 use crate::event::{propose_and_commit, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{
-    GameState, PaidCostRefV4, StackItem, StackItemKind, StackStateV4, Target, Zone,
+    FaceDownV1, GameState, PaidCostRefV4, StackItem, StackItemKind, StackStateV4, Target, Zone,
 };
 
 fn fixture(reverse_ids: bool) -> (GameState, [Vec<u16>; 2]) {
@@ -81,6 +81,38 @@ fn waiting(source: ObjectId, controller: PlayerId) -> StackItem {
     }
 }
 
+fn departed_public_damage(state: &mut GameState, owner: PlayerId) -> (ObjectId, usize) {
+    propose_and_commit(state, ProposedEvent::draw(owner));
+    let source = state.players[owner.index()].hand[0];
+    let entry = state.engine.event_history.len();
+    propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Battlefield));
+    // Event-level disguised-entry fixture, as in the v2 privacy tests. The
+    // subsequent damage and hidden departure use actual committed operations.
+    state.objects.get_mut(source).v4.face_down_v1 = Some(FaceDownV1 {
+        disguised: true,
+        lookers: 1 << owner.index(),
+        hidden_by: None,
+        hidden_by_source: None,
+    });
+    state
+        .observation_journal
+        .record_visibility_v2(entry, source, 1 << owner.index());
+    state.forget_hand_after_face_down_departure_v1(owner);
+    let damage = state.engine.event_history.len();
+    propose_and_commit(
+        state,
+        ProposedEvent::damage(source, Target::Player(owner.opponent()), 1),
+    );
+    assert_eq!(
+        state
+            .observation_journal
+            .damage_public_owner_v3(damage, source),
+        Some(owner)
+    );
+    propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Library));
+    (source, damage)
+}
+
 #[test]
 fn v3_public_rollback_order_keeps_paid_refs_and_ignores_arena_order_both_seats() {
     for viewer in [PlayerId::P0, PlayerId::P1] {
@@ -145,42 +177,67 @@ fn v3_same_owner_rollbacks_still_refuse_and_recover_after_a_visible_move() {
 }
 
 #[test]
-fn v3_unobserved_damage_is_unnamed_and_private_knowledge_does_not_gate_it() {
+fn v3_unattributed_damage_refuses_across_hidden_owners_and_private_knowledge() {
     for viewer in [PlayerId::P0, PlayerId::P1] {
         let (base, lists) = fixture(false);
-        let owner = viewer.opponent();
-        let hidden = &base.players[owner.index()].library;
         let mut outputs = vec![];
-        for &source in &hidden[..2] {
-            let mut state = base.clone();
-            // Private knowledge differs, including whether it names the
-            // damage's native source. Neither difference reaches V.
-            state.reveal_library_position(owner, owner, if source == hidden[0] { 0 } else { 2 });
-            state.engine.event_history.push(CommittedEvent::Damage {
-                source,
-                target: Target::Player(viewer),
-                amount: 1,
-            });
-            assert!(matches!(
-                export_v2(&input(&state, &lists, viewer)),
-                Err(ExportErrorV1::Refused {
-                    code: RefusalCodeV1::R2,
-                    ..
-                })
-            ));
-            let out = export_v3(&input(&state, &lists, viewer)).unwrap();
-            let CommittedEvent::Damage { source, amount, .. } = out.state.engine.event_history[0]
-            else {
-                panic!("damage")
-            };
-            assert_eq!(amount, 1);
-            assert!(matches!(
-                out.handles[source.0 as usize],
-                HandleV1::H { named: false, .. }
-            ));
-            outputs.push(out.bytes);
+        for owner in [PlayerId::P0, PlayerId::P1] {
+            for index in 0..2 {
+                let mut state = base.clone();
+                let source = state.players[owner.index()].library[index];
+                // Private knowledge differs, including whether it names the
+                // damage's native source. Neither difference reaches V.
+                state.reveal_library_position(
+                    viewer.opponent(),
+                    viewer.opponent(),
+                    if index == 0 { 0 } else { 2 },
+                );
+                propose_and_commit(
+                    &mut state,
+                    ProposedEvent::damage(source, Target::Player(viewer), 1),
+                );
+                assert_eq!(
+                    state.observation_journal.damage_public_owner_v3(0, source),
+                    None
+                );
+                assert!(matches!(
+                    export_v2(&input(&state, &lists, viewer)),
+                    Err(ExportErrorV1::Refused {
+                        code: RefusalCodeV1::R2,
+                        ..
+                    })
+                ));
+                let error = export_v3(&input(&state, &lists, viewer)).unwrap_err();
+                assert!(
+                    matches!(&error, ExportErrorV1::Refused { code: RefusalCodeV1::R2, detail }
+                if detail == "unobserved Damage owner has no public event-time proof")
+                );
+                outputs.push(error);
+            }
         }
-        assert_eq!(outputs[0], outputs[1]);
+        assert!(outputs.iter().all(|error| *error == outputs[0]));
+    }
+}
+
+#[test]
+fn v3_damage_owner_receipt_rejects_nominal_public_zone_without_correspondence() {
+    for owner in [PlayerId::P0, PlayerId::P1] {
+        for zone in [Zone::Battlefield, Zone::Graveyard, Zone::Exile, Zone::Stack] {
+            let (mut state, _) = fixture(false);
+            let source = state.players[owner.index()].library[0];
+            // A stale zone marker alone cannot establish the actual publicly
+            // indexed source. These intentionally malformed history fixtures
+            // exercise receipt capture, not engine scene admission.
+            state.objects.get_mut(source).zone = zone;
+            propose_and_commit(
+                &mut state,
+                ProposedEvent::damage(source, Target::Player(owner.opponent()), 1),
+            );
+            assert_eq!(
+                state.observation_journal.damage_public_owner_v3(0, source),
+                None
+            );
+        }
     }
 }
 
@@ -188,18 +245,13 @@ fn v3_unobserved_damage_is_unnamed_and_private_knowledge_does_not_gate_it() {
 fn v3_damage_refusal_recovers_when_the_public_operation_finishes() {
     for viewer in [PlayerId::P0, PlayerId::P1] {
         let (mut state, lists) = fixture(false);
-        let hidden = state.players[viewer.opponent().index()].library[0];
+        let (departed, damage) = departed_public_damage(&mut state, viewer.opponent());
         propose_and_commit(&mut state, ProposedEvent::draw(viewer));
         let public = state.players[viewer.index()].hand[0];
         propose_and_commit(
             &mut state,
             ProposedEvent::zone_change(public, Zone::Graveyard),
         );
-        state.engine.event_history.push(CommittedEvent::Damage {
-            source: hidden,
-            target: Target::Player(viewer),
-            amount: 1,
-        });
         state.stack.push(waiting(public, viewer));
         let history = state.engine.event_history.len();
         assert!(matches!(
@@ -221,7 +273,16 @@ fn v3_damage_refusal_recovers_when_the_public_operation_finishes() {
         }
         assert!(state.stack.is_empty());
         assert!(state.engine.event_history.len() >= history);
-        export_v3(&input(&state, &lists, viewer)).unwrap();
+        let out = export_v3(&input(&state, &lists, viewer)).unwrap();
+        let CommittedEvent::Damage { source, .. } = out.state.engine.event_history[damage] else {
+            panic!("damage");
+        };
+        assert!(matches!(
+            out.handles[source.0 as usize],
+            HandleV1::H { named: false, .. }
+        ));
+        assert_eq!(out.state.objects.get(source).owner, viewer.opponent());
+        assert_eq!(state.objects.get(departed).zone, Zone::Library);
         assert!(export_v2(&input(&state, &lists, viewer)).is_err());
     }
 }
