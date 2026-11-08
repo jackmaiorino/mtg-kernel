@@ -2077,6 +2077,10 @@ pub enum CommittedEvent {
     DrakusethDamageSourceV76 {
         journal: Box<crate::drakuseth_damage_source_v76::JournalV76>,
     },
+    NishobaDamageSourceV1 {
+        source: crate::state::AbilitySourceContractV4,
+        damage_history_index: u64,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -4446,6 +4450,13 @@ fn commit_with_entry_batch_and_source_color(
         }
         _ => None,
     };
+    #[cfg(feature = "eternal-fixtures")]
+    let nishoba_source = match &event {
+        ProposedEvent::Damage(damage) => {
+            crate::eternal_premodern_p2c_v1::nishoba_damage_source(state, damage.source)
+        }
+        _ => None,
+    };
     let Some(MaterializedEventV1 {
         committed,
         alesha_power_departure,
@@ -4559,6 +4570,19 @@ fn commit_with_entry_batch_and_source_color(
             .record_visibility_v2(entry_history_index, *object, mask);
     }
     state.engine.event_history.push(committed);
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(source) = nishoba_source.filter(|source| {
+        matches!(state.engine.event_history.get(entry_history_index),
+            Some(CommittedEvent::Damage { source: object, amount, .. })
+                if *object == source.source && *amount > 0)
+    }) {
+        let receipt = CommittedEvent::NishobaDamageSourceV1 {
+            source,
+            damage_history_index: entry_history_index as u64,
+        };
+        state.engine.event_log.push(receipt.clone());
+        state.engine.event_history.push(receipt);
+    }
     record_copied_token_entry_v1(state, entry_history_index);
     crate::effect::curator_v1::record_entry(state, entry_history_index);
     if !tutelage_observers.is_empty()
