@@ -47,6 +47,7 @@ mod kernels;
 mod parallel;
 #[cfg(test)]
 mod policy_tests;
+pub mod profile;
 #[cfg(test)]
 mod tests;
 pub mod tools;
@@ -55,6 +56,7 @@ use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::training_math_v1::TrainingMathV1;
 use kernels::{gemm_v1, InitV1};
 use parallel::SGradientSinkV1;
+use profile::{SectionV1, StageV1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -1180,6 +1182,7 @@ impl SModelV1 {
         if matches!(grad, SGradientSinkV1::Direct(values) if values.len() != self.layout.total) {
             return Err("S gradient buffer has the wrong length".into());
         }
+        profile::backward_census_v1(&config, counts);
         let lay = &self.layout;
         let (n, e, a, r) = (counts.objects, counts.edges, counts.actions, counts.refs);
         let d = config.d_model;
@@ -1211,6 +1214,7 @@ impl SModelV1 {
         sized_v1(&mut ws.dscore, l * l);
 
         // Value head: v = tanh(z / 2).
+        let heads = profile::span_v1(StageV1::BackHeads);
         let dz = dvalue * 0.5 * (1.0 - tape.value * tape.value);
         {
             let dz_row = [dz];
@@ -1262,12 +1266,14 @@ impl SModelV1 {
                 );
             }
         }
+        drop(heads);
         // Blocks in reverse. `ws.dx` is the gradient of the block's output.
         ws.dbias.fill(0.0);
         let scale = 1.0 / (dh as f32).sqrt();
         for (layer, block) in lay.blocks.iter().enumerate().rev() {
             let lt = &tape.layers[layer];
             // FFN.
+            let section = profile::section_v1(SectionV1::Ffn, layer);
             let dff = &mut ws.dwide[..l * ffn];
             self.linear_bwd(block.ff2, l, &lt.ff_act, &ws.dx, grad, Some(dff));
             kernels::gelu_backward_slice_v1(&lt.ff_pre, &mut ws.dwide[..l * ffn]);
@@ -1279,7 +1285,9 @@ impl SModelV1 {
                 grad,
                 Some(&mut ws.dx2[..]),
             );
+            drop(section);
             // LN2: dx_mid = dx_out + LN2'(dln2).
+            let section = profile::section_v1(SectionV1::Ln2, layer);
             {
                 let mut dmid = vec![0.0f32; d];
                 for t in 0..l {
@@ -1299,7 +1307,9 @@ impl SModelV1 {
                     }
                 }
             }
+            drop(section);
             // Projection.
+            let section = profile::section_v1(SectionV1::Proj, layer);
             self.linear_bwd(
                 block.proj,
                 l,
@@ -1308,9 +1318,11 @@ impl SModelV1 {
                 grad,
                 Some(&mut ws.dattn[..]),
             );
+            drop(section);
             // Attention, per head, through the ordered kernels:
             // dP = dO V^T, dV = P^T dO, dS = P * (dP - rowsum(P * dP)),
             // dQ = scale dS K, dK = scale dS^T Q; dS also feeds the bias.
+            let section = profile::section_v1(SectionV1::Attention, layer);
             ws.dqkv.fill(0.0);
             for head in 0..h {
                 for j in 0..l {
@@ -1395,9 +1407,13 @@ impl SModelV1 {
                     }
                 }
             }
+            drop(section);
             // QKV.
+            let section = profile::section_v1(SectionV1::Qkv, layer);
             self.linear_bwd(block.qkv, l, &lt.ln1, &ws.dqkv, grad, Some(&mut ws.dx2[..]));
+            drop(section);
             // LN1: dx_in = dx_mid + LN1'(dln1).
+            let section = profile::section_v1(SectionV1::Ln1, layer);
             {
                 let mut din = vec![0.0f32; d];
                 for t in 0..l {
@@ -1417,9 +1433,11 @@ impl SModelV1 {
                     }
                 }
             }
+            drop(section);
         }
 
         // Token inputs. State token.
+        let _inputs = profile::span_v1(StageV1::BackInputs);
         {
             let dact = &mut ws.dsmall[..d];
             self.linear_bwd(
@@ -1685,9 +1703,13 @@ impl SModelV1 {
             for (sub, substep) in group.substeps.iter().enumerate() {
                 let is_masked = masked.is_some_and(|m| m[sub]);
                 let d_joint = if is_masked { 0.0 } else { d_unmasked };
+                let forward = profile::span_v1(StageV1::Forward);
                 self.forward_into_v1(substep.input, &mut work.tape)?;
+                drop(forward);
+                let policy_row = profile::span_v1(StageV1::PolicyRow);
                 let (selected, dlogits) =
                     gae_policy_row_v1(&work.tape.logits, substep.selected, d_joint, index, sub)?;
+                drop(policy_row);
                 joint = if sub == 0 { selected } else { joint + selected };
                 if !is_masked {
                     policy_joint = Some(policy_joint.map_or(selected, |j| j + selected));
@@ -1698,6 +1720,7 @@ impl SModelV1 {
                 } else {
                     0.0
                 };
+                let backward = profile::span_v1(StageV1::Backward);
                 self.backward_v1(
                     substep.input,
                     &work.tape,
@@ -1706,6 +1729,7 @@ impl SModelV1 {
                     grad,
                     &mut work.back,
                 )?;
+                drop(backward);
             }
             policy_sum += match masked {
                 None => -joint * group.advantage,
@@ -1853,6 +1877,7 @@ impl STrainStateV1 {
         workers: usize,
     ) -> Result<SStepV1, String> {
         crate::expanded_deck_training_v1::validate_preparation_workers_v1(workers)?;
+        let gradient = profile::span_v1(StageV1::Gradient);
         let mut grad = vec![0.0f32; self.model.layout.total];
         let loss = if workers == 1 {
             self.model
@@ -1866,7 +1891,11 @@ impl STrainStateV1 {
                 work,
             )?
         };
+        drop(gradient);
+        let adam = profile::span_v1(StageV1::Adam);
         self.adam_step_with_gradient_v1(&grad, learning_rate)?;
+        drop(adam);
+        let _hash = profile::span_v1(StageV1::StateHash);
         Ok(SStepV1 {
             loss,
             adam_step: self.adam_step,

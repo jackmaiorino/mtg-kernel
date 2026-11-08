@@ -2,6 +2,7 @@
 //! of each parameter gradient. Replay keeps each parameter's original
 //! substep and row order, including additions to shared embeddings.
 
+use super::profile::{self, DrainV1, StageV1};
 use super::*;
 use std::ops::Range;
 use std::sync::Mutex;
@@ -33,6 +34,20 @@ impl SGradientTermsV1 {
         self.data.extend_from_slice(values);
         start..self.data.len()
     }
+
+    /// Live value bytes, live term-record bytes and reserved bytes of these
+    /// records (measurement only).
+    fn bytes_v1(&self) -> (usize, usize, usize) {
+        use std::mem::size_of;
+        let addition = size_of::<(usize, Range<usize>)>();
+        (
+            self.data.len() * size_of::<f32>(),
+            self.linears.len() * size_of::<LinearTermV1>() + self.additions.len() * addition,
+            self.data.capacity() * size_of::<f32>()
+                + self.linears.capacity() * size_of::<LinearTermV1>()
+                + self.additions.capacity() * addition,
+        )
+    }
 }
 
 pub(super) enum SGradientSinkV1<'a> {
@@ -54,6 +69,7 @@ impl SGradientSinkV1<'_> {
         match self {
             Self::Direct(gradient) => add_values_v1(gradient, offset, values),
             Self::Record(terms) => {
+                profile::addition_term_v1(values.len());
                 let range = terms.store_v1(values);
                 terms.additions.push((offset, range));
             }
@@ -61,6 +77,7 @@ impl SGradientSinkV1<'_> {
     }
 
     pub(super) fn linear_v1(&mut self, index: LinearIdxV1, rows: usize, x: &[f32], dy: &[f32]) {
+        let _span = profile::span_v1(StageV1::SinkLinear);
         match self {
             Self::Direct(gradient) => {
                 // dW[o, i] += sum_r dy[r, o] x[r, i]
@@ -83,6 +100,7 @@ impl SGradientSinkV1<'_> {
                 );
             }
             Self::Record(terms) => {
+                profile::linear_term_v1(rows, index.in_dim, index.out_dim);
                 let x = terms.store_v1(&x[..rows * index.in_dim]);
                 let dy = terms.store_v1(&dy[..rows * index.out_dim]);
                 terms.linears.push(LinearTermV1 { index, rows, x, dy });
@@ -124,6 +142,7 @@ impl SGradientSinkV1<'_> {
                 );
             }
             Self::Record(terms) => {
+                profile::layer_norm_term_v1(width);
                 let bias = terms.store_v1(dy);
                 let gain_start = terms.data.len();
                 terms.data.resize(gain_start + width, 0.0);
@@ -163,6 +182,7 @@ fn replay_v1(
 ) -> Result<(), String> {
     // The non-weight terms do not overlap a Linear weight. The shared
     // card and ref tables still receive each individual addition in order.
+    let additions = profile::span_v1(StageV1::ReplayAdditions);
     for substep in block {
         let terms = &substep.terms;
         for &(offset, ref range) in &terms.additions {
@@ -178,6 +198,8 @@ fn replay_v1(
             );
         }
     }
+    drop(additions);
+    let build = profile::span_v1(StageV1::ReplayShardBuild);
     let mut shards = Vec::new();
     let mut remaining = gradient;
     let target_size = layout.total.div_ceil(workers * 4);
@@ -199,11 +221,22 @@ fn replay_v1(
         }
     }
     shards.sort_by_key(|shard| std::cmp::Reverse(shard.values.len()));
-    drain_v1(&mut vec![(); workers], shards.into_iter(), |_, shard| {
+    drop(build);
+    let _span = profile::span_v1(StageV1::ReplayDrain);
+    let replay = |_: &mut (), shard: WeightShardV1<'_>| {
+        let mut census = profile::shard_v1(
+            layout,
+            shard.offset,
+            shard.start_row,
+            shard.rows,
+            shard.values.len(),
+        );
         for substep in block {
             let terms = &substep.terms;
             for term in &terms.linears {
+                census.scanned_v1();
                 if term.index.w == shard.offset {
+                    census.matched_v1(term.rows, term.index.in_dim);
                     gemm_v1(
                         shard.rows,
                         term.index.in_dim,
@@ -218,23 +251,35 @@ fn replay_v1(
                 }
             }
         }
-    })
+    };
+    drain_v1(
+        DrainV1::Replay,
+        &mut vec![(); workers],
+        shards.into_iter(),
+        replay,
+    )
 }
 
 /// Fixed-size, scoped workers. The caller also drains jobs, including any
-/// work left when the OS cannot start all requested helpers.
+/// work left when the OS cannot start all requested helpers. `kind` only
+/// labels the measurement-only census (`profile`).
 fn drain_v1<T: Send, W: Send>(
+    kind: DrainV1,
     workspaces: &mut [W],
     items: impl Iterator<Item = T> + Send,
     work: impl Fn(&mut W, T) + Sync,
 ) -> Result<(), String> {
+    let census = profile::drain_v1(kind, workspaces.len());
     let queue = Mutex::new(items);
-    let drain = |workspace: &mut W| -> Result<(), String> {
+    let drain = |workspace: &mut W, worker: usize| -> Result<(), String> {
         ensure_mxcsr_v1()?;
+        let mut busy = census.worker_v1(worker);
         loop {
             let item = queue.lock().expect("S learner job queue").next();
             let Some(item) = item else { return Ok(()) };
+            let started = busy.item_started_v1();
             work(workspace, item);
+            busy.item_done_v1(started);
         }
     };
     let (caller, helpers) = workspaces
@@ -242,20 +287,28 @@ fn drain_v1<T: Send, W: Send>(
         .expect("S learner needs a worker");
     thread::scope(|scope| {
         let drain = &drain;
+        let spawning = census.mark_v1();
         let helpers: Vec<_> = helpers
             .iter_mut()
-            .filter_map(|workspace| {
-                thread::Builder::new()
-                    .spawn_scoped(scope, move || drain(workspace))
-                    .ok()
+            .enumerate()
+            .filter_map(|(index, workspace)| {
+                let helper = thread::Builder::new()
+                    .spawn_scoped(scope, move || drain(workspace, 1 + index))
+                    .ok();
+                census.spawned_v1(helper.is_some());
+                helper
             })
             .collect();
-        let result = drain(caller);
+        census.spawn_done_v1(spawning);
+        let result = drain(caller, 0);
+        let joining = census.mark_v1();
+        let joins = helpers.len();
         for helper in helpers {
             helper
                 .join()
                 .unwrap_or_else(|payload| std::panic::resume_unwind(payload))?;
         }
+        census.join_done_v1(joining, joins);
         result
     })
 }
@@ -349,7 +402,9 @@ impl SModelV1 {
             }
             let active_workers = workers.min(len);
             let block = &mut block[..len];
+            let record = profile::span_v1(StageV1::RecordDrain);
             drain_v1(
+                DrainV1::Record,
                 &mut workspaces[..active_workers],
                 block.iter_mut(),
                 |work, slot| {
@@ -363,6 +418,14 @@ impl SModelV1 {
                     ));
                 },
             )?;
+            drop(record);
+            profile::block_v1(len, active_workers, || {
+                block.iter().fold((0, 0, 0), |sum, slot| {
+                    let bytes = slot.terms.bytes_v1();
+                    (sum.0 + bytes.0, sum.1 + bytes.1, sum.2 + bytes.2)
+                })
+            });
+            let merge = profile::span_v1(StageV1::ScoreMerge);
             for slot in block.iter_mut() {
                 let job = slot.job.take().expect("S learner scheduled job")?;
                 let (selected, error) = slot.score.take().expect("S learner prepared job")?;
@@ -377,6 +440,7 @@ impl SModelV1 {
                     value_sum += value_error * value_error;
                 }
             }
+            drop(merge);
             replay_v1(&self.layout, gradient, block, active_workers)?;
         }
         for range in self.layout.gauge_ranges_v1() {
@@ -404,7 +468,10 @@ impl SModelV1 {
         work: &mut SWorkV1,
         terms: &mut SGradientTermsV1,
     ) -> Result<(f32, f32), String> {
+        let forward = profile::span_v1(StageV1::Forward);
         self.forward_into_v1(job.substep.input, &mut work.tape)?;
+        drop(forward);
+        let policy_row = profile::span_v1(StageV1::PolicyRow);
         let (selected, dlogits) = gae_policy_row_v1(
             &work.tape.logits,
             job.substep.selected,
@@ -412,12 +479,14 @@ impl SModelV1 {
             job.index,
             job.sub,
         )?;
+        drop(policy_row);
         let (value_error, dvalue) = if job.sub == 0 {
             let error = work.tape.value - job.target;
             (error, (value_coefficient / group_count) * (2.0 * error))
         } else {
             (0.0, 0.0)
         };
+        let backward = profile::span_v1(StageV1::Backward);
         self.backward_into_v1(
             job.substep.input,
             &work.tape,
@@ -426,6 +495,7 @@ impl SModelV1 {
             &mut SGradientSinkV1::Record(terms),
             &mut work.back,
         )?;
+        drop(backward);
         Ok((selected, value_error))
     }
 }

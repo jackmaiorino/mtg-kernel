@@ -70,6 +70,13 @@ native-flat-tensorizer-diagnostic = []
 # call counts of tensorizer fill, packet encode and pooled forward, printed by
 # the multirun pilot. Off by default; production builds carry no counters.
 tensorize-cost-profile-v1 = []
+# Measurement-only attribution of the S learner (issue #598): stage spans,
+# term copy bytes, helper spawns and joins, replay shard work and peak term
+# bytes, reported per repetition by `s_transformer_v1 gae-bench`, whose binary
+# then also counts allocator events. Off by default; default builds compile
+# the spans and counters to nothing, so uninstrumented timings use a build
+# without it.
+s-learner-profile-v1 = []
 # Measurement-only exclusive cost split of Stage 4a persistent search
 # (`s4a-search-profile` rows). Off by default; default builds compile the
 # spans to nothing, so uninstrumented timings use a build without it.
@@ -217,6 +224,10 @@ required-features = ["eternal-fixtures"]
 [[test]]
 name = "retain_freed_memory"
 harness = false
+
+[[test]]
+name = "s_learner_profile_v1"
+required-features = ["s-learner-profile-v1"]
 
 [[bin]]
 name = "kernel_limited_prepared_env_v5"
