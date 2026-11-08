@@ -383,6 +383,7 @@ pub(crate) enum LimitedAppendixV1 {
     Artist,
     Niv,
     ChosenType,
+    Drakuseth,
 }
 
 #[derive(Clone)]

@@ -93,9 +93,9 @@ pub(crate) use standard_spell_copy::{
     materialize_copy_snapshot, validate_copy_snapshot,
 };
 
+pub(crate) mod niv_mizzet_resolution_v1;
 pub mod ordinary_cleanup_v1;
 pub mod time_stop_v1;
-pub(crate) mod niv_mizzet_resolution_v1;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineState {
@@ -20211,10 +20211,10 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     }
     if let Some(owner) = niv_owner {
         if niv_mizzet_resolution_v1::resolve(state, owner).is_err() {
-            state.engine.halted.get_or_insert((
-                UnsupportedMechanic::InvalidEffectContinuation,
-                item.source,
-            ));
+            state
+                .engine
+                .halted
+                .get_or_insert((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
         }
         return ResolutionProgress::Complete;

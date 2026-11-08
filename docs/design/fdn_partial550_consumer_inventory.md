@@ -291,3 +291,46 @@ action parity across independently initialized hidden draws and restores.
 The V3 learner reset installs the public name/count ledger before advance.
 The profile refuses current-slot sampling. Native qualification, including
 harvest of the new event-kind sample, remains pending.
+
+
+## Composed source checkpoint (2026-11-08)
+
+The source candidate now covers sixteen of the thirty-six Partial booster
+printings in six separate finite profiles: Return (3), V68-V75 (8), Artist (1),
+Chosen Type (2), Niv (1), and Drakuseth (1). This is source coverage only.
+Catalog status remains unchanged; no combined native qualification, fair-search
+coverage, training result, or Full promotion is claimed.
+
+Composition starts at Limited `94ca36cd93d40df1627d099adf6e5471d739be9c` and
+merges the complete chosen-type `350dae3d813036affa3e431608a9c6ee10a7270a`,
+Niv `189c35ae80fef4dfe7db090bc5599db9072a685e` (including native receipt
+`de704a7c003b6c69b90b68791938b47d3320cbbd`), and Drakuseth
+`6394da6d9b1489650af7bfecc97170f3ccc73236` histories. The separate #474
+performance candidate is excluded.
+
+Conflict reconciliation uses one exclusive `LimitedAppendixV1` capability:
+Legacy, Artist, ChosenType, Niv, or Drakuseth. Reset installs it before advance;
+restore compares the exact capability. Return and V68-V75 retain Legacy.
+Each appendix retains its own observation, candidate, Human and JSONL schemas;
+absent optional fields remain absent, and artifact validation rejects any
+mixed appendices. Chosen-type entry indices, restricted mana provenance,
+Drakuseth original target slots and replacement menus, and Niv native draw
+receipts remain in their original profile. Artist scope is passed from the
+actual `PolicySurfaceV5` caller into the common observation builder. Standalone
+legacy observation/candidate routes and appendix current-slot sampling still
+refuse the unsupported scopes.
+
+Source verification: pinned Rust 1.94.1 rustfmt succeeded under a one-core
+BelowNormal host-slots claim; `git diff --check` passed. Read-only review of
+Niv and Drakuseth found no blocking source issue. Native tests and binaries
+have not been built or run for this composed tree. Next guarded Limited build
+must include the three new `kernel_limited_{chosen_type,niv,drakuseth}_env_v1`
+binaries and existing Return, V68-V75 and Artist binaries. Focused test filters:
+`chosen_type_consumer_v1::tests::`, `niv_consumer_v1::tests::`,
+`niv_mizzet_public_v63::tests::`, `drakuseth_consumer_v1::tests::`,
+`artist_consumer_v1::tests::`, `limited_return_consumer_v1::tests::`,
+`limited_v68_v75_consumer_v1::tests::`, and rules-only Courtyard regression.
+Run the event-history serialization tests separately from sample harvesting.
+The new Niv event sample remains provisional until native paid-fixture harvest;
+terminal V75 responses carry no decision appendix even when a draw caused
+that terminal.

@@ -53,6 +53,8 @@ pub(crate) fn project_limited_kaito_v16(
         LimitedKaitoDecisionV16 {
             schema: if observation.chosen_type.is_some() {
                 "mtg-kernel-limited-chosen-type-decision/v1"
+            } else if observation.drakuseth.is_some() {
+                "mtg-kernel-limited-drakuseth-decision/v1"
             } else if observation.artist.is_some() {
                 "mtg-kernel-limited-artist-decision/v1"
             } else if observation.niv.is_some() {

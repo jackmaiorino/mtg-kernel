@@ -60,6 +60,19 @@ impl FastActorSessionV1 {
         Self::initialize_limited_consumer_v1(config, reveal_facts, LimitedAppendixV1::Niv)
     }
 
+    pub(crate) fn reset_limited_drakuseth_v1(
+        config: &crate::drakuseth_consumer_v1::ResetV1,
+        reveal_facts: bool,
+    ) -> Result<Self, RlSessionError> {
+        crate::drakuseth_consumer_v1::preflight(config)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        Self::initialize_limited_consumer_v1(
+            config,
+            reveal_facts,
+            crate::policy_surface_v5::LimitedAppendixV1::Drakuseth,
+        )
+    }
+
     fn initialize_limited_consumer_v1(
         config: &crate::limited_consumer_wire_v1::ResetV1,
         reveal_facts: bool,
