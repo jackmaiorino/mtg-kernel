@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import time
 
-from prepare_postboard_qualification_v1 import pin, read, write
+from prepare_postboard_qualification_v1 import pin, read, read_pinned_checkpoint, write
 from postboard_bo3_qualification_v1 import execute, audit_match
 
 
@@ -23,7 +23,7 @@ def endpoint(root, manifest, arm):
     completed = read(root / arm / 'training-audit.json')
     assert completed['complete'] and completed['updates'] == 200
     source = completed['source']
-    checkpoint = read(verify_pin(source['checkpoint']))
+    checkpoint = read_pinned_checkpoint(source['checkpoint'])
     assert checkpoint['adam_step'] == manifest['final_adam_step']
     assert source['checkpoint']['path'].replace('\\', '/').endswith('/iterations/000199/attempt-000000/update/checkpoint.json')
     assert source['play_import'] == manifest['initial_source']['play_import']
@@ -66,7 +66,7 @@ def evaluate(root, arms):
 
 def audit_evaluation_arm(root, manifest, arm, dispatched):
     source = endpoint(root, manifest, arm)
-    snapshot = read(verify_pin(source['checkpoint']))
+    snapshot = read_pinned_checkpoint(source['checkpoint'])
     pins, physical_games, passthroughs = [], 0, 0
     for job in [j for j in dispatched if j['arm'] == arm]:
         config = read(verify_pin(job['config']))
@@ -134,7 +134,7 @@ def audit_training(root, manifest, arm):
     assert final['complete'] and final['completed_iterations'] == 200
     assert final['loss_identity'] == 'gae_advantage_value/v1' and final['gpu_ordinal'] == 1
     previous_source = config['initial_source']
-    previous_state = read(verify_pin(previous_source['checkpoint']))['state_sha256']
+    previous_state = read_pinned_checkpoint(previous_source['checkpoint'])['state_sha256']
     natural, decisions, postboard = 0, 0, 0
     for index, batch in enumerate(config['iterations']):
         receipt = read(run / 'iterations' / f'{index:06}' / 'complete.json')
@@ -168,7 +168,7 @@ def audit_training(root, manifest, arm):
         previous_state = update['after_state_sha256']
     assert natural == 2000 and postboard == (1000 if arm == 'mixed' else 0)
     assert final['source'] == previous_source
-    checkpoint = read(verify_pin(previous_source['checkpoint']))
+    checkpoint = read_pinned_checkpoint(previous_source['checkpoint'])
     assert checkpoint['adam_step'] == 32600 and checkpoint['state_sha256'] == previous_state
     assert {k: checkpoint[k] for k in ('gamma_bits', 'gae_lambda_bits', 'entropy_coefficient_bits', 'learning_rate_bits', 'value_coefficient_bits')} == {
         'gamma_bits': 1065353216, 'gae_lambda_bits': 1063675494, 'entropy_coefficient_bits': 0,

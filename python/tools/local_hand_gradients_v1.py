@@ -3,6 +3,9 @@ import hashlib,json,sys
 from pathlib import Path
 import numpy as np
 import torch
+
+from checkpoint_container_v1 import document_from_bytes
+
 torch.set_num_threads(1);torch.set_num_interop_threads(1)
 torch.use_deterministic_algorithms(True)
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
@@ -12,7 +15,9 @@ B=Path('E:/mtg-meta-recovery-20260921');out=B/'local-hand-gradients-001.json'
 assert not out.exists()
 checkpoint=Path('D:/phase1-live/campaign-002/g/block115/run/iterations/000199/attempt-000000/update/checkpoint.json')
 raw=checkpoint.read_bytes();assert hashlib.sha256(raw).hexdigest()=='88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1'
-c=json.loads(raw);cfg=ModelConfig();model=KernelPolicyValueNet(cfg)
+c = document_from_bytes(raw)
+cfg = ModelConfig()
+model = KernelPolicyValueNet(cfg)
 def tensor(bits):return torch.from_numpy(np.array(bits,dtype=np.uint32).view(np.float32).copy())
 params={p['name']:tensor(p['values']).reshape(p['shape']) for p in c['parameters']}
 model.load_state_dict(params,strict=True);model.eval()

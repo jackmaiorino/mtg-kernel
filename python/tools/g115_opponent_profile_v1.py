@@ -6,7 +6,7 @@ from functools import cache
 from pathlib import Path
 import numpy as np
 
-from prepare_postboard_qualification_v1 import BASE, read, write, pin
+from prepare_postboard_qualification_v1 import BASE, read, read_pinned_checkpoint, write, pin
 from postboard_bo3_qualification_v1 import execute, seed
 from run_postboard_pilot_v1 import verify_pin
 from postboard_repaired_evaluation_v1 import check_adapter_receipts
@@ -19,14 +19,14 @@ REFERENCES = ('a48', 'v3')
 
 @cache
 def checkpoint_metadata(path, sha256):
-    checkpoint = read(verify_pin({'path': path, 'sha256': sha256}))
+    checkpoint = read_pinned_checkpoint({'path': path, 'sha256': sha256})
     return {k: checkpoint[k] for k in ('state_sha256', 'source_import')}
 
 
 def provenance(candidate, opponent):
     entries = {}
     for name, source in [('g115', candidate), ('a48', opponent)]:
-        checkpoint = read(verify_pin(source['checkpoint']))
+        checkpoint = read_pinned_checkpoint(source['checkpoint'])
         descriptor = read(verify_pin(source['play_import']))
         initialization = read(verify_pin(descriptor['initialization']))
         verify_pin(descriptor['parameters'])

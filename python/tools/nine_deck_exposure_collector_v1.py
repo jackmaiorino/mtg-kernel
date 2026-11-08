@@ -37,6 +37,7 @@ from collections import Counter
 from pathlib import Path
 
 import nine_deck_baseline_v1 as ndb
+from checkpoint_container_v1 import document_from_bytes
 
 SCHEMA = "nine-deck-baseline-v1/exposure-block"
 ROW_SCHEMA = "nine-deck-baseline-v1/episode-row"
@@ -329,10 +330,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"verdict": summary["verdict"], "checks": {k: v["pass"] for k, v in summary["checks"].items()},
                           "final_checkpoint_sha256": summary["final_checkpoint_sha256"]}))
     else:
-        result = embedding_gate(json.loads(args.start.read_bytes()), json.loads(args.end.read_bytes()),
-                                ndb.load_decks(args.decks))
-        result.update({"start_sha256": hashlib.sha256(args.start.read_bytes()).hexdigest(),
-                       "end_sha256": hashlib.sha256(args.end.read_bytes()).hexdigest()})
+        start, end = args.start.read_bytes(), args.end.read_bytes()
+        result = embedding_gate(document_from_bytes(start), document_from_bytes(end), ndb.load_decks(args.decks))
+        result.update({"start_sha256": hashlib.sha256(start).hexdigest(),
+                       "end_sha256": hashlib.sha256(end).hexdigest()})
         with args.out.open("x", encoding="utf-8") as stream:
             json.dump(result, stream, sort_keys=True, indent=1)
         print(json.dumps({"pass": result["pass"]}))

@@ -2328,6 +2328,9 @@ pub struct ObservationJournalV1(
     Vec<ObservationNoteV1>,
     // Private exporter provenance, never part of notes(), snapshots or hashes.
     std::collections::BTreeMap<usize, (ObjectId, u8)>,
+    // Damage attribution to an indexed public object at commit time. This
+    // proves only its publicly visible owner, never its concealed printing.
+    std::collections::BTreeMap<(usize, ObjectId), PlayerId>,
 );
 
 impl ObservationJournalV1 {
@@ -2344,6 +2347,23 @@ impl ObservationJournalV1 {
 
     pub(crate) fn record_visibility_v2(&mut self, event: usize, object: ObjectId, mask: u8) {
         self.1.insert(event, (object, mask));
+    }
+
+    pub(crate) fn damage_public_owner_v3(
+        &self,
+        event: usize,
+        object: ObjectId,
+    ) -> Option<PlayerId> {
+        self.2.get(&(event, object)).copied()
+    }
+
+    pub(crate) fn record_damage_public_owner_v3(
+        &mut self,
+        event: usize,
+        object: ObjectId,
+        owner: PlayerId,
+    ) {
+        self.2.insert((event, object), owner);
     }
 }
 
@@ -4733,6 +4753,9 @@ mod tests {
         let before = plain.observation_journal.notes().len();
         journalled.reveal_library_top(PlayerId::P1, PlayerId::P0, 1);
         journalled.library_knowledge = plain.library_knowledge.clone();
+        journalled
+            .observation_journal
+            .record_damage_public_owner_v3(0, journalled.players[0].hand[0], PlayerId::P0);
         assert_eq!(journalled.observation_journal.notes().len(), before + 1);
         assert_eq!(journalled, plain);
         let hash = |state: &GameState| {

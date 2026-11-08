@@ -154,3 +154,67 @@ qualification requires these tests, the Return regression filter and the
 inherited V68 through V75 paid mechanics filters on the delivered head. This
 source depends on the #552 qualification branch. Catalog status and
 playing-strength evidence remain at the earlier checkpoint.
+
+## Combined reveal and consumer qualification candidate
+
+The owned `codex/reveal-consumer-integration-20261108` branch normally merges
+the eight-card consumer checkpoint `a8a2a2203c64fc84530fe5fc1e77c3a7c0e5526e`
+with reveal PR #591 at `a1e82d798d45c6f6ce3363ef062106afc0e4bb76`.
+The first parent already contains canonical PR #586 at
+`1c3d215cec919538a1f0a0d16afcbeb4d7d6fe5d`. Both histories are retained.
+The shared V3 producer is `d5cc643ab12582a6d00bca03b10619ceee5b2d49`;
+the Git merge base is the #575 checkpoint
+`a23cbb050efd32c3bfd46fc446425bdbf4f9162a` because producer changes were
+previously copied into the Limited lane. The merge also retains #591's #579
+recovery and checkpoint-container caller repairs; it does not discard those
+changes because they fall outside the eight-card consumer files.
+
+Four files required eleven narrow conflict resolutions. The bridge and CLI
+retain the opt-in V4 selector and the unchanged historical option branch.
+The shared journal transcript and opponent-knowledge methods are available
+outside the Limited feature because the V4 exporter also uses them. The
+reducer retains possible-eventless-move tracking for unlinked Present and
+stack-arrival events, in addition to the existing compact arrival/present
+arithmetic. Those four resolved files equal the exact #591 versions. The
+state, engine, event and session hooks merged automatically. The shared state
+file equals #591, including the private journal and compact search-world ledger.
+The only additional Rust edit orders the new private module in `lib.rs` as
+required by pinned rustfmt.
+
+Source inspection retains separate structural paid-receipt occurrence marking,
+public name/count bounds instead of physical copy identity, and private journal
+exclusion from serde, equality and hashing. Both finite profile factories still
+select V75 before advancing, and the reveal-aware factory installs its compact
+knowledge before the first menu. Original owner/generation and action-index
+authentication code is unchanged by this merge.
+
+Qualification targets use one prospective `limited-fdn-fixtures` build of the
+library test harness plus `agent_bridge_v1`, `regret_census_v1`,
+`kernel_limited_match_v1`, `kernel_limited_training_v1`,
+`kernel_limited_return_env_v1` and `kernel_limited_v68_v75_env_v1`. This is a
+target inventory, not authorization to launch around the coordinating lead's
+host reservations. Focused library filters are:
+
+- `reveal_meaning_v3`, `infoset_v1::recovery::`, `reveal_v4`, and
+  `agent_bridge_v1::tests::infoset_v1_preview_flat_extension_equals_the_committed_one`;
+- `regret_census_v1::stage4a::serve::tests::` for inherited worker/import mapping;
+- `limited_match_v1::tests::closed_list_v3`, `issue552_`, and `issue454_`;
+- `limited_return_consumer_v1::tests::` and
+  `limited_v68_v75_consumer_v1::tests::` for the exact three- and eight-card gates;
+- the paid mechanics in `current_mixed_policy_v1::{end_turn,genesis_wave,vivien,
+  muldrotha,tinybones,liliana,chandra,kaito}::tests`, selected from the built
+  harness's test list rather than treating the brace notation as a filter.
+
+The inherited worker fixtures explicitly export V1. Passing them alone will
+not qualify the V4 worker path. A V4 request/import/sample exercise and an
+end-to-end companion adapter check of refreshed point, observation, support,
+candidates and selected key under the original root index map remain required,
+including a later export refusal. Companion Spellbench source is not changed
+here. The bounded training pilot still needs actual guarded execution, worker
+replay and resume validation under the coordinating lead's execution authority.
+
+The merge's guarded Rust 1.94.1 formatting check and diff check are source
+checks only. No native build, test, game, training or measurement was launched
+for this candidate. Neither canonical PR was updated or published from this
+branch. No catalog promotion, all-286 coverage, default-branch acceptance or
+playing-strength conclusion follows from this source integration.

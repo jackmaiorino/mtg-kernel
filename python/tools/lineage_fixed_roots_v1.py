@@ -3,6 +3,9 @@ import hashlib,json,sys
 from pathlib import Path
 import numpy as np
 import torch
+
+from checkpoint_container_v1 import document_from_bytes
+
 torch.set_num_threads(1);torch.set_num_interop_threads(1);torch.use_deterministic_algorithms(True)
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from mtg_kernel_rl.model import KernelPolicyValueNet,ModelConfig
@@ -30,8 +33,9 @@ for name,module in model.named_modules():
 results=[]
 for block in [110,114,115]:
     path=Path(f'D:/phase1-live/campaign-002/g/block{block}/run/iterations/000199/attempt-000000/update/checkpoint.json')
-    raw=path.read_bytes();c=json.loads(raw)
+    raw = path.read_bytes()
     if block==115:assert hashlib.sha256(raw).hexdigest()=='88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1'
+    c = document_from_bytes(raw)
     params={p['name']:tensor(p['values']).reshape(p['shape']) for p in c['parameters']};model.load_state_dict(params,strict=True);model.eval();activation.clear()
     norms={}
     for name,p in params.items():norms[name.split('.')[0]]=norms.get(name.split('.')[0],0.)+float(p.double().square().sum())

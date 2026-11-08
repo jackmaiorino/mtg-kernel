@@ -36,7 +36,6 @@ impl RevealKnowledgeV3 {
             .map(|(&name, count)| (name, count.minimum()))
     }
 
-    #[cfg(feature = "limited-fdn-fixtures")]
     pub(super) fn only_opponent(mut self, viewer: PlayerId) -> Self {
         self.0[viewer.index()].clear();
         self
@@ -68,6 +67,7 @@ impl RevealKnowledgeV3 {
 pub struct RevealReducerV3 {
     seen: BTreeMap<u64, Value>,
     knowledge: RevealKnowledgeV3,
+    possible_eventless_moves: [BTreeSet<u16>; 2],
     next: u64,
 }
 
@@ -108,9 +108,15 @@ impl RevealReducerV3 {
         self.knowledge.hand(owner).collect()
     }
 
-    #[cfg(feature = "limited-fdn-fixtures")]
     pub(crate) fn opponent_knowledge(self, viewer: PlayerId) -> RevealKnowledgeV3 {
         self.knowledge.only_opponent(viewer)
+    }
+
+    pub(crate) fn possible_eventless_moves(&self, owner: PlayerId) -> Vec<u16> {
+        self.possible_eventless_moves[owner.index()]
+            .iter()
+            .copied()
+            .collect()
     }
 
     /// Validate and absorb one prefix or delta, atomically. Exact re-delivery
@@ -163,7 +169,13 @@ impl RevealReducerV3 {
                             ) {
                                 return Err("transfer source is not continuously public");
                             }
-                            Some(card(&row["card_name"])?)
+                            let name = card(&row["card_name"])?;
+                            // A stack return may be an aborted cast without
+                            // a committed movement in the engine replay.
+                            if evidence["from_zone"] == "stack" {
+                                self.possible_eventless_moves[seat.index()].insert(name);
+                            }
+                            Some(name)
                         }
                         Some("search_reveal") => {
                             fields(evidence, &["kind"])?;
@@ -188,6 +200,7 @@ impl RevealReducerV3 {
                         Some("present") => {
                             fields(event, &["kind", "owner_seat", "card_name", "meaning"])?;
                             self.knowledge.present(seat, name);
+                            self.possible_eventless_moves[seat.index()].insert(name);
                         }
                         Some("moved") => {
                             fields(
@@ -317,6 +330,36 @@ mod tests {
             .unwrap();
         assert_eq!(reducer.hand(PlayerId::P1), BTreeMap::from([(swamp, 1)]));
         assert!(reducer.hand(PlayerId::P0).is_empty());
+    }
+
+    #[test]
+    fn reveal_meaning_v3_only_unlinked_and_stack_arrivals_can_hide_eventless_moves() {
+        let mut stack = arrival("Island");
+        stack["evidence"]["from_zone"] = json!("stack");
+        let transcript = stream(vec![operation(
+            0,
+            vec![
+                arrival("Forest"),
+                reveal("Forest", Some("arrival:0:0")),
+                stack,
+                reveal("Island", Some("arrival:0:2")),
+                reveal("Swamp", None),
+            ],
+        )]);
+        let mut reducer = RevealReducerV3::default();
+        reducer.absorb(&transcript).unwrap();
+        let definitions: BTreeSet<_> = reducer
+            .possible_eventless_moves(PlayerId::P1)
+            .into_iter()
+            .collect();
+        assert_eq!(
+            definitions,
+            BTreeSet::from([
+                card_id_by_name("Island").unwrap(),
+                card_id_by_name("Swamp").unwrap(),
+            ])
+        );
+        assert!(reducer.possible_eventless_moves(PlayerId::P0).is_empty());
     }
 
     #[test]

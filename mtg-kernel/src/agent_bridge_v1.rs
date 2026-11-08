@@ -28,13 +28,16 @@ use crate::agent_bridge_flat_v4_encode::{
     encode_flat_v4_tensor_v1, flat_v4_extension_value_v1, FlatV4EncodeScratchV1,
     SPELLBENCH_EXTENSION_KERNEL_FLAT_V4,
 };
-pub use crate::agent_bridge_infoset_v1::SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1;
 use crate::agent_bridge_infoset_v1::{
     infoset_extension_v1, preview_row_keys_v1, write_receipt_v1, InfosetBridgeV1,
     SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1,
 };
+pub use crate::agent_bridge_infoset_v1::{
+    SPELLBENCH_FLAG_X_KERNEL_INFOSET_REVEAL_V4, SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1,
+};
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::engine::{CastMode, CostKind, OptionalCostChoice};
+use crate::infoset_v1::INFOSET_SCHEMA_REVEAL_V4;
 use crate::mana::ManaColor;
 use crate::rl::{
     parse_strict_json_value, ActionSemanticV1, CardStableRefV1, ObservationV5,
@@ -301,6 +304,7 @@ struct SpellbenchBridgeGameV1 {
 pub struct SpellbenchBridgeServerV1 {
     identity: SpellbenchEngineIdentityV1,
     options: SpellbenchBridgeOptionsV1,
+    reveal_search_v4: bool,
     game: Option<SpellbenchBridgeGameV1>,
     used_game_ids: HashSet<String>,
     last_exchange: Option<CachedSpellbenchExchangeV1>,
@@ -343,11 +347,26 @@ impl SpellbenchBridgeServerV1 {
         SpellbenchBridgeServerV1 {
             identity,
             options,
+            reveal_search_v4: false,
             game: None,
             used_game_ids: HashSet::new(),
             last_exchange: None,
             private_preview: None,
         }
+    }
+
+    /// Prospective fair-search profile using the neutral reveal stream.
+    pub fn with_reveal_search_v4(identity: SpellbenchEngineIdentityV1) -> Self {
+        let mut server = Self::with_options(
+            identity,
+            SpellbenchBridgeOptionsV1 {
+                x_kernel_flat_v4: true,
+                reveal_meaning_v3: true,
+                ..Default::default()
+            },
+        );
+        server.reveal_search_v4 = true;
+        server
     }
 
     fn identity(&self) -> &SpellbenchEngineIdentityV1 {
@@ -486,6 +505,9 @@ impl SpellbenchBridgeServerV1 {
                 }
                 if self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1 {
                     extensions.push(SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1);
+                }
+                if self.reveal_search_v4 {
+                    extensions.push(INFOSET_SCHEMA_REVEAL_V4);
                 }
                 json!({
                     "response_type": "hello_ok",
@@ -713,6 +735,7 @@ impl SpellbenchBridgeServerV1 {
         ) {
             (Some(infoset), Some(lockstep)) => {
                 preview_row_keys_v1(infoset, expected_step, lockstep.fast_session())
+                    .map(|value| (infoset.extension(), value))
             }
             _ => None,
         };
@@ -725,8 +748,8 @@ impl SpellbenchBridgeServerV1 {
             Some(support),
         ) {
             WireResponseV1::Decision(mut view) => {
-                if let Some(keys) = keys {
-                    view["extensions"][SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1] = keys;
+                if let Some((extension, keys)) = keys {
+                    view["extensions"][extension] = keys;
                 }
                 json!({"response_type": "private_preview", "protocol": SPELLBENCH_PROTOCOL_V1,
                 "request_id": request_id, "view": view})
@@ -871,8 +894,12 @@ impl SpellbenchBridgeServerV1 {
             private_block_root_step: None,
             history_cursor: (0, 0, 0),
             reveal_cursor: [0; 2],
-            infoset: (self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1)
-                .then(InfosetBridgeV1::default),
+            infoset: if self.reveal_search_v4 {
+                Some(InfosetBridgeV1::reveal_v4())
+            } else {
+                (self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1)
+                    .then(InfosetBridgeV1::default)
+            },
             masked_observation: self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1,
             #[cfg(test)]
             force_flat_v4_encode_error: false,
@@ -1339,7 +1366,7 @@ fn finish_infoset_v1(game: &mut SpellbenchBridgeGameV1, wire: &mut WireResponseV
     match wire {
         WireResponseV1::Decision(value) => {
             if let Some(extension) = infoset.pending.take() {
-                value["extensions"][SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1] = extension;
+                value["extensions"][infoset.extension()] = extension;
             }
         }
         WireResponseV1::Terminal(_) => write_receipt_v1(&game.game_id, infoset),
@@ -1429,7 +1456,12 @@ fn flat_v4_extension_v1(
     }
     *flat_v4_rows = rows;
     if let Some(infoset) = infoset.as_mut() {
-        infoset_extension_v1(lockstep.fast_session(), decision, infoset)?;
+        infoset_extension_v1(
+            lockstep.fast_session(),
+            decision,
+            infoset,
+            &session.game_state().reveal_meaning_v3,
+        )?;
     }
     Ok(Some(value))
 }
@@ -1630,6 +1662,21 @@ type ObjectKeyV1 = (u32, u32);
 /// never advance the cursor.
 fn private_v2_support_with_history(game: &mut SpellbenchBridgeGameV1) -> Value {
     let mut support = private_v2_support(game);
+    let reveal_infoset = game
+        .infoset
+        .as_mut()
+        .filter(|infoset| infoset.extension() == INFOSET_SCHEMA_REVEAL_V4);
+    if let (Some(infoset), Some(lockstep)) = (reveal_infoset, game.flat_v4.as_ref()) {
+        if let RlSessionResponseV1::Decision(decision) = game.session.current_response() {
+            if let Some(rows) = infoset.live_group_rows_v4(
+                decision.acting_player,
+                &support,
+                lockstep.fast_session(),
+            ) {
+                support["reveal_v4_group_rows"] = rows;
+            }
+        }
+    }
     let state = game.session.game_state();
     let (events_from, notes_from, objects_from) = game.history_cursor;
     let events = &state.engine.event_history[events_from.min(state.engine.event_history.len())..];
@@ -3657,6 +3704,89 @@ mod tests {
                 ..SpellbenchBridgeOptionsV1::default()
             },
         )
+    }
+
+    #[test]
+    fn reveal_v4_bridge_exports_the_same_acting_viewer_stream_as_the_adapter() {
+        use crate::infoset_v1::PayloadV1;
+        use crate::reveal_meaning_v3::RevealReducerV3;
+
+        let mut server = SpellbenchBridgeServerV1::with_reveal_search_v4(
+            SpellbenchEngineIdentityV1::with_source_revision(None),
+        );
+        let hello = json!({"request_type": "hello", "protocol": SPELLBENCH_PROTOCOL_V1,
+                           "request_id": "reveal-v4-hello"});
+        let advertised = parse_line(&server.handle_line(&hello.to_string()));
+        assert_eq!(
+            advertised["extensions"],
+            json!(["x_kernel_v5", "x_kernel_flat_v4", INFOSET_SCHEMA_REVEAL_V4])
+        );
+
+        let mut reducers = [RevealReducerV3::default(), RevealReducerV3::default()];
+        let mut request = reset_line("reset", "reveal-v4", 7);
+        for step in 0..40 {
+            let raw = parse_line(&server.handle_line(&request));
+            assert_eq!(raw["response_type"], "decision", "{raw}");
+            let extensions = &raw["extensions"];
+            assert!(extensions
+                .get(SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1)
+                .is_none());
+            let support = &extensions["x_kernel_v2_support"]["reveal_meaning_v3"];
+            for (viewer, reducer) in reducers.iter_mut().enumerate() {
+                reducer
+                    .absorb(&support["viewers"][viewer]["transcript"])
+                    .unwrap();
+            }
+            if let Some(text) = extensions[INFOSET_SCHEMA_REVEAL_V4]["payload_json"].as_str() {
+                let payload = PayloadV1::from_bytes(text.as_bytes()).unwrap();
+                let imported = payload.import().unwrap();
+                let viewer = crate::ids::PlayerId(payload.viewer);
+                let knowledge =
+                    &imported.game_state().reveal_knowledge_v4.as_ref().unwrap()[viewer.index()];
+                assert_eq!(
+                    knowledge
+                        .hand(viewer.opponent())
+                        .collect::<std::collections::BTreeMap<_, _>>(),
+                    reducers[viewer.index()].hand(viewer.opponent())
+                );
+
+                // A live buffered continuation still keys its rows with
+                // the published root map after a fresh export refuses.
+                let game = server.game.as_mut().unwrap();
+                let fast = game.flat_v4.as_ref().unwrap().fast_session();
+                let infoset = game.infoset.as_mut().unwrap();
+                let support = json!({"block_declaration_instance": "fixture-block"});
+                let root = infoset
+                    .live_group_rows_v4(viewer.into(), &support, fast)
+                    .unwrap();
+                assert_eq!(root["root_step"], raw["step"]);
+                assert!(root["row_keys"].is_array());
+                assert_eq!(
+                    root["row_keys"],
+                    extensions[INFOSET_SCHEMA_REVEAL_V4]["row_keys"]
+                );
+                infoset.root_ids = None;
+                assert_eq!(
+                    infoset.live_group_rows_v4(viewer.into(), &support, fast),
+                    Some(root)
+                );
+                assert!(infoset
+                    .live_group_rows_v4(viewer.into(), &json!({}), fast)
+                    .is_none());
+                assert!(infoset
+                    .live_group_rows_v4(viewer.into(), &support, fast)
+                    .is_none());
+                return;
+            }
+            let selected = raw["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .position(|row| row["semantic"]["kind"] == "play_land")
+                .unwrap_or(0);
+            request = step_line_for(&format!("step-{step}"), &raw, selected);
+        }
+        panic!("no eligible reveal-v4 payload exported");
     }
 
     /// Design 7's composition keys: at a buffered group's root with a
