@@ -31,6 +31,31 @@ pub struct PayloadV1 {
     /// live combat scan's record).
     pub surface: crate::policy_surface_v5::SurfaceContextV1,
     pub state: serde_json::Value,
+    /// The selected viewer's opponent-hand minima in public name terms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reveal_hand: Option<Vec<RevealHandMinimumV4>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RevealHandMinimumV4 {
+    card_name: String,
+    minimum: usize,
+}
+
+fn reveal_hand_v4(state: &GameState, viewer: PlayerId) -> Option<Vec<RevealHandMinimumV4>> {
+    let knowledge = &state.reveal_knowledge_v4.as_ref()?[viewer.index()];
+    let mut facts = knowledge
+        .hand(viewer.opponent())
+        .map(|(def, minimum)| {
+            Some(RevealHandMinimumV4 {
+                card_name: crate::card_def::CARD_DEFS.get(usize::from(def))?.name.into(),
+                minimum,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    facts.sort_unstable_by(|a, b| a.card_name.cmp(&b.card_name));
+    Some(facts)
 }
 
 pub(super) fn validate_reveal_knowledge_v4(state: &GameState, viewer: PlayerId) -> Result<(), String> {
@@ -113,6 +138,11 @@ impl PayloadV1 {
             handles: export.handles.iter().map(super::HandleV1::label).collect(),
             surface,
             state: serde_json::to_value(&export.state).expect("state serializes"),
+            reveal_hand: if export.schema == super::INFOSET_SCHEMA_REVEAL_V4 {
+                Some(reveal_hand_v4(&export.state, viewer)?)
+            } else {
+                None
+            },
         };
         payload.sha256 = payload.envelope_digest();
         Some(payload)
@@ -162,8 +192,13 @@ impl PayloadV1 {
         let state: crate::state::GameState = serde_json::from_value(self.state.clone())
             .map_err(|e| format!("payload state: {e}"))?;
         if self.schema == super::INFOSET_SCHEMA_REVEAL_V4 {
-            validate_reveal_knowledge_v4(&state, PlayerId(self.viewer))?;
-        } else if state.reveal_knowledge_v4.is_some() {
+            let viewer = PlayerId(self.viewer);
+            validate_reveal_knowledge_v4(&state, viewer)?;
+            let expected = reveal_hand_v4(&state, viewer).ok_or("invalid reveal-v4 name ledger")?;
+            if self.reveal_hand.as_ref() != Some(&expected) {
+                return Err("reveal-v4 public name minima differ from its reducer state".into());
+            }
+        } else if state.reveal_knowledge_v4.is_some() || self.reveal_hand.is_some() {
             return Err("legacy infoset carries reveal-v4 knowledge".into());
         }
         if state.objects.len() != self.handles.len() {

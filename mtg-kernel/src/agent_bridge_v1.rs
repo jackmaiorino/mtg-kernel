@@ -3691,6 +3691,60 @@ mod tests {
         )
     }
 
+    #[test]
+    fn reveal_v4_bridge_exports_the_same_acting_viewer_stream_as_the_adapter() {
+        use crate::infoset_v1::PayloadV1;
+        use crate::reveal_meaning_v3::RevealReducerV3;
+
+        let mut server = SpellbenchBridgeServerV1::with_reveal_search_v4(
+            SpellbenchEngineIdentityV1::with_source_revision(None),
+        );
+        let hello = json!({"request_type": "hello", "protocol": SPELLBENCH_PROTOCOL_V1,
+                           "request_id": "reveal-v4-hello"});
+        let advertised = parse_line(&server.handle_line(&hello.to_string()));
+        assert_eq!(
+            advertised["extensions"],
+            json!(["x_kernel_v5", "x_kernel_flat_v4", INFOSET_SCHEMA_REVEAL_V4])
+        );
+
+        let mut reducers = [RevealReducerV3::default(), RevealReducerV3::default()];
+        let mut request = reset_line("reset", "reveal-v4", 7);
+        for step in 0..40 {
+            let raw = parse_line(&server.handle_line(&request));
+            assert_eq!(raw["response_type"], "decision", "{raw}");
+            let extensions = &raw["extensions"];
+            assert!(extensions.get(SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1).is_none());
+            let support = &extensions["x_kernel_v2_support"]["reveal_meaning_v3"];
+            for (viewer, reducer) in reducers.iter_mut().enumerate() {
+                reducer
+                    .absorb(&support["viewers"][viewer]["transcript"])
+                    .unwrap();
+            }
+            if let Some(text) = extensions[INFOSET_SCHEMA_REVEAL_V4]["payload_json"].as_str() {
+                let payload = PayloadV1::from_bytes(text.as_bytes()).unwrap();
+                let imported = payload.import().unwrap();
+                let viewer = crate::ids::PlayerId(payload.viewer);
+                let knowledge = &imported.game_state().reveal_knowledge_v4.as_ref().unwrap()
+                    [viewer.index()];
+                assert_eq!(
+                    knowledge
+                        .hand(viewer.opponent())
+                        .collect::<std::collections::BTreeMap<_, _>>(),
+                    reducers[viewer.index()].hand(viewer.opponent())
+                );
+                return;
+            }
+            let selected = raw["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .position(|row| row["semantic"]["kind"] == "play_land")
+                .unwrap_or(0);
+            request = step_line_for(&format!("step-{step}"), &raw, selected);
+        }
+        panic!("no eligible reveal-v4 payload exported");
+    }
+
     /// Design 7's composition keys: at a buffered group's root with a
     /// payload, each private preview's `row_keys` (lockstep rows, keyed with
     /// the root export's map) equal the keys of the entrant's local state,

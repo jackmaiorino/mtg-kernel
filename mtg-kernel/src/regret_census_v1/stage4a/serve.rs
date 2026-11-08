@@ -19,7 +19,7 @@ use super::play::decision;
 use super::refresh::{Cursor, Lookup};
 use super::seeds::RootSeeds;
 use super::world::DeckPrior;
-use crate::infoset_v1::PayloadV1;
+use crate::infoset_v1::{PayloadV1, INFOSET_SCHEMA_REVEAL_V4};
 use crate::rl_session::FastActorSessionV1;
 use crate::runtime_decks::RUNTIME_DECKS;
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
@@ -31,12 +31,22 @@ use std::time::Instant;
 
 pub(super) const SERVE_MODE: &str = "s4a-serve";
 pub(super) const WORKER_MODE: &str = "s4a-serve-worker";
+pub(super) const REVEAL_SERVE_MODE: &str = "s4a-serve-reveal-v4";
+pub(super) const REVEAL_WORKER_MODE: &str = "s4a-serve-reveal-v4-worker";
 /// RootSeeds' namespace for every W1 entrant search.
 pub(crate) const SERVE_SEED_MODEL_V1: &str = "w1-entrant-v1";
+const REVEAL_SERVE_SEED_MODEL: &str = "reveal-entrant-v4";
 const SERVE_STACK_BYTES_V1: usize = 256 << 20;
 /// Prefix of a pool error that leaves a worker pipe out of step: the pool
 /// answers it and exits instead of serving another search.
 const FATAL: &str = "fatal: ";
+
+fn require_profile(payload: &PayloadV1, reveal_v4: bool) -> Result<(), String> {
+    if (payload.schema == INFOSET_SCHEMA_REVEAL_V4) != reveal_v4 {
+        return Err("infoset schema does not match the search profile".into());
+    }
+    Ok(())
+}
 
 /// Tree k's share of budget B over K trees.
 pub(crate) fn partition_v1(budget: u64, k: u64, trees: u64) -> u64 {
@@ -125,7 +135,12 @@ pub(crate) fn search_tree_v1(
     let opponent = policy.fork_for_collection_v3()?;
     let mut roles = bank_roles(policy, std::slice::from_ref(&opponent))?;
     let seeds = RootSeeds {
-        model: SERVE_SEED_MODEL_V1.into(),
+        model: if payload.schema == INFOSET_SCHEMA_REVEAL_V4 {
+            REVEAL_SERVE_SEED_MODEL
+        } else {
+            SERVE_SEED_MODEL_V1
+        }
+        .into(),
         root: tree_root_v1(root_id, k),
     };
     let limits = Limits {
@@ -429,7 +444,7 @@ fn host_name() -> String {
 }
 
 /// Worker: one tree per request line, one result per answer line.
-pub(super) fn run_worker(policy: &FrozenPlayPolicyV1) -> Result<(), String> {
+pub(super) fn run_worker(policy: &FrozenPlayPolicyV1, reveal_v4: bool) -> Result<(), String> {
     let stdin = std::io::stdin();
     let mut out = std::io::stdout().lock();
     for line in stdin.lock().lines() {
@@ -446,6 +461,7 @@ pub(super) fn run_worker(policy: &FrozenPlayPolicyV1) -> Result<(), String> {
         let answer = (|| -> Result<Value, String> {
             let req: TreeRequestV1 =
                 serde_json::from_str(&line).map_err(|e| format!("request: {e}"))?;
+            require_profile(&req.payload, reveal_v4)?;
             let root = import_at_v1(&req.payload, &req.path)?;
             let r = search_tree_v1(
                 policy,
@@ -492,12 +508,12 @@ struct WorkerV1 {
     stdout: std::io::BufReader<std::process::ChildStdout>,
 }
 
-fn spawn_worker(source: &str) -> Result<WorkerV1, String> {
+fn spawn_worker(source: &str, mode: &str) -> Result<WorkerV1, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut child = std::process::Command::new(exe)
         .args([
             format!("source={source}"),
-            format!("mode={WORKER_MODE}"),
+            format!("mode={mode}"),
             "out=-".into(),
         ])
         .stdin(std::process::Stdio::piped())
@@ -528,15 +544,21 @@ pub(super) fn failed_request_charge_v1(parsed: bool, dispatched: u64, a_units: u
 
 /// Pool: K persistent workers (`W1_SERVE_K`), one merged search per request.
 pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String> {
-    let k: u64 = std::env::var("W1_SERVE_K")
-        .map_err(|_| "W1_SERVE_K is required")?
+    let reveal_v4 = cfg.mode == REVEAL_SERVE_MODE;
+    let (workers_env, worker_mode) = if reveal_v4 {
+        ("REVEAL_V4_SERVE_K", REVEAL_WORKER_MODE)
+    } else {
+        ("W1_SERVE_K", WORKER_MODE)
+    };
+    let k: u64 = std::env::var(workers_env)
+        .map_err(|_| format!("{workers_env} is required"))?
         .parse()
-        .map_err(|_| "W1_SERVE_K must be an integer")?;
+        .map_err(|_| format!("{workers_env} must be an integer"))?;
     if k == 0 {
-        return Err("W1_SERVE_K must be positive".into());
+        return Err(format!("{workers_env} must be positive"));
     }
     let mut workers: Vec<WorkerV1> = (0..k)
-        .map(|_| spawn_worker(&cfg.source))
+        .map(|_| spawn_worker(&cfg.source, worker_mode))
         .collect::<Result<_, _>>()?;
     let stdin = std::io::stdin();
     let mut out = std::io::stdout().lock();
@@ -558,12 +580,14 @@ pub(super) fn run_pool(cfg: &super::super::CensusConfigV1) -> Result<(), String>
             {
                 let req: PointRequestV1 =
                     serde_json::from_str(&line).map_err(|e| format!("request: {e}"))?;
+                require_profile(&req.payload, reveal_v4)?;
                 return Ok(json!({"ok": true, "point": point_v1(&req)?,
                     "wall_seconds": started.elapsed().as_secs_f64()}));
             }
             let req: SearchRequestV1 =
                 serde_json::from_str(&line).map_err(|e| format!("request: {e}"))?;
             identity = (json!(req.root_id), req.a_units);
+            require_profile(&req.payload, reveal_v4)?;
             // The receipt names the payload by the digest import recomputes.
             let root = import_at_v1(&req.payload, &req.path)?;
             let viewer_decision =

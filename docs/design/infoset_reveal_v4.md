@@ -28,4 +28,7 @@ shown while preserving the visible stream. The bridge's
 `--x-kernel-infoset-reveal-v4` profile uses the flat-action lockstep state for
 canonical row mapping and the same selected-viewer journal it sends to the
 trusted adapter. It advertises a separate extension and receipt identity.
-Native acceptance and the successor entrant are pending.
+The payload digest includes the public minima by name, which the adapter and
+entrant can compare with the selected transcript. The `s4a-serve-reveal-v4`
+search mode and its worker require the reveal-v4 schema and use a separate
+seed namespace. Native acceptance and the successor entrant are pending.
