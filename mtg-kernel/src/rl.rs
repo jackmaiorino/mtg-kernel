@@ -10661,7 +10661,8 @@ fn private_card(
         ));
     }
     if state.objects.try_get(id).is_some_and(|o| {
-        o.v4.face_down_v1.is_none() && CARD_DEFS[usize::from(o.card_def)].name == "Electroduplicate"
+        o.v4.face_down_v1.is_none() && appendix != LimitedAppendixV1::Electroduplicate
+            && CARD_DEFS[usize::from(o.card_def)].name == "Electroduplicate"
     }) {
         return Err(RlContractError(
             "Electroduplicate requires a distinct complete consumer".into(),

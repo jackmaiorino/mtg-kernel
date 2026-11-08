@@ -780,6 +780,8 @@ pub mod sideboard_search_campaign_v1;
 // default, never built into the product binary.
 pub mod aberration_consumer_v1;
 pub mod aberration_public_v1;
+pub mod electroduplicate_consumer_v1;
+pub mod electroduplicate_public_v1;
 mod authority_of_the_consuls_v1;
 pub(crate) mod cerberus_capture_v1;
 pub mod cerberus_public_v1;
