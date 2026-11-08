@@ -4,6 +4,7 @@
 //! and complete ordinary semantics, with mandatory typed
 //! Kaito V75 and inherited family context. This is not a session, restore capability or action dispatcher.
 use crate::{
+    artist_consumer_v1 as artist,
     graveyard_return_public_v61::{
         DeathV61, ProgramV61, ScheduleV61, StageV61, TargetV61, TriggerV61,
     },
@@ -32,6 +33,8 @@ pub struct CandidateMeaningV75 {
     /// public incarnation. Private PolicyActionV5 operands are never serialized.
     #[serde(deserialize_with = "strict_action")]
     pub action: A,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist_payment: Option<artist::PaymentActionV1>,
     #[serde(deserialize_with = "required_optional")]
     pub drake_activation: Option<crate::next_five_observation_v59::NextFiveActivationV59>,
     /// Complete current programs at this genuine decision, in native stage and
@@ -120,6 +123,7 @@ pub fn producer_sha256() -> String {
             inherited.as_str(),
             include_str!("tinybones_candidates_v72.rs"),
             include_str!("kaito_candidates_v75.rs"),
+            include_str!("artist_consumer_v1.rs"),
             include_str!("kaito_observation_v75.rs"),
             include_str!("rl_session/kaito_v75.rs"),
             include_str!("current_mixed_policy_v1/kaito.rs"),
@@ -607,6 +611,9 @@ pub(crate) fn project_parts_v75(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<(KaitoCandidatesV75, NativeCandidateProjectionV75), RlContractError> {
+    if surface.artist_consumer_v1() {
+        return Err(error("Artist candidates require their owning profile"));
+    }
     observation::validate_state(state).map_err(error)?;
     // Exact-bound source surfaces authenticate their own private scan. Owned
     // revision surfaces do not gain authority through this source-only API.
@@ -647,8 +654,9 @@ fn project_authenticated_parts_v75(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<(KaitoCandidatesV75, NativeCandidateProjectionV75), RlContractError> {
-    let observation =
-        observation::observe_v75(state, surface, actor_and_origin, step, physical, substep)?;
+    let (observation, _) =
+        observation::observe_parts_v75(state, surface, actor_and_origin, step, physical, substep)?;
+    let (schema, annotation_schema) = schemas(&observation);
     let authorized = authorized_references(&observation)?;
     // No native action or original semantic enters the public value. Keep the
     // original vector intact so index i continues to bind its exact native pair.
@@ -684,8 +692,10 @@ fn project_authenticated_parts_v75(
         projected.push((
             index,
             CandidateMeaningV75 {
-                schema: ANNOTATION_SCHEMA.into(),
+                schema: annotation_schema.into(),
                 ordinal: 0,
+                artist_payment: artist::payment_action(observation.artist.as_ref(), &action)
+                    .map_err(error)?,
                 selected_graveyard_target: selected_graveyard_target(&observation, &action)?,
                 drake_activation: drake_activation(&observation, &action)?,
                 vivien_activation: crate::vivien_public_v70::activation_cost(
@@ -762,7 +772,7 @@ fn project_authenticated_parts_v75(
         })
         .collect::<Result<Vec<_>, RlContractError>>()?;
     let mut value = KaitoCandidatesV75 {
-        schema: SCHEMA.into(),
+        schema: schema.into(),
         producer_sha256: producer_sha256(),
         observation,
         candidates,
@@ -781,11 +791,20 @@ fn project_authenticated_parts_v75(
     ))
 }
 
+fn schemas(observation: &KaitoObservationV75) -> (&'static str, &'static str) {
+    if observation.artist.is_some() {
+        (artist::CANDIDATES_SCHEMA, artist::ACTION_SCHEMA)
+    } else {
+        (SCHEMA, ANNOTATION_SCHEMA)
+    }
+}
+
 /// Supplemental closed-shape checks. Only validate_current authenticates this
 /// artifact against the native world; neither function grants execution/restore.
 pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractError> {
     observation::validate_artifact(&value.observation)?;
-    if value.schema != SCHEMA
+    let (schema, annotation_schema) = schemas(&value.observation);
+    if value.schema != schema
         || value.producer_sha256 != producer_sha256()
         || value.owning_consumer_admitted
         || !value.alesha_optional_resolution_supported
@@ -856,7 +875,10 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                 .map_err(error)?
             || row.liliana_choices
                 != crate::liliana_public_v73::choice_contexts(&value.observation.liliana)
-            || row.schema != ANNOTATION_SCHEMA
+            || row.schema != annotation_schema
+            || row.artist_payment
+                != artist::payment_action(value.observation.artist.as_ref(), &row.action)
+                    .map_err(error)?
             || usize::try_from(row.ordinal).ok() != Some(ordinal)
             || row.vivien_activation
                 != crate::vivien_public_v70::activation_cost(&value.observation.vivien, &row.action)

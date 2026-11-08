@@ -51,7 +51,12 @@ pub(crate) fn project_limited_kaito_v16(
         .transpose()?;
     Ok((
         LimitedKaitoDecisionV16 {
-            schema: "mtg-kernel-limited-kaito-decision/v16".into(),
+            schema: if observation.artist.is_some() {
+                "mtg-kernel-limited-artist-decision/v1"
+            } else {
+                "mtg-kernel-limited-kaito-decision/v16"
+            }
+            .into(),
             actor,
             prompt_seq,
             state: projected.state,

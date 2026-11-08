@@ -218,3 +218,30 @@ checks only. No native build, test, game, training or measurement was launched
 for this candidate. Neither canonical PR was updated or published from this
 branch. No catalog promotion, all-286 coverage, default-branch acceptance or
 playing-strength conclusion follows from this source integration.
+
+## Perforating Artist declared-deck source
+
+`fdn-artist-consumer/v1` gates the exact Artist460 definition and ordinary Full
+cards. The owning reset selects the private Artist scope before advance. It
+retains the complete V75 base, including current forms and native counters, and
+adds the V64 cast and Raid facts under separate observation, action, Human and
+JSONL schemas. `kernel_limited_artist_env_v1` uses the shared trusted host
+request envelope. The existing V75, Return and V68 through V75 resets still
+exclude Artist.
+
+The payer's menu binds the authentic original trigger and payment
+continuation. The sacrifice is a non-target payment, with the captured
+controller's opponent choosing the original eligible permanent or declining.
+The discard fallback shows its roster and selected prefix to the payer only.
+Numeric captures preserve the same original action map and distinguish
+selection, confirmation and decline. The optional V3 reset installs public
+name/count knowledge before its first menu. The Artist profile refuses
+current-slot sampling pending native reference custody for its continuations.
+
+Two focused source cases cover both-seat paid cast and Raid after untouched
+40-card resets, and real sacrifice, discard and decline fixtures across
+native, Human, JSONL and numeric routes. Independent private hands, finite
+learner update and authenticated restore are exercised at the actual prompts.
+Native execution and catalog promotion are pending. Niv-Mizzet remains a
+separate appendix until native receipts distinguish the realized draw count
+from the commanded count when its trigger is countered or interrupted.

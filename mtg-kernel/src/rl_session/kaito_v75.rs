@@ -71,7 +71,7 @@ pub(super) fn normalized_origin(
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
-    observation::validate_state(&session.state)
+    observation::validate_state_scoped(&session.state, session.surface.artist_consumer_v1())
         .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
     let actual =
         super::kaito_candidates_v75(&current.origin_decision, &session.state, &session.surface)
@@ -120,6 +120,10 @@ pub(super) fn prepare_current(
     Ok(())
 }
 impl FastActorSessionV1 {
+    pub(super) fn validate_kaito_state_v75(&self) -> Result<(), String> {
+        observation::validate_state_scoped(&self.state, self.surface.artist_consumer_v1())
+    }
+
     pub(crate) fn reset_kaito_v75(
         episode_id: u64,
         env_seed: u64,
@@ -170,13 +174,24 @@ impl FastActorSessionV1 {
         limits: (u64, u64),
         deck_ids: SessionDeckIdsV1,
         mainboards: &[Vec<u16>; 2],
+        state: GameState,
+    ) -> Result<Self, RlSessionError> {
+        Self::initialize_kaito_consumer_v1(episode_id, limits, deck_ids, mainboards, state, false)
+    }
+
+    pub(super) fn initialize_kaito_consumer_v1(
+        episode_id: u64,
+        limits: (u64, u64),
+        deck_ids: SessionDeckIdsV1,
+        mainboards: &[Vec<u16>; 2],
         mut state: GameState,
+        artist: bool,
     ) -> Result<Self, RlSessionError> {
         crate::combat_damage_v1::enable_foundations_combat_v1(&mut state)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
         crate::london_mulligan_v1::enable_london_mulligans_v1(&mut state)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
-        crate::kaito_observation_v75::validate_state(&state)
+        crate::kaito_observation_v75::validate_state_scoped(&state, artist)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
         let mut session = Self {
             deck_ids,
@@ -205,6 +220,9 @@ impl FastActorSessionV1 {
             terminal: None,
         };
         session.surface.enable_hunter_order_v45();
+        if artist {
+            session.surface.enable_artist_consumer_v1();
+        }
         session.advance_to_decision_or_terminal();
         Ok(session)
     }
@@ -217,10 +235,15 @@ impl FastActorSessionV1 {
         if !restored.is_common_v40()
             || restored.flat_action_contract_mode != self.flat_action_contract_mode
             || restored.episode_id != self.episode_id
+            || restored.surface.artist_consumer_v1() != self.surface.artist_consumer_v1()
         {
             return Err(RlContractError("wrong Kaito snapshot owner".into()));
         }
-        crate::kaito_observation_v75::validate_state(&restored.state).map_err(RlContractError)?;
+        crate::kaito_observation_v75::validate_state_scoped(
+            &restored.state,
+            restored.surface.artist_consumer_v1(),
+        )
+        .map_err(RlContractError)?;
         let next_revision = self
             .environment_revision
             .max(restored.environment_revision)
@@ -268,7 +291,11 @@ impl FastActorSessionV1 {
     /// It consumes the session; predecessor adapters keep their old mode.
     pub(crate) fn into_kaito_v75(mut self) -> Result<Self, RlContractError> {
         // Validate before any advancement can expire a malformed active marker.
-        crate::kaito_observation_v75::validate_state(&self.state).map_err(RlContractError)?;
+        crate::kaito_observation_v75::validate_state_scoped(
+            &self.state,
+            self.surface.artist_consumer_v1(),
+        )
+        .map_err(RlContractError)?;
         self.flat_action_contract_mode = FlatActionContractModeV1::KaitoV75;
         self.flat_action_cache_spare = None;
         self.flat_action_cache_spare_v2 = None;
@@ -302,6 +329,15 @@ impl FastActorSessionV1 {
         not(feature = "standard-magezero-fixtures")
     ))]
     pub(crate) fn from_kaito_v75_fixture_state(state: GameState) -> Self {
+        Self::from_kaito_v75_fixture_state_scoped(state, false)
+    }
+
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(crate) fn from_kaito_v75_fixture_state_scoped(state: GameState, artist: bool) -> Self {
         let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
         session.state = state;
         session.surface = PolicySurfaceV5::new_with_priority_mode_v1(
@@ -309,6 +345,9 @@ impl FastActorSessionV1 {
             SuppressionAuditMode::Off,
         );
         session.surface.enable_hunter_order_v45();
+        if artist {
+            session.surface.enable_artist_consumer_v1();
+        }
         session.environment_revision = 0;
         session.policy_step_count = 0;
         session.physical_decision_count = 0;
@@ -317,7 +356,7 @@ impl FastActorSessionV1 {
         session.flat_action_contract_mode = FlatActionContractModeV1::KaitoV75;
         session.flat_action_cache_spare = None;
         session.flat_action_cache_spare_v2 = None;
-        if let Err(error) = crate::kaito_observation_v75::validate_state(&session.state) {
+        if let Err(error) = observation::validate_state_scoped(&session.state, artist) {
             session.terminal = Some(halted_terminal(
                 &session.deck_ids,
                 session.deck_hashes,
@@ -578,6 +617,11 @@ impl KaitoSessionV75 {
         decision: &KaitoDecisionV75,
         seed: u64,
     ) -> Result<Self, RlContractError> {
+        if self.inner.surface.artist_consumer_v1() {
+            return Err(RlContractError(
+                "Artist profile has no current-slot sampler".into(),
+            ));
+        }
         let before = self.validated_current(decision)?;
         let actor = self
             .inner

@@ -18,7 +18,12 @@ use crate::{
 };
 use std::sync::Arc;
 type Error = HumanDecisionErrorV1;
-macro_rules! record { ($name:ident { $($field:ident:$ty:ty),* $(,)? })=>{#[derive(Debug,Clone,PartialEq,Eq,Serialize)] pub struct $name { $(pub $field:$ty),* }}; }
+macro_rules! record {
+    ($name:ident { $($(#[$meta:meta])* $field:ident:$ty:ty),* $(,)? }) => {
+        #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+        pub struct $name { $($(#[$meta])* pub $field:$ty),* }
+    };
+}
 record!(HumanVisibleStateKaitoV75 {
     common: super::elenda_v52::HumanVisibleStateElendaV52,
     prepared: super::prepared_v57::HumanPreparedFactsV57,
@@ -32,7 +37,9 @@ record!(HumanVisibleStateKaitoV75 {
     tinybones: super::tinybones_v72::HumanTinybonesFactsV72,
     liliana: HumanLilianaFactsV73,
     chandra: HumanChandraFactsV74,
-    kaito: HumanKaitoFactsV75
+    kaito: HumanKaitoFactsV75,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artist: Option<HumanArtistFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -56,14 +63,156 @@ record!(HumanKaitoCandidateV75 {
     compatibility_terminals: Vec<crate::time_stop_public_v68::CompatibilityTerminalV68>,
     genesis_waves: Vec<HumanWaveContextV71>,
     vivien_choices:Vec<crate::vivien_public_v70::ChoiceContextV70>,
-    vivien_activation:Option<HumanLoyaltyCostV71>
+    vivien_activation:Option<HumanLoyaltyCostV71>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artist_payment: Option<crate::artist_consumer_v1::PaymentActionV1>
 });
+record!(HumanArtistFactsV1 {
+    meaning: crate::rules_meaning_artist_v64::MeaningV64,
+    authorized_printings: Vec<HumanCardRefV1>,
+    casts: Vec<HumanArtistCastV1>,
+    triggers: Vec<HumanArtistTriggerV1>
+});
+record!(HumanArtistCastV1 {
+    position: u32,
+    source: HumanCardRefV1,
+    original_controller: PlayerSeatV1,
+    is_uncast_copy: bool,
+    payment_pending: bool,
+    genuine_cast_finalized: bool,
+    current_form: crate::optional_trigger_public_v1::FormV1
+});
+record!(HumanArtistTriggerV1 {
+    stage: crate::artist_public_v64::StageV64,
+    position: u32,
+    source: HumanCallRootV62,
+    affected_opponent: PlayerSeatV1,
+    captured_controller_attacked_this_turn: bool,
+    payment: Option<HumanArtistPaymentV1>
+});
+record!(HumanArtistPaymentV1 {
+    kind: crate::artist_public_v64::PaymentKindV64,
+    status: crate::artist_public_v64::PaymentStatusV64,
+    payer: PlayerSeatV1,
+    is_target: bool,
+    may_decline: bool,
+    candidates: Option<Vec<HumanCardRefV1>>,
+    selected: Option<Vec<HumanCardRefV1>>
+});
+
+fn artist_facts(
+    value: &crate::artist_public_v64::FactsV64,
+    handles: &mut Handles,
+) -> Result<HumanArtistFactsV1, Error> {
+    let refs = |rows: &[crate::optional_trigger_public_v1::ReferenceV1], h: &mut Handles| {
+        rows.iter()
+            .map(|r| href(r, h))
+            .collect::<Result<Vec<_>, Error>>()
+    };
+    Ok(HumanArtistFactsV1 {
+        meaning: value.meaning.clone(),
+        authorized_printings: refs(&value.authorized_printings, handles)?,
+        casts: value
+            .casts
+            .iter()
+            .map(|cast| {
+                Ok(HumanArtistCastV1 {
+                    position: cast.position,
+                    source: href(&cast.source, handles)?,
+                    original_controller: cast.original_controller,
+                    is_uncast_copy: cast.is_uncast_copy,
+                    payment_pending: cast.payment_pending,
+                    genuine_cast_finalized: cast.genuine_cast_finalized,
+                    current_form: cast.current_form.clone(),
+                })
+            })
+            .collect::<Result<_, Error>>()?,
+        triggers: value
+            .triggers
+            .iter()
+            .map(|trigger| {
+                Ok(HumanArtistTriggerV1 {
+                    stage: trigger.stage,
+                    position: trigger.position,
+                    source: root(&trigger.source, handles)?,
+                    affected_opponent: trigger.affected_opponent,
+                    captured_controller_attacked_this_turn: trigger
+                        .captured_controller_attacked_this_turn,
+                    payment: trigger
+                        .payment
+                        .as_ref()
+                        .map(|payment| {
+                            Ok::<_, Error>(HumanArtistPaymentV1 {
+                                kind: payment.kind,
+                                status: payment.status,
+                                payer: payment.payer,
+                                is_target: payment.is_target,
+                                may_decline: payment.may_decline,
+                                candidates: payment
+                                    .candidates
+                                    .as_deref()
+                                    .map(|rows| refs(rows, handles))
+                                    .transpose()?,
+                                selected: payment
+                                    .selected
+                                    .as_deref()
+                                    .map(|rows| refs(rows, handles))
+                                    .transpose()?,
+                            })
+                        })
+                        .transpose()?,
+                })
+            })
+            .collect::<Result<_, Error>>()?,
+    })
+}
+
 pub(super) fn choice_label(
     obs: &observation::KaitoObservationV75,
     a: &ActionSemanticV1,
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
+    if let Some(payment) = crate::artist_consumer_v1::payment_action(obs.artist.as_ref(), a)
+        .map_err(|_| Error::InvalidVisibleReference)?
+    {
+        use crate::artist_consumer_v1::AnswerV1;
+        use crate::artist_public_v64::PaymentKindV64;
+        let label = match (payment.kind, payment.answer, a) {
+            (
+                PaymentKindV64::SacrificeControlledNonlandPermanent,
+                AnswerV1::SelectPayment,
+                ActionSemanticV1::ChooseEffectTarget {
+                    target: TargetRefV1::Object { object },
+                    ..
+                },
+            ) => {
+                format!("Select {} to sacrifice", h.name(object)?)
+            }
+            (
+                PaymentKindV64::DiscardCard,
+                AnswerV1::SelectPayment,
+                ActionSemanticV1::ChooseEffectTarget {
+                    target: TargetRefV1::Object { object },
+                    ..
+                },
+            ) => {
+                format!("Select {} to discard", h.name(object)?)
+            }
+            (PaymentKindV64::SacrificeControlledNonlandPermanent, AnswerV1::ConfirmPayment, _) => {
+                "Confirm sacrifice".into()
+            }
+            (PaymentKindV64::DiscardCard, AnswerV1::ConfirmPayment, _) => "Confirm discard".into(),
+            (PaymentKindV64::SacrificeControlledNonlandPermanent, AnswerV1::DeclinePayment, _) => {
+                "Decline sacrifice".into()
+            }
+            (PaymentKindV64::DiscardCard, AnswerV1::DeclinePayment, _) => {
+                "Decline discard and lose 3 life".into()
+            }
+            _ => return Err(Error::InvalidVisibleReference),
+        };
+        return Ok(Some(label));
+    }
     if let Some(c) = crate::kaito_public_v75::activation_cost(&obs.kaito, a)
         .map_err(|_| Error::InvalidVisibleReference)?
     {
@@ -341,6 +490,11 @@ pub(super) fn project_with_handles(
         &mut roles,
     )?;
     let kaito = kaito_facts(&obs.kaito, &tinybones.battlefield, &mut handles, &mut roles)?;
+    let artist = obs
+        .artist
+        .as_ref()
+        .map(|v| artist_facts(v, &mut handles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
@@ -350,6 +504,7 @@ pub(super) fn project_with_handles(
                 .get(*i as usize)
                 .ok_or(Error::InvalidAction)?;
             Ok(HumanKaitoCandidateV75 {
+                artist_payment: r.artist_payment,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -592,7 +747,12 @@ pub(super) fn project_with_handles(
         .collect::<Result<_, Error>>()?;
     Ok((
         HumanDecisionKaitoV75 {
-            schema: "mtg-kernel-human-kaito-decision/v75".into(),
+            schema: if artist.is_some() {
+                "mtg-kernel-human-artist-decision/v1"
+            } else {
+                "mtg-kernel-human-kaito-decision/v75"
+            }
+            .into(),
             human_seat: human,
             prompt_seq,
             state: HumanVisibleStateKaitoV75 {
@@ -609,6 +769,7 @@ pub(super) fn project_with_handles(
                 liliana,
                 chandra,
                 kaito,
+                artist,
             },
             actions,
             action_meanings,

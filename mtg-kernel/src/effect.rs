@@ -666,7 +666,7 @@ pub(crate) mod perforating_artist_v1 {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    mod tests {
+    pub(crate) mod tests {
         include!("effect/perforating_artist_v1_tests.rs");
     }
 }

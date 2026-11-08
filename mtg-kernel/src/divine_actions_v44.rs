@@ -231,7 +231,8 @@ pub(crate) fn candidates_kaito_v75(
     state: &GameState,
     surface: &PolicySurfaceV5,
 ) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
-    crate::kaito_observation_v75::validate_state(state).map_err(RlContractError)?;
+    crate::kaito_observation_v75::validate_state_scoped(state, surface.artist_consumer_v1())
+        .map_err(RlContractError)?;
     candidates_current_scope_kaito_v75(
         origin,
         state,
