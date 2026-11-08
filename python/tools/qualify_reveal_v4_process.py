@@ -14,7 +14,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-COMPANION = "622e3b705d8e0c91284e2ebbf02ed2f58a4f9030"
+COMPANION = "7e3df807e8361e987a88e75804caea320b3d6e6f"
 INFOSET = "x_kernel_infoset_reveal_v4"
 
 
