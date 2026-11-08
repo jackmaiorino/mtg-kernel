@@ -119,14 +119,17 @@ fn exact_forty_card_v3_reset_pays_cast_and_both_abilities_both_seats() {
             let source = zimone;
             let allow_activation =
                 source.is_some_and(|id| state.objects.get(id).counters.plus1_plus1 == 1);
+            let needs_first_combat_counter =
+                source.is_some_and(|id| state.objects.get(id).counters.plus1_plus1 == 0);
             let choose_target = |row: &crate::kaito_candidates_v75::CandidateMeaningV75| {
                 matches!(
                     row.zimone_action,
                     Some(ActionV1::TargetChoice {
+                        kind,
                         selected_count: 0,
                         finish: false,
                         ..
-                    })
+                    }) if kind == AbilityKindV1::ActivateDoubleEveryKind || needs_first_combat_counter
                 ) && matches!(&row.action,
                     Action::ChooseTarget { target: TargetRefV1::Object { object }, .. }
                     | Action::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. }
@@ -215,9 +218,15 @@ fn exact_forty_card_v3_reset_pays_cast_and_both_abilities_both_seats() {
                 paid_double = true;
             }
         }
+        let state = numeric.fixture_state();
+        let source_status = zimone.map(|id| {
+            let o = state.objects.get(id);
+            (id, o.zone, o.zone_change_count, o.counters.plus1_plus1, o.summoning_sick, o.tapped)
+        });
         assert!(
             finished,
-            "declared reset did not complete Zimone's paid activation"
+            "declared reset did not complete Zimone's paid activation: actor={actor:?} turn={} step={:?} source={source_status:?} paid={paid_double}",
+            state.turn, state.step
         );
     }
 }
