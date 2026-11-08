@@ -802,7 +802,9 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::tutelage_consumer_v1::project(facts, &mut handles))
         .transpose()?;
-    let leyline_axe = obs.leyline_axe.as_ref()
+    let leyline_axe = obs
+        .leyline_axe
+        .as_ref()
         .map(|facts| super::leyline_axe_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
     let moon = obs
@@ -810,10 +812,14 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::moon_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
-    let progenitus = obs.progenitus.as_ref()
+    let progenitus = obs
+        .progenitus
+        .as_ref()
         .map(|facts| super::progenitus_consumer_v1::project(facts, &mut handles))
         .transpose()?;
-    let aberration = obs.aberration.as_ref()
+    let aberration = obs
+        .aberration
+        .as_ref()
         .map(|facts| super::aberration_consumer_v1::project(facts, &mut handles))
         .transpose()?;
     let action_meanings = indexes

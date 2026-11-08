@@ -765,18 +765,23 @@ fn project_authenticated_parts_v75(
                     &action,
                 )
                 .map_err(error)?,
-                moon_action: crate::moon_consumer_v1::action(
-                    observation.moon.as_ref(), &action,
-                ).map_err(error)?,
+                moon_action: crate::moon_consumer_v1::action(observation.moon.as_ref(), &action)
+                    .map_err(error)?,
                 leyline_axe_action: crate::leyline_axe_consumer_v1::action(
-                    observation.leyline_axe.as_ref(), &action,
-                ).map_err(error)?,
+                    observation.leyline_axe.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
                 progenitus_action: crate::progenitus_consumer_v1::action(
-                    observation.progenitus.as_ref(), &action,
-                ).map_err(error)?,
+                    observation.progenitus.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
                 aberration_action: crate::aberration_consumer_v1::action(
-                    observation.aberration.as_ref(), &action,
-                ).map_err(error)?,
+                    observation.aberration.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
                 drakuseth_target: crate::drakuseth_consumer_v1::target_action(
                     observation.drakuseth.as_ref(),
                     &action,
@@ -1076,14 +1081,23 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                 != crate::moon_consumer_v1::action(value.observation.moon.as_ref(), &row.action)
                     .map_err(error)?
             || row.leyline_axe_action
-                != crate::leyline_axe_consumer_v1::action(value.observation.leyline_axe.as_ref(), &row.action)
-                    .map_err(error)?
+                != crate::leyline_axe_consumer_v1::action(
+                    value.observation.leyline_axe.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
             || row.progenitus_action
-                != crate::progenitus_consumer_v1::action(value.observation.progenitus.as_ref(), &row.action)
-                    .map_err(error)?
+                != crate::progenitus_consumer_v1::action(
+                    value.observation.progenitus.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
             || row.aberration_action
-                != crate::aberration_consumer_v1::action(value.observation.aberration.as_ref(), &row.action)
-                    .map_err(error)?
+                != crate::aberration_consumer_v1::action(
+                    value.observation.aberration.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
             || row.chosen_type_answer
                 != chosen_type::answer(value.observation.chosen_type.as_ref(), &row.action)
                     .map_err(error)?

@@ -47,7 +47,8 @@ pub fn producer_sha256() -> String {
             hash.update(source.as_bytes());
         }
         format!("{:x}", hash.finalize())
-    }).clone()
+    })
+    .clone()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,7 +78,13 @@ pub fn printed_meaning() -> Result<MeaningV1, String> {
         producer_sha256: producer_sha256(),
         card_db_hash: card_def::KERNEL_CARDDB_HASH,
         card_id: selected_id()?,
-        colors: [ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G],
+        colors: [
+            ManaColor::W,
+            ManaColor::U,
+            ManaColor::B,
+            ManaColor::R,
+            ManaColor::G,
+        ],
         colored_pips_per_color: 2,
         mana_value: 10,
         legendary: true,
@@ -139,8 +146,13 @@ pub struct FactsV1 {
     pub graveyard_order: Option<OrderV1>,
 }
 
-fn visible(state: &GameState, viewer: PlayerId, id: ObjectId) -> Result<public::ReferenceV1, String> {
-    public::reference(state, id, Some(viewer)).ok_or_else(|| "Progenitus source is not visible".into())
+fn visible(
+    state: &GameState,
+    viewer: PlayerId,
+    id: ObjectId,
+) -> Result<public::ReferenceV1, String> {
+    public::reference(state, id, Some(viewer))
+        .ok_or_else(|| "Progenitus source is not visible".into())
 }
 
 fn order_refs(
@@ -148,17 +160,22 @@ fn order_refs(
     viewer: PlayerId,
     candidates: &[EffectTargetCandidate],
 ) -> Result<Vec<public::ReferenceV1>, String> {
-    candidates.iter().map(|candidate| {
-        let binding = candidate.expected_object.ok_or("Progenitus order lost object binding")?;
-        let card = visible(state, viewer, binding.object)?;
-        if candidate.target != Target::Object(binding.object)
-            || card.generation != binding.expected_zone_change_count
-            || card.zone != binding.expected_zone
-        {
-            return Err("Progenitus order lost original incarnation".into());
-        }
-        Ok(card)
-    }).collect()
+    candidates
+        .iter()
+        .map(|candidate| {
+            let binding = candidate
+                .expected_object
+                .ok_or("Progenitus order lost object binding")?;
+            let card = visible(state, viewer, binding.object)?;
+            if candidate.target != Target::Object(binding.object)
+                || card.generation != binding.expected_zone_change_count
+                || card.zone != binding.expected_zone
+            {
+                return Err("Progenitus order lost original incarnation".into());
+            }
+            Ok(card)
+        })
+        .collect()
 }
 
 pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, String> {
@@ -175,7 +192,9 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                 token: state.objects.get(id).v4.is_token,
                 form: public::checked_form(state, id)?,
                 protection_from_everything_active: engine::has_effective_keyword(
-                    state, id, Keywords::PROTECTION_FROM_EVERYTHING,
+                    state,
+                    id,
+                    Keywords::PROTECTION_FROM_EVERYTHING,
                 ),
             });
         }
@@ -189,8 +208,15 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
             continue;
         }
         let spec = engine::validated_stack_item_target_spec(item, state)?;
-        let source = item.v4.source_contract.ok_or("Progenitus lost original spell source")?;
-        let pending = state.engine.pending_cast.as_ref().filter(|pending| pending.spell == item.source);
+        let source = item
+            .v4
+            .source_contract
+            .ok_or("Progenitus lost original spell source")?;
+        let pending = state
+            .engine
+            .pending_cast
+            .as_ref()
+            .filter(|pending| pending.spell == item.source);
         if let Some(pending) = pending {
             engine::validate_pending_cast(state, pending)?;
         }
@@ -202,7 +228,9 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
             announcing: pending.is_some(),
             uncast_copy: item.is_copy,
             origin_zone: source.spell_cast_origin.map(|origin| origin.origin_zone),
-            finalized_method: source.spell_cast_origin.and_then(|origin| origin.finalized_method),
+            finalized_method: source
+                .spell_cast_origin
+                .and_then(|origin| origin.finalized_method),
         });
     }
 
@@ -210,17 +238,33 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
     // and actual move. The completed reveal conveys the name and originating
     // zone, without exposing the private input, a library position or a handle
     // that can follow the revealed card into its owner's shuffled library.
-    let completed_reveals_and_shuffles = state.engine.event_history.iter().filter_map(|event| {
-        let CommittedEvent::ProgenitusShuffledV1 { source, .. } = event else { return None };
-        Some(ShuffleV1 {
-            owner: source.owner.into(),
-            controller_before: source.controller.into(),
-            from_zone: source.zone,
+    let completed_reveals_and_shuffles = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|event| {
+            let CommittedEvent::ProgenitusShuffledV1 { source, .. } = event else {
+                return None;
+            };
+            Some(ShuffleV1 {
+                owner: source.owner.into(),
+                controller_before: source.controller.into(),
+                from_zone: source.zone,
+            })
         })
-    }).collect();
-    let graveyard_order = match state.engine.pending_effect.as_ref().and_then(|pending| pending.choice.as_ref()) {
+        .collect();
+    let graveyard_order = match state
+        .engine
+        .pending_effect
+        .as_ref()
+        .and_then(|pending| pending.choice.as_ref())
+    {
         Some(PendingEffectChoice::SelectTargets {
-            player, selected, legal, purpose: EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 { .. }, ..
+            player,
+            selected,
+            legal,
+            purpose: EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 { .. },
+            ..
         }) if *player == viewer => {
             crate::effect::validate_pending_effect_choice(state)?;
             Some(OrderV1 {

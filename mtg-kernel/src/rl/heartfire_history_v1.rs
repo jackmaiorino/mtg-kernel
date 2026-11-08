@@ -364,7 +364,9 @@ fn build(
             creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
                 .then(|| state.creatures_attacked_this_turn_v1()),
             restricted_mana: public_restricted_mana_v1(
-                state, text_mode, LimitedAppendixV1::Legacy,
+                state,
+                text_mode,
+                LimitedAppendixV1::Legacy,
             )?,
             surface: base.projection,
             policy_surface_context,
@@ -624,7 +626,12 @@ pub(super) fn normalization_common(
                             ));
                         }
                         if seen.insert(id) {
-                            cards.push(private_card(state, id, text_mode, LimitedAppendixV1::Legacy)?);
+                            cards.push(private_card(
+                                state,
+                                id,
+                                text_mode,
+                                LimitedAppendixV1::Legacy,
+                            )?);
                         }
                     }
                     // Only observable card identity determines class order.

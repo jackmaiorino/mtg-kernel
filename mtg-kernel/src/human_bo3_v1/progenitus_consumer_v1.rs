@@ -45,30 +45,50 @@ struct HumanOrderV1 {
 }
 
 pub(super) fn project(facts: &FactsV1, handles: &mut Handles) -> Result<HumanFactsV1, Error> {
-    let battlefield = facts.battlefield.iter().map(|permanent| {
-        Ok(HumanPermanentV1 {
-            card: href(&permanent.card, handles)?,
-            token: permanent.token,
-            form: permanent.form.clone(),
-            protection_from_everything_active: permanent.protection_from_everything_active,
+    let battlefield = facts
+        .battlefield
+        .iter()
+        .map(|permanent| {
+            Ok(HumanPermanentV1 {
+                card: href(&permanent.card, handles)?,
+                token: permanent.token,
+                form: permanent.form.clone(),
+                protection_from_everything_active: permanent.protection_from_everything_active,
+            })
         })
-    }).collect::<Result<_, Error>>()?;
-    let spells = facts.spells.iter().map(|spell| {
-        Ok(HumanSpellV1 {
-            card: href(&spell.card, handles)?,
-            announcing: spell.announcing,
-            uncast_copy: spell.uncast_copy,
-            origin_zone: spell.origin_zone,
-            finalized_method: spell.finalized_method,
+        .collect::<Result<_, Error>>()?;
+    let spells = facts
+        .spells
+        .iter()
+        .map(|spell| {
+            Ok(HumanSpellV1 {
+                card: href(&spell.card, handles)?,
+                announcing: spell.announcing,
+                uncast_copy: spell.uncast_copy,
+                origin_zone: spell.origin_zone,
+                finalized_method: spell.finalized_method,
+            })
         })
-    }).collect::<Result<_, Error>>()?;
-    let graveyard_order = facts.graveyard_order.as_ref().map(|order| {
-        Ok::<_, Error>(HumanOrderV1 {
-            chooser: order.chooser,
-            selected: order.selected.iter().map(|card| href(card, handles)).collect::<Result<_, _>>()?,
-            legal: order.legal.iter().map(|card| href(card, handles)).collect::<Result<_, _>>()?,
+        .collect::<Result<_, Error>>()?;
+    let graveyard_order = facts
+        .graveyard_order
+        .as_ref()
+        .map(|order| {
+            Ok::<_, Error>(HumanOrderV1 {
+                chooser: order.chooser,
+                selected: order
+                    .selected
+                    .iter()
+                    .map(|card| href(card, handles))
+                    .collect::<Result<_, _>>()?,
+                legal: order
+                    .legal
+                    .iter()
+                    .map(|card| href(card, handles))
+                    .collect::<Result<_, _>>()?,
+            })
         })
-    }).transpose()?;
+        .transpose()?;
     Ok(HumanFactsV1 {
         meaning: facts.meaning.clone(),
         battlefield,
@@ -89,8 +109,15 @@ pub(super) fn label(
     {
         return Ok(None);
     }
-    let Action::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. } = action else {
+    let Action::ChooseEffectTarget {
+        target: TargetRefV1::Object { object },
+        ..
+    } = action
+    else {
         return Err(Error::InvalidVisibleReference);
     };
-    Ok(Some(format!("Put {} next in the graveyard", handles.name(object)?)))
+    Ok(Some(format!(
+        "Put {} next in the graveyard",
+        handles.name(object)?
+    )))
 }

@@ -778,6 +778,8 @@ pub mod sideboard_search_campaign_v1;
 // the real read-only `validate_native_training_store_v2` genesis-to-latest
 // walk against an externally supplied Store copy. Test-only, ignored by
 // default, never built into the product binary.
+pub mod aberration_consumer_v1;
+pub mod aberration_public_v1;
 mod authority_of_the_consuls_v1;
 pub(crate) mod cerberus_capture_v1;
 pub mod cerberus_public_v1;
@@ -793,10 +795,6 @@ pub(crate) mod life_loss_turn_v1;
 pub mod limited_mixed_consumer_v1;
 pub mod moon_consumer_v1;
 pub mod moon_public_v1;
-pub mod progenitus_consumer_v1;
-pub mod progenitus_public_v1;
-pub mod aberration_consumer_v1;
-pub mod aberration_public_v1;
 pub mod omniscience_consumer_v1;
 pub mod omniscience_public_v1;
 pub mod own_registration_v1;
@@ -805,6 +803,8 @@ pub mod policy_surface_v5;
 pub(crate) mod private_physical_trajectory_core;
 pub(crate) mod private_physical_trajectory_v1;
 pub(crate) mod private_physical_trajectory_v2;
+pub mod progenitus_consumer_v1;
+pub mod progenitus_public_v1;
 pub mod regret_census_v1;
 pub mod rl;
 pub mod rl_session;

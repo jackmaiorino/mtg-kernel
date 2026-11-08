@@ -28880,7 +28880,10 @@ pub(crate) fn require_no_copied_token_abilities_chandra_v74(
     validate_complete_copied_token_prefix_v74(state, false)
 }
 
-fn require_unrepresented_copy_sources_v1(state: &GameState, leyline_axe: bool) -> Result<(), String> {
+fn require_unrepresented_copy_sources_v1(
+    state: &GameState,
+    leyline_axe: bool,
+) -> Result<(), String> {
     standard_exile::refuse_top_batch_legacy(state)?;
     if leyline_axe {
         crate::leyline_axe_v1::validate(state)?;

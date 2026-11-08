@@ -1,10 +1,10 @@
 //! Declared-deck owner for Consuming Aberration's CDA and cast trigger.
 pub use crate::limited_consumer_wire_v1::{CommandV1, ReplyBodyV1, ReplyV1, RequestV1, ResetV1};
 use crate::{
+    aberration_public_v1::{self as public, FactsV1, PRINTING},
     current_mixed_policy_v1::KaitoSession,
     human_bo3_v1::HumanKaitoSessionV75,
     limited_consumer_wire_v1::ProfileWireV1,
-    aberration_public_v1::{self as public, FactsV1, PRINTING},
     optional_trigger_public_v1::{IdentityV1, ReferenceV1},
     rl::{ActionSemanticV1 as Action, CardStableRefV1, PlayerSeatV1, TargetRefV1},
     rl_session::FastActorSessionV1,
@@ -96,14 +96,15 @@ impl JsonlServerV1 {
     }
 }
 
-
-
 fn exact_printing(card: &ReferenceV1) -> bool {
     card.identity == (IdentityV1::Known { card_id: PRINTING })
 }
 
 pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(), String> {
-    if facts.viewer != actor || facts.schema != public::SCHEMA || facts.meaning != public::printed_meaning()? {
+    if facts.viewer != actor
+        || facts.schema != public::SCHEMA
+        || facts.meaning != public::printed_meaning()?
+    {
         return Err("invalid Aberration viewer facts".into());
     }
     let printing = IdentityV1::Known { card_id: PRINTING };
@@ -137,7 +138,8 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
             || (!revealed && !trigger.revealed_prefix.is_empty())
             || trigger.order.is_some() != (revealed && trigger.library_owner == actor)
             || trigger.revealed_prefix.iter().any(|card| {
-                card.zone != Zone::Library || card.owner != trigger.library_owner
+                card.zone != Zone::Library
+                    || card.owner != trigger.library_owner
                     || !matches!(card.identity, IdentityV1::Known { .. })
             })
         {
@@ -168,7 +170,10 @@ pub enum ActionV1 {
 }
 
 fn binds(card: &ReferenceV1, stable: &CardStableRefV1) -> bool {
-    card.identity == (IdentityV1::Known { card_id: stable.card_db_id })
+    card.identity
+        == (IdentityV1::Known {
+            card_id: stable.card_db_id,
+        })
         && card.object == stable.arena_id
         && card.generation == stable.zone_change_count
         && card.owner == stable.owner
@@ -178,13 +183,22 @@ fn binds(card: &ReferenceV1, stable: &CardStableRefV1) -> bool {
 
 pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<ActionV1>, String> {
     let Some((trigger, order)) = facts.and_then(|facts| {
-        facts.triggers.iter().find_map(|trigger| trigger.order.as_ref().map(|order| (trigger, order)))
+        facts
+            .triggers
+            .iter()
+            .find_map(|trigger| trigger.order.as_ref().map(|order| (trigger, order)))
     }) else {
         return Ok(None);
     };
     let Action::ChooseEffectTarget {
-        actor, source, target: TargetRefV1::Object { object }, selected_count, min_targets, max_targets,
-    } = action else {
+        actor,
+        source,
+        target: TargetRefV1::Object { object },
+        selected_count,
+        min_targets,
+        max_targets,
+    } = action
+    else {
         return Err("Aberration graveyard order lost its native action".into());
     };
     // The shared V75 action projection restores the captured source reference
@@ -198,8 +212,14 @@ pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<
     {
         return Err("Aberration graveyard answer lost its original binding".into());
     }
-    Ok(Some(ActionV1::ChooseGraveyardOrder { selected_count: *selected_count }))
+    Ok(Some(ActionV1::ChooseGraveyardOrder {
+        selected_count: *selected_count,
+    }))
 }
 
-#[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 mod tests;

@@ -22184,7 +22184,10 @@ pub(crate) fn consuming_aberration_card_count_v1(count: usize) -> Result<i32, St
 
 /// Layer 7a, including cards outside the battlefield. Copy effects install the
 /// effective CardDef; in zones without a controller, "you" denotes the owner.
-pub(crate) fn consuming_aberration_base_v1(state: &GameState, id: ObjectId) -> Result<Option<i32>, String> {
+pub(crate) fn consuming_aberration_base_v1(
+    state: &GameState,
+    id: ObjectId,
+) -> Result<Option<i32>, String> {
     let object = state.objects.get(id);
     let definition = &card_def::CARD_DEFS[usize::from(object.card_def)];
     if !definition.is_executable()

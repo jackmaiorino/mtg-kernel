@@ -2393,8 +2393,11 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         .transpose()
         .map_err(RlContractError)?;
     crate::continuous_characteristics_v1::require_land_override_scope(
-        state, acting_player, allowed_moon,
-    ).map_err(RlContractError)?;
+        state,
+        acting_player,
+        allowed_moon,
+    )
+    .map_err(RlContractError)?;
     if !chosen_type {
         refuse_chosen_type_mana_v60(state)?;
     }
@@ -2934,7 +2937,9 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
             creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
                 .then(|| state.creatures_attacked_this_turn_v1()),
             restricted_mana: public_restricted_mana_v1(
-                state, text_mode, LimitedAppendixV1::Legacy,
+                state,
+                text_mode,
+                LimitedAppendixV1::Legacy,
             )?,
             surface: base.projection,
             policy_surface_context,
@@ -10624,7 +10629,7 @@ fn private_card(
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
             && ((appendix != LimitedAppendixV1::Progenitus
-                    && crate::progenitus_v1::definition(o.card_def))
+                && crate::progenitus_v1::definition(o.card_def))
                 || (appendix != LimitedAppendixV1::LeylineAxe
                     && crate::leyline_axe_v1::definition(o.card_def))
                 || crate::effect::harvester_v1::definition(o.card_def)

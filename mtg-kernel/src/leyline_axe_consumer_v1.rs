@@ -3,8 +3,8 @@ pub use crate::limited_consumer_wire_v1::{CommandV1, ReplyBodyV1, ReplyV1, Reque
 use crate::{
     current_mixed_policy_v1::KaitoSession,
     human_bo3_v1::HumanKaitoSessionV75,
-    limited_consumer_wire_v1::ProfileWireV1,
     leyline_axe_public_v1::{self as public, FactsV1, PRINTING},
+    limited_consumer_wire_v1::ProfileWireV1,
     optional_trigger_public_v1::{IdentityV1, ReferenceV1},
     rl::{ActionSemanticV1 as Action, CardStableRefV1, PlayerSeatV1, TargetRefV1},
     rl_session::FastActorSessionV1,
@@ -101,18 +101,25 @@ fn exact_printing(card: &ReferenceV1) -> bool {
 }
 
 pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(), String> {
-    if facts.viewer != actor || facts.schema != public::SCHEMA || facts.meaning != public::printed_meaning()? {
+    if facts.viewer != actor
+        || facts.schema != public::SCHEMA
+        || facts.meaning != public::printed_meaning()?
+    {
         return Err("invalid Leyline Axe actor facts".into());
     }
-    if facts.opening_choice.as_ref().is_some_and(|card|
-        !exact_printing(card) || card.zone != Zone::Hand || card.owner != actor)
+    if facts
+        .opening_choice
+        .as_ref()
+        .is_some_and(|card| !exact_printing(card) || card.zone != Zone::Hand || card.owner != actor)
     {
         return Err("invalid Leyline Axe private opening source".into());
     }
     for entry in &facts.opening_entries {
-        if entry.original.zone != Zone::Battlefield || entry.original.owner != entry.original.controller
+        if entry.original.zone != Zone::Battlefield
+            || entry.original.owner != entry.original.controller
             || entry.current_original.as_ref().is_some_and(|card| {
-                !exact_printing(card) || card.zone != Zone::Battlefield
+                !exact_printing(card)
+                    || card.zone != Zone::Battlefield
                     || card.object != entry.original.object
                     || card.generation != entry.original.generation
                     || card.owner != entry.original.owner
@@ -122,7 +129,8 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
         }
     }
     for cast in &facts.casts {
-        if !exact_printing(&cast.card) || cast.card.zone != Zone::Stack
+        if !exact_printing(&cast.card)
+            || cast.card.zone != Zone::Stack
             || cast.uncast_copy != cast.origin_zone.is_none()
             || (!cast.announcing && !cast.uncast_copy) != cast.finalized_method.is_some()
             || cast.uncast_copy && cast.announcing
@@ -132,7 +140,8 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
     }
     for ability in &facts.equip {
         let source = &ability.source.original_source;
-        if !exact_printing(source) || source.zone != Zone::Battlefield
+        if !exact_printing(source)
+            || source.zone != Zone::Battlefield
             || source.controller != ability.source.captured_controller
             || ability.stack_position.is_some() && ability.target.is_none()
         {
@@ -143,7 +152,8 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
                 || target.original.controller != ability.source.captured_controller
                 || target.currently_legal && target.current_original.is_none()
                 || target.current_original.as_ref().is_some_and(|card| {
-                    card.zone != Zone::Battlefield || card.object != target.original.object
+                    card.zone != Zone::Battlefield
+                        || card.object != target.original.object
                         || card.generation != target.original.generation
                         || card.owner != target.original.owner
                 })
@@ -175,38 +185,64 @@ pub enum ActionV1 {
 }
 
 fn binds(card: &ReferenceV1, stable: &CardStableRefV1) -> bool {
-    exact_printing(card) && stable.card_db_id == PRINTING
-        && card.object == stable.arena_id && card.generation == stable.zone_change_count
-        && card.owner == stable.owner && card.controller == stable.controller && card.zone == stable.zone
+    exact_printing(card)
+        && stable.card_db_id == PRINTING
+        && card.object == stable.arena_id
+        && card.generation == stable.zone_change_count
+        && card.owner == stable.owner
+        && card.controller == stable.controller
+        && card.zone == stable.zone
 }
 
 pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<ActionV1>, String> {
     let Some(facts) = facts else { return Ok(None) };
     match action {
-        Action::ChooseEffectOption { actor, source, option_index, option_count }
-            if source.card_db_id == PRINTING =>
-        {
-            if *actor != facts.viewer || *option_count != 2 || *option_index > 1
-                || !facts.opening_choice.as_ref().is_some_and(|card| binds(card, source))
+        Action::ChooseEffectOption {
+            actor,
+            source,
+            option_index,
+            option_count,
+        } if source.card_db_id == PRINTING => {
+            if *actor != facts.viewer
+                || *option_count != 2
+                || *option_index > 1
+                || !facts
+                    .opening_choice
+                    .as_ref()
+                    .is_some_and(|card| binds(card, source))
             {
                 return Err("Leyline Axe answer lost its private opening source".into());
             }
-            Ok(Some(ActionV1::ChooseOpeningEntry { accept: *option_index == 1 }))
+            Ok(Some(ActionV1::ChooseOpeningEntry {
+                accept: *option_index == 1,
+            }))
         }
-        Action::ActivateAbility { actor, source, ability_index: 0, granted_ability }
-            if source.card_db_id == PRINTING && granted_ability.is_none() =>
-        {
-            if !facts.battlefield.iter().any(|equipment|
-                equipment.card.controller == *actor && binds(&equipment.card, source))
-            {
+        Action::ActivateAbility {
+            actor,
+            source,
+            ability_index: 0,
+            granted_ability,
+        } if source.card_db_id == PRINTING && granted_ability.is_none() => {
+            if !facts.battlefield.iter().any(|equipment| {
+                equipment.card.controller == *actor && binds(&equipment.card, source)
+            }) {
                 return Err("Leyline Axe equip action lost its battlefield source".into());
             }
             Ok(Some(ActionV1::ActivateEquip { generic_cost: 3 }))
         }
-        Action::ChooseTarget { actor, source, target, remaining } if source.card_db_id == PRINTING => {
+        Action::ChooseTarget {
+            actor,
+            source,
+            target,
+            remaining,
+        } if source.card_db_id == PRINTING => {
             if *remaining != 1
-                || !facts.equip.iter().any(|ability| ability.stack_position.is_none() && ability.target.is_none()
-                    && ability.source.captured_controller == *actor && binds(&ability.source.original_source, source))
+                || !facts.equip.iter().any(|ability| {
+                    ability.stack_position.is_none()
+                        && ability.target.is_none()
+                        && ability.source.captured_controller == *actor
+                        && binds(&ability.source.original_source, source)
+                })
                 || !matches!(target, TargetRefV1::Object { object } if object.zone == Zone::Battlefield && object.controller == *actor)
             {
                 return Err("Leyline Axe target lost its native equip action".into());

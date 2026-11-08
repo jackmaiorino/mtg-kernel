@@ -37,8 +37,15 @@ fn config(actor: PlayerId, opponent_axes: bool) -> ResetV1 {
 }
 
 fn wire_step(current: &Body, action_index: u32) -> CommandV1 {
-    let Body::State { state, .. } = current else { panic!() };
-    let State::Decision { episode_id, authority_generation, decision } = state.as_ref() else {
+    let Body::State { state, .. } = current else {
+        panic!()
+    };
+    let State::Decision {
+        episode_id,
+        authority_generation,
+        decision,
+    } = state.as_ref()
+    else {
         panic!("missing Leyline Axe wire decision")
     };
     CommandV1::Step {
@@ -52,7 +59,10 @@ fn wire_step(current: &Body, action_index: u32) -> CommandV1 {
 
 fn decision(session: &KaitoSession) -> KaitoDecision {
     let FastActorResponseV1::Decision(expected) = session.current_response() else {
-        panic!("Leyline Axe decision absent: {:?}", session.current_response());
+        panic!(
+            "Leyline Axe decision absent: {:?}",
+            session.current_response()
+        );
     };
     session.encode(expected).unwrap()
 }
@@ -81,34 +91,70 @@ fn declared_forty_card_opening_choice_keeps_opponent_roster_private_and_binds_al
         let mut raw = native(&config).unwrap();
         let mut numeric = reset_numeric_reveal_facts_v3(&config).unwrap();
         let mut other = reset_numeric_reveal_facts_v3(&hidden_pair).unwrap();
-        assert_ne!(numeric.fixture_state().state_hash(), other.fixture_state().state_hash());
+        assert_ne!(
+            numeric.fixture_state().state_hash(),
+            other.fixture_state().state_hash()
+        );
         assert!(numeric.fixture_state().reveal_knowledge_v4.is_some());
         let mut human = reset_human_v1(&config, actor.into()).unwrap();
         let mut projector = HumanKaitoProjectorV75::new(actor.into());
         let mut wire = JsonlServerV1::new();
         let mut other_wire = JsonlServerV1::new();
-        let mut current = body(&mut wire, 1, CommandV1::Reset { config: config.clone() });
-        let mut other_current = body(&mut other_wire, 1, CommandV1::Reset { config: hidden_pair });
+        let mut current = body(
+            &mut wire,
+            1,
+            CommandV1::Reset {
+                config: config.clone(),
+            },
+        );
+        let mut other_current = body(
+            &mut other_wire,
+            1,
+            CommandV1::Reset {
+                config: hidden_pair,
+            },
+        );
         for serial in 2..=3 {
             let d = decision(&numeric);
             let backend = d.fixture_backend_v75();
             let expected = backend.expected();
-            let index = backend.candidates_v75().candidates.iter().position(|row| matches!(
-                row.action, Action::ChooseLondonMulligan { mulligan: false, .. }
-            )).unwrap() as u32;
+            let index = backend
+                .candidates_v75()
+                .candidates
+                .iter()
+                .position(|row| {
+                    matches!(
+                        row.action,
+                        Action::ChooseLondonMulligan {
+                            mulligan: false,
+                            ..
+                        }
+                    )
+                })
+                .unwrap() as u32;
             assert_eq!(index, 0);
             let original = backend.fixture_original_index_v75(index).unwrap();
-            let response = raw.step(expected.episode_id, expected.step, original).unwrap();
+            let response = raw
+                .step(expected.episode_id, expected.step, original)
+                .unwrap();
             assert_eq!(numeric.apply(&d, index).unwrap(), response);
             let hidden = decision(&other);
             other.apply(&hidden, index).unwrap();
             if expected.acting_player == actor.into() {
                 let prompt = projector.project_current(&human, expected).unwrap();
-                projector.submit(&mut human, HumanActionRequestV1 {
-                    prompt_seq: prompt.prompt_seq, action_index: index,
-                }).unwrap();
+                projector
+                    .submit(
+                        &mut human,
+                        HumanActionRequestV1 {
+                            prompt_seq: prompt.prompt_seq,
+                            action_index: index,
+                        },
+                    )
+                    .unwrap();
             } else {
-                human.step_opponent_with(expected, |_, _| Ok(index)).unwrap();
+                human
+                    .step_opponent_with(expected, |_, _| Ok(index))
+                    .unwrap();
             }
             current = body(&mut wire, serial, wire_step(&current, index));
             other_current = body(&mut other_wire, serial, wire_step(&other_current, index));
@@ -117,8 +163,15 @@ fn declared_forty_card_opening_choice_keeps_opponent_roster_private_and_binds_al
         let current = body(&mut wire, 4, CommandV1::Current);
         assert_eq!(current, body(&mut other_wire, 4, CommandV1::Current));
         let wire_action = wire_step(&current, 1);
-        let Body::State { state, .. } = current else { panic!() };
-        let State::Decision { decision: visible, .. } = *state else { panic!() };
+        let Body::State { state, .. } = current else {
+            panic!()
+        };
+        let State::Decision {
+            decision: visible, ..
+        } = *state
+        else {
+            panic!()
+        };
         assert_eq!(visible.schema, "mtg-kernel-limited-leyline-axe-decision/v1");
 
         let d = decision(&numeric);
@@ -132,13 +185,22 @@ fn declared_forty_card_opening_choice_keeps_opponent_roster_private_and_binds_al
         let opening = facts.opening_choice.as_ref().unwrap();
         assert_eq!(opening.owner, actor.into());
         assert_eq!(numeric.fixture_state().step, Step::Untap);
-        assert!(public::capture(numeric.fixture_state(), actor.opponent()).unwrap().opening_choice.is_none());
+        assert!(public::capture(numeric.fixture_state(), actor.opponent())
+            .unwrap()
+            .opening_choice
+            .is_none());
         let source = ObjectId(opening.object);
         let rows = &backend.candidates_v75().candidates;
         let native_answer = |index| backend.fixture_original_index_v75(index).unwrap();
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].leyline_axe_action, Some(ActionV1::ChooseOpeningEntry { accept: false }));
-        assert_eq!(rows[1].leyline_axe_action, Some(ActionV1::ChooseOpeningEntry { accept: true }));
+        assert_eq!(
+            rows[0].leyline_axe_action,
+            Some(ActionV1::ChooseOpeningEntry { accept: false })
+        );
+        assert_eq!(
+            rows[1].leyline_axe_action,
+            Some(ActionV1::ChooseOpeningEntry { accept: true })
+        );
         assert_eq!([native_answer(0), native_answer(1)], [0, 1]);
 
         let prompt = projector.project_current(&human, expected).unwrap();
@@ -151,37 +213,88 @@ fn declared_forty_card_opening_choice_keeps_opponent_roster_private_and_binds_al
         assert_eq!(prompt.action_meanings, visible.action_meanings);
 
         let human_saved = human.snapshot_v75();
-        let Body::State { snapshot_id: Some(snapshot_id), .. } =
-            body(&mut wire, 5, CommandV1::Snapshot)
-        else { panic!() };
-        let action = HumanActionRequestV1 { prompt_seq: prompt.prompt_seq, action_index: 1 };
+        let Body::State {
+            snapshot_id: Some(snapshot_id),
+            ..
+        } = body(&mut wire, 5, CommandV1::Snapshot)
+        else {
+            panic!()
+        };
+        let action = HumanActionRequestV1 {
+            prompt_seq: prompt.prompt_seq,
+            action_index: 1,
+        };
         let input = numeric.training_input_v1(&d).unwrap();
-        assert!(ModelV1::deterministic_fixture().forward(&input).unwrap().iter().all(|value| value.is_finite()));
-        let response = raw.step(expected.episode_id, expected.step, native_answer(1)).unwrap();
+        assert!(ModelV1::deterministic_fixture()
+            .forward(&input)
+            .unwrap()
+            .iter()
+            .all(|value| value.is_finite()));
+        let response = raw
+            .step(expected.episode_id, expected.step, native_answer(1))
+            .unwrap();
         assert_eq!(numeric.apply(&d, 1).unwrap(), response);
         projector.submit(&mut human, action.clone()).unwrap();
         assert_eq!(human.current_response(), response);
-        assert!(matches!(body(&mut wire, 6, wire_action.clone()), Body::State { receipt: Some(_), .. }));
+        assert!(matches!(
+            body(&mut wire, 6, wire_action.clone()),
+            Body::State {
+                receipt: Some(_),
+                ..
+            }
+        ));
         let accepted = numeric.fixture_state();
         assert_eq!(accepted.objects.get(source).zone, Zone::Battlefield);
-        assert_eq!(accepted.objects.get(source).zone_change_count, opening.generation + 1);
-        assert_eq!(public::capture(accepted, actor.opponent()).unwrap().opening_entries.len(), 1);
-        assert!(!accepted.engine.event_history.iter().any(|row| matches!(row, CommittedEvent::SpellCast { .. })));
+        assert_eq!(
+            accepted.objects.get(source).zone_change_count,
+            opening.generation + 1
+        );
+        assert_eq!(
+            public::capture(accepted, actor.opponent())
+                .unwrap()
+                .opening_entries
+                .len(),
+            1
+        );
+        assert!(!accepted
+            .engine
+            .event_history
+            .iter()
+            .any(|row| matches!(row, CommittedEvent::SpellCast { .. })));
 
         let declined = decision(&numeric);
-        let second = declined.fixture_backend_v75().observation().leyline_axe.as_ref().unwrap()
-            .opening_choice.as_ref().unwrap().object;
+        let second = declined
+            .fixture_backend_v75()
+            .observation()
+            .leyline_axe
+            .as_ref()
+            .unwrap()
+            .opening_choice
+            .as_ref()
+            .unwrap()
+            .object;
         numeric.apply(&declined, 0).unwrap();
-        assert_eq!(numeric.fixture_state().objects.get(ObjectId(second)).zone, Zone::Hand);
-        assert_eq!(public::capture(numeric.fixture_state(), actor.opponent()).unwrap().opening_entries.len(), 1);
+        assert_eq!(
+            numeric.fixture_state().objects.get(ObjectId(second)).zone,
+            Zone::Hand
+        );
+        assert_eq!(
+            public::capture(numeric.fixture_state(), actor.opponent())
+                .unwrap()
+                .opening_entries
+                .len(),
+            1
+        );
 
         let hidden_opening = decision(&other);
         other.apply(&hidden_opening, 1).unwrap();
         for session in [&mut numeric, &mut other] {
             while session.fixture_state().leyline_opening_v1.is_some() {
                 let decline = decision(session);
-                assert_eq!(decline.fixture_backend_v75().candidates_v75().candidates[0].leyline_axe_action,
-                    Some(ActionV1::ChooseOpeningEntry { accept: false }));
+                assert_eq!(
+                    decline.fixture_backend_v75().candidates_v75().candidates[0].leyline_axe_action,
+                    Some(ActionV1::ChooseOpeningEntry { accept: false })
+                );
                 session.apply(&decline, 0).unwrap();
             }
         }
@@ -196,19 +309,32 @@ fn declared_forty_card_opening_choice_keeps_opponent_roster_private_and_binds_al
         assert!(numeric.apply(&d, 1).is_err());
         assert!(projector.submit(&mut human, action).is_err());
         body(&mut wire, 7, CommandV1::Restore { snapshot_id });
-        assert!(matches!(body(&mut wire, 8, wire_action), Body::Error { .. }));
+        assert!(matches!(
+            body(&mut wire, 8, wire_action),
+            Body::Error { .. }
+        ));
     }
 }
 
 fn fixture(state: GameState) -> KaitoSession {
     KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
-        state, LimitedAppendixV1::LeylineAxe,
-    )).unwrap()
+        state,
+        LimitedAppendixV1::LeylineAxe,
+    ))
+    .unwrap()
 }
 
-fn play(session: &mut KaitoSession, pick: impl Fn(&crate::kaito_candidates_v75::CandidateMeaningV75) -> bool) {
+fn play(
+    session: &mut KaitoSession,
+    pick: impl Fn(&crate::kaito_candidates_v75::CandidateMeaningV75) -> bool,
+) {
     let d = decision(session);
-    let index = d.fixture_backend_v75().candidates_v75().candidates.iter().position(pick)
+    let index = d
+        .fixture_backend_v75()
+        .candidates_v75()
+        .candidates
+        .iter()
+        .position(pick)
         .expect("missing native Leyline Axe fixture action");
     session.apply(&d, index as u32).unwrap();
 }
@@ -231,7 +357,11 @@ fn actual_four_mana_cast_and_three_mana_equip_preserve_target_and_host_both_seat
     for actor in [PlayerId::P0, PlayerId::P1] {
         let land = vec![card("Forest"); 40];
         let mut state = GameState::new_from_libraries_with_starting_player_v1(
-            &land, &land, crate::rl::card_name, 550_482, actor,
+            &land,
+            &land,
+            crate::rl::card_name,
+            550_482,
+            actor,
         );
         state.step = Step::Main1;
         let source = put(&mut state, actor, public::NAME, Zone::Hand);
@@ -245,38 +375,71 @@ fn actual_four_mana_cast_and_three_mana_equip_preserve_target_and_host_both_seat
         }
         let mut session = fixture(state);
         let tapped_lands = |state: &GameState| {
-            state.players[actor.index()].battlefield.iter().filter(|&&id| {
-                let live = state.objects.get(id);
-                live.card_def == card("Forest") && live.tapped
-            }).count()
+            state.players[actor.index()]
+                .battlefield
+                .iter()
+                .filter(|&&id| {
+                    let live = state.objects.get(id);
+                    live.card_def == card("Forest") && live.tapped
+                })
+                .count()
         };
-        play(&mut session, |row| matches!(&row.action, Action::CastSpell { source: spell, .. } if spell.arena_id == source.0));
+        play(
+            &mut session,
+            |row| matches!(&row.action, Action::CastSpell { source: spell, .. } if spell.arena_id == source.0),
+        );
         assert_eq!(tapped_lands(session.fixture_state()), 4);
-        assert!(decision(&session).fixture_backend_v75().observation().leyline_axe.as_ref().unwrap()
-            .casts.iter().any(|spell| spell.finalized_method == Some(crate::state::CastMethodV4::Normal)));
+        assert!(decision(&session)
+            .fixture_backend_v75()
+            .observation()
+            .leyline_axe
+            .as_ref()
+            .unwrap()
+            .casts
+            .iter()
+            .any(|spell| spell.finalized_method == Some(crate::state::CastMethodV4::Normal)));
         settle(&mut session, actor);
-        play(&mut session, |row| row.leyline_axe_action == Some(ActionV1::ActivateEquip { generic_cost: 3 }));
+        play(&mut session, |row| {
+            row.leyline_axe_action == Some(ActionV1::ActivateEquip { generic_cost: 3 })
+        });
         let target_menu = decision(&session);
-        let targets = &target_menu.fixture_backend_v75().candidates_v75().candidates;
+        let targets = &target_menu
+            .fixture_backend_v75()
+            .candidates_v75()
+            .candidates;
         for legal in [host, second_host] {
             assert!(targets.iter().any(|row| row.leyline_axe_action == Some(ActionV1::ChooseEquipTarget)
                 && matches!(&row.action, Action::ChooseTarget { target: TargetRefV1::Object { object }, .. } if object.arena_id == legal.0)));
         }
-        play(&mut session, |row| row.leyline_axe_action == Some(ActionV1::ChooseEquipTarget)
-            && matches!(&row.action, Action::ChooseTarget { target: TargetRefV1::Object { object }, .. } if object.arena_id == host.0));
+        play(&mut session, |row| {
+            row.leyline_axe_action == Some(ActionV1::ChooseEquipTarget)
+                && matches!(&row.action, Action::ChooseTarget { target: TargetRefV1::Object { object }, .. } if object.arena_id == host.0)
+        });
         assert_eq!(tapped_lands(session.fixture_state()), 7);
         let on_stack = session.snapshot();
         settle(&mut session, actor);
         let current = decision(&session);
-        let equipment = &current.fixture_backend_v75().observation().leyline_axe.as_ref().unwrap().battlefield[0];
+        let equipment = &current
+            .fixture_backend_v75()
+            .observation()
+            .leyline_axe
+            .as_ref()
+            .unwrap()
+            .battlefield[0];
         let host_view = equipment.host.as_ref().unwrap();
         assert_eq!(host_view.card.object, host.0);
         assert_eq!(host_view.form.power, Some(2));
         assert_eq!(host_view.form.toughness, Some(2));
         assert!(host_view.receives_printed_bonus);
-        assert_eq!(host_view.form.keyword_bits & (Keywords::DOUBLE_STRIKE.0 | Keywords::TRAMPLE.0),
-            Keywords::DOUBLE_STRIKE.0 | Keywords::TRAMPLE.0);
-        assert!(engine::has_effective_keyword(session.fixture_state(), host, Keywords::DOUBLE_STRIKE));
+        assert_eq!(
+            host_view.form.keyword_bits & (Keywords::DOUBLE_STRIKE.0 | Keywords::TRAMPLE.0),
+            Keywords::DOUBLE_STRIKE.0 | Keywords::TRAMPLE.0
+        );
+        assert!(engine::has_effective_keyword(
+            session.fixture_state(),
+            host,
+            Keywords::DOUBLE_STRIKE
+        ));
         session.restore(&on_stack).unwrap();
         settle(&mut session, actor);
         assert_eq!(decision(&session).packet(), current.packet());

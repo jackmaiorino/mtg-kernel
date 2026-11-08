@@ -24,7 +24,8 @@ fn paid_complete_walkers_keep_private_mode_through_shared_prefix_and_legacy_refu
         let (kaito, _, _) = crate::effect::kaito_cunning_v75::tests::owner_v75_tests::owning_ready(
             player, false, "Island",
         );
-        validate_copy_prefix_for_mode_v1(&kaito, Mode::KaitoV75Artifact, LimitedAppendixV1::Legacy).unwrap();
+        validate_copy_prefix_for_mode_v1(&kaito, Mode::KaitoV75Artifact, LimitedAppendixV1::Legacy)
+            .unwrap();
         crate::next_five_public_v59::capture_kaito_compat_v75(
             &kaito,
             player,
@@ -55,7 +56,9 @@ fn paid_complete_walkers_keep_private_mode_through_shared_prefix_and_legacy_refu
             Mode::ChandraV74Artifact,
         ] {
             let before = kaito.clone();
-            assert!(validate_copy_prefix_for_mode_v1(&kaito, mode, LimitedAppendixV1::Legacy).is_err());
+            assert!(
+                validate_copy_prefix_for_mode_v1(&kaito, mode, LimitedAppendixV1::Legacy).is_err()
+            );
             assert_eq!(kaito, before);
         }
 
@@ -63,8 +66,18 @@ fn paid_complete_walkers_keep_private_mode_through_shared_prefix_and_legacy_refu
             crate::effect::chandra_flameshaper_v1::tests::owner_v74_tests::owning_ready(
                 player, false, "Island",
             );
-        validate_copy_prefix_for_mode_v1(&chandra, Mode::ChandraV74Artifact, LimitedAppendixV1::Legacy).unwrap();
-        validate_copy_prefix_for_mode_v1(&chandra, Mode::KaitoV75Artifact, LimitedAppendixV1::Legacy).unwrap();
+        validate_copy_prefix_for_mode_v1(
+            &chandra,
+            Mode::ChandraV74Artifact,
+            LimitedAppendixV1::Legacy,
+        )
+        .unwrap();
+        validate_copy_prefix_for_mode_v1(
+            &chandra,
+            Mode::KaitoV75Artifact,
+            LimitedAppendixV1::Legacy,
+        )
+        .unwrap();
         crate::next_five_public_v59::capture_chandra_compat_v74(&chandra, player).unwrap();
         crate::next_five_public_v59::capture_kaito_compat_v75(
             &chandra,
@@ -81,7 +94,10 @@ fn paid_complete_walkers_keep_private_mode_through_shared_prefix_and_legacy_refu
             Mode::LilianaV73Artifact,
         ] {
             let before = chandra.clone();
-            assert!(validate_copy_prefix_for_mode_v1(&chandra, mode, LimitedAppendixV1::Legacy).is_err());
+            assert!(
+                validate_copy_prefix_for_mode_v1(&chandra, mode, LimitedAppendixV1::Legacy)
+                    .is_err()
+            );
             assert_eq!(chandra, before);
         }
 
@@ -92,7 +108,12 @@ fn paid_complete_walkers_keep_private_mode_through_shared_prefix_and_legacy_refu
         for mode in [Mode::ChandraV74Artifact, Mode::KaitoV75Artifact] {
             validate_copy_prefix_for_mode_v1(&copied, mode, LimitedAppendixV1::Legacy).unwrap();
         }
-        assert!(validate_copy_prefix_for_mode_v1(&copied, Mode::FullArtifact, LimitedAppendixV1::Legacy).is_err());
+        assert!(validate_copy_prefix_for_mode_v1(
+            &copied,
+            Mode::FullArtifact,
+            LimitedAppendixV1::Legacy
+        )
+        .is_err());
         let token = copied
             .objects
             .iter()
@@ -111,7 +132,9 @@ fn paid_complete_walkers_keep_private_mode_through_shared_prefix_and_legacy_refu
             .copied_end_step_sacrifices_v1 = 2;
         for mode in [Mode::ChandraV74Artifact, Mode::KaitoV75Artifact] {
             let before = forged.clone();
-            assert!(validate_copy_prefix_for_mode_v1(&forged, mode, LimitedAppendixV1::Legacy).is_err());
+            assert!(
+                validate_copy_prefix_for_mode_v1(&forged, mode, LimitedAppendixV1::Legacy).is_err()
+            );
             assert_eq!(forged, before);
         }
     }

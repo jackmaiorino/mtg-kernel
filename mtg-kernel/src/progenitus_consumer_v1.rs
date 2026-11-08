@@ -4,8 +4,8 @@ use crate::{
     current_mixed_policy_v1::KaitoSession,
     human_bo3_v1::HumanKaitoSessionV75,
     limited_consumer_wire_v1::ProfileWireV1,
-    progenitus_public_v1::{self as public, FactsV1, PRINTING},
     optional_trigger_public_v1::{IdentityV1, ReferenceV1},
+    progenitus_public_v1::{self as public, FactsV1, PRINTING},
     rl::{ActionSemanticV1 as Action, CardStableRefV1, PlayerSeatV1, TargetRefV1},
     rl_session::FastActorSessionV1,
     state::Zone,
@@ -96,8 +96,6 @@ impl JsonlServerV1 {
     }
 }
 
-
-
 fn exact_printing(card: &ReferenceV1) -> bool {
     card.identity == (IdentityV1::Known { card_id: PRINTING })
 }
@@ -115,7 +113,8 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
             || permanent.card.zone != Zone::Battlefield
             || permanent.protection_from_everything_active
                 != (permanent.form.keyword_bits
-                    & crate::card_def::Keywords::PROTECTION_FROM_EVERYTHING.0 != 0)
+                    & crate::card_def::Keywords::PROTECTION_FROM_EVERYTHING.0
+                    != 0)
         {
             return Err("invalid Progenitus effective protection".into());
         }
@@ -134,7 +133,11 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
         if order.chooser != actor
             || order.legal.is_empty()
             || order.selected.len() + order.legal.len() < 2
-            || order.selected.iter().chain(&order.legal).any(|card| card.owner != actor)
+            || order
+                .selected
+                .iter()
+                .chain(&order.legal)
+                .any(|card| card.owner != actor)
         {
             return Err("invalid Progenitus graveyard order".into());
         }
@@ -176,7 +179,8 @@ pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<
         min_targets,
         max_targets,
         ..
-    } = action else {
+    } = action
+    else {
         return Err("Progenitus graveyard order lost its native action".into());
     };
     if *actor != order.chooser
@@ -187,7 +191,9 @@ pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<
     {
         return Err("Progenitus graveyard answer lost its original incarnation".into());
     }
-    Ok(Some(ActionV1::ChooseGraveyardOrder { selected_count: *selected_count }))
+    Ok(Some(ActionV1::ChooseGraveyardOrder {
+        selected_count: *selected_count,
+    }))
 }
 
 #[cfg(all(

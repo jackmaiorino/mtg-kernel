@@ -1,7 +1,10 @@
 //! Exact Consuming Aberration meaning and viewer-authorized native state.
 use crate::{
     card_def::{self, CardCapability, CardType, Keywords, Subtype, TargetSpec},
-    effect::{EffectObjectBinding, EffectOp, EffectTargetCandidate, EffectTargetSelectionPurpose, ObjectRef, PendingEffectChoice, PlayerRef},
+    effect::{
+        EffectObjectBinding, EffectOp, EffectTargetCandidate, EffectTargetSelectionPurpose,
+        ObjectRef, PendingEffectChoice, PlayerRef,
+    },
     engine,
     ids::PlayerId,
     mana::{ManaColor, Pip},
@@ -23,8 +26,10 @@ const MILL: EffectOp = EffectOp::RevealUntilCardTypeAndMill {
 };
 
 pub(crate) fn selected_id() -> Result<u16, String> {
-    if !cfg!(all(feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))
-        || card_def::card_id_by_name(NAME) != Some(PRINTING)
+    if !cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) || card_def::card_id_by_name(NAME) != Some(PRINTING)
     {
         return Err("Aberration requires its exact pure Limited printing".into());
     }
@@ -48,10 +53,11 @@ pub(crate) fn selected_id() -> Result<u16, String> {
         || def.keywords != Keywords::NONE
         || def.is_token
         || def.target_spec != TargetSpec::None
-        || (def.spell_effect)() != Some(EffectOp::MoveObject {
-            object: ObjectRef::ThisSource,
-            to_zone: Zone::Battlefield,
-        })
+        || (def.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
         || trigger.condition != TriggerCondition::CastSpell
         || trigger.home_zone != Zone::Battlefield
         || trigger.intervening_if_kicked
@@ -83,7 +89,8 @@ pub fn producer_sha256() -> String {
             hash.update(source.as_bytes());
         }
         format!("{:x}", hash.finalize())
-    }).clone()
+    })
+    .clone()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,13 +206,18 @@ fn order_refs(
     owner: PlayerId,
     candidates: &[EffectTargetCandidate],
 ) -> Result<Vec<public::ReferenceV1>, String> {
-    candidates.iter().map(|candidate| {
-        let binding = candidate.expected_object.ok_or("Aberration order lost object binding")?;
-        if candidate.target != Target::Object(binding.object) {
-            return Err("Aberration order lost original target".into());
-        }
-        library_ref(state, viewer, owner, binding)
-    }).collect()
+    candidates
+        .iter()
+        .map(|candidate| {
+            let binding = candidate
+                .expected_object
+                .ok_or("Aberration order lost object binding")?;
+            if candidate.target != Target::Object(binding.object) {
+                return Err("Aberration order lost original target".into());
+            }
+            library_ref(state, viewer, owner, binding)
+        })
+        .collect()
 }
 
 pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, String> {
@@ -215,7 +227,8 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
         if !public::visible_known(state, id, Some(viewer), |id| id == PRINTING) {
             continue;
         }
-        let card = public::reference(state, id, Some(viewer)).ok_or("Aberration visible card absent")?;
+        let card =
+            public::reference(state, id, Some(viewer)).ok_or("Aberration visible card absent")?;
         let relative_player = if matches!(live.zone, Zone::Battlefield | Zone::Stack) {
             live.controller
         } else {
@@ -231,7 +244,10 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
 
     let mut triggers = vec![];
     for held in public::held(state) {
-        let Some(source) = held.source_contract.filter(|source| source.card_def == PRINTING) else {
+        let Some(source) = held
+            .source_contract
+            .filter(|source| source.card_def == PRINTING)
+        else {
             continue;
         };
         if held.effect != MILL {
@@ -254,22 +270,35 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
         if engine::validated_stack_item_target_spec(item, state)?.is_some() {
             return Err("Aberration trigger became targeted".into());
         }
-        let source = item.v4.ability_source_contract.ok_or("Aberration original trigger source absent")?;
+        let source = item
+            .v4
+            .ability_source_contract
+            .ok_or("Aberration original trigger source absent")?;
         let owner = source.controller.opponent();
-        let pending = state.engine.pending_effect.as_ref()
+        let pending = state
+            .engine
+            .pending_effect
+            .as_ref()
             .filter(|pending| pending.resolving_item.v4.stack_item_id == item.v4.stack_item_id);
         let (stage, revealed_prefix, order) = if let Some(pending) = pending {
             crate::effect::validate_pending_effect_choice(state)?;
             let Some(PendingEffectChoice::SelectTargets {
-                player, selected, legal,
-                purpose: EffectTargetSelectionPurpose::OrderRevealedIntoGraveyard { original_prefix, .. },
+                player,
+                selected,
+                legal,
+                purpose:
+                    EffectTargetSelectionPurpose::OrderRevealedIntoGraveyard {
+                        original_prefix, ..
+                    },
                 ..
-            }) = pending.choice.as_ref() else {
+            }) = pending.choice.as_ref()
+            else {
                 return Err("Aberration lost its native revealed order".into());
             };
-            let revealed = original_prefix.iter().map(|&binding| {
-                library_ref(state, viewer, owner, binding)
-            }).collect::<Result<Vec<_>, _>>()?;
+            let revealed = original_prefix
+                .iter()
+                .map(|&binding| library_ref(state, viewer, owner, binding))
+                .collect::<Result<Vec<_>, _>>()?;
             let order = if *player == viewer {
                 Some(OrderV1 {
                     chooser: (*player).into(),
@@ -286,11 +315,19 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
         triggers.push(TriggerV1 {
             source: public::root(state, source, Some(viewer))?,
             stage,
-            stack_position: Some(u32::try_from(index).map_err(|_| "Aberration stack position overflow")?),
+            stack_position: Some(
+                u32::try_from(index).map_err(|_| "Aberration stack position overflow")?,
+            ),
             library_owner: owner.into(),
             revealed_prefix,
             order,
         });
     }
-    Ok(FactsV1 { schema: SCHEMA.into(), viewer: viewer.into(), meaning, characteristics, triggers })
+    Ok(FactsV1 {
+        schema: SCHEMA.into(),
+        viewer: viewer.into(),
+        meaning,
+        characteristics,
+        triggers,
+    })
 }

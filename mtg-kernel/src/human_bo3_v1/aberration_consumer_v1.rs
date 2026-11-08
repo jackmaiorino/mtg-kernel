@@ -48,34 +48,54 @@ fn refs(cards: &[ReferenceV1], handles: &mut Handles) -> Result<Vec<HumanCardRef
 }
 
 pub(super) fn project(facts: &FactsV1, handles: &mut Handles) -> Result<HumanFactsV1, Error> {
-    let characteristics = facts.characteristics.iter().map(|row| {
-        Ok(HumanCdaV1 {
-            card: href(&row.card, handles)?,
-            relative_player: row.relative_player,
-            base_from_cda: row.base_from_cda,
-            form: row.form.clone(),
-        })
-    }).collect::<Result<_, Error>>()?;
-    let triggers = facts.triggers.iter().map(|trigger| {
-        let order = trigger.order.as_ref().map(|order| {
-            Ok::<_, Error>(HumanOrderV1 {
-                chooser: order.chooser,
-                selected: refs(&order.selected, handles)?,
-                legal: refs(&order.legal, handles)?,
+    let characteristics = facts
+        .characteristics
+        .iter()
+        .map(|row| {
+            Ok(HumanCdaV1 {
+                card: href(&row.card, handles)?,
+                relative_player: row.relative_player,
+                base_from_cda: row.base_from_cda,
+                form: row.form.clone(),
             })
-        }).transpose()?;
-        Ok(HumanTriggerV1 {
-            original_source: href(&trigger.source.original_source, handles)?,
-            current_original_source: trigger.source.current_original_source.as_ref()
-                .map(|card| href(card, handles)).transpose()?,
-            stage: trigger.stage,
-            stack_position: trigger.stack_position,
-            library_owner: trigger.library_owner,
-            revealed_prefix: refs(&trigger.revealed_prefix, handles)?,
-            order,
         })
-    }).collect::<Result<_, Error>>()?;
-    Ok(HumanFactsV1 { meaning: facts.meaning.clone(), characteristics, triggers })
+        .collect::<Result<_, Error>>()?;
+    let triggers = facts
+        .triggers
+        .iter()
+        .map(|trigger| {
+            let order = trigger
+                .order
+                .as_ref()
+                .map(|order| {
+                    Ok::<_, Error>(HumanOrderV1 {
+                        chooser: order.chooser,
+                        selected: refs(&order.selected, handles)?,
+                        legal: refs(&order.legal, handles)?,
+                    })
+                })
+                .transpose()?;
+            Ok(HumanTriggerV1 {
+                original_source: href(&trigger.source.original_source, handles)?,
+                current_original_source: trigger
+                    .source
+                    .current_original_source
+                    .as_ref()
+                    .map(|card| href(card, handles))
+                    .transpose()?,
+                stage: trigger.stage,
+                stack_position: trigger.stack_position,
+                library_owner: trigger.library_owner,
+                revealed_prefix: refs(&trigger.revealed_prefix, handles)?,
+                order,
+            })
+        })
+        .collect::<Result<_, Error>>()?;
+    Ok(HumanFactsV1 {
+        meaning: facts.meaning.clone(),
+        characteristics,
+        triggers,
+    })
 }
 
 pub(super) fn label(
@@ -89,8 +109,15 @@ pub(super) fn label(
     {
         return Ok(None);
     }
-    let Action::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. } = action else {
+    let Action::ChooseEffectTarget {
+        target: TargetRefV1::Object { object },
+        ..
+    } = action
+    else {
         return Err(Error::InvalidVisibleReference);
     };
-    Ok(Some(format!("Put {} next in the graveyard", handles.name(object)?)))
+    Ok(Some(format!(
+        "Put {} next in the graveyard",
+        handles.name(object)?
+    )))
 }

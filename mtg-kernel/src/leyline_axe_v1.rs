@@ -568,13 +568,24 @@ pub(crate) fn visible_opening_v1(
     let mut entries = vec![];
     for row in &state.engine.event_history {
         let CommittedEvent::LeylineOpeningV1 {
-            record: RecordV1::Answer { input_history_index, index, accept: true, .. },
-        } = row else {
+            record:
+                RecordV1::Answer {
+                    input_history_index,
+                    index,
+                    accept: true,
+                    ..
+                },
+        } = row
+        else {
             continue;
         };
         let original = input(state, *input_history_index)?
-            .candidates.get(*index as usize).ok_or("opening answer source absent")?;
-        let generation = original.zone_change_count.checked_add(1)
+            .candidates
+            .get(*index as usize)
+            .ok_or("opening answer source absent")?;
+        let generation = original
+            .zone_change_count
+            .checked_add(1)
             .ok_or("opening entry incarnation overflow")?;
         entries.push((
             state.objects.get(original.object).owner,

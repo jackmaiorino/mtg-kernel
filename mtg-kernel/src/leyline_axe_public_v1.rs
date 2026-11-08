@@ -4,12 +4,11 @@ use crate::{
     effect::{EffectOp, ObjectRef},
     engine,
     ids::{ObjectId, PlayerId},
-    leyline_axe_v1 as native,
-    optional_trigger_public_v1 as public,
+    leyline_axe_v1 as native, optional_trigger_public_v1 as public,
     rl::PlayerSeatV1,
     state::{
-        AbilitySourceContractV4, CastMethodV4, GameState, StackItemKind,
-        StackTargetContractV4, Target, Zone,
+        AbilitySourceContractV4, CastMethodV4, GameState, StackItemKind, StackTargetContractV4,
+        Target, Zone,
     },
     tinybones_public_v72::{CountersV72, IncarnationV72},
 };
@@ -51,7 +50,8 @@ pub fn producer_sha256() -> String {
             hash.update(source.as_bytes());
         }
         format!("{:x}", hash.finalize())
-    }).clone()
+    })
+    .clone()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,8 +166,13 @@ fn ordinal(position: usize) -> Result<u32, String> {
     u32::try_from(position).map_err(|_| "Leyline Axe native position overflow".into())
 }
 
-fn visible(state: &GameState, viewer: PlayerId, id: ObjectId) -> Result<public::ReferenceV1, String> {
-    public::reference(state, id, Some(viewer)).ok_or_else(|| "Leyline Axe visible card missing".into())
+fn visible(
+    state: &GameState,
+    viewer: PlayerId,
+    id: ObjectId,
+) -> Result<public::ReferenceV1, String> {
+    public::reference(state, id, Some(viewer))
+        .ok_or_else(|| "Leyline Axe visible card missing".into())
 }
 
 fn original_battlefield(
@@ -176,13 +181,18 @@ fn original_battlefield(
     original: &IncarnationV72,
 ) -> Option<public::ReferenceV1> {
     let id = ObjectId(original.object);
-    state.objects.try_get(id)
+    state
+        .objects
+        .try_get(id)
         .filter(|o| o.zone == Zone::Battlefield && o.zone_change_count == original.generation)
         .and_then(|_| public::reference(state, id, Some(viewer)))
 }
 
 pub(crate) fn is_attachment_program(effect: &EffectOp) -> bool {
-    *effect == EffectOp::AttachSourceToTarget { object: ObjectRef::Target(0) }
+    *effect
+        == EffectOp::AttachSourceToTarget {
+            object: ObjectRef::Target(0),
+        }
 }
 
 fn equip_target(
@@ -198,10 +208,19 @@ fn equip_target(
         ([target], [contract]) => (*target, *contract),
         _ => return Err("Leyline Axe native equip target count changed".into()),
     };
-    if !crate::state::stack_target_contract_is_structurally_valid(state, spec, 0, chosen, contract) {
+    if !crate::state::stack_target_contract_is_structurally_valid(state, spec, 0, chosen, contract)
+    {
         return Err("Leyline Axe native equip target contract changed".into());
     }
-    let StackTargetContractV4::Object { object, owner, controller, zone, zone_change_count, .. } = contract else {
+    let StackTargetContractV4::Object {
+        object,
+        owner,
+        controller,
+        zone,
+        zone_change_count,
+        ..
+    } = contract
+    else {
         return Err("Leyline Axe equip target is not an original creature".into());
     };
     let original = IncarnationV72 {
@@ -216,7 +235,12 @@ fn equip_target(
         original,
         currently_legal: engine::target_contract_matches_live(state, chosen, contract)
             && engine::effect_target_is_legal_from_ability_source(
-                state, source, source.controller, spec, targets, 0,
+                state,
+                source,
+                source.controller,
+                spec,
+                targets,
+                0,
             ),
     }))
 }
@@ -224,30 +248,40 @@ fn equip_target(
 pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, String> {
     let meaning = printed_meaning()?;
     let (opening, entries) = native::visible_opening_v1(state, viewer)?;
-    state.validate_attachment_relations()
+    state
+        .validate_attachment_relations()
         .map_err(|_| "Leyline Axe native attachment relation changed")?;
-    let opening_choice = opening.map(|binding| {
-        visible(state, viewer, binding.object).and_then(|card| {
-            if card.owner != viewer.into() || card.zone != Zone::Hand
-                || card.generation != binding.zone_change_count
-            {
-                return Err("Leyline Axe opening chooser lost original private source".into());
-            }
-            Ok(card)
+    let opening_choice = opening
+        .map(|binding| {
+            visible(state, viewer, binding.object).and_then(|card| {
+                if card.owner != viewer.into()
+                    || card.zone != Zone::Hand
+                    || card.generation != binding.zone_change_count
+                {
+                    return Err("Leyline Axe opening chooser lost original private source".into());
+                }
+                Ok(card)
+            })
         })
-    }).transpose()?;
-    let opening_entries = entries.into_iter().map(|(player, entry)| {
-        let original = IncarnationV72 {
-            object: entry.object.0,
-            generation: entry.zone_change_count,
-            owner: player.into(),
-            controller: player.into(),
-            zone: Zone::Battlefield,
-        };
-        let current_original = original_battlefield(state, viewer, &original)
-            .filter(|card| card.identity == (public::IdentityV1::Known { card_id: PRINTING }));
-        OpeningEntryV1 { current_original, original }
-    }).collect();
+        .transpose()?;
+    let opening_entries = entries
+        .into_iter()
+        .map(|(player, entry)| {
+            let original = IncarnationV72 {
+                object: entry.object.0,
+                generation: entry.zone_change_count,
+                owner: player.into(),
+                controller: player.into(),
+                zone: Zone::Battlefield,
+            };
+            let current_original = original_battlefield(state, viewer, &original)
+                .filter(|card| card.identity == (public::IdentityV1::Known { card_id: PRINTING }));
+            OpeningEntryV1 {
+                current_original,
+                original,
+            }
+        })
+        .collect();
     let mut battlefield = vec![];
     for player in [PlayerId::P0, PlayerId::P1] {
         for &id in &state.players[player.index()].battlefield {
@@ -255,26 +289,39 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                 continue;
             }
             let live = state.objects.get(id);
-            let host = live.v4.attached_to.map(|link| {
-                let card = visible(state, viewer, link.object)?;
-                if card.zone != Zone::Battlefield || card.generation != link.zone_change_count {
-                    return Err("Leyline Axe host lost original attachment incarnation".to_string());
-                }
-                Ok(HostV1 {
-                    card,
-                    form: public::checked_form(state, link.object)?,
-                    counters: crate::tinybones_public_v72::counters(state, link.object)?,
-                    receives_printed_bonus: engine::attached_equipment_profiles(state, link.object)
+            let host = live
+                .v4
+                .attached_to
+                .map(|link| {
+                    let card = visible(state, viewer, link.object)?;
+                    if card.zone != Zone::Battlefield || card.generation != link.zone_change_count {
+                        return Err(
+                            "Leyline Axe host lost original attachment incarnation".to_string()
+                        );
+                    }
+                    Ok(HostV1 {
+                        card,
+                        form: public::checked_form(state, link.object)?,
+                        counters: crate::tinybones_public_v72::counters(state, link.object)?,
+                        receives_printed_bonus: engine::attached_equipment_profiles(
+                            state,
+                            link.object,
+                        )
                         .any(|(equipment, _)| equipment == id),
+                    })
                 })
-            }).transpose()?;
-            battlefield.push(EquipmentV1 { card: visible(state, viewer, id)?, token: live.v4.is_token, host });
+                .transpose()?;
+            battlefield.push(EquipmentV1 {
+                card: visible(state, viewer, id)?,
+                token: live.v4.is_token,
+                host,
+            });
         }
     }
     let mut equip = vec![];
-    if let Some(pending) = state.engine.pending_activation.as_ref().filter(|pending|
-        public::visible_known(state, pending.source, Some(viewer), |id| id == PRINTING))
-    {
+    if let Some(pending) = state.engine.pending_activation.as_ref().filter(|pending| {
+        public::visible_known(state, pending.source, Some(viewer), |id| id == PRINTING)
+    }) {
         engine::validate_pending_activation(state, pending)?;
         if pending.ability_index != 0
             || pending.target_spec != TargetSpec::ControlledCreature
@@ -286,7 +333,13 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
         equip.push(EquipV1 {
             stack_position: None,
             source: public::root(state, source, Some(viewer))?,
-            target: equip_target(state, viewer, source, &pending.targets_chosen, &pending.target_contracts)?,
+            target: equip_target(
+                state,
+                viewer,
+                source,
+                &pending.targets_chosen,
+                &pending.target_contracts,
+            )?,
         });
     }
     let mut casts = vec![];
@@ -295,8 +348,16 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
             && public::visible_known(state, item.source, Some(viewer), |id| id == PRINTING)
         {
             let target_spec = engine::validated_stack_item_target_spec(item, state)?;
-            let origin = item.v4.source_contract.ok_or("Leyline Axe stack source absent")?.spell_cast_origin;
-            let pending = state.engine.pending_cast.as_ref().filter(|pending| pending.spell == item.source);
+            let origin = item
+                .v4
+                .source_contract
+                .ok_or("Leyline Axe stack source absent")?
+                .spell_cast_origin;
+            let pending = state
+                .engine
+                .pending_cast
+                .as_ref()
+                .filter(|pending| pending.spell == item.source);
             if let Some(pending) = pending {
                 engine::validate_pending_cast(state, pending)?;
             }
@@ -312,17 +373,31 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                 origin_zone: origin.map(|origin| origin.origin_zone),
                 finalized_method: origin.and_then(|origin| origin.finalized_method),
             });
-        } else if let Some(source) = item.v4.ability_source_contract.filter(|source| source.card_def == PRINTING) {
+        } else if let Some(source) = item
+            .v4
+            .ability_source_contract
+            .filter(|source| source.card_def == PRINTING)
+        {
             if item.kind != StackItemKind::ActivatedAbility
                 || item.v4.activated_ability_index != Some(0)
                 || item.v4.granted_by.is_some()
-                || !item.inline_effect.as_ref().is_some_and(is_attachment_program)
-                || engine::validated_stack_item_target_spec(item, state)? != Some(TargetSpec::ControlledCreature)
+                || !item
+                    .inline_effect
+                    .as_ref()
+                    .is_some_and(is_attachment_program)
+                || engine::validated_stack_item_target_spec(item, state)?
+                    != Some(TargetSpec::ControlledCreature)
             {
                 return Err("Leyline Axe published equip lost its printed route".into());
             }
-            let target = equip_target(state, viewer, source, &item.targets, &item.v4.target_contracts)?
-                .ok_or("Leyline Axe published equip lost its target")?;
+            let target = equip_target(
+                state,
+                viewer,
+                source,
+                &item.targets,
+                &item.v4.target_contracts,
+            )?
+            .ok_or("Leyline Axe published equip lost its target")?;
             equip.push(EquipV1 {
                 stack_position: Some(ordinal(position)?),
                 source: public::root(state, source, Some(viewer))?,
@@ -330,6 +405,14 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
             });
         }
     }
-    Ok(FactsV1 { schema: SCHEMA.into(), viewer: viewer.into(), meaning, opening_choice,
-        opening_entries, casts, equip, battlefield })
+    Ok(FactsV1 {
+        schema: SCHEMA.into(),
+        viewer: viewer.into(),
+        meaning,
+        opening_choice,
+        opening_entries,
+        casts,
+        equip,
+        battlefield,
+    })
 }
