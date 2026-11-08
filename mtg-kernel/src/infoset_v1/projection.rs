@@ -1033,12 +1033,16 @@ impl WalkV1<'_> {
                     // A spell copy is created on the stack at generation 0.
                     o.exists = true;
                     o.zone = Some(Zone::Stack);
-                    self.settle(&[id]);
+                    let observed = [id];
+                    let named = !o.hidden_v2;
+                    self.settle(if named { &observed } else { &[] });
                     return;
                 }
                 let source = o.zone;
                 if source == Some(Zone::Stack) {
-                    self.settle(&[id]);
+                    let observed = [id];
+                    let named = !o.hidden_v2;
+                    self.settle(if named { &observed } else { &[] });
                     return;
                 }
                 let was = o.tracked;
