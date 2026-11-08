@@ -1733,8 +1733,6 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
         ) => {
             crate::electroduplicate_consumer_v1::validate_facts(facts, actor)
                 .map_err(RlContractError)?;
-            crate::electroduplicate_consumer_v1::validate_inherited(facts, value)
-                .map_err(RlContractError)?;
             crate::electroduplicate_consumer_v1::OBSERVATION_SCHEMA
         }
         (
@@ -2030,6 +2028,10 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
         }
         _ => return Err(RlContractError("mixed appendix profiles".into())),
     };
+    if let Some(facts) = &value.electroduplicate {
+        crate::electroduplicate_consumer_v1::validate_inherited(facts, value)
+            .map_err(RlContractError)?;
+    }
     crate::muldrotha_public_v71::validate_tinybones_compat_v72(&value.muldrotha)
         .map_err(RlContractError)?;
     crate::vivien_public_v70::validate_tinybones_compat_v72(&value.vivien)
