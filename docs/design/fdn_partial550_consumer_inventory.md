@@ -320,9 +320,12 @@ remain pending.
 
 ## Composed source checkpoint (2026-11-08)
 
-The source candidate now covers sixteen of the thirty-six Partial booster
-printings in six separate finite profiles: Return (3), V68-V75 (8), Artist (1),
-Chosen Type (2), Niv (1), and Drakuseth (1). This is source coverage only.
+The source candidate at `5eb71519310b5258760b1e1fff2f0902fd44a2a9` covers
+twenty of the thirty-six Partial booster printings in ten separate finite
+profiles: Return (3), V68-V75 (8), Artist (1), Chosen Type (2), Niv (1),
+Drakuseth (1), Embercleave (1), Zimone (1), Omniscience (1), and Tutelage (1).
+Sixteen original Partial consumer gaps remain outside this composition.
+This is source coverage only.
 Catalog status remains unchanged; no combined native qualification, fair-search
 coverage, training result, or Full promotion is claimed.
 
@@ -331,10 +334,15 @@ merges the complete chosen-type `350dae3d813036affa3e431608a9c6ee10a7270a`,
 Niv `189c35ae80fef4dfe7db090bc5599db9072a685e` (including native receipt
 `de704a7c003b6c69b90b68791938b47d3320cbbd`), and Drakuseth
 `6394da6d9b1489650af7bfecc97170f3ccc73236` histories. The separate #474
-performance candidate is excluded.
+performance candidate is excluded. Later merges add Embercleave through
+`cde12e6be6e51920b58bf0130533f8cdc65f3a21`, Zimone through
+`d04564a65047c7b2f27c3f7aa03c287cab5d5dde`, Omniscience through
+`140c0770a75ee8d3fc9a35ac8e86132a18ef008b`, and Tutelage through
+`4676515fbeed6fe38864abb070e377fee9b66cd5`.
 
 Conflict reconciliation uses one exclusive `LimitedAppendixV1` capability:
-Legacy, Artist, ChosenType, Niv, or Drakuseth. Reset installs it before advance;
+Legacy, Artist, ChosenType, Niv, Drakuseth, Embercleave, Zimone, Omniscience,
+or Tutelage. Reset installs it before advance;
 restore compares the exact capability. Return and V68-V75 retain Legacy.
 Each appendix retains its own observation, candidate, Human and JSONL schemas;
 absent optional fields remain absent, and artifact validation rejects any
@@ -343,18 +351,41 @@ Drakuseth original target slots and replacement menus, and Niv native draw
 receipts remain in their original profile. Artist scope is passed from the
 actual `PolicySurfaceV5` caller into the common observation builder. Standalone
 legacy observation/candidate routes and appendix current-slot sampling still
-refuse the unsupported scopes.
+refuse the unsupported scopes. Embercleave retains its current native cast
+quote and attachment source; Zimone preserves all eighteen counter widths;
+Omniscience retains paid/free routes, captured permission and additional costs.
+Tutelage records the actual public post-replacement mill members and native
+repeat result at commit, including a repeating final pair with no remaining
+library. Old absent event fields add no hash or serialization bytes; their
+native continuation remains readable, while the new profile requires the
+new receipt. Chooser-private graveyard ordering remains viewer-scoped.
 
-Source verification: pinned Rust 1.94.1 rustfmt succeeded under a one-core
-BelowNormal host-slots claim; `git diff --check` passed. Read-only review of
-Niv and Drakuseth found no blocking source issue. Native tests and binaries
-have not been built or run for this composed tree. Next guarded Limited build
-must include the three new `kernel_limited_{chosen_type,niv,drakuseth}_env_v1`
-binaries and existing Return, V68-V75 and Artist binaries. Focused test filters:
+Source verification: pinned Rust 1.94.1 rustfmt passed for the sixteen-card
+checkpoint and separate Embercleave, Zimone and Omniscience changes. Tutelage's
+one-core formatter request received `no_room` and did not start; formatting
+remains pending. `git diff --check` passes. Read-only review found and repaired
+four Heartfire callers that still supplied a boolean instead of Legacy scope.
+The sixteen-card type-check attempt reported seven diagnostics, repaired in
+`0c277d8e`; environmental interruptions prevented a completed retry. Native
+tests and binaries have not been built or run for this twenty-card tree.
+
+Earlier `1c3d215` passed four #552 and six #454 native checks. Its Return filter
+passed six of seven; the Call publication fixture was subsequently repaired.
+The separate #591 default-feature build passed twenty-one V4/V3/privacy cases.
+Its seven recovery checks passed six; the paid-spell fixture repair at
+`476f60ac02c15572f2189e15847a3ed1aa992d88` is included here and awaits rerun.
+None of those predecessor results qualifies this full composition.
+
+Next guarded Limited build must include all ten profile binaries. Focused filters:
 `chosen_type_consumer_v1::tests::`, `niv_consumer_v1::tests::`,
 `niv_mizzet_public_v63::tests::`, `drakuseth_consumer_v1::tests::`,
 `artist_consumer_v1::tests::`, `limited_return_consumer_v1::tests::`,
-`limited_v68_v75_consumer_v1::tests::`, and rules-only Courtyard regression.
+`limited_v68_v75_consumer_v1::tests::`, `embercleave_consumer_v1::tests::`,
+`zimone_consumer_v1::tests::`, `omniscience_consumer_v1::tests::`,
+`tutelage_consumer_v1::tests::`, their native mechanics filters, and the
+rules-only Courtyard regression. Tutelage also needs its genuine mixed
+Progenitus replacement case. The bounded learner pilot still selects only
+Return; no mixed-appendix learner or all-286 search run is qualified.
 Run the event-history serialization tests separately from sample harvesting.
 The new Niv event sample remains provisional until native paid-fixture harvest;
 terminal V75 responses carry no decision appendix even when a draw caused
