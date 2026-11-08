@@ -320,15 +320,15 @@ remain pending.
 
 ## Composed source checkpoint (2026-11-08)
 
-The source candidate at `f0ca97a46760c749d7dc00427235b2e94a8348ec` covers
-23 of the 36 Partial booster printings in thirteen finite profiles: Return (3),
+The source candidate at `7ba93081503e1cdf8229bdf9950ccd8355453b63` covers
+24 of the 36 Partial booster printings in fourteen finite profiles: Return (3),
 V68-V75 (8), Artist (1), Chosen Type (2), Niv (1), Drakuseth (1),
 Embercleave (1), Zimone (1), Omniscience (1), Tutelage (1), Moon (1), and
-Leyline Axe (1), Progenitus (1). Thirteen original Partial consumer gaps remain. Catalog tiers are unchanged.
+Leyline Axe (1), Progenitus (1), Aberration (1). Twelve original Partial consumer gaps remain. Catalog tiers are unchanged.
 This is source coverage; the complete composition is not natively qualified.
 
 The additional `fdn-mixed-consumer/v1` owner composes the first twenty
-printings, excluding Moon, Leyline Axe and Progenitus. It authenticates every represented native printed
+printings, excluding Moon, Leyline Axe, Progenitus and Aberration. It authenticates every represented native printed
 definition before reset and retains the real declared deck IDs. Its exact
 Mixed capability enables all eight existing appendices together. Its distinct
 observation and candidate schemas require all eight facts; single-family
@@ -367,8 +367,18 @@ RNG and library positions. Source fixtures separately cover declared 40-card
 reset, an actual ten-mana cast, battlefield/stack/hand shuffle replacement,
 and paid mass reveal/order with independent hidden suffixes. Review of
 `f3878c8c3aca0d6dd53981a2f883a216329de07a` found no remaining source blocker
-after its ConsumerV1 match repair. The integrated eleven-appendix shape still
-requires all three newer appendices absent for Mixed. Native checks are pending.
+after its ConsumerV1 match repair. The integrated appendix shape still
+requires every newer appendix absent for Mixed. Native checks are pending.
+
+Consuming Aberration has its own `fdn-aberration-consumer/v1` profile. Its
+all-zone CDA uses the native engine count after viewer visibility filtering.
+An active trigger exposes only the actual validated reveal through the first
+land or library end. Current ordering choices remain chooser-private in both
+the typed and inherited projection. The fixed source and original native
+indices carry through Human and wire actions. Review of
+`f236cfb1ca0aeeea4829352ba2338472370b8e3c` found no source blocker in these
+paths. Its paid trigger, hidden-suffix, all-zone CDA and restore fixtures are
+unrun. This singleton profile does not authorize Progenitus interactions.
 
 The composition retains the complete histories for Chosen Type, Niv,
 Drakuseth, Embercleave, Zimone, Omniscience and Tutelage. The latter's new
@@ -382,7 +392,7 @@ Source verification: pinned Rust 1.94.1 formatting passed through the
 Tutelage checkpoint `98ee9ab7e9ee66e76d6481fa6d5a426f71e1df73`.
 The Mixed and Moon changes passed the pinned one-core formatter in
 `52f25a4fc9a45e200b90a4e032dd792e263159e2` (36 staged files, 17 changed).
-The Axe and Progenitus successor still awaits pinned formatting and native checks.
+The Axe, Progenitus and Aberration successor still awaits pinned formatting and native checks.
 Read-only review of Mixed `ac74b5322218e00cd0b33d65151efecf9ce29ace`
 found no blocking source issue in the explicit scope, candidate bindings,
 normalization, or fixture call signatures. Root reviewed the Moon printing,
@@ -397,7 +407,12 @@ repaired in `0c277d8e`; environmental interruptions prevented a completed retry.
 The guarded 52f25 library/test-code check completed with one compiler error:
 Tutelage's public repeat helper attempted to move the static CardDef array.
 `a5714aefc` borrows it instead and removes the unused Omniscience engine import.
-That failed attempt is retained; the repaired combined source awaits its retry.
+That failed attempt is retained. The next check at `aa45b00` reached a second
+error: the match runner passed a single-reference method to an iterator of
+double references. `8ff554f6` fixes that call with an explicit closure; its
+check is pending. The successor also fixes reported Human type visibility
+and unused wrapper warnings and boxes Eternal printed programs without
+changing their serialized payload.
 The separate #591 default-feature lane passed 21 V4/V3/privacy tests and its
 real native/companion buffered-commit process passed for both starting seats.
 Its fresh 28-case recovery/reveal/privacy run passed, and #591 is merged on main.
@@ -406,11 +421,12 @@ None of these
 predecessor results qualifies the larger Limited composition.
 
 The next guarded Limited job must first complete a type check and the focused
-consumer fixtures before building all thirteen individual-profile binaries and
+consumer fixtures before building all fourteen individual-profile binaries and
 the Mixed binary. Filters include `limited_mixed_consumer_v1::tests::`,
 `moon_consumer_v1::tests::`, `chosen_type_consumer_v1::tests::`,
 `leyline_axe_consumer_v1::tests::`, `leyline_axe_v1::tests::`,
 `progenitus_consumer_v1::tests::`, `engine::progenitus_v1_tests::`,
+`aberration_consumer_v1::tests::`, `effect::consuming_aberration_v1_tests::`,
 `rl::complete_copy_prefix_scope_tests::`,
 `niv_consumer_v1::tests::`, `niv_mizzet_public_v63::tests::`,
 `drakuseth_consumer_v1::tests::`, `artist_consumer_v1::tests::`,
