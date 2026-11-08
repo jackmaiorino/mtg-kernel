@@ -14273,7 +14273,7 @@ fn drive_resumable_inner_with_native_row_v1(
                                             )
                                             .map_err(|error| error.to_string())?;
                                     }
-                                    if state.reveal_meaning_v3.enabled() {
+                                    if state.reveal_meaning_v3_enabled() {
                                         shown.push(binding.object);
                                     }
                                 }
@@ -14411,7 +14411,7 @@ fn drive_resumable_inner_with_native_row_v1(
                                     )
                                     .expect("a successful searched-card move is publicly revealed");
                             }
-                            if state.reveal_meaning_v3.enabled() {
+                            if state.reveal_meaning_v3_enabled() {
                                 shown.push(binding.object);
                             }
                         }
@@ -18084,7 +18084,7 @@ fn resume_library_partition_frame(
                                 )
                                 .expect("a successful selected-card move is publicly revealed");
                         }
-                        if state.reveal_meaning_v3.enabled() {
+                        if state.reveal_meaning_v3_enabled() {
                             shown.push(binding.object);
                         }
                     }
