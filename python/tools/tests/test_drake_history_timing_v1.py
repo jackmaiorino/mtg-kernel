@@ -92,6 +92,11 @@ class NativeReceipts(unittest.TestCase):
             path.write_text('{"changed":true}')
             with self.assertRaises(ValueError):
                 timing.checked(reference)
+            transported = {"files": {reference["path"]: "{}"}}
+            self.assertEqual(timing.reference_json(reference, transported), {})
+            transported["files"][reference["path"]] = '{"changed":true}'
+            with self.assertRaises(ValueError):
+                timing.reference_json(reference, transported)
 
 
 if __name__ == "__main__":

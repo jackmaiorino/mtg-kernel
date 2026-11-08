@@ -24,8 +24,9 @@ BASE = "384c8a4e5103f40384928adb69720268e4ecd8cb"
 HEAD = "17856aa9b6e6c116440b64acab0dcbfe4306e03a"
 ROOT = Path(__file__).resolve().parents[2]
 PREFIX = "drake_hatcher_v1::prefix_memo_tests::slow_drake_staging_"
-SCHEMA = "drake-history-timing/v1"
+SCHEMA = "drake-history-timing/v2"
 GIB = 1024 ** 3
+HOSTS = {"desktop": "DESKTOP-DJ1C40R", "computehost": "HALEYSPC"}
 CASES = {
     "train_241": ("train", 241, ["FDN_top_15301_BG", "FDN_top_01766_UR"], "P1", 1344),
     "train_436": ("train", 436, ["FDN_top_07760_UBpG", "FDN_top_02819_WU"], "P1", 1575),
@@ -78,16 +79,14 @@ def positive(value):
     return type(value) in (int, float) and math.isfinite(value) and value > 0
 
 
-def inventory(reference, *, final=False):
-    value = read(checked(reference))
+def inventory(reference, placement="desktop", bundle=None):
+    value = reference_json(reference, bundle)
     require(set(value) == {"desktop", "computehost", "runpod"}, "inspect all three placements")
     for name, item in value.items():
         require(type(item["eligible"]) is bool and item["reason"].strip(), "missing placement decision")
         require(0 <= time.time() - item["checked_epoch"] <= 86400, "stale availability")
-        checked(item["evidence"])
-        if final and name != "desktop":
-            require(not item["eligible"], "another eligible placement needs throughput qualification")
-    require(value["desktop"]["eligible"], "desktop is not eligible")
+        reference_bytes(item["evidence"], bundle)
+    require(placement in HOSTS and value[placement]["eligible"], "selected host is not eligible")
     return value
 
 
@@ -99,11 +98,13 @@ def validate_placement(cores, reserved_cores):
             and set(cores) <= set(reserved_cores), "reserve every worker CPU and its SMT sibling")
 
 
-def prepare(path, cores, reserved_cores, availability):
+def prepare(path, cores, reserved_cores, availability, placement="desktop", remote_root=None):
     require(not path.exists(), "plan already exists")
     validate_placement(cores, reserved_cores)
     availability = pin(availability)
-    inventory(availability)
+    inventory(availability, placement)
+    require(platform.node().casefold() == HOSTS[placement].casefold(), "placement host differs")
+    require((remote_root is not None) == (placement == "computehost"), "remote custody root required only on Haley")
     binaries, datasets = {}, []
     for label, (source, binary, digest, checkout) in BINARIES.items():
         executable = pin(binary)
@@ -116,12 +117,13 @@ def prepare(path, cores, reserved_cores, availability):
         datasets.append({name: ref["sha256"] for name, ref in inputs.items()})
         binaries[label] = {"source": source, "binary": executable, "sample": str(sample), "inputs": inputs}
     require(datasets[0] == datasets[1], "old/new runtime inputs differ")
-    plan = {"schema": SCHEMA, "host": platform.node(), "cores": cores, "reserved_cores": reserved_cores,
+    plan = {"schema": SCHEMA, "host": platform.node(), "placement": placement, "remote_root": remote_root,
+            "cores": cores, "reserved_cores": reserved_cores,
             "python": pin(sys.executable), "availability": availability, "binaries": binaries,
             "tools": [pin(__file__), pin(ROOT / "python/tools/host_slots_v1.py"),
-                      pin(ROOT / "python/tools/host_reservation_v1.py")],
+                      pin(ROOT / "python/tools/host_reservation_v1.py"), pin(ROOT / "python/tools/drake_history_remote_v1.py")],
             "cases": list(CASES), "qualification_cases": list(CASES)[:2],
-            "job_seconds": 1800, "batch_seconds": 7200, "output_cap_bytes": GIB,
+            "job_seconds": 1800, "batch_seconds": 7200, "output_cap_bytes": GIB // 8,
             "free_floor_bytes": 60 * GIB, "priority": "below_normal",
             "analysis": "all windows; normalized partial windows marked, no automatic flat-cost verdict"}
     write(path, plan)
@@ -133,12 +135,13 @@ def load_plan(reference):
     require(plan["schema"] == SCHEMA and plan["host"] == platform.node(), "different schema or host")
     require(plan["cases"] == list(CASES) and plan["qualification_cases"] == list(CASES)[:2], "changed cases")
     require(plan["job_seconds"] == 1800 and plan["batch_seconds"] == 7200
-            and plan["output_cap_bytes"] == GIB and plan["free_floor_bytes"] == 60 * GIB
+            and plan["output_cap_bytes"] == GIB // 8 and plan["free_floor_bytes"] == 60 * GIB
             and plan["priority"] == "below_normal", "changed resource bounds")
     validate_placement(plan["cores"], plan["reserved_cores"])
+    require(plan["placement"] in HOSTS and plan["host"].casefold() == HOSTS[plan["placement"]].casefold(), "placement differs")
     require(checked(plan["python"]) == Path(sys.executable).resolve(), "different Python")
     require(plan["tools"] == [pin(__file__), pin(ROOT / "python/tools/host_slots_v1.py"),
-                              pin(ROOT / "python/tools/host_reservation_v1.py")], "changed runner or guards")
+                              pin(ROOT / "python/tools/host_reservation_v1.py"), pin(ROOT / "python/tools/drake_history_remote_v1.py")], "changed runner or guards")
     for label, (source, binary, digest, checkout) in BINARIES.items():
         item = plan["binaries"][label]
         require(item["source"] == source and item["binary"] == {"path": str(Path(binary).resolve()), "sha256": digest},
@@ -200,6 +203,11 @@ def guarded(plan):
             and set(slots.parse_cores(os.environ.get(slots.CORES_ENV, ""))) == set(plan["reserved_cores"]),
             "need the exact two-core timed declaration")
     require(not (Path(plan["binaries"]["new"]["sample"]).parents[2] / "STOP").exists(), "STOP exists")
+    if plan["remote_root"] is not None:
+        import drake_history_remote_v1 as remote
+        root = remote.owned_root(plan["remote_root"])
+        remote.mapped_identity(root)
+        remote.waiter_priority(root)
     return slots
 
 
@@ -299,14 +307,26 @@ def batch(plan_ref, root, name, cases, workers):
     return pin(output / "batch.json")
 
 
-def validate_batch(plan_ref, reference, cases, workers):
-    plan = read(checked(plan_ref))
-    value = read(checked(reference))
+def reference_bytes(reference, bundle=None):
+    if bundle is None:
+        return checked(reference).read_bytes()
+    data = bundle["files"][reference["path"]].encode("utf-8")
+    require(hashlib.sha256(data).hexdigest() == reference["sha256"], "bundled reference hash differs")
+    return data
+
+
+def reference_json(reference, bundle=None):
+    return json.loads(reference_bytes(reference, bundle))
+
+
+def validate_batch(plan_ref, reference, cases, workers, bundle=None):
+    plan = reference_json(plan_ref, bundle)
+    value = reference_json(reference, bundle)
     require(value["plan"] == plan_ref and value["cases"] == cases and value["workers"] == workers
             and value["complete"] and value["children_drained"] and positive(value["seconds"]), "incomplete/incompatible batch")
     actual = {}
     for reference in value["jobs"]:
-        item = read(checked(reference))
+        item = reference_json(reference, bundle)
         key = item["case"], item["label"]
         require(key not in actual and item["exit"] == 0 and item["children_drained"], "invalid/duplicate job")
         require(key[0] in cases and key[1] in BINARIES, "unexpected job")
@@ -315,7 +335,7 @@ def validate_batch(plan_ref, reference, cases, workers):
                                      "--exact", "--ignored", "--nocapture", "--test-threads=1"], "changed placement or command")
         require(positive(item["seconds"]) and item["seconds"] <= plan["job_seconds"] + 30
                 and positive(item["finished_epoch"] - item["started_epoch"]), "invalid job timing")
-        rows = reports(checked(item["log"]).read_text(encoding="utf-8"), item["case"])
+        rows = reports(reference_bytes(item["log"], bundle).decode("utf-8"), item["case"])
         require(item["reports"] == rows, "receipt differs from native log")
         actual[key] = item
     require(set(actual) == {(case, label) for case in cases for label in BINARIES}, "missing jobs")
@@ -328,16 +348,99 @@ def validate_batch(plan_ref, reference, cases, workers):
     return value, actual
 
 
-def qualification(plan_ref, reference):
-    value = read(checked(reference))
+def qualification(plan_ref, reference, bundle=None):
+    value = reference_json(reference, bundle)
     require(value["plan"] == plan_ref, "qualification for another plan")
-    batches = [validate_batch(plan_ref, value[str(w)], list(CASES)[:2], w) for w in (1, 2)]
+    batches = [validate_batch(plan_ref, value[str(w)], list(CASES)[:2], w, bundle) for w in (1, 2)]
     for key in batches[0][1]:
         require(batches[0][1][key]["reports"][0]["final_state_sha256"]
                 == batches[1][1][key]["reports"][0]["final_state_sha256"], "parallel execution changed outcomes")
     selected = min((1, 2), key=lambda w: batches[w - 1][0]["seconds"])
     require(value["selected_workers"] == selected, "allocation is not the measured faster choice")
     return selected, value[str(selected)]
+
+
+def portable_inputs(plan):
+    return {"schema": plan["schema"], "cases": plan["cases"], "qualification_cases": plan["qualification_cases"],
+            "tools": [p["sha256"] for p in plan["tools"]],
+            "binaries": {label: {"source": b["source"], "sha256": b["binary"]["sha256"],
+                                  "inputs": {k: v["sha256"] for k, v in b["inputs"].items()}}
+                         for label, b in plan["binaries"].items()}}
+
+
+def bundle_qualification(plan_ref, qual_ref, overhead_ref, output):
+    load_plan(plan_ref)
+    qualification(plan_ref, qual_ref)
+    overhead = reference_json(overhead_ref)
+    require(set(overhead) == {"setup_seconds", "transfer_seconds", "wait_seconds", "evidence"}
+            and all(type(overhead[k]) in (int, float) and math.isfinite(overhead[k]) and overhead[k] >= 0
+                    for k in ("setup_seconds", "transfer_seconds", "wait_seconds")), "invalid observed overhead")
+    refs = [plan_ref, qual_ref, overhead_ref, overhead["evidence"]]
+    q = reference_json(qual_ref)
+    for w in (1, 2):
+        refs.append(q[str(w)])
+        for job in reference_json(q[str(w)])["jobs"]:
+            refs.extend([job, reference_json(job)["log"]])
+    value = {"schema": SCHEMA, "plan": plan_ref, "qualification": qual_ref, "overhead": overhead_ref,
+             "files": {ref["path"]: reference_bytes(ref).decode("utf-8") for ref in refs}}
+    qualification(plan_ref, qual_ref, value)
+    write(output, value)
+
+
+def select_placement(availability_ref, bundle_refs, forecast_ref, output=None, proofs=None):
+    available = reference_json(availability_ref, proofs)
+    forecasts = reference_json(forecast_ref, proofs)
+    refs = [availability_ref, forecast_ref, *bundle_refs,
+            *[v["evidence"] for v in available.values()], *[v["evidence"] for v in forecasts.values()]]
+    candidates, common, outcomes = {}, None, None
+    for reference in bundle_refs:
+        bundle = reference_json(reference, proofs)
+        plan = reference_json(bundle["plan"], bundle)
+        placement = plan["placement"]
+        require(placement not in candidates and plan["schema"] == SCHEMA
+                and plan["host"].casefold() == HOSTS[placement].casefold(), "duplicate/different qualification host")
+        inputs = portable_inputs(plan)
+        require(common is None or common == inputs, "placements did not run identical native inputs/helpers")
+        common = inputs
+        workers, selected = qualification(bundle["plan"], bundle["qualification"], bundle)
+        batch_value, jobs = validate_batch(bundle["plan"], selected, list(CASES)[:2], workers, bundle)
+        states = {case: jobs[case, "old"]["reports"][0]["final_state_sha256"] for case in list(CASES)[:2]}
+        require(outcomes is None or outcomes == states, "host placement changed terminal outcomes")
+        outcomes = states
+        forecast = forecasts[placement]
+        require(set(forecast) == {"remaining_setup_seconds", "remaining_transfer_seconds", "remaining_wait_seconds", "evidence"}
+                and all(type(v) in (int, float) and math.isfinite(v) and v >= 0 for k, v in forecast.items() if k != "evidence"),
+                "invalid remaining overhead forecast")
+        reference_bytes(forecast["evidence"], proofs)
+        observed = reference_json(bundle["overhead"], bundle)
+        reference_bytes(observed["evidence"], bundle)
+        # Decision-weighted forecast of the two remaining fixed cases. Past
+        # setup/qualification is reported, not charged again as future work.
+        ratio = sum(CASES[c][4] for c in list(CASES)[2:]) / sum(CASES[c][4] for c in list(CASES)[:2])
+        remaining = batch_value["seconds"] * ratio + sum(v for k, v in forecast.items() if k != "evidence")
+        candidates[placement] = {"bundle": reference, "plan": bundle["plan"], "workers": workers,
+                                 "observed_overhead": observed, "remaining_forecast": forecast,
+                                 "projected_remaining_seconds": remaining}
+    expected = {key for key, value in available.items() if value["eligible"]}
+    require(set(candidates) == expected and expected <= set(HOSTS), "every eligible placement needs completed qualification")
+    for name in expected:
+        inventory(availability_ref, name, proofs)
+    winner = min(candidates, key=lambda key: (candidates[key]["projected_remaining_seconds"], key))
+    result = {"schema": SCHEMA, "availability": availability_ref, "forecast": forecast_ref,
+              "candidates": candidates, "selected": winner, "basis": "measured completed batch and declared remaining overhead",
+              "proofs": {"files": {r["path"]: reference_bytes(r, proofs).decode("utf-8") for r in refs}}}
+    if output is not None:
+        write(output, result)
+    return result
+
+
+def require_selection(plan_ref, selection_ref):
+    selected = reference_json(selection_ref)
+    # Recompute from retained primary receipts; do not trust a chosen host label.
+    rebuilt = select_placement(selected["availability"], [v["bundle"] for v in selected["candidates"].values()],
+                               selected["forecast"], proofs=selected["proofs"])
+    require(rebuilt == selected, "selection differs from primary receipts")
+    require(selected["candidates"][selected["selected"]]["plan"] == plan_ref, "this host/plan was not the fastest qualified placement")
 
 
 def normalized_window(case, label, staging, window):
@@ -378,10 +481,13 @@ def analyze(plan_ref, references, output):
           "windows": windows, "paired_windows": comparisons})
 
 
-def execute(plan_ref, output, stage, qualification_ref=None):
+def execute(plan_ref, output, stage, qualification_ref=None, selection_ref=None):
     plan = load_plan(plan_ref)
     guarded(plan)
-    inventory(plan["availability"], final=stage == "compare")
+    inventory(plan["availability"], plan["placement"])
+    if stage == "compare":
+        require(selection_ref is not None, "comparison requires host selection")
+        require_selection(plan_ref, selection_ref)
     require(not output.exists(), "fresh output directory required")
     output.mkdir(parents=True)
     storage(plan, output)
@@ -405,6 +511,19 @@ def main():
     prep.add_argument("--cores", required=True, help="two worker logical CPUs, comma-separated")
     prep.add_argument("--reserved-cores", required=True, help="worker CPUs and their SMT siblings, comma-separated")
     prep.add_argument("--availability", type=Path, required=True)
+    prep.add_argument("--placement", choices=tuple(HOSTS), default="desktop")
+    prep.add_argument("--remote-root")
+    bundle = sub.add_parser("bundle")
+    bundle.add_argument("--plan", required=True)
+    bundle.add_argument("--sha256", required=True)
+    bundle.add_argument("--qualification", type=Path, required=True)
+    bundle.add_argument("--overhead", type=Path, required=True)
+    bundle.add_argument("--output", type=Path, required=True)
+    select = sub.add_parser("select")
+    select.add_argument("--availability", type=Path, required=True)
+    select.add_argument("--bundle", type=Path, action="append", required=True)
+    select.add_argument("--forecast", type=Path, required=True)
+    select.add_argument("--output", type=Path, required=True)
     for mode in ("execute", "analyze", "_child"):
         p = sub.add_parser(mode)
         p.add_argument("--plan", required=True)
@@ -413,6 +532,7 @@ def main():
         if mode in ("execute", "analyze"):
             if mode == "execute":
                 p.add_argument("--stage", choices=("qualify", "compare"), required=True)
+                p.add_argument("--selection", type=Path)
             else:
                 p.add_argument("--remaining", type=Path, required=True)
             p.add_argument("--qualification", type=Path, required=mode == "analyze")
@@ -423,7 +543,12 @@ def main():
     args = parser.parse_args()
     if args.mode == "prepare":
         print(json.dumps(prepare(args.output.resolve(), [int(x) for x in args.cores.split(",")],
-                                 [int(x) for x in args.reserved_cores.split(",")], args.availability)))
+                                 [int(x) for x in args.reserved_cores.split(",")], args.availability,
+                                 args.placement, args.remote_root)))
+    elif args.mode == "bundle":
+        bundle_qualification({"path": args.plan, "sha256": args.sha256}, pin(args.qualification), pin(args.overhead), args.output)
+    elif args.mode == "select":
+        select_placement(pin(args.availability), [pin(p) for p in args.bundle], pin(args.forecast), args.output)
     elif args.mode == "_child":
         child({"path": args.plan, "sha256": args.sha256}, args.output.resolve(), args.label, args.case, args.core)
     elif args.mode == "analyze":
@@ -435,7 +560,7 @@ def main():
                             (pin(args.remaining), list(CASES)[2:], workers)], args.output)
     else:
         execute({"path": args.plan, "sha256": args.sha256}, args.output.resolve(), args.stage,
-                pin(args.qualification) if args.qualification else None)
+                pin(args.qualification) if args.qualification else None, pin(args.selection) if args.selection else None)
 
 
 if __name__ == "__main__":

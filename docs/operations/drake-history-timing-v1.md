@@ -20,9 +20,9 @@ and `evidence` (`path`, `sha256`) pointing to the current actual resource
 inspection. Include host/core topology, competing work, memory, disk,
 connectivity and relevant spending authority in those evidence files.
 The runner checks evidence pins and freshness. It cannot discover or
-qualify remote placement itself. Final comparison refuses another eligible
-placement until the coordinator has resolved that missing qualification;
-do not mark available capacity ineligible merely to pass the check.
+qualify remote placement itself. Final comparison requires completed
+qualification from every eligible placement. Do not mark available capacity
+ineligible merely to pass the check.
 
 Choose two free logical CPUs of the same performance class on different
 physical cores, using the current host topology and reservation. The
@@ -72,7 +72,7 @@ train 597 and eval 458. This is 16 qualification games plus 8 remaining
 games, not a new strength campaign. No synthetic load or learning occurs.
 
 Each invocation is limited to 1800 seconds, each batch to 7200 seconds,
-each stage to 1 GiB output and at least 60 GiB free space. Guard loss, STOP,
+each stage to 128 MiB output and at least 60 GiB free space. Guard loss, STOP,
 deadline, changed input or failed test aborts the batch and invokes bounded
 job cleanup. Preserve incomplete logs and receipts. Failed or zero-test
 runs never become successful comparison data. `MTG_LIMITED_MATCH_TRACE`
@@ -96,3 +96,45 @@ python -B python/tools/drake_history_timing_v1.py analyze --plan D:/OWNED/plan.j
 
 The pure parser tests do not launch games or acquire host resources.
 Native execution and serial/parallel qualification remain pending.
+
+The v2 plan adds an explicit `--placement desktop|computehost` and portable
+qualification bundles. After each host finishes its serial/parallel batch,
+`bundle --plan PLAN --sha256 SHA --qualification QUAL --overhead OVERHEAD
+--output BUNDLE` retains the exact plan, native logs and hash-bound receipts.
+The overhead JSON records nonoverlapping observed `setup_seconds`,
+`transfer_seconds`, `wait_seconds` and a pinned `evidence` file. Bundles carry
+their primary receipts so copied Windows paths are not followed on another host.
+
+`select --availability INVENTORY --bundle DESKTOP --bundle HALEY --forecast
+FORECAST --output SELECTION` checks identical native inputs, helper hashes,
+winner/decision/hash receipts and each host's completed one/two-worker batches.
+Each eligible host has a forecast with `remaining_setup_seconds`,
+`remaining_transfer_seconds`, `remaining_wait_seconds` and pinned `evidence`.
+Remaining native time uses measured batch seconds scaled by the remaining
+fixed cases' decision counts. This is a forecast, not measured flat-cost proof.
+Selection reports past setup separately and chooses shortest projected remaining
+work, without charging sunk setup twice. `execute --stage compare` additionally
+requires `--selection SELECTION` and rechecks its embedded primary receipts.
+
+Haley uses `drake_history_remote_v1.py` in one dedicated SSH connection.
+An exact manifest binds files in a fresh `C:/mtg-node/codex-drake474-timing-*`
+root. The non-System supervisor's logon-local `D:` points only into its
+`drive-d` directory, reproducing compiled runtime paths. Ordinary children
+retain the token; WMI and a second SSH connection are not used for consumers.
+The wrapper checks token identity and the exact mapping, drains its contained
+children, then removes only the exact definition. Cleanup receipts use C: paths.
+Microsoft documents this scope and exact-match removal in
+[DefineDosDevice](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-definedosdevicea)
+and [DOS-device namespaces](https://learn.microsoft.com/en-us/windows/win32/fileio/defining-an-ms-dos-device-name).
+
+Remote staging plus results is capped at 768 MiB, including at most 256 MiB
+results, with the unchanged 60 GiB disk floor. Before acquisition and during
+work the earlier combined-trainer queue is checked. Free bytes plus our
+reclaimable staging reaching its 65.5 GiB admission threshold stops only our
+work. Its files, waiter and reserve are preserved. `probe` runs only native
+`--list` on one guarded core and checks all four exact filters per binary;
+this does not execute a game or prove the native input consumer ran.
+
+The earlier unexecuted plan `9138114cca0e00f01b9bb506a037eb0772403ed4e7453e672cea30bdd87b712d`
+is superseded. Its no-D-drive rationale was a reversible setup prerequisite,
+not a user restriction. Fresh v2 plans are required before timing.
