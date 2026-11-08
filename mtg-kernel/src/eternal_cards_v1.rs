@@ -396,14 +396,15 @@ pub enum EternalOpV1 {
     P1bV1(crate::eternal_premodern_p1b_v1::P1bOpV1),
     /// A leaf owned by Premodern wave P2a's module.
     P2aV1(crate::eternal_premodern_p2a_v1::P2aOpV1),
-    /// A leaf owned by Premodern wave P2c's module.
-    P2cV1(crate::eternal_premodern_p2c_v1::P2cOpV1),
     /// A leaf owned by Premodern wave P2d's module.
     P2dV1(crate::eternal_premodern_p2d_v1::P2dOpV1),
     /// A leaf owned by Premodern wave P1a's module.
     P1aV1(crate::eternal_premodern_p1a_v1::P1aOpV1),
     /// A leaf owned by Premodern wave P2b's module.
     P2bV1(crate::eternal_premodern_p2b_v1::P2bOpV1),
+    /// A leaf owned by Premodern wave P2c's module. Appended to preserve
+    /// existing stack and continuation hash discriminants.
+    P2cV1(crate::eternal_premodern_p2c_v1::P2cOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it

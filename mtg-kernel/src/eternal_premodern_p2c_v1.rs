@@ -44,6 +44,7 @@ use crate::standard_cards_v1::{StandardOpV1, StandardTargetV1};
 use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Target, Zone};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 
 pub(crate) const PALINCHRON: &str = "Palinchron";
 pub(crate) const TREVAS_RUINS: &str = "Treva's Ruins";
@@ -67,7 +68,7 @@ const SAPROLING_TOKEN: &str = "Saproling Token";
 /// Per-game state for this module's cards, kept inside
 /// `eternal_cards_v1::EternalStateV1`. Default (and absent from snapshots)
 /// until one of these cards needs it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct P2cStateV1 {
     /// Undiscovered Paradise incarnations tapped for mana that return to
@@ -89,6 +90,21 @@ pub struct P2cStateV1 {
     /// Nishoba incarnations that already lost their counter for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nishoba_batch: Option<Vec<ObjectLinkV4>>,
+}
+
+impl Hash for P2cStateV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // An empty extension must leave the enclosing Eternal state's hash
+        // input unchanged.
+        if !self.is_empty() {
+            b"premodern-p2c/v1".hash(state);
+            self.paradise_returns.hash(state);
+            self.petradon_exiled.hash(state);
+            self.life_lands.hash(state);
+            self.devourer_triggered.hash(state);
+            self.nishoba_batch.hash(state);
+        }
+    }
 }
 
 impl P2cStateV1 {

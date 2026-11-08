@@ -289,12 +289,12 @@ pub enum E3ChoiceKindV1 {
     E9aV1(crate::eternal_legacy_e9a_v1::E9aChoiceV1),
     /// A Premodern wave P1b choice (`eternal_premodern_p1b_v1`).
     P1bV1(crate::eternal_premodern_p1b_v1::P1bChoiceV1),
-    /// A Premodern wave P2c choice (`eternal_premodern_p2c_v1`).
-    P2cV1(crate::eternal_premodern_p2c_v1::P2cChoiceV1),
     /// A Premodern wave P2a choice (`eternal_premodern_p2a_v1`).
     P2aV1(crate::eternal_premodern_p2a_v1::P2aChoiceV1),
     /// A Premodern wave P1a choice (`eternal_premodern_p1a_v1`).
     P1aV1(crate::eternal_premodern_p1a_v1::P1aChoiceV1),
+    /// A Premodern wave P2c choice. Appended to preserve existing hashes.
+    P2cV1(crate::eternal_premodern_p2c_v1::P2cChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
