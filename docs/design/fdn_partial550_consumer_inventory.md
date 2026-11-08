@@ -320,15 +320,17 @@ remain pending.
 
 ## Composed source checkpoint (2026-11-08)
 
-The source candidate at `7ba93081503e1cdf8229bdf9950ccd8355453b63` covers
-24 of the 36 Partial booster printings in fourteen finite profiles: Return (3),
+The source candidate at `982840608aefe832b4bf3ee8ed49e110593e08ab` covers
+26 of the 36 Partial booster printings in sixteen finite profiles: Return (3),
 V68-V75 (8), Artist (1), Chosen Type (2), Niv (1), Drakuseth (1),
 Embercleave (1), Zimone (1), Omniscience (1), Tutelage (1), Moon (1), and
-Leyline Axe (1), Progenitus (1), Aberration (1). Twelve original Partial consumer gaps remain. Catalog tiers are unchanged.
+Leyline Axe (1), Progenitus (1), Aberration (1), Lathril (1), and
+Electroduplicate (1). Ten original Partial consumer gaps remain. Catalog tiers are unchanged.
 This is source coverage; the complete composition is not natively qualified.
 
 The additional `fdn-mixed-consumer/v1` owner composes the first twenty
-printings, excluding Moon, Leyline Axe, Progenitus and Aberration. It authenticates every represented native printed
+printings, excluding Moon, Leyline Axe, Progenitus, Aberration, Lathril and
+Electroduplicate. It authenticates every represented native printed
 definition before reset and retains the real declared deck IDs. Its exact
 Mixed capability enables all eight existing appendices together. Its distinct
 observation and candidate schemas require all eight facts; single-family
@@ -380,6 +382,24 @@ indices carry through Human and wire actions. Review of
 paths. Its paid trigger, hidden-suffix, all-zone CDA and restore fixtures are
 unrun. This singleton profile does not authorize Progenitus interactions.
 
+Lathril has its own `fdn-lathril-consumer/v1` profile. Native proposal capture
+binds actual combat token batches, ten-other-Elves tap payments and life
+changes before publication; auxiliary range markers cannot replace those
+actual operations. Nonchooser pending costs remain private. Review of
+`e7993362a6b11d163333a1a3e35d010148c7c030` resolved the paired-marker and
+archived-payment findings, plus the external token-constructor repair. The
+real paid and replacement fixtures and event-kind sample harvest are unrun.
+
+Electroduplicate has its own `fdn-electroduplicate-consumer/v1` profile. Exact
+native cast/target contracts distinguish announcements, finalized casts and
+uncast spell copies. V74 lifecycle receipts and current copied-token facts
+retain copiable haste, each end-step sacrifice instance, complete form and
+counters. The artifact validator cross-checks inherited fields and unique
+cast/token rosters. Review of `ee5586cee` resolved stage-method and duplicate
+row findings. Both-seat paid casting, flashback, copies of copies, sacrifice,
+hidden-pair and restore fixtures remain unrun. These two new profiles still
+need pinned formatting and native qualification.
+
 The composition retains the complete histories for Chosen Type, Niv,
 Drakuseth, Embercleave, Zimone, Omniscience and Tutelage. The latter's new
 native receipt records actual post-replacement mill members and the original
@@ -429,12 +449,14 @@ None of these
 predecessor results qualifies the larger Limited composition.
 
 The next guarded Limited job must first complete a type check and the focused
-consumer fixtures before building all fourteen individual-profile binaries and
+consumer fixtures before building all sixteen individual-profile binaries and
 the Mixed binary. Filters include `limited_mixed_consumer_v1::tests::`,
 `moon_consumer_v1::tests::`, `chosen_type_consumer_v1::tests::`,
 `leyline_axe_consumer_v1::tests::`, `leyline_axe_v1::tests::`,
 `progenitus_consumer_v1::tests::`, `engine::progenitus_v1_tests::`,
 `aberration_consumer_v1::tests::`, `effect::consuming_aberration_v1_tests::`,
+`lathril_consumer_v1::tests::`, `effect::lathril_v1_tests::`,
+`electroduplicate_consumer_v1::tests::`, `effect::electroduplicate_v1_tests::`,
 `rl::complete_copy_prefix_scope_tests::`,
 `niv_consumer_v1::tests::`, `niv_mizzet_public_v63::tests::`,
 `drakuseth_consumer_v1::tests::`, `artist_consumer_v1::tests::`,
