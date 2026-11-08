@@ -253,13 +253,23 @@ fn build_history_parts(
     let own_hand = state.players[acting_player.index()]
         .hand
         .iter()
-        .map(|&id| private_card(state, id, text_mode, false))
+        .map(|&id| private_card(state, id, text_mode, LimitedAppendixV1::Legacy))
         .collect::<Result<Vec<_>>>()?;
     Ok(HistoryParts {
         projection,
         own_hand,
-        known_library_cards: known_library_cards_v4(state, acting_player, text_mode, false)?,
-        known_hand_cards: known_hand_cards_v4(state, acting_player, text_mode, false)?,
+        known_library_cards: known_library_cards_v4(
+            state,
+            acting_player,
+            text_mode,
+            LimitedAppendixV1::Legacy,
+        )?,
+        known_hand_cards: known_hand_cards_v4(
+            state,
+            acting_player,
+            text_mode,
+            LimitedAppendixV1::Legacy,
+        )?,
         known_face_down_cards: known_face_down_cards_v1(state, acting_player, text_mode)?,
     })
 }
@@ -612,7 +622,7 @@ pub(super) fn normalization_common(
                             ));
                         }
                         if seen.insert(id) {
-                            cards.push(private_card(state, id, text_mode, false)?);
+                            cards.push(private_card(state, id, text_mode, LimitedAppendixV1::Legacy)?);
                         }
                     }
                     // Only observable card identity determines class order.
