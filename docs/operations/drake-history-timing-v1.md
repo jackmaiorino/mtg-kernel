@@ -29,12 +29,17 @@ physical cores, using the current host topology and reservation. The
 runner fixes the first case to the first CPU and the second case to the
 second CPU, including during the serial run. Old and new therefore use
 the same core for each case. The coordinator must preserve this placement
-and competing-load envelope when reusing qualification evidence.
+and competing-load envelope when reusing qualification evidence. Reserve
+both worker CPUs and their SMT siblings so another claim cannot share a
+physical core. For desktop worker CPUs `0,2`, the current topology requires
+reserved CPUs `0,1,2,3`. Confirm that topology at placement time. The plan
+pins worker placement separately from the complete reservation; every
+batch receipt binds that exact plan.
 
 Offline preparation, with an existing output parent:
 
 ```text
-python -B python/tools/drake_history_timing_v1.py prepare --output D:/OWNED/plan.json --cores CPU_A,CPU_B --availability D:/OWNED/availability.json
+python -B python/tools/drake_history_timing_v1.py prepare --output D:/OWNED/plan.json --cores 0,2 --reserved-cores 0,1,2,3 --availability D:/OWNED/availability.json
 ```
 
 Preparation pins both known binary hashes, Python, runner/guard sources,
@@ -44,7 +49,8 @@ binary does not redirect its inputs. A changed binary, source helper or
 runtime input invalidates the plan. Preserve those original worktrees.
 
 Execute only under the supported `host_reservation_v1` supervisor, with
-`host_slots_v1.py timed --cores CPU_A,CPU_B --` wrapping the command below.
+`host_slots_v1.py timed --cores 0,1,2,3 --` wrapping the command below,
+matching the plan's complete reservation.
 Use the coordinator's existing supervisor launch procedure. The runner
 requires the live reservation token, supervised ancestry and exact live
 timed declaration. An ordinary slot claim is insufficient for timing.

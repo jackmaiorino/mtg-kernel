@@ -91,10 +91,17 @@ def inventory(reference, *, final=False):
     return value
 
 
-def prepare(path, cores, availability):
-    require(not path.exists(), "plan already exists")
+def validate_placement(cores, reserved_cores):
     require(len(cores) == 2 and len(set(cores)) == 2 and all(type(c) is int and 0 <= c < 64 for c in cores),
-            "choose two distinct eligible logical CPUs")
+            "choose two distinct eligible worker CPUs")
+    require(len(reserved_cores) == len(set(reserved_cores))
+            and all(type(c) is int and 0 <= c < 64 for c in reserved_cores)
+            and set(cores) <= set(reserved_cores), "reserve every worker CPU and its SMT sibling")
+
+
+def prepare(path, cores, reserved_cores, availability):
+    require(not path.exists(), "plan already exists")
+    validate_placement(cores, reserved_cores)
     availability = pin(availability)
     inventory(availability)
     binaries, datasets = {}, []
@@ -109,7 +116,7 @@ def prepare(path, cores, availability):
         datasets.append({name: ref["sha256"] for name, ref in inputs.items()})
         binaries[label] = {"source": source, "binary": executable, "sample": str(sample), "inputs": inputs}
     require(datasets[0] == datasets[1], "old/new runtime inputs differ")
-    plan = {"schema": SCHEMA, "host": platform.node(), "cores": cores,
+    plan = {"schema": SCHEMA, "host": platform.node(), "cores": cores, "reserved_cores": reserved_cores,
             "python": pin(sys.executable), "availability": availability, "binaries": binaries,
             "tools": [pin(__file__), pin(ROOT / "python/tools/host_slots_v1.py"),
                       pin(ROOT / "python/tools/host_reservation_v1.py")],
@@ -128,7 +135,7 @@ def load_plan(reference):
     require(plan["job_seconds"] == 1800 and plan["batch_seconds"] == 7200
             and plan["output_cap_bytes"] == GIB and plan["free_floor_bytes"] == 60 * GIB
             and plan["priority"] == "below_normal", "changed resource bounds")
-    require(len(plan["cores"]) == len(set(plan["cores"])) == 2, "two distinct cores required")
+    validate_placement(plan["cores"], plan["reserved_cores"])
     require(checked(plan["python"]) == Path(sys.executable).resolve(), "different Python")
     require(plan["tools"] == [pin(__file__), pin(ROOT / "python/tools/host_slots_v1.py"),
                               pin(ROOT / "python/tools/host_reservation_v1.py")], "changed runner or guards")
@@ -189,8 +196,8 @@ def guarded(plan):
     timed = slots.timed_state()
     require(timed["held"] and timed.get("token_sha256") == slots.token_hash(token)
             and timed.get("why") == "timed work declared its cores"
-            and set(timed["cores"] or []) == set(plan["cores"])
-            and set(slots.parse_cores(os.environ.get(slots.CORES_ENV, ""))) == set(plan["cores"]),
+            and set(timed["cores"] or []) == set(plan["reserved_cores"])
+            and set(slots.parse_cores(os.environ.get(slots.CORES_ENV, ""))) == set(plan["reserved_cores"]),
             "need the exact two-core timed declaration")
     require(not (Path(plan["binaries"]["new"]["sample"]).parents[2] / "STOP").exists(), "STOP exists")
     return slots
@@ -245,7 +252,7 @@ def batch(plan_ref, root, name, cases, workers):
     # One case per stable lane. The serial and parallel modes use the SAME
     # physical core for each case, and old/new always share that core.
     lanes = [[(label, case) for label in ("old", "new")] for case in cases]
-    tree = slots.Tree(plan["cores"], "below_normal")
+    tree = slots.Tree(plan["reserved_cores"], "below_normal")
     running, finished = {}, []
     started = time.monotonic()
     result = {"plan": plan_ref, "workers": workers, "cases": cases, "jobs": [], "complete": False}
@@ -395,7 +402,8 @@ def main():
     sub = parser.add_subparsers(dest="mode", required=True)
     prep = sub.add_parser("prepare")
     prep.add_argument("--output", type=Path, required=True)
-    prep.add_argument("--cores", required=True, help="two logical CPUs, comma-separated")
+    prep.add_argument("--cores", required=True, help="two worker logical CPUs, comma-separated")
+    prep.add_argument("--reserved-cores", required=True, help="worker CPUs and their SMT siblings, comma-separated")
     prep.add_argument("--availability", type=Path, required=True)
     for mode in ("execute", "analyze", "_child"):
         p = sub.add_parser(mode)
@@ -414,7 +422,8 @@ def main():
             p.add_argument("--core", type=int, required=True)
     args = parser.parse_args()
     if args.mode == "prepare":
-        print(json.dumps(prepare(args.output.resolve(), [int(x) for x in args.cores.split(",")], args.availability)))
+        print(json.dumps(prepare(args.output.resolve(), [int(x) for x in args.cores.split(",")],
+                                 [int(x) for x in args.reserved_cores.split(",")], args.availability)))
     elif args.mode == "_child":
         child({"path": args.plan, "sha256": args.sha256}, args.output.resolve(), args.label, args.case, args.core)
     elif args.mode == "analyze":
