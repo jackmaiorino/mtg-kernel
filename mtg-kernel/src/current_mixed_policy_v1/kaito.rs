@@ -10,6 +10,9 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
+mod full_pool_sampler_tests;
+
 pub struct KaitoSession {
     inner: KaitoSessionV75,
     owner: Arc<()>,
