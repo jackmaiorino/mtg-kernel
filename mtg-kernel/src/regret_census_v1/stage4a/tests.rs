@@ -2242,3 +2242,135 @@ fn value_leaf_refuses_undefined_combinations() {
     let (sel, _) = roles.select_e_options(&ctx, None, 1, None, None, None, &options);
     assert!(sel.incomplete && sel.attempted == 0);
 }
+
+/// One plain E search (EX1's selection settings) at `session` with `n`
+/// attempted simulations under an explicit SD1 world lifecycle.
+fn world_search(
+    session: &crate::rl_session::FastActorSessionV1,
+    prior: &world::DeckPrior,
+    world_mode: Option<world::WorldMode>,
+    n: u64,
+) -> (arms::Selection, tree::Tree) {
+    let mut roles = Roles {
+        focal: fixture(),
+        opps: vec![fixture()],
+        scorer: fixture(),
+        inner_focal: fixture(),
+        inner_opps: vec![fixture()],
+    };
+    let seeds = RootSeeds {
+        model: "fixture".into(),
+        root: "sd1-world-fixture".into(),
+    };
+    let ctx = RootCtx {
+        visible_history: &[],
+        root: session,
+        d: play::decision(session).unwrap(),
+        focal: play::acting(&play::decision(session).unwrap()),
+        opp: 0,
+        seeds: &seeds,
+        prior,
+        defs: spy_defs(),
+        cast_root: false,
+        probs: Vec::new(),
+        limits: Limits {
+            select_cap: n * 2_000,
+            eval_worlds: 1,
+            eval_cap: 1,
+        },
+        urgency: Some(1.5),
+        key_mode: super::canon2::KeyMode::Legacy,
+        interchange: false,
+        bestline: None,
+    };
+    let options = root_allocation::SearchOptions {
+        work_limit: Some(n),
+        world: world_mode,
+        ..root_allocation::SearchOptions::default()
+    };
+    roles.select_e_options(&ctx, None, 1, None, None, None, &options)
+}
+
+fn world_primary(sel: &arms::Selection, tree: &tree::Tree) -> serde_json::Value {
+    let root = value_leaf::root(tree).map(|r| (r.n.clone(), r.wins.clone(), r.draws.clone()));
+    serde_json::json!({"attempted":sel.attempted,"completed":sel.completed,"nonnatural":sel.nonnatural,
+        "transitions":sel.transitions,"inference":sel.inference,"incomplete":sel.incomplete,
+        "faults":sel.faults,"sampler":sel.sampler.json(),"extra":sel.extra,"nodes":tree.nodes.len(),
+        "root":root})
+}
+
+/// SD1 E1: an explicit `fresh` world is the default search exactly (no
+/// receipt is added), and `true-v1` and `pinned-v1` repeat exactly, carry
+/// their receipts, and sample as declared (none for `true-v1`, the pinned
+/// tree's accepted sample and its rejections for `pinned-v1`).
+#[test]
+fn sd1_world_modes_repeat_and_fresh_is_the_default() {
+    let (session, prior) = value_leaf_root();
+    let (a, ta) = world_search(&session, &prior, None, 24);
+    let (b, tb) = world_search(&session, &prior, Some(world::WorldMode::Fresh), 24);
+    assert!(a.faults.is_empty() && !a.incomplete, "{:?}", a.faults);
+    assert_eq!(world_primary(&a, &ta), world_primary(&b, &tb));
+    assert!(a.extra.get("world").is_none());
+    assert_eq!(a.sampler.ok + a.sampler.rejected, a.attempted);
+    for mode in [world::WorldMode::TrueV1, world::WorldMode::PinnedV1] {
+        let (x, tx) = world_search(&session, &prior, Some(mode), 24);
+        let (y, ty) = world_search(&session, &prior, Some(mode), 24);
+        assert!(
+            x.faults.is_empty() && !x.incomplete,
+            "{mode:?}: {:?}",
+            x.faults
+        );
+        assert_eq!(world_primary(&x, &tx), world_primary(&y, &ty), "{mode:?}");
+        assert_eq!(x.extra["world"]["mode"], mode.label());
+        assert!(x.completed > 0, "{mode:?}");
+        match mode {
+            world::WorldMode::TrueV1 => assert_eq!(x.sampler.ok + x.sampler.rejected, 0),
+            _ => {
+                let attempts = x.extra["world"]["pinned_attempts"].as_u64().unwrap();
+                assert_eq!(x.sampler.ok, 1);
+                assert_eq!(x.sampler.rejected + 1, attempts);
+                assert_eq!(
+                    x.extra["world"]["pinned_ordinal"].as_u64().unwrap() + 1,
+                    attempts
+                );
+            }
+        }
+    }
+}
+
+/// SD1 E1: a `true-v1` (or pinned) simulation world keeps every object,
+/// zone and library order of its base and changes only the future engine
+/// randomness, which differs between simulation seeds.
+#[test]
+fn sd1_fresh_future_world_keeps_hidden_state_and_replaces_randomness() {
+    let (session, prior) = value_leaf_root();
+    let pinned = world::sample(&session, 7, &prior).unwrap().world;
+    for base in [&session, &pinned] {
+        let x = world::fresh_future_world(base, 11);
+        let y = world::fresh_future_world(base, 12);
+        let (b, sx, sy) = (base.game_state(), x.game_state(), y.game_state());
+        for st in [sx, sy] {
+            for p in 0..2 {
+                assert_eq!(st.players[p].library, b.players[p].library);
+                assert_eq!(st.players[p].hand, b.players[p].hand);
+            }
+            let defs = |g: &crate::state::GameState| {
+                g.objects
+                    .iter()
+                    .map(|(id, o)| (id, o.card_def, o.zone))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(defs(st), defs(b));
+        }
+        let ser = |g: &crate::state::GameState| serde_json::to_string(g).unwrap();
+        assert_ne!(ser(sx), ser(sy), "the two simulation streams must differ");
+        assert_eq!(
+            ser(sx),
+            ser(world::fresh_future_world(base, 11).game_state())
+        );
+        assert_eq!(
+            play::decision(&x).map(|d| d.legal_action_count),
+            play::decision(base).map(|d| d.legal_action_count)
+        );
+    }
+}

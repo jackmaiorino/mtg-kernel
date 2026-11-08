@@ -25,6 +25,9 @@ pub(crate) struct SearchOptions {
     pub(crate) key_memo: Option<Option<usize>>,
     /// Opt-in value-leaf search (`value_leaf.rs`); None keeps E unchanged.
     pub(crate) value_leaf: Option<super::value_leaf::ValueLeafV1>,
+    /// SD1's world lifecycle for E's selection (`world::WorldMode`). `None`
+    /// reads `S4A_WORLD`, whose absence is the default `Fresh` (unchanged).
+    pub(crate) world: Option<super::world::WorldMode>,
 }
 
 #[derive(Default)]

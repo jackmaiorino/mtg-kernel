@@ -381,6 +381,70 @@ pub(crate) fn sample_recorded(
     })
 }
 
+/// SD1's opt-in world lifecycle for E's selection simulations (collab
+/// LANES/search-diagnostic-20261108/DESIGN.md v4 section 3.1, E1). Every mode
+/// installs fresh future engine randomness per simulation, derived from the
+/// simulation's seed exactly as `FutureChanceV3` derives it; they differ only
+/// in the hidden state each simulation starts from.
+///
+/// - `Fresh` (unset, the default): one lawful sample per simulation
+///   (`sample_recorded`), byte for byte the existing behavior.
+/// - `TrueV1` (`true-v1`, omniscient diagnostic, never deployable): the
+///   realized root state with no redeterminization (both libraries keep their
+///   realized order, the opponent's hand and deck are the real ones).
+/// - `PinnedV1` (`pinned-v1`): one lawful `FutureChanceV3` sample per tree
+///   (the first accepted sample among the tree's pinned seed ordinals) pins
+///   the opponent's hidden state and both library orders, our own draws
+///   included; each simulation replaces the future randomness only.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum WorldMode {
+    #[default]
+    Fresh,
+    TrueV1,
+    PinnedV1,
+}
+
+/// The environment switch for processes that cannot pass the mode per
+/// search (SD1's game harness): unset keeps `Fresh`.
+pub(crate) const WORLD_ENV: &str = "S4A_WORLD";
+
+impl WorldMode {
+    pub(crate) fn parse(text: &str) -> Result<Self, String> {
+        match text {
+            "fresh" => Ok(Self::Fresh),
+            "true-v1" => Ok(Self::TrueV1),
+            "pinned-v1" => Ok(Self::PinnedV1),
+            other => Err(format!(
+                "{WORLD_ENV}: unknown world mode {other:?} (fresh, true-v1, pinned-v1)"
+            )),
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Fresh => "fresh",
+            Self::TrueV1 => "true-v1",
+            Self::PinnedV1 => "pinned-v1",
+        }
+    }
+
+    /// The process setting: `S4A_WORLD` unset is `Fresh`.
+    pub(crate) fn from_env() -> Result<Self, String> {
+        match std::env::var(WORLD_ENV) {
+            Err(std::env::VarError::NotPresent) => Ok(Self::Fresh),
+            Err(e) => Err(format!("{WORLD_ENV}: {e}")),
+            Ok(v) => Self::parse(&v),
+        }
+    }
+}
+
+/// One simulation's world under a non-default mode: a clone of `base` (the
+/// realized root for `TrueV1`, the tree's pinned sample for `PinnedV1`) with
+/// the future randomness `FutureChanceV3` would derive from `seed`.
+pub(crate) fn fresh_future_world(base: &FastActorSessionV1, seed: u64) -> FastActorSessionV1 {
+    base.kernel_clone_with_future_randomness_v1(crate::rl_session::future_chance_seed_v3(seed))
+}
+
 #[cfg(test)]
 mod lembas_tests;
 

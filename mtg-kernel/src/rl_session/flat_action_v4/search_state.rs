@@ -309,7 +309,29 @@ fn validate_library_origin_candidates_v4(
     Ok(())
 }
 
+/// The future-chance stream `FutureChanceV3` installs for a sample `seed`:
+/// the first eight bytes (little-endian) of
+/// SHA256("mtg-kernel/v4-search-future-chance/v3\0" || seed LE).
+pub(crate) fn future_chance_seed_v3(seed: u64) -> u64 {
+    let mut hash = Sha256::new();
+    hash.update(b"mtg-kernel/v4-search-future-chance/v3\0");
+    hash.update(seed.to_le_bytes());
+    let bytes = hash.finalize();
+    u64::from_le_bytes(bytes[..8].try_into().expect("eight digest bytes"))
+}
+
 impl FastActorSessionV1 {
+    /// SD1 (opt-in, never on a default path): a clone of this session whose
+    /// hidden state is kept exactly as it is (no redeterminization) and whose
+    /// future engine randomness is replaced by the stream `future` seeds
+    /// (`resample_future_randomness_for_search_v3`). Nothing the actor
+    /// observes changes, so the live decision and its candidates stay valid.
+    pub(crate) fn kernel_clone_with_future_randomness_v1(&self, future: u64) -> Self {
+        let mut copy = self.clone();
+        copy.state.resample_future_randomness_for_search_v3(future);
+        copy
+    }
+
     #[cfg(test)]
     pub(crate) fn kernel_search_redeterminized_clone_v4(&self, seed: u64) -> Result<Self, Error> {
         self.search_clone_v4_inner(seed, |_, _| {})
@@ -423,12 +445,8 @@ impl FastActorSessionV1 {
         if mode == V4SearchSampleMode::FutureChanceV3 {
             // `seed` already derives from visible root, experiment and
             // simulation ordinal. Separate future chance from hidden-pool RNG.
-            let mut hash = Sha256::new();
-            hash.update(b"mtg-kernel/v4-search-future-chance/v3\0");
-            hash.update(seed.to_le_bytes());
-            let bytes = hash.finalize();
-            let future = u64::from_le_bytes(bytes[..8].try_into().expect("eight digest bytes"));
-            copy.state.resample_future_randomness_for_search_v3(future);
+            copy.state
+                .resample_future_randomness_for_search_v3(future_chance_seed_v3(seed));
         }
         after_sample(&mut copy.state, actor)?;
         let mut current = copy.current.take().ok_or(Error::NoLiveDecision)?;
