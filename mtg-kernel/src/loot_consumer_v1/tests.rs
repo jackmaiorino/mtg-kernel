@@ -133,6 +133,17 @@ fn paid_private_look_preserves_numeric_human_wire_indices_and_random_bottom_both
         assert!(public::capture(&state, actor.opponent()).unwrap().abilities.iter().all(|row| row.choice.is_none()));
         let index = backend.candidates_v75().candidates.iter().position(|row|
             row.loot_action == Some(ActionV1::ChooseCreature)).unwrap() as u32;
+        let mut forged = backend.candidates_v75().candidates[index as usize].action.clone();
+        if let Action::ChooseEffectTarget { source, .. } = &mut forged { source.zone_change_count += 1; }
+        assert!(action(Some(facts), &forged).is_err());
+        // Native departure setup isolates the retained original source binding.
+        // The look itself was paid through the real cast and activation above.
+        let mut source_departed = state.clone();
+        crate::event::propose_and_commit(&mut source_departed, crate::event::ProposedEvent::zone_change(source, Zone::Exile));
+        let departed_owner = KaitoSession::from_session(fixture(&source_departed)).unwrap();
+        let departed_decision = decision(&departed_owner);
+        assert!(departed_decision.fixture_backend_v75().candidates_v75().candidates.iter()
+            .any(|row| row.loot_action == Some(ActionV1::ChooseCreature)));
         let selected = choice.legal[0].object;
         let expected = backend.expected();
         let prompt = projector.project_current(&human, expected).unwrap();

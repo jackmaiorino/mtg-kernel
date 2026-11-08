@@ -166,7 +166,7 @@ pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<
     };
     if source.card_db_id != PRINTING { return Ok(None); }
     let ability = facts.abilities.iter().find(|ability| ability.choice.is_some()
-        && ability.source.original_source.object == source.arena_id)
+        && binds(&ability.source.original_source, source))
         .ok_or("Loot private action lost its native ability")?;
     let choice = ability.choice.as_ref().unwrap();
     if *actor != facts.viewer || *actor != choice.chooser || usize::from(*selected_count) != choice.selected.len() {
