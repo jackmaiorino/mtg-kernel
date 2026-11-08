@@ -287,6 +287,47 @@ mod tests {
     }
 
     #[test]
+    fn reveal_meaning_v3_concealed_exile_return_respects_each_viewers_look_permission() {
+        for owner in [PlayerId::P0, PlayerId::P1] {
+            for other_can_look in [false, true] {
+                for name in ["Swamp", "Forest"] {
+                    let mut state = empty();
+                    let card = put(&mut state, owner, name, Zone::Library);
+                    assert_eq!(state.players[owner.index()].library.pop(), Some(card));
+                    state.exile.push(card);
+                    state.objects.get_mut(card).zone = Zone::Exile;
+                    state.objects.get_mut(card).v4.face_down_v1 = Some(FaceDownV1 {
+                        disguised: false,
+                        lookers: if other_can_look {
+                            3
+                        } else {
+                            1 << owner.index()
+                        },
+                        hidden_by: None,
+                        hidden_by_source: None,
+                    });
+                    propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Hand));
+                    assert!(state.objects.get(card).v4.face_down_v1.is_none());
+                    assert!(state.players[owner.index()].hand.contains(&card));
+                    assert_eq!(
+                        crate::card_def::CARD_DEFS[usize::from(state.objects.get(card).card_def)]
+                            .name,
+                        name
+                    );
+                    assert!(state.known_hand_cards(owner, owner).is_empty());
+                    assert_eq!(
+                        state.known_hand_cards(owner.opponent(), owner).len(),
+                        usize::from(other_can_look),
+                    );
+                    // Look permission preserves a private fact; the concealed
+                    // move is still not a public named arrival in V3.
+                    assert_eq!(operations(&state, owner.opponent()), json!([]));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn reveal_meaning_v3_aborted_face_up_cast_exports_real_stack_return() {
         use crate::engine::{self, Action, Decision};
         use crate::mana::ManaColor;

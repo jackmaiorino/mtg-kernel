@@ -169,6 +169,7 @@ fn v2_face_down_exile_to_hidden_zones_never_reveals_the_name() {
             hidden_move(st, departed, Zone::Exile, false);
             let index = st.engine.event_history.len();
             propose_and_commit(st, ProposedEvent::zone_change(departed, to));
+            assert!(st.known_hand_cards(PlayerId::P1, PlayerId::P0).is_empty());
             assert_eq!(
                 st.observation_journal.visibility_v2(index, departed),
                 Some(1)

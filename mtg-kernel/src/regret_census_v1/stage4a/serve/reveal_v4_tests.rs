@@ -67,6 +67,28 @@ fn repeated_reveal(
     (live, PayloadV1::from_bytes(&payload.to_bytes()).unwrap())
 }
 
+fn assert_capped_without_pick(result: &TreeResultV1, payload: &PayloadV1, width: usize) {
+    assert_eq!(result.transitions, 8, "{result:?}");
+    assert!(result.cap_reached, "{result:?}");
+    assert!(result.edges.is_none(), "{result:?}");
+    // A worker can finish its budget without a terminal-backed root node.
+    // The real pool merger must exclude it and cannot fabricate an action.
+    let merged = merge_v1(
+        "capped-v4",
+        8,
+        1,
+        &payload.sha256,
+        &result.menu_sha256,
+        width,
+        std::slice::from_ref(result),
+    );
+    assert!(merged.incomplete);
+    assert_eq!(merged.excluded, vec![result.tree]);
+    assert_eq!(merged.pick, None);
+    assert_eq!(merged.units, 8);
+    assert_eq!(merged.charge, 9);
+}
+
 #[test]
 fn reveal_v4_request_import_sample_and_worker_use_public_minima_both_seats() {
     let policy = FrozenPlayPolicyV1::training_fixture_v4();
@@ -120,7 +142,7 @@ fn reveal_v4_request_import_sample_and_worker_use_public_minima_both_seats() {
         );
         assert!(result.faults.is_empty(), "{result:?}");
         assert_eq!(result.menu_sha256, menu_sha256(&imported).unwrap());
-        assert_eq!(result.edges.as_ref().unwrap().len(), keys.len());
+        assert_capped_without_pick(&result, &payload, keys.len());
         let replay = worker_answer_v4(&policy, true, &request);
         assert_eq!(first["result"]["digest"], replay["result"]["digest"]);
         let land = imported
@@ -157,9 +179,11 @@ fn reveal_v4_request_import_sample_and_worker_use_public_minima_both_seats() {
             "{continued}"
         );
         assert_eq!(continued["result"]["faults"], json!([]), "{continued}");
-        assert_eq!(
-            continued["result"]["edges"].as_array().unwrap().len(),
-            decision(&later).unwrap().legal_action_count as usize
+        let continued: TreeResultV1 = serde_json::from_value(continued["result"].clone()).unwrap();
+        assert_capped_without_pick(
+            &continued,
+            &payload,
+            decision(&later).unwrap().legal_action_count as usize,
         );
         let refused = worker_answer_v4(&policy, false, &request);
         assert_eq!(refused["ok"], false);
@@ -174,6 +198,82 @@ fn reveal_v4_request_import_sample_and_worker_use_public_minima_both_seats() {
             .as_str()
             .unwrap()
             .contains("outside the menu"));
+    }
+}
+
+#[test]
+fn reveal_v4_worker_terminal_backup_and_pool_pick_keep_live_indices() {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::{Step, Zone};
+
+    let policy = FrozenPlayPolicyV1::training_fixture_v4();
+    for viewer in [PlayerId::P0, PlayerId::P1] {
+        let template = new_game(["Faeries", "Faeries"], 543, viewer);
+        let mut state = template.game_state().clone();
+        // Construct a near-terminal position: only lands in hand, no permanents,
+        // and the next player's library has been exhausted. Passing or playing
+        // a land reaches the real draw-loss rule without a long game rollout.
+        for seat in [viewer, viewer.opponent()] {
+            force_deal(&mut state, seat, &["Island"; 7], &[]);
+            state.players[seat.index()].mana_pool.fill(0);
+        }
+        state.step = Step::Main2;
+        state.reveal_meaning_v3.enable();
+        let library = state.players[viewer.opponent().index()].library.clone();
+        for card in library {
+            propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(card, Zone::Graveyard),
+            );
+        }
+        let live = restart(&template, state);
+        let deck = RUNTIME_DECKS.iter().find(|d| d.id == "Faeries").unwrap();
+        let exported = export_reveal_v4(&ExportInputV1 {
+            state: live.game_state(),
+            journal: live.game_state().observation_journal.notes(),
+            viewer,
+            decklists: [deck.card_ids, deck.card_ids],
+            marks: None,
+        })
+        .unwrap();
+        let payload = PayloadV1::new(&exported, &live, viewer, 0).unwrap();
+        let imported = import_at_v1(&payload, &[]).unwrap();
+        let ids = crate::infoset_v1::order::imported_ids_v1(&payload.handles);
+        let keys = crate::infoset_v1::order::row_keys_v1(&imported, Some(&ids)).unwrap();
+        assert!(keys.len() > 1);
+        let request = json!({"root_id":format!("v4-terminal/{}", viewer.0),
+            "tree":0, "units":32, "payload":payload, "path":[]})
+        .to_string();
+        let answer = worker_answer_v4(&policy, true, &request);
+        assert_eq!(answer["ok"], true, "{answer}");
+        let result: TreeResultV1 = serde_json::from_value(answer["result"].clone()).unwrap();
+        assert!(result.faults.is_empty(), "{result:?}");
+        assert_eq!(result.menu_sha256, menu_sha256(&imported).unwrap());
+        let edges = result
+            .edges
+            .as_ref()
+            .expect("natural draw loss must back up the root");
+        assert_eq!(edges.len(), keys.len());
+        assert!(edges.iter().any(|edge| edge.n > 0));
+        assert!(edges
+            .iter()
+            .all(|edge| edge.wins == edge.n && edge.draws == 0));
+        let merged = merge_v1(
+            "v4-terminal",
+            32,
+            1,
+            &payload.sha256,
+            &result.menu_sha256,
+            keys.len(),
+            std::slice::from_ref(&result),
+        );
+        assert!(!merged.incomplete);
+        assert!(merged.excluded.is_empty());
+        let picked = merged.pick.expect("terminal-backed counts produce a pick");
+        assert!(picked < keys.len());
+        assert_eq!(merged.merged[picked], edges[picked]);
+        let replay = worker_answer_v4(&policy, true, &request);
+        assert_eq!(answer["result"]["digest"], replay["result"]["digest"]);
     }
 }
 

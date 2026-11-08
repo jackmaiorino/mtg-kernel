@@ -95,8 +95,24 @@ fn reveal_v4_roundtrip_continuation_matches_the_public_reducer() {
         raw.players[owner.index()].hand[0],
         raw.players[owner.index()].hand[1],
     ];
+    let mut sequential = raw.clone();
+    for card in revealed {
+        propose_and_commit(
+            &mut sequential,
+            ProposedEvent::zone_change(card, Zone::Graveyard),
+        );
+        propose_and_commit(
+            &mut sequential,
+            ProposedEvent::zone_change(card, Zone::Hand),
+        );
+    }
     for card in revealed {
         propose_and_commit(&mut raw, ProposedEvent::zone_change(card, Zone::Graveyard));
+    }
+    // Two public arrivals with no intervening hand departure establish two
+    // copies. Interleaved departure/return pairs establish only a minimum of
+    // one: a later same-name departure may consume the earlier arrival.
+    for card in revealed {
         propose_and_commit(&mut raw, ProposedEvent::zone_change(card, Zone::Hand));
     }
 
@@ -119,6 +135,8 @@ fn reveal_v4_roundtrip_continuation_matches_the_public_reducer() {
         assert_eq!(simulated_rows, reducer.hand(owner));
         assert_eq!(simulated_rows.get(&swamp).copied().unwrap_or(0), swamps);
     };
+    let sequential_export = export_reveal_v4(&input(&sequential, viewer, &decks)).unwrap();
+    compare(&sequential, &sequential_export.state, 1);
     compare(&raw, &simulated, 2);
     for game in [&mut raw, &mut simulated] {
         let shown: Vec<_> = game.players[owner.index()]
@@ -159,7 +177,7 @@ fn reveal_v4_real_aborted_cast_refills_by_public_name_in_paired_worlds() {
     let spell_def = id("Cast Down");
     let island = id("Island");
     let forest = id("Forest");
-    let target_def = id("Aegis Turtle");
+    let target_def = id("Gurmag Angler");
     let owner = PlayerId::P0;
     let viewer = owner.opponent();
     let decks = [
