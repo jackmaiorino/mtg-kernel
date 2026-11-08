@@ -44,7 +44,7 @@ reusable evidence only for the mechanics they actually exercise.
 | Quilled Greatwurm | Native: effect/greatwurm_v1 | Complete stack; original combat amount and graveyard six-counter payment across exact permanents |
 | Sphinx of Forgotten Lore | Native: effect/sphinx_lore_v1 | Complete stack; original attack target, temporary flashback grant and actual cast/payment route |
 | Omniscience | Native: engine/omniscience_cast_v1 | Complete stack; optional free hand casting and its restrictions, original route and remaining costs |
-| Abyssal Harvester | Native: effect/harvester_v1 | Complete stack; this-turn graveyard eligibility, exact exile, Nightmare copy and other-token exile batch |
+| Abyssal Harvester | Appendix: harvester_public_v1 | Finite owner, Human, JSONL and sealed numeric source. This-turn graveyard eligibility and actual tap, Nightmare births and replacement-aware departures. Native qualification and event-sample harvest pending |
 | Progenitus | Native: progenitus_v1 | Complete stack; protection from everything and actual reveal/shuffle replacement from hidden and public zones |
 | Etali, Primal Storm | Native: resolution-play and etali tests | Complete stack; simultaneous top exile and optional repeated free casting during resolution |
 | Leyline Axe | Native: leyline_axe_v1 | Complete stack; kept-hand pregame choice and actual entry/equip/host effects |

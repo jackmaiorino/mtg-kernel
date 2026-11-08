@@ -10679,7 +10679,8 @@ fn private_card(
                 && crate::progenitus_v1::definition(o.card_def))
                 || (appendix != LimitedAppendixV1::LeylineAxe
                     && crate::leyline_axe_v1::definition(o.card_def))
-                || crate::effect::harvester_v1::definition(o.card_def)
+                || (appendix != LimitedAppendixV1::Harvester
+                    && crate::effect::harvester_v1::definition(o.card_def))
                 || (!appendix.includes(LimitedAppendixV1::Omniscience)
                     && crate::engine::omniscience_cast_v1::definition(o.card_def))
                 || crate::effect::sphinx_lore_v1::definition(o.card_def)

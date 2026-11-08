@@ -212,6 +212,15 @@ impl FastActorSessionV1 {
         Self::initialize_limited_consumer_v1(config, reveal_facts, LimitedAppendixV1::Curator)
     }
 
+    pub(crate) fn reset_limited_harvester_v1(
+        config: &crate::harvester_consumer_v1::ResetV1,
+        reveal_facts: bool,
+    ) -> Result<Self, RlSessionError> {
+        crate::harvester_consumer_v1::preflight(config)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        Self::initialize_limited_consumer_v1(config, reveal_facts, LimitedAppendixV1::Harvester)
+    }
+
     fn initialize_limited_consumer_v1(
         config: &crate::limited_consumer_wire_v1::ResetV1,
         reveal_facts: bool,
@@ -231,6 +240,7 @@ impl FastActorSessionV1 {
             state.reveal_knowledge_v4 = Some(Default::default());
         }
         state.curator_unordered_reveal_v1 = appendix == LimitedAppendixV1::Curator;
+        state.harvester_commit_receipts_v1 = appendix == LimitedAppendixV1::Harvester;
         Self::initialize_kaito_consumer_v1(
             config.episode_id,
             (config.max_physical_decisions, config.max_policy_steps),

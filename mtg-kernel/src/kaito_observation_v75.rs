@@ -107,6 +107,8 @@ pub struct KaitoObservationV75 {
     pub curator: Option<crate::curator_public_v1::FactsV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kykar: Option<crate::kykar_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harvester: Option<crate::harvester_public_v1::FactsV1>,
     pub complete_ordinary_observation: bool,
     pub owning_consumer_admitted: bool,
     pub projection_sha256: String,
@@ -167,6 +169,8 @@ pub fn producer_sha256() -> String {
             include_str!("edict_receipts_v1.rs"),
             include_str!("curator_public_v1.rs"),
             include_str!("curator_receipts_v1.rs"),
+            include_str!("harvester_public_v1.rs"),
+            include_str!("harvester_receipts_v1.rs"),
             include_str!("drakuseth_consumer_v1.rs"),
             include_str!("drakuseth_consumer_v1/damage.rs"),
             include_str!("human_bo3_v1/drakuseth_consumer_v1.rs"),
@@ -311,6 +315,11 @@ pub(crate) fn validate_state_scoped(
     } else if state.curator_unordered_reveal_v1 {
         return Err("Curator unordered reveal requires its distinct owning profile".into());
     }
+    if appendix == LimitedAppendixV1::Harvester {
+        crate::harvester_public_v1::validate_native(state)?;
+    } else if state.harvester_commit_receipts_v1 {
+        return Err("Harvester native receipts require its distinct owning profile".into());
+    }
     crate::ravenous_observation_v51::validate_state_complete_recipient_scope(
         state,
         crate::planeswalker_v1::RecipientScopeV1::KaitoV75,
@@ -364,6 +373,7 @@ fn require_supported(
         LimitedAppendixV1::Loot => Some(crate::loot_public_v1::selected_id()?),
         LimitedAppendixV1::Curator => Some(crate::curator_public_v1::selected_id()?),
         LimitedAppendixV1::Kykar => Some(crate::kykar_public_v1::selected_id()?),
+        LimitedAppendixV1::Harvester => Some(crate::harvester_public_v1::selected_id()?),
     };
     let unsupported = |id: u16| {
         id >= 460
@@ -467,6 +477,10 @@ fn require_supported(
             | E::CuratorFinishedV1 { .. }
             | E::CuratorProgressV1 { .. }
             | E::CuratorReceiptV1 { .. } => appendix != LimitedAppendixV1::Curator,
+            E::HarvesterCommitReceiptV1 { .. }
+            | E::HarvesterResolvedV1 { .. }
+            | E::NightmareCopyEnteredV1 { .. }
+            | E::NightmareCopyLayerV1 { .. } => appendix != LimitedAppendixV1::Harvester,
             E::KykarExiledV1 { .. }
             | E::KykarDelayedCollectedV1 { .. } => appendix != LimitedAppendixV1::Kykar,
 
@@ -520,6 +534,8 @@ fn captured_reference(
             || source.card_def == crate::drakuseth_consumer_v1::PRINTING_V1
             || state.curator_unordered_reveal_v1
                 && source.card_def == crate::curator_public_v1::PRINTING
+            || state.harvester_commit_receipts_v1
+                && source.card_def == crate::harvester_public_v1::PRINTING
         {
             source.card_def
         } else {
@@ -614,6 +630,9 @@ pub(crate) fn stack_source_reference(
     let curator = state.curator_unordered_reveal_v1
         && source.card_def == crate::curator_public_v1::PRINTING
         && matches!(item.inline_effect, Some(crate::effect::EffectOp::CuratorDestiniesV1 { .. }));
+    let harvester = state.harvester_commit_receipts_v1
+        && source.card_def == crate::harvester_public_v1::PRINTING
+        && crate::harvester_receipts_v1::selected(item);
     let kykar = crate::effect::kykar_v1::item_selected(state, item);
     if !selected_source(source)
         && !kykar
@@ -624,6 +643,7 @@ pub(crate) fn stack_source_reference(
         && !zimone_counters
         && !tutelage
         && !curator
+        && !harvester
     {
         return Ok(None);
     }
@@ -791,6 +811,7 @@ pub(crate) fn observe_parts_v75(
             LimitedAppendixV1::Loot => crate::loot_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Curator => crate::curator_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Kykar => crate::kykar_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Harvester => crate::harvester_consumer_v1::OBSERVATION_SCHEMA,
         }
         .into(),
         producer_sha256: producer_sha256(),
@@ -955,6 +976,10 @@ pub(crate) fn observe_parts_v75(
         kykar: (appendix == LimitedAppendixV1::Kykar)
             .then(|| crate::kykar_public_v1::capture(state, actor_and_origin.0))
             .transpose().map_err(RlContractError)?,
+        harvester: (appendix == LimitedAppendixV1::Harvester)
+            .then(|| crate::harvester_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1))
+            .transpose()
+            .map_err(RlContractError)?,
         complete_ordinary_observation: true,
         owning_consumer_admitted: false,
         projection_sha256: String::new(),
@@ -996,8 +1021,9 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
         &value.loot,
         &value.curator,
         &value.kykar,
+        &value.harvester,
     ) {
-        (Some(artist), Some(niv), Some(chosen), Some(drakuseth), Some(embercleave), Some(zimone), Some(omniscience), Some(tutelage), None, None, None, None, None, None, None, None, None, None) if value.schema == crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA => {
+        (Some(artist), Some(niv), Some(chosen), Some(drakuseth), Some(embercleave), Some(zimone), Some(omniscience), Some(tutelage), None, None, None, None, None, None, None, None, None, None, None) if value.schema == crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA => {
             crate::artist_consumer_v1::validate_facts(artist, actor).map_err(RlContractError)?;
             crate::niv_consumer_v1::validate_facts(niv, actor).map_err(RlContractError)?;
             crate::chosen_type_consumer_v1::validate_facts(chosen, actor)
@@ -1013,85 +1039,89 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
                 .map_err(RlContractError)?;
             crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA
         }
-        (Some(artist), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None) => {
+        (Some(artist), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None) => {
             crate::artist_consumer_v1::validate_facts(artist, actor).map_err(RlContractError)?;
             crate::artist_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, Some(niv), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None) => {
+        (None, Some(niv), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None) => {
             crate::niv_consumer_v1::validate_facts(niv, actor).map_err(RlContractError)?;
             crate::niv_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, Some(chosen_type), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None) => {
+        (None, None, Some(chosen_type), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None) => {
             crate::chosen_type_consumer_v1::validate_facts(chosen_type, actor)
                 .map_err(RlContractError)?;
             crate::chosen_type_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, Some(facts), None, None, None, None, None, None, None, None, None, None, None, None, None, None) => {
+        (None, None, None, Some(facts), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None) => {
             crate::drakuseth_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::drakuseth_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, Some(facts), None, None, None, None, None, None, None, None, None, None, None, None, None) => {
+        (None, None, None, None, Some(facts), None, None, None, None, None, None, None, None, None, None, None, None, None, None) => {
             crate::embercleave_consumer_v1::validate_facts(facts, actor)
                 .map_err(RlContractError)?;
             crate::embercleave_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, Some(facts), None, None, None, None, None, None, None, None, None, None, None, None) => {
+        (None, None, None, None, None, Some(facts), None, None, None, None, None, None, None, None, None, None, None, None, None) => {
             crate::zimone_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::zimone_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, Some(facts), None, None, None, None, None, None, None, None, None, None, None) => {
+        (None, None, None, None, None, None, Some(facts), None, None, None, None, None, None, None, None, None, None, None, None) => {
             crate::omniscience_consumer_v1::validate_facts(facts, actor)
                 .map_err(RlContractError)?;
             crate::omniscience_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, Some(facts), None, None, None, None, None, None, None, None, None, None) => {
+        (None, None, None, None, None, None, None, Some(facts), None, None, None, None, None, None, None, None, None, None, None) => {
             crate::tutelage_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::tutelage_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, Some(facts), None, None, None, None, None, None, None, None, None) => {
+        (None, None, None, None, None, None, None, None, Some(facts), None, None, None, None, None, None, None, None, None, None) => {
             crate::moon_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::moon_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, None, Some(facts), None, None, None, None, None, None, None, None) => {
+        (None, None, None, None, None, None, None, None, None, Some(facts), None, None, None, None, None, None, None, None, None) => {
             crate::leyline_axe_consumer_v1::validate_facts(facts, actor)
                 .map_err(RlContractError)?;
             crate::leyline_axe_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None) => SCHEMA,
-        (None, None, None, None, None, None, None, None, None, None, Some(facts), None, None, None, None, None, None, None) => {
+        (None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None) => SCHEMA,
+        (None, None, None, None, None, None, None, None, None, None, Some(facts), None, None, None, None, None, None, None, None) => {
             crate::progenitus_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::progenitus_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, None, None, None, Some(facts), None, None, None, None, None, None) => {
+        (None, None, None, None, None, None, None, None, None, None, None, Some(facts), None, None, None, None, None, None, None) => {
             crate::aberration_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::aberration_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, None, None, None, None, Some(facts), None, None, None, None, None) => {
+        (None, None, None, None, None, None, None, None, None, None, None, None, Some(facts), None, None, None, None, None, None) => {
             crate::lathril_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::lathril_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, None, None, None, None, None, Some(facts), None, None, None, None) => {
+        (None, None, None, None, None, None, None, None, None, None, None, None, None, Some(facts), None, None, None, None, None) => {
             crate::electroduplicate_consumer_v1::validate_facts(facts, actor)
                 .map_err(RlContractError)?;
             crate::electroduplicate_consumer_v1::validate_inherited(facts, value)
                 .map_err(RlContractError)?;
             crate::electroduplicate_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some(facts), None, None, None) => {
+        (None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some(facts), None, None, None, None) => {
             crate::edict_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::edict_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some(facts), None, None) => {
+        (None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some(facts), None, None, None) => {
             crate::loot_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::loot_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some(facts), None) => {
+        (None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some(facts), None, None) => {
             crate::curator_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::curator_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some(facts)) => {
+        (None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some(facts), None) => {
             crate::kykar_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::kykar_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some(facts)) => {
+            crate::harvester_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::harvester_consumer_v1::OBSERVATION_SCHEMA
         }
         _ => return Err(RlContractError("mixed appendix profiles".into())),
     };
