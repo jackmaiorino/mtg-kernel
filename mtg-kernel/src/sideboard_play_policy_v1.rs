@@ -1358,6 +1358,13 @@ impl FrozenPlayPolicyV1 {
             .ok_or_else(|| "the pairing relation requires the V8 scorer".into())
     }
 
+    /// The `f32` values `duplicate_loaded_v1` copies: the model's
+    /// (`NativePolicyValueNetV1::owned_f32_len_v1`) and the embedding table
+    /// (`loaded_source_profile_v1`).
+    pub(crate) fn owned_f32_len_v1(&self) -> usize {
+        self.model.owned_f32_len_v1() + self.embeddings.len()
+    }
+
     /// An exact duplicate of a policy in the state its loader returned it:
     /// no sampling started and no collection sampler, search forward,
     /// prediction cache, probe or trace attached. Anything else is refused.

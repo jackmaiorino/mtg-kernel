@@ -1186,6 +1186,28 @@ impl NativePolicyValueNetV1 {
         Ok(())
     }
 
+    /// The `f32` values a clone of this net copies: every parameter and each
+    /// linear layer's derived transposed weight (`loaded_source_profile_v1`).
+    pub(crate) fn owned_f32_len_v1(&self) -> usize {
+        let linear =
+            |layer: &LinearV1| layer.weight.len() + layer.bias.len() + layer.weight_t.len();
+        let two = |layers: &TwoLayerTanhV1| linear(&layers.first) + linear(&layers.second);
+        self.card_embedding.len()
+            + two(&self.object_encoder)
+            + two(&self.edge_encoder)
+            + two(&self.node_update)
+            + two(&self.state_encoder)
+            + two(&self.action_ref_encoder)
+            + two(&self.action_encoder)
+            + linear(&self.scorer_first)
+            + linear(&self.scorer_second)
+            + linear(&self.value_first)
+            + linear(&self.value_second)
+            + self.pairing.as_ref().map_or(0, |pairing| {
+                linear(&pairing.first) + linear(&pairing.second)
+            })
+    }
+
     pub(crate) fn parameter_count_v1(&self) -> usize {
         let mut count = 0usize;
         self.visit_parameters_v1(|_, _, values| count += values.len());
