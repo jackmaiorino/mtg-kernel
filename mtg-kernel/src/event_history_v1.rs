@@ -1032,6 +1032,7 @@ impl EventHistoryV1 {
 
     /// Leaves `memo` about the first `covered` events (ignored past the end).
     /// The caller must have derived it from exactly these events.
+    /// Drake memos also preserve the ownership invariant on `CheckedPrefixV1`.
     pub(crate) fn set_prefix_memo_v1(&self, covered: usize, memo: Arc<dyn Any + Send + Sync>) {
         if covered <= self.events.len() {
             if let Ok(mut slot) = self.prefix.0.lock() {

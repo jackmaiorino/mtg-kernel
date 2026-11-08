@@ -584,6 +584,66 @@ fn verification<T>(run: impl FnOnce() -> Result<T, String>) -> Result<T, String>
     let _guard = VerifyGuard(old);
     run()
 }
+pub(crate) fn enclosing_replay_active_v1() -> bool {
+    VERIFYING.with(Cell::get)
+}
+
+/// Compare the actual owned replay with the retained borrowing path on all
+/// enclosing records of a recorded game, independently of the replay cache.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(super) fn compare_owned_enclosing_replays_for_test(state: &GameState) -> usize {
+    let mut compared = 0;
+    for record in state.engine.event_history.iter().filter_map(journal) {
+        let JournalV1::Enclosing {
+            start,
+            original,
+            operation,
+            answers,
+            used_banner,
+            ..
+        } = &record.value
+        else {
+            continue;
+        };
+        verification(|| {
+            crate::linked_aura_operation_v1::as_recorded(|| {
+                let restore =
+                    || restore_world(original, &state.engine.event_history, *start as usize);
+                let input = restore()?;
+                let borrowed = crate::linked_aura_operation_v1::replay_drake_enclosing_v1(
+                    &input,
+                    operation,
+                    answers,
+                    *used_banner,
+                )?;
+                let owned = crate::linked_aura_operation_v1::replay_drake_enclosing_owned_v1(
+                    input,
+                    operation,
+                    answers,
+                    *used_banner,
+                    &restore,
+                )?;
+                if borrowed != owned
+                    || serde_json::to_vec(&borrowed).map_err(|error| error.to_string())?
+                        != serde_json::to_vec(&owned).map_err(|error| error.to_string())?
+                {
+                    return Err(format!(
+                        "owned replay differs at Drake record {}",
+                        record.index
+                    ));
+                }
+                Ok(())
+            })
+        })
+        .unwrap();
+        compared += 1;
+    }
+    compared
+}
 pub(crate) fn journal(event: &CommittedEvent) -> Option<&RecordV1> {
     if let CommittedEvent::DrakeJournalV1 { record } = event {
         Some(record)
@@ -1918,7 +1978,8 @@ fn leave_prefix(
 }
 
 /// Extends the checked prefix `history` carries to all its events, as a
-/// validation of it would, without validating them.
+/// validation of it would, without validating them. This is only for
+/// drop-semantics tests; it leaves a prefix that no validation established.
 #[cfg(all(
     test,
     feature = "limited-fdn-fixtures",
@@ -2137,19 +2198,29 @@ fn check_row(
                 count_replay(hit, key.is_some());
                 if !hit {
                     verification(|| {
-                        let input =
-                            restore_world(original, &state.engine.event_history, *start as usize)?;
                         crate::linked_aura_operation_v1::as_recorded(|| {
+                            // Each version attempt gets its own owned input.
+                            // A suspended replay may call the same factory to
+                            // retain the original in its pending checkpoint.
+                            let restore = || {
+                                restore_world(
+                                    original,
+                                    &state.engine.event_history,
+                                    *start as usize,
+                                )
+                            };
+                            let input = restore()?;
                             let replay = {
                                 #[cfg(test)]
                                 let _timing = crate::rl_session::test_timing_v1::span(
                                     crate::rl_session::test_timing_v1::Phase::DrakeActualEnclosingReplay,
                                 );
-                                crate::linked_aura_operation_v1::replay_drake_enclosing_v1(
-                                    &input,
+                                crate::linked_aura_operation_v1::replay_drake_enclosing_owned_v1(
+                                    input,
                                     operation,
                                     answers,
                                     *used_banner,
+                                    &restore,
                                 )?
                             };
                             if replay.engine.event_history.get(*start as usize..)

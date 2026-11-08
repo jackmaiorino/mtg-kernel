@@ -142,6 +142,22 @@ fn every_engine_validation_of_recorded_drake_pair_29_matches_the_reference() {
     engine_validations_match_reference(&PAIR_29);
 }
 
+#[test]
+fn owned_enclosing_replays_match_borrowed_states_and_serialized_receipts() {
+    let mut final_state = None;
+    let mut decision = 0;
+    play(&PAIR_29, &mut |state| {
+        // The observer is called once at reset and after every decision.
+        // Copy only the final state; the helper bypasses the replay cache.
+        if decision == PAIR_29.decisions {
+            final_state = Some(state.clone());
+        }
+        decision += 1;
+    });
+    let compared = custody::compare_owned_enclosing_replays_for_test(&final_state.unwrap());
+    assert!(compared > 10, "{compared} enclosing records compared");
+}
+
 /// The four slow deals take minutes with the reference beside every
 /// validation: `cargo test --release --features limited-fdn-fixtures --lib
 /// prefix_memo_tests -- --ignored`.
