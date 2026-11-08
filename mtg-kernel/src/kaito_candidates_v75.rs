@@ -51,6 +51,8 @@ pub struct CandidateMeaningV75 {
     pub moon_action: Option<crate::moon_consumer_v1::ActionV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub leyline_axe_action: Option<crate::leyline_axe_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progenitus_action: Option<crate::progenitus_consumer_v1::ActionV1>,
     #[serde(deserialize_with = "required_optional")]
     pub drake_activation: Option<crate::next_five_observation_v59::NextFiveActivationV59>,
     /// Complete current programs at this genuine decision, in native stage and
@@ -160,6 +162,9 @@ pub fn producer_sha256() -> String {
             include_str!("leyline_axe_consumer_v1.rs"),
             include_str!("leyline_axe_public_v1.rs"),
             include_str!("human_bo3_v1/leyline_axe_consumer_v1.rs"),
+            include_str!("progenitus_consumer_v1.rs"),
+            include_str!("progenitus_public_v1.rs"),
+            include_str!("human_bo3_v1/progenitus_consumer_v1.rs"),
             include_str!("drakuseth_consumer_v1.rs"),
             include_str!("drakuseth_consumer_v1/damage.rs"),
             include_str!("human_bo3_v1/drakuseth_consumer_v1.rs"),
@@ -761,6 +766,9 @@ fn project_authenticated_parts_v75(
                 leyline_axe_action: crate::leyline_axe_consumer_v1::action(
                     observation.leyline_axe.as_ref(), &action,
                 ).map_err(error)?,
+                progenitus_action: crate::progenitus_consumer_v1::action(
+                    observation.progenitus.as_ref(), &action,
+                ).map_err(error)?,
                 drakuseth_target: crate::drakuseth_consumer_v1::target_action(
                     observation.drakuseth.as_ref(),
                     &action,
@@ -915,6 +923,11 @@ fn schemas(observation: &KaitoObservationV75) -> (&'static str, &'static str) {
             crate::leyline_axe_consumer_v1::CANDIDATES_SCHEMA,
             crate::leyline_axe_consumer_v1::ACTION_SCHEMA,
         )
+    } else if observation.progenitus.is_some() {
+        (
+            crate::progenitus_consumer_v1::CANDIDATES_SCHEMA,
+            crate::progenitus_consumer_v1::ACTION_SCHEMA,
+        )
     } else {
         (SCHEMA, ANNOTATION_SCHEMA)
     }
@@ -1051,6 +1064,9 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                     .map_err(error)?
             || row.leyline_axe_action
                 != crate::leyline_axe_consumer_v1::action(value.observation.leyline_axe.as_ref(), &row.action)
+                    .map_err(error)?
+            || row.progenitus_action
+                != crate::progenitus_consumer_v1::action(value.observation.progenitus.as_ref(), &row.action)
                     .map_err(error)?
             || row.chosen_type_answer
                 != chosen_type::answer(value.observation.chosen_type.as_ref(), &row.action)

@@ -10623,7 +10623,8 @@ fn private_card(
 ) -> Result<CardPrivateV1> {
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
-            && (crate::progenitus_v1::definition(o.card_def)
+            && ((appendix != LimitedAppendixV1::Progenitus
+                    && crate::progenitus_v1::definition(o.card_def))
                 || (appendix != LimitedAppendixV1::LeylineAxe
                     && crate::leyline_axe_v1::definition(o.card_def))
                 || crate::effect::harvester_v1::definition(o.card_def)
@@ -12319,6 +12320,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             | crate::effect::EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
                                 ..
                             }
@@ -12366,6 +12368,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             | crate::effect::EffectTargetSelectionPurpose::DiscardPaymentV1 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
@@ -12424,7 +12427,12 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                                 if !matches!(prepared_scope, Some(CommonProjectionScopeV42::LilianaV73 | CommonProjectionScopeV42::ChandraV74 | CommonProjectionScopeV42::KaitoV75)) { return Err(RlContractError("Liliana sacrifice choice requires a complete V73 consumer".into())); }
                                 TargetSelectionPurposeV4::CardSelection
                             },
-                            crate::effect::EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 { .. } => return Err(RlContractError("Progenitus mill ordering needs a complete successor".into())),
+                            crate::effect::EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 { .. } => {
+                                if appendix != LimitedAppendixV1::Progenitus {
+                                    return Err(RlContractError("Progenitus mill ordering needs a complete successor".into()));
+                                }
+                                TargetSelectionPurposeV4::LibraryOrder
+                            }
                             crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: Some(_), .. } => TargetSelectionPurposeV4::LibraryOrder,
                             crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: None, .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }

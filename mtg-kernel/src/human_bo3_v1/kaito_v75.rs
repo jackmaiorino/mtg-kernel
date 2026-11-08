@@ -57,7 +57,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     moon: Option<super::moon_consumer_v1::HumanFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    leyline_axe: Option<super::leyline_axe_consumer_v1::HumanFactsV1>
+    leyline_axe: Option<super::leyline_axe_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    progenitus: Option<super::progenitus_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -99,7 +101,9 @@ record!(HumanKaitoCandidateV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     moon_action: Option<crate::moon_consumer_v1::ActionV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    leyline_axe_action: Option<crate::leyline_axe_consumer_v1::ActionV1>
+    leyline_axe_action: Option<crate::leyline_axe_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    progenitus_action: Option<crate::progenitus_consumer_v1::ActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -325,6 +329,9 @@ pub(super) fn choice_label(
         return Ok(Some(label));
     }
     if let Some(label) = super::moon_consumer_v1::label(obs.moon.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::progenitus_consumer_v1::label(obs.progenitus.as_ref(), a, h)? {
         return Ok(Some(label));
     }
     if let Some(label) = super::tutelage_consumer_v1::label(obs.tutelage.as_ref(), a, h)? {
@@ -796,6 +803,9 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::moon_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
+    let progenitus = obs.progenitus.as_ref()
+        .map(|facts| super::progenitus_consumer_v1::project(facts, &mut handles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
@@ -814,6 +824,7 @@ pub(super) fn project_with_handles(
                 tutelage_action: r.tutelage_action,
                 moon_action: r.moon_action,
                 leyline_axe_action: r.leyline_axe_action,
+                progenitus_action: r.progenitus_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -1078,6 +1089,8 @@ pub(super) fn project_with_handles(
                 "mtg-kernel-human-moon-decision/v1"
             } else if leyline_axe.is_some() {
                 "mtg-kernel-human-leyline-axe-decision/v1"
+            } else if progenitus.is_some() {
+                "mtg-kernel-human-progenitus-decision/v1"
             } else {
                 "mtg-kernel-human-kaito-decision/v75"
             }
@@ -1108,6 +1121,7 @@ pub(super) fn project_with_handles(
                 tutelage,
                 moon,
                 leyline_axe,
+                progenitus,
             },
             actions,
             action_meanings,

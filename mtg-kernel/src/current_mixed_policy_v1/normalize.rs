@@ -499,9 +499,16 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         }
         covered.insert(meaning.card_id);
     }
-    if source == Source::KaitoV75
-        && (state["schema"] == crate::zimone_consumer_v1::CANDIDATES_SCHEMA
-            || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA)
+    if source == Source::KaitoV75 && state["schema"] == crate::progenitus_consumer_v1::CANDIDATES_SCHEMA {
+        let meaning: crate::progenitus_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["progenitus"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        if meaning != crate::progenitus_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection("Progenitus meaning differs from exact printing".into()));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75 && (state["schema"] == crate::zimone_consumer_v1::CANDIDATES_SCHEMA || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA)
     {
         let meaning: crate::zimone_public_v1::MeaningV1 =
             serde_json::from_value(state["observation"]["zimone"]["meaning"].clone())

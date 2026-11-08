@@ -37337,7 +37337,7 @@ mod checked_pt_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "engine/progenitus_v1_tests.rs"]
-mod progenitus_v1_tests;
+pub(crate) mod progenitus_v1_tests;
 
 #[cfg(all(
     test,
