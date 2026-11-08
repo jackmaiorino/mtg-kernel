@@ -120,6 +120,8 @@ pub(crate) fn rewrite(
     // that ledger rather than retaining a binding to a replaced definition.
     state.hand_knowledge[opponent.index()] = Default::default();
     state.library_knowledge[opponent.index()] = Default::default();
+    state.library_knowledge[opponent.index()][actor.index()] =
+        crate::effect::curator_v1::public_order_library_receipts(state, actor);
     let facts = &mut state.hand_knowledge[actor.index()][opponent.index()];
     *facts = sampled_known_hand;
     facts.sort_unstable_by_key(|entry| entry.object);

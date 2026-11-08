@@ -447,6 +447,42 @@ pub enum AnswerV1 {
     Cards(Vec<EffectObjectBinding>),
     Pile(bool),
 }
+
+/// The controller knows which positions they publicly revealed at the current
+/// pile ordering choice. A search clone can reconstruct those receipts without
+/// consulting the other seat's private library knowledge.
+#[cfg(feature = "limited-fdn-fixtures")]
+pub(crate) fn public_order_library_receipts(
+    state: &GameState,
+    actor: PlayerId,
+) -> Vec<crate::state::LibraryKnowledgeEntry> {
+    let Some(PendingEffectChoice::SelectTargets {
+        player,
+        purpose: EffectTargetSelectionPurpose::CuratorCardsV1 { choice },
+        ..
+    }) = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .and_then(|pending| pending.choice.as_ref())
+    else {
+        return Vec::new();
+    };
+    if *player != actor || choice.player != actor || choice.phase != 2 {
+        return Vec::new();
+    }
+    choice
+        .prefix
+        .iter()
+        .enumerate()
+        .filter(|(_, card)| !choice.down.contains(card))
+        .map(|(position, card)| crate::state::LibraryKnowledgeEntry {
+            position: position as u32,
+            object: card.object,
+            zone_change_count: card.expected_zone_change_count,
+        })
+        .collect()
+}
 fn subset(
     original: &[EffectObjectBinding],
     selected: &[EffectObjectBinding],

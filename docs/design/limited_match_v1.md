@@ -87,6 +87,12 @@ decision fixed. A second probe attempts opening search in rules-only decks conta
 Partial printing. Later decisions and canonical history across distinct but publicly equivalent
 native trajectories remain acceptance work for #552.
 
+At Curator of Destinies' final order decision, the controller knows which library positions were
+publicly revealed for the face-up pile. The sampled world reconstructs the receipts for those
+positions from the pending choice. Unrelated private library knowledge of the other seat is
+discarded. A paired active Curator fixture exercises the order decision with and without that
+extra private knowledge.
+
 The `smoke` command runs a bounded pair on the original DraftZero evaluation decks and replays
 it at a second worker count. Its turn-limited or decision-limited rows are engineering checks.
 For a substantial evaluation, qualify the complete collection path first with identical deck
