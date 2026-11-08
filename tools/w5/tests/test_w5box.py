@@ -1,9 +1,11 @@
 """Unit tests of the W5 launcher's pure parts (any OS). The cgroup sequence runs in cgroup_acceptance.py."""
+from contextlib import nullcontext
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
@@ -192,6 +194,35 @@ class GuardTests(unittest.TestCase):
 
 
 class NodeStateTests(unittest.TestCase):
+    def test_enforcement_skips_chain_that_vanishes_after_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_root, cgroup_root = root / "state", root / "cgroups"
+            vanished = cgroup_root / "box0" / "chain"
+            vanished.mkdir(parents=True)
+            procs, events = vanished / "cgroup.procs", vanished / "cgroup.events"
+            procs.touch()
+            events.write_text("populated 0\nfrozen 0\n")
+            node = w5box.NodeLog(state_root)
+            plan = {"state_root": state_root, "cgroup_root": cgroup_root}
+            exists = w5box.Cgroup.exists
+
+            def remove_after_exists(cgroup):
+                present = exists(cgroup)
+                if cgroup.path == vanished and present:
+                    procs.unlink()
+                    events.unlink()
+                    vanished.rmdir()
+                return present
+
+            with patch.object(node, "locked", nullcontext), patch.object(w5box.Cgroup, "exists", remove_after_exists):
+                w5box.enforce_node(plan, node, "test")
+
+            self.assertFalse(vanished.exists())
+            records, _ = node.read()
+            self.assertEqual(records[-1]["event"], "enforced")
+            self.assertEqual(records[-1]["changed"], [])
+
     def test_outages_faults_restorations_and_operator_freeze(self):
         state = w5box.NodeLog.state
         log = [{"event": "outage-start", "id": "o1", "box_slot": 1, "unix": 1}]

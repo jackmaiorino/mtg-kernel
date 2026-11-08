@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 
+from checkpoint_container_v1 import document_from_bytes
 from phase1_breadth_v1.catalog_v1 import (
     canonical_zones, combined_key, digest, load_catalog_v1, strict_json, to_native,
 )
@@ -25,6 +26,14 @@ MODEL_SHA = '88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1'
 
 def read(path):
     return strict_json(Path(path).read_bytes())
+
+
+def read_pinned_checkpoint(value):
+    """Check the source hash and decode those same bytes as a checkpoint."""
+    path = Path(value['path'])
+    raw = path.read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == value['sha256'], value['path']
+    return strict_json(raw, loads=document_from_bytes)
 
 
 def pin(path):
@@ -44,10 +53,12 @@ def prepare(root, seed):
     historical = read(BASE / 'campaign-002-g-block115-cuda.json')
     source = read(SOURCE)
     assert source['checkpoint']['sha256'] == MODEL_SHA
-    for model in [source] + [x['source'] for x in historical['opponents']]:
+    assert pin(source['play_import']['path'])['sha256'] == source['play_import']['sha256']
+    checkpoint = read_pinned_checkpoint(source['checkpoint'])
+    for opponent in historical['opponents']:
+        model = opponent['source']
         for key in ('play_import', 'checkpoint'):
             assert pin(model[key]['path'])['sha256'] == model[key]['sha256']
-    checkpoint = read(source['checkpoint']['path'])
     assert checkpoint['adam_step'] == 32400
     assert checkpoint['loss_identity'] == 'gae_advantage_value/v1'
     assert pin(BINARY)['sha256'] == BINARY_SHA

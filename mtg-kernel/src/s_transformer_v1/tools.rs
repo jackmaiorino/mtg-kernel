@@ -721,6 +721,64 @@ fn avx2_v1() -> bool {
     }
 }
 
+/// Bounded synthetic learner timing diagnostic. Every repetition starts from
+/// the same warmed full Adam state; game collection and record I/O are outside
+/// this measurement and must be qualified separately on real training inputs.
+pub fn gae_bench_v1(seed: u64, count: usize, reps: usize, workers: usize) -> Result<Value, String> {
+    if !(1..=2048).contains(&count) || !(1..=32).contains(&reps) || !(1..=32).contains(&workers) {
+        return Err("gae-bench requires groups=1..2048 reps=1..32 workers=1..32".into());
+    }
+    let mut rng = SplitMixV1::new(seed);
+    let warm_batch = synthetic_batch_v1(&mut rng, 4, MEAN_SHAPE_V1);
+    let batch = synthetic_batch_v1(&mut rng, count, MEAN_SHAPE_V1);
+    let groups = groups_of_v1(&batch);
+    let model = SModelV1::init_pilot_scheme_v1(SConfigV1::s_v1(), seed)?;
+    let mut initial = STrainStateV1::fresh_optimizer_v1(model);
+    let mut warm_work = SWorkV1::default();
+    initial.train_step_gae_v1(
+        &groups_of_v1(&warm_batch),
+        RT1_VALUE_COEFFICIENT_V1,
+        RT1_LEARNING_RATE_V1,
+        &mut warm_work,
+    )?;
+    let before = initial.state_sha256_v1();
+    let mut seconds = Vec::new();
+    let mut after: Option<String> = None;
+    for _ in 0..reps {
+        let mut state = initial.clone();
+        let mut work = SWorkV1::default();
+        let start = Instant::now();
+        let result = state.train_step_gae_with_workers_v1(
+            &groups,
+            RT1_VALUE_COEFFICIENT_V1,
+            RT1_LEARNING_RATE_V1,
+            &mut work,
+            workers,
+        )?;
+        seconds.push(start.elapsed().as_secs_f64());
+        if after
+            .as_ref()
+            .is_some_and(|hash| hash != &result.after_state_sha256)
+        {
+            return Err("gae-bench repetitions produced different full Adam states".into());
+        }
+        after = Some(result.after_state_sha256);
+    }
+    Ok(json!({
+        "schema": "s-gae-bench-v1",
+        "scope": "synthetic learner diagnostic, not end-to-end training qualification",
+        "seed": seed,
+        "groups": count,
+        "substeps": groups.iter().map(|g| g.substeps.len()).sum::<usize>(),
+        "workers": workers,
+        "seconds": seconds,
+        "before_state_sha256": before,
+        "after_state_sha256": after,
+        "os": std::env::consts::OS,
+        "avx2": cfg!(target_arch = "x86_64") && avx2_v1(),
+    }))
+}
+
 fn run_steps_v1(
     state: &mut STrainStateV1,
     batches: &[Vec<SyntheticGroupV1>],
@@ -915,6 +973,12 @@ pub fn main_v1(args: &[String]) -> Result<Value, String> {
             number("count", 2000)? as usize,
             number("reps", 3)? as usize,
         ),
+        "gae-bench" => gae_bench_v1(
+            seed,
+            number("groups", 256)? as usize,
+            number("reps", 3)? as usize,
+            number("workers", 1)? as usize,
+        ),
         "resume-check" => resume_check_v1(
             Path::new(&get("out").ok_or("out=<dir> is required")?),
             seed,
@@ -935,4 +999,4 @@ pub fn main_v1(args: &[String]) -> Result<Value, String> {
     }
 }
 
-const USAGE_V1: &str = "usage: s_transformer_v1 parity-dump out=<dir> [seed batches groups] | logits-dump out=<file> model=<spec> states=<spec> | bench [seed count reps] | resume-check out=<dir> [seed steps split groups] | import-values values=<file> names=<file> out=<file> | starting-state checkpoint=<file> extras=<file>";
+const USAGE_V1: &str = "usage: s_transformer_v1 parity-dump out=<dir> [seed batches groups] | logits-dump out=<file> model=<spec> states=<spec> | bench [seed count reps] | gae-bench [seed groups reps workers] | resume-check out=<dir> [seed steps split groups] | import-values values=<file> names=<file> out=<file> | starting-state checkpoint=<file> extras=<file>";
