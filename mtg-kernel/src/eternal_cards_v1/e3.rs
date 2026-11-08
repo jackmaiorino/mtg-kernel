@@ -1052,6 +1052,9 @@ pub(crate) fn drive(
         EternalOpV1::P1aV1(op) => {
             crate::eternal_premodern_p1a_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::P2bV1(op) => {
+            crate::eternal_premodern_p2b_v1::drive(state, continuation, op, path)
+        }
         other => {
             super::execute(other, &continuation.ctx, state);
             Ok(false)
@@ -1084,6 +1087,7 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
         || matches!(op, EternalOpV1::P1bV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::P2aV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::P1aV1(op) if op.contains_player_choice())
+        || matches!(op, EternalOpV1::P2bV1(op) if op.contains_player_choice())
 }
 
 /// The cards (not tokens or copies) in `player`'s graveyard, in order.

@@ -362,7 +362,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn madness_cost_for(name: &str) -> Option<&'static str> {
     match name {
         "Basking Rootwalla" | "Blazing Rootwalla" => Some("{0}"),
-        _ => None,
+        _ => super::build_eternal_p2b_v1::madness_cost_for(name),
     }
 }
 

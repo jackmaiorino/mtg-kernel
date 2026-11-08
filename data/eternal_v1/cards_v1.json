@@ -22852,6 +22852,577 @@
     "put_onto_battlefield"
    ],
    "java_file": "Mage.Sets/src/mage/cards/v/VeteranExplorer.java"
+  },
+  {
+   "name": "Birds of Paradise",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Bird"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "premodern-survival",
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "flying",
+    "mana_ability",
+    "tap_ability",
+    "any_color_mana"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BirdsOfParadise.java"
+  },
+  {
+   "name": "Caller of the Claw",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves",
+    "premodern-survival"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flash",
+    "etb_trigger",
+    "token_creation",
+    "graveyard_count"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CallerOfTheClaw.java"
+  },
+  {
+   "name": "Deranged Hermit",
+   "engine_capability": "full",
+   "mana_cost": "{3}{G}{G}",
+   "mana_value": 5,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves",
+    "premodern-survival"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "echo",
+    "etb_trigger",
+    "token_creation",
+    "lord"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DerangedHermit.java"
+  },
+  {
+   "name": "Gaea's Cradle",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "G"
+   ],
+   "decks": [
+    "premodern-madness-threshold",
+    "premodern-elves",
+    "premodern-survival"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "variable_mana"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GaeasCradle.java"
+  },
+  {
+   "name": "Multani's Acolyte",
+   "engine_capability": "full",
+   "mana_cost": "{G}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves",
+    "premodern-survival"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "echo",
+    "etb_trigger",
+    "draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MultanisAcolyte.java"
+  },
+  {
+   "name": "Nantuko Vigilante",
+   "engine_capability": "full",
+   "mana_cost": "{3}{G}",
+   "mana_value": 4,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Insect",
+    "Druid",
+    "Mutant"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves",
+    "premodern-survival"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "morph",
+    "turned_face_up_trigger",
+    "destroy_target"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/NantukoVigilante.java"
+  },
+  {
+   "name": "Survival of the Fittest",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves",
+    "premodern-survival",
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "discard_cost",
+    "tutor"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SurvivalOfTheFittest.java"
+  },
+  {
+   "name": "Wirewood Symbiote",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Insect"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves",
+    "premodern-survival"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "return_to_hand_cost",
+    "untap",
+    "once_per_turn"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WirewoodSymbiote.java"
+  },
+  {
+   "name": "Yavimaya Granger",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves",
+    "premodern-survival"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "echo",
+    "etb_trigger",
+    "ramp",
+    "tutor"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/y/YavimayaGranger.java"
+  },
+  {
+   "name": "Masticore",
+   "engine_capability": "full",
+   "mana_cost": "{4}",
+   "mana_value": 4,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Masticore"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "upkeep_trigger",
+    "discard",
+    "activated_ability",
+    "regenerate",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/Masticore.java"
+  },
+  {
+   "name": "Arrogant Wurm",
+   "engine_capability": "full",
+   "mana_cost": "{3}{G}{G}",
+   "mana_value": 5,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Wurm"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-madness-threshold"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "trample",
+    "madness"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/ArrogantWurm.java"
+  },
+  {
+   "name": "Blastoderm",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}{G}",
+   "mana_value": 4,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Beast"
+   ],
+   "supertypes": [],
+   "power": 5,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-madness-threshold"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "shroud",
+    "fading"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/Blastoderm.java"
+  },
+  {
+   "name": "Chatter of the Squirrel",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-madness-threshold"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "flashback"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/ChatterOfTheSquirrel.java"
+  },
+  {
+   "name": "Glory",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W}{W}",
+   "mana_value": 5,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Incarnation"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-madness-threshold"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flying",
+    "activated_ability",
+    "graveyard_ability",
+    "protection"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/Glory.java"
+  },
+  {
+   "name": "Tireless Tribe",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Nomad"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-madness-threshold"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "discard_cost",
+    "pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TirelessTribe.java"
+  },
+  {
+   "name": "Vintara Snapper",
+   "engine_capability": "full",
+   "mana_cost": "{G}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Turtle"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-madness-threshold"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "conditional_shroud"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/VintaraSnapper.java"
+  },
+  {
+   "name": "Yavimaya Hollow",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "premodern-madness-threshold"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "activated_ability",
+    "regenerate"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/y/YavimayaHollow.java"
+  },
+  {
+   "name": "Bear Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Bear"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/BearToken.java",
+   "is_token": true
   }
  ]
 }
