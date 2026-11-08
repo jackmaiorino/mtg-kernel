@@ -234,6 +234,7 @@ pub(crate) struct Occurrence {
     pub exiled: Vec<ExileV1>,
     pub casts: Vec<CastV1>,
     pub started: bool,
+    batch_range: Option<(usize, usize)>,
     pub finished: Option<bool>,
     pub countered: bool,
 }
@@ -397,8 +398,25 @@ pub(crate) fn occurrences(state: &GameState) -> Result<Vec<Occurrence>, String> 
             last = at;
             casts.push(row);
         }
+        if let Some(batch_end) = batch_end {
+            let actual_casts = history[batch_end + 1..terminal.unwrap_or(history.len())]
+                .iter().filter_map(|event| match event {
+                    E::PublishedCastIdentityV1 { receipt }
+                        if receipt.origin_zone == Zone::Exile
+                            && exiled.iter().any(|top| top.arrival.source == receipt.spell
+                                && top.arrival.zone_change_count == receipt.origin_zone_change_count) =>
+                    {
+                        Some((receipt.spell_cast_history_index, receipt.stack_item_id))
+                    }
+                    _ => None,
+                });
+            if !actual_casts.eq(casts.iter().map(|cast| (cast.cast_at, cast.child))) {
+                return Err("Etali typed child roster omits or changes native casts".into());
+            }
+        }
         result.push(Occurrence {
             source, stack_position, id, exiled, casts, started: ops.started.is_some(),
+            batch_range: ops.started.zip(batch_end).map(|((start, _), end)| (start, end + 1)),
             finished: ops.finished.map(|(_, declined)| declined), countered: ops.countered.is_some(),
         });
     }
@@ -465,7 +483,9 @@ pub(crate) fn validate_current(state: &GameState, rows: &[Occurrence]) -> Result
         expected_zone_change_count: row.arrival.zone_change_count,
     });
     let paid = row.casts.iter().map(|cast| cast.original).chain(reserved);
-    if !choice.scans.iter().flat_map(|scan| scan.exiled.iter().copied()).eq(observed)
+    if choice.scans.iter().any(|scan|
+        Some((scan.history_start, scan.history_end)) != row.batch_range)
+        || !choice.scans.iter().flat_map(|scan| scan.exiled.iter().copied()).eq(observed)
         || !choice.cast.iter().copied().eq(paid)
     {
         return Err("Etali current original top or paid cast roster changed".into());
