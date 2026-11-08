@@ -435,6 +435,7 @@ pub fn sample_world_v1(
     belief: Option<&LimitedBeliefV1>,
     seed: u64,
 ) -> Result<FastActorSessionV1, String> {
+    session.refuse_curator_sampling_v1()?;
     match mode {
         WorldModeV1::Peek => Ok(session.clone()),
         WorldModeV1::TrueList => session.limited_belief_clone_v1(seed, |_, _, _| Ok(())),
@@ -636,6 +637,7 @@ pub fn pimc_choose_v1(
     belief: Option<&LimitedBeliefV1>,
     seed: u64,
 ) -> Result<(u32, PimcStatsV1), String> {
+    session.refuse_curator_sampling_v1()?;
     let FastActorResponseV1::Decision(decision) = session.current_response() else {
         return Err("no current decision".into());
     };

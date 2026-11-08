@@ -11,7 +11,7 @@ const NAME: &str = "Curator of Destinies";
 fn id(name: &str) -> u16 {
     card_def::card_id_by_name(name).unwrap()
 }
-fn ready(actor: PlayerId, library: &[&str]) -> GameState {
+pub(crate) fn ready(actor: PlayerId, library: &[&str]) -> GameState {
     let cards = library.iter().map(|n| id(n)).collect::<Vec<_>>();
     let other = [id("Forest"); 32];
     let (a, b) = if actor == PlayerId::P0 {
@@ -151,7 +151,7 @@ fn resolve_response(s: &mut GameState, source: ObjectId) {
     }
     panic!("response absent")
 }
-fn paid_to_trigger(s: &mut GameState, p: PlayerId) -> (ObjectId, StackItem) {
+pub(crate) fn paid_to_trigger(s: &mut GameState, p: PlayerId) -> (ObjectId, StackItem) {
     let card = cast(s, p, NAME, &[], 6);
     for _ in 0..24 {
         let d = next(s);
@@ -177,7 +177,7 @@ fn paid_to_trigger(s: &mut GameState, p: PlayerId) -> (ObjectId, StackItem) {
     }
     panic!("Curator did not enter")
 }
-fn partition_prompt(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
+pub(crate) fn partition_prompt(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
     for _ in 0..24 {
         let d = next(s);
         if let Decision::ChooseEffectTargets {
@@ -206,7 +206,7 @@ fn partition_prompt(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
     }
     panic!("private partition absent")
 }
-fn partition(s: &mut GameState, down: &[ObjectId]) {
+pub(crate) fn partition(s: &mut GameState, down: &[ObjectId]) {
     for object in down {
         let d = next(s);
         assert!(
@@ -227,7 +227,7 @@ fn partition(s: &mut GameState, down: &[ObjectId]) {
         .is_some());
     validate_pending_effect_choice(s).unwrap();
 }
-fn pile_prompt(s: &mut GameState, p: PlayerId, down: usize, up: usize) -> Decision {
+pub(crate) fn pile_prompt(s: &mut GameState, p: PlayerId, down: usize, up: usize) -> Decision {
     let d = next(s);
     assert!(
         matches!(d,Decision::ChooseEffectBoolean{player,default:Some(false),purpose:EffectBooleanChoicePurpose::CuratorPileV1{face_down_count,face_up_count,..},..}if player==p.opponent()&&usize::from(face_down_count)==down&&usize::from(face_up_count)==up)
@@ -235,7 +235,7 @@ fn pile_prompt(s: &mut GameState, p: PlayerId, down: usize, up: usize) -> Decisi
     validate_pending_effect_choice(s).unwrap();
     d
 }
-fn finish(s: &mut GameState) -> Vec<ObjectId> {
+pub(crate) fn finish(s: &mut GameState) -> Vec<ObjectId> {
     let mut ordered = Vec::new();
     for _ in 0..64 {
         let d = next(s);

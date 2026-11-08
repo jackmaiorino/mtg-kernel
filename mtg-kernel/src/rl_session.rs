@@ -8456,6 +8456,7 @@ impl FastActorSessionV1 {
         use crate::kernel_native_search_opponent_v1::{
             pending_selection_hidden_objects_v1, redeterminize_hidden_zones_pinned_v1,
         };
+        self.refuse_curator_sampling_v1()?;
         let actor = self.current.as_ref().ok_or("no current decision")?.actor;
         let pinned = pending_selection_hidden_objects_v1(&self.state, actor);
         let mut sampled = self.clone();
@@ -8478,6 +8479,13 @@ impl FastActorSessionV1 {
             return Err("hidden-source provenance conflict".to_string());
         }
         Ok(sampled)
+    }
+
+    pub(crate) fn refuse_curator_sampling_v1(&self) -> Result<(), String> {
+        if self.state.curator_unordered_reveal_v1 {
+            return Err("Curator profile has no unordered-pile sampler".into());
+        }
+        Ok(())
     }
 
     /// Limited match search (issue #110 milestone 6): the census world with a

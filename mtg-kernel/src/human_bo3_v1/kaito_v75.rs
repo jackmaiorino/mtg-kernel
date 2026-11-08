@@ -69,7 +69,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     edict: Option<super::edict_consumer_v1::HumanFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    loot: Option<super::loot_consumer_v1::HumanFactsV1>
+    loot: Option<super::loot_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    curator: Option<super::curator_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -123,7 +125,9 @@ record!(HumanKaitoCandidateV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     edict_action: Option<crate::edict_consumer_v1::ActionV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    loot_action: Option<crate::loot_consumer_v1::ActionV1>
+    loot_action: Option<crate::loot_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    curator_action: Option<crate::curator_consumer_v1::ActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -349,6 +353,9 @@ pub(super) fn choice_label(
         return Ok(Some(label));
     }
     if let Some(label) = super::edict_consumer_v1::label(obs.edict.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::curator_consumer_v1::label(obs.curator.as_ref(), a, h)? {
         return Ok(Some(label));
     }
     if let Some(label) = super::lathril_consumer_v1::label(obs.lathril.as_ref(), a, h)? {
@@ -872,6 +879,9 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::electroduplicate_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
+    let curator = obs.curator.as_ref()
+        .map(|facts| super::curator_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
@@ -896,6 +906,7 @@ pub(super) fn project_with_handles(
                 electroduplicate_action: r.electroduplicate_action,
                 edict_action: r.edict_action,
                 loot_action: r.loot_action,
+                curator_action: r.curator_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -1172,6 +1183,8 @@ pub(super) fn project_with_handles(
                 "mtg-kernel-human-loot-decision/v1"
             } else if edict.is_some() {
                 "mtg-kernel-human-edict-decision/v1"
+            } else if curator.is_some() {
+                "mtg-kernel-human-curator-decision/v1"
             } else {
                 "mtg-kernel-human-kaito-decision/v75"
             }
@@ -1208,6 +1221,7 @@ pub(super) fn project_with_handles(
                 electroduplicate,
                 edict,
                 loot,
+                curator,
             },
             actions,
             action_meanings,

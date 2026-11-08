@@ -85,6 +85,8 @@ pub(crate) fn project_limited_kaito_v16(
                 "mtg-kernel-limited-loot-decision/v1"
             } else if observation.edict.is_some() {
                 "mtg-kernel-limited-edict-decision/v1"
+            } else if observation.curator.is_some() {
+                "mtg-kernel-limited-curator-decision/v1"
             } else {
                 "mtg-kernel-limited-kaito-decision/v16"
             }
