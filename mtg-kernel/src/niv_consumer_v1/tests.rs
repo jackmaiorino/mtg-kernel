@@ -26,7 +26,9 @@ fn config(actor: PlayerId) -> ResetV1 {
     ResetV1 {
         expected_card_db_hash: KERNEL_CARDDB_HASH,
         episode_id: 550,
-        env_seed: 550_461,
+        // Both seats draw Niv, Bolt and their colors within this bounded fixture.
+        // The declared multiset, real payment assertions and decision limit stay fixed.
+        env_seed: 550_476,
         starting_player: actor.into(),
         deck_ids: ["niv-left".into(), "niv-right".into()],
         mainboards,

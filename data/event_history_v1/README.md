@@ -54,9 +54,14 @@ Insert that line where the variant sits in `CommittedEvent`. When no test
 commits the kind, build the event by hand from its fields, reusing a harvested
 sibling's payload where the types match.
 
-`NivMizzetVisionaryDrawEndedV1` has a hand-built counter shape for the
-source checkpoint. Native qualification should replace it with the
-harvested event from the paid Niv outcome fixtures.
+`NivMizzetVisionaryDrawEndedV1` was harvested from the passing paid Niv
+native-index/privacy/restore fixture at `8ff554f6`: resolved stack item 3
+actually drew three cards. The retained test executable SHA-256 is
+`405bef3fcd4a06e955f3b950d72d34fe2790bf35360eea965f96bcb29eed71b4`;
+the original 120-byte event sample SHA-256 is
+`4d75cfd341cf61e9fb067c23fd66bffaa579976a9f15436541131dda35ad8a2a`.
+The separate declared-deck Niv fixture exhausted its decision bound, so
+this event does not establish whole-profile acceptance.
 
 ## Appended FDN event samples (October 21, 2026)
 
