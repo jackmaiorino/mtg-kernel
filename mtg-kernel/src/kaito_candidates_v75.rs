@@ -124,6 +124,7 @@ pub fn producer_sha256() -> String {
             include_str!("tinybones_candidates_v72.rs"),
             include_str!("kaito_candidates_v75.rs"),
             include_str!("artist_consumer_v1.rs"),
+            include_str!("niv_consumer_v1.rs"),
             include_str!("kaito_observation_v75.rs"),
             include_str!("rl_session/kaito_v75.rs"),
             include_str!("current_mixed_policy_v1/kaito.rs"),
@@ -611,8 +612,8 @@ pub(crate) fn project_parts_v75(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<(KaitoCandidatesV75, NativeCandidateProjectionV75), RlContractError> {
-    if surface.artist_consumer_v1() {
-        return Err(error("Artist candidates require their owning profile"));
+    if surface.limited_appendix_v1() != crate::policy_surface_v5::LimitedAppendixV1::Legacy {
+        return Err(error("Appendix candidates require their owning profile"));
     }
     observation::validate_state(state).map_err(error)?;
     // Exact-bound source surfaces authenticate their own private scan. Owned
@@ -794,6 +795,11 @@ fn project_authenticated_parts_v75(
 fn schemas(observation: &KaitoObservationV75) -> (&'static str, &'static str) {
     if observation.artist.is_some() {
         (artist::CANDIDATES_SCHEMA, artist::ACTION_SCHEMA)
+    } else if observation.niv.is_some() {
+        (
+            crate::niv_consumer_v1::CANDIDATES_SCHEMA,
+            crate::niv_consumer_v1::ACTION_SCHEMA,
+        )
     } else {
         (SCHEMA, ANNOTATION_SCHEMA)
     }

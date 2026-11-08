@@ -460,6 +460,13 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         crate::rules_meaning_artist_v64::validate(&meaning).map_err(Error::Projection)?;
         covered.insert(meaning.card_id);
     }
+    if source == Source::KaitoV75 && state["schema"] == crate::niv_consumer_v1::CANDIDATES_SCHEMA {
+        let meaning: crate::rules_meaning_niv_mizzet_v63::MeaningV63 =
+            serde_json::from_value(state["observation"]["niv"]["appendix"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        crate::rules_meaning_niv_mizzet_v63::validate(&meaning).map_err(Error::Projection)?;
+        covered.insert(meaning.card_id);
+    }
     expand(&mut state, &mut covered, source)?;
     let mut cards = BTreeSet::new();
     collect_cards(&state, &mut cards)?;

@@ -39,7 +39,9 @@ record!(HumanVisibleStateKaitoV75 {
     chandra: HumanChandraFactsV74,
     kaito: HumanKaitoFactsV75,
     #[serde(skip_serializing_if = "Option::is_none")]
-    artist: Option<HumanArtistFactsV1>
+    artist: Option<HumanArtistFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    niv: Option<HumanNivFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -99,6 +101,120 @@ record!(HumanArtistPaymentV1 {
     candidates: Option<Vec<HumanCardRefV1>>,
     selected: Option<Vec<HumanCardRefV1>>
 });
+record!(HumanNivFactsV1 {
+    meaning: crate::rules_meaning_niv_mizzet_v63::MeaningV63,
+    authorized: Vec<HumanCardRefV1>,
+    current: Vec<HumanNivCurrentV1>,
+    casts: Vec<HumanNivCastV1>,
+    damage_draws: Vec<HumanNivDrawV1>,
+    results: Vec<crate::niv_mizzet_public_v63::DrawResultV1>,
+    no_maximum_hand_size: [bool; 2]
+});
+record!(HumanNivCurrentV1 {
+    card: HumanCardRefV1,
+    is_token: bool,
+    tapped: bool,
+    summoning_sick: bool,
+    marked_damage: u32,
+    form: crate::optional_trigger_public_v1::FormV1
+});
+record!(HumanNivCastV1 {
+    position: u32,
+    source: HumanCardRefV1,
+    original_controller: PlayerSeatV1,
+    is_uncast_copy: bool,
+    payment_pending: bool,
+    genuine_cast_finalized: bool
+});
+record!(HumanNivDrawV1 {
+    occurrence: u32,
+    observer: HumanCallRootV62,
+    damage_source: HumanTinybonesRelationV72,
+    damage_source_controller_basis: crate::niv_mizzet_public_v63::ControllerBasisV63,
+    current_original_damage_source: Option<HumanCardRefV1>,
+    recipient: PlayerSeatV1,
+    committed_damage: i32,
+    commanded_draw_count: i32,
+    stage: crate::niv_mizzet_public_v63::StageV63,
+    native_position: Option<u32>
+});
+
+fn niv_facts(
+    value: &crate::niv_mizzet_public_v63::ConsumerFactsV1,
+    handles: &mut Handles,
+    roles: &mut Incarnations,
+) -> Result<HumanNivFactsV1, Error> {
+    let appendix = &value.appendix;
+    Ok(HumanNivFactsV1 {
+        meaning: appendix.meaning.clone(),
+        authorized: appendix
+            .authorized
+            .iter()
+            .map(|r| href(r, handles))
+            .collect::<Result<_, _>>()?,
+        current: appendix
+            .current
+            .iter()
+            .map(|row| {
+                Ok(HumanNivCurrentV1 {
+                    card: href(&row.card, handles)?,
+                    is_token: row.is_token,
+                    tapped: row.tapped,
+                    summoning_sick: row.summoning_sick,
+                    marked_damage: row.marked_damage,
+                    form: row.form.clone(),
+                })
+            })
+            .collect::<Result<_, Error>>()?,
+        casts: appendix
+            .casts
+            .iter()
+            .map(|row| {
+                Ok(HumanNivCastV1 {
+                    position: row.position,
+                    source: href(&row.source, handles)?,
+                    original_controller: row.original_controller,
+                    is_uncast_copy: row.is_uncast_copy,
+                    payment_pending: row.payment_pending,
+                    genuine_cast_finalized: row.genuine_cast_finalized,
+                })
+            })
+            .collect::<Result<_, Error>>()?,
+        damage_draws: appendix
+            .damage_draws
+            .iter()
+            .map(|row| {
+                let damage = &row.damage_source;
+                Ok(HumanNivDrawV1 {
+                    occurrence: row.occurrence,
+                    observer: root(&row.observer, handles)?,
+                    damage_source: roles.relation(
+                        &crate::tinybones_public_v72::IncarnationV72 {
+                            object: damage.object,
+                            generation: damage.generation,
+                            owner: damage.owner,
+                            controller: damage.damage_controller,
+                            zone: damage.original_zone,
+                        },
+                    )?,
+                    damage_source_controller_basis: damage.controller_basis.clone(),
+                    current_original_damage_source: damage
+                        .current_original_source
+                        .as_ref()
+                        .map(|r| href(r, handles))
+                        .transpose()?,
+                    recipient: row.recipient,
+                    committed_damage: row.committed_damage,
+                    commanded_draw_count: row.draw_count,
+                    stage: row.stage,
+                    native_position: row.native_position,
+                })
+            })
+            .collect::<Result<_, Error>>()?,
+        results: value.results.clone(),
+        no_maximum_hand_size: appendix.no_maximum_hand_size,
+    })
+}
 
 fn artist_facts(
     value: &crate::artist_public_v64::FactsV64,
@@ -495,6 +611,11 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|v| artist_facts(v, &mut handles))
         .transpose()?;
+    let niv = obs
+        .niv
+        .as_ref()
+        .map(|v| niv_facts(v, &mut handles, &mut roles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
@@ -749,6 +870,8 @@ pub(super) fn project_with_handles(
         HumanDecisionKaitoV75 {
             schema: if artist.is_some() {
                 "mtg-kernel-human-artist-decision/v1"
+            } else if niv.is_some() {
+                "mtg-kernel-human-niv-decision/v1"
             } else {
                 "mtg-kernel-human-kaito-decision/v75"
             }
@@ -770,6 +893,7 @@ pub(super) fn project_with_handles(
                 chandra,
                 kaito,
                 artist,
+                niv,
             },
             actions,
             action_meanings,

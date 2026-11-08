@@ -27,11 +27,23 @@ fn finish(state: &mut GameState) {
 }
 
 fn cast_niv(actor: PlayerId) -> (GameState, ObjectId, ObjectId, ObjectId) {
+    cast_niv_with_top(actor, "Island")
+}
+
+fn cast_niv_with_top(
+    actor: PlayerId,
+    hidden_top: &str,
+) -> (GameState, ObjectId, ObjectId, ObjectId) {
     let responder = actor.opponent();
     let mut state = ready_state_for(actor);
     for player in [actor, responder] {
-        for _ in 0..20 {
-            put(&mut state, player, "Island", Zone::Library);
+        for index in 0..20 {
+            let name = if player == actor && index == 0 {
+                hidden_top
+            } else {
+                "Island"
+            };
+            put(&mut state, player, name, Zone::Library);
         }
     }
     for _ in 0..8 {
@@ -298,8 +310,15 @@ fn bytes(state: &GameState) -> Vec<u8> {
 fn restore(state: &GameState) -> GameState {
     serde_json::from_slice(&bytes(state)).unwrap()
 }
-pub(crate) fn published(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
-    let (mut state, niv, archer, _) = cast_niv(actor);
+fn published(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
+    published_with_top(actor, "Island")
+}
+
+pub(crate) fn published_with_top(
+    actor: PlayerId,
+    hidden_top: &str,
+) -> (GameState, ObjectId, ObjectId) {
+    let (mut state, niv, archer, _) = cast_niv_with_top(actor, hidden_top);
     cast_bolt(actor, &mut state);
     advance_to_archer_damage_trigger(actor, archer, &mut state);
     (state, niv, archer)

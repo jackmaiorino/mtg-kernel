@@ -2,7 +2,6 @@
 pub use crate::limited_consumer_wire_v1::{CommandV1, ReplyBodyV1, ReplyV1, RequestV1, ResetV1};
 use crate::{
     artist_public_v64::{FactsV64, PaymentKindV64, PaymentStatusV64, StageV64},
-    card_def::{CARD_DEFS, KERNEL_CARDDB_HASH},
     current_mixed_policy_v1::KaitoSession,
     human_bo3_v1::HumanKaitoSessionV75,
     ids::PlayerId,
@@ -47,45 +46,12 @@ pub fn producer_sha256_v1() -> String {
 }
 
 pub(crate) fn preflight(config: &ResetV1) -> Result<(), String> {
-    if !cfg!(all(
-        feature = "limited-fdn-fixtures",
-        not(feature = "standard-magezero-fixtures")
-    )) {
-        return Err("Artist profile requires the Foundations catalog".into());
-    }
-    if config.expected_card_db_hash != KERNEL_CARDDB_HASH {
-        return Err("catalog mismatch".into());
-    }
-    if config.max_physical_decisions == 0
-        || config.max_policy_steps == 0
-        || config.mainboards.iter().any(|deck| {
-            !(40..=crate::limited_session_v1::MAX_CUSTOM_DECK_CARDS_V1).contains(&deck.len())
-        })
-    {
-        return Err("invalid Artist profile reset".into());
-    }
-    if crate::rules_meaning_artist_v64::printed_meaning()?.card_id != PRINTING_V1 {
-        return Err("Artist profile printing identity changed".into());
-    }
-    for deck in &config.mainboards {
-        for &id in deck {
-            let def = CARD_DEFS
-                .get(usize::from(id))
-                .ok_or("unknown declared card")?;
-            if def.is_token
-                || !(def.has_full_support() || (id == PRINTING_V1 && def.is_executable()))
-            {
-                return Err(format!("card {id} is outside the Artist consumer profile"));
-            }
-            if id != PRINTING_V1 {
-                crate::rl::require_declared_cards_for_scope(
-                    crate::rl::CommonProjectionScopeV42::KaitoV75,
-                    std::slice::from_ref(&id),
-                )?;
-            }
-        }
-    }
-    Ok(())
+    crate::limited_consumer_wire_v1::preflight_single_appendix(
+        config,
+        PRINTING_V1,
+        || crate::rules_meaning_artist_v64::printed_meaning().map(|meaning| meaning.card_id),
+        "Artist",
+    )
 }
 
 fn native(config: &ResetV1) -> Result<FastActorSessionV1, String> {

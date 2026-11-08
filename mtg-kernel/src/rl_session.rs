@@ -537,7 +537,7 @@ pub(crate) fn kaito_candidates_v75(
     state: &crate::state::GameState,
     surface: &PolicySurfaceV5,
 ) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
-    crate::kaito_observation_v75::validate_state_scoped(state, surface.artist_consumer_v1())
+    crate::kaito_observation_v75::validate_state_scoped(state, surface.limited_appendix_v1())
         .map_err(RlContractError)?;
     #[cfg(feature = "limited-fdn-fixtures")]
     if let Some((player, pending, prefix)) = surface
@@ -564,7 +564,7 @@ pub(crate) fn kaito_candidates_v75(
         crate::rl::core_policy_action_candidates_kaito_scoped_v75(
             origin,
             state,
-            surface.artist_consumer_v1(),
+            surface.limited_appendix_v1(),
         )
     }
 }
