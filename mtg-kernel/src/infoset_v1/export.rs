@@ -206,7 +206,7 @@ pub(crate) fn contract_pins(state: &GameState) -> Vec<ObjectId> {
 /// `DealDamageToTargetEqualToChosenCostCreaturePower` read it), with no
 /// captured last-known power, no payment by its own source, no grant and
 /// no catalog-owned payment record (`fixed_source_damage_v3`).
-fn paid_costs_unread_v1(state: &GameState, item: &crate::state::StackItem) -> bool {
+fn paid_cost_effect_unread_v1(state: &GameState, item: &crate::state::StackItem) -> bool {
     use crate::effect::EffectOp;
     let source = item.v4.ability_source_contract.map(|c| c.source);
     item.kind == crate::state::StackItemKind::ActivatedAbility
@@ -221,12 +221,52 @@ fn paid_costs_unread_v1(state: &GameState, item: &crate::state::StackItem) -> bo
                     | EffectOp::DealDamage { .. }
             )
         )
+        && !crate::fixed_source_damage_v3::tracked(state, item)
+}
+
+fn paid_costs_unread_v1(state: &GameState, item: &crate::state::StackItem) -> bool {
+    paid_cost_effect_unread_v1(state, item)
         && item
             .v4
             .paid_cost_refs
             .iter()
             .all(|p| p.power_lki.is_none() && p.object != item.source)
-        && !crate::fixed_source_damage_v3::tracked(state, item)
+}
+
+/// Mark each independently unread public receipt by its containing stack
+/// position. A pending reader with the same raw object cannot change this
+/// occurrence's eligibility. The marker is consumed by the rewrite walker.
+pub(super) fn mark_detached_receipts_v4(
+    state: &GameState,
+    tagged: &mut Value,
+    viewer: PlayerId,
+) -> Result<Vec<(PlayerId, u16)>, ExportErrorV1> {
+    let bit = 1 << viewer.index();
+    let mut detached = Vec::new();
+    for (index, item) in state.stack.iter().enumerate() {
+        if !paid_cost_effect_unread_v1(state, item) {
+            continue;
+        }
+        let Some(source) = item.v4.ability_source_contract else {
+            continue;
+        };
+        for (position, receipt) in item.v4.paid_cost_refs.iter().enumerate() {
+            // A payment with the source's printing might be self-payment.
+            // Exclude it by public name in every copy assignment.
+            if receipt.visible_to_mask & bit == 0
+                || receipt.power_lki.is_some()
+                || receipt.card_def == source.card_def
+            {
+                continue;
+            }
+            let row = tagged["stack"][index]["v4"]["paid_cost_refs"][position]
+                .as_object_mut()
+                .ok_or_else(|| refuse(RefusalCodeV1::R2, "public paid-cost receipt shape"))?;
+            row.insert(super::rewrite::DETACHED_PAID_V4.into(), json!(detached.len()));
+            detached.push((receipt.owner, receipt.card_def));
+        }
+    }
+    Ok(detached)
 }
 
 /// Amendment 43.5: the paid-cost records (object, epoch) whose live
@@ -1024,6 +1064,11 @@ fn export_versioned(
 
     // Live references (collect pass): R(o), R1, R1b, R2 inputs.
     let mut tagged = tagged_value(state);
+    let detached_receipts = if reveal_evidence_v4.is_some() {
+        mark_detached_receipts_v4(state, &mut tagged, v)?
+    } else {
+        Vec::new()
+    };
     let mut refs: Vec<(RefV1, &'static str)> = Vec::new();
     {
         let mut record = |r: RefV1, region: &'static str| refs.push((r, region));
@@ -1051,7 +1096,11 @@ fn export_versioned(
     // same-name copy V later drew, so R1b's name-level join test must
     // refuse in both worlds before tracking decides the tombstone; so does
     // R1 `same_name_batch` below (Sol round 2).
-    let unread_paid = unread_paid_costs_v1(state, &tagged, v);
+    let unread_paid = if reveal_evidence_v4.is_none() {
+        unread_paid_costs_v1(state, &tagged, v)
+    } else {
+        BTreeSet::new()
+    };
     let paid_tomb = |r: &RefV1| -> bool {
         r.class == ClassV1::Live
             && r.paid_cost
@@ -1061,35 +1110,8 @@ fn export_versioned(
                 if projection.span_of(r.object, *g).is_some()
                     && unread_paid.contains(&(r.object, *g)))
     };
-    // V4 can keep a publicly receipted payment without claiming that an
-    // earlier incarnation is the same copy now seen in a public zone or
-    // named in the opponent's hand. The reader audit above excludes every
-    // receipt whose live resolution consumes the paid object.
-    let mut detached_receipts = BTreeMap::new();
-    if reveal_evidence_v4.is_some() {
-        for receipt in state.stack.iter().flat_map(|item| &item.v4.paid_cost_refs) {
-            let key = (receipt.object, receipt.zone_change_count);
-            if unread_paid.contains(&key) {
-                let printing = (receipt.owner, receipt.card_def);
-                if detached_receipts
-                    .insert(key, printing)
-                    .is_some_and(|old| old != printing)
-                {
-                    return Err(refuse(
-                        RefusalCodeV1::R2,
-                        "conflicting public paid-cost receipts",
-                    ));
-                }
-            }
-        }
-    }
     let detached_paid = |r: &RefV1| -> Option<(PlayerId, u16)> {
-        match r.generations.as_slice() {
-            [epoch] if r.class == ClassV1::Live && r.paid_cost => {
-                detached_receipts.get(&(r.object, *epoch)).copied()
-            }
-            _ => None,
-        }
+        r.detached_paid_v4.map(|index| detached_receipts[index])
     };
 
     // Lead ruling 7 (a): a live reference keeps its link across an unlinked

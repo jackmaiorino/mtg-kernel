@@ -474,6 +474,40 @@ fn reveal_v4_detaches_an_unread_payment_after_a_repeated_reveal() {
     assert_eq!(run(paid, twin), run(twin, paid));
 }
 
+#[test]
+fn reveal_v4_receipt_admission_ignores_a_separate_readers_hidden_alias() {
+    use super::export::mark_detached_receipts_v4;
+    use super::rewrite::{tagged_value, DETACHED_PAID_V4};
+
+    let viewer = PlayerId::P1;
+    let session = opponent_payment();
+    let mut base = session.game_state().clone();
+    let item = waiting(&base, OutletV1::Shaman).unwrap();
+    let paid = base.stack[item].v4.paid_cost_refs[0];
+    let twin = library_lembas(&mut base, paid.object, 1)[0];
+    let check = |alias| {
+        let mut state = base.clone();
+        // Preserve the unclassified item's public receipt fields while
+        // varying whether its raw reference equals the unread receipt.
+        let mut reader = state.stack[item].clone();
+        reader.inline_effect = None;
+        reader.v4.paid_cost_refs[0].object = alias;
+        let reader_index = state.stack.len();
+        state.stack.push(reader);
+        let mut tagged = tagged_value(&state);
+        let detached = mark_detached_receipts_v4(&state, &mut tagged, viewer).unwrap();
+        assert!(tagged["stack"][reader_index]["v4"]["paid_cost_refs"][0]
+            .get(DETACHED_PAID_V4)
+            .is_none());
+        let mark = tagged["stack"][item]["v4"]["paid_cost_refs"][0][DETACHED_PAID_V4]
+            .as_u64()
+            .unwrap();
+        assert_eq!(detached[mark as usize], (paid.owner, paid.card_def));
+        (detached, mark)
+    };
+    assert_eq!(check(paid.object), check(twin));
+}
+
 /// The opponent's Shaman payment for Sol round 2. V is Faeries (P1).
 /// Wildfire casts two Lembas and Krark-Clan Shaman and sacrifices one
 /// Lembas to the Shaman; the session stops at V's first decision with the
