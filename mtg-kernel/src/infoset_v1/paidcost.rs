@@ -416,6 +416,7 @@ fn drawing_the_paid_lembas_or_its_twin_exports_alike() {
 fn reveal_v4_detaches_an_unread_payment_after_a_repeated_reveal() {
     use crate::event::{propose_and_commit, ProposedEvent};
 
+    let policy = crate::sideboard_play_policy_v1::FrozenPlayPolicyV1::training_fixture_v4();
     let owner = PlayerId::P0;
     let viewer = PlayerId::P1;
     let s = opponent_payment();
@@ -472,6 +473,33 @@ fn reveal_v4_detaches_an_unread_payment_after_a_repeated_reveal() {
             v4.handles[receipt.object.0 as usize],
             HandleV1::H { named: true, .. }
         ));
+        // Carry the recovered structural receipt across the real envelope and
+        // production worker parser/import/sampler, not just the exporter.
+        let payload = super::PayloadV1::new(&v4, &s, viewer, 0).unwrap();
+        let payload = super::PayloadV1::from_bytes(&payload.to_bytes()).unwrap();
+        let imported = payload.import().unwrap();
+        let restored = &imported.game_state().stack
+            [waiting(imported.game_state(), OutletV1::Shaman).unwrap()]
+        .v4
+        .paid_cost_refs[0];
+        assert_eq!(restored.card_def, receipt.card_def);
+        assert_eq!(restored.owner, receipt.owner);
+        let request = serde_json::json!({"root_id":"recovered-public-payment",
+            "tree":0, "units":8, "payload":payload, "path":[]})
+        .to_string();
+        let answer =
+            crate::regret_census_v1::stage4a::qualify_worker_request_v4(&policy, true, &request);
+        assert_eq!(answer["ok"], true, "{answer}");
+        assert!(
+            answer["result"]["transitions"].as_u64().unwrap() > 0,
+            "{answer}"
+        );
+        assert_eq!(
+            answer["result"]["faults"],
+            serde_json::json!([]),
+            "{answer}"
+        );
+        assert!(answer["result"]["edges"].is_array(), "{answer}");
         (state.reveal_meaning_v3.transcript(viewer), v4.bytes)
     };
     assert_eq!(run(paid, twin), run(twin, paid));

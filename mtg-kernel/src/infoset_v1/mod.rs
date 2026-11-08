@@ -30,7 +30,7 @@ mod face_down;
 #[cfg(test)]
 mod fcast;
 #[cfg(test)]
-mod fixtures;
+pub(crate) mod fixtures;
 #[cfg(test)]
 mod harness;
 #[cfg(test)]

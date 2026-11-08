@@ -448,6 +448,33 @@ fn host_name() -> String {
         .unwrap_or_default()
 }
 
+/// Parse and dispatch exactly one worker request. Shared with native qualification
+/// fixtures; the stdio loop retains framing and flushing.
+pub(crate) fn worker_answer_v4(policy: &FrozenPlayPolicyV1, reveal_v4: bool, line: &str) -> Value {
+    // Echo the request's identity so the pool can match every reply.
+    let id = serde_json::from_str::<Value>(line).ok();
+    let (root_id, tree) = match &id {
+        Some(v) => (v["root_id"].clone(), v["tree"].clone()),
+        None => (Value::Null, Value::Null),
+    };
+    let answer = (|| -> Result<Value, String> {
+        let req: TreeRequestV1 = serde_json::from_str(line).map_err(|e| format!("request: {e}"))?;
+        require_profile(&req.payload, reveal_v4)?;
+        let root = import_at_v1(&req.payload, &req.path)?;
+        let r = search_tree_v1(
+            policy,
+            &root,
+            &req.payload,
+            &req.root_id,
+            req.tree,
+            req.units,
+        )?;
+        Ok(json!({"ok": true, "root_id": req.root_id, "tree": req.tree, "result": r}))
+    })()
+    .unwrap_or_else(|e| json!({"ok": false, "root_id": root_id, "tree": tree, "error": e}));
+    answer
+}
+
 /// Worker: one tree per request line, one result per answer line.
 pub(super) fn run_worker(policy: &FrozenPlayPolicyV1, reveal_v4: bool) -> Result<(), String> {
     let stdin = std::io::stdin();
@@ -457,28 +484,7 @@ pub(super) fn run_worker(policy: &FrozenPlayPolicyV1, reveal_v4: bool) -> Result
         if line.trim().is_empty() {
             continue;
         }
-        // Echo the request's identity so the pool can match every reply.
-        let id = serde_json::from_str::<Value>(&line).ok();
-        let (root_id, tree) = match &id {
-            Some(v) => (v["root_id"].clone(), v["tree"].clone()),
-            None => (Value::Null, Value::Null),
-        };
-        let answer = (|| -> Result<Value, String> {
-            let req: TreeRequestV1 =
-                serde_json::from_str(&line).map_err(|e| format!("request: {e}"))?;
-            require_profile(&req.payload, reveal_v4)?;
-            let root = import_at_v1(&req.payload, &req.path)?;
-            let r = search_tree_v1(
-                policy,
-                &root,
-                &req.payload,
-                &req.root_id,
-                req.tree,
-                req.units,
-            )?;
-            Ok(json!({"ok": true, "root_id": req.root_id, "tree": req.tree, "result": r}))
-        })()
-        .unwrap_or_else(|e| json!({"ok": false, "root_id": root_id, "tree": tree, "error": e}));
+        let answer = worker_answer_v4(policy, reveal_v4, &line);
         writeln!(out, "{answer}").map_err(|e| e.to_string())?;
         out.flush().map_err(|e| e.to_string())?;
     }
@@ -960,3 +966,7 @@ mod tests {
         assert!(none.incomplete && none.pick.is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "serve/reveal_v4_tests.rs"]
+mod reveal_v4_tests;

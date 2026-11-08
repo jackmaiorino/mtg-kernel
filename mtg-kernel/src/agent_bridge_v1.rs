@@ -3765,7 +3765,19 @@ mod tests {
                     root["row_keys"],
                     extensions[INFOSET_SCHEMA_REVEAL_V4]["row_keys"]
                 );
-                infoset.root_ids = None;
+                // Serialized snapshots intentionally lose the private journal.
+                // Run the actual exporter again and require its R8 refusal,
+                // rather than simulating refusal by clearing root_ids ourselves.
+                let restored: crate::state::GameState = serde_json::from_value(
+                    serde_json::to_value(game.session.game_state()).unwrap(),
+                )
+                .unwrap();
+                let RlSessionResponseV1::Decision(current) = game.session.current_response() else {
+                    panic!("expected a live decision");
+                };
+                infoset_extension_v1(fast, &current, infoset, &restored.reveal_meaning_v3).unwrap();
+                assert_eq!(infoset.pending.as_ref().unwrap()["refusal"], "R8");
+                assert!(infoset.root_ids.is_none());
                 assert_eq!(
                     infoset.live_group_rows_v4(viewer.into(), &support, fast),
                     Some(root)
