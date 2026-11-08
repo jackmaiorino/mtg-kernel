@@ -234,16 +234,30 @@ impl ExpandedUpdateBackendV1 {
         }
     }
 
-    pub(crate) fn validate_update_execution_v1(&self, document: &Value) -> Result<(), String> {
+    pub(crate) fn validate_update_execution_v1(
+        &self,
+        document: &Value,
+        s_parallel_workers: Option<usize>,
+    ) -> Result<(), String> {
         self.validate_v1()?;
         let mut expected = json!({
             "schema":"mtg-kernel-expanded-deck-update/v1",
             "numerical_backend":"native-cpu-sequential"
         });
         self.record_update_execution_v1(&mut expected);
+        // Older prepared S updates used serial learner math. Their original
+        // receipt is still valid and its preparation telemetry is checked by
+        // the run driver. A parallel learner receipt binds its requested count.
+        if let Some(workers) = s_parallel_workers.filter(|_| {
+            self.is_cpu()
+                && document["numerical_backend"] == s_learner_v1::S_PARALLEL_UPDATE_BACKEND_V1
+        }) {
+            s_learner_v1::record_parallel_update_execution_v1(&mut expected, workers);
+        }
         for key in [
             "schema",
             "numerical_backend",
+            "s_learner_workers_requested",
             "update_backend",
             "device",
             "gpu_ordinal",
@@ -6325,12 +6339,12 @@ pub(crate) mod tests {
         let mut legacy = base.clone();
         cpu.record_update_execution_v1(&mut legacy);
         assert_eq!(legacy, base);
-        cpu.validate_update_execution_v1(&legacy).unwrap();
-        assert!(cuda.validate_update_execution_v1(&legacy).is_err());
+        cpu.validate_update_execution_v1(&legacy, None).unwrap();
+        assert!(cuda.validate_update_execution_v1(&legacy, None).is_err());
         let mut device = base.clone();
         cuda.record_update_execution_v1(&mut device);
-        cuda.validate_update_execution_v1(&device).unwrap();
-        assert!(cpu.validate_update_execution_v1(&device).is_err());
+        cuda.validate_update_execution_v1(&device, None).unwrap();
+        assert!(cpu.validate_update_execution_v1(&device, None).is_err());
         assert_eq!(device["reported_loss_source"], "transported-cpu-outputs");
         for key in [
             "schema",
@@ -6345,18 +6359,43 @@ pub(crate) mod tests {
             let mut missing = device.clone();
             missing.as_object_mut().unwrap().remove(key);
             assert!(
-                cuda.validate_update_execution_v1(&missing).is_err(),
+                cuda.validate_update_execution_v1(&missing, None).is_err(),
                 "{key}"
             );
             let mut wrong = device.clone();
             wrong[key] = json!("incorrect");
-            assert!(cuda.validate_update_execution_v1(&wrong).is_err(), "{key}");
+            assert!(
+                cuda.validate_update_execution_v1(&wrong, None).is_err(),
+                "{key}"
+            );
         }
         let other = ExpandedUpdateBackendV1::Cuda { device_ordinal: 2 };
-        assert!(other.validate_update_execution_v1(&device).is_err());
+        assert!(other.validate_update_execution_v1(&device, None).is_err());
         let mut misleading_cpu = legacy;
         misleading_cpu["gpu_ordinal"] = json!(1);
-        assert!(cpu.validate_update_execution_v1(&misleading_cpu).is_err());
+        assert!(cpu
+            .validate_update_execution_v1(&misleading_cpu, None)
+            .is_err());
+    }
+
+    #[test]
+    fn s_parallel_update_receipt_binds_worker_count_and_accepts_legacy_receipts() {
+        let cpu = ExpandedUpdateBackendV1::Cpu;
+        let legacy = json!({"schema":"mtg-kernel-expanded-deck-update/v1",
+            "numerical_backend":"native-cpu-sequential"});
+        cpu.validate_update_execution_v1(&legacy, Some(4)).unwrap();
+        let mut parallel = legacy.clone();
+        s_learner_v1::record_parallel_update_execution_v1(&mut parallel, 4);
+        cpu.validate_update_execution_v1(&parallel, Some(4))
+            .unwrap();
+        assert!(cpu
+            .validate_update_execution_v1(&parallel, Some(2))
+            .is_err());
+        assert!(cpu.validate_update_execution_v1(&parallel, None).is_err());
+        parallel["numerical_backend"] = legacy["numerical_backend"].clone();
+        assert!(cpu
+            .validate_update_execution_v1(&parallel, Some(4))
+            .is_err());
     }
 
     #[test]
