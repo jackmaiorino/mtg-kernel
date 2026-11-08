@@ -84,6 +84,20 @@ fn faces_at(state: &GameState, index: usize, spell: &StackItem) -> Result<Vec<Fa
     Ok(faces.clone())
 }
 
+fn validate_current_face(state: &GameState, index: usize, face: &FaceV1) -> Result<(), String> {
+    let Some((id, _, generation)) = object(face.contract) else { return Ok(()) };
+    let live = state.objects.try_get(id).ok_or("Storm historical target absent")?;
+    if live.zone_change_count != generation || Some(crate::rl::projected_card_def(state, id, generation)) == face.public_card_def {
+        return Ok(());
+    }
+    let was_concealed = ["Face-down creature", "Face-down card"].iter().any(|name| crate::card_def::card_id_by_name(name).is_some_and(|id| Some(id) == face.public_card_def));
+    if was_concealed && live.v4.face_down_v1.is_none() && state.engine.event_history[index + 1..].iter().any(|e| matches!(e,
+        E::TurnedFaceUp { object, zone_change_count } if *object == id && *zone_change_count == generation)) {
+        return Ok(());
+    }
+    Err("Storm target face differs without a native face change".into())
+}
+
 pub(crate) fn for_snapshot(state: &GameState, spell: &StackItem) -> Result<Vec<FaceV1>, String> {
     if !state.thousand_year_storm_consumer_v1 { return Err("Storm target faces have no owning profile".into()); }
     let mut found = None;
@@ -94,7 +108,25 @@ pub(crate) fn for_snapshot(state: &GameState, spell: &StackItem) -> Result<Vec<F
             _ => continue,
         };
         if found.is_some() { return Err("Storm target faces have duplicate snapshot owners".into()); }
-        found = Some(faces_at(state, index + offset, spell)?);
+        let faces = faces_at(state, index + offset, spell)?;
+        if let E::ThousandYearStormV1 { journal: JournalV1::Copy { trigger, .. } } = event {
+            let mut publications = state.engine.event_history[..index].iter().filter_map(|e| match e {
+                E::ThousandYearStormV1 { journal: JournalV1::Published { cast, item } } if item.v4.stack_item_id == *trigger => Some(*cast),
+                _ => None,
+            });
+            let cast = publications.next().ok_or("Storm target faces lost original trigger")?;
+            if publications.next().is_some() { return Err("Storm target faces have duplicate trigger owners".into()); }
+            let JournalV1::Cast { spell: original, .. } = at(state, cast)? else { return Err("Storm copy target faces lost original cast".into()); };
+            let original_faces = for_snapshot(state, original)?;
+            for (slot, face) in faces.iter().enumerate() {
+                if original.v4.target_contracts.get(slot) == Some(&face.contract) {
+                    if original_faces.get(slot) != Some(face) { return Err("Storm retained copy target differs from original native face".into()); }
+                } else { validate_current_face(state, index + offset, face)?; }
+            }
+        } else {
+            for face in &faces { validate_current_face(state, index + offset, face)?; }
+        }
+        found = Some(faces);
     }
     found.ok_or_else(|| "Storm target faces lost native snapshot".into())
 }
@@ -116,7 +148,18 @@ pub(crate) fn publish_copy(state: &mut GameState, owner: CopyOwnerV1, original: 
 }
 
 pub(super) fn validate_state(state: &GameState) -> Result<(), String> {
+    let mut ids = std::collections::BTreeSet::new();
+    let mut sources = std::collections::BTreeSet::new();
     for (index, event) in state.engine.event_history.iter().enumerate() {
+        if state.thousand_year_storm_consumer_v1 {
+            if let E::ThousandYearStormV1 { journal: JournalV1::Cast { spell: item, .. } | JournalV1::Copy { item, .. } | JournalV1::Published { item, .. } } = event {
+                if !ids.insert(item.v4.stack_item_id.0) { return Err("Storm native stack item identity was reused".into()); }
+                if item.kind == crate::state::StackItemKind::Spell {
+                    let source = item.v4.source_contract.ok_or("Storm native spell source absent")?;
+                    if !sources.insert((source.source.0, source.zone_change_count)) { return Err("Storm native spell incarnation was reused".into()); }
+                }
+            }
+        }
         match event {
             E::ThousandYearStormV1 { journal: JournalV1::TargetFaces { item, .. } } => {
                 if !state.thousand_year_storm_consumer_v1 { return Err("Storm target face has no owning profile".into()); }
