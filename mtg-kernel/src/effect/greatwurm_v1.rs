@@ -490,7 +490,11 @@ pub(crate) fn waiting(state: &GameState, ctx: &ExecCtx) -> bool {
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
     validate_item_lifetime(state, item, true)
 }
-fn validate_item_lifetime(state: &GameState, item: &StackItem, require_live: bool) -> Result<(), String> {
+fn validate_item_lifetime(
+    state: &GameState,
+    item: &StackItem,
+    require_live: bool,
+) -> Result<(), String> {
     let op = item.inline_effect.as_ref().ok_or("combat root erased")?;
     validate_root(state, op, item.v4.ability_source_contract)?;
     let source = item
@@ -588,7 +592,9 @@ pub(super) fn execute(
         let mut staged = state.clone();
         let start = staged.engine.event_history.len();
         crate::greatwurm_receipts_v1::record_dispatch(
-            &mut staged, id, crate::greatwurm_receipts_v1::DispatchV1::Resolve {
+            &mut staged,
+            id,
+            crate::greatwurm_receipts_v1::DispatchV1::Resolve {
                 recipient: Some((controller, before)),
             },
         );
@@ -613,7 +619,9 @@ pub(super) fn execute(
         result
     } else {
         crate::greatwurm_receipts_v1::record_dispatch(
-            state, id, crate::greatwurm_receipts_v1::DispatchV1::Resolve { recipient: None },
+            state,
+            id,
+            crate::greatwurm_receipts_v1::DispatchV1::Resolve { recipient: None },
         );
         Some(crate::greatwurm_receipts_v1::EndV1::OriginalCreatureGone)
     };

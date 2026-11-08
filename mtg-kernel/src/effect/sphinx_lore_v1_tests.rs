@@ -87,7 +87,13 @@ fn tapped(s: &GameState, p: PlayerId) -> usize {
         .filter(|o| s.objects.get(**o).tapped)
         .count()
 }
-pub(crate) fn cast(s: &mut GameState, p: PlayerId, n: &str, targets: &[Target], cost: usize) -> ObjectId {
+pub(crate) fn cast(
+    s: &mut GameState,
+    p: PlayerId,
+    n: &str,
+    targets: &[Target],
+    cost: usize,
+) -> ObjectId {
     priority(s, p);
     let card = put(s, p, n, Zone::Hand);
     let before = tapped(s, p);
@@ -172,7 +178,12 @@ pub(crate) fn main2(s: &mut GameState, p: PlayerId) {
     }
     panic!("main2 absent");
 }
-pub(crate) fn attack(s: &mut GameState, p: PlayerId, sphinx: ObjectId, target: ObjectId) -> StackItem {
+pub(crate) fn attack(
+    s: &mut GameState,
+    p: PlayerId,
+    sphinx: ObjectId,
+    target: ObjectId,
+) -> StackItem {
     let mut declared = false;
     let mut targeted = false;
     for _ in 0..96 {

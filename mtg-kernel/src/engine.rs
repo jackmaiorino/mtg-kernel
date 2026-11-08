@@ -3332,9 +3332,16 @@ fn validate_ability_source_contract(
         .ok_or("ability source object no longer exists")?;
     let historical_sphinx = item.kind == StackItemKind::TriggeredAbility
         && source.zone_change_count > contract.zone_change_count
-        && item.inline_effect.as_ref().is_some_and(crate::effect::sphinx_lore_v1::recipe);
+        && item
+            .inline_effect
+            .as_ref()
+            .is_some_and(crate::effect::sphinx_lore_v1::recipe);
     if historical_sphinx {
-        crate::effect::sphinx_lore_v1::validate_root(state, item.inline_effect.as_ref().unwrap(), Some(contract))?;
+        crate::effect::sphinx_lore_v1::validate_root(
+            state,
+            item.inline_effect.as_ref().unwrap(),
+            Some(contract),
+        )?;
     }
     if contract.source != item.source
         || (!historical_sphinx && !source_card_def_matches(state, contract, source.card_def))
@@ -19184,10 +19191,14 @@ pub(crate) fn counter_stack_item_by_id(
     }
     if greatwurm_counter {
         crate::greatwurm_receipts_v1::record_dispatch(
-            state, item.v4.stack_item_id, crate::greatwurm_receipts_v1::DispatchV1::Countered,
+            state,
+            item.v4.stack_item_id,
+            crate::greatwurm_receipts_v1::DispatchV1::Countered,
         );
         crate::greatwurm_receipts_v1::record_end(
-            state, item.v4.stack_item_id, crate::greatwurm_receipts_v1::EndV1::Countered,
+            state,
+            item.v4.stack_item_id,
+            crate::greatwurm_receipts_v1::EndV1::Countered,
         );
         state
             .engine

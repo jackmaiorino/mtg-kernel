@@ -451,21 +451,29 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         }
     }
     let mut covered = BTreeSet::new();
-    if source == Source::KaitoV75 && state["schema"] == crate::greatwurm_consumer_v1::CANDIDATES_SCHEMA {
+    if source == Source::KaitoV75
+        && state["schema"] == crate::greatwurm_consumer_v1::CANDIDATES_SCHEMA
+    {
         let meaning: crate::greatwurm_public_v1::MeaningV1 =
             serde_json::from_value(state["observation"]["greatwurm"]["meaning"].clone())
                 .map_err(|error| Error::Projection(error.to_string()))?;
         if meaning != crate::greatwurm_public_v1::printed_meaning().map_err(Error::Projection)? {
-            return Err(Error::Projection("Greatwurm meaning differs from exact printing".into()));
+            return Err(Error::Projection(
+                "Greatwurm meaning differs from exact printing".into(),
+            ));
         }
         covered.insert(meaning.card_id);
     }
-    if source == Source::KaitoV75 && state["schema"] == crate::curator_consumer_v1::CANDIDATES_SCHEMA {
+    if source == Source::KaitoV75
+        && state["schema"] == crate::curator_consumer_v1::CANDIDATES_SCHEMA
+    {
         let meaning: crate::curator_public_v1::MeaningV1 =
             serde_json::from_value(state["observation"]["curator"]["meaning"].clone())
                 .map_err(|error| Error::Projection(error.to_string()))?;
         if meaning != crate::curator_public_v1::printed_meaning().map_err(Error::Projection)? {
-            return Err(Error::Projection("Curator meaning differs from exact printing".into()));
+            return Err(Error::Projection(
+                "Curator meaning differs from exact printing".into(),
+            ));
         }
         covered.insert(meaning.card_id);
     }
@@ -547,8 +555,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         }
         covered.insert(meaning.card_id);
     }
-    if source == Source::KaitoV75
-        && state["schema"] == crate::kykar_consumer_v1::CANDIDATES_SCHEMA
+    if source == Source::KaitoV75 && state["schema"] == crate::kykar_consumer_v1::CANDIDATES_SCHEMA
     {
         let meaning: crate::kykar_public_v1::MeaningV1 =
             serde_json::from_value(state["observation"]["kykar"]["meaning"].clone())
@@ -574,9 +581,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         }
         covered.insert(meaning.card_id);
     }
-    if source == Source::KaitoV75
-        && state["schema"] == crate::loot_consumer_v1::CANDIDATES_SCHEMA
-    {
+    if source == Source::KaitoV75 && state["schema"] == crate::loot_consumer_v1::CANDIDATES_SCHEMA {
         let meaning: crate::loot_public_v1::MeaningV1 =
             serde_json::from_value(state["observation"]["loot"]["meaning"].clone())
                 .map_err(|e| Error::Projection(e.to_string()))?;

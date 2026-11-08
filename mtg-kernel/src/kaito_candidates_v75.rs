@@ -840,11 +840,23 @@ fn project_authenticated_parts_v75(
                     .map_err(error)?,
                 loot_action: crate::loot_consumer_v1::action(observation.loot.as_ref(), &action)
                     .map_err(error)?,
-                curator_action: crate::curator_consumer_v1::action(observation.curator.as_ref(), &action)
+                curator_action: crate::curator_consumer_v1::action(
+                    observation.curator.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                greatwurm_action: crate::greatwurm_consumer_v1::action(
+                    observation.greatwurm.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                sphinx_lore_action: crate::sphinx_lore_consumer_v1::action(
+                    observation.sphinx_lore.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                kykar_action: crate::kykar_consumer_v1::action(observation.kykar.as_ref(), &action)
                     .map_err(error)?,
-                greatwurm_action: crate::greatwurm_consumer_v1::action(observation.greatwurm.as_ref(), &action).map_err(error)?,
-                sphinx_lore_action: crate::sphinx_lore_consumer_v1::action(observation.sphinx_lore.as_ref(), &action).map_err(error)?,
-                kykar_action: crate::kykar_consumer_v1::action(observation.kykar.as_ref(), &action).map_err(error)?,
                 drakuseth_target: crate::drakuseth_consumer_v1::target_action(
                     observation.drakuseth.as_ref(),
                     &action,
@@ -1030,7 +1042,10 @@ fn schemas(observation: &KaitoObservationV75) -> (&'static str, &'static str) {
             crate::loot_consumer_v1::ACTION_SCHEMA,
         )
     } else if observation.curator.is_some() {
-        (crate::curator_consumer_v1::CANDIDATES_SCHEMA, crate::curator_consumer_v1::ACTION_SCHEMA)
+        (
+            crate::curator_consumer_v1::CANDIDATES_SCHEMA,
+            crate::curator_consumer_v1::ACTION_SCHEMA,
+        )
     } else if observation.kykar.is_some() {
         (
             crate::kykar_consumer_v1::CANDIDATES_SCHEMA,
@@ -1074,12 +1089,18 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
         .map_err(error)?;
     }
     if let Some(facts) = &value.observation.greatwurm {
-        crate::greatwurm_consumer_v1::validate_candidate_order(facts, value.candidates.iter().map(|row| &row.action)).map_err(error)?;
+        crate::greatwurm_consumer_v1::validate_candidate_order(
+            facts,
+            value.candidates.iter().map(|row| &row.action),
+        )
+        .map_err(error)?;
     }
     if let Some(facts) = &value.observation.curator {
         crate::curator_consumer_v1::validate_candidate_order(
-            facts, value.candidates.iter().map(|row| &row.action),
-        ).map_err(error)?;
+            facts,
+            value.candidates.iter().map(|row| &row.action),
+        )
+        .map_err(error)?;
     }
     if let Some(active) = value
         .observation
@@ -1225,16 +1246,33 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                     &row.action,
                 )
                 .map_err(error)?
-            || row.greatwurm_action != crate::greatwurm_consumer_v1::action(value.observation.greatwurm.as_ref(), &row.action).map_err(error)?
-            || row.sphinx_lore_action != crate::sphinx_lore_consumer_v1::action(value.observation.sphinx_lore.as_ref(), &row.action).map_err(error)?
-            || row.kykar_action != crate::kykar_consumer_v1::action(value.observation.kykar.as_ref(), &row.action).map_err(error)?
-            || row.loot_action != crate::loot_consumer_v1::action(value.observation.loot.as_ref(), &row.action).map_err(error)?
+            || row.greatwurm_action
+                != crate::greatwurm_consumer_v1::action(
+                    value.observation.greatwurm.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.sphinx_lore_action
+                != crate::sphinx_lore_consumer_v1::action(
+                    value.observation.sphinx_lore.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.kykar_action
+                != crate::kykar_consumer_v1::action(value.observation.kykar.as_ref(), &row.action)
+                    .map_err(error)?
+            || row.loot_action
+                != crate::loot_consumer_v1::action(value.observation.loot.as_ref(), &row.action)
+                    .map_err(error)?
             || row.edict_action
                 != crate::edict_consumer_v1::action(value.observation.edict.as_ref(), &row.action)
                     .map_err(error)?
             || row.curator_action
-                != crate::curator_consumer_v1::action(value.observation.curator.as_ref(), &row.action)
-                    .map_err(error)?
+                != crate::curator_consumer_v1::action(
+                    value.observation.curator.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
             || row.chosen_type_answer
                 != chosen_type::answer(value.observation.chosen_type.as_ref(), &row.action)
                     .map_err(error)?

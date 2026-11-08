@@ -102,7 +102,10 @@ pub(crate) fn source_at(state: &GameState, index: u64) -> Result<AbilitySourceCo
     {
         return Err("Sphinx original declaration changed".into());
     }
-    let live = state.objects.try_get(source.source).ok_or("Sphinx original attacker absent")?;
+    let live = state
+        .objects
+        .try_get(source.source)
+        .ok_or("Sphinx original attacker absent")?;
     if live.owner != source.owner || live.zone_change_count < source.zone_change_count {
         return Err("Sphinx original attacker ownership or incarnation changed".into());
     }
@@ -369,7 +372,8 @@ pub(crate) fn installation(
         .ok_or("Sphinx granted card absent")?;
     if o.owner != owner
         || (o.zone_change_count == zone_change_count && o.card_def != card_def)
-        || o.zone_change_count < zone_change_count {
+        || o.zone_change_count < zone_change_count
+    {
         return Err("Sphinx granted original card changed".into());
     }
     let d = &card_def::CARD_DEFS[usize::from(card_def)];

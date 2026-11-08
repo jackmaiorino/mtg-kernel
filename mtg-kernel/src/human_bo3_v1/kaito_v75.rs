@@ -361,10 +361,18 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
-    if let Some(label) = super::greatwurm_consumer_v1::label(obs.greatwurm.as_ref(), a, h)? { return Ok(Some(label)); }
-    if let Some(label) = super::sphinx_lore_consumer_v1::label(obs.sphinx_lore.as_ref(), a, h)? { return Ok(Some(label)); }
-    if let Some(label) = super::kykar_consumer_v1::label(obs.kykar.as_ref(), a, h)? { return Ok(Some(label)); }
-    if let Some(label) = super::loot_consumer_v1::label(obs.loot.as_ref(), a, h)? { return Ok(Some(label)); }
+    if let Some(label) = super::greatwurm_consumer_v1::label(obs.greatwurm.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::sphinx_lore_consumer_v1::label(obs.sphinx_lore.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::kykar_consumer_v1::label(obs.kykar.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::loot_consumer_v1::label(obs.loot.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
     if let Some(label) = super::edict_consumer_v1::label(obs.edict.as_ref(), a, h)? {
         return Ok(Some(label));
     }
@@ -857,11 +865,29 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::lathril_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
-    let greatwurm = obs.greatwurm.as_ref().map(|facts| super::greatwurm_consumer_v1::project(facts, &mut handles, &mut roles)).transpose()?;
-    let sphinx_lore = obs.sphinx_lore.as_ref().map(|facts| super::sphinx_lore_consumer_v1::project(facts, &mut handles, &mut roles)).transpose()?;
-    let kykar = obs.kykar.as_ref().map(|facts| super::kykar_consumer_v1::project(facts, &mut handles, &mut roles)).transpose()?;
-    let loot = obs.loot.as_ref().map(|facts| super::loot_consumer_v1::project(facts, &mut handles)).transpose()?;
-    let edict = obs.edict.as_ref()
+    let greatwurm = obs
+        .greatwurm
+        .as_ref()
+        .map(|facts| super::greatwurm_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let sphinx_lore = obs
+        .sphinx_lore
+        .as_ref()
+        .map(|facts| super::sphinx_lore_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let kykar = obs
+        .kykar
+        .as_ref()
+        .map(|facts| super::kykar_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let loot = obs
+        .loot
+        .as_ref()
+        .map(|facts| super::loot_consumer_v1::project(facts, &mut handles))
+        .transpose()?;
+    let edict = obs
+        .edict
+        .as_ref()
         .map(|facts| super::edict_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
     let leyline_axe = obs
@@ -889,7 +915,9 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::electroduplicate_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
-    let curator = obs.curator.as_ref()
+    let curator = obs
+        .curator
+        .as_ref()
         .map(|facts| super::curator_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
     let action_meanings = indexes

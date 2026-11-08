@@ -354,7 +354,6 @@ impl ConsumerV1 {
             | Self::KaitoLathrilV1
             | Self::KaitoLootV1
             | Self::KaitoCuratorV1
-
             | Self::KaitoKykarV1
             | Self::KaitoSphinxLoreV1
             | Self::KaitoGreatwurmV1 => {

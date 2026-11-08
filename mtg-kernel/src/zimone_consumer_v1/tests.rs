@@ -221,7 +221,14 @@ fn exact_forty_card_v3_reset_pays_cast_and_both_abilities_both_seats() {
         let state = numeric.fixture_state();
         let source_status = zimone.map(|id| {
             let o = state.objects.get(id);
-            (id, o.zone, o.zone_change_count, o.counters.plus1_plus1, o.summoning_sick, o.tapped)
+            (
+                id,
+                o.zone,
+                o.zone_change_count,
+                o.counters.plus1_plus1,
+                o.summoning_sick,
+                o.tapped,
+            )
         });
         assert!(
             finished,

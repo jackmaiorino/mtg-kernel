@@ -97,7 +97,10 @@ fn parity(state: &GameState, typed: ActionV1) -> GameState {
     let d = decision(&numeric);
     let backend = d.fixture_backend_v75();
     let expected = backend.expected();
-    let actor = match expected.acting_player { PlayerSeatV1::P0 => PlayerId::P0, PlayerSeatV1::P1 => PlayerId::P1 };
+    let actor = match expected.acting_player {
+        PlayerSeatV1::P0 => PlayerId::P0,
+        PlayerSeatV1::P1 => PlayerId::P1,
+    };
     let mut hidden = state.clone();
     let concealed = hidden.players[actor.opponent().index()].library[0];
     hidden.objects.get_mut(concealed).card_def = card("Mountain");
