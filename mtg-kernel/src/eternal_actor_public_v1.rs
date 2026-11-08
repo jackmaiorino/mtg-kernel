@@ -51,6 +51,87 @@ pub struct GrantedLeaveDrawV1 {
     pub pending_battlefield_entry: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EntryOptionV1 {
+    CreatureType(Subtype),
+    CardName { printing: u16 },
+    PayLifeToEnterUntapped { life: u8, pay: bool },
+}
+
+/// Meanings of the finite entry-choice indices. The caller supplies the fresh
+/// backend semantic; this helper conveys no executable action authority.
+pub fn entry_option_v1(
+    state: &GameState,
+    action: &crate::rl::ActionSemanticV1,
+) -> Result<Option<EntryOptionV1>, RlContractError> {
+    let crate::rl::ActionSemanticV1::ChooseEffectOption {
+        actor,
+        source,
+        option_index,
+        option_count,
+    } = action
+    else {
+        return Ok(None);
+    };
+    let Some(def) = crate::card_def::CARD_DEFS.get(usize::from(source.card_db_id)) else {
+        return Err(RlContractError("invalid public entry printing".into()));
+    };
+    if !matches!(
+        def.name,
+        "Cavern of Souls" | "Pithing Needle" | "Bridgeworks Battle"
+    ) {
+        return Ok(None);
+    }
+    let link = ObjectLinkV4 {
+        object: crate::ids::ObjectId(source.arena_id),
+        zone_change_count: source.zone_change_count,
+    };
+    if current_public(state, link, Zone::Battlefield)?.as_ref() != Some(source)
+        || source.controller != *actor
+        || option_index >= option_count
+    {
+        return Err(RlContractError("stale public entry option".into()));
+    }
+    let player = match actor {
+        crate::rl::PlayerSeatV1::P0 => crate::ids::PlayerId::P0,
+        crate::rl::PlayerSeatV1::P1 => crate::ids::PlayerId::P1,
+    };
+    let index = usize::from(*option_index);
+    Ok(Some(match def.name {
+        "Cavern of Souls" => {
+            let options = crate::eternal_cards_v1::e3::cavern_type_options(state, player);
+            if options.len() != usize::from(*option_count) {
+                return Err(RlContractError("stale public creature-type menu".into()));
+            }
+            EntryOptionV1::CreatureType(
+                *options
+                    .get(index)
+                    .ok_or_else(|| RlContractError("missing public creature type".into()))?,
+            )
+        }
+        "Pithing Needle" => {
+            let options = crate::eternal_lurrus_v1::needle_name_options(state, player);
+            if options.len() != usize::from(*option_count) {
+                return Err(RlContractError("stale public card-name menu".into()));
+            }
+            EntryOptionV1::CardName {
+                printing: *options
+                    .get(index)
+                    .ok_or_else(|| RlContractError("missing public card name".into()))?,
+            }
+        }
+        "Bridgeworks Battle" => {
+            if state.objects.get(link.object).v4.face_index != 1 || *option_count > 2 {
+                return Err(RlContractError("unexpected public land-face choice".into()));
+            }
+            EntryOptionV1::PayLifeToEnterUntapped {
+                life: 3,
+                pay: *option_index == 1,
+            }
+        }
+        _ => unreachable!(),
+    }))
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PublicChoicesV1 {
     pub schema: String,
@@ -355,11 +436,31 @@ mod tests {
             put(&mut state, player, "Wastescape Battlemage", Zone::Hand);
             let options = crate::eternal_cards_v1::e3::cavern_type_options(&state, player);
             let selected = options.iter().position(|t| *t == Subtype::Eldrazi).unwrap();
+            let action = crate::rl::ActionSemanticV1::ChooseEffectOption {
+                actor: player.into(),
+                source: crate::rl::card_ref(&state, cavern).unwrap(),
+                option_index: selected as u16,
+                option_count: options.len() as u16,
+            };
+            assert_eq!(
+                entry_option_v1(&state, &action).unwrap(),
+                Some(EntryOptionV1::CreatureType(Subtype::Eldrazi))
+            );
             crate::eternal_cards_v1::e3::answer_entry_choice(&mut state, selected as u16).unwrap();
             let needle = put(&mut state, player, "Pithing Needle", Zone::Battlefield);
             let options = crate::eternal_lurrus_v1::needle_name_options(&state, player);
             let named = crate::card_def::card_id_by_name("Cavern of Souls").unwrap();
             let selected = options.iter().position(|id| *id == named).unwrap();
+            let action = crate::rl::ActionSemanticV1::ChooseEffectOption {
+                actor: player.into(),
+                source: crate::rl::card_ref(&state, needle).unwrap(),
+                option_index: selected as u16,
+                option_count: options.len() as u16,
+            };
+            assert_eq!(
+                entry_option_v1(&state, &action).unwrap(),
+                Some(EntryOptionV1::CardName { printing: named })
+            );
             assert!(
                 crate::eternal_lurrus_v1::answer_entry_choice(&mut state, selected as u16).unwrap()
             );
