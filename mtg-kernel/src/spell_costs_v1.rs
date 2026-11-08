@@ -23,6 +23,7 @@ enum PreparedNonmanaActionV1 {
     Component(CostComponent, Vec<ObjectId>),
     CounterRemovals(Vec<ObjectId>),
     RevealHand(Vec<ObjectId>),
+    RevealHandCard(ObjectId),
 }
 
 impl PreparedNonmanaActionV1 {
@@ -51,9 +52,17 @@ impl PreparedNonmanaActionV1 {
                     // spellbench-public-reveal: hand card revealed by the card rules.
                     for observer in [PlayerId::P0, PlayerId::P1] {
                         state
-                            .reveal_hand_card(observer, player, object)
+                            .reveal_distinct_hand_card(observer, player, object)
                             .expect("synchronous prepared hand reveal remains live");
                     }
+                }
+            }
+            Self::RevealHandCard(object) => {
+                // spellbench-public-reveal: the chosen creature is revealed as a cost.
+                for observer in [PlayerId::P0, PlayerId::P1] {
+                    state
+                        .reveal_hand_card(observer, player, *object)
+                        .expect("synchronous prepared creature reveal remains live");
                 }
             }
         }
@@ -1588,7 +1597,7 @@ impl PreparedSpellPaymentV1 {
         let spent = self.mana.commit(state, player, source);
         self.base.apply(state, player, source);
         if let Some(object) = self.chosen_reveal {
-            PreparedNonmanaActionV1::RevealHand(vec![object]).commit(state, player, source);
+            PreparedNonmanaActionV1::RevealHandCard(object).commit(state, player, source);
         }
         self.additional.apply(state, player, source);
         self.commit_optional(state);
@@ -1780,7 +1789,7 @@ pub(super) fn prepare_final_spell_payment_v1(
         }
         if zone == super::ChosenCreatureCostZoneV1::Hand {
             prepared.chosen_reveal = Some(binding.object);
-            PreparedNonmanaActionV1::RevealHand(vec![binding.object]).commit(
+            PreparedNonmanaActionV1::RevealHandCard(binding.object).commit(
                 &mut projected,
                 player,
                 source,
@@ -2669,6 +2678,30 @@ mod tests {
             assert!(prepare_spell_nonmana_v1(&forged, PlayerId::P0, source, groups).is_none());
             assert_eq!(serde_json::to_value(&forged).unwrap(), corrupt);
         }
+    }
+
+    #[test]
+    fn issue567_whole_hand_reveal_preserves_same_name_multiplicity() {
+        let forest = card_def::card_id_by_name("Forest").unwrap();
+        let mut state =
+            GameState::new_from_libraries(&[forest, forest], &[], |_| "Forest".into(), 952);
+        state.enable_hand_knowledge_by_name_v2();
+        let player = PlayerId::P0;
+        let observer = player.opponent();
+        let first = state.draw_card(player).unwrap();
+        let second = state.draw_card(player).unwrap();
+        state.reveal_hand_card(observer, player, first).unwrap();
+        let groups: &[(&[CostComponent], &[ObjectId])] = &[(
+            &[CostComponent::RevealHandIfNoCardsWithType(
+                CardType::Creature,
+            )],
+            &[],
+        )];
+        let prepared = prepare_spell_nonmana_v1(&state, player, first, groups).unwrap();
+        prepared.commit(&mut state, player, first);
+        let known = state.known_hand_cards(observer, player);
+        assert_eq!(known.len(), 2);
+        assert_eq!([known[0].object, known[1].object], [first, second]);
     }
 
     #[test]

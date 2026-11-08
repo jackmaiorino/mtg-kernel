@@ -1416,7 +1416,7 @@ pub(crate) fn answer_pending_decision(state: &mut GameState, option: u16) -> Res
     e5b_state(state).miracle_offers = remaining;
     if option == 1 {
         // spellbench-public-reveal: hand card revealed by the card rules.
-        state.reveal_hand_card(player.opponent(), player, offer.object)?;
+        state.reveal_distinct_hand_card(player.opponent(), player, offer.object)?;
         // The reveal is answered outside any event batch, so its trigger
         // waits for the next placement directly.
         let source = AbilitySourceContractV4::capture(state, offer.object);

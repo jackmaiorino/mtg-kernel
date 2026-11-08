@@ -389,7 +389,7 @@ pub(super) fn finish_play(
                 // spellbench-public-reveal: hand card revealed by the card rules.
                 for observer in [PlayerId::P0, PlayerId::P1] {
                     staged
-                        .reveal_hand_card(observer, owner, card.object)
+                        .reveal_distinct_hand_card(observer, owner, card.object)
                         .map_err(|e| e.to_string())?;
                 }
             }

@@ -13949,7 +13949,7 @@ fn drive_resumable_inner_with_native_row_v1(
                             // spellbench-public-reveal: hand card revealed by the card rules.
                             for observer in [PlayerId::P0, PlayerId::P1] {
                                 state
-                                    .reveal_hand_card(observer, player, binding.object)
+                                    .reveal_distinct_hand_card(observer, player, binding.object)
                                     .expect("a successful searched-card move is publicly revealed");
                             }
                         }
@@ -14259,7 +14259,11 @@ fn drive_resumable_inner_with_native_row_v1(
                                     // spellbench-public-reveal: hand card revealed by the card rules.
                                     for observer in [PlayerId::P0, PlayerId::P1] {
                                         state
-                                            .reveal_hand_card(observer, player, binding.object)
+                                            .reveal_distinct_hand_card(
+                                                observer,
+                                                player,
+                                                binding.object,
+                                            )
                                             .map_err(|error| error.to_string())?;
                                     }
                                 }
@@ -14383,7 +14387,7 @@ fn drive_resumable_inner_with_native_row_v1(
                             // spellbench-public-reveal: hand card revealed by the card rules.
                             for observer in [PlayerId::P0, PlayerId::P1] {
                                 state
-                                    .reveal_hand_card(observer, player, binding.object)
+                                    .reveal_distinct_hand_card(observer, player, binding.object)
                                     .expect("a successful searched-card move is publicly revealed");
                             }
                         }
@@ -16258,7 +16262,7 @@ fn drive_resumable_inner_with_native_row_v1(
                     // spellbench-public-reveal: hand card revealed by the card rules.
                     for observer in [PlayerId::P0, PlayerId::P1] {
                         state
-                            .reveal_hand_card(observer, player, binding.object)
+                            .reveal_distinct_hand_card(observer, player, binding.object)
                             .map_err(|error| {
                                 format!("linked-exile public hand reveal failed: {error}")
                             })?;
@@ -16594,7 +16598,7 @@ fn drive_resumable_inner_with_native_row_v1(
                 for binding in &original_hand {
                     // spellbench-public-reveal: hand card revealed by the card rules.
                     for observer in [PlayerId::P0, PlayerId::P1] {
-                        state.reveal_hand_card(observer, player, binding.object)?;
+                        state.reveal_distinct_hand_card(observer, player, binding.object)?;
                     }
                 }
                 let eligible =
@@ -18053,7 +18057,7 @@ fn resume_library_partition_frame(
                         // spellbench-public-reveal: hand card revealed by the card rules.
                         for observer in [PlayerId::P0, PlayerId::P1] {
                             state
-                                .reveal_hand_card(observer, player, binding.object)
+                                .reveal_distinct_hand_card(observer, player, binding.object)
                                 .expect("a successful selected-card move is publicly revealed");
                         }
                     }
@@ -19633,7 +19637,7 @@ fn reveal_until_type_to_hand_random_bottom_v1(
         if projected.objects.get(selected.object).zone == Zone::Hand {
             // spellbench-public-reveal: hand card revealed by the card rules.
             for observer in [PlayerId::P0, PlayerId::P1] {
-                projected.reveal_hand_card(observer, player, selected.object)?;
+                projected.reveal_distinct_hand_card(observer, player, selected.object)?;
             }
         }
     }
@@ -21455,7 +21459,10 @@ fn execute_with_native_row_v1(
             if state.objects.get(top).zone == Zone::Hand {
                 // spellbench-public-reveal: hand card revealed by the card rules.
                 for observer in [PlayerId::P0, PlayerId::P1] {
-                    if state.reveal_hand_card(observer, player, top).is_err() {
+                    if state
+                        .reveal_distinct_hand_card(observer, player, top)
+                        .is_err()
+                    {
                         state.engine.halted = Some((
                             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                             ctx.source,
@@ -21499,7 +21506,10 @@ fn execute_with_native_row_v1(
                 if state.objects.get(card).zone == Zone::Hand {
                     // spellbench-public-reveal: hand card revealed by the card rules.
                     for observer in [PlayerId::P0, PlayerId::P1] {
-                        if state.reveal_hand_card(observer, player, card).is_err() {
+                        if state
+                            .reveal_distinct_hand_card(observer, player, card)
+                            .is_err()
+                        {
                             state.engine.halted = Some((
                                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                                 ctx.source,

@@ -7455,7 +7455,7 @@ fn materialize_zone_change_v1(
         // spellbench-public-reveal: hand card revealed by the card rules.
         for observer in [PlayerId::P0, PlayerId::P1] {
             state
-                .reveal_hand_card(observer, owner, id)
+                .reveal_distinct_hand_card(observer, owner, id)
                 .expect("just moved this live public object into its owner's hand");
         }
     } else if to_zone == Zone::Hand && informed_observer_mask != 0 {
@@ -7467,7 +7467,7 @@ fn materialize_zone_change_v1(
             if informed_observer_mask & (1 << observer.index()) != 0 {
                 // spellbench-public-reveal: hand card revealed by the card rules.
                 state
-                    .reveal_hand_card(observer, owner, id)
+                    .reveal_distinct_hand_card(observer, owner, id)
                     .expect("known library object just moved into its owner's hand");
             }
         }
@@ -8096,6 +8096,56 @@ mod tests {
         );
         assert_eq!(p1_rows_of_p0(&state).len(), 1);
         assert!(state.players[0].hand.contains(&p1_rows_of_p0(&state)[0]));
+    }
+
+    #[test]
+    fn issue567_repeated_reveals_and_simultaneous_reveals_keep_a_name_lower_bound() {
+        let (mut state, hand) = hand_with_shown_cards(&[1, 1, 1], &[], false);
+        state.enable_hand_knowledge_by_name_v2();
+        let observer = PlayerId::P1;
+        let owner = PlayerId::P0;
+        for object in [hand[0], hand[0], hand[1]] {
+            state.reveal_hand_card(observer, owner, object).unwrap();
+            assert_eq!(p1_rows_of_p0(&state), [hand[0]]);
+        }
+
+        for shown in [[hand[1], hand[0]], [hand[2], hand[1]]] {
+            for object in shown {
+                state
+                    .record_hand_reveal(observer, owner, object, Some(shown.len()))
+                    .unwrap();
+            }
+            assert_eq!(p1_rows_of_p0(&state), [hand[0], hand[1]]);
+        }
+        propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(hand[2], Zone::Graveyard),
+        );
+        assert_eq!(p1_rows_of_p0(&state).len(), 1);
+    }
+
+    #[test]
+    fn issue567_v2_snapshot_flag_is_additive_and_hashed() {
+        let (off, _) = hand_with_shown_cards(&[1, 1], &[0], false);
+        let (v1, _) = hand_with_shown_cards(&[1, 1], &[0], true);
+        for old in [off.clone(), v1] {
+            let bytes = serde_json::to_vec(&old).unwrap();
+            let value = serde_json::to_value(&old).unwrap();
+            assert!(value.get("hand_knowledge_by_name_v2").is_none());
+            let restored: GameState = serde_json::from_slice(&bytes).unwrap();
+            assert!(!restored.hand_knowledge_by_name_v2);
+            assert_eq!(restored.state_hash(), old.state_hash());
+            assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
+        }
+        let mut v2 = off.clone();
+        v2.enable_hand_knowledge_by_name_v2();
+        let value = serde_json::to_value(&v2).unwrap();
+        assert_eq!(value["hand_knowledge_by_name_v2"], serde_json::json!(true));
+        assert!(value.get("hand_departures_by_name_v1").is_none());
+        let restored: GameState = serde_json::from_value(value).unwrap();
+        assert!(restored.hand_knowledge_by_name_v2);
+        assert_eq!(restored.state_hash(), v2.state_hash());
+        assert_ne!(restored.state_hash(), off.state_hash());
     }
 
     /// Issue #531: under the name-level rule a card put on the library at a

@@ -661,7 +661,7 @@ fn mad_wizards_lair(
         .collect::<Vec<_>>();
     for &card in &drawn {
         // spellbench-public-reveal: hand card revealed by the card rules.
-        state.reveal_hand_card(player.opponent(), player, card)?;
+        state.reveal_distinct_hand_card(player.opponent(), player, card)?;
     }
     let drawn = drawn
         .into_iter()

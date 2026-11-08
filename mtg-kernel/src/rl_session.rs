@@ -2114,6 +2114,37 @@ fn flat_visible_action_object_v2(
     })
 }
 
+pub(crate) fn flat_pending_hand_action_object_v2(
+    source: &CardStableRefV1,
+    actor: PlayerSeatV1,
+) -> Result<FlatActionObjectV2, FlatActionDecisionSliceErrorV1> {
+    Ok(FlatActionObjectV2 {
+        card_token: flat_card_token_v2(source.card_db_id),
+        group: FlatActionObjectGroupV1::HistoricalPublicSource,
+        actor_visible_ordinal: 0,
+        owner_relative: flat_relative_seat_v1(source.owner, actor)?,
+        controller_relative: flat_relative_seat_v1(source.controller, actor)?,
+        zone: flat_zone_v1(source.zone),
+        zone_change_count: 0,
+    })
+}
+
+fn flat_action_object_with_pending_hand_source_v2(
+    state: &crate::state::GameState,
+    actor: PlayerId,
+    role: FlatActionRefRoleV1,
+    reference: &CardStableRefV1,
+    pending_source: Option<&CardStableRefV1>,
+) -> Result<FlatActionObjectV2, FlatActionDecisionSliceErrorV1> {
+    if role == FlatActionRefRoleV1::Source {
+        if let Some(source) = pending_source.filter(|source| source.arena_id == reference.arena_id)
+        {
+            return flat_pending_hand_action_object_v2(source, actor.into());
+        }
+    }
+    flat_visible_action_object_v2(state, actor, reference)
+}
+
 #[cfg(test)]
 fn flat_current_ref_for_object_v1(
     current: &FastActorCurrentDecisionV1,
@@ -4435,6 +4466,9 @@ fn flat_build_action_cache_v2(
     let action_count_u32 = u32::try_from(current.candidates.len())
         .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
     let actor: PlayerSeatV1 = current.actor.into();
+    let pending_source =
+        crate::rl::public_pending_opponent_hand_source_v2(&session.state, current.actor)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
     let (mut actions, mut refs, mut objects, mut unindexed_refs, mut resolved_objects) =
         if let Some(mut reusable) = reusable {
             reusable.actions.clear();
@@ -4473,8 +4507,13 @@ fn flat_build_action_cache_v2(
             actor,
             ref_start,
             |role, order_index, associated_order, reference| {
-                let object =
-                    flat_visible_action_object_v2(&session.state, current.actor, reference)?;
+                let object = flat_action_object_with_pending_hand_source_v2(
+                    &session.state,
+                    current.actor,
+                    role,
+                    reference,
+                    pending_source.as_ref(),
+                )?;
                 if let Some(previous) = resolved_objects
                     .iter()
                     .find(|candidate| candidate.arena_id == reference.arena_id)
@@ -4753,6 +4792,9 @@ fn flat_validate_action_cache_v2(
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
     flat_validate_current_binding_header_v2(session, current)?;
     let actor: PlayerSeatV1 = current.actor.into();
+    let pending_source =
+        crate::rl::public_pending_opponent_hand_source_v2(&session.state, current.actor)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
     let mut validated_ref_count = 0_usize;
     for candidate in &current.candidates {
         flat_validate_semantic_policy_pair_v1(candidate)?;
@@ -4762,8 +4804,14 @@ fn flat_validate_action_cache_v2(
             &candidate.semantic,
             actor,
             ref_start,
-            |_, _, _, reference| {
-                flat_visible_action_object_v2(&session.state, current.actor, reference)?;
+            |role, _, _, reference| {
+                flat_action_object_with_pending_hand_source_v2(
+                    &session.state,
+                    current.actor,
+                    role,
+                    reference,
+                    pending_source.as_ref(),
+                )?;
                 Ok(())
             },
         )?;
@@ -4784,8 +4832,13 @@ fn flat_validate_action_cache_v2(
             actor,
             ref_start,
             |role, order_index, associated_order, reference| {
-                let object =
-                    flat_visible_action_object_v2(&session.state, current.actor, reference)?;
+                let object = flat_action_object_with_pending_hand_source_v2(
+                    &session.state,
+                    current.actor,
+                    role,
+                    reference,
+                    pending_source.as_ref(),
+                )?;
                 let object_index = cache
                     .objects
                     .binary_search_by_key(&object.canonical_key(), |candidate| {
@@ -7231,6 +7284,23 @@ impl FastActorSessionV1 {
         )
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_v2_fixture_state(state: crate::state::GameState) -> Self {
+        let mut session = FastActorSessionV1::reset_with_limits(23, 91, 8, 8);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.flat_action_cache_spare = None;
+        session.flat_action_cache_spare_v2 = None;
+        session.terminal = None;
+        session.flat_action_contract_mode = FlatActionContractModeV1::V2;
+        session.advance_to_decision_or_terminal();
+        session
+    }
+
     /// Constructs a session whose one eager action cache is the explicit V2
     /// contract.  V1 APIs fail closed on this session, so the hot path never
     /// constructs, copies, or hashes V1 rows.
@@ -7997,6 +8067,27 @@ impl FastActorSessionV1 {
             return Err("name-level hand departures are a reset-only option".into());
         }
         self.state.enable_hand_departures_by_name_v1();
+        Ok(())
+    }
+
+    /// Opts a new game into name-level reveals and departures (issue #567).
+    /// Enable this before the first policy step and record it as part of the
+    /// runtime identity for any resulting policy or evaluation.
+    pub fn enable_hand_knowledge_by_name_v2(&mut self) -> Result<(), String> {
+        if self.policy_step_count != 0 {
+            return Err("name-level hand knowledge is a reset-only option".into());
+        }
+        self.state.enable_hand_knowledge_by_name_v2();
+        if self.flat_action_contract_mode == FlatActionContractModeV1::V2
+            && self.state.engine.pending_effect.is_some()
+        {
+            if let Some(mut current) = self.current.take() {
+                let reusable = current.flat_action_cache_v2.take();
+                let cache = flat_build_action_cache_v2(self, &current, reusable);
+                flat_install_action_cache_build_result_v2(&mut current, cache);
+                self.current = Some(current);
+            }
+        }
         Ok(())
     }
 
@@ -13683,22 +13774,6 @@ mod tests {
         );
     }
 
-    fn flat_v2_session_from_state(state: GameState) -> FastActorSessionV1 {
-        let mut session = FastActorSessionV1::reset_with_limits(23, 91, 8, 8);
-        session.state = state;
-        session.surface = PolicySurfaceV5::new();
-        session.environment_revision = 0;
-        session.policy_step_count = 0;
-        session.physical_decision_count = 0;
-        session.current = None;
-        session.flat_action_cache_spare = None;
-        session.flat_action_cache_spare_v2 = None;
-        session.terminal = None;
-        session.flat_action_contract_mode = FlatActionContractModeV1::V2;
-        session.advance_to_decision_or_terminal();
-        session
-    }
-
     fn fast_offered_includes(session: &FastActorSessionV1) -> Vec<bool> {
         session
             .current
@@ -13802,7 +13877,7 @@ mod tests {
                         .expect("a Mountain tapped to cast Highway Robbery");
                     step(&mut state, Action::ChooseCostTarget(land)).unwrap();
                     assert!(!state.players[0].has_lost, "the draw has not happened yet");
-                    return flat_v2_session_from_state(state);
+                    return FastActorSessionV1::from_v2_fixture_state(state);
                 }
                 other => panic!("unexpected decision before the loss: {other:?}"),
             };
@@ -13852,7 +13927,7 @@ mod tests {
         let mut state = attacker_state(2);
         let goaded = state.players[0].battlefield[0];
         goad(&mut state, goaded);
-        let mut session = flat_v2_session_from_state(state);
+        let mut session = FastActorSessionV1::from_v2_fixture_state(state);
         assert_eq!(fast_offered_includes(&session), vec![true]);
         let FastActorResponseV1::Decision(expected) = session.current_response() else {
             panic!("expected the goaded attacker's scan step");
@@ -13903,7 +13978,7 @@ mod tests {
                     }
                 }
                 assert_flat_v2_offers_exactly_the_completable_answers(
-                    &flat_v2_session_from_state(state),
+                    &FastActorSessionV1::from_v2_fixture_state(state),
                     &format!("attackers count={count} goad_mask={goad_mask:#05b}"),
                 );
             }
@@ -13914,7 +13989,7 @@ mod tests {
                 let attacker = state.engine.combat.attackers[0];
                 state.objects.get_mut(attacker).v4.minimum_blockers_override = Some(minimum);
                 assert_flat_v2_offers_exactly_the_completable_answers(
-                    &flat_v2_session_from_state(state),
+                    &FastActorSessionV1::from_v2_fixture_state(state),
                     &format!("blockers count={count} minimum={minimum}"),
                 );
             }

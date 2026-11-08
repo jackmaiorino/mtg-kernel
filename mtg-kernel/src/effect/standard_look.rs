@@ -109,7 +109,7 @@ pub(super) fn finish(
             // spellbench-public-reveal: hand card revealed by the card rules.
             for observer in [PlayerId::P0, PlayerId::P1] {
                 state
-                    .reveal_hand_card(observer, choice.player, card.object)
+                    .reveal_distinct_hand_card(observer, choice.player, card.object)
                     .map_err(|e| e.to_string())?;
             }
         }

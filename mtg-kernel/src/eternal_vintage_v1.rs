@@ -839,7 +839,10 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
             let opponent = viewer.opponent();
             for card in state.players[opponent.index()].hand.clone() {
                 // spellbench-reviewed-look: the card rules let a player look at the other hand.
-                if state.reveal_hand_card(viewer, opponent, card).is_err() {
+                if state
+                    .reveal_distinct_hand_card(viewer, opponent, card)
+                    .is_err()
+                {
                     halt(state, ctx.source);
                     return;
                 }
@@ -870,7 +873,7 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
             // spellbench-public-reveal: hand card revealed by the card rules.
             for observer in [PlayerId::P0, PlayerId::P1] {
                 if state
-                    .reveal_hand_card(observer, contract.owner, contract.source)
+                    .reveal_distinct_hand_card(observer, contract.owner, contract.source)
                     .is_err()
                 {
                     halt(state, ctx.source);

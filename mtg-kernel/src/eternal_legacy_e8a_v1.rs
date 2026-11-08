@@ -680,7 +680,7 @@ fn to_hand_revealed(state: &mut GameState, card: ObjectId) -> Result<(), String>
     if live.zone == Zone::Hand {
         let owner = live.owner;
         // spellbench-public-reveal: hand card revealed by the card rules.
-        state.reveal_hand_card(owner.opponent(), owner, card)?;
+        state.reveal_distinct_hand_card(owner.opponent(), owner, card)?;
     }
     Ok(())
 }
@@ -1780,7 +1780,7 @@ pub(crate) fn drive(
             let hand = state.players[opponent.index()].hand.clone();
             for &card in &hand {
                 // spellbench-public-reveal: the opponent reveals their hand (Cloak and Dagger).
-                state.reveal_hand_card(controller, opponent, card)?;
+                state.reveal_distinct_hand_card(controller, opponent, card)?;
             }
             let mut candidates = hand_cards(state, opponent, |def| !def.has_type(CardType::Land));
             let spec = TargetSpec::StandardV1(StandardTargetV1::OpponentThenUpToOneTheirCreatureV1);
