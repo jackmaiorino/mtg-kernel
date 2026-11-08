@@ -243,6 +243,31 @@ impl KaitoSession {
         }
         Ok(sampled)
     }
+    /// A separate corpus-driven path for the full-pool reveal-minima owner.
+    /// The live opponent deck and physical revealed-copy identities are not
+    /// supplied as a belief. The caller supplies the public belief corpus.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub fn sampled_full_pool_closed_list_v1(
+        &self, decision: &KaitoDecision, seed: u64,
+        belief: &crate::limited_match_v1::LimitedBeliefV1,
+    ) -> Result<Self> {
+        if !Arc::ptr_eq(&self.owner, &decision.owner) || self.generation != decision.generation {
+            return Err(Error::StaleBinding);
+        }
+        let facts = self.hand_facts();
+        if !matches!(facts, HandFacts::RevealMinimaV3(_)) {
+            return Err(Error::Projection("full-pool sampling requires public reveal minima".into()));
+        }
+        if packet_from_current(decision.backend.candidates_v75(), decision.backend.actions(), &facts)? != decision.packet {
+            return Err(Error::StaleBinding);
+        }
+        let inner = self.inner.sampled_full_pool_closed_list_v1(&decision.backend, seed, belief)
+            .map_err(|e| Error::Projection(e.to_string()))?;
+        let sampled = Self::from_kaito(inner);
+        if sampled.encode(decision.backend.expected())?.packet != decision.packet { return Err(Error::StaleBinding); }
+        Ok(sampled)
+    }
+
     pub fn current_response(&self) -> FastActorResponseV1 {
         self.inner.response()
     }

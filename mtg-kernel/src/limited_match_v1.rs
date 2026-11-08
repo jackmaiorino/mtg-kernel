@@ -427,6 +427,15 @@ fn executable_belief_v2(belief: Option<&LimitedBeliefV1>) -> Result<&LimitedBeli
     Ok(belief)
 }
 
+pub(crate) fn full_pool_belief_v1(belief: &LimitedBeliefV1) -> Result<&LimitedBeliefV1, String> {
+    let belief = executable_belief_v2(Some(belief))?;
+    let printings = crate::limited_full_pool_consumer_v1::declared_printings_v1()?;
+    if belief.decks.iter().flatten().any(|id| !printings.contains(id)) {
+        return Err("full-pool belief contains a printing outside the frozen pool".into());
+    }
+    Ok(belief)
+}
+
 /// One world of the current actor's information set (see the module docs).
 /// `Err` is a declared rejection: the caller skips that simulation.
 pub fn sample_world_v1(

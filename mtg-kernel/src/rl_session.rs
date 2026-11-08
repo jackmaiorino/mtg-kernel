@@ -1167,6 +1167,7 @@ pub(crate) struct LimitedClosedListRootV3 {
     slots: [Vec<ObjectId>; 2],
     knowledge: crate::reveal_meaning_v3::RevealKnowledgeV3,
     known_names: Vec<u16>,
+    typed_full_pool: bool,
 }
 
 fn flat_player_id_v1(seat: PlayerSeatV1) -> PlayerId {
@@ -8584,8 +8585,14 @@ impl FastActorSessionV1 {
         use crate::limited_match_v1::closed_list_v2;
         use crate::reveal_meaning_v3::RevealReducerV3;
 
-        if self.flat_action_contract_mode != FlatActionContractModeV1::RulesOnlyV1 {
-            return Err("closedlist-v3 requires a rules-only session".into());
+        let typed_full_pool = self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75
+            && self.surface.limited_appendix_v1() == crate::policy_surface_v5::LimitedAppendixV1::FullPool;
+        if self.flat_action_contract_mode != FlatActionContractModeV1::RulesOnlyV1 && !typed_full_pool {
+            return Err("closedlist-v3 requires a rules-only or full-pool owning session".into());
+        }
+        if typed_full_pool && self.state.engine.event_history.iter().any(|e| matches!(e,
+            crate::event::CommittedEvent::CuratorEnteredV1 { .. })) {
+            return Err("full-pool Curator history requires unordered-pile sampling".into());
         }
         let actor = self.current.as_ref().ok_or("no current decision")?.actor;
         // Answering an already-open operation replays its original GameState.
@@ -8594,14 +8601,16 @@ impl FastActorSessionV1 {
             return Err("linked operation checkpoint requires sampled replay".into());
         }
         let opponent = actor.opponent();
-        let transcript = self
-            .state
-            .reveal_meaning_v3
-            .transcript(actor)
-            .ok_or("closedlist-v3 needs the viewer's public reveal stream")?;
-        let mut reducer = RevealReducerV3::default();
-        reducer.absorb(&transcript)?;
-        let knowledge = reducer.opponent_knowledge(actor);
+        let knowledge = if typed_full_pool {
+            self.state.reveal_knowledge_v4.as_ref()
+                .ok_or("full-pool sampling requires public reveal minima")?[actor.index()].clone()
+        } else {
+            let transcript = self.state.reveal_meaning_v3.transcript(actor)
+                .ok_or("closedlist-v3 needs the viewer's public reveal stream")?;
+            let mut reducer = RevealReducerV3::default();
+            reducer.absorb(&transcript)?;
+            reducer.opponent_knowledge(actor)
+        };
         let hand_len = self.state.players[opponent.index()].hand.len();
         let mut known_names = Vec::new();
         for (def, count) in knowledge.hand(opponent) {
@@ -8634,6 +8643,7 @@ impl FastActorSessionV1 {
             slots,
             knowledge,
             known_names,
+            typed_full_pool,
         })
     }
 
@@ -8649,8 +8659,10 @@ impl FastActorSessionV1 {
         use crate::limited_match_v1::closed_list_v2;
 
         let live = self.current.as_ref().ok_or("no current decision")?;
-        if root.actor != live.actor {
-            return Err("sampled root actor differs".into());
+        let typed_full_pool = self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75
+            && self.surface.limited_appendix_v1() == crate::policy_surface_v5::LimitedAppendixV1::FullPool;
+        if root.actor != live.actor || root.typed_full_pool != typed_full_pool {
+            return Err("sampled root actor or owning profile differs".into());
         }
         let mut sampled = self.clone();
         closed_list_v2::rewrite_names(
@@ -8669,7 +8681,18 @@ impl FastActorSessionV1 {
         sampled.state.hand_knowledge_by_name_v2 = false;
         sampled.state.resample_future_randomness_for_search_v3(seed);
 
-        sampled.advance_rules_only_v1();
+        if typed_full_pool {
+            // Rebind the exact native root without advancing it again. A
+            // repeated advance can append genuine enclosing-operation rows.
+            let mut current = sampled.current.take().ok_or("sampled full-pool root absent")?;
+            kaito_v75::prepare_current(&sampled, &mut current)
+                .map_err(|e| format!("sampled full-pool binding: {e:?}"))?;
+            sampled.flat_action_cache_spare = None;
+            sampled.flat_action_cache_spare_v2 = None;
+            sampled.current = Some(current);
+        } else {
+            sampled.advance_rules_only_v1();
+        }
         let rebuilt = sampled
             .current
             .as_mut()

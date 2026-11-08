@@ -658,6 +658,32 @@ impl KaitoSessionV75 {
         }
         Ok(sampled)
     }
+    /// Closed-list sampling for the explicitly composed full-pool owner.
+    /// The private native index map is rebound before any sampled action.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn sampled_full_pool_closed_list_v1(
+        &self, decision: &KaitoDecisionV75, seed: u64,
+        belief: &crate::limited_match_v1::LimitedBeliefV1,
+    ) -> Result<Self, RlContractError> {
+        if self.inner.surface.limited_appendix_v1() != LimitedAppendixV1::FullPool {
+            return Err(RlContractError("closed-list owner is not the full pool".into()));
+        }
+        let before = self.validated_current(decision)?;
+        let belief = crate::limited_match_v1::full_pool_belief_v1(belief).map_err(RlContractError)?;
+        let root = self.inner.limited_closed_list_root_v3().map_err(RlContractError)?;
+        let inner = self.inner.limited_closed_list_clone_v3(&root, seed, belief).map_err(RlContractError)?;
+        let sampled = Self { inner, owner: std::sync::Arc::new(()), generation: self.generation };
+        let after = sampled.fresh_binding()?;
+        // The numeric V3 owner checks the complete canonical public packet
+        // after replacing physical known-hand rows by public name minima.
+        // Native commands, indices and family bindings must already be exact.
+        if after.expected != before.expected || after.original != before.original
+            || after.public_to_original != before.public_to_original || after.families != before.families {
+            return Err(RlContractError("sampled full-pool native binding changed".into()));
+        }
+        Ok(sampled)
+    }
+
     pub fn validate_decision_v75(
         &self,
         decision: &KaitoDecisionV75,
