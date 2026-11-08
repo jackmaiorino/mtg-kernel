@@ -499,8 +499,14 @@ The combined thirty-printing source `67e26cf31` passed pinned Rust 1.94.1
 formatting on all 36 changed Rust inputs; all 22 changed outputs were
 hash-verified before application in `a211e3456`. Formatter receipt SHA-256
 `72c313839c2035ced26c95fbb42099f7db73280eb16a9eec157e0bc689e406a6`.
-The next bounded type check is pinned to `12e4ac749`, before the two later
-fixture-only repairs. Formatting does not establish type or runtime validity.
+The bounded type check at `12e4ac749` finished with exit 101 in 482.325 seconds,
+with children drained. All eleven selected normal binaries type-checked;
+the library test target failed on Kykar's missing reverse player-seat conversion.
+Receipt SHA-256
+`07f015d00ef714aa037e65bdf21ec5dcb7dea6b3c7e21a5b05059788ece15909`.
+`9e04faead` fixes that fixture and the same conversion in Sphinx's fixture.
+`ce814a6f2` removes the five reported unused helpers/imports. These repairs
+do not convert the failed check into a pass.
 The successor also
 fixes reported Human type visibility
 and unused wrapper warnings and boxes Eternal printed programs without
@@ -563,7 +569,11 @@ Face-down payments retain the neutral public printing, including after serde
 restore. Wide/stolen debit, genuinely paid graveyard recast and combat fixtures
 remain unrun. Its new event kind is appended at 318; earlier Edict 316 and
 Curator 317 stay fixed. A genuine Greatwurm receipt sample is still required.
-The combined thirty-two source has not been formatted, compiled or executed.
+The combined thirty-two source passed pinned formatting on all 42 staged Rust
+inputs; all 25 changed outputs were independently hash-verified and applied in
+`e68ce9757`. Receipt SHA-256
+`625599aa9d5a8906c13864558b5a6fe631d981298bfd25f3755e9206406f1c67`.
+Its combined type check and native execution are pending.
 
 The bounded learner pilot still selects Return. No Mixed learner, all-286
 fair-search run, training/evaluation result or Full promotion is qualified.
