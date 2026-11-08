@@ -166,7 +166,8 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
         if collected == 1 { native::validate_root(state, &EffectOp::KykarReturnV1 { schedule_history_index: index }, Some(source))?; }
         positions.insert(index, width(schedules.len())?);
         let current_original_exile = state.objects.try_get(exiled.object)
-            .filter(|live| live.zone == Zone::Exile && live.zone_change_count == exiled.zone_change_count)
+            .filter(|live| live.zone == Zone::Exile && live.zone_change_count == exiled.zone_change_count
+                && state.exile.contains(&exiled.object))
             .and_then(|_| public::reference(state, exiled.object, Some(viewer)));
         schedules.push(ScheduleV1 { source: public::root(state, source, Some(viewer))?,
             original_exile: IncarnationV72 { object: exiled.object.0, generation: exiled.zone_change_count,

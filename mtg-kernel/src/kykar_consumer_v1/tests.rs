@@ -162,5 +162,16 @@ fn original_target_return_incarnation_and_unselected_mode_do_not_rebind() {
         let mut changed = rows[0].action.clone();
         let Action::ChooseSpellMode { source, .. } = &mut changed else { panic!() }; source.zone_change_count += 1;
         assert!(action(d.fixture_backend_v75().observation().kykar.as_ref(), &changed).is_err());
+
+        native::choose(&mut state, actor, 1, None); native::finish(&mut state);
+        let token = state.objects.iter().find_map(|(id, live)|
+            (live.zone == Zone::Battlefield && live.card_def == public::token_id().unwrap()).then_some(id)).unwrap();
+        native::start(&mut state, actor, source); native::choose(&mut state, actor, 0, Some(token)); native::finish(&mut state);
+        assert!(!state.exile.contains(&token));
+        let facts = public::capture(&state, actor).unwrap();
+        assert_eq!(facts.schedules.len(), 1); assert!(facts.schedules[0].current_original_exile.is_none());
+        let (schedule, _) = native::schedule(&state); native::return_row(&mut state, schedule); native::finish(&mut state);
+        assert!(!state.players[actor.index()].battlefield.contains(&token));
+        assert!(public::capture(&state, actor).unwrap().schedules[0].current_original_exile.is_none());
     }
 }
