@@ -1,10 +1,13 @@
 # Player-visible reveal meaning, protocol v3
 
-Proposal for #543. Independent two-world design review is required before code.
-The frozen W1 entrant, transcript schema and soak binaries are unchanged. A
-successor is admitted only after the owning W1 soak work has finished; the
-completed 4k-k1 report's reveal share exceeds the issue's 2% priority trigger,
-but that is not evidence that every soak/acceptance obligation is complete.
+Design for #543. Independent two-world design review passed at
+`a8c0df37ce267948254a45d474d9dfb52b0c2766`. Both W1 AC5 soak jobs finished in
+collab commit `ec83ac0b`, with exit-zero arena/report receipts and unchanged
+pins. The 4k-k1 report exceeds the issue's 2% reveal priority trigger and fails
+its fault bound; the 16k-k4 fault bound passes. This satisfies the issue's
+after-soak ordering for prospective code. It does not establish wider W1
+acceptance or qualify the successor. Frozen entrants, transcripts and binaries
+remain unchanged.
 
 ## Visible evidence, not native object identity
 
