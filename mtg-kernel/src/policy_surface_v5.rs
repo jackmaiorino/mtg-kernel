@@ -394,6 +394,7 @@ pub(crate) enum LimitedAppendixV1 {
     Progenitus,
     Aberration,
     Lathril,
+    Electroduplicate,
 }
 
 impl LimitedAppendixV1 {

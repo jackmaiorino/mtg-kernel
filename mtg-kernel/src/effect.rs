@@ -28553,7 +28553,7 @@ mod blasphemous_edict_v1_tests;
 
 // Kept inline so the existing effect-source identities cover the complete
 // native exception/count/target/program validator and reducer.
-fn electroduplicate_definition_v1(id: u16) -> bool {
+pub(crate) fn electroduplicate_definition_v1(id: u16) -> bool {
     cfg!(all(feature="limited-fdn-fixtures",not(feature="standard-magezero-fixtures")))
         && id==471 && card_def::CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
             let card_def::CardDef {
@@ -28708,7 +28708,7 @@ fn electroduplicate_definition_v1(id: u16) -> bool {
         })
 }
 
-fn validate_electroduplicate_live_stack_v1(state: &GameState) -> Result<(), String> {
+pub(crate) fn validate_electroduplicate_live_stack_v1(state: &GameState) -> Result<(), String> {
     for item in &state.stack {
         // Mutable row kind/flags cannot hide a definition-owned spell.
         if state
@@ -28953,7 +28953,7 @@ pub(crate) fn needs_electroduplicate_entry_owner_v1(state: &GameState) -> bool {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "effect/electroduplicate_v1_tests.rs"]
-mod electroduplicate_v1_tests;
+pub(crate) mod electroduplicate_v1_tests;
 
 // This copy permit never confers Kykar's separate printed token-creation mode.
 // Its original removed cast, native spell copy, or Replication row is borrowed for one batch.

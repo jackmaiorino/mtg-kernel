@@ -12,11 +12,14 @@ const NAME: &str = "Electroduplicate";
 fn id(name: &str) -> u16 {
     card_def::card_id_by_name(name).unwrap()
 }
-fn ready(actor: PlayerId) -> GameState {
+fn ready(actor: PlayerId) -> GameState { ready_with_hidden(actor, "Forest") }
+pub(crate) fn ready_with_hidden(actor: PlayerId, opponent_hidden: &str) -> GameState {
     let library = [id("Forest"); 40];
+    let other = [id(opponent_hidden); 40];
+    let (left, right) = if actor == PlayerId::P0 { (&library, &other) } else { (&other, &library) };
     let mut s = GameState::new_from_libraries_with_starting_player_v1(
-        &library,
-        &library,
+        left,
+        right,
         crate::rl::card_name,
         110_471,
         actor,
@@ -67,7 +70,7 @@ fn priority(s: &mut GameState, actor: PlayerId) {
     }
     panic!("native priority absent")
 }
-fn finish(s: &mut GameState) {
+pub(crate) fn finish(s: &mut GameState) {
     for _ in 0..128 {
         let d = engine::advance_until_decision(s);
         assert!(s.engine.halted.is_none(), "{:?}", s.engine.halted);
@@ -83,14 +86,14 @@ fn finish(s: &mut GameState) {
     }
     panic!("native resolution did not finish")
 }
-fn taps(s: &GameState, p: PlayerId) -> usize {
+pub(crate) fn taps(s: &GameState, p: PlayerId) -> usize {
     s.players[p.index()]
         .battlefield
         .iter()
         .filter(|id| s.objects.get(**id).tapped)
         .count()
 }
-fn cast_card(
+pub(crate) fn cast_card(
     s: &mut GameState,
     p: PlayerId,
     card: ObjectId,
@@ -170,13 +173,13 @@ fn paid_bounce_response(s: &mut GameState, p: PlayerId, target: ObjectId) -> Obj
         2,
     )
 }
-fn paid(s: &mut GameState, p: PlayerId, name: &str, cost: usize) -> ObjectId {
+pub(crate) fn paid(s: &mut GameState, p: PlayerId, name: &str, cost: usize) -> ObjectId {
     let card = cast(s, p, name, &[], cost);
     finish(s);
     assert_eq!(s.objects.get(card).zone, Zone::Battlefield);
     card
 }
-fn copies(s: &GameState, definition: u16) -> Vec<ObjectId> {
+pub(crate) fn copies(s: &GameState, definition: u16) -> Vec<ObjectId> {
     s.objects
         .iter()
         .filter_map(|(id, o)| {
@@ -202,7 +205,7 @@ fn electro(s: &mut GameState, p: PlayerId, target: ObjectId) -> (ObjectId, Objec
     assert_eq!(new.len(), 1);
     (spell, new[0])
 }
-fn end_priority(s: &mut GameState) -> Decision {
+pub(crate) fn end_priority(s: &mut GameState) -> Decision {
     for _ in 0..400 {
         let d = engine::advance_until_decision(s);
         assert!(s.engine.halted.is_none(), "{:?}", s.engine.halted);
@@ -225,7 +228,7 @@ fn next_end(s: &mut GameState) -> Decision {
     }
     panic!("next actual end step absent")
 }
-fn publish_end(s: &mut GameState, d: Decision) -> Vec<StackItem> {
+pub(crate) fn publish_end(s: &mut GameState, d: Decision) -> Vec<StackItem> {
     quiet_if_order(s, d);
     s.stack
         .iter()

@@ -63,7 +63,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     aberration: Option<super::aberration_consumer_v1::HumanFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    lathril: Option<super::lathril_consumer_v1::HumanFactsV1>
+    lathril: Option<super::lathril_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    electroduplicate: Option<super::electroduplicate_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -111,7 +113,9 @@ record!(HumanKaitoCandidateV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     aberration_action: Option<crate::aberration_consumer_v1::ActionV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    lathril_action: Option<crate::lathril_consumer_v1::ActionV1>
+    lathril_action: Option<crate::lathril_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    electroduplicate_action: Option<crate::electroduplicate_consumer_v1::ActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -346,6 +350,9 @@ pub(super) fn choice_label(
         return Ok(Some(label));
     }
     if let Some(label) = super::aberration_consumer_v1::label(obs.aberration.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::electroduplicate_consumer_v1::label(obs.electroduplicate.as_ref(), a, h)? {
         return Ok(Some(label));
     }
     if let Some(label) = super::tutelage_consumer_v1::label(obs.tutelage.as_ref(), a, h)? {
@@ -830,6 +837,11 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::aberration_consumer_v1::project(facts, &mut handles))
         .transpose()?;
+    let electroduplicate = obs
+        .electroduplicate
+        .as_ref()
+        .map(|facts| super::electroduplicate_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
@@ -851,6 +863,7 @@ pub(super) fn project_with_handles(
                 progenitus_action: r.progenitus_action,
                 aberration_action: r.aberration_action,
                 lathril_action: r.lathril_action,
+                electroduplicate_action: r.electroduplicate_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -1121,6 +1134,8 @@ pub(super) fn project_with_handles(
                 "mtg-kernel-human-aberration-decision/v1"
             } else if lathril.is_some() {
                 "mtg-kernel-human-lathril-decision/v1"
+            } else if electroduplicate.is_some() {
+                "mtg-kernel-human-electroduplicate-decision/v1"
             } else {
                 "mtg-kernel-human-kaito-decision/v75"
             }
@@ -1154,6 +1169,7 @@ pub(super) fn project_with_handles(
                 progenitus,
                 aberration,
                 lathril,
+                electroduplicate,
             },
             actions,
             action_meanings,

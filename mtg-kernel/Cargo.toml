@@ -325,6 +325,7 @@ required-features = ["limited-fdn-fixtures"]
 [[bin]]
 name = "kernel_limited_moon_env_v1"
 path = "src/bin/kernel_limited_moon_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
 
 [[bin]]
 name = "kernel_limited_leyline_axe_env_v1"
@@ -343,6 +344,10 @@ required-features = ["limited-fdn-fixtures"]
 [[bin]]
 name = "kernel_limited_aberration_env_v1"
 path = "src/bin/kernel_limited_aberration_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+[[bin]]
+name = "kernel_limited_electroduplicate_env_v1"
+path = "src/bin/kernel_limited_electroduplicate_env_v1.rs"
 required-features = ["limited-fdn-fixtures"]
 
 [[bin]]
