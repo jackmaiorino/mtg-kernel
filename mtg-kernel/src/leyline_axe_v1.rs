@@ -1,4 +1,4 @@
-//! Native opening-hand action for Leyline Axe. No consumer admission.
+//! Native opening-hand action for Leyline Axe.
 //! Its equipment bonuses/equip payment reuse the ordinary native attachment path.
 use crate::{
     card_def::{self, CardType, Keywords},
@@ -546,6 +546,45 @@ pub(crate) fn require_legacy_absence(state: &GameState) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+/// The current chooser's source and the public entries made through this
+/// opening procedure. Keep the original roster, declines, and raw ordinals in
+/// the native checkpoint. The same proof is checked before every native answer.
+pub(crate) fn visible_opening_v1(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<(Option<ObjectLinkV4>, Vec<(PlayerId, ObjectLinkV4)>), String> {
+    validate(state)?;
+    let current = if let Some(opening) = state.leyline_opening_v1 {
+        input(state, opening.input_history_index)?
+            .candidates
+            .get(opening.next as usize)
+            .copied()
+            .filter(|source| state.objects.get(source.object).owner == viewer)
+    } else {
+        None
+    };
+    let mut entries = vec![];
+    for row in &state.engine.event_history {
+        let CommittedEvent::LeylineOpeningV1 {
+            record: RecordV1::Answer { input_history_index, index, accept: true, .. },
+        } = row else {
+            continue;
+        };
+        let original = input(state, *input_history_index)?
+            .candidates.get(*index as usize).ok_or("opening answer source absent")?;
+        let generation = original.zone_change_count.checked_add(1)
+            .ok_or("opening entry incarnation overflow")?;
+        entries.push((
+            state.objects.get(original.object).owner,
+            ObjectLinkV4 {
+                object: original.object,
+                zone_change_count: generation,
+            },
+        ));
+    }
+    Ok((current, entries))
 }
 
 pub(crate) fn definition(id: u16) -> bool {

@@ -2398,7 +2398,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     if !chosen_type {
         refuse_chosen_type_mana_v60(state)?;
     }
-    validate_copy_prefix_for_mode_v1(state, text_mode)?;
+    validate_copy_prefix_for_mode_v1(state, text_mode, private_scope)?;
     if !matches!(
         text_mode,
         ObservationTextModeV2::EndTurnV68Artifact
@@ -2933,7 +2933,9 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
             },
             creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
                 .then(|| state.creatures_attacked_this_turn_v1()),
-            restricted_mana: public_restricted_mana_v1(state, text_mode, false)?,
+            restricted_mana: public_restricted_mana_v1(
+                state, text_mode, LimitedAppendixV1::Legacy,
+            )?,
             surface: base.projection,
             policy_surface_context,
             london_mulligans: public_london_mulligans_v1(state),
@@ -2995,10 +2997,14 @@ fn refuse_chosen_type_mana_v60(state: &GameState) -> Result<()> {
 /// Carry the complete owning envelope through shared observation and mana
 /// prefixes. Every predecessor keeps the original refusal and all native
 /// copied-ability checks remain active.
-fn validate_copy_prefix_for_mode_v1(state: &GameState, mode: ObservationTextModeV2) -> Result<()> {
+fn validate_copy_prefix_for_mode_v1(
+    state: &GameState,
+    mode: ObservationTextModeV2,
+    appendix: LimitedAppendixV1,
+) -> Result<()> {
     use crate::optional_trigger_public_v1::ConsumerV1;
     let consumer = match mode {
-        ObservationTextModeV2::KaitoV75Artifact => ConsumerV1::KaitoV75,
+        ObservationTextModeV2::KaitoV75Artifact => ConsumerV1::for_kaito(appendix),
         ObservationTextModeV2::ChandraV74Artifact => ConsumerV1::ChandraV74,
         _ => ConsumerV1::Legacy,
     };
@@ -3022,12 +3028,14 @@ mod effect_order_tests;
 fn public_restricted_mana_v1(
     state: &GameState,
     text_mode: ObservationTextModeV2,
-    chosen_type: bool,
+    appendix: LimitedAppendixV1,
 ) -> Result<Option<[Vec<PublicRestrictedManaV1>; 2]>> {
+    let chosen_type = text_mode == ObservationTextModeV2::KaitoV75Artifact
+        && appendix.includes(LimitedAppendixV1::ChosenType);
     if !chosen_type {
         refuse_chosen_type_mana_v60(state)?;
     }
-    validate_copy_prefix_for_mode_v1(state, text_mode)?;
+    validate_copy_prefix_for_mode_v1(state, text_mode, appendix)?;
     // Both frozen and complete constructors project this field, even for an
     // empty mana pool. Retain their private scope through these legacy guards.
     if !matches!(
@@ -5519,9 +5527,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         accept_conqueror,
         accept_fake,
         conqueror_proof,
-        if text_mode == ObservationTextModeV2::KaitoV75Artifact
-            && surface.limited_appendix_v1().includes(LimitedAppendixV1::Omniscience)
-        {
+        if text_mode == ObservationTextModeV2::KaitoV75Artifact {
             surface.limited_appendix_v1()
         } else {
             LimitedAppendixV1::Legacy
@@ -5626,8 +5632,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             restricted_mana: public_restricted_mana_v1(
                 state,
                 text_mode,
-                text_mode == ObservationTextModeV2::KaitoV75Artifact
-                    && surface.limited_appendix_v1().includes(crate::policy_surface_v5::LimitedAppendixV1::ChosenType),
+                surface.limited_appendix_v1(),
             )?,
             surface: base.projection,
             policy_surface_context,
@@ -5915,7 +5920,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
     }
-    validate_copy_prefix_for_mode_v1(state, text_mode)?;
+    validate_copy_prefix_for_mode_v1(state, text_mode, private_scope)?;
     if !matches!(
         text_mode,
         ObservationTextModeV2::EndTurnV68Artifact
@@ -10619,7 +10624,8 @@ fn private_card(
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
             && (crate::progenitus_v1::definition(o.card_def)
-                || crate::leyline_axe_v1::definition(o.card_def)
+                || (appendix != LimitedAppendixV1::LeylineAxe
+                    && crate::leyline_axe_v1::definition(o.card_def))
                 || crate::effect::harvester_v1::definition(o.card_def)
                 || (!appendix.includes(LimitedAppendixV1::Omniscience)
                     && crate::engine::omniscience_cast_v1::definition(o.card_def))

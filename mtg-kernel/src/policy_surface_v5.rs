@@ -390,6 +390,7 @@ pub(crate) enum LimitedAppendixV1 {
     Tutelage,
     Mixed,
     Moon,
+    LeylineAxe,
 }
 
 impl LimitedAppendixV1 {

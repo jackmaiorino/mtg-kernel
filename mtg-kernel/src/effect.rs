@@ -28859,12 +28859,15 @@ pub(crate) fn require_no_copied_token_abilities_v1(state: &GameState) -> Result<
 
 /// Only the complete V75 envelope supplies both planeswalker appendices.
 /// Native validation remains mandatory before projecting its inherited prefix.
-pub(crate) fn require_no_copied_token_abilities_kaito_v75(state: &GameState) -> Result<(), String> {
+pub(crate) fn require_no_copied_token_abilities_kaito_v75(
+    state: &GameState,
+    leyline_axe: bool,
+) -> Result<(), String> {
     chandra_flameshaper_v1::validate_state(state)?;
     chandra_flameshaper_v1::validate_pending(state)?;
     kaito_cunning_v75::validate_state(state)?;
     kaito_cunning_v75::validate_pending(state)?;
-    validate_complete_copied_token_prefix_v74(state)
+    validate_complete_copied_token_prefix_v74(state, leyline_axe)
 }
 
 /// V74 carries Chandra but still refuses Kaito's later mechanics.
@@ -28874,12 +28877,16 @@ pub(crate) fn require_no_copied_token_abilities_chandra_v74(
     chandra_flameshaper_v1::validate_state(state)?;
     chandra_flameshaper_v1::validate_pending(state)?;
     kaito_cunning_v75::require_legacy(state, None)?;
-    validate_complete_copied_token_prefix_v74(state)
+    validate_complete_copied_token_prefix_v74(state, false)
 }
 
-fn require_unrepresented_copy_sources_v1(state: &GameState) -> Result<(), String> {
+fn require_unrepresented_copy_sources_v1(state: &GameState, leyline_axe: bool) -> Result<(), String> {
     standard_exile::refuse_top_batch_legacy(state)?;
-    crate::leyline_axe_v1::require_legacy_absence(state)?;
+    if leyline_axe {
+        crate::leyline_axe_v1::validate(state)?;
+    } else {
+        crate::leyline_axe_v1::require_legacy_absence(state)?;
+    }
     harvester_v1::require_legacy_absence(state)?;
     Ok(())
 }
@@ -28887,13 +28894,16 @@ fn require_unrepresented_copy_sources_v1(state: &GameState) -> Result<(), String
 /// The enclosing V74 appendix publishes every copied-token entry and end-step
 /// occurrence, including copies of copies. Authenticate their native history;
 /// predecessor projections retain the original absence requirement below.
-fn validate_complete_copied_token_prefix_v74(state: &GameState) -> Result<(), String> {
-    require_unrepresented_copy_sources_v1(state)?;
+fn validate_complete_copied_token_prefix_v74(
+    state: &GameState,
+    leyline_axe: bool,
+) -> Result<(), String> {
+    require_unrepresented_copy_sources_v1(state, leyline_axe)?;
     event::validate_copied_token_abilities_v1(state)
 }
 
 fn require_no_copied_token_added_abilities_v1(state: &GameState) -> Result<(), String> {
-    require_unrepresented_copy_sources_v1(state)?;
+    require_unrepresented_copy_sources_v1(state, false)?;
     if state
         .objects
         .iter()

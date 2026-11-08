@@ -783,6 +783,8 @@ mod counter_target_effects_v1;
 pub mod ex1_v1;
 mod extravagant_replication_v1;
 pub mod juggernaut_public_v1;
+pub mod leyline_axe_consumer_v1;
+pub mod leyline_axe_public_v1;
 pub(crate) mod life_gain_turn_v1;
 pub(crate) mod life_loss_turn_v1;
 pub mod limited_mixed_consumer_v1;
