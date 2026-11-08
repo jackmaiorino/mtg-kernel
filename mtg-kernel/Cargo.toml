@@ -337,6 +337,11 @@ path = "src/bin/kernel_limited_progenitus_env_v1.rs"
 required-features = ["limited-fdn-fixtures"]
 
 [[bin]]
+name = "kernel_limited_aberration_env_v1"
+path = "src/bin/kernel_limited_aberration_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
 name = "kernel_limited_match_v1"
 path = "src/bin/kernel_limited_match_v1.rs"
 required-features = ["limited-fdn-fixtures"]

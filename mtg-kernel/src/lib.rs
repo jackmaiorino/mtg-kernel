@@ -795,6 +795,8 @@ pub mod moon_consumer_v1;
 pub mod moon_public_v1;
 pub mod progenitus_consumer_v1;
 pub mod progenitus_public_v1;
+pub mod aberration_consumer_v1;
+pub mod aberration_public_v1;
 pub mod omniscience_consumer_v1;
 pub mod omniscience_public_v1;
 pub mod own_registration_v1;

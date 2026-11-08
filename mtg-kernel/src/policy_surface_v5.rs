@@ -392,6 +392,7 @@ pub(crate) enum LimitedAppendixV1 {
     Moon,
     LeylineAxe,
     Progenitus,
+    Aberration,
 }
 
 impl LimitedAppendixV1 {
