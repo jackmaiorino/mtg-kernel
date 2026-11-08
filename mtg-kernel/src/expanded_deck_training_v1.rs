@@ -8753,6 +8753,7 @@ pub(crate) mod tests {
                         search_seeds: vec![0, 1],
                         rollouts: 4,
                         value_leaf: None,
+                        sd1: None,
                     }),
                 }),
             };
@@ -8821,6 +8822,173 @@ pub(crate) mod tests {
         assert!(reached > 0, "no slot reached its placed decision");
     }
 
+    /// SD1 capture (collab LANES/search-diagnostic-20261108/DESIGN.md v4 E2):
+    /// the learner plays its own draw throughout; every arm x seed is recorded
+    /// with its world receipt and both picks; coverage holds the arms'
+    /// supported actions and picks; both reference halves and V_p count every
+    /// rollout once; the capture replays exactly (CPU and wall aside); and the
+    /// panel-only pass reaches the same states with the same policy.
+    #[test]
+    fn sd1_capture_records_arms_and_split_references_without_touching_the_episode() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = fast_self_play_episode_v1("w5-capture", 2_026_110_202, 0);
+        let plain = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+        let arm = |label: &str, world: &str, budget: u64| ex1_collect_v1::Sd1ArmOptionsV1 {
+            label: label.into(),
+            world: world.into(),
+            search_seeds: vec![0],
+            budget,
+            value_leaf: None,
+        };
+        let options = |arms: Vec<ex1_collect_v1::Sd1ArmOptionsV1>, half_rollouts: u64| {
+            ex1_collect_v1::Ex1CollectOptionsV1 {
+                run: "sd1/panel".into(),
+                update: 0,
+                budget: 600,
+                w5: Some(ex1_collect_v1::W5CollectOptionsV1 {
+                    recipe: crate::w5_xact_v1::W5_XACT_VERSION_V1.into(),
+                    key_memo_mib: 64,
+                    capture_0b: Some(ex1_collect_v1::W5CaptureOptionsV1 {
+                        budgets: vec![],
+                        search_seeds: vec![],
+                        rollouts: 0,
+                        value_leaf: None,
+                        sd1: Some(ex1_collect_v1::Sd1CaptureOptionsV1 {
+                            version: ex1_collect_v1::SD1_CAPTURE_VERSION_V1.into(),
+                            arms,
+                            half_rollouts,
+                            coverage_max: 16,
+                        }),
+                    }),
+                }),
+            }
+        };
+        let mut vl = arm("VL8-h0", "fresh", 0);
+        vl.value_leaf = Some(ex1_collect_v1::Sd1ValueLeafArmV1 {
+            horizon: "h0".into(),
+            sims: 12,
+        });
+        let full = options(
+            vec![
+                arm("D", "fresh", 600),
+                arm("P", "pinned-v1", 600),
+                arm("T", "true-v1", 600),
+                vl,
+            ],
+            2,
+        );
+        full.validate_v1().unwrap();
+        let panel = options(vec![], 0);
+        panel.validate_v1().unwrap();
+        // A 0b field beside sd1 is refused.
+        let mut bad = full.clone();
+        bad.w5
+            .as_mut()
+            .unwrap()
+            .capture_0b
+            .as_mut()
+            .unwrap()
+            .rollouts = 4;
+        assert!(bad.validate_v1().is_err());
+        let strip = |mut v: Value| {
+            for a in v["arms"].as_array_mut().unwrap() {
+                a.as_object_mut().unwrap().remove("cpu_s");
+                a["search"].as_object_mut().unwrap().remove("wall");
+            }
+            v
+        };
+        let mut reached = 0;
+        for slot in 0..48_usize {
+            let run = |options: &ex1_collect_v1::Ex1CollectOptionsV1,
+                       policy: &mut FrozenPlayPolicyV1| {
+                let mut hook =
+                    ex1_collect_v1::Ex1EpisodeHookV1::new(options, policy, &episode, slot).unwrap();
+                let hooked =
+                    collect_episode_hooked_v1(policy, &learner, None, &episode, Some(&mut hook))
+                        .unwrap();
+                (hooked, hook.finish_v1(&episode, true))
+            };
+            let (hooked, record) = run(&full, &mut policy);
+            assert_eq!(
+                serde_json::to_vec(&plain).unwrap(),
+                serde_json::to_vec(&hooked).unwrap(),
+                "slot {slot}: capture changed the episode"
+            );
+            let capture = record["capture_0b"].clone();
+            if capture["reached"] != true {
+                continue;
+            }
+            reached += 1;
+            assert_eq!(capture["schema"], ex1_collect_v1::SD1_CAPTURE_VERSION_V1);
+            let arms = capture["arms"].as_array().unwrap();
+            assert_eq!(arms.len(), 4);
+            let width = capture["width"].as_u64().unwrap() as usize;
+            let actions: Vec<usize> =
+                serde_json::from_value(capture["references"]["actions"].clone()).unwrap();
+            for a in arms.iter().filter(|a| a["status"] == "ok") {
+                let n: Vec<u64> = serde_json::from_value(a["n"].clone()).unwrap();
+                assert_eq!(n.len(), width);
+                for (i, &count) in n.iter().enumerate() {
+                    if count >= 8 {
+                        assert!(actions.contains(&i));
+                    }
+                }
+                for pick in [&a["frozen_choice"], &a["pick_v2"]] {
+                    if let Some(i) = pick.as_u64() {
+                        assert!(actions.contains(&(i as usize)));
+                    }
+                }
+                let mut perm: Vec<u64> = serde_json::from_value(a["perm_live"].clone()).unwrap();
+                perm.sort_unstable();
+                assert_eq!(perm, (0..width as u64).collect::<Vec<_>>());
+                assert_eq!(a["search"]["world"], a["world"]);
+            }
+            assert_eq!(arms[2]["search"]["world_receipt"]["mode"], "true-v1");
+            if arms[1]["status"] == "ok" {
+                assert_eq!(arms[1]["search"]["world_receipt"]["mode"], "pinned-v1");
+            }
+            assert!(arms[0]["search"]["world_receipt"].is_null());
+            if width <= 16 {
+                assert_eq!(actions, (0..width).collect::<Vec<_>>());
+            }
+            let refs = &capture["references"];
+            for half in ["a", "b"] {
+                let q = &refs["q"][half];
+                for i in 0..actions.len() {
+                    let total = q["wins"][i].as_u64().unwrap()
+                        + q["draws"][i].as_u64().unwrap()
+                        + q["nonnatural"][i].as_u64().unwrap();
+                    assert!(total <= 2);
+                }
+                let vp = &refs["vp"][half];
+                let drawn: u64 = vp["drawn"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|x| x.as_u64().unwrap())
+                    .sum();
+                assert_eq!(drawn, 2);
+            }
+            // Exact replay, CPU and wall aside.
+            let (_, again) = run(&full, &mut policy);
+            assert_eq!(strip(capture.clone()), strip(again["capture_0b"].clone()));
+            // The panel-only pass: same state and policy, no arms, no references.
+            let (_, only) = run(&panel, &mut policy);
+            let only = &only["capture_0b"];
+            assert_eq!(only["reached"], true);
+            assert_eq!(only["step"], capture["step"]);
+            assert_eq!(only["policy"], capture["policy"]);
+            assert_eq!(only["features"], capture["features"]);
+            assert!(only["arms"].as_array().unwrap().is_empty());
+            assert!(only.get("references").is_none());
+            if reached >= 1 {
+                break;
+            }
+        }
+        assert!(reached > 0, "no slot reached its placed decision");
+    }
+
     /// W5 Stage 2a capture: adding the value-leaf searches leaves the episode,
     /// the Stage 0b candidates and every shared Q_ref value unchanged (parity),
     /// records every horizon x count x seed search with its primary hash, and
@@ -8844,6 +9012,7 @@ pub(crate) mod tests {
                         search_seeds: vec![0],
                         rollouts: 2,
                         value_leaf,
+                        sd1: None,
                     }),
                 }),
             }
