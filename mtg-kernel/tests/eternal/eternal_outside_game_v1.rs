@@ -8,18 +8,66 @@ use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::eternal_outside_game_v1::{
     decision_options, outside_the_game, set_outside_the_game, OutsideGameOptionV1,
+    OutsideGameStateV1,
 };
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::LimitedJsonlServerV1;
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 use serde_json::{json, Value};
+use std::hash::{Hash, Hasher};
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
 fn id(name: &str) -> u16 {
     card_id_by_name(name).unwrap_or_else(|| panic!("{name}"))
+}
+
+#[test]
+fn empty_outside_game_state_preserves_legacy_hash_input_and_json() {
+    #[derive(Default)]
+    struct HashInput(Vec<u8>);
+    impl Hasher for HashInput {
+        fn finish(&self) -> u64 {
+            0
+        }
+        fn write(&mut self, bytes: &[u8]) {
+            self.0.extend_from_slice(bytes);
+        }
+    }
+    fn input(outside: &OutsideGameStateV1) -> Vec<u8> {
+        let mut state = HashInput::default();
+        outside.hash(&mut state);
+        state.0
+    }
+
+    // An absent sideboard must add no bytes even when another Eternal card
+    // has already initialized the enclosing module state.
+    assert!(input(&OutsideGameStateV1::default()).is_empty());
+    let eternal = mtg_kernel::eternal_cards_v1::EternalStateV1 {
+        energy: [3, 0],
+        ..Default::default()
+    };
+    let legacy_json = serde_json::to_value(&eternal).unwrap();
+    assert!(legacy_json.get("outside_game").is_none());
+    let restored: mtg_kernel::eternal_cards_v1::EternalStateV1 =
+        serde_json::from_value(legacy_json).unwrap();
+    assert_eq!(restored, eternal);
+
+    // A real sideboard still binds identities, quantities and owning seats.
+    let one = OutsideGameStateV1 {
+        cards: [vec![id("Gamble")], vec![]],
+    };
+    let original = input(&one);
+    assert!(!original.is_empty());
+    for cards in [
+        [vec![id("Counterspell")], vec![]],
+        [vec![id("Gamble"); 2], vec![]],
+        [vec![], vec![id("Gamble")]],
+    ] {
+        assert_ne!(input(&OutsideGameStateV1 { cards }), original);
+    }
 }
 
 /// A first main phase with P0 active and holding priority, both libraries

@@ -28,14 +28,26 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{GameObject, GameState, ObjectStateV4, Target, Zone};
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 
 /// Each player's cards outside the game, sorted by card id. Absent from the
 /// eternal state until a game has any.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutsideGameStateV1 {
     #[serde(default)]
     pub cards: [Vec<u16>; 2],
+}
+
+impl Hash for OutsideGameStateV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // EternalStateV1 derives Hash. An empty extension must therefore write
+        // nothing, including no empty-vector lengths, to preserve its old hash.
+        if !self.is_empty() {
+            b"outside-the-game/v1".hash(state);
+            self.cards.hash(state);
+        }
+    }
 }
 
 impl OutsideGameStateV1 {
