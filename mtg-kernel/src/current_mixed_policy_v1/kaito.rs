@@ -65,18 +65,34 @@ fn packet_from_current(
 }
 impl KaitoSession {
     #[cfg(test)]
-    pub(crate) fn probe_apply_v1(&mut self, decision: &KaitoDecision, index: u32)
-        -> std::result::Result<(), (crate::current_actor_probe_v1::Stage, String)> {
+    pub(crate) fn probe_apply_v1(
+        &mut self,
+        decision: &KaitoDecision,
+        index: u32,
+    ) -> std::result::Result<(), (crate::current_actor_probe_v1::Stage, String)> {
         use crate::current_actor_probe_v1::Stage;
-        if !Arc::ptr_eq(&self.owner, &decision.owner) || self.generation != decision.generation
-            || index as usize >= decision.packet.actions.len() {
+        if !Arc::ptr_eq(&self.owner, &decision.owner)
+            || self.generation != decision.generation
+            || index as usize >= decision.packet.actions.len()
+        {
             return Err((Stage::Encoding, "stale probe owner or action range".into()));
         }
-        self.inner.step_with_current_check(&decision.backend, index, |candidates, actions| {
-            let fresh = packet_from_current(candidates, actions).map_err(|e| (Stage::Encoding, e.to_string()))?;
-            if fresh != decision.packet { return Err((Stage::Encoding, "changed probe packet".into())); }
-            Ok(())
-        }, |error| (Stage::Encoding, error.to_string()), |error| (Stage::Engine, error.to_string())).map(|_| ())
+        self.inner
+            .step_with_current_check(
+                &decision.backend,
+                index,
+                |candidates, actions| {
+                    let fresh = packet_from_current(candidates, actions)
+                        .map_err(|e| (Stage::Encoding, e.to_string()))?;
+                    if fresh != decision.packet {
+                        return Err((Stage::Encoding, "changed probe packet".into()));
+                    }
+                    Ok(())
+                },
+                |error| (Stage::Encoding, error.to_string()),
+                |error| (Stage::Engine, error.to_string()),
+            )
+            .map(|_| ())
     }
     pub fn from_session(session: FastActorSessionV1) -> Result<Self> {
         Ok(Self::from_kaito(

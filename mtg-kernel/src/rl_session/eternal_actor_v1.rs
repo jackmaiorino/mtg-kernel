@@ -167,37 +167,69 @@ mod tests {
 
     #[test]
     fn issue454_paid_doomsday_full_selection_range_and_native_apply_both_seats() {
-        use crate::{current_tree_learner_v1::ModelV1, state::{GameState, Step, Zone}};
+        use crate::{
+            current_tree_learner_v1::ModelV1,
+            state::{GameState, Step, Zone},
+        };
         for player in [PlayerId::P0, PlayerId::P1] {
             let cards = mainboard("legacy-doomsday");
             let mut owner = EternalActorSessionV1::reset_explicit_mainboards(
-                454, 0x5eed_0001, (1000, 1000), ["legacy-doomsday".into(), "legacy-doomsday".into()],
-                [cards.clone(), cards.clone()], player,
-            ).unwrap();
+                454,
+                0x5eed_0001,
+                (1000, 1000),
+                ["legacy-doomsday".into(), "legacy-doomsday".into()],
+                [cards.clone(), cards.clone()],
+                player,
+            )
+            .unwrap();
             // Labelled initial scene, preserving both original60 multisets.
             // Only starting resources move. The spell, payment, resolution and
             // private ordered-five choice below all use the real owning engine.
             let mut state = GameState::new_from_libraries_environment_v2_with_starting_player_v1(
-                &cards, &cards, crate::rl::card_name, 0x5eed_0001, player,
+                &cards,
+                &cards,
+                crate::rl::card_name,
+                0x5eed_0001,
+                player,
             );
             state.step = Step::Main1;
-            for (name, zone) in [("Doomsday", Zone::Hand), ("Underground Sea", Zone::Battlefield),
-                ("Underground Sea", Zone::Battlefield), ("Underground Sea", Zone::Battlefield)] {
+            for (name, zone) in [
+                ("Doomsday", Zone::Hand),
+                ("Underground Sea", Zone::Battlefield),
+                ("Underground Sea", Zone::Battlefield),
+                ("Underground Sea", Zone::Battlefield),
+            ] {
                 let id = crate::card_def::card_id_by_name(name).unwrap();
-                let at = state.players[player.index()].library.iter().position(|&object| state.objects.get(object).card_def == id).unwrap();
+                let at = state.players[player.index()]
+                    .library
+                    .iter()
+                    .position(|&object| state.objects.get(object).card_def == id)
+                    .unwrap();
                 let object = state.players[player.index()].library.remove(at);
                 state.objects.get_mut(object).zone = zone;
-                match zone { Zone::Hand => state.players[player.index()].hand.push(object),
-                    Zone::Battlefield => state.players[player.index()].battlefield.push(object), _ => unreachable!() }
+                match zone {
+                    Zone::Hand => state.players[player.index()].hand.push(object),
+                    Zone::Battlefield => state.players[player.index()].battlefield.push(object),
+                    _ => unreachable!(),
+                }
             }
             for seat in [PlayerId::P0, PlayerId::P1] {
-                let mut actual = state.players[seat.index()].library.iter().chain(&state.players[seat.index()].hand)
-                    .chain(&state.players[seat.index()].battlefield).map(|&id| state.objects.get(id).card_def).collect::<Vec<_>>();
-                let mut original = cards.clone(); actual.sort_unstable(); original.sort_unstable(); assert_eq!(actual, original);
+                let mut actual = state.players[seat.index()]
+                    .library
+                    .iter()
+                    .chain(&state.players[seat.index()].hand)
+                    .chain(&state.players[seat.index()].battlefield)
+                    .map(|&id| state.objects.get(id).card_def)
+                    .collect::<Vec<_>>();
+                let mut original = cards.clone();
+                actual.sort_unstable();
+                original.sort_unstable();
+                assert_eq!(actual, original);
             }
             owner.inner.state = state;
             owner.inner.surface = PolicySurfaceV5::new_with_priority_mode_v1(
-                crate::surface_v2::PriorityModeV1::EngineWindowsV1, SuppressionAuditMode::Off,
+                crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+                SuppressionAuditMode::Off,
             );
             owner.inner.environment_revision = 0;
             owner.inner.policy_step_count = 0;
@@ -211,9 +243,16 @@ mod tests {
             let mut cast = false;
             let mut largest_menu = 0;
             for _ in 0..40 {
-                if cast && owner.inner.state.players[player.index()].library.len() == 5
-                    && owner.inner.state.players[player.index()].life == 10 { break; }
-                let FastActorResponseV1::Decision(header) = owner.current_response().unwrap() else { panic!("Doomsday became terminal") };
+                if cast
+                    && owner.inner.state.players[player.index()].library.len() == 5
+                    && owner.inner.state.players[player.index()].life == 10
+                {
+                    break;
+                }
+                let FastActorResponseV1::Decision(header) = owner.current_response().unwrap()
+                else {
+                    panic!("Doomsday became terminal")
+                };
                 let decision = owner.encode(header).unwrap();
                 let input = owner.training_input_v1(&decision).unwrap();
                 let logits = ModelV1::deterministic_fixture().forward(&input).unwrap();
@@ -223,24 +262,54 @@ mod tests {
                 let index = if !cast {
                     actions.iter().position(|a| matches!(a, ActionSemanticV1::CastSpell { source, .. }
                         if source.card_db_id == crate::card_def::card_id_by_name("Doomsday").unwrap())).unwrap()
-                } else if let Some(index) = actions.iter().position(|a| matches!(a, ActionSemanticV1::ChooseEffectTarget { .. })) {
-                    assert!(matches!(crate::eternal_actor_choice_v1::capture_v1(&owner.inner.state, player).unwrap(),
-                        Some(crate::eternal_actor_choice_v1::SelectionV1::DoomsdayOrderedFive)));
-                    selected_cards += 1; largest_menu = largest_menu.max(actions.len()); index
+                } else if let Some(index) = actions
+                    .iter()
+                    .position(|a| matches!(a, ActionSemanticV1::ChooseEffectTarget { .. }))
+                {
+                    assert!(matches!(
+                        crate::eternal_actor_choice_v1::capture_v1(&owner.inner.state, player)
+                            .unwrap(),
+                        Some(crate::eternal_actor_choice_v1::SelectionV1::DoomsdayOrderedFive)
+                    ));
+                    selected_cards += 1;
+                    largest_menu = largest_menu.max(actions.len());
+                    index
                 } else {
-                    actions.iter().position(|a| matches!(a, ActionSemanticV1::Pass { .. } | ActionSemanticV1::FinishEffectSelection { .. })).unwrap()
+                    actions
+                        .iter()
+                        .position(|a| {
+                            matches!(
+                                a,
+                                ActionSemanticV1::Pass { .. }
+                                    | ActionSemanticV1::FinishEffectSelection { .. }
+                            )
+                        })
+                        .unwrap()
                 };
                 let mut reference = owner.inner.clone();
-                let expected = reference.step(header.episode_id, header.step, index as u32).unwrap();
+                let expected = reference
+                    .step(header.episode_id, header.step, index as u32)
+                    .unwrap();
                 assert_eq!(owner.apply(&decision, index as u32).unwrap(), expected);
                 assert_eq!(owner.inner.state, reference.state);
                 if !cast {
-                    assert_eq!(owner.inner.state.players[player.index()].battlefield.iter().filter(|&&id| owner.inner.state.objects.get(id).tapped).count(), 3);
-                    assert_eq!(owner.inner.state.players[player.index()].mana_pool, [0; 6]); cast = true;
+                    assert_eq!(
+                        owner.inner.state.players[player.index()]
+                            .battlefield
+                            .iter()
+                            .filter(|&&id| owner.inner.state.objects.get(id).tapped)
+                            .count(),
+                        3
+                    );
+                    assert_eq!(owner.inner.state.players[player.index()].mana_pool, [0; 6]);
+                    cast = true;
                 }
             }
             assert_eq!(selected_cards, 5);
-            assert!(largest_menu > 40, "exercise the full private library selection range");
+            assert!(
+                largest_menu > 40,
+                "exercise the full private library selection range"
+            );
             assert_eq!(owner.inner.state.players[player.index()].library.len(), 5);
             assert_eq!(owner.inner.state.players[player.index()].life, 10);
         }
@@ -268,7 +337,10 @@ impl EternalActorDecisionV1 {
     }
     #[cfg(test)]
     pub(crate) fn probe_actions_v1(&self) -> Vec<ActionSemanticV1> {
-        self.original.iter().map(|candidate| candidate.semantic.clone()).collect()
+        self.original
+            .iter()
+            .map(|candidate| candidate.semantic.clone())
+            .collect()
     }
 }
 fn projection(error: impl std::fmt::Display) -> Error {
@@ -277,13 +349,23 @@ fn projection(error: impl std::fmt::Display) -> Error {
 
 impl EternalActorSessionV1 {
     #[cfg(test)]
-    pub(crate) fn probe_apply_v1(&mut self, decision: &EternalActorDecisionV1, index: u32)
-        -> std::result::Result<(), (crate::current_actor_probe_v1::Stage, String)> {
+    pub(crate) fn probe_apply_v1(
+        &mut self,
+        decision: &EternalActorDecisionV1,
+        index: u32,
+    ) -> std::result::Result<(), (crate::current_actor_probe_v1::Stage, String)> {
         use crate::current_actor_probe_v1::Stage;
-        self.validate(decision).map_err(|error| (Stage::Encoding, error.to_string()))?;
-        if index as usize >= decision.original.len() { return Err((Stage::Encoding, "action range".into())); }
-        let generation = self.generation.checked_add(1).ok_or((Stage::Encoding, "generation exhausted".into()))?;
-        self.inner.step(decision.expected.episode_id, decision.expected.step, index)
+        self.validate(decision)
+            .map_err(|error| (Stage::Encoding, error.to_string()))?;
+        if index as usize >= decision.original.len() {
+            return Err((Stage::Encoding, "action range".into()));
+        }
+        let generation = self
+            .generation
+            .checked_add(1)
+            .ok_or((Stage::Encoding, "generation exhausted".into()))?;
+        self.inner
+            .step(decision.expected.episode_id, decision.expected.step, index)
             .map_err(|error| (Stage::Engine, format!("{error:?}")))?;
         self.generation = generation;
         // The next public-header projection is classified at response(), not

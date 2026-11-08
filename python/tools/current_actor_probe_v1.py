@@ -17,6 +17,7 @@ import platform
 import subprocess
 import sys
 import time
+import host_slots_v1
 
 from compute_throughput_v1 import checked, nonnegative, read
 
@@ -90,19 +91,20 @@ def prepare(args):
     labels = [deck["label"] for deck in admitted]
     if len(set(deck["label"] for deck in pool)) != len(pool):
         raise ValueError("duplicate deck label")
-    if args.cohort == "original40":
+    if args.cohort == "original_limited":
         if args.pool != "limited":
-            raise ValueError("original40 applies only to Limited")
+            raise ValueError("original_limited applies only to Limited")
         originals = []
         for deck in pool:
             path = Path(args.repo) / "data/limited/draftzero_sample_v1/decks" / (deck["label"] + ".json")
             inputs.append(pin(path))
             original = read(path)
             rows = [[row["count"], row["name"]] for row in original["cards"]]
-            if original["name"] != deck["label"] or sum(row[0] for row in rows) != 40:
+            if original["name"] != deck["label"] or not 40 <= sum(row[0] for row in rows) <= 10000:
                 raise ValueError("original Limited list differs")
             originals.append(dict(label=deck["label"], mainboard=rows, sideboard=[]))
         pool = originals
+    pool = [dict(deck, mainboard_size=sum(row[0] for row in deck["mainboard"])) for deck in pool]
     log = Path(args.original_root) / f"digest-probe-{args.pool}.log"
     inputs.append(pin(log))
     required = {}
@@ -169,11 +171,21 @@ def require_choice(path, binary, manifest):
         host = candidate["host"]
         if host not in inventory or not inventory[host]["eligible"] or receipt["host"] != inventory[host]["hostname"]:
             raise ValueError("candidate host is unavailable or changed")
-        seconds = nonnegative(receipt["seconds"])
-        if seconds <= 0:
+        seconds = nonnegative(report["seconds"])
+        allocation = receipt["allocation"]
+        actual = allocation["actual_cores"]
+        if (allocation["priority"] != "below_normal" or len(actual) != receipt["workers"]
+                or sorted(set(actual)) != actual or any(type(core) is not int or core < 0 for core in actual)):
+            raise ValueError("qualification lacks an exact supported core allocation")
+        requested = allocation["requested_core_pool"]
+        if requested is not None and not set(actual).issubset(requested):
+            raise ValueError("actual allocation differs from requested core pool")
+        if seconds <= 0 or receipt["native_seconds"] != seconds:
             raise ValueError("invalid completed-work timing")
-        projected = seconds * 15 + sum(nonnegative(candidate[k]) for k in ("setup_seconds", "transfer_seconds", "recovery_seconds"))
-        candidates.append(dict(id=candidate["id"], host=host, hostname=receipt["host"], workers=receipt["workers"], projected_seconds=projected))
+        projected = seconds * 15 + nonnegative(receipt["post_admission_overhead_seconds"]) + sum(
+            nonnegative(candidate[k]) for k in ("setup_seconds", "transfer_seconds", "recovery_seconds"))
+        candidates.append(dict(id=candidate["id"], host=host, hostname=receipt["host"], workers=receipt["workers"],
+                               actual_cores=actual, projected_seconds=projected))
         primary.add(report["primary_sha256"])
     if len(primary) != 1 or not any(c["workers"] == 1 for c in candidates) or not any(c["workers"] > 1 for c in candidates):
         raise ValueError("require bit-identical serial and parallel completed games")
@@ -195,42 +207,76 @@ def execute(args):
     if args.command == "run":
         chosen = require_choice(args.compute_choice, binary, manifest)
         workers, count = chosen["workers"], 60
+        core_pool = chosen["actual_cores"]
+        if args.core_pool and host_slots_v1.parse_cores(args.core_pool) != core_pool:
+            raise ValueError("run core pool differs from the measured exact allocation")
     else:
         workers, count = args.workers, args.count
         if not 1 <= workers <= count <= 4:
             raise ValueError("small correctness/scaling samples are bounded to four games")
+        core_pool = host_slots_v1.parse_cores(args.core_pool) if args.core_pool else None
     output = Path(args.output).resolve()
     report = output.with_suffix(".native.json")
     log = output.with_suffix(".log")
     if any(path.exists() for path in (output, report, log)):
         raise ValueError("preserve existing receipts; choose a fresh output")
     output.parent.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ, MTG_CURRENT_ACTOR_PROBE_INPUT=manifest["path"], MTG_CURRENT_ACTOR_PROBE_OUTPUT=str(report),
+    env = dict(MTG_CURRENT_ACTOR_PROBE_INPUT=manifest["path"], MTG_CURRENT_ACTOR_PROBE_OUTPUT=str(report),
                MTG_CURRENT_ACTOR_PROBE_COUNT=str(count), MTG_CURRENT_ACTOR_PROBE_WORKERS=str(workers))
-    guard = Path(__file__).with_name("host_slots_v1.py")
-    command = [sys.executable, str(guard), "run", "--lane", "actor454-probe", "--work-id", output.stem,
-               "--cores", str(workers), "--priority", "below_normal", "--max-seconds", str(args.max_seconds),
-               "--on-overdue", "kill", "--cwd", str(Path(args.repo).resolve())]
-    if args.core_pool:
-        command += ["--core-pool", args.core_pool, "--pool-reason", "isolation"]
-    command += ["--", binary["path"], TEST, "--exact", "--ignored", "--nocapture"]
+    previous_env = {key: os.environ.get(key) for key in env}
+    command = [sys.executable, str(Path(__file__).resolve()), "_native", binary["path"], str(log)]
     started = time.monotonic()
-    with log.open("x", encoding="utf-8") as stream:
-        result = subprocess.run(command, env=env, stdout=stream, stderr=subprocess.STDOUT, check=False)
+    allocation = dict(requested_core_pool=core_pool, actual_cores=[], priority="below_normal")
+    admitted_at = None
+    def on_claim(claim):
+        nonlocal admitted_at
+        admitted_at = time.monotonic()
+        allocation["actual_cores"] = list(claim["cores"])
+        allocation["claim_id"] = claim["id"]
+        if args.command == "run" and allocation["actual_cores"] != core_pool:
+            raise ValueError("supported guard selected a different measured allocation")
+    error = None
+    try:
+        os.environ.update(env)
+        code = host_slots_v1.run("actor454-probe", output.stem, workers, command,
+            cwd=str(Path(args.repo).resolve()), priority="below_normal", core_pool=core_pool,
+            pool_reason="isolation" if core_pool is not None else None,
+            max_seconds=args.max_seconds, on_overdue="kill", on_claim=on_claim)
+    except Exception as exception:
+        code, error = 1, str(exception)
+    finally:
+        for key, value in previous_env.items():
+            if value is None: os.environ.pop(key, None)
+            else: os.environ[key] = value
+    if not log.exists():
+        with log.open("x", encoding="utf-8") as stream:
+            stream.write((error or "guard ended before native log creation") + "\n")
+    elapsed = time.monotonic()-started
+    native_seconds = read(report)["seconds"] if report.exists() else None
+    admission_seconds = admitted_at-started if admitted_at is not None else None
     receipt = dict(schema="current-actor-probe-execution/v1", host=platform.node(), binary=binary, manifest=manifest,
-                   workers=workers, count=count, seconds=time.monotonic()-started, exit_code=result.returncode,
+                   workers=workers, count=count, seconds=elapsed, exit_code=code, error=error, allocation=allocation,
+                   native_seconds=native_seconds, guard_admission_seconds=admission_seconds,
+                   post_admission_overhead_seconds=max(0., elapsed-admission_seconds-native_seconds)
+                       if admission_seconds is not None and native_seconds is not None else None,
                    report=pin(report) if report.exists() else None, log=pin(log),
                    compute_choice=pin(args.compute_choice) if args.command == "run" else None)
     write_new(output, receipt)
-    return result.returncode
+    return code
 
 
 def main():
+    if len(sys.argv) == 4 and sys.argv[1] == "_native":
+        # Internal descendant of the supported guard; native output goes
+        # directly to a durable file on Windows and POSIX alike.
+        with Path(sys.argv[3]).open("x", encoding="utf-8") as stream:
+            return subprocess.run([sys.argv[2], TEST, "--exact", "--ignored", "--nocapture"],
+                stdout=stream, stderr=subprocess.STDOUT, check=False).returncode
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     prepare_parser = sub.add_parser("prepare")
     prepare_parser.add_argument("--pool", choices=("limited", "eternal"), required=True)
-    prepare_parser.add_argument("--cohort", choices=("original40", "historical60"), required=True)
+    prepare_parser.add_argument("--cohort", choices=("original_limited", "historical60"), required=True)
     prepare_parser.add_argument("--original-root", required=True)
     prepare_parser.add_argument("--historical-repo", required=True)
     prepare_parser.add_argument("--repo", required=True)
