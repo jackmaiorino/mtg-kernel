@@ -13,13 +13,14 @@ state equality, including continuation after checkpoint reload. Tests also cover
 multi-substep groups, repeated embedding entries, original error precedence and
 the real prepared update route. Each arithmetic worker normalizes MXCSR.
 
-Qualification uses a copied first-16-update prefix of the current CS workload,
+Qualification uses a copied first-four-update prefix of the current CS workload,
 including its original ten-game batches, initial S0, opponents and seeds. The
 production chain ledger is omitted from this independent engineering replay;
 input content and path rebasing are recorded in the small run manifest.
 
 The supported native CPU dispatcher first compares one complete update at
-1/2/4 workers for each pinned baseline/candidate binary, verifies equivalent
+1/2/3/4 workers and the production four-collector/two-learner setting for each
+pinned baseline/candidate binary, verifies equivalent
 outputs, and selects its fastest measured eligible placement. It then runs the
 complete prefix in ABBA order, retaining every output and failed attempt.
 Report actual child wall time, recovery-inclusive time, learner timing and
@@ -28,10 +29,13 @@ composes this existing reservation and throughput gate. Its plan pins runtime,
 inputs, host inventory and the CPU allocation. `s_transformer_v1 gae-bench` is a
 bounded synthetic diagnostic only, never end-to-end qualification evidence.
 
-The active Linux training chains and Haley's W1 soak are excluded from
-placement. The candidate is tested on separately available desktop capacity
-after compiler jobs end. No active executable, reservation, checkpoint, seed,
-statistical rule or campaign is modified. Speed measurements on this host do
-not establish speed on the Linux nodes or playing strength.
+The active Linux training chains and Jack's live human-play session are excluded
+from placement. Haley's soak ended before qualification staging, leaving that
+PC available. Its two-core/four-thread allocation uses a 6 GiB retained-output
+cap and preserves 60 GiB free disk space. The short prefix fits this capacity;
+the original 16-update fixture is retained. No active executable, reservation,
+checkpoint, seed, statistical rule or campaign is modified. Speed measurements
+on this host do not establish speed on the Linux nodes or playing strength.
 
-Results are pending native verification and qualification.
+Thirty native checks passed, including full gradient bits, warmed Adam state,
+real-game training and resume. Timing qualification is pending.

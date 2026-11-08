@@ -36,6 +36,14 @@ def write(path, value):
 def run(plan_path):
     plan = dispatch.read(plan_path)
     root, cold = Path(plan["root"]), Path(plan["cold_root"])
+    host = plan.get("host", "desktop")
+    if host not in ("desktop", "computehost"):
+        raise ValueError("this bounded comparison supports the two Windows PCs")
+    host_name = plan.get("compute_host_name")
+    if host == "computehost":
+        if not isinstance(host_name, str) or not host_name:
+            raise ValueError("compute host name required")
+        dispatch.HOSTS["computehost"] = host_name.upper()
     config = dispatch.read(dispatch.checked(plan["config"]))
     if not 2 <= len(config["iterations"]) <= 32:
         raise ValueError("engineering comparison needs 2..32 complete updates")
@@ -49,16 +57,35 @@ def run(plan_path):
     affinity = plan["cpu_affinity"]
     if len(affinity) < 4:
         raise ValueError("the fixed 1/2/4 comparison needs at least four logical CPUs")
+    worker_counts = plan.get("worker_counts", [1, 2, 4])
+    if (not isinstance(worker_counts, list) or 1 not in worker_counts
+            or len(set(worker_counts)) != len(worker_counts)
+            or any(type(w) is not int or not 1 <= w <= min(32, len(affinity)) for w in worker_counts)
+            or not any(w > 1 for w in worker_counts)):
+        raise ValueError("unique serial and parallel worker counts within the CPU allocation required")
+    worker_settings = [(w, w) for w in sorted(worker_counts)]
+    # The live CS layout uses four collectors and two preparation workers.
+    # Price it explicitly because the best learner and collector counts can differ.
+    if plan.get("include_production_workers", False) and (4, 2) not in worker_settings:
+        worker_settings.append((4, 2))
     trials, choices, settings = {}, {}, {}
 
     def execute(path, qualification):
         # Each supported attempt owns fresh monitor/signal state and affinity.
-        subprocess.run([
+        command = [
             sys.executable, "-B", str(Path(dispatch.__file__).resolve()),
             "_qualify" if qualification else "_dispatch", str(path.resolve()),
-        ], check=True, stdout=sys.stdout, stderr=sys.stderr)
+        ]
+        if host_name:
+            command.extend(["--compute-host-name", host_name])
+        subprocess.run(command, check=True, stdout=sys.stdout, stderr=sys.stderr)
 
     def request(label, runtime, workers, prep, choice=None):
+        projection = plan.get("projected_additional_bytes", 2 * 1024**3)
+        volume_projection = {}
+        for directory in (root, cold):
+            volume = directory.drive.upper()
+            volume_projection[volume] = volume_projection.get(volume, 0) + (projection + 1) // 2
         trial_config = dict(config, output_directory=str(root / label / "native"),
                             collection_workers=workers, preparation_workers=prep)
         config_pin = write(root / "requests" / (label + "-config.json"), trial_config)
@@ -67,16 +94,15 @@ def run(plan_path):
             "lane": "codex-s-transformer-parallel", "runtime": runtime,
             "config": config_pin, "root": str(root / label),
             "cold_root": str(cold / label),
-            "placement": {"host": "desktop", "cpu_affinity": affinity,
+            "placement": {"host": host, "cpu_affinity": affinity,
                           "workers": workers, "preparation_workers": prep,
-                          "memory_bytes": 12 * 1024**3},
+                          "memory_bytes": plan.get("memory_bytes", 12 * 1024**3)},
             "storage": {
                 "accounting_roots": [str(root), str(cold)],
-                "max_logical_bytes": 12 * 1024**3,
+                "max_logical_bytes": plan.get("max_logical_bytes", 12 * 1024**3),
                 "reserve_bytes": 60 * 1024**3,
-                "projected_additional_bytes": 1024**3,
-                "projected_volume_bytes": {root.drive.upper(): 1024**3,
-                                           cold.drive.upper(): 1024**3}},
+                "projected_additional_bytes": projection,
+                "projected_volume_bytes": volume_projection},
             "wall_seconds": 600,
         }
         fraction = config.get("max_non_natural_episode_fraction", 0)
@@ -97,9 +123,9 @@ def run(plan_path):
     # The same full initial state and first scheduled batch price all settings.
     for name in ("baseline", "candidate"):
         reports = []
-        for workers in (1, 2, 4):
-            label = f"qual-{name}-w{workers}"
-            path, req = request(label, runtime_pins[name], workers, workers)
+        for workers, prep in worker_settings:
+            label = f"qual-{name}-w{workers}-p{prep}"
+            path, req = request(label, runtime_pins[name], workers, prep)
             execute(path, True)
             report_path = root / label / "report.json"
             report = dispatch.read(report_path)
