@@ -332,7 +332,7 @@ This is source coverage; the complete composition is not natively qualified.
 
 The additional `fdn-mixed-consumer/v1` owner composes the first twenty
 printings, excluding Moon, Leyline Axe, Progenitus, Aberration, Lathril and
-Electroduplicate, Blasphemous Edict, Loot, Curator and Kykar. It authenticates every represented native printed
+Electroduplicate, Blasphemous Edict, Loot, Curator, Kykar, Sphinx and Greatwurm. It authenticates every represented native printed
 definition before reset and retains the real declared deck IDs. Its exact
 Mixed capability enables all eight existing appendices together. Its distinct
 observation and candidate schemas require all eight facts; single-family
