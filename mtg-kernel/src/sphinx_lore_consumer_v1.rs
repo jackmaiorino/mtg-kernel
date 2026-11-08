@@ -157,6 +157,7 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
             || cast.spell.generation <= cast.original_graveyard.generation || cast.routes.is_empty()
             || cast.routes.len() > usize::from(u16::MAX)
             || cast.selected.is_some_and(|i| usize::from(i) >= cast.routes.len())
+            || cast.stage == public::CastStageV1::Announcing && cast.finalized_method.is_some()
             || cast.stage != public::CastStageV1::Announcing && (cast.selected.is_none() || cast.finalized_method.is_none()) {
             return Err("invalid Sphinx current cast binding".into());
         }
@@ -164,6 +165,17 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
         let def = crate::card_def::CARD_DEFS.get(usize::from(card_id)).ok_or("Sphinx cast printing absent")?;
         for (i, option) in cast.routes.iter().enumerate() {
             if cast.routes[..i].iter().any(|r| r.route == option.route) { return Err("Sphinx duplicate route".into()); }
+            let (expected_cost, expected_method) = match option.route {
+                public::RouteV1::Normal => (vec![public::CostV1::Mana(def.cost.into())],crate::state::CastMethodV4::Normal),
+                public::RouteV1::PrintedFlashback => (public::costs(def.flashback.ok_or("Sphinx printed flashback absent")?.cost)?,crate::state::CastMethodV4::Flashback),
+                public::RouteV1::Escape => (public::costs(def.escape.ok_or("Sphinx printed escape absent")?.cost)?,crate::state::CastMethodV4::Escape),
+                public::RouteV1::Granted{..} => (vec![public::CostV1::Mana(def.cost.into())],crate::state::CastMethodV4::Flashback),
+            };
+            if option.ordered_base_cost != expected_cost || cast.selected == Some(i as u16)
+                && cast.finalized_method.is_some_and(|method|method != expected_method
+                    && !(option.route == public::RouteV1::Normal && method == crate::state::CastMethodV4::Alternative)) {
+                return Err("Sphinx route changed its printed cost or finalized method".into());
+            }
             if let public::RouteV1::Granted { grant } = option.route {
                 let grant = facts.grants.get(grant as usize).ok_or("Sphinx cast original grant absent")?;
                 if grant.original_card.object != cast.spell.object || grant.original_card.generation != cast.original_graveyard.generation

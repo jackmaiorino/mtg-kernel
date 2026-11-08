@@ -142,6 +142,10 @@ fn paid_attack_original_source_death_and_both_flashback_costs_preserve_all_indic
             assert!(matches!(native::next(&mut state),engine::Decision::ChooseEffectOption {player,source,option_count:2} if player==actor&&source==target));
             let facts=public::capture(&state,actor).unwrap(); validate_facts(&facts,actor.into()).unwrap();
             let cast=&facts.casts[0]; assert_eq!(cast.stage,public::CastStageV1::Announcing);
+            let mut false_cost=facts.clone();
+            let cheaper=false_cost.casts[0].routes.iter().find(|o|matches!(o.route,public::RouteV1::Granted{..})).unwrap().ordered_base_cost.clone();
+            false_cost.casts[0].routes.iter_mut().find(|o|o.route==public::RouteV1::PrintedFlashback).unwrap().ordered_base_cost=cheaper;
+            assert!(validate_facts(&false_cost,actor.into()).is_err());
             let (index,option)=cast.routes.iter().enumerate().find(|(_,o)|matches!(o.route,public::RouteV1::Granted{..})==granted).unwrap();
             let public::CostV1::Mana(mana)=&option.ordered_base_cost[0] else{panic!()};
             assert_eq!(mana.generic,if granted{1}else{2}); assert_eq!(mana.pips.len(),1);
@@ -152,6 +156,8 @@ fn paid_attack_original_source_death_and_both_flashback_costs_preserve_all_indic
             let facts=public::capture(&paid,actor).unwrap(); validate_facts(&facts,actor.into()).unwrap();
             assert_eq!(facts.casts[0].selected,Some(index as u16));
             assert_eq!(facts.casts[0].finalized_method,Some(crate::state::CastMethodV4::Flashback));
+            let mut false_method=facts.clone(); false_method.casts[0].finalized_method=Some(crate::state::CastMethodV4::Normal);
+            assert!(validate_facts(&false_method,actor.into()).is_err());
             assert!(!facts.grants[0].original_incarnation_has_active_grant);
             let restored=restore(&paid); assert_eq!(public::capture(&paid,actor).unwrap(),public::capture(&restored,actor).unwrap());
             native::finish(&mut paid); assert_eq!(paid.objects.get(target).zone,Zone::Exile);
@@ -208,6 +214,30 @@ fn target_departure_fizzles_and_changed_native_route_source_is_rejected() {
             if let CommittedEvent::SphinxLoreCastOptionsV1{options}=entry {options.graveyard_generation+=1;break;}
         }
         assert!(public::capture(&forged,actor).is_err());
+    }
+}
+
+#[test]
+fn remembered_attack_ignores_later_concealed_source_before_and_after_resolution_both_seats() {
+    for actor in [PlayerId::P0,PlayerId::P1] {
+        let (mut state,source,target,_)=native::scenario(actor,"Think Twice");
+        // Native departure setup after a real paid attack, preserving the old
+        // declaration and public source rather than editing that receipt.
+        crate::event::propose_and_commit(&mut state,ProposedEvent::zone_change(source,Zone::Library));
+        let mut hidden=state.clone(); hidden.objects.get_mut(source).card_def=card("Forest");
+        for viewer in [actor,actor.opponent()] {
+            assert_eq!(public::capture(&state,viewer).unwrap(),public::capture(&hidden,viewer).unwrap());
+        }
+        let plain=KaitoSession::from_session(fixture(&state)).unwrap();
+        let paired=KaitoSession::from_session(fixture(&hidden)).unwrap();
+        assert_eq!(decision(&plain).packet(),decision(&paired).packet());
+        let mut hidden=restore(&hidden); native::install(&mut state,actor,target); native::install(&mut hidden,actor,target);
+        for viewer in [actor,actor.opponent()] {
+            let facts=public::capture(&hidden,viewer).unwrap();
+            assert_eq!(public::capture(&state,viewer).unwrap(),facts);
+            assert!(facts.attacks[0].source.current_original_source.is_none());
+            assert_eq!(facts.attacks[0].source.original_source.identity,IdentityV1::Known{card_id:PRINTING});
+        }
     }
 }
 

@@ -86,7 +86,7 @@ pub(crate) fn record_attack(state: &mut GameState, id: ObjectId) {
     state.engine.event_history.push(event.clone());
     state.engine.event_log.push(event);
 }
-fn source_at(state: &GameState, index: u64) -> Result<AbilitySourceContractV4, String> {
+pub(crate) fn source_at(state: &GameState, index: u64) -> Result<AbilitySourceContractV4, String> {
     let JournalV1::Attack {
         declaration,
         source,
@@ -102,7 +102,17 @@ fn source_at(state: &GameState, index: u64) -> Result<AbilitySourceContractV4, S
     {
         return Err("Sphinx original declaration changed".into());
     }
-    crate::engine::validate_historical_ability_source_contract(state, *source)?;
+    let live = state.objects.try_get(source.source).ok_or("Sphinx original attacker absent")?;
+    if live.owner != source.owner || live.zone_change_count < source.zone_change_count {
+        return Err("Sphinx original attacker ownership or incarnation changed".into());
+    }
+    if live.zone_change_count == source.zone_change_count {
+        crate::engine::validate_historical_ability_source_contract(state, *source)?;
+    } else {
+        // The adjacent native declaration and captured receipt own the old
+        // public identity. Later hidden incarnations cannot validate that name.
+        crate::engine::validate_historical_permanent_copy_source(state, *source, live)?;
+    }
     Ok(*source)
 }
 pub(crate) fn collect(

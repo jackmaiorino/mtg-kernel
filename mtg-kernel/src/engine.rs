@@ -2811,7 +2811,7 @@ pub(crate) fn source_card_def_matches(
 /// A resolved permanent spell copy is now a token, but keeps its immutable
 /// spell ancestry. Its independent entry snapshot, not a mutable token flag,
 /// distinguishes that ability source from an unentered or ceased Stack copy.
-fn validate_historical_permanent_copy_source(
+pub(crate) fn validate_historical_permanent_copy_source(
     state: &GameState,
     contract: AbilitySourceContractV4,
     live: &crate::state::GameObject,
@@ -3330,8 +3330,14 @@ fn validate_ability_source_contract(
         .objects
         .try_get(item.source)
         .ok_or("ability source object no longer exists")?;
+    let historical_sphinx = item.kind == StackItemKind::TriggeredAbility
+        && source.zone_change_count > contract.zone_change_count
+        && item.inline_effect.as_ref().is_some_and(crate::effect::sphinx_lore_v1::recipe);
+    if historical_sphinx {
+        crate::effect::sphinx_lore_v1::validate_root(state, item.inline_effect.as_ref().unwrap(), Some(contract))?;
+    }
     if contract.source != item.source
-        || !source_card_def_matches(state, contract, source.card_def)
+        || (!historical_sphinx && !source_card_def_matches(state, contract, source.card_def))
         || contract.owner != source.owner
         || contract.controller != item.controller
         || contract.zone == Zone::Stack

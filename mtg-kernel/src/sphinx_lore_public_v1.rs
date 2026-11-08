@@ -112,7 +112,7 @@ fn target(state: &GameState, viewer: PlayerId, item: &StackItem) -> Result<Optio
         && engine::effect_target_is_legal_from_ability_source(state,source,item.controller,lore::target_spec(),&item.targets,0),
         original,current_original }))
 }
-fn costs(values: &[CostComponent]) -> Result<Vec<CostV1>,String> {
+pub(crate) fn costs(values: &[CostComponent]) -> Result<Vec<CostV1>,String> {
     values.iter().map(|cost| Ok(match cost {
         CostComponent::Mana(m) => CostV1::Mana((*m).into()), CostComponent::DiscardCards(n) => CostV1::DiscardCards(*n),
         CostComponent::SacrificeLands(n) => CostV1::SacrificeLands(*n), CostComponent::PayLife(n) => CostV1::PayLife(*n),
@@ -149,8 +149,14 @@ pub(crate) fn capture(state:&GameState,viewer:PlayerId)->Result<FactsV1,String> 
             counters:crate::tinybones_public_v72::counters(state,id)?,tapped:o.tapped,summoning_sick:o.summoning_sick});}}
     let history=state.engine.event_history.scan_for_v1(&[crate::event_history_v1::EventKindV1::SphinxLoreV1]);
     let mut attacks=vec![];let mut attack_positions=std::collections::BTreeMap::new();
-    for(index,entry)in history.iter().enumerate(){if let E::SphinxLoreV1{journal:lore::JournalV1::Attack{source,turn,..}}=entry{
-        attack_positions.insert(index as u64,width(attacks.len())?); attacks.push(AttackV1{source:public::root(state,*source,Some(viewer))?,turn:*turn,
+    for(index,entry)in history.iter().enumerate(){if let E::SphinxLoreV1{journal:lore::JournalV1::Attack{turn,..}}=entry{
+        let source = lore::source_at(state,index as u64)?;
+        let original_source = public::ReferenceV1 {object:source.source.0,generation:source.zone_change_count,
+            owner:source.owner.into(),controller:source.controller.into(),zone:source.zone,identity:public::IdentityV1::Known {card_id:source.card_def}};
+        let current_original_source = state.objects.try_get(source.source).filter(|o|o.zone_change_count==source.zone_change_count)
+            .and_then(|_|public::reference(state,source.source,Some(viewer)));
+        let source = public::RootV1 {original_source,current_original_source,captured_controller:source.controller.into()};
+        attack_positions.insert(index as u64,width(attacks.len())?); attacks.push(AttackV1{source,turn:*turn,
             pending:None,original_target:None,installed_grant:None});}}
     let active=lore::active_at(state,state.engine.event_history.len())?;
     let mut grants=vec![];let mut grant_positions=std::collections::BTreeMap::new();
