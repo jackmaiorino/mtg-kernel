@@ -1423,7 +1423,9 @@ pub(crate) fn foretell(
         return Err("foretell's {2} is not payable".to_string());
     }
     let history_start = state.engine.event_history.len();
+    state.reveal_meaning_v3.set_concealed_exile(Some(source));
     event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Exile));
+    state.reveal_meaning_v3.set_concealed_exile(None);
     if state.objects.get(source).zone != Zone::Exile {
         return Ok(());
     }

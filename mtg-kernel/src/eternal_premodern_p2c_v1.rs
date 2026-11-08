@@ -800,29 +800,60 @@ pub(crate) fn delayed_triggers(state: &mut GameState, events: &[CommittedEvent])
     note_devourer_power(state);
 }
 
+/// Capture the ability as damage commits, before SBA or later effects can
+/// change the source's abilities, incarnation or controller.
+pub(crate) fn nishoba_damage_source(
+    state: &GameState,
+    source: ObjectId,
+) -> Option<AbilitySourceContractV4> {
+    let live = state.objects.try_get(source)?;
+    (live.zone == Zone::Battlefield && statics::is_nishoba(state, source))
+        .then(|| AbilitySourceContractV4::capture(state, source))
+}
+
 /// "Whenever this creature deals damage, you gain that much life": one
 /// trigger per Nishoba for the damage it dealt in these events.
 fn note_nishoba_damage(state: &mut GameState, events: &[CommittedEvent]) {
-    let mut dealt: Vec<(ObjectId, i32)> = Vec::new();
+    let mut dealt: Vec<(AbilitySourceContractV4, i32)> = Vec::new();
     for event in events {
-        let CommittedEvent::Damage { source, amount, .. } = *event else {
+        let CommittedEvent::NishobaDamageSourceV1 {
+            source,
+            damage_history_index,
+        } = *event
+        else {
             continue;
         };
-        if amount <= 0 || !statics::is_nishoba(state, source) {
-            continue;
+        let Ok(index) = usize::try_from(damage_history_index) else {
+            halt(state, source.source);
+            return;
+        };
+        let Some(CommittedEvent::Damage {
+            source: object,
+            amount,
+            ..
+        }) = state.engine.event_history.get(index)
+        else {
+            halt(state, source.source);
+            return;
+        };
+        if *object != source.source
+            || *amount <= 0
+            || state.engine.event_history.get(index + 1) != Some(event)
+        {
+            halt(state, source.source);
+            return;
         }
+        let amount = *amount;
         match dealt.iter_mut().find(|(seen, _)| *seen == source) {
             Some((_, total)) => *total = total.saturating_add(amount),
             None => dealt.push((source, amount)),
         }
     }
-    for (nishoba, amount) in dealt {
-        let controller = state.objects.get(nishoba).controller;
-        let contract = AbilitySourceContractV4::capture(state, nishoba);
+    for (source, amount) in dealt {
         queue_trigger(
             state,
-            contract,
-            controller,
+            source,
+            source.controller,
             p2c(P2cOpV1::NishobaLifeV1 { amount }),
             None,
         );
