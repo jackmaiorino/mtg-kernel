@@ -7545,6 +7545,14 @@ fn materialize_zone_change_v1(
             {
                 continue;
             }
+            // A permitted look establishes a viewer-visible hand name, but
+            // concealed exile is not a continuously public arrival. Preserve
+            // that existence fact without claiming a distinct arriving copy.
+            let meaning = if from_zone == Zone::Exile && source_face_down {
+                crate::reveal_meaning_v3::RevealV3::Present
+            } else {
+                meaning
+            };
             state
                 .reveal_distinct_hand_card_with_meaning_v3(observer, owner, id, meaning)
                 .expect("just moved this live public object into its owner's hand");
