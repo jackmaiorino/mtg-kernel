@@ -3,7 +3,7 @@ use crate::{card_def::{card_id_by_name, KERNEL_CARDDB_HASH}, current_mixed_polic
     current_tree_learner_v1::ModelV1, effect::kykar_v1::tests as native,
     engine::{self, Action as NativeAction}, event::{CommittedEvent, ProposedEvent},
     human_bo3_v1::{HumanActionRequestV1, HumanKaitoProjectorV75, project_limited_kaito_v16},
-    ids::{ObjectId, PlayerId}, limited_kaito_session_v16::{LimitedKaitoBodyV16 as Body, LimitedKaitoStateV16 as State},
+    ids::PlayerId, limited_kaito_session_v16::{LimitedKaitoBodyV16 as Body, LimitedKaitoStateV16 as State},
     policy_surface_v5::LimitedAppendixV1, rl_session::{FastActorResponseV1, KaitoSessionV75}, state::GameState};
 fn card(name: &str) -> u16 { card_id_by_name(name).unwrap() }
 fn config(actor: PlayerId) -> ResetV1 {
@@ -160,7 +160,7 @@ fn original_target_return_incarnation_and_unselected_mode_do_not_rebind() {
         let rows = &d.fixture_backend_v75().candidates_v75().candidates;
         assert_eq!(rows.len(), 1); assert_eq!(rows[0].kykar_action, Some(ActionV1::ChooseSpiritMode));
         let mut changed = rows[0].action.clone();
-        let Action::ChooseSpellMode { source, .. } = &mut changed else { panic!() }; source.zone_change_count += 1;
+        let Action::ChooseSpellMode { source: changed_source, .. } = &mut changed else { panic!() }; changed_source.zone_change_count += 1;
         assert!(action(d.fixture_backend_v75().observation().kykar.as_ref(), &changed).is_err());
 
         native::choose(&mut state, actor, 1, None); native::finish(&mut state);
