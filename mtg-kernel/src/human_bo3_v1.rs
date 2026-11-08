@@ -481,4 +481,5 @@ mod embercleave_consumer_v1;
 mod omniscience_consumer_v1;
 mod tutelage_consumer_v1;
 mod moon_consumer_v1;
+mod progenitus_consumer_v1;
 mod zimone_consumer_v1;
