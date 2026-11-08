@@ -1091,11 +1091,13 @@ pub fn publish_new_bytes_v1(
 /// [`publish_new_bytes_v1`] with only the two bracketing content readbacks:
 /// the staged file immediately before it is linked, and the final file
 /// immediately before the receipt. The readbacks right after staging and
-/// right after the final namespace sync are skipped; any change they would
-/// catch is still caught by the next readback, which reports the same error
-/// kind, so the final name never gains bytes that were not verified and no
-/// receipt is returned for them. Every identity, length and namespace check
-/// is unchanged. For resident reads (`verified_reads: "resident"`).
+/// right after the final namespace sync are skipped. A change still present
+/// at the next readback is caught there with the same error kind, so the
+/// final name never gains staged bytes that were not verified and no receipt
+/// is returned for final bytes that differ; a change undone before the next
+/// readback goes unnoticed, where the full publication would reject it.
+/// Every identity, length and namespace check is unchanged. For resident
+/// reads (`verified_reads: "resident"`).
 pub fn publish_new_bytes_bracketed_v1(
     parent: &ValidatedPublicationParentV1,
     stage_name: impl AsRef<OsStr>,
