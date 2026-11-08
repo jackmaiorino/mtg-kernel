@@ -2999,17 +2999,12 @@ impl FlatDecisionEncoderV2 {
         }
         for (stack_order, item) in p.stack.iter().enumerate() {
             let stack_order = usize_u32(stack_order)?;
-            let unlinked_source = self
-                .unlinked_hand_stack_sources
-                .iter()
-                .find_map(|&(order, index)| (order == stack_order).then_some(index));
-            let source = if let Some(index) = unlinked_source {
-                index
-            } else if common.v3_source_authority {
-                self.resolve_reference(&item.source, actor)?
-            } else {
-                self.resolve_live(&item.source, actor)?
-            };
+            let source = self.resolve_stack_source(
+                &item.source,
+                actor,
+                stack_order,
+                common.v3_source_authority,
+            )?;
             self.push_relation(
                 FlatRelationRoleV2::StackTarget,
                 Some(source),
@@ -3771,6 +3766,26 @@ impl FlatDecisionEncoderV2 {
         self.hand_knowledge_by_name_v2 && stable.owner != actor && stable.zone == Zone::Hand
     }
 
+    fn resolve_stack_source(
+        &self,
+        stable: &CardStableRefV1,
+        actor: PlayerSeatV1,
+        stack_index: u32,
+        historical_source_authority: bool,
+    ) -> Result<u32, FlatDecisionErrorV2> {
+        if let Some(index) = self
+            .unlinked_hand_stack_sources
+            .iter()
+            .find_map(|&(order, index)| (order == stack_index).then_some(index))
+        {
+            Ok(index)
+        } else if historical_source_authority {
+            self.resolve_reference(stable, actor)
+        } else {
+            self.resolve_live(stable, actor)
+        }
+    }
+
     /// A revealed opponent hand source establishes a name, but its private
     /// copy cannot identify one of the known-hand rows. Register it once per
     /// public context even if several abilities came from the same copy.
@@ -4075,7 +4090,12 @@ impl FlatDecisionEncoderV2 {
             }
             Ok(FlatWardPaymentV3 {
                 targeting_stack_index: ward.targeting_stack_index,
-                targeting_source_object: self.resolve_reference(&targeting.source, actor)?,
+                targeting_source_object: self.resolve_stack_source(
+                    &targeting.source,
+                    actor,
+                    ward.targeting_stack_index,
+                    true,
+                )?,
                 ward_source_object: self.resolve_reference(source, actor)?,
                 payer: relative_player(ward.payer, actor),
                 generic: ward.generic,
@@ -5255,7 +5275,12 @@ impl FlatDecisionEncoderV2 {
             }
             Ok(FlatWardPaymentV3 {
                 targeting_stack_index: ward.targeting_stack_index,
-                targeting_source_object: self.resolve_reference(&targeting.source, actor)?,
+                targeting_source_object: self.resolve_stack_source(
+                    &targeting.source,
+                    actor,
+                    ward.targeting_stack_index,
+                    true,
+                )?,
                 ward_source_object: self.resolve_reference(source, actor)?,
                 payer: relative_player(ward.payer, actor),
                 generic: ward.generic,
@@ -5774,7 +5799,12 @@ impl FlatDecisionEncoderV2 {
             }
             Ok(FlatWardPaymentV3 {
                 targeting_stack_index: ward.targeting_stack_index,
-                targeting_source_object: self.resolve_reference(&targeting.source, actor)?,
+                targeting_source_object: self.resolve_stack_source(
+                    &targeting.source,
+                    actor,
+                    ward.targeting_stack_index,
+                    true,
+                )?,
                 ward_source_object: self.resolve_reference(source, actor)?,
                 payer: relative_player(ward.payer, actor),
                 generic: ward.generic,
@@ -5835,7 +5865,12 @@ impl FlatDecisionEncoderV2 {
             }
             Ok(crate::flat_policy_v5::FlatWardLifePaymentV5 {
                 targeting_stack_index: ward.targeting_stack_index,
-                targeting_source_object: self.resolve_reference(&targeting.source, actor)?,
+                targeting_source_object: self.resolve_stack_source(
+                    &targeting.source,
+                    actor,
+                    ward.targeting_stack_index,
+                    true,
+                )?,
                 ward_source_object: self.resolve_reference(source, actor)?,
                 payer: relative_player(ward.payer, actor),
                 life: ward.life,

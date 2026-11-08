@@ -554,6 +554,106 @@ mod tests {
         assert_eq!(v5[0], v5[1]);
     }
 
+    #[cfg(feature = "standard-magezero-fixtures")]
+    #[test]
+    fn issue567_ward_binds_the_public_channel_stack_position() {
+        use crate::engine::{self, Action, Decision};
+        use crate::flat_policy_v3::FlatDecisionEncoderV3;
+        use crate::flat_policy_v5::FlatDecisionEncoderV5;
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::policy_observation_v6::HistoricalSourceContextV6;
+        use crate::policy_observation_v7::HistoricalSourceContextV7;
+        use crate::state::{Target, Zone};
+
+        let mut state = ready_state();
+        state.enable_hand_knowledge_by_name_v2();
+        let source = put(
+            &mut state,
+            PlayerId::P0,
+            "Otawara, Soaring City",
+            Zone::Hand,
+        );
+        let target = put(
+            &mut state,
+            PlayerId::P1,
+            "Tolarian Terror",
+            Zone::Battlefield,
+        );
+        put(&mut state, PlayerId::P1, "Lightning Bolt", Zone::Hand);
+        state.players[0].mana_pool[ManaColor::U.pool_index()] = 6;
+        state.players[1].mana_pool[ManaColor::R.pool_index()] = 1;
+        engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { .. }
+        ));
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+        if state.priority_player == PlayerId::P0 {
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        let session = FastActorSessionV1::from_v3_fixture_state(state.clone());
+        let FastActorResponseV1::Decision(current) = session.current_response() else {
+            panic!("expected the Ward controller's response decision");
+        };
+        assert_eq!(current.acting_player as usize, PlayerId::P1.index());
+        let mut owned = OwnedScoringV4::default();
+        let v3 = session
+            .encode_current_flat_scoring_decision_owned_v3(
+                current,
+                &mut FlatDecisionEncoderV3::default(),
+                &mut owned.buffers(),
+            )
+            .unwrap();
+        let ward = &v3.extensions.queued_ward_payments[0].payment;
+        let stack_index = ward.targeting_stack_index;
+        let source_row = v3
+            .extensions
+            .historical_public_sources
+            .iter()
+            .find(|row| row.context == HistoricalSourceContextV6::Stack { stack_index })
+            .unwrap()
+            .model_object_index;
+        assert_eq!(ward.targeting_source_object, source_row);
+
+        let v4 = owned.encode(&session).unwrap();
+        let ward = &v4.extensions.queued_ward_payments[0].payment;
+        let source_row = v4
+            .extensions
+            .historical_public_sources
+            .iter()
+            .find(|row| row.context == HistoricalSourceContextV7::Stack { stack_index })
+            .unwrap()
+            .model_object_index;
+        assert_eq!(ward.targeting_source_object, source_row);
+
+        let session = FastActorSessionV1::from_v5_fixture_state(state);
+        let FastActorResponseV1::Decision(current) = session.current_response() else {
+            panic!("expected the V5 Ward controller's response decision");
+        };
+        let v5 = session
+            .encode_current_flat_scoring_decision_owned_v5(
+                current,
+                &mut FlatDecisionEncoderV5::default(),
+                &mut owned.buffers(),
+            )
+            .unwrap();
+        let ward = &v5.extensions.queued_ward_payments[0].payment;
+        let source_row = v5
+            .extensions
+            .historical_public_sources
+            .iter()
+            .find(|row| row.context == HistoricalSourceContextV7::Stack { stack_index })
+            .unwrap()
+            .model_object_index;
+        assert_eq!(ward.targeting_source_object, source_row);
+    }
+
     #[test]
     fn public_stack_actual_v4_binding_zero_parity_and_hidden_invariance() {
         use crate::native_policy_value_net_v1::stack_inputs_v1::*;
