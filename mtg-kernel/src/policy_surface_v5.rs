@@ -388,6 +388,7 @@ pub(crate) enum LimitedAppendixV1 {
     Zimone,
     Omniscience,
     Tutelage,
+    Moon,
 }
 
 #[derive(Clone)]

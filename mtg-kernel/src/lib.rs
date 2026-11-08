@@ -788,6 +788,8 @@ pub(crate) mod life_loss_turn_v1;
 pub mod omniscience_consumer_v1;
 pub mod omniscience_public_v1;
 pub mod tutelage_public_v1;
+pub mod moon_public_v1;
+pub mod moon_consumer_v1;
 pub mod tutelage_consumer_v1;
 pub mod own_registration_v1;
 pub mod phase_profile;

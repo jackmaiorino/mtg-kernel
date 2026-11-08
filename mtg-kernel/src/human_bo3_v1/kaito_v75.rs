@@ -53,7 +53,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     omniscience: Option<super::omniscience_consumer_v1::HumanFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tutelage: Option<super::tutelage_consumer_v1::HumanFactsV1>
+    tutelage: Option<super::tutelage_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    moon: Option<super::moon_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -91,7 +93,9 @@ record!(HumanKaitoCandidateV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     omniscience_action: Option<crate::omniscience_consumer_v1::ActionV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tutelage_action: Option<crate::tutelage_consumer_v1::ActionV1>
+    tutelage_action: Option<crate::tutelage_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    moon_action: Option<crate::moon_consumer_v1::ActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -313,6 +317,9 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
+    if let Some(label) = super::moon_consumer_v1::label(obs.moon.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
     if let Some(label) = super::tutelage_consumer_v1::label(obs.tutelage.as_ref(), a, h)? {
         return Ok(Some(label));
     }
@@ -774,6 +781,11 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::tutelage_consumer_v1::project(facts, &mut handles))
         .transpose()?;
+    let moon = obs
+        .moon
+        .as_ref()
+        .map(|facts| super::moon_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
@@ -790,6 +802,7 @@ pub(super) fn project_with_handles(
                 zimone_action: r.zimone_action,
                 omniscience_action: r.omniscience_action,
                 tutelage_action: r.tutelage_action,
+                moon_action: r.moon_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -1048,6 +1061,8 @@ pub(super) fn project_with_handles(
                 "mtg-kernel-human-omniscience-decision/v1"
             } else if tutelage.is_some() {
                 "mtg-kernel-human-tutelage-decision/v1"
+            } else if moon.is_some() {
+                "mtg-kernel-human-moon-decision/v1"
             } else {
                 "mtg-kernel-human-kaito-decision/v75"
             }
@@ -1076,6 +1091,7 @@ pub(super) fn project_with_handles(
                 zimone,
                 omniscience,
                 tutelage,
+                moon,
             },
             actions,
             action_meanings,

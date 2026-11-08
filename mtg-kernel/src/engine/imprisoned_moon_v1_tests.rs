@@ -6,7 +6,7 @@ const NAME: &str = "Imprisoned in the Moon";
 fn id(name: &str) -> u16 {
     card_def::card_id_by_name(name).unwrap()
 }
-fn ready(p: PlayerId, hidden: &str) -> GameState {
+pub(crate) fn ready(p: PlayerId, hidden: &str) -> GameState {
     let library = [id("Forest"); 80];
     let other = [id(hidden); 80];
     let (a, b) = if p == PlayerId::P0 {
@@ -101,7 +101,7 @@ fn priority(s: &mut GameState, p: PlayerId) {
     }
     panic!("actor priority absent");
 }
-fn finish(s: &mut GameState) {
+pub(crate) fn finish(s: &mut GameState) {
     for _ in 0..64 {
         let d = next(s);
         if matches!(d, Decision::CastSpellOrPass { .. })
@@ -115,7 +115,7 @@ fn finish(s: &mut GameState) {
     }
     panic!("native stack unfinished");
 }
-fn tapped(s: &GameState, p: PlayerId) -> usize {
+pub(crate) fn tapped(s: &GameState, p: PlayerId) -> usize {
     s.players[p.index()]
         .battlefield
         .iter()
@@ -236,7 +236,7 @@ fn cast(
     card
 }
 
-fn spell(s: &mut GameState, p: PlayerId, name: &str, targets: &[Target], cost: usize) -> ObjectId {
+pub(crate) fn spell(s: &mut GameState, p: PlayerId, name: &str, targets: &[Target], cost: usize) -> ObjectId {
     let c = cast(s, p, name, (false, 0, false), targets, None, cost);
     finish(s);
     c
@@ -715,6 +715,12 @@ fn paid_replication_copied_moon_season_real_host_choice_and_restore_both_seats()
                 } if targeted => {
                     assert_eq!(player, p);
                     assert!(legal_targets.contains(&Target::Object(elf)));
+                    let facts = crate::moon_public_v1::capture(&s, p).unwrap();
+                    let menu = facts.attachment_menu.unwrap();
+                    assert_eq!(menu.kind, crate::moon_public_v1::AttachmentKindV1::CopiedAura);
+                    assert_eq!(menu.aura.object, original.0);
+                    assert_eq!(menu.total_hosts, 2);
+                    assert_eq!(menu.selected_hosts.len(), attached);
                     let mut r = restore(&s);
                     step(&mut s, Action::ChooseEffectTarget(Target::Object(elf))).unwrap();
                     step(&mut r, Action::ChooseEffectTarget(Target::Object(elf))).unwrap();
@@ -746,6 +752,10 @@ fn paid_replication_copied_moon_season_real_host_choice_and_restore_both_seats()
         }
         only_land(&s, elf);
         assert_eq!(s.objects.get(elf).attachments.len(), 3);
+        let facts = crate::moon_public_v1::capture(&s, p).unwrap();
+        let host = facts.hosts.iter().find(|host| host.card.object == elf.0).unwrap();
+        assert_eq!(host.auras.iter().filter(|aura| aura.token).count(), 2);
+        assert!(host.moon_sets_land && host.moon_sets_colorless && host.moon_grants_tap_for_colorless);
         s.validate_attachment_relations().unwrap();
         assert_eq!(restore(&s), s);
     }
