@@ -89,3 +89,19 @@ of an old printed ability. The remaining Eternal delayed effects, selections,
 static meanings and public continuations must be represented before complete
 consumer admission; serializing the entire Eternal state is forbidden because
 it includes unrevealed private choices.
+
+The supplement additionally carries live Prepare copy and Animate Dead links.
+Departed linked sources refuse until their historical public identity and
+delayed lifecycle are represented. The first-spell fact is derived from public
+cast events rather than the E8a ledger, whose updates depend on hidden card
+presence. Tests cover actual Cavern/Needle handlers, concealed-source refusal,
+and hidden-card variants of the public cast fact.
+
+`eternal_actor_printed_v1` extracts the generated CardDef, ordered costs,
+programs, activated abilities, and triggers for the 62-name union of the exact
+legacy-reanimator, legacy-doomsday, and vintage-red-prison mainboards. Its
+exhaustive CardDef destructuring rejects unrepresented fields. This printed
+component is not an admission gate: external static handlers, generated token
+printings, dynamic continuations, and canonical public-reference integration
+remain separate work. The 62-name extraction and operand checks need native
+Eternal validation before use.
