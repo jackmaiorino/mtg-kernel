@@ -166,7 +166,8 @@ The harness defaults remain 32/128; this source change does not silently
 raise them or turn an all-incomplete attempt into acceptance.
 
 Focused receipt checks are in
-`python/tools/tests/test_qualify_reveal_v4_process.py`. They cover matching
+`python/tests/test_qualify_reveal_v4_process.py`, discovered by the general
+Python CI shards. They cover matching
 paths, same-payload wrong paths, wrong/missing keys, unmapped picks, group
 identity, original-completion disagreement, incomplete replies and accounting.
 These pure unit cases are not native evidence. They and Python execution are

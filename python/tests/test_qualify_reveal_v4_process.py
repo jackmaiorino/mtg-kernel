@@ -1,7 +1,10 @@
 """Receipt-binding unit cases only; these do not qualify a native process run."""
 from copy import deepcopy
+from pathlib import Path
+import sys
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from qualify_reveal_v4_process import bind_live_point, binds_committed_path, search_receipt
 
 
