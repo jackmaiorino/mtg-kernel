@@ -568,6 +568,71 @@ pub(super) fn label(
     label_common(action, &LabelInput::from_v6(observation), handles, human)
 }
 
+#[cfg(all(test, feature = "eternal-fixtures"))]
+#[test]
+fn thornscape_white_kicker_has_a_fixed_seat_human_prompt() {
+    use crate::engine::{self, Action, Decision};
+    use crate::ids::PlayerId;
+    use crate::policy_observation_v6::tests::{put, ready_state_for};
+    use crate::policy_surface_v5::PolicySurfaceV5;
+    use crate::rl::{legal_action_candidates_v1, observe_policy_v6};
+    use crate::surface::SurfaceDecision;
+
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let spell = put(&mut state, actor, "Thornscape Battlemage", Zone::Hand);
+        put(&mut state, actor, "Aluren", Zone::Battlefield);
+        let pool = &mut state.players[actor.index()].mana_pool;
+        for color in [ManaColor::G, ManaColor::R, ManaColor::W] {
+            pool[color.pool_index()] = 1;
+        }
+        pool[ManaColor::C.pool_index()] = 2;
+        engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseKicker { spell: source, .. } if source == spell
+        ));
+        engine::step(&mut state, Action::ChooseKicker(true)).unwrap();
+        let decision = engine::advance_until_decision(&mut state);
+        assert!(matches!(
+            decision,
+            Decision::ChooseEffectOption { source, option_count: 2, .. } if source == spell
+        ));
+        let actions = legal_action_candidates_v1(&SurfaceDecision::Decision(decision), &state)
+            .unwrap()
+            .into_iter()
+            .map(|row| row.record.semantic)
+            .collect::<Vec<_>>();
+        let observation =
+            observe_policy_v6(&state, &PolicySurfaceV5::new(), actor, 0, 0, 0, 1).unwrap();
+        let (prompt, indices) =
+            super::visible::project_decision(&observation, &actions, actor.into(), 1).unwrap();
+        assert_eq!(indices, [0, 1]);
+        assert!(prompt.actions[0]
+            .label
+            .starts_with("Decline the additional kicker cost {W} for Thornscape Battlemage ["));
+        assert!(prompt.actions[1]
+            .label
+            .starts_with("Pay the additional kicker cost {W} for Thornscape Battlemage ["));
+
+        engine::step(&mut state, Action::ChooseEffectOption(indices[1] as u16)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseEffectOption { source, option_count: 2, .. } if source == spell
+        ));
+        assert_eq!(
+            state.engine.pending_cast.as_ref().unwrap().thornscape_white_kicker_v1,
+            Some(true)
+        );
+        engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(state.stack.last().unwrap().v4.battlemage_kickers_v1.0, 3);
+    }
+}
+
 pub(super) fn label_v8(
     action: &A,
     observation: &crate::policy_observation_v8::ObservationV8,
