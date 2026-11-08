@@ -154,3 +154,6 @@ fn paid_two_target_slots_and_x_copies_retain_native_choices_both_seats() {
         *ordinal=2;malformed.engine.event_history.insert(at,row);assert!(public::validate_native(&malformed).is_err());
     }
 }
+
+#[path = "stale_target_tests.rs"]
+mod stale_targets;
