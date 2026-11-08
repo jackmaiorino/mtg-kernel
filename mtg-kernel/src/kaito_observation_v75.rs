@@ -979,6 +979,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
         }
         (None, None, None, None, None, None, None, None, None, None, None, None, Some(facts)) => {
             crate::electroduplicate_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::electroduplicate_consumer_v1::validate_inherited(facts, value).map_err(RlContractError)?;
             crate::electroduplicate_consumer_v1::OBSERVATION_SCHEMA
         }
         _ => return Err(RlContractError("mixed appendix profiles".into())),

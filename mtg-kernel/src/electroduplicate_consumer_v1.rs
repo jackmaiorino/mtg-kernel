@@ -149,6 +149,65 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
     Ok(())
 }
 
+/// Cross-check duplicated fields against the inherited public envelope. This
+/// rejects inconsistent artifacts; native recapture still owns execution authority.
+pub(crate) fn validate_inherited(
+    facts: &FactsV1,
+    value: &crate::kaito_observation_v75::KaitoObservationV75,
+) -> Result<(), String> {
+    use crate::rl::StackItemKindV2;
+    use crate::state::CastMethodV4;
+    let common = &value.common.common.projection.surface;
+    let expected_casts = common.stack.iter().filter(|row|
+        row.stack_item_kind == StackItemKindV2::Spell && row.source.card_db_id == PRINTING).count();
+    if expected_casts != facts.casts.len() { return Err("Electroduplicate cast roster differs from common stack".into()); }
+    for cast in &facts.casts {
+        let row = common.stack.iter().find(|row| row.stack_index == cast.stack_position
+            && row.stack_item_kind == StackItemKindV2::Spell && binds(&cast.spell, &row.source))
+            .ok_or("Electroduplicate cast lost its inherited stack row")?;
+        if row.controller != cast.spell.controller || row.cast_method != cast.finalized_method
+            || row.is_copy != (cast.stage == public::CastStageV1::UncastCopy)
+            || cast.finalized_method == Some(CastMethodV4::Flashback)
+                && (cast.origin_zone != Some(Zone::Graveyard) || !row.is_flashback)
+        { return Err("Electroduplicate cast route differs from common stack".into()); }
+        let targets = if cast.stage == public::CastStageV1::Announcing {
+            let pending = common.engine_context.pending_cast.as_ref().filter(|pending|
+                pending.source.as_ref().is_some_and(|source| binds(&cast.spell, source)))
+                .ok_or("Electroduplicate announcement lost its pending cast")?;
+            if Some(pending.origin_zone) != cast.origin_zone || pending.controller != cast.spell.controller {
+                return Err("Electroduplicate pending origin differs".into());
+            }
+            &pending.chosen_targets
+        } else { &row.targets };
+        match (cast.target.as_ref(), targets.as_slice()) {
+            (None, []) => {},
+            (Some(target), [TargetRefV1::Object { object }])
+                if target.original.object == object.arena_id
+                    && target.original.generation == object.zone_change_count
+                    && target.original.owner == object.owner
+                    && target.original.controller == object.controller
+                    && target.original.zone == object.zone => {},
+            _ => return Err("Electroduplicate original target differs from inherited stack".into()),
+        }
+    }
+    let entries: Vec<_> = value.chandra.copied_tokens.iter().filter_map(|entry| {
+        entry.source.current_original_source.as_ref().filter(|card|
+            card.zone == Zone::Battlefield && matches!(card.identity, IdentityV1::Known { .. }))
+            .map(|card| (card, entry.sacrifice_instances))
+    }).collect();
+    if entries.len() != facts.copied_tokens.len() { return Err("Electroduplicate token roster differs from V74".into()); }
+    for token in &facts.copied_tokens {
+        if entries.iter().filter(|(card, count)| *card == &token.card
+            && *count == token.copiable_haste_and_each_end_step_sacrifice_instances).count() != 1
+            || !value.tinybones.battlefield.iter().flatten().any(|current|
+                current.card == token.card && current.is_token && current.form == token.form
+                    && current.counters == token.counters && current.tapped == token.tapped
+                    && current.summoning_sick == token.summoning_sick)
+        { return Err("Electroduplicate current token differs from inherited facts".into()); }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ActionV1 { ChooseCopyTarget }

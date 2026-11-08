@@ -227,6 +227,11 @@ fn paid_cast_target_hidden_pair_indices_restore_and_fizzle_on_new_incarnation_bo
         let flashback = public::capture(&copied, actor.opponent()).unwrap();
         assert_eq!(flashback.casts[0].origin_zone, Some(Zone::Graveyard));
         assert_eq!(flashback.casts[0].finalized_method, Some(crate::state::CastMethodV4::Flashback));
+        let flashback_owner = KaitoSession::from_session(fixture(&copied)).unwrap();
+        let mut forged = decision(&flashback_owner).fixture_backend_v75().observation().clone();
+        forged.electroduplicate.as_mut().unwrap().casts[0].origin_zone = Some(Zone::Hand);
+        forged.projection_sha256 = crate::kaito_observation_v75::commitment(&forged).unwrap();
+        assert!(crate::kaito_observation_v75::validate_artifact(&forged).is_err());
         native::finish(&mut copied);
         assert_eq!(copied.objects.get(source).zone, Zone::Exile);
         let copies = public::capture(&copied, actor).unwrap();
@@ -234,6 +239,10 @@ fn paid_cast_target_hidden_pair_indices_restore_and_fizzle_on_new_incarnation_bo
         let copy_owner = KaitoSession::from_session(fixture(&copied)).unwrap();
         let copy_decision = decision(&copy_owner);
         assert_eq!(copy_decision.fixture_backend_v75().observation().chandra.copied_tokens.len(), 2);
+        let mut forged = copy_decision.fixture_backend_v75().observation().clone();
+        forged.electroduplicate.as_mut().unwrap().copied_tokens[0].copiable_haste_and_each_end_step_sacrifice_instances = 42;
+        forged.projection_sha256 = crate::kaito_observation_v75::commitment(&forged).unwrap();
+        assert!(crate::kaito_observation_v75::validate_artifact(&forged).is_err());
         assert!(ModelV1::deterministic_fixture().forward(&copy_owner.training_input_v1(&copy_decision).unwrap()).unwrap().iter().all(|v| v.is_finite()));
         let restored: GameState = serde_json::from_slice(&serde_json::to_vec(&copied).unwrap()).unwrap();
         assert_eq!(copied.state_hash(), restored.state_hash());
