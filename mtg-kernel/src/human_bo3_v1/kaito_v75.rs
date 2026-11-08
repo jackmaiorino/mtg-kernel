@@ -345,7 +345,7 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
-    if let Some(label) = super::loot_consumer_v1::label(obs.loot.as_ref(), a, h)? { return Ok(label); }
+    if let Some(label) = super::loot_consumer_v1::label(obs.loot.as_ref(), a, h)? { return Ok(Some(label)); }
     if let Some(label) = super::edict_consumer_v1::label(obs.edict.as_ref(), a, h)? {
         return Ok(Some(label));
     }
