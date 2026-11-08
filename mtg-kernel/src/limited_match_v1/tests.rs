@@ -128,6 +128,173 @@ fn policy_specs_parse_and_refuse() {
     assert!(PolicySpecV1::parse("pimc:sims=0:peek").is_err());
     assert!(PolicySpecV1::parse("random:x").is_err());
     assert!(PolicySpecV1::parse("az:sims=100").is_err());
+    let v2 = PolicySpecV1::parse("pimc:sims=2:depth=0:closedlist-v2").unwrap();
+    assert!(v2.needs_belief() && v2.uses_closed_list_v2());
+    assert!(PolicySpecV1::parse("pimc:closedlist:closedlist-v2").is_err());
+}
+
+fn rules_only_closed_list_game(decks: [Vec<u16>; 2], starting: PlayerId) -> FastActorSessionV1 {
+    let mut session = FastActorSessionV1::reset_rules_only_v1(
+        31,
+        31,
+        (4_000, 1 << 20),
+        ["first".into(), "second".into()],
+        decks,
+        starting,
+        |id| {
+            SessionKindV1::RulesOnly(RulesAdmissionV1::AllExecutable)
+                .refusal(id)
+                .is_none()
+        },
+    )
+    .expect("rules-only reset");
+    session.enable_hand_knowledge_by_name_v2().unwrap();
+    session
+}
+
+#[test]
+fn closed_list_v2_ignores_hidden_definitions_reveal_copy_and_future_rng() {
+    let forest = card_id_by_name("Forest").unwrap();
+    let plains = card_id_by_name("Plains").unwrap();
+    let swamp = card_id_by_name("Swamp").unwrap();
+    let island = card_id_by_name("Island").unwrap();
+    let axe = card_id_by_name("Leyline Axe").unwrap();
+
+    for starting in [PlayerId::P0, PlayerId::P1] {
+        let mut decks = [vec![plains; 40], vec![plains; 40]];
+        decks[starting.index()][..18].fill(forest);
+        decks[starting.index()][18..22].fill(axe);
+        let session = rules_only_closed_list_game(decks, starting);
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("expected a London decision");
+        };
+        let actor = seat(decision.acting_player);
+        assert_eq!(actor, starting);
+        assert!(decision.legal_action_count > 1);
+        let opponent = actor.opponent();
+        let same_named_card_at = |copy: usize, unknown: u16, future_seed: u64| {
+            session.census_edited_clone_v1(|state| {
+                let hand = state.players[opponent.index()].hand.clone();
+                let revealed = hand[copy];
+                for id in hand
+                    .into_iter()
+                    .chain(state.players[opponent.index()].library.clone())
+                {
+                    if id != revealed {
+                        let card = state.objects.get_mut(id);
+                        card.card_def = unknown;
+                        card.name = CARD_DEFS[usize::from(unknown)].name.into();
+                        card.v4 = ObjectStateV4::from_card_def(unknown);
+                    }
+                }
+                state.reveal_hand_card(actor, opponent, revealed).unwrap();
+                if copy != 0 {
+                    let library = state.players[actor.index()].library.clone();
+                    let reversed: Vec<_> = library
+                        .iter()
+                        .rev()
+                        .map(|&id| state.objects.get(id).card_def)
+                        .collect();
+                    for (id, definition) in library.into_iter().zip(reversed) {
+                        let card = state.objects.get_mut(id);
+                        card.card_def = definition;
+                        card.name = CARD_DEFS[usize::from(definition)].name.into();
+                        card.v4 = ObjectStateV4::from_card_def(definition);
+                    }
+                }
+                state.resample_future_randomness_for_search_v3(future_seed);
+            })
+        };
+        let left = same_named_card_at(0, swamp, 8325);
+        let right = same_named_card_at(4, island, 9325);
+        assert_ne!(left.game_state(), right.game_state());
+        assert_eq!(left.current_response(), right.current_response());
+        let mut deck = vec![forest; 40];
+        deck[0] = plains;
+        let belief = LimitedBeliefV1::new([deck]);
+        let world = WorldModeV1::ClosedListV2;
+        for seed in 0..8 {
+            let a = sample_world_v1(&left, world, Some(&belief), seed).unwrap();
+            let b = sample_world_v1(&right, world, Some(&belief), seed).unwrap();
+            assert_eq!(a.game_state(), b.game_state(), "seat {actor:?} seed {seed}");
+            let known = a.game_state().known_hand_cards(actor, opponent);
+            assert_eq!(known.len(), 1);
+            assert_eq!(a.game_state().objects.get(known[0].object).card_def, plains);
+        }
+        let search = |session: &FastActorSessionV1| {
+            pimc_choose_v1(session, 8, 12, world, Some(&belief), 534).unwrap()
+        };
+        let result = search(&left);
+        assert_eq!(result, search(&right));
+        assert_eq!(result.1.rejected, 0);
+        assert_eq!(
+            result.1.rollout_errors, 0,
+            "{:?}",
+            result.1.first_rollout_error
+        );
+        assert_eq!(result.1.visits.iter().sum::<u32>(), 8);
+    }
+}
+
+#[test]
+fn closed_list_v2_searches_opening_decisions_for_the_frozen_fdn_pool() {
+    let manifest: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../data/limited/fdn_v1/booster_pool_v1.json"
+    ))
+    .unwrap();
+    let printings = manifest["card_names"].as_array().unwrap();
+    assert_eq!(printings.len(), 286);
+    let forest = card_id_by_name("Forest").unwrap();
+    let island = card_id_by_name("Island").unwrap();
+    let opponent = vec![island; 40];
+    let belief = LimitedBeliefV1::new([opponent.clone()]);
+    let mut ids = HashSet::new();
+    let mut failures = Vec::new();
+    for name in printings {
+        let name = name.as_str().unwrap();
+        let id = card_id_by_name(name).unwrap_or_else(|| panic!("missing printing {name}"));
+        assert!(ids.insert(id), "duplicate definition for {name}");
+        let mut deck = vec![forest; 40];
+        deck[..4].fill(id);
+        let session = rules_only_closed_list_game([deck, opponent.clone()], PlayerId::P0);
+        let (_, stats) =
+            pimc_choose_v1(&session, 2, 1, WorldModeV1::ClosedListV2, Some(&belief), 99)
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+        if stats.visits.iter().sum::<u32>() != 2 || stats.rollout_errors != 0 {
+            failures.push(format!("{name}: {stats:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+#[test]
+fn closed_list_v2_counts_unmodeled_face_down_roots_as_fallbacks() {
+    let forest = card_id_by_name("Forest").unwrap();
+    let deck = vec![forest; 40];
+    let session = rules_only_closed_list_game([deck.clone(), deck.clone()], PlayerId::P0);
+    let hidden = session.census_edited_clone_v1(|state| {
+        let object =
+            crate::policy_observation_v6::tests::put(state, PlayerId::P1, "Forest", Zone::Exile);
+        state.objects.get_mut(object).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+            disguised: false,
+            lookers: 0b10,
+            hidden_by: None,
+            hidden_by_source: None,
+        });
+    });
+    let (_, stats) = pimc_choose_v1(
+        &hidden,
+        4,
+        1,
+        WorldModeV1::ClosedListV2,
+        Some(&LimitedBeliefV1::new([deck])),
+        99,
+    )
+    .unwrap();
+    assert_eq!(stats.visits.iter().sum::<u32>(), 0);
+    assert_eq!(stats.rejected, 4);
+    assert_eq!(stats.rejection_reasons["unknown face-down identity"], 4);
+    assert_eq!(stats.rollout_errors, 0);
 }
 
 #[test]

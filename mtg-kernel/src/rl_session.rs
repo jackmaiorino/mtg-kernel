@@ -8496,6 +8496,50 @@ impl FastActorSessionV1 {
         Ok(sampled)
     }
 
+    /// Closed-list v2 installs an independent future RNG and never draws
+    /// from the opponent's native unknown identities. The disposable clone
+    /// keeps the original root binding for applying the selected index.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn limited_closed_list_clone_v2(
+        &self,
+        seed: u64,
+        belief: &crate::limited_match_v1::LimitedBeliefV1,
+    ) -> Result<Self, String> {
+        use crate::kernel_native_search_opponent_v1::pending_selection_hidden_objects_v1;
+        use crate::limited_match_v1::closed_list_v2;
+
+        if self.flat_action_contract_mode != FlatActionContractModeV1::RulesOnlyV1
+            || !self.state.hand_knowledge_by_name_v2
+        {
+            return Err("closedlist-v2 requires rules-only play with name-level hand facts".into());
+        }
+        let actor = self.current.as_ref().ok_or("no current decision")?.actor;
+        let pinned = pending_selection_hidden_objects_v1(&self.state, actor);
+        if pinned.iter().any(|id| {
+            self.state.players[actor.opponent().index()]
+                .hand
+                .contains(id)
+        }) {
+            return Err("opponent hand selection binds physical copies".into());
+        }
+        if self.state.objects.iter().any(|(_, card)| {
+            card.v4
+                .face_down_v1
+                .is_some_and(|face| face.lookers & (1 << actor.index()) == 0)
+        }) {
+            return Err("unknown face-down identity".into());
+        }
+        let slots = closed_list_v2::resampled_slots(&self.state, actor, &pinned);
+        let changed: Vec<_> = slots.iter().flatten().copied().collect();
+        if flat_action_v4::census_hidden_source_conflicts_v1(&self.state, &changed) {
+            return Err("hidden-source provenance conflict".into());
+        }
+        let mut sampled = self.clone();
+        closed_list_v2::rewrite(&mut sampled.state, actor, slots, belief, seed)?;
+        sampled.state.resample_future_randomness_for_search_v3(seed);
+        Ok(sampled)
+    }
+
     /// Limited self-play and search rollouts (issue #364): a Prepared V57 step
     /// without the pre-step contract re-check. The advance that built the
     /// current decision already validated this state and menu, and only
