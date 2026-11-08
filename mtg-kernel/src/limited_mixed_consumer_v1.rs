@@ -15,8 +15,8 @@ pub const OBSERVATION_SCHEMA: &str = "mtg-kernel/mixed-fdn-observation/v1";
 pub const CANDIDATES_SCHEMA: &str = "mtg-kernel/mixed-fdn-candidates/v1";
 pub const ACTION_SCHEMA: &str = "mtg-kernel/mixed-fdn-candidate-meaning/v1";
 pub const PARTIAL_PRINTINGS_V1: [u16; 20] = [
-    457, 458, 459, 460, 461, 462, 463, 464, 465, 466,
-    470, 478, 486, 487, 488, 489, 490, 491, 493, 494,
+    457, 458, 459, 460, 461, 462, 463, 464, 465, 466, 470, 478, 486, 487, 488, 489, 490, 491, 493,
+    494,
 ];
 
 pub fn producer_sha256_v1() -> String {
@@ -37,21 +37,25 @@ pub fn producer_sha256_v1() -> String {
         hash.update(crate::limited_kaito_session_v16::producer_sha256_v16());
         hash.update(crate::current_mixed_policy_v1::feature_identity());
         format!("{:x}", hash.finalize())
-    }).clone()
+    })
+    .clone()
 }
 
 pub(crate) fn preflight(config: &ResetV1) -> Result<(), String> {
-    if !cfg!(all(feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))
-        || config.expected_card_db_hash != KERNEL_CARDDB_HASH
-        || config.max_physical_decisions == 0 || config.max_policy_steps == 0
+    if !cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) || config.expected_card_db_hash != KERNEL_CARDDB_HASH
+        || config.max_physical_decisions == 0
+        || config.max_policy_steps == 0
         || config.mainboards.iter().any(|deck| {
             !(40..=crate::limited_session_v1::MAX_CUSTOM_DECK_CARDS_V1).contains(&deck.len())
         })
     {
         return Err("invalid mixed Foundations profile reset".into());
     }
-    use crate::rules_meaning_graveyard_return_v61::{self as graveyard, FamilyV61};
     use crate::rules_meaning_chosen_type_v66::{self as chosen, FamilyV66};
+    use crate::rules_meaning_graveyard_return_v61::{self as graveyard, FamilyV61};
     // Authenticate the exact native definitions and generated tokens before
     // admitting their real IDs. No replacement card or alternate deck is used.
     let exact = [
@@ -80,9 +84,15 @@ pub(crate) fn preflight(config: &ResetV1) -> Result<(), String> {
         return Err("mixed Foundations printing identities changed".into());
     }
     for &id in config.mainboards.iter().flatten() {
-        let card = CARD_DEFS.get(usize::from(id)).ok_or("unknown declared card")?;
-        if card.is_token || !(card.has_full_support() || (exact.contains(&id) && card.is_executable())) {
-            return Err(format!("card {id} is outside the mixed Foundations profile"));
+        let card = CARD_DEFS
+            .get(usize::from(id))
+            .ok_or("unknown declared card")?;
+        if card.is_token
+            || !(card.has_full_support() || (exact.contains(&id) && card.is_executable()))
+        {
+            return Err(format!(
+                "card {id} is outside the mixed Foundations profile"
+            ));
         }
         if !exact.contains(&id) {
             crate::rl::require_declared_cards_for_scope(
@@ -108,7 +118,10 @@ pub fn reset_numeric_reveal_facts_v3(config: &ResetV1) -> Result<KaitoSession, S
     KaitoSession::from_session(owner).map_err(|error| error.to_string())
 }
 
-pub fn reset_human_v1(config: &ResetV1, seat: PlayerSeatV1) -> Result<HumanKaitoSessionV75, String> {
+pub fn reset_human_v1(
+    config: &ResetV1,
+    seat: PlayerSeatV1,
+) -> Result<HumanKaitoSessionV75, String> {
     HumanKaitoSessionV75::from_session(native(config)?, seat).map_err(|error| error.to_string())
 }
 
@@ -121,10 +134,20 @@ impl Default for JsonlServerV1 {
 }
 
 impl JsonlServerV1 {
-    pub fn new() -> Self { Self::default() }
-    pub fn handle_line(&mut self, line: &str) -> String { self.0.handle_line(line) }
-    pub fn handle_request(&mut self, request: RequestV1) -> ReplyV1 { self.0.handle_request(request) }
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn handle_line(&mut self, line: &str) -> String {
+        self.0.handle_line(line)
+    }
+    pub fn handle_request(&mut self, request: RequestV1) -> ReplyV1 {
+        self.0.handle_request(request)
+    }
 }
 
-#[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 mod tests;

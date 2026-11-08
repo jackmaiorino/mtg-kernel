@@ -236,7 +236,13 @@ fn cast(
     card
 }
 
-pub(crate) fn spell(s: &mut GameState, p: PlayerId, name: &str, targets: &[Target], cost: usize) -> ObjectId {
+pub(crate) fn spell(
+    s: &mut GameState,
+    p: PlayerId,
+    name: &str,
+    targets: &[Target],
+    cost: usize,
+) -> ObjectId {
     let c = cast(s, p, name, (false, 0, false), targets, None, cost);
     finish(s);
     c
@@ -717,7 +723,10 @@ fn paid_replication_copied_moon_season_real_host_choice_and_restore_both_seats()
                     assert!(legal_targets.contains(&Target::Object(elf)));
                     let facts = crate::moon_public_v1::capture(&s, p).unwrap();
                     let menu = facts.attachment_menu.unwrap();
-                    assert_eq!(menu.kind, crate::moon_public_v1::AttachmentKindV1::CopiedAura);
+                    assert_eq!(
+                        menu.kind,
+                        crate::moon_public_v1::AttachmentKindV1::CopiedAura
+                    );
                     assert_eq!(menu.aura.object, original.0);
                     assert_eq!(menu.total_hosts, 2);
                     assert_eq!(menu.selected_hosts.len(), attached);
@@ -753,9 +762,15 @@ fn paid_replication_copied_moon_season_real_host_choice_and_restore_both_seats()
         only_land(&s, elf);
         assert_eq!(s.objects.get(elf).attachments.len(), 3);
         let facts = crate::moon_public_v1::capture(&s, p).unwrap();
-        let host = facts.hosts.iter().find(|host| host.card.object == elf.0).unwrap();
+        let host = facts
+            .hosts
+            .iter()
+            .find(|host| host.card.object == elf.0)
+            .unwrap();
         assert_eq!(host.auras.iter().filter(|aura| aura.token).count(), 2);
-        assert!(host.moon_sets_land && host.moon_sets_colorless && host.moon_grants_tap_for_colorless);
+        assert!(
+            host.moon_sets_land && host.moon_sets_colorless && host.moon_grants_tap_for_colorless
+        );
         s.validate_attachment_relations().unwrap();
         assert_eq!(restore(&s), s);
     }

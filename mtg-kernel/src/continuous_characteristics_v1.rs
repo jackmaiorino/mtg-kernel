@@ -78,7 +78,10 @@ pub(crate) fn land_override_timestamp(state: &GameState, host: ObjectId) -> Opti
     if object.zone != Zone::Battlefield {
         return None;
     }
-    object.attachments.iter().copied()
+    object
+        .attachments
+        .iter()
+        .copied()
         .filter_map(|aura| land_override_source_timestamp(state, host, aura))
         .max()
 }

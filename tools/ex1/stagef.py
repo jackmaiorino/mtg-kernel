@@ -440,13 +440,24 @@ def tree_bytes(root):
     else, and a file moved during the walk counts at least once (twice if it was counted before the move), never in
     neither. A purged file really is gone. So the walk errs high around thin, which keeps the byte cap and storage
     admission conservative. It cannot see bytes written during the walk (`room` adds the unfinished segments' bytes
-    for that) or an interrupted iteration that quarantine moves aside during it (at most one iteration)."""
+    for that) or an interrupted iteration that quarantine moves aside during it (at most one iteration).
+    Windows may report access denied while a directory is pending deletion. Retry that enumeration briefly;
+    only an actual FileNotFoundError counts it as gone. Persistent access denial still fails the byte count."""
+    def entries_at(path):
+        for attempt in range(6):
+            try:
+                return list(os.scandir(path))
+            except PermissionError as error:
+                if getattr(error, "winerror", None) != 5 or attempt == 5:
+                    raise
+                time.sleep(0.01 * 2 ** attempt)
+
     def walk(top, skip=None):
         total, stack = 0, [Path(top)]
         while stack:
             d = stack.pop()
             try:
-                entries = list(os.scandir(d))
+                entries = entries_at(d)
             except FileNotFoundError:           # the folder vanished before it was listed
                 continue
             for e in entries:

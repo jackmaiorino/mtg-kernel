@@ -54,8 +54,7 @@ pub(crate) fn preflight(config: &ResetV1) -> Result<(), String> {
 }
 
 fn native(config: &ResetV1) -> Result<FastActorSessionV1, String> {
-    FastActorSessionV1::reset_limited_moon_v1(config, false)
-        .map_err(|error| format!("{error:?}"))
+    FastActorSessionV1::reset_limited_moon_v1(config, false).map_err(|error| format!("{error:?}"))
 }
 
 pub fn reset_numeric_v1(config: &ResetV1) -> Result<KaitoSession, String> {
@@ -97,22 +96,34 @@ impl JsonlServerV1 {
     }
 }
 
-
-
 fn exact_printing(card: &ReferenceV1) -> bool {
     card.identity == (IdentityV1::Known { card_id: PRINTING })
 }
 
 pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(), String> {
-    if facts.viewer != actor || facts.schema != public::SCHEMA || facts.meaning != public::printed_meaning()? {
+    if facts.viewer != actor
+        || facts.schema != public::SCHEMA
+        || facts.meaning != public::printed_meaning()?
+    {
         return Err("invalid Moon viewer facts".into());
     }
     for cast in &facts.casts {
-        if !exact_printing(&cast.spell) || cast.spell.zone != Zone::Stack
+        if !exact_printing(&cast.spell)
+            || cast.spell.zone != Zone::Stack
             || match cast.stage {
-                CastStageV1::Announcing => cast.finalized_method.is_some() || cast.origin_zone.is_none(),
-                CastStageV1::Published => cast.finalized_method.is_none() || cast.origin_zone.is_none() || cast.target.is_none(),
-                CastStageV1::UncastCopy => cast.finalized_method.is_some() || cast.origin_zone.is_some() || cast.target.is_none(),
+                CastStageV1::Announcing => {
+                    cast.finalized_method.is_some() || cast.origin_zone.is_none()
+                }
+                CastStageV1::Published => {
+                    cast.finalized_method.is_none()
+                        || cast.origin_zone.is_none()
+                        || cast.target.is_none()
+                }
+                CastStageV1::UncastCopy => {
+                    cast.finalized_method.is_some()
+                        || cast.origin_zone.is_some()
+                        || cast.target.is_none()
+                }
             }
         {
             return Err("invalid Moon native cast facts".into());
@@ -133,13 +144,21 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
     }
     for host in &facts.hosts {
         let any_current = host.auras.iter().any(|aura| aura.supplies_current_override);
-        if host.card.zone != Zone::Battlefield || host.auras.is_empty()
-            || (host.moon_sets_land || host.moon_sets_colorless || host.moon_grants_tap_for_colorless) && !any_current
-            || host.granted_mana_available_now && (!host.moon_grants_tap_for_colorless || host.tapped)
+        if host.card.zone != Zone::Battlefield
+            || host.auras.is_empty()
+            || (host.moon_sets_land
+                || host.moon_sets_colorless
+                || host.moon_grants_tap_for_colorless)
+                && !any_current
+            || host.granted_mana_available_now
+                && (!host.moon_grants_tap_for_colorless || host.tapped)
             || host.auras.iter().enumerate().any(|(index, aura)| {
-                !exact_printing(&aura.card) || aura.card.zone != Zone::Battlefield
+                !exact_printing(&aura.card)
+                    || aura.card.zone != Zone::Battlefield
                     || aura.card.object == host.card.object
-                    || host.auras[..index].iter().any(|earlier| earlier.card.object == aura.card.object)
+                    || host.auras[..index]
+                        .iter()
+                        .any(|earlier| earlier.card.object == aura.card.object)
             })
         {
             return Err("invalid Moon live attachment or layer facts".into());
@@ -147,12 +166,19 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
         crate::tinybones_public_v72::nonnegative(&host.counters)?;
     }
     if let Some(menu) = &facts.attachment_menu {
-        if !exact_printing(&menu.aura) || menu.legal_hosts.is_empty()
+        if !exact_printing(&menu.aura)
+            || menu.legal_hosts.is_empty()
             || menu.selected_hosts.len() >= menu.total_hosts as usize
-            || menu.selected_hosts.iter().chain(&menu.legal_hosts).any(|host| host.zone != Zone::Battlefield)
+            || menu
+                .selected_hosts
+                .iter()
+                .chain(&menu.legal_hosts)
+                .any(|host| host.zone != Zone::Battlefield)
             || match menu.kind {
                 AttachmentKindV1::CopiedAura => menu.aura.zone != Zone::Battlefield,
-                AttachmentKindV1::ReturningAura => menu.total_hosts != 1 || !menu.selected_hosts.is_empty(),
+                AttachmentKindV1::ReturningAura => {
+                    menu.total_hosts != 1 || !menu.selected_hosts.is_empty()
+                }
             }
         {
             return Err("invalid Moon native attachment menu".into());
@@ -189,10 +215,17 @@ fn binds(card: &ReferenceV1, stable: &CardStableRefV1) -> bool {
 pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<ActionV1>, String> {
     let Some(facts) = facts else { return Ok(None) };
     match action {
-        Action::ChooseTarget { actor, source, target, remaining } if source.card_db_id == PRINTING => {
-            if !facts.casts.iter().any(|cast| cast.stage == CastStageV1::Announcing
-                && cast.spell.controller == *actor && binds(&cast.spell, source))
-                || *remaining != 1
+        Action::ChooseTarget {
+            actor,
+            source,
+            target,
+            remaining,
+        } if source.card_db_id == PRINTING => {
+            if !facts.casts.iter().any(|cast| {
+                cast.stage == CastStageV1::Announcing
+                    && cast.spell.controller == *actor
+                    && binds(&cast.spell, source)
+            }) || *remaining != 1
                 || !matches!(target, TargetRefV1::Object { object } if object.zone == Zone::Battlefield)
             {
                 return Err("Moon target does not match the native announcing cast".into());
@@ -200,17 +233,27 @@ pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<
             Ok(Some(ActionV1::ChooseCastTarget))
         }
         Action::ChooseEffectTarget { actor, target, .. } => {
-            let Some(menu) = &facts.attachment_menu else { return Ok(None) };
-            if menu.chooser != *actor || !matches!(target, TargetRefV1::Object { object }
+            let Some(menu) = &facts.attachment_menu else {
+                return Ok(None);
+            };
+            if menu.chooser != *actor
+                || !matches!(target, TargetRefV1::Object { object }
                 if menu.legal_hosts.iter().any(|host| binds(host, object)))
             {
                 return Err("Moon host action does not match the native attachment menu".into());
             }
             Ok(Some(ActionV1::ChooseAttachmentHost { kind: menu.kind }))
         }
-        Action::ActivateManaAbility { actor, source, mana_choice: Some(ManaColor::C), cost_target: None }
-            if facts.hosts.iter().any(|host| host.granted_mana_available_now
-                && host.card.controller == *actor && binds(&host.card, source)) =>
+        Action::ActivateManaAbility {
+            actor,
+            source,
+            mana_choice: Some(ManaColor::C),
+            cost_target: None,
+        } if facts.hosts.iter().any(|host| {
+            host.granted_mana_available_now
+                && host.card.controller == *actor
+                && binds(&host.card, source)
+        }) =>
         {
             Ok(Some(ActionV1::TapForColorless))
         }

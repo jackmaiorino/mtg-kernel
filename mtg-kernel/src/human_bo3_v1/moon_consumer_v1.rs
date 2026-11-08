@@ -81,37 +81,58 @@ pub(super) fn project(
     handles: &mut Handles,
     roles: &mut Incarnations,
 ) -> Result<HumanFactsV1, Error> {
-    let casts = facts.casts.iter().map(|cast| {
-        let target = cast.target.as_ref().map(|target| {
-            Ok::<_, Error>(HumanTargetV1 {
-                original: roles.relation(&target.original)?,
-                current_original: target.current_original.as_ref()
-                    .map(|card| href(card, handles)).transpose()?,
-                currently_legal: target.currently_legal,
+    let casts = facts
+        .casts
+        .iter()
+        .map(|cast| {
+            let target = cast
+                .target
+                .as_ref()
+                .map(|target| {
+                    Ok::<_, Error>(HumanTargetV1 {
+                        original: roles.relation(&target.original)?,
+                        current_original: target
+                            .current_original
+                            .as_ref()
+                            .map(|card| href(card, handles))
+                            .transpose()?,
+                        currently_legal: target.currently_legal,
+                    })
+                })
+                .transpose()?;
+            Ok(HumanCastV1 {
+                stack_position: cast.stack_position,
+                spell: href(&cast.spell, handles)?,
+                stage: cast.stage,
+                origin_zone: cast.origin_zone,
+                finalized_method: cast.finalized_method,
+                target,
             })
-        }).transpose()?;
-        Ok(HumanCastV1 {
-            stack_position: cast.stack_position,
-            spell: href(&cast.spell, handles)?,
-            stage: cast.stage,
-            origin_zone: cast.origin_zone,
-            finalized_method: cast.finalized_method,
-            target,
         })
-    }).collect::<Result<_, Error>>()?;
+        .collect::<Result<_, Error>>()?;
     let mut hosts = vec![];
     for host in &facts.hosts {
-        let mut timestamps: Vec<_> = host.auras.iter().filter_map(|aura| aura.layer_timestamp).collect();
+        let mut timestamps: Vec<_> = host
+            .auras
+            .iter()
+            .filter_map(|aura| aura.layer_timestamp)
+            .collect();
         timestamps.sort_unstable();
         timestamps.dedup();
-        let auras = host.auras.iter().map(|aura| {
-            Ok(HumanAuraV1 {
-                card: href(&aura.card, handles)?,
-                token: aura.token,
-                layer_order: aura.layer_timestamp.and_then(|stamp| timestamps.binary_search(&stamp).ok()),
-                supplies_current_override: aura.supplies_current_override,
+        let auras = host
+            .auras
+            .iter()
+            .map(|aura| {
+                Ok(HumanAuraV1 {
+                    card: href(&aura.card, handles)?,
+                    token: aura.token,
+                    layer_order: aura
+                        .layer_timestamp
+                        .and_then(|stamp| timestamps.binary_search(&stamp).ok()),
+                    supplies_current_override: aura.supplies_current_override,
+                })
             })
-        }).collect::<Result<_, Error>>()?;
+            .collect::<Result<_, Error>>()?;
         hosts.push(HumanHostV1 {
             card: href(&host.card, handles)?,
             auras,
@@ -125,17 +146,26 @@ pub(super) fn project(
             granted_mana_available_now: host.granted_mana_available_now,
         });
     }
-    let attachment_menu = facts.attachment_menu.as_ref().map(|menu| {
-        Ok::<_, Error>(HumanAttachmentMenuV1 {
-            kind: menu.kind,
-            chooser: menu.chooser,
-            aura: href(&menu.aura, handles)?,
-            selected_hosts: refs(&menu.selected_hosts, handles)?,
-            total_hosts: menu.total_hosts,
-            legal_hosts: refs(&menu.legal_hosts, handles)?,
+    let attachment_menu = facts
+        .attachment_menu
+        .as_ref()
+        .map(|menu| {
+            Ok::<_, Error>(HumanAttachmentMenuV1 {
+                kind: menu.kind,
+                chooser: menu.chooser,
+                aura: href(&menu.aura, handles)?,
+                selected_hosts: refs(&menu.selected_hosts, handles)?,
+                total_hosts: menu.total_hosts,
+                legal_hosts: refs(&menu.legal_hosts, handles)?,
+            })
         })
-    }).transpose()?;
-    Ok(HumanFactsV1 { meaning: facts.meaning.clone(), casts, hosts, attachment_menu })
+        .transpose()?;
+    Ok(HumanFactsV1 {
+        meaning: facts.meaning.clone(),
+        casts,
+        hosts,
+        attachment_menu,
+    })
 }
 
 pub(super) fn label(
@@ -146,17 +176,32 @@ pub(super) fn label(
     let annotated = crate::moon_consumer_v1::action(facts, action)
         .map_err(|_| Error::InvalidVisibleReference)?;
     Ok(match (annotated, action) {
-        (Some(ActionV1::ChooseCastTarget), Action::ChooseTarget { target: TargetRefV1::Object { object }, .. }) =>
-            Some(format!("Enchant {} with Imprisoned in the Moon", handles.name(object)?)),
-        (Some(ActionV1::ChooseAttachmentHost { kind }), Action::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. }) => {
+        (
+            Some(ActionV1::ChooseCastTarget),
+            Action::ChooseTarget {
+                target: TargetRefV1::Object { object },
+                ..
+            },
+        ) => Some(format!(
+            "Enchant {} with Imprisoned in the Moon",
+            handles.name(object)?
+        )),
+        (
+            Some(ActionV1::ChooseAttachmentHost { kind }),
+            Action::ChooseEffectTarget {
+                target: TargetRefV1::Object { object },
+                ..
+            },
+        ) => {
             let aura = match kind {
                 AttachmentKindV1::CopiedAura => "the Imprisoned in the Moon copy",
                 AttachmentKindV1::ReturningAura => "the returning Imprisoned in the Moon",
             };
             Some(format!("Attach {aura} to {}", handles.name(object)?))
         }
-        (Some(ActionV1::TapForColorless), Action::ActivateManaAbility { source, .. }) =>
-            Some(format!("Tap {} for colorless mana", handles.name(source)?)),
+        (Some(ActionV1::TapForColorless), Action::ActivateManaAbility { source, .. }) => {
+            Some(format!("Tap {} for colorless mana", handles.name(source)?))
+        }
         (None, _) => None,
         _ => return Err(Error::InvalidVisibleReference),
     })

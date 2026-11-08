@@ -67,8 +67,9 @@
 //! attempt, game result, collection, preservation and fit record carries the
 //! build, so a resumed collection never relabels another build's games.
 //!
-//! The single read is the separate pinned analyzer
-//! (`python/tools/b_width_prescreen_read_v1.py`), whose hash the config pins.
+//! The config pins the single-read analyzer. The shipped `config.json` pins
+//! `b_width_prescreen_read_v1.py` for the launched run. A new root may use
+//! `config-v2.json`, which pins `b_width_prescreen_read_v2.py`.
 //!
 //! **Store format.** `games.bin` is [`STORE_MAGIC_V1`] followed by each
 //! natural game's bytes in schedule order; the collection record gives each
@@ -1130,8 +1131,8 @@ pub(crate) struct CollectionRecordV1 {
     pub(crate) store_sha256: String,
     pub(crate) store_bytes: u64,
     pub(crate) games: Vec<CollectedGameEntryV1>,
-    /// Torn attempt records a resumed collection set aside (games never
-    /// dispatched), retained under `collect/torn-attempts/k<chain>/`.
+    /// Torn attempts retained under `collect/torn-attempts/k<chain>/`.
+    /// A `.00` suffix records reuse of a published result.
     pub(crate) torn_attempts: Vec<TornAttemptV1>,
 }
 
@@ -1227,12 +1228,19 @@ fn result_path_v1(directory: &Path, index: usize, extension: &str) -> PathBuf {
 /// (engine commit and the launch binary). Returns the published result.
 fn resumed_game_v1(
     loaded: &LoadedConfigV1,
+    root: &Path,
     games: &Path,
     index: usize,
     plan: &GamePlanV1,
     binary: &str,
 ) -> Result<Option<GameResultV1>, String> {
     let attempt_path = attempt_path_v1(games, index);
+    if recovered_attempt_path_v1(root, plan.chain, index).exists() {
+        let result = read_game_result_v1(loaded, games, index, plan, binary)?
+            .ok_or("a recovered game lost its published result")?;
+        read_game_store_v1(games, index, &result)?;
+        return Ok(Some(result));
+    }
     if !attempt_path.exists() {
         return Ok(None);
     }
@@ -1247,6 +1255,16 @@ fn resumed_game_v1(
         attempt.engine_commit == engine_commit_v1() && attempt.binary_sha256 == binary,
         "a game was attempted by another engine build",
     )?;
+    read_game_result_v1(loaded, games, index, plan, binary)
+}
+
+fn read_game_result_v1(
+    loaded: &LoadedConfigV1,
+    games: &Path,
+    index: usize,
+    plan: &GamePlanV1,
+    binary: &str,
+) -> Result<Option<GameResultV1>, String> {
     let result_path = result_path_v1(games, index, "json");
     if !result_path.exists() {
         return Ok(None);
@@ -1262,11 +1280,31 @@ fn resumed_game_v1(
         result.engine_commit == engine_commit_v1() && result.binary_sha256 == binary,
         "a published game result was produced by another engine build",
     )?;
+    let natural = result.terminal.as_ref().is_some_and(|terminal| {
+        terminal.terminal_classification == TerminalClassificationV1::Natural
+    });
+    ensure(
+        natural == result.sha256.is_some() && result.terminal.is_some() != result.failure.is_some(),
+        "a published game result's store differs from its terminal",
+    )?;
     Ok(Some(result))
 }
 
-/// A torn attempt record that a resumed collection set aside, retained at
-/// `path` (relative to the run root).
+fn read_game_store_v1(
+    games: &Path,
+    index: usize,
+    result: &GameResultV1,
+) -> Result<Vec<u8>, String> {
+    let Some(digest) = &result.sha256 else {
+        return Ok(Vec::new());
+    };
+    let bytes = read_v1(&result_path_v1(games, index, "bin"))?;
+    ensure(sha(&bytes) == *digest, "a published game's bytes differ")?;
+    Ok(bytes)
+}
+
+/// A torn attempt record retained at `path` (relative to the run root).
+/// A `.00` suffix marks a game reused from its published result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TornAttemptV1 {
@@ -1288,6 +1326,12 @@ fn torn_attempts_dir_v1(root: &Path, chain: u32) -> PathBuf {
     root.join("collect")
         .join("torn-attempts")
         .join(format!("k{chain}"))
+}
+
+fn recovered_attempt_path_v1(root: &Path, chain: u32, index: usize) -> PathBuf {
+    // The analyzer accepts numeric suffixes. Ordinary attempts use unpadded
+    // ordinals, leaving "00" to distinguish reuse of a published result.
+    torn_attempts_dir_v1(root, chain).join(format!("{}00", torn_attempt_prefix_v1(index)))
 }
 
 /// The game's result evidence in `games`: its result record, its store bytes,
@@ -1325,39 +1369,47 @@ fn result_evidence_v1(games: &Path, index: usize) -> Result<Vec<String>, String>
 /// collection record) and the game counts as not attempted, which is not a
 /// retry: it never started.
 ///
-/// That proof covers an interrupted initial write only. If any result evidence
-/// exists, the record was damaged after it was written (the game may have been
-/// played), so the collection refuses instead of dispatching the game again.
-/// Returns whether a record was set aside.
+/// With a verified published result, retain the damaged attempt and reuse the
+/// result. With only partial result evidence, refuse instead of redispatching.
 fn set_aside_torn_attempt_v1(
+    loaded: &LoadedConfigV1,
     root: &Path,
     games: &Path,
-    chain: u32,
     index: usize,
-) -> Result<bool, String> {
+    plan: &GamePlanV1,
+    binary: &str,
+) -> Result<(), String> {
     let path = attempt_path_v1(games, index);
     if !path.exists() || complete_json_v1(&read_v1(&path)?) {
-        return Ok(false);
+        return Ok(());
     }
+    let chain = plan.chain;
     let evidence = result_evidence_v1(games, index)?;
-    if !evidence.is_empty() {
-        return Err(format!(
-            "chain {chain} game {index}: the attempt record {} is not complete, but the game has result \
-             evidence ({}). The record was damaged after it was written and the game may have been played, so \
-             the collection refuses to dispatch it again. An operator must investigate this run root; do not \
-             remove the evidence to resume.",
-            path.display(),
-            evidence.join(", ")
-        ));
-    }
     let retained = torn_attempts_dir_v1(root, chain);
+    let target = if evidence.is_empty() {
+        (0..)
+            .map(|n| retained.join(format!("{}{n}", torn_attempt_prefix_v1(index))))
+            .find(|candidate| !candidate.exists())
+            .expect("an unused name")
+    } else {
+        let result = read_game_result_v1(loaded, games, index, plan, binary)?.ok_or_else(|| {
+            format!(
+                "chain {chain} game {index}: the attempt record {} is not complete, but the game has result \
+                 evidence ({}) without a published result. The collection refuses to dispatch it again.",
+                path.display(),
+                evidence.join(", ")
+            )
+        })?;
+        read_game_store_v1(games, index, &result)?;
+        let target = recovered_attempt_path_v1(root, chain, index);
+        ensure(
+            !target.exists(),
+            "the recovered attempt record already exists",
+        )?;
+        target
+    };
     fs::create_dir_all(&retained).map_err(err)?;
-    let target = (0..)
-        .map(|n| retained.join(format!("{}{n}", torn_attempt_prefix_v1(index))))
-        .find(|candidate| !candidate.exists())
-        .expect("an unused name");
-    fs::rename(&path, &target).map_err(err)?;
-    Ok(true)
+    fs::rename(&path, &target).map_err(err)
 }
 
 /// Every torn attempt record retained for a chain, by game index.
@@ -1454,16 +1506,17 @@ pub(crate) fn collect_chain_limited_v1(
     let parent = load_parent_v1(config, &chain.source)?;
     let plans = chain_schedule_v1(config, chain.index);
     fs::create_dir_all(&games).map_err(err)?;
-    // A resumed collection sets aside torn attempt records (never dispatched;
-    // a damaged record with result evidence refuses) and reuses only this
-    // config's and this build's games.
+    // A resumed collection reuses only this config's and build's games. A torn
+    // attempt with a verified result is retained without replaying the game.
+    let mut unattempted = Vec::new();
     for (index, plan) in plans.iter().enumerate() {
-        set_aside_torn_attempt_v1(root, &games, chain.index, index)?;
-        resumed_game_v1(loaded, &games, index, plan, &binary)?;
+        set_aside_torn_attempt_v1(loaded, root, &games, index, plan, &binary)?;
+        if resumed_game_v1(loaded, root, &games, index, plan, &binary)?.is_none()
+            && !attempt_path_v1(&games, index).exists()
+        {
+            unattempted.push(index);
+        }
     }
-    let unattempted: Vec<usize> = (0..plans.len())
-        .filter(|&index| !attempt_path_v1(&games, index).exists())
-        .collect();
     let pending: Vec<usize> = unattempted
         .iter()
         .copied()
@@ -1519,18 +1572,11 @@ pub(crate) fn collect_chain_limited_v1(
     let mut entries = Vec::with_capacity(plans.len());
     for (index, plan) in plans.into_iter().enumerate() {
         let offset = store.len() as u64;
-        ensure(
-            attempt_path_v1(&games, index).exists(),
-            "a scheduled game was never attempted",
-        )?;
-        let entry = if let Some(result) = resumed_game_v1(loaded, &games, index, &plan, &binary)? {
-            let mut length = 0;
-            if let Some(digest) = &result.sha256 {
-                let bytes = read_v1(&result_path_v1(&games, index, "bin"))?;
-                ensure(sha(&bytes) == *digest, "a published game's bytes differ")?;
-                length = bytes.len() as u64;
-                store.extend_from_slice(&bytes);
-            }
+        let result = resumed_game_v1(loaded, root, &games, index, &plan, &binary)?;
+        let entry = if let Some(result) = result {
+            let bytes = read_game_store_v1(&games, index, &result)?;
+            let length = bytes.len() as u64;
+            store.extend_from_slice(&bytes);
             CollectedGameEntryV1 {
                 natural: result.sha256.is_some(),
                 plan,
@@ -1543,6 +1589,10 @@ pub(crate) fn collect_chain_limited_v1(
                 sha256: result.sha256,
             }
         } else {
+            ensure(
+                attempt_path_v1(&games, index).exists(),
+                "a scheduled game was never attempted",
+            )?;
             CollectedGameEntryV1 {
                 plan,
                 natural: false,
@@ -2806,6 +2856,8 @@ struct FitQueueV1 {
     limit: usize,
     state: Mutex<QueueStateV1>,
     changed: Condvar,
+    #[cfg(test)]
+    parked: Option<std::sync::mpsc::Sender<usize>>,
 }
 
 impl FitQueueV1 {
@@ -2820,6 +2872,8 @@ impl FitQueueV1 {
                 peak: 0,
             }),
             changed: Condvar::new(),
+            #[cfg(test)]
+            parked: None,
         }
     }
 
@@ -2863,6 +2917,12 @@ impl FitQueueV1 {
             };
             match step {
                 QueueStepV1::Wait => {
+                    #[cfg(test)]
+                    if let Some(parked) = &self.parked {
+                        // The failure injection must acquire this same mutex,
+                        // which wait releases only when it parks the worker.
+                        let _ = parked.send(chain);
+                    }
                     guard = self
                         .changed
                         .wait(guard)

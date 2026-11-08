@@ -61,9 +61,9 @@ Each pass:
 The startup allowance ends the lease without worker-started.json;
 marker_probe(pod) may read a Pod-side marker instead ("not ready" on failure).
 Completion needs every known ID confirmed absent in this process, two spaced
-empty censuses, every known ID durable and no store error. A create attempt
+empty censuses, every known ID durable and no store error or unresolved observation. A create attempt
 (lease/create-attempt.json or lease/create-ambiguous.json) is resolved only by
-readable evidence: a valid receipt, a retained 'receipt' record, a definite
+readable evidence: a valid receipt, a retained 'receipt' record, a raw POST ID, a definite
 provider refusal, or lease/ambiguous-resolved-by-operator.json; until then
 completion is blocked, and lease/create-ambiguous.json is also a release
 reason. Release authorization never proves that a create failed, and neither
@@ -77,18 +77,27 @@ per window on its own thread and writes ambiguous-create-funds.json when it
 returns; it never holds a pass. A census entry with an ID but no nonblank name
 is malformed, never absence.
 
-Every handoff, every create attempt (record_create_attempt) and completion take
+Handoffs, create attempts and receipts, conditional release claims, and completion take
 one OS lock (lease/known-pods.lock). A handoff of positive presence (an ID a
 census, GET or POST returned, known or new) advances that ID's presence
 revision (known-pods/<id>.presence.json); a changed revision voids the guard's
-absence confirmation of the ID and its census confirmation. A refresh (presence of
-an ID a record or receipt already names) stays an obligation of the observer
-until its own presence handoff lands: no older record discharges it, the
-observer never deletes such a guardian-owned Pod, and if the handoff never lands
-it fails loudly (ALERT). Completion is the
-store's closure: under the lock it checks that no ID's presence revision changed
+absence confirmation of the ID and its census confirmation. A census or GET of an open
+store starts with an fsynced intent and a live OS lock unique to that observer. The intent
+survives interruption or failed handoff. A guard can resolve abandoned intents only after
+a fresh complete census and exact-ID reads, advancing the recovery revision before removing
+them so other guards also discard stale absence evidence. A refresh never deletes a Pod
+that still belongs to an open guardian. If that guardian closes during the refresh, the
+observer keeps the release obligation.
+
+Conditional cleanup claims release durably before DELETE. A claimed ID can no longer be
+handed off or given a create receipt. Claims survive restarts and lost DELETE responses;
+they authorize release and never certify absence. A guard, including a watchdog after an
+earlier closure, observes and releases claim IDs. The raw POST ID is also durable before
+handoff, so the guard can recover it even if the exact-name census omits it.
+
+Completion is the store's closure: under the lock it checks that the recovery and presence revisions have not changed
 since the pass read it, that the store names no ID beyond
-memory and reads cleanly, and that the receipt and create records name only IDs
+memory and reads cleanly, that no observation is pending, and that the release claims, receipt and create records name only IDs
 confirmed absent with no create unresolved; only then does it write
 external-guard-completion.json (read back; a failed write leaves the store open).
 After it exists a handoff or create attempt is refused (StoreClosed), nothing on
@@ -97,11 +106,10 @@ guard that sees the closure, at start or mid-run, ends through one pass whose ex
 must verify every ID it holds absent within main's release bound, or alert (I4). A
 completion record never ends supervision while a create is unresolved.
 
-When this synchronization itself fails (the store lock cannot be set up or
-acquired, the closure probe errs, a presence file cannot be read or written),
-each operation degrades to main's behavior, which has none of it, and
-ALERT-sync-degraded.json tells the operator: main is the floor. once=True runs a
-single pass (a watchdog).
+Synchronization failures block an unsafe custody change, observation, conditional
+DELETE or completion. They alert the operator and do not themselves authorize a
+DELETE. A deadline DELETE of a retained ID still runs before any lock wait.
+once=True runs a single pass (a watchdog).
 
 usage: external_guard.py CONTROL_DIR [--once]   (CONTROL_DIR/lease/lease.json required)
 """
@@ -117,6 +125,7 @@ import sys
 import threading
 import time
 import urllib.request
+import uuid
 
 from common import read, write
 from lease_guard import (AbsenceConfirmer, Provider, decision, pod_rate, validate,
@@ -167,6 +176,11 @@ def valid_id(pod_id):
     return isinstance(pod_id, str) and POD_ID.fullmatch(pod_id) is not None
 
 
+def get_evidence_complete(pod_id, value):
+    return value is None or (isinstance(value, dict) and value.get('id') == pod_id
+                             and isinstance(value.get('name'), str) and bool(value['name'].strip()))
+
+
 def census_entries(census, name):
     """(owned IDs in census order, every listed ID, malformed) from a raw census.
 
@@ -208,13 +222,24 @@ def receipt_state(root):
 
 
 def create_evidence(root):
-    """Readable evidence naming the create's Pod: a valid receipt or a retained 'receipt' record."""
+    """Readable evidence naming the create's Pod, even before custody is transferred."""
     if receipt_state(root)[0]:
         return True
     try:
-        return any(role == 'receipt' for role in known_pods(root, []).values())
+        return returned_post_id(root) is not None or any(role == 'receipt' for role in known_pods(root, []).values())
     except Exception:  # noqa: BLE001 - unreadable store: no evidence
         return False
+
+
+def returned_post_id(root):
+    path = Path(root) / 'lease/create-returned-id.json'
+    if not path.exists():
+        return None
+    value = read(path)
+    pod_id = value.get('pod_id') if isinstance(value, dict) else None
+    if not valid_id(pod_id):
+        raise ValueError('malformed raw create ID record')
+    return pod_id
 
 
 def ambiguous_unresolved(root):
@@ -266,9 +291,7 @@ def remember_in(folder, pod_id, role, epoch):
 
 
 class SyncError(OSError):
-    """A failure of the synchronization main does not have (the store lock, presence revisions). It blocks
-    completion and is reported, but is never a store fault that releases a lease: main, without that
-    synchronization, would have kept the Pod."""
+    """A local synchronization fault blocks unsafe transitions and never authorizes release by itself."""
 
 
 class LockTimeout(SyncError):
@@ -289,6 +312,10 @@ class ClosureUnknown(SyncError):
 
 class StoreClosed(RuntimeError):
     """The guard completed: no supervisor reads the store any more, so a handoff to it is refused."""
+
+
+class ReleaseClaimed(RuntimeError):
+    """A durable release claim prevents transferring this Pod back to the guard."""
 
 
 COMPLETION = 'external-guard-completion.json'
@@ -327,6 +354,42 @@ def read_presence(folder, pod_id):
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise ValueError('presence revision malformed')
     return value
+
+
+def release_claim_path(folder, pod_id):
+    return Path(folder).parent / 'release-claims' / (pod_id + '.json')
+
+
+def release_claims(folder):
+    path = Path(folder).parent / 'release-claims'
+    if not path.exists():
+        return set()
+    return {entry.stem for entry in path.iterdir() if entry.suffix == '.json' and valid_id(entry.stem)}
+
+
+def observation_dir(folder):
+    return Path(folder).parent / 'observation-intents'
+
+
+def observation_intents(folder):
+    path = observation_dir(folder)
+    if not path.exists():
+        return []
+    return sorted(entry for entry in path.iterdir() if entry.suffix == '.json')
+
+
+def recovery_path(folder):
+    return Path(folder).parent / 'observation-recovery.json'
+
+
+def recovery_revision(folder):
+    path = recovery_path(folder)
+    if not path.exists():
+        return 0
+    revision = read(path).get('revision')
+    if type(revision) is not int or revision < 1:
+        raise ValueError('observation recovery revision malformed')
+    return revision
 
 
 class StoreLock:
@@ -396,9 +459,7 @@ class StoreLock:
 
 
 def degraded(folder, what, error=None):
-    """A failure of this module's own synchronization (the store lock, the closure probe, a presence
-    file): the operation goes on as it would without that synchronization, which is main's behavior,
-    and the operator is told. Never raises."""
+    """Report a synchronization fault without masking the caller's own result."""
     try:
         write(lease_root(folder) / SYNC_ALERT, {'what': what, 'epoch': time.time(),
               'error_type': type(error).__name__ if error is not None else None}, replace=True)
@@ -407,46 +468,95 @@ def degraded(folder, what, error=None):
 
 
 @contextlib.contextmanager
-def lock_or_degrade(folder, what, wait=None):
-    """The store lock, or, when it cannot be set up or acquired, no lock and a degraded() report. Yields
-    whether the lock is held."""
+def locked_store(folder, what, wait=None):
+    """A real lock is required for ownership transitions and closure."""
     lock = StoreLock(folder, wait)
     try:
         lock.__enter__()
-    except SyncError as e:
-        degraded(folder, what + ': store lock', e)
-        yield False
-        return
+    except SyncError as error:
+        degraded(folder, what + ': store lock', error)
+        raise
     try:
-        yield True
+        state = store_state(folder)
+        if state == 'unknown':
+            degraded(folder, what + ': closure probe')
+            raise ClosureUnknown(what + ': closure probe failed')
+        yield state
     finally:
         lock.__exit__(None, None, None)
 
 
+def write_presence(folder, pod_id, epoch):
+    try:
+        revision = read_presence(folder, pod_id) + 1
+        write(presence_path(folder, pod_id), {'revision': revision, 'epoch': epoch}, replace=True)
+        if read_presence(folder, pod_id) != revision:
+            raise ValueError('presence revision did not read back')
+    except Exception as error:  # noqa: BLE001 - a failed revision keeps the observation open
+        degraded(folder, 'presence revision of ' + pod_id, error)
+        raise PresenceError('presence revision of ' + pod_id) from error
+
+
+def orphan_observations(folder):
+    """Snapshot intents whose observers are gone. Never wait on a live observer under the store lock."""
+    abandoned = {}
+    with locked_store(folder, 'inspect observation intents', wait=0):
+        for path in observation_intents(folder):
+            try:
+                with StoreLock(path.with_suffix(''), wait=0):
+                    value = read(path)
+                    if value.get('kind') == 'census':
+                        abandoned[path] = None
+                    elif value.get('kind') == 'get' and valid_id(value.get('pod_id')):
+                        abandoned[path] = value['pod_id']
+                    else:
+                        raise ValueError('observation intent malformed')
+            except LockTimeout:
+                continue
+    return abandoned
+
+
+def finish_observations(folder, paths, wait=0, *, recovered=False):
+    with locked_store(folder, 'settle observation intents', wait=wait):
+        revision = None
+        if recovered:
+            # Other guards may still hold absence evidence from before these
+            # intents. Invalidate it durably before removing the barrier.
+            revision = recovery_revision(folder) + 1
+            write(recovery_path(folder), {'revision': revision}, replace=True)
+            if recovery_revision(folder) != revision:
+                raise ValueError('observation recovery revision did not read back')
+        for path in paths:
+            path.unlink(missing_ok=True)
+        return revision
+
+
+def remove_observation_lock(path):
+    # Intent tokens are never reused. A missing JSON record no longer names this lock.
+    try:
+        path.with_suffix('.lock').unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def handoff_in(folder, pod_id, role, epoch, presence=True, lock_wait=None):
-    """I4: under the store lock, refuse a closed store, write the record and read it back; raises unless
-    it now durably names this ID (and a create role). A handoff of positive presence (an ID a census,
-    GET or POST just returned, known or not) also advances the ID's presence revision, which voids the
-    guard's absence confirmation of that ID. When the lock or the closure probe fails, the handoff is
-    main's (record and read-back, no presence revision) and degraded() reports it."""
-    with lock_or_degrade(folder, 'handoff of ' + pod_id, lock_wait) as locked:
-        state = store_state(folder)
+    """Publish custody and any positive presence under the lock. A release claim instead retains
+    custody for release, but its observer still advances the presence revision."""
+    with locked_store(folder, 'handoff of ' + pod_id, lock_wait) as state:
         if state == 'closed':
             raise StoreClosed('the guard completed; the caller keeps ' + pod_id)
-        if state != 'open':
-            degraded(folder, 'handoff of ' + pod_id + ': closure probe')
+        if release_claim_path(folder, pod_id).exists():
+            if presence:
+                write_presence(folder, pod_id, epoch)
+            raise ReleaseClaimed('release already claimed for ' + pod_id)
         remember_in(folder, pod_id, role, epoch)
         value = read(Path(folder) / (pod_id + '.json'))
-        if presence and locked and state == 'open':
-            try:
-                write(presence_path(folder, pod_id), {'revision': read_presence(folder, pod_id) + 1,
-                                                      'epoch': epoch}, replace=True)
-            except Exception as e:  # noqa: BLE001 - the record above is durable, as main's would be
-                degraded(folder, 'presence revision of ' + pod_id, e)
-    if not isinstance(value, dict) or value.get('id') != pod_id:
-        raise ValueError('known-Pod record does not read back')
-    if role in CREATE_ROLES and value.get('role') not in CREATE_ROLES:
-        raise ValueError('known-Pod record lost its create role')
+        if not isinstance(value, dict) or value.get('id') != pod_id:
+            raise ValueError('known-Pod record does not read back')
+        if role in CREATE_ROLES and value.get('role') not in CREATE_ROLES:
+            raise ValueError('known-Pod record lost its create role')
+        if presence:
+            write_presence(folder, pod_id, epoch)
     return True
 
 
@@ -457,18 +567,20 @@ def complete_store(root, memory, basis, settled, errors, record):
     then is the completion record, which closes the store, written and read back. True when it was."""
     folder = Path(root) / KNOWN_DIR
     try:
-        with lock_or_degrade(folder, 'completion'):
-            state = store_state(folder)
+        with locked_store(folder, 'completion', wait=0) as state:
             if state == 'closed':              # another guard completed first: its record stands
                 return False
-            if state != 'open':
-                degraded(folder, 'completion: closure probe')
+            claims = release_claims(folder)
+            if claims != set(record.get('release_claims', ())) or claims - set(memory) or observation_intents(folder):
+                return False
+            if recovery_revision(folder) != record.get('observation_recovery_revision', 0):
+                return False
             for pod_id in memory:
                 try:
                     revision = read_presence(folder, pod_id)
-                except Exception as e:  # noqa: BLE001 - main has no presence check
+                except Exception as e:  # noqa: BLE001 - unreadable revision blocks completion
                     degraded(folder, 'completion: presence revision of ' + pod_id, e)
-                    continue
+                    return False
                 if revision != basis.get(pod_id, 0):
                     return False
             late = set(known_pods(root, errors)) - set(memory)
@@ -490,21 +602,32 @@ def closed_and_settled(root):
         return False
 
 
-def record_create_attempt(lease_dir, value):
+def record_create_attempt(lease_dir, value, *, funding_observed=None, funding_max_age=120, clock=time.time):
     """A creator's attempt record, written under the store lock; refused once the guard has completed,
     so a create never starts after completion's final check (I4)."""
     folder = Path(lease_dir) / 'known-pods'
-    with lock_or_degrade(folder, 'create attempt'):
-        state = store_state(folder)
+    with locked_store(folder, 'create attempt') as state:
         if state == 'closed':
             raise StoreClosed('the guard completed; no create after completion')
-        if state != 'open':
-            degraded(folder, 'create attempt: closure probe')
+        if funding_observed is not None and not 0 <= clock() - funding_observed <= funding_max_age:
+            raise ValueError(f'funding observation older than {funding_max_age} s at the create attempt')
         write(Path(lease_dir) / 'create-attempt.json', value)
 
 
+def record_created_pod(folder, value, writer=write):
+    pod_id = value['id']
+    if not valid_id(pod_id):
+        raise ValueError('invalid Pod ID in create receipt')
+    with locked_store(folder, 'create receipt', wait=0) as state:
+        if state == 'closed':
+            raise StoreClosed('the guard completed; the creator keeps ' + pod_id)
+        if release_claim_path(folder, pod_id).exists():
+            raise ReleaseClaimed('release already claimed for ' + pod_id)
+        writer(Path(folder).parent / 'created-pod.json', value, replace=True)
+
+
 def remember(root, pod_id, role, epoch):
-    remember_in(Path(root) / KNOWN_DIR, pod_id, role, epoch)
+    handoff_in(Path(root) / KNOWN_DIR, pod_id, role, epoch, presence=False)
 
 
 def handoff(root, pod_id, role, epoch):
@@ -577,8 +700,8 @@ class LeaseClient:
     def __init__(self, folder, name, key, provider=None, pods=None, clock=None, sleep=None, alert_path=None,
                  lease_deadline=0.0, min_release_seconds=120, lock_wait=0):
         self.folder = Path(folder); self.name = name; self.key = key
-        # a holder of allocated Pods never waits on the store lock: on contention its handoff degrades at
-        # once to main's lock-free one (plus ALERT), so no release or cleanup is delayed
+        # A holder of allocated Pods defaults to nonblocking store operations.
+        # Conditional release retries within the existing deadline on contention.
         self.lock_wait = lock_wait
         self._provider = provider or PodApi
         self._pods = pods or list_pods
@@ -601,7 +724,7 @@ class LeaseClient:
         self.load_durable()
         return self
 
-    def receipt_ids(self):
+    def receipt_ids(self, *, strict=False):
         """IDs named by this lease's create receipt and ambiguity records, when readable and valid."""
         found = set()
         for name, field in (('created-pod.json', 'id'), ('create-ambiguous.json', 'pod_id'),
@@ -610,8 +733,11 @@ class LeaseClient:
                 value = read(self.folder.parent / name)
                 if isinstance(value, dict) and valid_id(value.get(field)):
                     found.add(value[field])
-            except Exception:  # noqa: BLE001 - missing or unreadable: names nothing
+            except FileNotFoundError:
                 pass
+            except Exception:  # noqa: BLE001 - a strict observation may not rule out a known ID
+                if strict:
+                    raise
         return found
 
     def record_reads_back(self, pod_id):
@@ -643,7 +769,7 @@ class LeaseClient:
         readable receipt naming the ID. Destructive cleanup never touches such an ID. After the guard
         closed the store nothing is durable: this process keeps every ID it holds. An ID seen alive whose
         presence handoff has not landed is never durable, whatever older record names it."""
-        if store_closed(self.folder) or pod_id in self.presence_pending:
+        if store_closed(self.folder) or pod_id in self.presence_pending or release_claim_path(self.folder, pod_id).exists():
             return False
         if pod_id in self.durable or self.record_reads_back(pod_id) or pod_id in self.receipt_ids():
             self.persisted.add(pod_id); self.unpersisted.discard(pod_id)
@@ -654,8 +780,22 @@ class LeaseClient:
         """An open store already names the ID (a record this process read or wrote back, its own record
         reading back now, or a readable receipt): the guardian supervises it, so this process never
         deletes it, even while a presence handoff of it is pending or the record is unreadable now."""
-        return not store_closed(self.folder) and (pod_id in self.durable or pod_id in self.persisted
-                                                  or self.record_reads_back(pod_id) or pod_id in self.receipt_ids())
+        return (not store_closed(self.folder) and not release_claim_path(self.folder, pod_id).exists()
+                and (pod_id in self.durable or pod_id in self.persisted
+                     or self.record_reads_back(pod_id) or pod_id in self.receipt_ids()))
+
+    def claim_release(self, pod_id):
+        """Choose release under the same lock as every competing custody write."""
+        if not valid_id(pod_id):
+            raise ValueError('invalid Pod ID for release')
+        path = release_claim_path(self.folder, pod_id)
+        with locked_store(self.folder, 'claim release of ' + pod_id, self.lock_wait) as state:
+            if path.exists():
+                return True
+            if state == 'open' and (self.guardian_owns(pod_id) or (self.folder / (pod_id + '.json')).exists()):
+                return False
+            write(path, {'id': pod_id, 'epoch': self.clock()})
+            return True
 
     def open_obligations(self):
         """The unresolved obligations now: registered, not verified absent, not durable on disk."""
@@ -727,7 +867,7 @@ class LeaseClient:
                 p for p in seen if not (p in self.persisted or p in self.durable or self.record_reads_back(p)
                                         or p in receipts))
 
-    def retain(self, pod_id, role, presence=True):
+    def retain(self, pod_id, role, presence=True, *, raise_closed=False):
         """Register, then hand off; the obligation is cleared only after the durable readback."""
         if not valid_id(pod_id):
             return False
@@ -739,7 +879,14 @@ class LeaseClient:
             handoff_in(self.folder, pod_id, self.retained[pod_id], self.clock(), presence=presence,
                        lock_wait=self.lock_wait)
         except StoreClosed:   # expected after completion, not a store fault: the obligation stays this process's
+            if raise_closed:
+                raise
             return False
+        except ReleaseClaimed:
+            # The durable release claim, and a new presence revision for a positive observation, exist.
+            self.presence_pending.discard(pod_id)
+            self.unpersisted.add(pod_id)
+            return True
         except SyncError as e:   # the obligation stays and blocks completion; not a store fault
             self.sync_errors.append('retain:' + pod_id + ':' + type(e).__name__)
             return False
@@ -780,22 +927,79 @@ class LeaseClient:
         for pod_id in sorted(self.unpersisted):
             self.retain(pod_id, self.retained.get(pod_id, 'census'), presence=pod_id in self.presence_pending)
 
+    @contextlib.contextmanager
+    def observing(self, kind, pod_id=None):
+        """Publish intent before provider I/O, with its liveness lock already held."""
+        if store_closed(self.folder):
+            yield None
+            return
+        path = observation_dir(self.folder) / (uuid.uuid4().hex + '.json')
+        try:
+            with StoreLock(path.with_suffix(''), wait=0):
+                with locked_store(self.folder, 'start observation', self.lock_wait) as state:
+                    if state == 'open':
+                        try:
+                            write(path, {'kind': kind, 'pod_id': pod_id, 'epoch': self.clock()})
+                        except OSError as error:
+                            degraded(self.folder, 'publish observation intent', error)
+                            raise SyncError('publish observation intent') from error
+                yield path if state == 'open' else None
+        finally:
+            try:
+                if not path.exists():
+                    remove_observation_lock(path)
+            except OSError:
+                pass
+
+    def observed(self, path, complete):
+        if path is not None and complete:
+            try:
+                finish_observations(self.folder, (path,), self.lock_wait)
+            except OSError as error:
+                degraded(self.folder, 'settle observation intent', error)
+                self.sync_errors.append('observation:' + type(error).__name__)
+
+    def known_observation_targets(self):
+        """Existing custody makes a matching ID evidence of presence even under another name."""
+        try:
+            root = lease_root(self.folder)
+            raw_post = returned_post_id(root)
+            targets = (set(self.retained) | self.persisted | self.durable | self.unpersisted
+                       | set(known_pods(root, [])) | release_claims(self.folder) | self.receipt_ids(strict=True))
+            if raw_post is not None:
+                targets.add(raw_post)
+            return targets
+        except Exception as error:  # noqa: BLE001 - leave the intent for a later complete observation
+            degraded(self.folder, 'read observation targets', error)
+            raise SyncError('read observation targets') from error
+
     def census(self):
         """(raw census, owned IDs, every listed ID, malformed); each owned ID is retained first."""
         self._require_active()
-        raw = self._raw(self._pods, self.key)
-        owned, listed, malformed = census_entries(raw, self.name)
-        self.register(owned)            # every owned ID becomes an obligation before any handoff
-        for pod_id in owned:
-            self.retain(pod_id, 'census')
+        with self.observing('census') as intent:
+            raw = self._raw(self._pods, self.key)
+            owned, listed, malformed = census_entries(raw, self.name)
+            self.register(owned)        # every owned ID becomes an obligation before any handoff
+            other_names = listed - set(owned)
+            renamed = sorted(other_names & self.known_observation_targets()) if intent is not None and other_names else []
+            if renamed:
+                self.register(renamed)
+            retained = [self.retain(pod_id, 'census') for pod_id in owned + renamed]
+            self.observed(intent, not malformed and all(retained))
         return raw, owned, listed, malformed
 
     def get(self, pod_id):
         self._require_active()
-        got = self._raw(lambda: self._provider(self.key, pod_id).call('GET'))
-        if isinstance(got, dict) and got.get('name') == self.name and valid_id(got.get('id')):
-            self.register([got['id']])
-            self.retain(got['id'], 'census')
+        with self.observing('get', pod_id) as intent:
+            got = self._raw(lambda: self._provider(self.key, pod_id).call('GET'))
+            complete = get_evidence_complete(pod_id, got)
+            if isinstance(got, dict) and valid_id(got.get('id')):
+                seen_id = got['id']
+                renamed = intent is not None and seen_id == pod_id and got.get('name') != self.name
+                if got.get('name') == self.name or (renamed and seen_id in self.known_observation_targets()):
+                    self.register([seen_id])
+                    complete = self.retain(seen_id, 'census') and complete
+            self.observed(intent, complete)
         return got
 
     def delete(self, pod_id):
@@ -813,17 +1017,40 @@ class LeaseClient:
         else:
             returned = self._raw(poster, body)
         if isinstance(returned, dict) and valid_id(returned.get('id')):
-            self.register([returned['id']])
-            self.retain(returned['id'], 'receipt')
+            pod_id = returned['id']
+            self.unpersisted.add(pod_id)
+            self.verified_absent.discard(pod_id)
+            # The locked pre-POST attempt already prevents completion. Record
+            # the ID before handoff, including a response with an unexpected
+            # name that an exact-name census could not recover. This is not custody.
+            try:
+                write(self.folder.parent / 'create-returned-id.json', {'pod_id': pod_id})
+            except OSError as error:
+                degraded(self.folder, 'record raw create ID', error)
+            self.retain(pod_id, 'receipt')
         return returned
 
 
 def settle_refresh(client, pod_id):
-    """A guardian-owned ID whose refresh has not landed: one retry; if it fails the refresh is reported
-    and discharged, which is main's behavior (main holds no refresh obligation). Never deletes."""
-    if not client.retain(pod_id, client.retained.get(pod_id, 'census'), presence=True):
-        degraded(client.folder, 'refresh of ' + pod_id + ' not published')
-        client.presence_pending.discard(pod_id); client.unpersisted.discard(pod_id)
+    """Retry a guardian-owned refresh. False leaves the caller responsible for release."""
+    try:
+        retained = client.retain(pod_id, client.retained.get(pod_id, 'census'), presence=True, raise_closed=True)
+    except StoreClosed:
+        return False
+    if retained:
+        return client.guardian_owns(pod_id)
+    # Only a still-open guardian may take the local obligation. The intent from the
+    # provider call remains on disk and prevents completion until reconciled.
+    try:
+        with locked_store(client.folder, 'settle refresh of ' + pod_id, client.lock_wait) as state:
+            if state == 'closed' or not client.guardian_owns(pod_id):
+                return False
+            degraded(client.folder, 'refresh of ' + pod_id + ' not published')
+            client.presence_pending.discard(pod_id)
+            client.unpersisted.discard(pod_id)
+            return True
+    except OSError:
+        return False
 
 
 def release_unhanded(client, pod_ids, deadline, sleep=None):
@@ -852,20 +1079,22 @@ def release_unhanded(client, pod_ids, deadline, sleep=None):
                 # target's provider call was in flight): the guardian's, never deleted here
                 targets.discard(pod_id)
                 continue
-            if client.guardian_owns(pod_id):
-                # seen alive, but its presence handoff has not landed: the guardian's Pod is never
-                # deleted here. One retry; if it fails, the refresh is reported and discharged, which
-                # is main's behavior (no refresh obligation at all), so nothing waits on it (I4, I5)
-                settle_refresh(client, pod_id)
+            if client.guardian_owns(pod_id) and settle_refresh(client, pod_id):
                 targets.discard(pod_id)
                 continue
             try:
-                client.delete(pod_id)
-            except Exception:  # noqa: BLE001 - retried
-                pass
+                claimed = client.claim_release(pod_id)
+            except OSError as error:
+                degraded(client.folder, 'claim release of ' + pod_id, error)
+                claimed = False
+            if claimed:
+                try:
+                    client.delete(pod_id)
+                except Exception:  # noqa: BLE001 - DELETE is retried, including lost responses
+                    pass
             try:
                 absent = client.get(pod_id) is None
-            except Exception:  # noqa: BLE001 - a failed or malformed GET is never absence
+            except Exception:  # noqa: BLE001 - retried
                 absent = False
             seen = census_ok and pod_id not in listed and absent
             state[pod_id] = confirmers.setdefault(pod_id, AbsenceConfirmer(client.clock)).observe(seen)
@@ -884,11 +1113,11 @@ def resolve_or_alert(client, deadline, alert_path, sleep=None, also=()):
     absent are released here (release_unhanded); if any remain, an ALERT record is written and
     RuntimeError('ALERT ...') raised. Returns the IDs this call released."""
     targets = {p for p in (set(also) | client.unpersisted) - client.verified_absent if not client.durable_now(p)}
-    # a guardian-owned ID whose refresh has not landed is settled first, without any provider call: one
-    # retry, then reported and discharged (main holds no refresh obligation), so it never delays a release
+    # A still-owned refresh can be settled without a provider call. Closure during
+    # that retry leaves the ID in the release set.
     for pod_id in sorted(p for p in targets if p in client.presence_pending and client.guardian_owns(p)):
-        settle_refresh(client, pod_id)
-        targets.discard(pod_id)
+        if settle_refresh(client, pod_id):
+            targets.discard(pod_id)
     if not targets:
         return set()
     pending = release_unhanded(client, targets, deadline, sleep)
@@ -929,6 +1158,8 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
     id_absence = {}
     memory = client.retained      # known ID -> role; nothing leaves it (I4)
     confirmed = set()             # IDs confirmed absent by evidence seen in this process (I5)
+    claims = set()                # release authority, never persisted absence
+    recovered_revision = 0
 
     def note(name, value):
         """True when the record was written; a failed write never blocks a DELETE."""
@@ -993,6 +1224,11 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
         recorded, receipt_error = receipt_state(root)
         if receipt_error:
             store_errors.append(receipt_error)
+        try:
+            raw_post = returned_post_id(root)
+        except Exception as error:  # noqa: BLE001 - a damaged raw ID must not close the store
+            store_errors.append('raw create ID:' + type(error).__name__)
+            raw_post = None
         fallbacks = []                              # IDs the create records name, read once this pass
         for name in ('lease/create-ambiguous.json', 'lease/create-pod-failure.json'):
             try:
@@ -1006,6 +1242,19 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
         # loses one (I4)
         for pod_id in ([recorded] if recorded else []) + fallbacks:
             memory.setdefault(pod_id, 'receipt')
+        if raw_post is not None:
+            memory[raw_post] = 'receipt'
+        try:
+            current_claims = release_claims(client.folder)
+            if current_claims != claims:
+                for pod_id in current_claims - claims:
+                    confirmed.discard(pod_id); id_absence.pop(pod_id, None)
+                census_absence = AbsenceConfirmer(clock)
+            claims = current_claims
+        except OSError as error:
+            sync_errors.append('release claims:' + type(error).__name__)
+        for pod_id in claims:
+            memory.setdefault(pod_id, 'release')
         # (B) after the deadline every known ID is deleted first, before any synchronized handoff and
         # before anything can fail
         deleted_first = set()
@@ -1015,10 +1264,25 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
         if recorded:
             client.mark_durable(recorded)
             client.retain(recorded, 'receipt', presence=False)
+        if raw_post and raw_post not in claims and not client.guardian_owns(raw_post):
+            client.retain(raw_post, 'receipt', presence=False)
         for fallback in fallbacks:
             client.mark_durable(fallback)
             client.retain(fallback, 'receipt', presence=False)
         client.retry()                              # every unpersisted ID, every pass (I2, I4)
+        try:
+            orphaned = orphan_observations(client.folder)
+            observed_revision = recovery_revision(client.folder)
+        except Exception as error:  # noqa: BLE001 - an unreadable intent never permits completion
+            sync_errors.append('observation intents:' + type(error).__name__)
+            orphaned = {}
+            observed_revision = recovered_revision
+        if orphaned or observed_revision != recovered_revision:
+            # A dead observer may have seen presence with no revision write. No
+            # absence witness from before this reconciliation can support closure.
+            confirmed.clear(); id_absence.clear()
+            census_absence = AbsenceConfirmer(clock)
+        recovered_revision = observed_revision
         # A presence handoff of an ID since this process last read it (any process saw that Pod alive)
         # voids its absence confirmation and the census confirmation (I5)
         for pod_id in sorted(memory):
@@ -1032,10 +1296,10 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
 
         def primary_id():
             """I3: the readable receipt, else a retained create-result record."""
-            if recorded:
+            if recorded and recorded not in claims:
                 return recorded
             for role in CREATE_ROLES:
-                candidates = sorted(p for p, r in memory.items() if r == role)
+                candidates = sorted(p for p, r in memory.items() if r == role and p not in claims)
                 if candidates:
                     return candidates[0]
             return None
@@ -1046,10 +1310,13 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
         # (C1) census through the client (each owned ID retained first); every listed ID, whatever
         # its name, is presence; malformed provider data is a guard failure, never absence
         before = set(memory); open_before = [p for p in memory if p not in confirmed]
+        prior_errors = len(client.errors); prior_sync_errors = len(client.sync_errors)
         census_ok = False; malformed = False; owned = []; census_ids = set()
         try:
             _, owned, census_ids, malformed = client.census()
             census_ok = True
+        except SyncError as error:
+            sync_errors.append('census:' + type(error).__name__)
         except Exception as e:  # noqa: BLE001
             failures.append('census:' + type(e).__name__)
         if malformed:
@@ -1064,13 +1331,20 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
         for pod_id in sorted(confirmed & census_ids):
             reactivate(pod_id, 'census')
         # (C2) exact-ID GET of every known ID, confirmed ones included (a reappearance reactivates it)
-        observed = {}; pod = None
-        for pod_id in sorted(memory):
+        observed = {}; pod = None; all_gets_complete = True
+        get_ids = set(memory) | {pod_id for pod_id in orphaned.values() if pod_id is not None}
+        for pod_id in sorted(get_ids):
             try:
                 got = client.get(pod_id)
+            except SyncError as error:
+                sync_errors.append('get:' + type(error).__name__)
+                all_gets_complete = False
+                continue
             except Exception as e:  # noqa: BLE001
                 failures.append('get:' + type(e).__name__); observed[pod_id] = None
+                all_gets_complete = False
                 continue
+            all_gets_complete = all_gets_complete and get_evidence_complete(pod_id, got)
             observed[pod_id] = 'absent' if got is None else 'present'
             if got is not None and pod_id in confirmed:
                 reactivate(pod_id, 'get')
@@ -1111,6 +1385,14 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
             reason = 'startup_idle'
         store_errors.extend(client.errors)
         sync_errors.extend(client.sync_errors)
+        fresh_handoffs = len(client.errors) == prior_errors and len(client.sync_errors) == prior_sync_errors
+        if orphaned and census_ok and not malformed and all_gets_complete and fresh_handoffs:
+            try:
+                recovered_revision = finish_observations(client.folder, orphaned, recovered=True)
+                for path in orphaned:
+                    remove_observation_lock(path)
+            except Exception as error:  # noqa: BLE001 - recovery failure leaves closure blocked
+                sync_errors.append('recover observation intents:' + type(error).__name__)
         if sync_errors:   # diagnostic; completion stays blocked
             note('external-sync-error.json', {'epoch': clock(), 'errors': list(sync_errors)})
         open_known = sorted(p for p in memory if p not in confirmed)
@@ -1162,7 +1444,9 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
             seen_absent = census_ok and not malformed and pod_id not in census_ids and observed.get(pod_id) == 'absent'
             if id_absence.setdefault(pod_id, AbsenceConfirmer(clock)).observe(seen_absent):
                 confirmed.add(pod_id)
-                if pod_id in client.presence_pending and client.guardian_owns(pod_id):
+                if pod_id in claims:
+                    client.unpersisted.discard(pod_id); client.presence_pending.discard(pod_id)
+                elif pod_id in client.presence_pending and client.guardian_owns(pod_id):
                     # its record reads back and this process's own evidence supersedes the refresh it
                     # could not publish (I2 still holds: the record itself is durable)
                     client.presence_pending.discard(pod_id); client.unpersisted.discard(pod_id)
@@ -1180,13 +1464,19 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
             named, error = receipt_state(root)
             if error or (named and named not in memory):
                 return False
+            if create_unresolved(root) or ambiguous_unresolved(root):
+                return False
+            # A raw ID can arrive without the store lock, after the pre-POST
+            # attempt. Check it after any create-evidence reads above.
+            raw = returned_post_id(root)
+            if raw and raw not in memory:
+                return False
             for name in ('lease/create-ambiguous.json', 'lease/create-pod-failure.json'):
                 if (root / name).exists():
                     fallback = read(root / name).get('pod_id')
                     if valid_id(fallback) and fallback not in memory:
                         return False
-            return not create_unresolved(root) and not ambiguous_unresolved(root) and \
-                not any(p not in confirmed for p in memory)
+            return not any(p not in confirmed for p in memory)
         # Completion is the store's closure, written under the store lock after a final check: a concurrent
         # handoff or create attempt either lands before it (and blocks completion) or meets the closure and
         # stays its caller's (I4). A failed write leaves the store open; the next pass tries again.
@@ -1194,6 +1484,7 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
                 root, memory, basis, settled, store_errors, {
                     'exact_name': lease['name'], 'pod_id': primary, 'known_pods': sorted(memory),
                     'provider_absent': True, 'absent_confirmations': 2, 'reason': reason, 'deletes': deletes,
+                    'release_claims': sorted(claims), 'observation_recovery_revision': recovered_revision,
                     'presence_revisions': dict(sorted(basis.items())), 'epoch': clock()}):
             return
         absent_now = census_clear and all(observed.get(p) == 'absent' for p in open_known)
@@ -1208,7 +1499,7 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
         for pod_id in open_known:
             if pod_id == primary:
                 continue
-            if primary is not None or reason:
+            if pod_id in claims or primary is not None or reason:
                 targets.append(pod_id)
         if reason and primary in open_known:
             remaining = lease['deadline_epoch'] - clock()
@@ -1222,7 +1513,7 @@ def _guard(root, lease, client, clock, sleep, once, preserve, marker_probe, fund
             targets.insert(0, primary)
         targets = [p for p in targets if not (observed.get(p) == 'absent' and p not in census_ids)]
         for target in targets:
-            delete(target, reason or 'duplicate_pod')
+            delete(target, reason or ('claimed_release' if target in claims else 'duplicate_pod'))
         if reason and clock() >= lease['deadline_epoch'] and (targets or not absent_now):
             note('ALERT-pod-not-released.json', {'targets': targets, 'epoch': clock(), 'reason': reason})
         if once or closed_and_settled(root):
