@@ -27955,12 +27955,12 @@ pub(crate) fn begin_owned_lathril_v1(
     // One complete original simultaneous entry batch. Commit only a successful
     // staged world, preserving the public row on any checked replacement error.
     let mut staged = state.clone();
-    let batch_start = staged.engine.event_history.len();
+    crate::lathril_receipts_v1::record_token_begin(&mut staged, owner.capture);
     event::propose_and_commit_batch(&mut staged, events);
     if staged.engine.halted.is_some() || staged.engine.pending_effect.is_some() {
         return Err("Lathril token batch did not complete".into());
     }
-    crate::lathril_receipts_v1::record_tokens(&mut staged, owner.capture, batch_start)?;
+    crate::lathril_receipts_v1::record_tokens(&mut staged, owner.capture)?;
     staged
         .engine
         .event_history

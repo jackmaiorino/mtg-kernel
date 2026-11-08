@@ -12725,9 +12725,12 @@ fn pending_activation_semantic_v2(
 ) -> Result<PendingActivationSemanticV2> {
     engine::validate_pending_activation(state, p)
         .map_err(|error| RlContractError(format!("invalid pending activation: {error}")))?;
+    let hide_object_cost = acting_player != p.controller
+        && crate::lathril_receipts_v1::pending_selected(state, p);
     let object_cost_chosen = p
         .object_cost_chosen
         .iter()
+        .filter(|_| !hide_object_cost)
         .map(|binding| binding.object)
         .collect::<Vec<_>>();
     Ok(PendingActivationSemanticV2 {

@@ -9,6 +9,7 @@ use crate::{
     human_bo3_v1::{project_limited_kaito_v16, HumanActionRequestV1, HumanKaitoProjectorV75},
     ids::{ObjectId, PlayerId},
     lathril_public_v1::{CombatStageV1, DrainStageV1},
+    lathril_receipts_v1::JournalV1,
     limited_kaito_session_v16::{LimitedKaitoBodyV16 as Body, LimitedKaitoStateV16 as State},
     policy_observation_v6::tests::{advance_to_next_main_for, put},
     policy_surface_v5::LimitedAppendixV1,
@@ -102,6 +103,13 @@ fn declared_forty_card_v3_reset_pays_lathril_and_real_combat_creates_two_elves_b
                         &serde_json::to_vec(numeric.fixture_state()).unwrap(),
                     ).unwrap();
                     assert_eq!(public::capture(&restored, actor).unwrap().combat, facts.combat);
+                    let mut truncated = restored.clone();
+                    move_receipt_start_to_terminal(
+                        &mut truncated,
+                        |journal| matches!(journal, JournalV1::TokenBegin { .. }),
+                        |journal| matches!(journal, JournalV1::Tokens { .. }),
+                    );
+                    assert!(public::capture(&truncated, actor).is_err());
                     let input = numeric.training_input_v1(&d).unwrap();
                     assert!(ModelV1::deterministic_fixture().forward(&input).unwrap().iter().all(|value| value.is_finite()));
                     completed = true;
@@ -143,13 +151,32 @@ fn fixture(state: &GameState) -> FastActorSessionV1 {
 fn payment_fixture(actor: PlayerId, hidden: &str) -> (GameState, ObjectId, Vec<ObjectId>) {
     let (mut state, source) = native_fixture::paid(actor);
     advance_to_next_main_for(&mut state, actor);
-    let elves = native_fixture::create_elves(&mut state, actor);
+    let physical = put(&mut state, actor, "Llanowar Elves", Zone::Hand);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(physical, Zone::Battlefield));
+    let mut elves = vec![physical];
+    elves.extend(native_fixture::create_elves(&mut state, actor));
     put(&mut state, actor.opponent(), hidden, Zone::Hand);
     engine::step(&mut state, engine::Action::ActivateAbility(source, 0)).unwrap();
     assert!(matches!(engine::advance_until_decision(&mut state), engine::Decision::ChooseCostTargets {
         player, source: actual, remaining: 10, ..
     } if player == actor && actual == source));
     (state, source, elves)
+}
+
+fn move_receipt_start_to_terminal(
+    state: &mut GameState,
+    is_start: impl Fn(&JournalV1) -> bool,
+    is_terminal: impl Fn(&JournalV1) -> bool,
+) {
+    let history = &mut state.engine.event_history;
+    let start = history.iter().position(|row|
+        matches!(row, CommittedEvent::LathrilReceiptV1 { journal } if is_start(journal))
+    ).unwrap();
+    let start = history.remove(start);
+    let end = history.iter().position(|row|
+        matches!(row, CommittedEvent::LathrilReceiptV1 { journal } if is_terminal(journal))
+    ).unwrap();
+    history.insert(end, start);
 }
 
 #[test]
@@ -228,7 +255,7 @@ fn paid_ten_elf_hidden_pairs_keep_original_indices_and_observe_actual_life_both_
         assert!(matches!(live.drains[0].stage, DrainStageV1::Published { .. }));
         assert!(paid.objects.get(source).tapped);
         assert!(elves[..10].iter().all(|&elf| paid.objects.get(elf).tapped));
-        assert!(!paid.objects.get(elves[10]).tapped);
+        assert!(elves[10..].iter().all(|&elf| !paid.objects.get(elf).tapped));
         let life = paid.players.each_ref().map(|p| p.life);
         let id = paid.stack.last().unwrap().v4.stack_item_id;
         let mut countered = paid.clone();
@@ -247,6 +274,29 @@ fn paid_ten_elf_hidden_pairs_keep_original_indices_and_observe_actual_life_both_
         assert_eq!(resolved.players[actor.opponent().index()].life, life[actor.opponent().index()] - 10);
         let restored: GameState = serde_json::from_slice(&serde_json::to_vec(&resolved).unwrap()).unwrap();
         assert_eq!(public::capture(&restored, actor.opponent()).unwrap(), facts);
+        let mut truncated = restored.clone();
+        move_receipt_start_to_terminal(
+            &mut truncated,
+            |journal| matches!(journal, JournalV1::DrainBegin { .. }),
+            |journal| matches!(journal, JournalV1::DrainEnded { .. }),
+        );
+        assert!(public::capture(&truncated, actor).is_err());
+        for corrupt_generation in [true, false] {
+            let mut forged = restored.clone();
+            let history = &mut forged.engine.event_history;
+            let at = history.iter().position(|row| matches!(row,
+                CommittedEvent::LathrilReceiptV1 { journal } if matches!(journal.as_ref(), JournalV1::Paid { .. })
+            )).unwrap();
+            let CommittedEvent::LathrilReceiptV1 { journal } = &mut history[at] else { panic!() };
+            let JournalV1::Paid { item, public_printings } = journal.as_mut() else { panic!() };
+            if corrupt_generation {
+                assert_eq!(item.v4.paid_cost_refs[0].object, elves[0]);
+                item.v4.paid_cost_refs[0].zone_change_count -= 1;
+            } else {
+                public_printings[0] = card("Face-down creature");
+            }
+            assert!(public::capture(&forged, actor).is_err());
+        }
         let mut legacy = paid.clone();
         legacy.engine.event_history.retain(|row| !matches!(row, CommittedEvent::LathrilReceiptV1 { .. }));
         assert!(public::capture(&legacy, actor).is_err());

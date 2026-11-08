@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn lathril_unpaid_elf_prefix_is_chooser_only_in_shared_activation_context() {
+    use crate::{
+        effect::lathril_v1_tests as native,
+        policy_observation_v6::tests::advance_to_next_main_for,
+    };
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source) = native::paid(actor);
+        advance_to_next_main_for(&mut state, actor);
+        let elves = native::create_elves(&mut state, actor);
+        engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+        assert!(matches!(engine::advance_until_decision(&mut state), Decision::ChooseCostTargets { .. }));
+        engine::step(&mut state, Action::ChooseCostTarget(elves[0])).unwrap();
+        assert!(matches!(engine::advance_until_decision(&mut state), Decision::ChooseCostTargets { .. }));
+        let pending = state.engine.pending_activation.as_ref().unwrap();
+        let own = pending_activation_semantic_v2(&state, actor, pending).unwrap();
+        assert_eq!(own.object_cost_chosen.len(), 1);
+        assert_eq!(own.object_cost_chosen[0].arena_id, elves[0].0);
+        let other = pending_activation_semantic_v2(&state, actor.opponent(), pending).unwrap();
+        assert!(other.object_cost_chosen.is_empty());
+    }
+}
+
+#[test]
 fn paid_complete_walkers_keep_private_mode_through_shared_prefix_and_legacy_refusal_both_seats() {
     use crate::optional_trigger_public_v1::ConsumerV1;
     use ObservationTextModeV2 as Mode;

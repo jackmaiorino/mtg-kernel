@@ -19129,7 +19129,9 @@ pub(crate) fn counter_stack_item_by_id(
     if let Some(owner) = niv_counter {
         niv_mizzet_resolution_v1::counter(state, owner)?;
     }
-    crate::lathril_receipts_v1::record_ended(state, &item, None)?;
+    crate::lathril_receipts_v1::record_ended(
+        state, &item, crate::lathril_receipts_v1::EndV1::Countered,
+    )?;
     tinybones_v72::countered(state, &item)?;
     if let Some(entry_history_index) = curator_counter {
         state
@@ -20608,6 +20610,11 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         return ResolutionProgress::Complete;
     }
     if let Some(effect) = item.inline_effect.clone() {
+        if crate::lathril_receipts_v1::record_drain_begin(state, &item).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
         let effect_history_start = state.engine.event_history.len();
         if item
             .v4
@@ -20668,8 +20675,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         if progress == ResolutionProgress::Complete {
             if crate::librarian_activation_v1::record_resolved(state, &item, effect_history_start)
                 .is_err()
-                || crate::lathril_receipts_v1::record_ended(state, &item, Some(effect_history_start))
-                    .is_err()
+                || crate::lathril_receipts_v1::record_ended(
+                    state, &item, crate::lathril_receipts_v1::EndV1::Resolved,
+                ).is_err()
                 || crate::fixed_source_damage_v3::record_removed(
                     state,
                     fixed_removal_owner,
@@ -28913,6 +28921,7 @@ struct FrozenActivationSource {
     granted_by: Option<AbilitySourceContractV4>,
     fixed_departure: Option<u32>,
     fiend_input: Option<u32>,
+    lathril_input: Option<crate::lathril_receipts_v1::PaymentInputV1>,
     payment_history_start: usize,
     fishing_ability_index: u8,
     ajani_payment_owner: Option<crate::ajani_full_v42::lifecycle::PaymentOwner>,
@@ -28969,6 +28978,7 @@ fn freeze_activation_source(
         granted_by,
         fixed_departure: None,
         fiend_input: None,
+        lathril_input: crate::lathril_receipts_v1::freeze_payment(state, pending, source),
         payment_history_start: state.engine.event_history.len(),
         fishing_ability_index: pending.ability_index,
         ajani_payment_owner: None,
@@ -29156,7 +29166,7 @@ fn push_paid_activation(
         ));
         return;
     }
-    if crate::lathril_receipts_v1::record_paid(state, frozen.payment_history_start).is_err() {
+    if crate::lathril_receipts_v1::record_paid(state, frozen.lathril_input).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.source,
