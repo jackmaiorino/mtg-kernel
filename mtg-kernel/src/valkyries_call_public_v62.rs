@@ -374,12 +374,13 @@ pub(crate) fn capture_tinybones_compat_v72(
 pub(crate) fn capture_kaito_compat_v75(
     state: &GameState,
     viewer: PlayerId,
+    appendix: crate::policy_surface_v5::LimitedAppendixV1,
 ) -> Result<FactsV62, String> {
     capture_for_consumer(
         state,
         viewer,
         public::CounterScopeV61::TinybonesV72,
-        crate::optional_trigger_public_v1::ConsumerV1::KaitoV75,
+        crate::optional_trigger_public_v1::ConsumerV1::for_kaito(appendix),
     )
 }
 pub(crate) fn capture_chandra_compat_v74(

@@ -204,7 +204,7 @@ fn cast(
     assert_eq!(tapped(s, p) - before, cost);
     card
 }
-fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
+pub(crate) fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
     let card = cast(s, p, NAME, (false, 0, false), &[], None, 10);
     finish(s);
     assert_eq!(s.objects.get(card).zone, Zone::Battlefield);

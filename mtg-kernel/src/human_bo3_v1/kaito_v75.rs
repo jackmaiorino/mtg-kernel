@@ -49,7 +49,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     embercleave: Option<super::embercleave_consumer_v1::HumanFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    zimone: Option<super::zimone_consumer_v1::HumanFactsV1>
+    zimone: Option<super::zimone_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    omniscience: Option<super::omniscience_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -83,7 +85,9 @@ record!(HumanKaitoCandidateV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     embercleave_action: Option<crate::embercleave_consumer_v1::ActionV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    zimone_action: Option<crate::zimone_consumer_v1::ActionV1>
+    zimone_action: Option<crate::zimone_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    omniscience_action: Option<crate::omniscience_consumer_v1::ActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -305,6 +309,9 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
+    if let Some(label) = super::omniscience_consumer_v1::label(obs.omniscience.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
     if let Some(label) = super::zimone_consumer_v1::label(obs.zimone.as_ref(), a, h)? {
         return Ok(Some(label));
     }
@@ -750,6 +757,11 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::zimone_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
+    let omniscience = obs
+        .omniscience
+        .as_ref()
+        .map(|facts| super::omniscience_consumer_v1::project(facts, &mut handles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
@@ -764,6 +776,7 @@ pub(super) fn project_with_handles(
                 drakuseth_target: r.drakuseth_target,
                 embercleave_action: r.embercleave_action,
                 zimone_action: r.zimone_action,
+                omniscience_action: r.omniscience_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -1018,6 +1031,8 @@ pub(super) fn project_with_handles(
                 "mtg-kernel-human-embercleave-decision/v1"
             } else if zimone.is_some() {
                 "mtg-kernel-human-zimone-decision/v1"
+            } else if omniscience.is_some() {
+                "mtg-kernel-human-omniscience-decision/v1"
             } else {
                 "mtg-kernel-human-kaito-decision/v75"
             }
@@ -1044,6 +1059,7 @@ pub(super) fn project_with_handles(
                 drakuseth,
                 embercleave,
                 zimone,
+                omniscience,
             },
             actions,
             action_meanings,

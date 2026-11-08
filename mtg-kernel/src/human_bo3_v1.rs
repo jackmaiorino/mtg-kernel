@@ -478,4 +478,5 @@ pub use limited_kaito_v16::LimitedKaitoDecisionV16;
 
 mod drakuseth_consumer_v1;
 mod embercleave_consumer_v1;
+mod omniscience_consumer_v1;
 mod zimone_consumer_v1;
