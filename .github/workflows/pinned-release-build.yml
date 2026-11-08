@@ -1,0 +1,40 @@
+name: Pinned release build
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/pinned-release-build.yml'
+      - 'tools/pinned-release-build/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capacity:
+    # This placement probe neither compiles nor starts a native workload.
+    if: github.repository == 'jackmaiorino/mtg-kernel'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Report actual runner capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, shutil, subprocess
+          paths = ('/', '/mnt', '/tmp', os.environ['RUNNER_TEMP'], os.environ['GITHUB_WORKSPACE'])
+          print(json.dumps({
+              'runner_image': os.environ.get('ImageVersion'),
+              'cpus': os.cpu_count(),
+              'memory': open('/proc/meminfo').read().splitlines()[:3],
+              'volumes': [{
+                  'path': p, 'device': os.stat(p).st_dev,
+                  'total_bytes': shutil.disk_usage(p).total,
+                  'free_bytes': shutil.disk_usage(p).free,
+                  'can_admit_5gib_build_above_reserve': shutil.disk_usage(p).free >= int(65.5 * 1024**3),
+              } for p in paths],
+          }, indent=2))
+          subprocess.run(['findmnt', '-J', '-o', 'TARGET,SOURCE,FSTYPE,OPTIONS'], check=True)
+          PY
+          sudo du -sx --block-size=1 /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache /usr/local/share/boost /usr/local/share/powershell /opt/google /opt/microsoft /usr/local/julia* 2>/dev/null || true
