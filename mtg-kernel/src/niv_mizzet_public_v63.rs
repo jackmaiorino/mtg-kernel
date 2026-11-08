@@ -307,6 +307,11 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV63, String> 
     capture_parts_scoped(state, viewer, public::ConsumerV1::Legacy).map(|(facts, _)| facts)
 }
 
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 pub(crate) fn capture_for_consumer(
     state: &GameState,
     viewer: PlayerId,

@@ -100,10 +100,6 @@ impl JsonlServerV1 {
     }
 }
 
-pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV65, String> {
-    capture_scoped(state, viewer, ConsumerV1::Legacy)
-}
-
 pub(crate) fn capture_scoped(
     state: &GameState,
     viewer: PlayerId,

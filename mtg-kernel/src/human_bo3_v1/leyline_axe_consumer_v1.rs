@@ -15,7 +15,7 @@ use crate::{
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(super) struct HumanFactsV1 {
+pub struct HumanFactsV1 {
     meaning: MeaningV1,
     opening_choice: Option<HumanCardRefV1>,
     opening_entries: Vec<HumanOriginalV1>,

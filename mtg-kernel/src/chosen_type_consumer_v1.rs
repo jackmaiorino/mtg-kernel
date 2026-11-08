@@ -179,10 +179,6 @@ fn active_printing(state: &GameState, viewer: PlayerId) -> Result<Option<FamilyV
         .ok_or("chosen-type entry lost its exact printing".into())
 }
 
-pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, String> {
-    capture_scoped(state, viewer, ConsumerV1::Legacy)
-}
-
 pub(crate) fn capture_scoped(
     state: &GameState,
     viewer: PlayerId,

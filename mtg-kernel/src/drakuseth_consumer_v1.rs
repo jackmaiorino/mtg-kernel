@@ -161,10 +161,6 @@ pub struct FactsV1 {
     pub pending_damage: Option<DamageChoiceV1>,
 }
 
-pub(crate) fn capture(state: &GameState, actor: PlayerId) -> Result<FactsV1, String> {
-    capture_scoped(state, actor, ConsumerV1::Legacy)
-}
-
 pub(crate) fn capture_scoped(
     state: &GameState,
     actor: PlayerId,

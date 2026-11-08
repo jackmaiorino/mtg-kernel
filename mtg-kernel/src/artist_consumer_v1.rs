@@ -98,6 +98,11 @@ impl JsonlServerV1 {
     }
 }
 
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 pub(crate) fn capture(state: &GameState, actor: PlayerId) -> Result<FactsV64, String> {
     capture_scoped(state, actor, ConsumerV1::Legacy)
 }

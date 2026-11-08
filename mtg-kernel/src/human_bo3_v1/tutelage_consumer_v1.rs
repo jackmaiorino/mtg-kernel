@@ -12,7 +12,7 @@ use crate::{
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(super) struct HumanFactsV1 {
+pub struct HumanFactsV1 {
     meaning: MeaningV1,
     draws: Vec<HumanDrawV1>,
     current_order: Option<HumanOrderV1>,
