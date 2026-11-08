@@ -81,7 +81,11 @@ pub(super) fn project(
             rows.push(HumanCurrentV1 {
                 card: href(&card.card, handles)?,
                 form: card.form.clone(),
-                attached_to: card.attached_to.as_ref().map(|r| href(r, handles)).transpose()?,
+                attached_to: card
+                    .attached_to
+                    .as_ref()
+                    .map(|r| href(r, handles))
+                    .transpose()?,
             });
         }
     }
@@ -103,40 +107,60 @@ pub(super) fn project(
             quote(&facts.current_cast_reduction[0], handles)?,
             quote(&facts.current_cast_reduction[1], handles)?,
         ],
-        casts: facts.casts.iter().map(|cast| Ok(HumanCastV1 {
-            position: cast.position,
-            source: href(&cast.source, handles)?,
-            original_controller: cast.original_controller,
-            is_uncast_copy: cast.is_uncast_copy,
-            payment_pending: cast.payment_pending,
-            genuine_cast_finalized: cast.genuine_cast_finalized,
-        })).collect::<Result<_, Error>>()?,
-        abilities: facts.abilities.iter().map(|ability| {
-            let original_targets = ability.original_targets.iter().map(|target| {
-                Ok(HumanTargetV1 {
-                    original: roles.relation(&crate::tinybones_public_v72::IncarnationV72 {
-                        object: target.object,
-                        generation: target.generation,
-                        owner: target.owner,
-                        controller: target.controller_when_selected,
-                        zone: target.original_zone,
-                    })?,
-                    current_original_target: target.current_original_target.as_ref()
-                        .map(|r| href(r, handles)).transpose()?,
-                    currently_legal: target.currently_legal,
+        casts: facts
+            .casts
+            .iter()
+            .map(|cast| {
+                Ok(HumanCastV1 {
+                    position: cast.position,
+                    source: href(&cast.source, handles)?,
+                    original_controller: cast.original_controller,
+                    is_uncast_copy: cast.is_uncast_copy,
+                    payment_pending: cast.payment_pending,
+                    genuine_cast_finalized: cast.genuine_cast_finalized,
                 })
-            }).collect::<Result<_, Error>>()?;
-            Ok(HumanAbilityV1 {
-                kind: ability.kind,
-                stage: ability.stage,
-                position: ability.position,
-                source: root(&ability.source, handles)?,
-                original_source_incarnation_present: ability.original_source_incarnation_present,
-                original_targets,
-                current_candidate_pool: references(&ability.current_candidate_pool, handles)?,
-                selection_complete: ability.selection_complete,
-                payment_complete: ability.payment_complete,
             })
-        }).collect::<Result<_, Error>>()?,
+            .collect::<Result<_, Error>>()?,
+        abilities: facts
+            .abilities
+            .iter()
+            .map(|ability| {
+                let original_targets = ability
+                    .original_targets
+                    .iter()
+                    .map(|target| {
+                        Ok(HumanTargetV1 {
+                            original: roles.relation(
+                                &crate::tinybones_public_v72::IncarnationV72 {
+                                    object: target.object,
+                                    generation: target.generation,
+                                    owner: target.owner,
+                                    controller: target.controller_when_selected,
+                                    zone: target.original_zone,
+                                },
+                            )?,
+                            current_original_target: target
+                                .current_original_target
+                                .as_ref()
+                                .map(|r| href(r, handles))
+                                .transpose()?,
+                            currently_legal: target.currently_legal,
+                        })
+                    })
+                    .collect::<Result<_, Error>>()?;
+                Ok(HumanAbilityV1 {
+                    kind: ability.kind,
+                    stage: ability.stage,
+                    position: ability.position,
+                    source: root(&ability.source, handles)?,
+                    original_source_incarnation_present: ability
+                        .original_source_incarnation_present,
+                    original_targets,
+                    current_candidate_pool: references(&ability.current_candidate_pool, handles)?,
+                    selection_complete: ability.selection_complete,
+                    payment_complete: ability.payment_complete,
+                })
+            })
+            .collect::<Result<_, Error>>()?,
     })
 }

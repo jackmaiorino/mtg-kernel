@@ -116,7 +116,10 @@ pub(crate) fn validate_facts(facts: &FactsV65, actor: PlayerSeatV1) -> Result<()
         || facts.complete_ordinary_observation
         || facts.owning_consumer_admitted
         || facts.authorized.iter().any(|card| {
-            card.identity != (IdentityV1::Known { card_id: PRINTING_V1 })
+            card.identity
+                != (IdentityV1::Known {
+                    card_id: PRINTING_V1,
+                })
                 || (card.zone == Zone::Hand && card.owner != actor)
         })
     {
@@ -159,9 +162,10 @@ pub(crate) fn validate_facts(facts: &FactsV65, actor: PlayerSeatV1) -> Result<()
 }
 
 pub(crate) fn is_attachment_program(effect: &crate::effect::EffectOp) -> bool {
-    effect == &crate::effect::EffectOp::AttachSourceToTarget {
-        object: crate::effect::ObjectRef::Target(0),
-    }
+    effect
+        == &crate::effect::EffectOp::AttachSourceToTarget {
+            object: crate::effect::ObjectRef::Target(0),
+        }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,15 +225,27 @@ pub(crate) fn action(
                 retained_red_pips: quote.retained_red_pips,
             }))
         }
-        Action::ActivateAbility { source, ability_index: 0, granted_ability, .. }
-            if source.card_db_id == PRINTING_V1 && granted_ability.is_none() =>
-        {
-            Ok(Some(ActionV1::ActivateEquip { printed_generic_cost: 3 }))
+        Action::ActivateAbility {
+            source,
+            ability_index: 0,
+            granted_ability,
+            ..
+        } if source.card_db_id == PRINTING_V1 && granted_ability.is_none() => {
+            Ok(Some(ActionV1::ActivateEquip {
+                printed_generic_cost: 3,
+            }))
         }
-        Action::ChooseTarget { actor, source, target, .. } => {
+        Action::ChooseTarget {
+            actor,
+            source,
+            target,
+            ..
+        } => {
             let mut matching = facts.abilities.iter().filter(|ability| {
-                matches!(ability.stage, StageV65::ChoosingEntryTarget | StageV65::PayingEquip)
-                    && !ability.selection_complete
+                matches!(
+                    ability.stage,
+                    StageV65::ChoosingEntryTarget | StageV65::PayingEquip
+                ) && !ability.selection_complete
                     && ability.source.captured_controller == *actor
                     && matches_reference(&ability.source.original_source, source)
             });
