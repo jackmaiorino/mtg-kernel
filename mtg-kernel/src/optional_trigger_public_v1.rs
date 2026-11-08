@@ -314,6 +314,7 @@ pub(crate) enum ConsumerV1 {
     KaitoLeylineAxeV1,
     KaitoProgenitusV1,
     KaitoAberrationV1,
+    KaitoLathrilV1,
 }
 impl ConsumerV1 {
     pub(crate) fn for_kaito(appendix: crate::policy_surface_v5::LimitedAppendixV1) -> Self {
@@ -325,6 +326,7 @@ impl ConsumerV1 {
             LimitedAppendixV1::LeylineAxe => Self::KaitoLeylineAxeV1,
             LimitedAppendixV1::Progenitus => Self::KaitoProgenitusV1,
             LimitedAppendixV1::Aberration => Self::KaitoAberrationV1,
+            LimitedAppendixV1::Lathril => Self::KaitoLathrilV1,
             _ => Self::KaitoV75,
         }
     }
@@ -338,7 +340,8 @@ impl ConsumerV1 {
             | Self::KaitoTutelageV1
             | Self::KaitoMixedV1
             | Self::KaitoProgenitusV1
-            | Self::KaitoAberrationV1 => {
+            | Self::KaitoAberrationV1
+            | Self::KaitoLathrilV1 => {
                 crate::effect::require_no_copied_token_abilities_kaito_v75(state, false)
             }
             Self::KaitoLeylineAxeV1 => {
@@ -373,7 +376,7 @@ pub(crate) fn validate_state_for_consumer(
     crate::effect::kykar_v1::refuse_legacy(state)?;
     crate::effect::loot_v1::refuse_legacy(state)?;
     consumer.validate_copy_prefix(state)?;
-    if state.objects.iter().any(|(_, o)| {
+    if !matches!(consumer, ConsumerV1::KaitoLathrilV1) && (state.objects.iter().any(|(_, o)| {
         matches!(o.zone, Zone::Battlefield | Zone::Stack)
             && o.v4.face_down_v1.is_none()
             && crate::event::is_lathril_v1(o.card_def)
@@ -381,6 +384,7 @@ pub(crate) fn validate_state_for_consumer(
         matches!(
             entry,
             crate::event::CommittedEvent::LathrilCombatDamageV1 { .. }
+                | crate::event::CommittedEvent::LathrilReceiptV1 { .. }
         )
     }) || state.stack.iter().any(|row| {
         row.v4
@@ -393,7 +397,7 @@ pub(crate) fn validate_state_for_consumer(
         p.ctx
             .ability_source_contract
             .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
-    }) {
+    })) {
         return Err(
             "Lathril native combat/cost history requires a distinct complete consumer".into(),
         );

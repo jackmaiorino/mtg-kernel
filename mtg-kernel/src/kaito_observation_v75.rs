@@ -95,6 +95,8 @@ pub struct KaitoObservationV75 {
     pub progenitus: Option<crate::progenitus_public_v1::FactsV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aberration: Option<crate::aberration_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lathril: Option<crate::lathril_public_v1::FactsV1>,
     pub complete_ordinary_observation: bool,
     pub owning_consumer_admitted: bool,
     pub projection_sha256: String,
@@ -143,6 +145,8 @@ pub fn producer_sha256() -> String {
             include_str!("limited_mixed_consumer_v1.rs"),
             include_str!("leyline_axe_public_v1.rs"),
             include_str!("leyline_axe_v1.rs"),
+            include_str!("lathril_public_v1.rs"),
+            include_str!("lathril_receipts_v1.rs"),
             include_str!("drakuseth_consumer_v1.rs"),
             include_str!("drakuseth_consumer_v1/damage.rs"),
             include_str!("human_bo3_v1/drakuseth_consumer_v1.rs"),
@@ -276,6 +280,9 @@ pub(crate) fn validate_state_scoped(
     if appendix == LimitedAppendixV1::LeylineAxe {
         crate::leyline_axe_v1::validate(state)?;
     }
+    if appendix == LimitedAppendixV1::Lathril {
+        crate::lathril_public_v1::validate_native_receipts(state)?;
+    }
     crate::ravenous_observation_v51::validate_state_complete_recipient_scope(
         state,
         crate::planeswalker_v1::RecipientScopeV1::KaitoV75,
@@ -321,6 +328,7 @@ fn require_supported(
         LimitedAppendixV1::LeylineAxe => Some(crate::leyline_axe_public_v1::selected_id()?),
         LimitedAppendixV1::Progenitus => Some(crate::progenitus_public_v1::selected_id()?),
         LimitedAppendixV1::Aberration => Some(crate::aberration_public_v1::selected_id()?),
+        LimitedAppendixV1::Lathril => Some(crate::lathril_public_v1::selected_id()?),
     };
     let unsupported = |id: u16| {
         id >= 460
@@ -415,7 +423,8 @@ fn require_supported(
             | E::LathrilCombatResolvedV1 { .. }
             | E::LathrilCombatCounteredV1 { .. }
             | E::LathrilCombatObservedV1 { .. }
-            | E::CuratorEnteredV1 { .. }
+            | E::LathrilReceiptV1 { .. } => appendix != LimitedAppendixV1::Lathril,
+            E::CuratorEnteredV1 { .. }
             | E::CuratorCollectedV1 { .. }
             | E::CuratorPublishedV1 { .. }
             | E::CuratorFinishedV1 { .. }
@@ -721,6 +730,7 @@ pub(crate) fn observe_parts_v75(
             LimitedAppendixV1::LeylineAxe => crate::leyline_axe_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Progenitus => crate::progenitus_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Aberration => crate::aberration_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Lathril => crate::lathril_consumer_v1::OBSERVATION_SCHEMA,
         }
         .into(),
         producer_sha256: producer_sha256(),
@@ -863,6 +873,10 @@ pub(crate) fn observe_parts_v75(
             .then(|| crate::aberration_public_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
+        lathril: (appendix == LimitedAppendixV1::Lathril)
+            .then(|| crate::lathril_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
         complete_ordinary_observation: true,
         owning_consumer_admitted: false,
         projection_sha256: String::new(),
@@ -898,21 +912,9 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
         &value.leyline_axe,
         &value.progenitus,
         &value.aberration,
+        &value.lathril,
     ) {
-        (
-            Some(artist),
-            Some(niv),
-            Some(chosen),
-            Some(drakuseth),
-            Some(embercleave),
-            Some(zimone),
-            Some(omniscience),
-            Some(tutelage),
-            None,
-            None,
-            None,
-            None,
-        ) if value.schema == crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA => {
+        (Some(artist), Some(niv), Some(chosen), Some(drakuseth), Some(embercleave), Some(zimone), Some(omniscience), Some(tutelage), None, None, None, None, None) if value.schema == crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA => {
             crate::artist_consumer_v1::validate_facts(artist, actor).map_err(RlContractError)?;
             crate::niv_consumer_v1::validate_facts(niv, actor).map_err(RlContractError)?;
             crate::chosen_type_consumer_v1::validate_facts(chosen, actor)
@@ -928,58 +930,62 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
                 .map_err(RlContractError)?;
             crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA
         }
-        (Some(artist), None, None, None, None, None, None, None, None, None, None, None) => {
+        (Some(artist), None, None, None, None, None, None, None, None, None, None, None, None) => {
             crate::artist_consumer_v1::validate_facts(artist, actor).map_err(RlContractError)?;
             crate::artist_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, Some(niv), None, None, None, None, None, None, None, None, None, None) => {
+        (None, Some(niv), None, None, None, None, None, None, None, None, None, None, None) => {
             crate::niv_consumer_v1::validate_facts(niv, actor).map_err(RlContractError)?;
             crate::niv_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, Some(chosen_type), None, None, None, None, None, None, None, None, None) => {
+        (None, None, Some(chosen_type), None, None, None, None, None, None, None, None, None, None) => {
             crate::chosen_type_consumer_v1::validate_facts(chosen_type, actor)
                 .map_err(RlContractError)?;
             crate::chosen_type_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, Some(facts), None, None, None, None, None, None, None, None) => {
+        (None, None, None, Some(facts), None, None, None, None, None, None, None, None, None) => {
             crate::drakuseth_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::drakuseth_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, Some(facts), None, None, None, None, None, None, None) => {
+        (None, None, None, None, Some(facts), None, None, None, None, None, None, None, None) => {
             crate::embercleave_consumer_v1::validate_facts(facts, actor)
                 .map_err(RlContractError)?;
             crate::embercleave_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, Some(facts), None, None, None, None, None, None) => {
+        (None, None, None, None, None, Some(facts), None, None, None, None, None, None, None) => {
             crate::zimone_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::zimone_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, Some(facts), None, None, None, None, None) => {
+        (None, None, None, None, None, None, Some(facts), None, None, None, None, None, None) => {
             crate::omniscience_consumer_v1::validate_facts(facts, actor)
                 .map_err(RlContractError)?;
             crate::omniscience_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, Some(facts), None, None, None, None) => {
+        (None, None, None, None, None, None, None, Some(facts), None, None, None, None, None) => {
             crate::tutelage_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::tutelage_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, Some(facts), None, None, None) => {
+        (None, None, None, None, None, None, None, None, Some(facts), None, None, None, None) => {
             crate::moon_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::moon_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, None, Some(facts), None, None) => {
+        (None, None, None, None, None, None, None, None, None, Some(facts), None, None, None) => {
             crate::leyline_axe_consumer_v1::validate_facts(facts, actor)
                 .map_err(RlContractError)?;
             crate::leyline_axe_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, None, None, None, None) => SCHEMA,
-        (None, None, None, None, None, None, None, None, None, None, Some(facts), None) => {
+        (None, None, None, None, None, None, None, None, None, None, None, None, None) => SCHEMA,
+        (None, None, None, None, None, None, None, None, None, None, Some(facts), None, None) => {
             crate::progenitus_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::progenitus_consumer_v1::OBSERVATION_SCHEMA
         }
-        (None, None, None, None, None, None, None, None, None, None, None, Some(facts)) => {
+        (None, None, None, None, None, None, None, None, None, None, None, Some(facts), None) => {
             crate::aberration_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
             crate::aberration_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (None, None, None, None, None, None, None, None, None, None, None, None, Some(facts)) => {
+            crate::lathril_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::lathril_consumer_v1::OBSERVATION_SCHEMA
         }
         _ => return Err(RlContractError("mixed appendix profiles".into())),
     };

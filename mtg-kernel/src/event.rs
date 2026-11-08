@@ -325,6 +325,8 @@ fn is_false(value: &bool) -> bool {
 pub struct LifeLossProposed {
     pub player: PlayerId,
     pub amount: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) lathril_owner: Option<crate::lathril_receipts_v1::OperationOwnerV1>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -340,6 +342,8 @@ pub struct WideLifeProposedV59 {
 pub struct LifeGainProposed {
     pub player: PlayerId,
     pub amount: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) lathril_owner: Option<crate::lathril_receipts_v1::OperationOwnerV1>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -352,6 +356,8 @@ pub struct DrawProposed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TapProposed {
     pub object: ObjectId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) lathril_owner: Option<crate::lathril_receipts_v1::OperationOwnerV1>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -372,6 +378,8 @@ pub struct CreateTokenProposed {
     pub entry_tapped: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initialization_v48: Option<crate::doubling_season_v48::TokenEntryV48>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) lathril_owner: Option<crate::lathril_receipts_v1::OperationOwnerV1>,
     pub touched_by: Vec<ReplacementId>,
 }
 fn token_entry_untapped_v48(value: &bool) -> bool {
@@ -568,6 +576,7 @@ impl ProposedEvent {
         ProposedEvent::LifeLoss(LifeLossProposed {
             player,
             amount,
+            lathril_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -594,6 +603,7 @@ impl ProposedEvent {
         ProposedEvent::LifeGain(LifeGainProposed {
             player,
             amount,
+            lathril_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -606,6 +616,7 @@ impl ProposedEvent {
     pub fn tap(object: ObjectId) -> ProposedEvent {
         ProposedEvent::Tap(TapProposed {
             object,
+            lathril_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -623,6 +634,7 @@ impl ProposedEvent {
             entry_face_index: None,
             entry_tapped: false,
             initialization_v48: None,
+            lathril_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -633,6 +645,7 @@ impl ProposedEvent {
             entry_face_index: Some(1),
             entry_tapped: false,
             initialization_v48: None,
+            lathril_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -2082,6 +2095,9 @@ pub enum CommittedEvent {
     NivMizzetVisionaryDrawEndedV1 {
         stack_item_id: StackItemId,
         outcome: crate::engine::niv_mizzet_resolution_v1::EndV1,
+    },
+    LathrilReceiptV1 {
+        journal: Box<crate::lathril_receipts_v1::JournalV1>,
     },
 }
 
@@ -4480,6 +4496,7 @@ fn commit_with_entry_batch_and_source_color(
         }
         _ => Vec::new(),
     };
+    let lathril_operation = crate::lathril_receipts_v1::capture_operation(state, &event);
     let Some(MaterializedEventV1 {
         committed,
         alesha_power_departure,
@@ -4604,6 +4621,15 @@ fn commit_with_entry_batch_and_source_color(
             .record_visibility_v2(entry_history_index, *object, mask);
     }
     state.engine.event_history.push(committed);
+    if let Some(operation) = lathril_operation {
+        if operation.record(state, entry_history_index).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    }
     record_copied_token_entry_v1(state, entry_history_index);
     crate::effect::curator_v1::record_entry(state, entry_history_index);
     if !tutelage_observers.is_empty()
@@ -10365,6 +10391,22 @@ pub(crate) fn validate_lathril_trigger_v1(
     state: &GameState,
     item: &crate::state::StackItem,
 ) -> Result<u64, String> {
+    let capture = validate_historical_lathril_trigger_v1(state, item)?;
+    if state.engine.event_history.iter().any(|entry| {
+        matches!(entry,
+            CommittedEvent::LathrilCombatResolvedV1 { capture_history_index }
+                | CommittedEvent::LathrilCombatCounteredV1 { capture_history_index }
+            if *capture_history_index == capture)
+    }) {
+        return Err("Lathril trigger already consumed".into());
+    }
+    Ok(capture)
+}
+
+pub(crate) fn validate_historical_lathril_trigger_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<u64, String> {
     let Some(crate::effect::EffectOp::LathrilCombatTokensV1 {
         capture_history_index,
     }) = item.inline_effect.as_ref()
@@ -10405,14 +10447,8 @@ pub(crate) fn validate_lathril_trigger_v1(
             })
             .count()
             != 1
-        || state.engine.event_history.iter().any(|entry| {
-            matches!(entry,
-            CommittedEvent::LathrilCombatResolvedV1 { capture_history_index: other }
-                | CommittedEvent::LathrilCombatCounteredV1 { capture_history_index: other }
-            if other == capture_history_index)
-        })
     {
-        return Err("Lathril trigger source/controller/recipe changed or consumed".into());
+        return Err("Lathril trigger source/controller/recipe changed".into());
     }
     Ok(*capture_history_index)
 }

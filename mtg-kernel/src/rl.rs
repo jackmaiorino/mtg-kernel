@@ -9880,6 +9880,28 @@ fn paid_cost_card_refs(
         .collect()
 }
 
+fn stack_paid_cost_card_refs(
+    state: &GameState,
+    item: &StackItem,
+    acting_player: PlayerId,
+) -> Result<Vec<CardStableRefV1>> {
+    if let Some(printings) = crate::lathril_receipts_v1::payment_printings(state, item)
+        .map_err(RlContractError)?
+    {
+        return Ok(item.v4.paid_cost_refs.iter().zip(printings)
+            .filter(|(paid, _)| paid.visible_to(acting_player))
+            .map(|(paid, &printing)| CardStableRefV1 {
+                arena_id: paid.object.0,
+                card_db_id: printing,
+                owner: paid.owner.into(),
+                controller: paid.controller.into(),
+                zone: paid.zone,
+                zone_change_count: paid.zone_change_count,
+            }).collect());
+    }
+    Ok(paid_cost_card_refs(state, &item.v4.paid_cost_refs, acting_player))
+}
+
 pub(crate) fn stack_item_target_ref_from_contract(
     state: &GameState,
     contract: crate::state::StackTargetContractV4,
@@ -12719,9 +12741,12 @@ fn pending_activation_semantic_v2(
 ) -> Result<PendingActivationSemanticV2> {
     engine::validate_pending_activation(state, p)
         .map_err(|error| RlContractError(format!("invalid pending activation: {error}")))?;
+    let hide_object_cost = acting_player != p.controller
+        && crate::lathril_receipts_v1::pending_selected(state, p);
     let object_cost_chosen = p
         .object_cost_chosen
         .iter()
+        .filter(|_| !hide_object_cost)
         .map(|binding| binding.object)
         .collect::<Vec<_>>();
     Ok(PendingActivationSemanticV2 {
@@ -13301,7 +13326,7 @@ pub(crate) fn stack_item_public_v2_from_frozen(
         cast_method: item.v4.cast_method,
         face_index: item.v4.face_index,
         x_value: item.v4.x_value,
-        paid_cost_refs: paid_cost_card_refs(state, &item.v4.paid_cost_refs, acting_player),
+        paid_cost_refs: stack_paid_cost_card_refs(state, item, acting_player)?,
         granted_ability: public_granted_ability(item.v4.cauldron_grant),
         counter_transfer: public_counter_transfer(
             state,
@@ -13404,7 +13429,7 @@ fn stack_item_public_conqueror_v49_fake_v50(
         cast_method: item.v4.cast_method,
         face_index: item.v4.face_index,
         x_value: item.v4.x_value,
-        paid_cost_refs: paid_cost_card_refs(state, &item.v4.paid_cost_refs, acting_player),
+        paid_cost_refs: stack_paid_cost_card_refs(state, item, acting_player)?,
         granted_ability: public_granted_ability(item.v4.cauldron_grant),
         counter_transfer: public_counter_transfer(
             state,

@@ -7356,10 +7356,13 @@ fn commit_cost_components_from_plan_v1(
     object_cost_chosen: &[ObjectId],
     mana_plan: Option<&mana::PaymentPlan>,
 ) -> Option<u16> {
+    let lathril_payment = crate::lathril_receipts_v1::payment_owner(state, source, components);
     let mut mana_spent = 0;
     for c in components {
         match c {
-            CostComponent::Tap => event::propose_and_commit(state, ProposedEvent::tap(source)),
+            CostComponent::Tap => event::propose_and_commit(
+                state, crate::lathril_receipts_v1::owned_proposal(ProposedEvent::tap(source), lathril_payment),
+            ),
             CostComponent::SacrificeSelf => commit_sacrifice(state, &[source]),
             CostComponent::ExileSelf => {
                 event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Exile))
@@ -7392,7 +7395,9 @@ fn commit_cost_components_from_plan_v1(
             CostComponent::TapControlled { count, .. } => {
                 debug_assert_eq!(object_cost_chosen.len(), usize::from(*count));
                 for &object in object_cost_chosen {
-                    event::propose_and_commit(state, ProposedEvent::tap(object));
+                    event::propose_and_commit(
+                        state, crate::lathril_receipts_v1::owned_proposal(ProposedEvent::tap(object), lathril_payment),
+                    );
                 }
             }
             CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
@@ -8165,6 +8170,21 @@ fn activation_controlled_cost_candidates(
             }
         })
         .collect()
+}
+
+pub(crate) fn lathril_payment_candidates_v1(
+    state: &GameState,
+    pending: &PendingActivation,
+) -> Vec<EffectObjectBinding> {
+    activation_controlled_cost_candidates(
+        None,
+        pending.controller,
+        crate::lathril_receipts_v1::payer_filter(),
+        true,
+        pending.source,
+        state,
+        &pending.object_cost_chosen,
+    )
 }
 
 /// The card type of a craft cost's material: an artifact, or a creature
@@ -18342,6 +18362,7 @@ pub(crate) fn validated_stack_item_target_spec(
     state: &GameState,
 ) -> Result<Option<TargetSpec>, String> {
     validate_spell_stack_source(state, item)?;
+    crate::lathril_receipts_v1::validate_live(state, item)?;
     if crate::event::lathril_item_selected_v1(state, item) {
         crate::event::validate_published_lathril_v1(state, item)?;
     }
@@ -19113,6 +19134,9 @@ pub(crate) fn counter_stack_item_by_id(
     if let Some(owner) = niv_counter {
         niv_mizzet_resolution_v1::counter(state, owner)?;
     }
+    crate::lathril_receipts_v1::record_ended(
+        state, &item, crate::lathril_receipts_v1::EndV1::Countered,
+    )?;
     tinybones_v72::countered(state, &item)?;
     if let Some(entry_history_index) = curator_counter {
         state
@@ -20591,6 +20615,11 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         return ResolutionProgress::Complete;
     }
     if let Some(effect) = item.inline_effect.clone() {
+        if crate::lathril_receipts_v1::record_drain_begin(state, &item).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
         let effect_history_start = state.engine.event_history.len();
         if item
             .v4
@@ -20651,6 +20680,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         if progress == ResolutionProgress::Complete {
             if crate::librarian_activation_v1::record_resolved(state, &item, effect_history_start)
                 .is_err()
+                || crate::lathril_receipts_v1::record_ended(
+                    state, &item, crate::lathril_receipts_v1::EndV1::Resolved,
+                ).is_err()
                 || crate::fixed_source_damage_v3::record_removed(
                     state,
                     fixed_removal_owner,
@@ -28897,6 +28929,7 @@ struct FrozenActivationSource {
     granted_by: Option<AbilitySourceContractV4>,
     fixed_departure: Option<u32>,
     fiend_input: Option<u32>,
+    lathril_input: Option<crate::lathril_receipts_v1::PaymentInputV1>,
     payment_history_start: usize,
     fishing_ability_index: u8,
     ajani_payment_owner: Option<crate::ajani_full_v42::lifecycle::PaymentOwner>,
@@ -28953,6 +28986,7 @@ fn freeze_activation_source(
         granted_by,
         fixed_departure: None,
         fiend_input: None,
+        lathril_input: crate::lathril_receipts_v1::freeze_payment(state, pending, source),
         payment_history_start: state.engine.event_history.len(),
         fishing_ability_index: pending.ability_index,
         ajani_payment_owner: None,
@@ -29134,6 +29168,13 @@ fn push_paid_activation(
         },
     });
     if effect::fiend_artisan_v1::record_paid(state, stack_item_id, frozen.fiend_input).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
+    if crate::lathril_receipts_v1::record_paid(state, frozen.lathril_input).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.source,

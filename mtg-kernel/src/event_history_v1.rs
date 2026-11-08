@@ -350,12 +350,12 @@ pub enum EventKindV1 {
     KaitoCunningV75,
     DrakusethDamageSourceV76,
     NivMizzetVisionaryDrawEndedV1,
+    LathrilReceiptV1,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 315;
-const _: () =
-    assert!(EventKindV1::NivMizzetVisionaryDrawEndedV1 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 316;
+const _: () = assert!(EventKindV1::LathrilReceiptV1 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -772,6 +772,7 @@ impl CommittedEvent {
             Self::NivMizzetVisionaryDrawEndedV1 { .. } => {
                 EventKindV1::NivMizzetVisionaryDrawEndedV1
             }
+            Self::LathrilReceiptV1 { .. } => EventKindV1::LathrilReceiptV1,
         }
     }
 }

@@ -61,7 +61,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     progenitus: Option<super::progenitus_consumer_v1::HumanFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    aberration: Option<super::aberration_consumer_v1::HumanFactsV1>
+    aberration: Option<super::aberration_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lathril: Option<super::lathril_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -107,7 +109,9 @@ record!(HumanKaitoCandidateV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     progenitus_action: Option<crate::progenitus_consumer_v1::ActionV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    aberration_action: Option<crate::aberration_consumer_v1::ActionV1>
+    aberration_action: Option<crate::aberration_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lathril_action: Option<crate::lathril_consumer_v1::ActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -329,6 +333,9 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
+    if let Some(label) = super::lathril_consumer_v1::label(obs.lathril.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
     if let Some(label) = super::leyline_axe_consumer_v1::label(obs.leyline_axe.as_ref(), a, h)? {
         return Ok(Some(label));
     }
@@ -802,9 +809,10 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::tutelage_consumer_v1::project(facts, &mut handles))
         .transpose()?;
-    let leyline_axe = obs
-        .leyline_axe
-        .as_ref()
+    let lathril = obs.lathril.as_ref()
+        .map(|facts| super::lathril_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let leyline_axe = obs.leyline_axe.as_ref()
         .map(|facts| super::leyline_axe_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
     let moon = obs
@@ -842,6 +850,7 @@ pub(super) fn project_with_handles(
                 leyline_axe_action: r.leyline_axe_action,
                 progenitus_action: r.progenitus_action,
                 aberration_action: r.aberration_action,
+                lathril_action: r.lathril_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -1110,6 +1119,8 @@ pub(super) fn project_with_handles(
                 "mtg-kernel-human-progenitus-decision/v1"
             } else if aberration.is_some() {
                 "mtg-kernel-human-aberration-decision/v1"
+            } else if lathril.is_some() {
+                "mtg-kernel-human-lathril-decision/v1"
             } else {
                 "mtg-kernel-human-kaito-decision/v75"
             }
@@ -1142,6 +1153,7 @@ pub(super) fn project_with_handles(
                 leyline_axe,
                 progenitus,
                 aberration,
+                lathril,
             },
             actions,
             action_meanings,
