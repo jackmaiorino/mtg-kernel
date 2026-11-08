@@ -4,18 +4,69 @@ use crate::{
     card_def::{card_id_by_name, CARD_DEFS},
     ids::PlayerId,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-type Fact = (PlayerId, u16);
 type Result<T> = std::result::Result<T, &'static str>;
 const MAX_SAFE: u64 = (1 << 53) - 1;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CountV3 {
+    arrivals: usize,
+    present: usize,
+}
+
+impl CountV3 {
+    fn minimum(&self) -> usize {
+        self.arrivals.max(self.present)
+    }
+}
+
+/// State at an operation boundary. A link is only usable in its own
+/// operation, so settled arrivals need counts but no tokens or copy IDs.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(crate) struct RevealKnowledgeV3([BTreeMap<u16, CountV3>; 2]);
+
+impl RevealKnowledgeV3 {
+    pub(crate) fn hand(&self, owner: PlayerId) -> impl Iterator<Item = (u16, usize)> + '_ {
+        self.0[owner.index()]
+            .iter()
+            .map(|(&name, count)| (name, count.minimum()))
+    }
+
+    pub(super) fn only_opponent(mut self, viewer: PlayerId) -> Self {
+        self.0[viewer.index()].clear();
+        self
+    }
+
+    pub(super) fn arrive(&mut self, owner: PlayerId, name: u16) {
+        self.0[owner.index()].entry(name).or_default().arrivals += 1;
+    }
+
+    pub(super) fn present(&mut self, owner: PlayerId, name: u16) {
+        let count = self.0[owner.index()].entry(name).or_default();
+        count.present = count.present.max(1);
+    }
+
+    pub(crate) fn depart(&mut self, owner: PlayerId, name: Option<u16>, count: usize) {
+        self.0[owner.index()].retain(|&printing, current| {
+            if name.is_none_or(|named| named == printing) {
+                *current = CountV3 {
+                    arrivals: 0,
+                    present: current.minimum().saturating_sub(count),
+                };
+            }
+            current.minimum() > 0
+        });
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct RevealReducerV3 {
     seen: BTreeMap<u64, Value>,
-    arrivals: BTreeMap<String, Fact>,
-    present: BTreeMap<Fact, usize>,
+    knowledge: RevealKnowledgeV3,
     next: u64,
 }
 
@@ -50,25 +101,14 @@ fn card(value: &Value) -> Result<u16> {
 }
 
 impl RevealReducerV3 {
-    fn bounds(&self) -> BTreeMap<Fact, usize> {
-        let mut names = BTreeMap::new();
-        for &fact in self.arrivals.values() {
-            *names.entry(fact).or_default() += 1;
-        }
-        for (&fact, &minimum) in &self.present {
-            let known = names.entry(fact).or_default();
-            *known = (*known).max(minimum);
-        }
-        names
-    }
-
     /// Conservative name minima in one seat's hand. Keys are exact public
     /// registry printings and carry no physical copy authority.
     pub fn hand(&self, owner: PlayerId) -> BTreeMap<u16, usize> {
-        self.bounds()
-            .into_iter()
-            .filter_map(|((seat, id), count)| (seat == owner && count > 0).then_some((id, count)))
-            .collect()
+        self.knowledge.hand(owner).collect()
+    }
+
+    pub(crate) fn opponent_knowledge(self, viewer: PlayerId) -> RevealKnowledgeV3 {
+        self.knowledge.only_opponent(viewer)
     }
 
     /// Validate and absorb one prefix or delta, atomically. Exact re-delivery
@@ -134,7 +174,7 @@ impl RevealReducerV3 {
                     };
                     let token = format!("arrival:{sequence}:{index}");
                     if let Some(id) = name {
-                        self.arrivals.insert(token.clone(), (seat, id));
+                        self.knowledge.arrive(seat, id);
                     } else {
                         unresolved.insert(token.clone());
                     }
@@ -145,8 +185,7 @@ impl RevealReducerV3 {
                     match event["meaning"].as_str() {
                         Some("present") => {
                             fields(event, &["kind", "owner_seat", "card_name", "meaning"])?;
-                            let minimum = self.present.entry((seat, name)).or_default();
-                            *minimum = (*minimum).max(1);
+                            self.knowledge.present(seat, name);
                         }
                         Some("moved") => {
                             fields(
@@ -160,9 +199,11 @@ impl RevealReducerV3 {
                             if arrival.0 != seat || arrival.1.is_some_and(|known| known != name) {
                                 return Err("arrival owner or name changed");
                             }
-                            arrival.1 = Some(name);
-                            self.arrivals.insert(token.into(), (seat, name));
-                            unresolved.remove(token);
+                            if arrival.1.is_none() {
+                                arrival.1 = Some(name);
+                                self.knowledge.arrive(seat, name);
+                                unresolved.remove(token);
+                            }
                         }
                         _ => return Err("unknown reveal meaning"),
                     }
@@ -179,13 +220,7 @@ impl RevealReducerV3 {
                     } else {
                         Some(card(&row["card_name"])?)
                     };
-                    let affected =
-                        |(owner, name): Fact| owner == seat && named.is_none_or(|id| id == name);
-                    let bounds = self.bounds();
-                    self.arrivals.retain(|_, &mut fact| !affected(fact));
-                    for (fact, minimum) in bounds.into_iter().filter(|&(fact, _)| affected(fact)) {
-                        self.present.insert(fact, minimum.saturating_sub(count));
-                    }
+                    self.knowledge.depart(seat, named, count);
                     eligible.retain(|_, (owner, name)| {
                         *owner != seat || matches!((named, *name), (Some(a), Some(b)) if a != b)
                     });

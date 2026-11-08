@@ -16,8 +16,11 @@ the public refill pool and fills the remaining slots through the existing
 canonical allocation. It refuses a bound beyond the hand size or available
 pool. A bound that may overlap an unresolved public pin also refuses until the
 allocator can represent that overlap. Existing ambiguous historical-reference
-refusals still apply. The imported reveal-v4 state uses name-level hand
-knowledge for subsequent simulated moves.
+refusals still apply. The digest binds a compact operation-boundary ledger
+that retains the separate arrival count and present minimum for each name.
+Simulated reveal and departure hooks apply the same max-overlap and survivor
+arithmetic as the transcript reducer. The sampler sees deterministic rows
+for the resulting minima inside each hypothetical world.
 
 The reveal-v4 schema and canonical occupants bind the new payload digest. The
 new branch has source tests that vary hidden composition and the physical copy

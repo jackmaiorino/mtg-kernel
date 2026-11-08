@@ -8,7 +8,9 @@
 use super::{InfosetV1, INFOSET_SCHEMA_V1};
 use crate::ids::PlayerId;
 use crate::rl_session::FastActorSessionV1;
+use crate::state::{GameState, Zone};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -29,6 +31,47 @@ pub struct PayloadV1 {
     /// live combat scan's record).
     pub surface: crate::policy_surface_v5::SurfaceContextV1,
     pub state: serde_json::Value,
+}
+
+pub(super) fn validate_reveal_knowledge_v4(state: &GameState, viewer: PlayerId) -> Result<(), String> {
+    let knowledge = state
+        .reveal_knowledge_v4
+        .as_ref()
+        .ok_or("missing reveal-v4 knowledge")?;
+    if state.hand_knowledge_by_name_v2 || state.hand_departures_by_name_v1 {
+        return Err("reveal-v4 payload carries a legacy hand mode".into());
+    }
+    for observer in [PlayerId::P0, PlayerId::P1] {
+        for owner in [PlayerId::P0, PlayerId::P1] {
+            let mut expected = knowledge[observer.index()].hand(owner).peekable();
+            let rows = state.known_hand_cards(observer, owner);
+            if observer != viewer || owner == viewer {
+                if expected.peek().is_some() || !rows.is_empty() {
+                    return Err("reveal-v4 payload carries out-of-view hand facts".into());
+                }
+                continue;
+            }
+            let mut names = BTreeMap::<u16, usize>::new();
+            let mut seen = BTreeSet::new();
+            for row in rows {
+                let live = state.objects.try_get(row.object).filter(|card| {
+                    card.owner == owner
+                        && card.zone == Zone::Hand
+                        && card.zone_change_count == row.zone_change_count
+                        && state.players[owner.index()].hand.contains(&row.object)
+                });
+                let card = live.ok_or("reveal-v4 payload carries a stale hand representative")?;
+                if !seen.insert(row.object) {
+                    return Err("reveal-v4 payload repeats a hand representative".into());
+                }
+                *names.entry(card.card_def).or_default() += 1;
+            }
+            if !expected.eq(names) {
+                return Err("reveal-v4 payload hand rows differ from its public minima".into());
+            }
+        }
+    }
+    Ok(())
 }
 
 impl PayloadV1 {
@@ -118,8 +161,10 @@ impl PayloadV1 {
         }
         let state: crate::state::GameState = serde_json::from_value(self.state.clone())
             .map_err(|e| format!("payload state: {e}"))?;
-        if self.schema == super::INFOSET_SCHEMA_REVEAL_V4 && !state.hand_knowledge_by_name_v2 {
-            return Err("reveal-v4 payload requires name-level hand knowledge".into());
+        if self.schema == super::INFOSET_SCHEMA_REVEAL_V4 {
+            validate_reveal_knowledge_v4(&state, PlayerId(self.viewer))?;
+        } else if state.reveal_knowledge_v4.is_some() {
+            return Err("legacy infoset carries reveal-v4 knowledge".into());
         }
         if state.objects.len() != self.handles.len() {
             return Err("payload handles do not cover the arena".into());

@@ -2,7 +2,7 @@
 use super::*;
 use crate::event::{propose_and_commit, ProposedEvent};
 use crate::ids::PlayerId;
-use crate::state::GameState;
+use crate::state::{GameState, Zone};
 
 fn input<'a>(
     state: &'a GameState,
@@ -57,7 +57,8 @@ fn reveal_v4_export_uses_public_name_bounds_and_ignores_native_hand_copies() {
         let names = a.state.known_hand_cards(viewer, owner);
         assert_eq!(names.len(), 1);
         assert_eq!(a.state.objects.get(names[0].object).card_def, swamp);
-        assert!(a.state.hand_knowledge_by_name_v2);
+        assert!(a.state.reveal_knowledge_v4.is_some());
+        super::payload::validate_reveal_knowledge_v4(&a.state, viewer).unwrap();
 
         let previous = export_v3(&input(&left, viewer, &decks)).unwrap();
         assert_eq!(previous.schema, INFOSET_SCHEMA_V3);
@@ -72,4 +73,74 @@ fn reveal_v4_export_uses_public_name_bounds_and_ignores_native_hand_copies() {
                 .bytes
         );
     }
+}
+
+#[test]
+fn reveal_v4_roundtrip_continuation_matches_the_public_reducer() {
+    use crate::reveal_meaning_v3::RevealReducerV3;
+    use std::collections::BTreeMap;
+
+    let id = super::fixtures::id;
+    let swamp = id("Swamp");
+    let forest = id("Forest");
+    let owner = PlayerId::P1;
+    let viewer = owner.opponent();
+    let decks = [vec![id("Island"); 4], vec![swamp, swamp, swamp, forest]];
+    let mut raw = GameState::new_from_libraries(&decks[0], &decks[1], crate::rl::card_name, 543);
+    raw.reveal_meaning_v3.enable();
+    for _ in 0..4 {
+        propose_and_commit(&mut raw, ProposedEvent::draw(owner));
+    }
+    for card in raw.players[owner.index()].hand[..2].to_vec() {
+        propose_and_commit(&mut raw, ProposedEvent::zone_change(card, Zone::Graveyard));
+        propose_and_commit(&mut raw, ProposedEvent::zone_change(card, Zone::Hand));
+    }
+
+    let exported = export_reveal_v4(&input(&raw, viewer, &decks)).unwrap();
+    let mut simulated: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&exported.state).unwrap()).unwrap();
+    super::payload::validate_reveal_knowledge_v4(&simulated, viewer).unwrap();
+
+    let compare = |raw: &GameState, simulated: &GameState, swamps| {
+        let mut reducer = RevealReducerV3::default();
+        reducer
+            .absorb(&raw.reveal_meaning_v3.transcript(viewer).unwrap())
+            .unwrap();
+        let mut simulated_rows = BTreeMap::<u16, usize>::new();
+        for row in simulated.known_hand_cards(viewer, owner) {
+            *simulated_rows
+                .entry(simulated.objects.get(row.object).card_def)
+                .or_default() += 1;
+        }
+        assert_eq!(simulated_rows, reducer.hand(owner));
+        assert_eq!(simulated_rows.get(&swamp).copied().unwrap_or(0), swamps);
+    };
+    compare(&raw, &simulated, 2);
+    for game in [&mut raw, &mut simulated] {
+        let shown: Vec<_> = game.players[owner.index()]
+            .hand
+            .iter()
+            .copied()
+            .filter(|&object| game.objects.get(object).card_def == swamp)
+            .collect();
+        assert_eq!(shown.len(), 3);
+        game.reveal_public_hand_group_v3(owner, shown.into_iter())
+            .unwrap();
+    }
+    compare(&raw, &simulated, 2);
+    for game in [&mut raw, &mut simulated] {
+        let hidden = game.players[owner.index()]
+            .hand
+            .iter()
+            .copied()
+            .find(|&object| game.objects.get(object).card_def == forest)
+            .unwrap();
+        propose_and_commit(game, ProposedEvent::private_bottom_library_insert(hidden));
+    }
+    compare(&raw, &simulated, 1);
+    for game in [&mut raw, &mut simulated] {
+        let shown = game.players[owner.index()].hand[0];
+        propose_and_commit(game, ProposedEvent::zone_change(shown, Zone::Graveyard));
+    }
+    compare(&raw, &simulated, 0);
 }

@@ -5,6 +5,7 @@ use crate::state::Zone;
 use serde_json::{json, Value};
 
 mod reducer;
+pub(crate) use reducer::RevealKnowledgeV3;
 pub use reducer::RevealReducerV3;
 
 #[derive(Clone, Copy)]
@@ -13,6 +14,19 @@ pub(crate) enum RevealV3 {
     PublicTransfer(Zone),
     SearchReveal,
     Omit,
+}
+
+impl RevealV3 {
+    pub(crate) fn apply(self, knowledge: &mut RevealKnowledgeV3, owner: PlayerId, name: u16) {
+        match self {
+            Self::Present => knowledge.present(owner, name),
+            Self::SearchReveal
+            | Self::PublicTransfer(
+                Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile | Zone::Command,
+            ) => knowledge.arrive(owner, name),
+            Self::Omit | Self::PublicTransfer(Zone::Hand | Zone::Library) => {}
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -48,9 +62,7 @@ impl RevealJournalV3 {
     }
 
     pub(crate) fn set_concealed_exile(&mut self, object: Option<ObjectId>) {
-        if self.viewers.is_some() {
-            self.concealed_exile = object;
-        }
+        self.concealed_exile = object;
     }
 
     pub(crate) fn departure(
@@ -60,17 +72,17 @@ impl RevealJournalV3 {
         name: &str,
         destination: Zone,
         named: bool,
-    ) {
+    ) -> bool {
         let named = named && !(destination == Zone::Exile && self.concealed_exile == Some(object));
-        let Some(viewers) = &mut self.viewers else {
-            return;
-        };
-        for (viewer, operations) in viewers.iter_mut().enumerate() {
-            operations.push(json!({"sequence": operations.len(), "events": [{
-                "kind": "hand_departure", "owner_seat": seat(owner), "count": 1,
-                "card_name": (named || viewer == owner.index()).then_some(name),
-            }]}));
+        if let Some(viewers) = &mut self.viewers {
+            for (viewer, operations) in viewers.iter_mut().enumerate() {
+                operations.push(json!({"sequence": operations.len(), "events": [{
+                    "kind": "hand_departure", "owner_seat": seat(owner), "count": 1,
+                    "card_name": (named || viewer == owner.index()).then_some(name),
+                }]}));
+            }
         }
+        named
     }
 
     pub(crate) fn shuffle(&mut self, owner: PlayerId) {
@@ -82,16 +94,6 @@ impl RevealJournalV3 {
                 "kind": "library_shuffled", "owner_seat": seat(owner),
             }]}));
         }
-    }
-
-    pub(crate) fn reveal(
-        &mut self,
-        viewer: PlayerId,
-        owner: PlayerId,
-        name: &str,
-        meaning: RevealV3,
-    ) {
-        self.reveal_group(viewer, owner, [name], meaning);
     }
 
     pub(crate) fn reveal_group<'a>(

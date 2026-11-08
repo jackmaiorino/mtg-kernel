@@ -817,24 +817,12 @@ pub(crate) fn export_reveal_v4_from_journal(
     reducer
         .absorb(&transcript)
         .map_err(|detail| refuse(RefusalCodeV1::R8, detail))?;
-    let opponent = input.viewer.opponent();
-    let hand_size = input.state.players[opponent.index()].hand.len();
-    let mut bound_names = Vec::new();
-    for (def, count) in reducer.hand(opponent) {
-        if count > hand_size - bound_names.len() {
-            return Err(refuse(
-                RefusalCodeV1::R8,
-                "reveal minima exceed the public hand size",
-            ));
-        }
-        bound_names.extend(std::iter::repeat_n(def, count));
-    }
     export_versioned(
         input,
         ExportOptionsV1::default(),
         true,
         true,
-        Some(&bound_names),
+        Some(reducer.opponent_knowledge(input.viewer)),
     )
 }
 
@@ -869,7 +857,7 @@ fn export_versioned(
     options: ExportOptionsV1,
     visibility_v2: bool,
     recovery_v3: bool,
-    reveal_names_v4: Option<&[u16]>,
+    reveal_knowledge_v4: Option<crate::reveal_meaning_v3::RevealKnowledgeV3>,
 ) -> Result<InfosetV1, ExportErrorV1> {
     let state = input.state;
     let v = input.viewer;
@@ -1235,8 +1223,20 @@ fn export_versioned(
     // soundness check and the validity mutants, which still claim them.
     let hand_mutant =
         is(MutantV1::L8) || is(MutantV1::L11) || is(MutantV1::L12) || is(MutantV1::L14);
-    let mut bound_names: Vec<u16> = reveal_names_v4.unwrap_or_default().to_vec();
-    if reveal_names_v4.is_some() && pinned_defs(opp).iter().any(|id| bound_names.contains(id)) {
+    let mut bound_names = Vec::new();
+    if let Some(knowledge) = &reveal_knowledge_v4 {
+        let hand_size = state.players[opp.index()].hand.len();
+        for (def, count) in knowledge.hand(opp) {
+            if count > hand_size - bound_names.len() {
+                return Err(refuse(
+                    RefusalCodeV1::R8,
+                    "reveal minima exceed the public hand size",
+                ));
+            }
+            bound_names.extend(std::iter::repeat_n(def, count));
+        }
+    }
+    if reveal_knowledge_v4.is_some() && pinned_defs(opp).iter().any(|id| bound_names.contains(id)) {
         return Err(refuse(
             RefusalCodeV1::R7,
             "reveal-name bound overlaps an unresolved physical pin",
@@ -1254,7 +1254,7 @@ fn export_versioned(
     }
     bound_names.sort_by_key(|d| name_key(*d));
     subtract(&mut pool5, bound_names.iter().copied()).map_err(|d| {
-        if reveal_names_v4.is_some() {
+        if reveal_knowledge_v4.is_some() {
             return refuse(
                 RefusalCodeV1::R8,
                 "reveal minima exceed the public refill pool",
@@ -2008,8 +2008,15 @@ fn export_versioned(
     let mut out: GameState = serde_json::from_value(tagged)
         .map_err(|e| refuse(RefusalCodeV1::R2, format!("the export does not load: {e}")))?;
     out.resample_future_randomness_for_search_v3(INFOSET_RNG_SEED_V1);
-    if reveal_names_v4.is_some() {
-        out.enable_hand_knowledge_by_name_v2();
+    let has_reveal_knowledge = reveal_knowledge_v4.is_some();
+    out.reveal_knowledge_v4 = reveal_knowledge_v4.map(|knowledge| {
+        let mut viewers = [Default::default(), Default::default()];
+        viewers[v.index()] = knowledge;
+        viewers
+    });
+    if has_reveal_knowledge {
+        out.hand_departures_by_name_v1 = false;
+        out.hand_knowledge_by_name_v2 = false;
     }
     crate::effect::refresh_binding_fingerprints_v1(&mut out);
     static_assertions(&out, &handles, v)?;
@@ -2018,7 +2025,7 @@ fn export_versioned(
     if !hand.reveal.is_empty() || reveal_used.get() {
         return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_REVEAL_DETAIL));
     }
-    let schema = if reveal_names_v4.is_some() {
+    let schema = if has_reveal_knowledge {
         super::INFOSET_SCHEMA_REVEAL_V4
     } else if recovery_v3 {
         super::INFOSET_SCHEMA_V3
