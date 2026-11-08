@@ -125,3 +125,32 @@ is not advertised as the all286 closed-list fair-search contract. #552 checkpoin
 reveal-active typed training requires a separate prospective projection of the
 selected V3 reducer's sorted public name/count minima; sorting raw V2 rows alone
 does not qualify it. The sealed Kaito capture/apply interface remains the boundary.
+
+## V68 through V75 declared-deck source
+
+`fdn-v68-v75-consumer/v1` admits exactly the eight later Partial printings in
+the table, with ordinary Full cards as the rest of each declared mainboard.
+Each reset checks the FDN catalog hash and the eight native printed meaning
+comparators. Liliana and Kaito also authenticate their generated Zombie and
+Ninja definitions. The gate excludes every token and every other Partial
+printing, including the three Return printings.
+
+The typed owner starts before the first menu. Fixed-seat Human and the
+`kernel_limited_v68_v75_env_v1` process use the same V75 owner, with a required
+profile discriminant on JSONL requests and the V16 actor payload. The numeric
+entry point exposes the sealed learner input and existing current-slot sampler.
+A separate numeric reset initializes the V3 public name/count reducer before
+the first menu and uses the inherited refusal for the ordinary sampler.
+The Return and new profiles share private JSONL dispatch and initialization
+after their separate gates. The existing Return grammar and deck gate are
+preserved. Its rebuilt producer hash reflects the new shared sources.
+
+Focused source tests drive untouched 40-card resets through genuine payment
+and spell departure or entry for all eight printings in both seats. The paid
+Wave and Time Stop fixtures also compare independent hidden worlds at the
+public subset and cleanup menus, exercise authenticated restore, and verify
+the original action map across the numeric, Human and wire routes. Native
+qualification requires these tests, the Return regression filter and the
+inherited V68 through V75 paid mechanics filters on the delivered head. This
+source depends on the #552 qualification branch. Catalog status and
+playing-strength evidence remain at the earlier checkpoint.

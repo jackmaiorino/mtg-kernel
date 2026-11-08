@@ -1,4 +1,4 @@
-//! Exact three-printing consumer factory. Existing Full-only resets stay intact.
+//! Explicit consumer factories over the same preflighted V75 initialization.
 use super::*;
 
 impl FastActorSessionV1 {
@@ -20,6 +20,22 @@ impl FastActorSessionV1 {
     ) -> Result<Self, RlSessionError> {
         crate::limited_return_consumer_v1::preflight(config)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        Self::initialize_limited_consumer_v1(config, reveal_facts)
+    }
+
+    pub(crate) fn reset_limited_v68_v75_v1(
+        config: &crate::limited_v68_v75_consumer_v1::ResetV1,
+        reveal_facts: bool,
+    ) -> Result<Self, RlSessionError> {
+        crate::limited_v68_v75_consumer_v1::preflight(config)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        Self::initialize_limited_consumer_v1(config, reveal_facts)
+    }
+
+    fn initialize_limited_consumer_v1(
+        config: &crate::limited_consumer_wire_v1::ResetV1,
+        reveal_facts: bool,
+    ) -> Result<Self, RlSessionError> {
         let mut state = crate::rl::build_preflighted_deck_pair_environment_v2(
             config.env_seed,
             &config.mainboards[0],

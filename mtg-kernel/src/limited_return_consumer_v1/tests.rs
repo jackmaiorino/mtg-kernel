@@ -6,10 +6,10 @@ use crate::{
     graveyard_return_public_v61::tests as native,
     human_bo3_v1::{project_limited_kaito_v16, HumanActionRequestV1, HumanKaitoProjectorV75},
     ids::{ObjectId, PlayerId},
-    limited_kaito_session_v16::{LimitedKaitoBodyV16, LimitedKaitoStateV16},
+    limited_kaito_session_v16::{LimitedKaitoBodyV16, LimitedKaitoReplyV16, LimitedKaitoStateV16},
     policy_observation_v6::tests::put,
     rl::{ActionSemanticV1 as A, TargetRefV1},
-    rl_session::FastActorResponseV1,
+    rl_session::{FastActorResponseV1, KaitoSessionV75},
     state::{GameState, Zone},
 };
 
@@ -216,9 +216,8 @@ impl Pair {
         let raw = make();
         let human = HumanKaitoSessionV75::from_session(make(), actor.into()).unwrap();
         let mut wire = JsonlServerV1::new();
-        wire.inner
-            .install_profile_core(KaitoSessionV75::from_session(make()).unwrap())
-            .unwrap();
+        wire.0
+            .install_fixture_core(KaitoSessionV75::from_session(make()).unwrap());
         Self {
             numeric,
             raw,
