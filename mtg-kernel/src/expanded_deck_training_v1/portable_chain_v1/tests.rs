@@ -34,6 +34,16 @@ fn fixture(root: &Path, attempt: &str, changed_action: bool, changed_moment: boo
     saved.feature_contract_digest = features.feature_contract_digest.into();
     saved.feature_encoding_digest = features.feature_encoding_digest.into();
     let mut snapshot = state.snapshot_v1().unwrap();
+    let embedding = snapshot
+        .first_moments
+        .iter()
+        .position(|parameter| parameter.name == "card_embedding.weight")
+        .unwrap();
+    // Row zero is frozen padding, including its optimizer moments. Exercise
+    // both Adam buffers at the first coordinate of a trainable embedding row.
+    let moment_index = snapshot.first_moments[embedding].shape[1];
+    snapshot.first_moments[embedding].values[moment_index] = 0.0625;
+    snapshot.second_moments[embedding].values[moment_index] = 0.03125;
     saved.scorer_bias_anchor_bits = snapshot.scorer_bias_anchor_bits;
     saved.parameters = snapshot
         .parameters
@@ -70,9 +80,9 @@ fn fixture(root: &Path, attempt: &str, changed_action: bool, changed_moment: boo
     saved.trajectories = vec![first_episode.clone()];
     saved.adam_step = 1;
     snapshot.adam_step = 1;
-    let original_moment = snapshot.first_moments[0].values[0];
+    let original_moment = snapshot.first_moments[embedding].values[moment_index];
     if changed_moment {
-        snapshot.first_moments[0].values[0] = 0.125;
+        snapshot.first_moments[embedding].values[moment_index] = 0.125;
     }
     saved.state_sha256 = hex(&snapshot.state_sha256_v1().unwrap());
     saved.first_moments = snapshot
@@ -101,7 +111,7 @@ fn fixture(root: &Path, attempt: &str, changed_action: bool, changed_moment: boo
     saved.trajectories = vec![publish_json_bytes_v1(&run, "second-episode.json", &sealed).unwrap()];
     saved.adam_step = 2;
     snapshot.adam_step = 2;
-    snapshot.first_moments[0].values[0] = original_moment;
+    snapshot.first_moments[embedding].values[moment_index] = original_moment;
     saved.state_sha256 = hex(&snapshot.state_sha256_v1().unwrap());
     saved.first_moments = snapshot
         .first_moments
