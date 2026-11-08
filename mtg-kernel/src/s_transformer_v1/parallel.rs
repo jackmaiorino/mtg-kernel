@@ -115,12 +115,12 @@ impl SGradientSinkV1<'_> {
                     rstd,
                     gain,
                     dy,
-                    dx,
-                    scratch,
                     |i, g, b| {
                         dgain[i] += g;
                         dbias[i] += b;
                     },
+                    dx,
+                    scratch,
                 );
             }
             Self::Record(terms) => {
@@ -133,11 +133,11 @@ impl SGradientSinkV1<'_> {
                     rstd,
                     gain,
                     dy,
-                    dx,
-                    scratch,
                     |i, g, _| {
                         terms.data[gain_start + i] = g;
                     },
+                    dx,
+                    scratch,
                 );
                 terms
                     .additions
