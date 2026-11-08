@@ -1192,6 +1192,23 @@ impl WalkV1<'_> {
                 owner,
                 object,
             } => {
+                // The historical native move-to-hand helper emits a reveal
+                // even from concealed exile. Its event-anchored note is not
+                // evidence of a public identity in v2. A genuinely subsequent
+                // reveal has a later history_len and is still read normally.
+                if self.visibility_v2
+                    && matches!(self.state.engine.event_history.get(note.history_len),
+                        Some(CommittedEvent::ZoneChange { object: moved, to: Zone::Hand, .. })
+                        if moved == object)
+                    && self
+                        .state
+                        .observation_journal
+                        .visibility_v2(note.history_len, *object)
+                        .is_some_and(|mask| mask & (1 << viewer.index()) == 0)
+                {
+                    self.settle(&[]);
+                    return;
+                }
                 if *observer != viewer {
                     self.settle(&[]);
                     return;

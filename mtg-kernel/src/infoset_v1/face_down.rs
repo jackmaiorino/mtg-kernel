@@ -34,7 +34,20 @@ fn input<'a>(st: &'a GameState, lists: &'a [Vec<u16>; 2]) -> ExportInputV1<'a> {
 // is separately exercised by the actual foretell and cast tests below.
 fn hidden_move(st: &mut GameState, id: ObjectId, to: Zone, disguised: bool) {
     let start = st.engine.event_history.len();
-    propose_and_commit(st, ProposedEvent::zone_change(id, to));
+    if to == Zone::Stack {
+        // Like casting, update the hand/stack transition before SpellCast.
+        // Stack entry is not an effect-leaf ZoneChange operation.
+        st.players[0].hand.retain(|&card| card != id);
+        let turn = st.turn_key_v1();
+        let object = st.objects.get_mut(id);
+        object.zone = Zone::Stack;
+        object.zone_change_count += 1;
+        object
+            .v4
+            .reset_for_zone_change(object.card_def, Zone::Stack, turn);
+    } else {
+        propose_and_commit(st, ProposedEvent::zone_change(id, to));
+    }
     st.objects.get_mut(id).v4.face_down_v1 = Some(FaceDownV1 {
         disguised,
         lookers: 1,
@@ -44,7 +57,6 @@ fn hidden_move(st: &mut GameState, id: ObjectId, to: Zone, disguised: bool) {
     st.observation_journal.record_visibility_v2(start, id, 1);
     if to == Zone::Stack {
         // Casting itself has no ZoneChange in the production stream.
-        st.engine.event_history.truncate(start);
         crate::event::log_spell_cast(st, id, PlayerId::P0);
     }
     st.forget_hand_after_face_down_departure_v1(PlayerId::P0);
@@ -289,7 +301,8 @@ fn v2_schema_and_payload_digest_are_distinct_while_v1_state_is_unchanged() {
     )
     .unwrap();
     let lists = super::tests::decklists(&live);
-    let source = input(live.game_state(), &lists);
+    let mut source = input(live.game_state(), &lists);
+    source.viewer = PlayerId::P0;
     let old = export_v1(&source, ExportOptionsV1::default()).unwrap();
     let new = export_v2(&source).unwrap();
     assert_eq!(
@@ -306,12 +319,12 @@ fn v2_schema_and_payload_digest_are_distinct_while_v1_state_is_unchanged() {
             &old.handles.iter().map(HandleV1::label).collect::<Vec<_>>()
         )
     );
-    let payload = PayloadV1::new(&new, &live, PlayerId::P1, 0).unwrap();
+    let payload = PayloadV1::new(&new, &live, PlayerId::P0, 0).unwrap();
     assert_eq!(payload.schema, INFOSET_SCHEMA_V2);
     let decoded = PayloadV1::from_bytes(&payload.to_bytes()).unwrap();
     assert_eq!(
-        decoded.import().unwrap().game_state().state_hash(),
-        new.state.state_hash()
+        serde_json::to_value(decoded.import().unwrap().game_state()).unwrap(),
+        serde_json::to_value(&new.state).unwrap()
     );
     let mut relabelled = payload;
     relabelled.schema = INFOSET_SCHEMA_V1.into();
