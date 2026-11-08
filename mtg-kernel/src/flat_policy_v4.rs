@@ -432,6 +432,65 @@ mod tests {
     }
 
     #[test]
+    fn issue567_monstrous_emergence_keeps_public_cost_without_identifying_a_copy() {
+        use crate::engine::{self, Action, Decision};
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::{Target, Zone};
+
+        let mut initial = ready_state();
+        initial.enable_hand_knowledge_by_name_v2();
+        let actor = PlayerId::P0;
+        let observer = actor.opponent();
+        let spell = put(&mut initial, actor, "Monstrous Emergence", Zone::Hand);
+        let known = put(&mut initial, actor, "Avenging Hunter", Zone::Hand);
+        let hidden = put(&mut initial, actor, "Avenging Hunter", Zone::Hand);
+        initial.reveal_hand_card(observer, actor, known).unwrap();
+        put(&mut initial, actor, "Sacred Cat", Zone::Battlefield);
+        let target = put(&mut initial, observer, "Tinder Wall", Zone::Battlefield);
+        put(&mut initial, observer, "Lightning Bolt", Zone::Hand);
+        initial.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 2;
+        initial.players[observer.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        engine::step(&mut initial, Action::CastSpell(spell)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut initial),
+            Decision::ChooseTargets { .. }
+        ));
+        engine::step(&mut initial, Action::ChooseTarget(Target::Object(target))).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut initial),
+            Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            }
+        ));
+        engine::step(&mut initial, Action::ChooseEffectOption(1)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut initial),
+            Decision::ChooseCostTargets { .. }
+        ));
+
+        let mut encoder = FlatDecisionEncoderV4::default();
+        let tensors = [known, hidden].map(|chosen| {
+            let mut state = initial.clone();
+            engine::step(&mut state, Action::ChooseCostTarget(chosen)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert_eq!(state.known_hand_cards(observer, actor).len(), 1);
+            let paid = &state.stack.last().unwrap().v4.paid_cost_refs[0];
+            assert_eq!(paid.object, chosen);
+            assert!(paid.visible_to(observer));
+            if state.priority_player == actor {
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            issue567_tensor(state, observer, &mut encoder)
+        });
+        assert_eq!(tensors[0], tensors[1]);
+    }
+
+    #[test]
     fn issue567_default_and_departure_v1_retain_their_reveal_contract() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let default = issue567_ninjutsu_worlds(actor, |_| {}, false);
@@ -652,6 +711,112 @@ mod tests {
             .unwrap()
             .model_object_index;
         assert_eq!(ward.targeting_source_object, source_row);
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn issue567_v2_pending_chancellor_source_stays_public_after_hidden_departure() {
+        use crate::engine::{self, Action, Decision};
+        use crate::event::{self, ProposedEvent};
+        use crate::flat_policy_v2::{
+            FlatContextSubroleV2, FlatObjectGroupV2, FlatRelationPayloadV2,
+        };
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::put;
+        use crate::state::{GameState, Step, Zone};
+
+        let island = crate::card_def::card_id_by_name("Island").unwrap();
+        let mut state = GameState::new_from_libraries(
+            &[island; 20],
+            &[island; 20],
+            crate::rl::card_name,
+            0x4348_414e,
+        );
+        state.enable_hand_knowledge_by_name_v2();
+        let chancellor = put(
+            &mut state,
+            PlayerId::P1,
+            "Chancellor of the Annex",
+            Zone::Hand,
+        );
+        for _ in 0..32 {
+            match engine::advance_until_decision(&mut state) {
+                Decision::ChooseEffectOption {
+                    player: PlayerId::P1,
+                    ..
+                } => {
+                    engine::step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+                }
+                Decision::CastSpellOrPass { .. }
+                    if state.step == Step::Main1 && state.stack.is_empty() =>
+                {
+                    break
+                }
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                other => panic!("expected opening reveal or priority, got {other:?}"),
+            }
+        }
+        assert_eq!(state.step, Step::Main1);
+        assert_eq!(
+            state.known_hand_cards(PlayerId::P0, PlayerId::P1)[0].object,
+            chancellor
+        );
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::private_top_library_insert(chancellor),
+        );
+        assert!(state
+            .known_hand_cards(PlayerId::P0, PlayerId::P1)
+            .is_empty());
+
+        let mox = put(&mut state, PlayerId::P0, "Mox Pearl", Zone::Hand);
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+        engine::step(&mut state, Action::CastSpell(mox)).unwrap();
+        for _ in 0..16 {
+            match engine::advance_until_decision(&mut state) {
+                Decision::ChooseEffectOption {
+                    player: PlayerId::P0,
+                    ..
+                } => break,
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                other => panic!("expected Chancellor tax or priority, got {other:?}"),
+            }
+        }
+        assert!(state.engine.pending_effect.is_some());
+        let session = FastActorSessionV1::from_v2_fixture_state(state);
+        let FastActorResponseV1::Decision(current) = session.current_response() else {
+            panic!("expected the V2 tax payment decision");
+        };
+        assert_eq!(current.acting_player as usize, PlayerId::P0.index());
+        let mut owned = OwnedScoringV4::default();
+        session
+            .encode_current_flat_scoring_decision_owned_v2(
+                current,
+                &mut FlatDecisionEncoderV2::default(),
+                &mut owned.buffers(),
+            )
+            .unwrap();
+        let source_row = owned
+            .relations
+            .iter()
+            .find_map(|relation| match relation.payload {
+                FlatRelationPayloadV2::Context(context)
+                    if context.subrole == FlatContextSubroleV2::PendingEffectSource =>
+                {
+                    relation.target_object
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            owned.objects[source_row as usize].group,
+            FlatObjectGroupV2::PendingContext
+        );
+        assert!(!owned.action_refs.is_empty());
+        assert!(owned
+            .action_refs
+            .iter()
+            .all(|reference| reference.model_object_index == source_row));
     }
 
     #[test]

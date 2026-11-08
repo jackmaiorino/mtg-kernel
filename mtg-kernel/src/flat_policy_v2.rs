@@ -1118,6 +1118,7 @@ pub struct FlatDecisionEncoderV2 {
     hand_knowledge_by_name_v2: bool,
     unlinked_hand_stack_sources: Vec<(u32, u32)>,
     unlinked_pending_hand_source: Option<u32>,
+    unlinked_hand_paid_costs: Vec<((u32, u32), u32)>,
     globals: FlatGlobalsV2,
     objects: Vec<FlatObjectCoreV2>,
     object_keys: Vec<Option<PrivateObjectKeyV2>>,
@@ -1436,6 +1437,7 @@ impl FlatDecisionEncoderV2 {
         self.hand_knowledge_by_name_v2 = state.hand_knowledge_by_name_v2;
         self.unlinked_hand_stack_sources.clear();
         self.unlinked_pending_hand_source = None;
+        self.unlinked_hand_paid_costs.clear();
         self.globals = FlatGlobalsV2::default();
         self.objects.clear();
         self.object_keys.clear();
@@ -1604,7 +1606,18 @@ impl FlatDecisionEncoderV2 {
         &self,
         stable: &CardStableRefV1,
         actor: PlayerSeatV1,
+        stack_index: u32,
+        paid_position: u32,
     ) -> Result<u32, FlatDecisionErrorV2> {
+        if let Some(index) = self
+            .unlinked_hand_paid_costs
+            .iter()
+            .find_map(|&(position, index)| {
+                (position == (stack_index, paid_position)).then_some(index)
+            })
+        {
+            return Ok(index);
+        }
         let wanted = self.private_key(stable, actor, HISTORICAL_PAID_COST_KIND_V1);
         let mut found = None;
         for (index, key) in self.object_keys.iter().enumerate() {
@@ -1626,6 +1639,18 @@ impl FlatDecisionEncoderV2 {
             }
         }
         found.ok_or(FlatDecisionErrorV2::InvalidReference)
+    }
+
+    fn resolve_finalized_chosen_cost(
+        &self,
+        cost: &crate::policy_observation_v6::FinalizedChosenCreatureCostV6,
+        actor: PlayerSeatV1,
+    ) -> Result<u32, FlatDecisionErrorV2> {
+        if self.is_unlinked_hand_source(&cost.chosen, actor) {
+            self.resolve_paid_cost_reference(&cost.chosen, actor, cost.stack_index, 0)
+        } else {
+            self.resolve_reference(&cost.chosen, actor)
+        }
     }
 
     fn add_private_card(
@@ -2579,6 +2604,22 @@ impl FlatDecisionEncoderV2 {
                 context_object_ordinal(context, 0),
             )?;
         }
+        if !observation.v3_source_authority {
+            if let Some(source) = engine
+                .pending_effect
+                .as_ref()
+                .and_then(|pending| pending.source.as_ref())
+                .filter(|source| self.is_unlinked_hand_source(source, actor))
+            {
+                self.unlinked_pending_hand_source = Some(self.add_unlinked_source_row(
+                    source,
+                    actor,
+                    context_object_ordinal(FlatContextKindV2::PendingEffect, 1),
+                    FlatObjectGroupV2::PendingContext,
+                    FlatObjectSourceKindV2::Pending,
+                )?);
+            }
+        }
         for (order, _) in engine.pending_triggers.iter().enumerate() {
             self.add_context_object(
                 FlatObjectGroupV2::PendingContext,
@@ -2660,16 +2701,28 @@ impl FlatDecisionEncoderV2 {
             }
         }
         let mut paid_order = 0_u32;
-        for item in &p.stack {
-            for paid in &item.paid_cost_refs {
-                self.add_stable(
-                    paid,
-                    actor,
-                    FlatObjectGroupV2::HistoricalPaidCost,
-                    FlatObjectSourceKindV2::PaidCost,
-                    paid_order,
-                    HISTORICAL_PAID_COST_KIND_V1,
-                )?;
+        for (stack_index, item) in p.stack.iter().enumerate() {
+            for (paid_position, paid) in item.paid_cost_refs.iter().enumerate() {
+                if self.is_unlinked_hand_source(paid, actor) {
+                    let index = self.add_unlinked_source_row(
+                        paid,
+                        actor,
+                        paid_order,
+                        FlatObjectGroupV2::HistoricalPaidCost,
+                        FlatObjectSourceKindV2::PaidCost,
+                    )?;
+                    self.unlinked_hand_paid_costs
+                        .push(((usize_u32(stack_index)?, usize_u32(paid_position)?), index));
+                } else {
+                    self.add_stable(
+                        paid,
+                        actor,
+                        FlatObjectGroupV2::HistoricalPaidCost,
+                        FlatObjectSourceKindV2::PaidCost,
+                        paid_order,
+                        HISTORICAL_PAID_COST_KIND_V1,
+                    )?;
+                }
                 paid_order = paid_order
                     .checked_add(1)
                     .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
@@ -3039,13 +3092,15 @@ impl FlatDecisionEncoderV2 {
                 );
             }
             for (paid_order, paid) in item.paid_cost_refs.iter().enumerate() {
-                let paid = self.resolve_paid_cost_reference(paid, actor)?;
+                let paid_order = usize_u32(paid_order)?;
+                let paid =
+                    self.resolve_paid_cost_reference(paid, actor, stack_order, paid_order)?;
                 self.push_relation(
                     FlatRelationRoleV2::PaidCost,
                     Some(source),
                     Some(paid),
                     stack_order,
-                    usize_u32(paid_order)?,
+                    paid_order,
                     0,
                     FlatRelationPayloadV2::None,
                 );
@@ -4075,7 +4130,7 @@ impl FlatDecisionEncoderV2 {
                 .push(FlatFinalizedChosenCreatureCostV3 {
                     stack_index: cost.stack_index,
                     source_object: self.resolve_reference(&cost.source, actor)?,
-                    chosen_object: self.resolve_reference(&cost.chosen, actor)?,
+                    chosen_object: self.resolve_finalized_chosen_cost(cost, actor)?,
                     power_lki: cost.power_lki,
                 });
         }
@@ -4391,6 +4446,29 @@ impl FlatDecisionEncoderV2 {
         self.build_globals(&observation)?;
         self.register_objects(&observation)?;
         self.build_relations(&observation)?;
+        if let Some(index) = self.unlinked_pending_hand_source {
+            let source = crate::rl::public_pending_opponent_hand_source_v2(
+                session.game_state(),
+                crate::kernel_native_search_opponent_v1::player_id_v1(observation.acting_player),
+            )
+            .map_err(|_| FlatDecisionErrorV2::InvalidReference)?
+            .ok_or(FlatDecisionErrorV2::InvalidReference)?;
+            let projected = observation
+                .projection
+                .surface
+                .engine_context
+                .pending_effect
+                .as_ref()
+                .and_then(|pending| pending.source.as_ref());
+            if projected != Some(&source) {
+                return Err(FlatDecisionErrorV2::InconsistentReference);
+            }
+            let authority = crate::rl_session::flat_pending_hand_action_object_v2(
+                &source,
+                observation.acting_player,
+            )?;
+            self.v3_action_objects = Some(vec![(authority, index)]);
+        }
         self.validate_cached_tables()?;
         self.cached_binding = Some(action_slice.binding);
         Ok(())
@@ -5260,7 +5338,7 @@ impl FlatDecisionEncoderV2 {
                 .push(FlatFinalizedChosenCreatureCostV3 {
                     stack_index: cost.stack_index,
                     source_object: self.resolve_reference(&cost.source, actor)?,
-                    chosen_object: self.resolve_reference(&cost.chosen, actor)?,
+                    chosen_object: self.resolve_finalized_chosen_cost(cost, actor)?,
                     power_lki: cost.power_lki,
                 });
         }
@@ -5784,7 +5862,7 @@ impl FlatDecisionEncoderV2 {
                 .push(FlatFinalizedChosenCreatureCostV3 {
                     stack_index: cost.stack_index,
                     source_object: self.resolve_reference(&cost.source, actor)?,
-                    chosen_object: self.resolve_reference(&cost.chosen, actor)?,
+                    chosen_object: self.resolve_finalized_chosen_cost(cost, actor)?,
                     power_lki: cost.power_lki,
                 });
         }
@@ -5974,6 +6052,23 @@ impl FlatDecisionEncoderV2 {
                     });
                 } else if !model_object_indices.contains(&registered.model_object_index) {
                     model_object_indices.push(registered.model_object_index);
+                }
+            }
+            for (paid, registered) in extensions_v8
+                .finalized_chosen_creature_costs
+                .iter()
+                .zip(&output.finalized_chosen_creature_costs)
+            {
+                if paid.chosen == trait_row.source
+                    && self.is_unlinked_hand_source(&paid.chosen, actor)
+                {
+                    found_unlinked_hand_trait = true;
+                    unlinked_hand_traits.push(crate::flat_policy_v5::FlatWardLifeCardTraitV5 {
+                        model_object_indices: vec![registered.chosen_object],
+                        life: trait_row.life,
+                        printed_face: trait_row.printed_face,
+                        effective: trait_row.effective,
+                    });
                 }
             }
             model_object_indices.sort_unstable();

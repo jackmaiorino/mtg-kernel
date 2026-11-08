@@ -28140,6 +28140,14 @@ fn finalize_owned_cast(
             .iter_mut()
             .find(|reference| reference.object == binding.object)
             .expect("chosen creature is included in its paid provenance");
+        if state.hand_knowledge_by_name_v2
+            && pending.chosen_creature_cost_zone == Some(ChosenCreatureCostZoneV1::Hand)
+        {
+            // The prepared cost publicly revealed this card. Its paid
+            // receipt remains visible even if a prior same-name fact
+            // already supplies the observer's known-hand lower bound.
+            reference.visible_to_mask = 0b11;
+        }
         reference.power_lki = Some(power);
     }
     let selected_target_spec = if cast_method == CastMethodV4::Omen {

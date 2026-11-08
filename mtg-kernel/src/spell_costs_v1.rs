@@ -23,6 +23,7 @@ enum PreparedNonmanaActionV1 {
     Component(CostComponent, Vec<ObjectId>),
     CounterRemovals(Vec<ObjectId>),
     RevealHand(Vec<ObjectId>),
+    RevealHandCard(ObjectId),
 }
 
 impl PreparedNonmanaActionV1 {
@@ -54,6 +55,14 @@ impl PreparedNonmanaActionV1 {
                             .reveal_distinct_hand_card(observer, player, object)
                             .expect("synchronous prepared hand reveal remains live");
                     }
+                }
+            }
+            Self::RevealHandCard(object) => {
+                // spellbench-public-reveal: the chosen creature is revealed as a cost.
+                for observer in [PlayerId::P0, PlayerId::P1] {
+                    state
+                        .reveal_hand_card(observer, player, *object)
+                        .expect("synchronous prepared creature reveal remains live");
                 }
             }
         }
@@ -1588,7 +1597,7 @@ impl PreparedSpellPaymentV1 {
         let spent = self.mana.commit(state, player, source);
         self.base.apply(state, player, source);
         if let Some(object) = self.chosen_reveal {
-            PreparedNonmanaActionV1::RevealHand(vec![object]).commit(state, player, source);
+            PreparedNonmanaActionV1::RevealHandCard(object).commit(state, player, source);
         }
         self.additional.apply(state, player, source);
         self.commit_optional(state);
@@ -1780,7 +1789,7 @@ pub(super) fn prepare_final_spell_payment_v1(
         }
         if zone == super::ChosenCreatureCostZoneV1::Hand {
             prepared.chosen_reveal = Some(binding.object);
-            PreparedNonmanaActionV1::RevealHand(vec![binding.object]).commit(
+            PreparedNonmanaActionV1::RevealHandCard(binding.object).commit(
                 &mut projected,
                 player,
                 source,

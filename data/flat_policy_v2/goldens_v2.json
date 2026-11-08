@@ -1,6 +1,6 @@
 {
   "schema": "flat-policy-v2-independent-goldens-v1",
-  "inventory_sha256": "e2e3225fea8ea54e5d531588ae8086d5dfada38da47ed6732035d37cc7115afd",
+  "inventory_sha256": "021c8f2006ab341c1cdf465f46c94c1584f847df79ac83eb501c87202444916e",
   "action_contract_binding": {
     "source_sha256": "946f495d6ba029f01b781e05b6ee70f1fe2a83f4a13167d02363ad383fe64a75",
     "canonical_sha256": "bbac470c2352819c53ea5772314d1966ba88c8235e918f8678cc78b27ec1a10f"
