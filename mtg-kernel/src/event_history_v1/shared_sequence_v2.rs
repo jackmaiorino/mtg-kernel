@@ -764,7 +764,7 @@ mod tests {
         no_counts.push(3000);
         no_counts.truncate(65);
         no_counts.as_mut_vec().push(66);
-        assert_eq!(no_counts.counts(), []);
+        assert_eq!(no_counts.counts(), [0u32; 0]);
         no_counts.repack();
         assert_eq!(no_counts.len(), 66);
     }
