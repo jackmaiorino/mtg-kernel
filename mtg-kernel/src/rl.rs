@@ -27,8 +27,8 @@ use crate::policy_observation_v6::{
     OBSERVATION_SCHEMA_VERSION_V6,
 };
 use crate::policy_surface_v5::{
-    LimitedAppendixV1, PolicyActionV5, PolicyDecisionV5, PolicySurfaceContextIdsV5, PolicySurfaceStageV5,
-    PolicySurfaceV5, POLICY_SURFACE_VERSION,
+    LimitedAppendixV1, PolicyActionV5, PolicyDecisionV5, PolicySurfaceContextIdsV5,
+    PolicySurfaceStageV5, PolicySurfaceV5, POLICY_SURFACE_VERSION,
 };
 use crate::rl_session::{RlEpisodeSessionV1, RlSessionResponseV1};
 use crate::runtime_decks::runtime_deck_by_id;
@@ -2088,7 +2088,14 @@ pub fn observe_v1(
     let own_hand = state.players[acting_player.index()]
         .hand
         .iter()
-        .map(|&id| private_card(state, id, ObservationTextModeV2::FullArtifact, LimitedAppendixV1::Legacy))
+        .map(|&id| {
+            private_card(
+                state,
+                id,
+                ObservationTextModeV2::FullArtifact,
+                LimitedAppendixV1::Legacy,
+            )
+        })
         .collect::<Result<Vec<_>>>()?;
     let mut obs = ObservationV1 {
         schema_version: OBSERVATION_SCHEMA_VERSION_V1,
@@ -2362,7 +2369,11 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     consumer: crate::policy_surface_v5::LimitedAppendixV1,
 ) -> Result<ObservationV2> {
     let owning_kaito = text_mode == ObservationTextModeV2::KaitoV75Artifact;
-    let private_scope = if owning_kaito { consumer } else { LimitedAppendixV1::Legacy };
+    let private_scope = if owning_kaito {
+        consumer
+    } else {
+        LimitedAppendixV1::Legacy
+    };
     let chosen_type = owning_kaito && consumer == LimitedAppendixV1::ChosenType;
     if !matches!(
         text_mode,
@@ -2774,7 +2785,12 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         step_index,
         projection,
         own_hand,
-        known_library_cards: known_library_cards_v4(state, acting_player, text_mode, private_scope)?,
+        known_library_cards: known_library_cards_v4(
+            state,
+            acting_player,
+            text_mode,
+            private_scope,
+        )?,
         known_hand_cards: known_hand_cards_v4(state, acting_player, text_mode, private_scope)?,
         known_face_down_cards: known_face_down_cards_v1(state, acting_player, text_mode)?,
         visible_projection_hash: 0,

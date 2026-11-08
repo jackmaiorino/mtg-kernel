@@ -35,8 +35,7 @@ pub(crate) fn active_source(
         .iter()
         .copied()
         .find_map(|id| {
-            active_source_at(state, player, id)
-            .then(|| AbilitySourceContractV4::capture(state, id))
+            active_source_at(state, player, id).then(|| AbilitySourceContractV4::capture(state, id))
         })
 }
 
@@ -443,11 +442,18 @@ pub(crate) fn published_options<'a>(
     if item.kind != StackItemKind::Spell || item.is_copy {
         return Ok(None);
     }
-    if state.stack.iter().any(|row| row.v4.stack_item_id == item.v4.stack_item_id) {
+    if state
+        .stack
+        .iter()
+        .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+    {
         validate_spell_stack_source(state, item)?;
-    } else if state.engine.pending_effect.as_ref().is_some_and(|pending| {
-        pending.resolving_item == *item
-    }) {
+    } else if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|pending| pending.resolving_item == *item)
+    {
         crate::effect::validate_pending_effect_choice(state)?;
         validate_spell_source_contract_fields(state, item)?;
     } else {
@@ -461,12 +467,16 @@ pub(crate) fn published_options<'a>(
     else {
         return Ok(None);
     };
-    let Some(CommittedEvent::OmniscienceCastSelectedV1 { choice, .. }) =
-        usize::try_from(index).ok().and_then(|i| state.engine.event_history.get(i))
+    let Some(CommittedEvent::OmniscienceCastSelectedV1 { choice, .. }) = usize::try_from(index)
+        .ok()
+        .and_then(|i| state.engine.event_history.get(i))
     else {
         return Err("Omniscience finalized option receipt absent".into());
     };
-    Ok(Some((*choice, options(state, choice.options_history_index)?)))
+    Ok(Some((
+        *choice,
+        options(state, choice.options_history_index)?,
+    )))
 }
 
 pub(crate) struct PaymentTermsV1 {
@@ -484,7 +494,10 @@ pub(crate) fn payment_terms(state: &GameState, pending: &PendingCast) -> Option<
     pending.cast_mode?;
     let mode = pending.mode_chosen?;
     let kicked = pending.kicked?;
-    if pending.mandatory_additional_cost.is_some_and(|cost| cost.pay_mana.is_none()) {
+    if pending
+        .mandatory_additional_cost
+        .is_some_and(|cost| cost.pay_mana.is_none())
+    {
         return None;
     }
     let item = state.stack.last()?;

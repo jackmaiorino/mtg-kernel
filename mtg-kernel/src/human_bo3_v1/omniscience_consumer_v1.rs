@@ -47,34 +47,48 @@ struct HumanCastV1 {
 
 pub(super) fn project(facts: &FactsV1, handles: &mut Handles) -> Result<HumanFactsV1, Error> {
     let mut current_permissions = [None, None];
-    for (public, reference) in current_permissions.iter_mut().zip(&facts.current_permissions) {
-        *public = reference.as_ref().map(|card| href(card, handles)).transpose()?;
+    for (public, reference) in current_permissions
+        .iter_mut()
+        .zip(&facts.current_permissions)
+    {
+        *public = reference
+            .as_ref()
+            .map(|card| href(card, handles))
+            .transpose()?;
     }
-    let hand_offers = facts.hand_offers.iter().map(|offer| {
-        Ok(HumanOfferV1 {
-            card: href(&offer.card, handles)?,
-            permission: root(&offer.permission, handles)?,
-            ordinary_payment_available: offer.ordinary_payment_available,
+    let hand_offers = facts
+        .hand_offers
+        .iter()
+        .map(|offer| {
+            Ok(HumanOfferV1 {
+                card: href(&offer.card, handles)?,
+                permission: root(&offer.permission, handles)?,
+                ordinary_payment_available: offer.ordinary_payment_available,
+            })
         })
-    }).collect::<Result<_, Error>>()?;
-    let casts = facts.casts.iter().map(|cast| {
-        Ok(HumanCastV1 {
-            spell: href(&cast.spell, handles)?,
-            permission: root(&cast.permission, handles)?,
-            original_permission_active: cast.original_permission_active,
-            stack_position: cast.stack_position,
-            stage: cast.stage,
-            origin_zone: cast.origin_zone,
-            ordinary_payment_was_available: cast.ordinary_payment_was_available,
-            route: cast.route,
-            x: cast.x,
-            kicked: cast.kicked,
-            optional_additional_cost_selected: cast.optional_additional_cost_selected,
-            mandatory_mana_branch: cast.mandatory_mana_branch,
-            payment_terms_now: cast.payment_terms_now.clone(),
-            finalized_method: cast.finalized_method,
+        .collect::<Result<_, Error>>()?;
+    let casts = facts
+        .casts
+        .iter()
+        .map(|cast| {
+            Ok(HumanCastV1 {
+                spell: href(&cast.spell, handles)?,
+                permission: root(&cast.permission, handles)?,
+                original_permission_active: cast.original_permission_active,
+                stack_position: cast.stack_position,
+                stage: cast.stage,
+                origin_zone: cast.origin_zone,
+                ordinary_payment_was_available: cast.ordinary_payment_was_available,
+                route: cast.route,
+                x: cast.x,
+                kicked: cast.kicked,
+                optional_additional_cost_selected: cast.optional_additional_cost_selected,
+                mandatory_mana_branch: cast.mandatory_mana_branch,
+                payment_terms_now: cast.payment_terms_now.clone(),
+                finalized_method: cast.finalized_method,
+            })
         })
-    }).collect::<Result<_, Error>>()?;
+        .collect::<Result<_, Error>>()?;
     Ok(HumanFactsV1 {
         meaning: facts.meaning.clone(),
         current_permissions,
@@ -91,13 +105,15 @@ pub(super) fn label(
     let annotated = crate::omniscience_consumer_v1::action(facts, action)
         .map_err(|_| Error::InvalidVisibleReference)?;
     Ok(match annotated {
-        Some(ActionV1::ChooseRoute { route: RouteV1::OrdinaryPayment }) => {
-            Some("Pay the spell's ordinary costs".into())
-        }
-        Some(ActionV1::ChooseRoute { route: RouteV1::ReplaceBaseMana }) => {
-            Some("Use Omniscience to skip the base mana cost".into())
-        }
-        Some(ActionV1::AnnounceHandSpell { ordinary_payment_available }) => {
+        Some(ActionV1::ChooseRoute {
+            route: RouteV1::OrdinaryPayment,
+        }) => Some("Pay the spell's ordinary costs".into()),
+        Some(ActionV1::ChooseRoute {
+            route: RouteV1::ReplaceBaseMana,
+        }) => Some("Use Omniscience to skip the base mana cost".into()),
+        Some(ActionV1::AnnounceHandSpell {
+            ordinary_payment_available,
+        }) => {
             let Action::CastSpell { source, .. } = action else {
                 return Err(Error::InvalidVisibleReference);
             };

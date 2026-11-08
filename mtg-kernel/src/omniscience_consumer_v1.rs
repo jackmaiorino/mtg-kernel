@@ -4,11 +4,11 @@ use crate::{
     current_mixed_policy_v1::KaitoSession,
     human_bo3_v1::HumanKaitoSessionV75,
     limited_consumer_wire_v1::ProfileWireV1,
+    omniscience_public_v1::{self as public, FactsV1, RouteV1, StageV1, PRINTING},
     optional_trigger_public_v1::{IdentityV1, ReferenceV1, RootV1},
     rl::{ActionSemanticV1 as Action, CardStableRefV1, PlayerSeatV1},
     rl_session::FastActorSessionV1,
     state::Zone,
-    omniscience_public_v1::{self as public, FactsV1, RouteV1, StageV1, PRINTING},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -53,7 +53,8 @@ pub(crate) fn preflight(config: &ResetV1) -> Result<(), String> {
 }
 
 fn native(config: &ResetV1) -> Result<FastActorSessionV1, String> {
-    FastActorSessionV1::reset_limited_omniscience_v1(config, false).map_err(|error| format!("{error:?}"))
+    FastActorSessionV1::reset_limited_omniscience_v1(config, false)
+        .map_err(|error| format!("{error:?}"))
 }
 
 pub fn reset_numeric_v1(config: &ResetV1) -> Result<KaitoSession, String> {
@@ -95,13 +96,14 @@ impl JsonlServerV1 {
     }
 }
 
-
 fn permission_source(root: &RootV1, controller: PlayerSeatV1) -> bool {
     root.captured_controller == controller
         && root.original_source.zone == Zone::Battlefield
         && root.original_source.controller == controller
-        && matches!(root.original_source.identity,
-            IdentityV1::Known { card_id: PRINTING } | IdentityV1::FaceDown { .. })
+        && matches!(
+            root.original_source.identity,
+            IdentityV1::Known { card_id: PRINTING } | IdentityV1::FaceDown { .. }
+        )
         && root.current_original_source.as_ref().is_none_or(|current| {
             current.zone == Zone::Battlefield
                 && current.object == root.original_source.object
@@ -111,10 +113,16 @@ fn permission_source(root: &RootV1, controller: PlayerSeatV1) -> bool {
 }
 
 pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(), String> {
-    if facts.viewer != actor || facts.schema != public::SCHEMA || facts.meaning != public::printed_meaning()? {
+    if facts.viewer != actor
+        || facts.schema != public::SCHEMA
+        || facts.meaning != public::printed_meaning()?
+    {
         return Err("invalid Omniscience viewer facts".into());
     }
-    for (seat, source) in [PlayerSeatV1::P0, PlayerSeatV1::P1].into_iter().zip(&facts.current_permissions) {
+    for (seat, source) in [PlayerSeatV1::P0, PlayerSeatV1::P1]
+        .into_iter()
+        .zip(&facts.current_permissions)
+    {
         if source.as_ref().is_some_and(|source| {
             source.zone != Zone::Battlefield
                 || source.controller != seat
@@ -128,10 +136,14 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
             || offer.card.owner != actor
             || offer.card.controller != actor
             || !permission_source(&offer.permission, actor)
-            || !facts.current_permissions.iter().flatten().any(|source| {
-                source == &offer.permission.original_source
-            })
-            || facts.hand_offers[..index].iter().any(|prior| prior.card.object == offer.card.object)
+            || !facts
+                .current_permissions
+                .iter()
+                .flatten()
+                .any(|source| source == &offer.permission.original_source)
+            || facts.hand_offers[..index]
+                .iter()
+                .any(|prior| prior.card.object == offer.card.object)
         {
             return Err("invalid Omniscience actor hand offer".into());
         }
@@ -146,9 +158,15 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
             || cast.route != Some(RouteV1::ReplaceBaseMana) && !cast.ordinary_payment_was_available
             || (cast.stage == StageV1::Resolving) != cast.stack_position.is_none()
             || match cast.stage {
-                StageV1::Announcing => cast.spell.controller != actor || cast.finalized_method.is_some(),
-                StageV1::Published | StageV1::Resolving => cast.route.is_none()
-                    || cast.x.is_none() || cast.finalized_method.is_none() || cast.payment_terms_now.is_some(),
+                StageV1::Announcing => {
+                    cast.spell.controller != actor || cast.finalized_method.is_some()
+                }
+                StageV1::Published | StageV1::Resolving => {
+                    cast.route.is_none()
+                        || cast.x.is_none()
+                        || cast.finalized_method.is_none()
+                        || cast.payment_terms_now.is_some()
+                }
             }
         {
             return Err("invalid Omniscience cast-route facts".into());
@@ -165,7 +183,10 @@ pub enum ActionV1 {
 }
 
 fn binds(card: &ReferenceV1, stable: &CardStableRefV1) -> bool {
-    card.identity == (IdentityV1::Known { card_id: stable.card_db_id })
+    card.identity
+        == (IdentityV1::Known {
+            card_id: stable.card_db_id,
+        })
         && card.object == stable.arena_id
         && card.generation == stable.zone_change_count
         && card.owner == stable.owner
@@ -183,10 +204,19 @@ pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<
             .map(|offer| ActionV1::AnnounceHandSpell {
                 ordinary_payment_available: offer.ordinary_payment_available,
             })),
-        Action::ChooseEffectOption { actor, source, option_index, option_count } => {
-            let Some(cast) = facts.casts.iter().find(|cast| {
-                cast.stage == StageV1::Announcing && cast.route.is_none()
-            }) else { return Ok(None) };
+        Action::ChooseEffectOption {
+            actor,
+            source,
+            option_index,
+            option_count,
+        } => {
+            let Some(cast) = facts
+                .casts
+                .iter()
+                .find(|cast| cast.stage == StageV1::Announcing && cast.route.is_none())
+            else {
+                return Ok(None);
+            };
             if *actor != facts.viewer || !binds(&cast.spell, source) || *option_count != 2 {
                 return Err("Omniscience route action does not match the native menu".into());
             }

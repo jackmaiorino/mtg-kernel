@@ -662,19 +662,31 @@ pub(crate) fn observe_parts_v75(
         drake: crate::drake_public_v53::capture_kaito_compat_v75(state, appendix)?,
         spinner: crate::spinner_public_v54::capture_kaito_compat_v75(state, appendix)
             .map_err(RlContractError)?,
-        quandary: crate::quandary_public_v55::capture_kaito_compat_v75(state, actor_and_origin.0, appendix)
-            .map_err(RlContractError)?,
+        quandary: crate::quandary_public_v55::capture_kaito_compat_v75(
+            state,
+            actor_and_origin.0,
+            appendix,
+        )
+        .map_err(RlContractError)?,
         phoenix: crate::phoenix_public_v56::capture(state)?,
-        next_five: crate::next_five_public_v59::capture_kaito_compat_v75(state, actor_and_origin.0, appendix)
-            .map_err(RlContractError)?,
+        next_five: crate::next_five_public_v59::capture_kaito_compat_v75(
+            state,
+            actor_and_origin.0,
+            appendix,
+        )
+        .map_err(RlContractError)?,
         graveyard_return: crate::graveyard_return_public_v61::capture_kaito_compat_v75(
             state,
             actor_and_origin.0,
             appendix,
         )
         .map_err(RlContractError)?,
-        call: crate::valkyries_call_public_v62::capture_kaito_compat_v75(state, actor_and_origin.0, appendix)
-            .map_err(RlContractError)?,
+        call: crate::valkyries_call_public_v62::capture_kaito_compat_v75(
+            state,
+            actor_and_origin.0,
+            appendix,
+        )
+        .map_err(RlContractError)?,
         end_turn: crate::time_stop_public_v68::capture_tinybones_v72(state, actor_and_origin.0)
             .map_err(RlContractError)?,
         genesis_wave: crate::genesis_wave_public_v69::capture(state, actor_and_origin.0)
@@ -724,7 +736,9 @@ pub(crate) fn observe_parts_v75(
             .transpose()
             .map_err(RlContractError)?,
         omniscience: (appendix == LimitedAppendixV1::Omniscience)
-            .then(|| crate::omniscience_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1))
+            .then(|| {
+                crate::omniscience_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1)
+            })
             .transpose()
             .map_err(RlContractError)?,
         complete_ordinary_observation: true,
@@ -785,7 +799,8 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             crate::zimone_consumer_v1::OBSERVATION_SCHEMA
         }
         (None, None, None, None, None, None, Some(facts)) => {
-            crate::omniscience_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::omniscience_consumer_v1::validate_facts(facts, actor)
+                .map_err(RlContractError)?;
             crate::omniscience_consumer_v1::OBSERVATION_SCHEMA
         }
         (None, None, None, None, None, None, None) => SCHEMA,

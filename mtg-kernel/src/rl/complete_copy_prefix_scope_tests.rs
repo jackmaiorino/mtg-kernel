@@ -26,8 +26,11 @@ fn paid_complete_walkers_keep_private_mode_through_shared_prefix_and_legacy_refu
         );
         validate_copy_prefix_for_mode_v1(&kaito, Mode::KaitoV75Artifact).unwrap();
         crate::next_five_public_v59::capture_kaito_compat_v75(
-            &kaito, player, crate::policy_surface_v5::LimitedAppendixV1::Legacy,
-        ).unwrap();
+            &kaito,
+            player,
+            crate::policy_surface_v5::LimitedAppendixV1::Legacy,
+        )
+        .unwrap();
         appendices(&kaito, ConsumerV1::KaitoV75);
         assert!(
             crate::vivien_public_v70::capture_tinybones_for_consumer_v72(
@@ -64,8 +67,11 @@ fn paid_complete_walkers_keep_private_mode_through_shared_prefix_and_legacy_refu
         validate_copy_prefix_for_mode_v1(&chandra, Mode::KaitoV75Artifact).unwrap();
         crate::next_five_public_v59::capture_chandra_compat_v74(&chandra, player).unwrap();
         crate::next_five_public_v59::capture_kaito_compat_v75(
-            &chandra, player, crate::policy_surface_v5::LimitedAppendixV1::Legacy,
-        ).unwrap();
+            &chandra,
+            player,
+            crate::policy_surface_v5::LimitedAppendixV1::Legacy,
+        )
+        .unwrap();
         appendices(&chandra, ConsumerV1::ChandraV74);
         appendices(&chandra, ConsumerV1::KaitoV75);
         assert!(crate::midnight_snack_public_v58::capture(&chandra, player).is_err());

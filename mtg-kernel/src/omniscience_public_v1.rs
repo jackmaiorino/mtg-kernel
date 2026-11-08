@@ -207,8 +207,13 @@ pub struct FactsV1 {
     pub casts: Vec<CastV1>,
 }
 
-fn card(state: &GameState, viewer: PlayerId, object: ObjectId) -> Result<public::ReferenceV1, String> {
-    public::reference(state, object, Some(viewer)).ok_or_else(|| "Omniscience public card missing".into())
+fn card(
+    state: &GameState,
+    viewer: PlayerId,
+    object: ObjectId,
+) -> Result<public::ReferenceV1, String> {
+    public::reference(state, object, Some(viewer))
+        .ok_or_else(|| "Omniscience public card missing".into())
 }
 
 fn root(
@@ -221,7 +226,11 @@ fn root(
 
 fn route(choice: native::ChoiceV1) -> Option<RouteV1> {
     choice.free.map(|free| {
-        if free { RouteV1::ReplaceBaseMana } else { RouteV1::OrdinaryPayment }
+        if free {
+            RouteV1::ReplaceBaseMana
+        } else {
+            RouteV1::OrdinaryPayment
+        }
     })
 }
 
@@ -243,15 +252,24 @@ fn published(
         spell,
         permission: root(state, viewer, options.source)?,
         original_permission_active: native::original_permission_active(state, options.source),
-        stack_position: position.map(u32::try_from).transpose().map_err(|_| "Omniscience stack position overflow")?,
-        stage: if position.is_some() { StageV1::Published } else { StageV1::Resolving },
+        stack_position: position
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|_| "Omniscience stack position overflow")?,
+        stage: if position.is_some() {
+            StageV1::Published
+        } else {
+            StageV1::Resolving
+        },
         origin_zone: Zone::Hand,
         ordinary_payment_was_available: options.paid,
         route: route(choice),
         x: Some(item.v4.x_value),
         kicked: Some(item.kicked),
         optional_additional_cost_selected: Some(item.v4.optional_additional_cost_paid.is_some()),
-        mandatory_mana_branch: item.v4.source_contract
+        mandatory_mana_branch: item
+            .v4
+            .source_contract
             .and_then(|source| source.finalized_cast_binding)
             .and_then(|binding| binding.mandatory_additional_cost)
             .map(|cost| cost.pay_mana),
@@ -274,11 +292,16 @@ pub(crate) fn capture(
     }
     let mut hand_offers = vec![];
     if let PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::CastSpellOrPass {
-        player, castable_spells, ..
-    })) = origin {
+        player,
+        castable_spells,
+        ..
+    })) = origin
+    {
         if *player == viewer && current_permissions[viewer.index()].is_some() {
             for &spell in castable_spells {
-                if let Some((source, ordinary_payment_available)) = native::quoted_offer(state, spell, viewer) {
+                if let Some((source, ordinary_payment_available)) =
+                    native::quoted_offer(state, spell, viewer)
+                {
                     hand_offers.push(OfferV1 {
                         card: card(state, viewer, spell)?,
                         permission: root(state, viewer, source)?,
@@ -296,10 +319,20 @@ pub(crate) fn capture(
                 casts.push(CastV1 {
                     spell: card(state, viewer, pending.spell)?,
                     permission: root(state, viewer, options.source)?,
-                    original_permission_active: native::original_permission_active(state, options.source),
-                    stack_position: Some(u32::try_from(state.stack.len().checked_sub(1)
-                        .ok_or("Omniscience pending placeholder missing")?)
-                        .map_err(|_| "Omniscience stack position overflow")?),
+                    original_permission_active: native::original_permission_active(
+                        state,
+                        options.source,
+                    ),
+                    stack_position: Some(
+                        u32::try_from(
+                            state
+                                .stack
+                                .len()
+                                .checked_sub(1)
+                                .ok_or("Omniscience pending placeholder missing")?,
+                        )
+                        .map_err(|_| "Omniscience stack position overflow")?,
+                    ),
                     stage: StageV1::Announcing,
                     origin_zone: Zone::Hand,
                     ordinary_payment_was_available: options.paid,
@@ -307,8 +340,12 @@ pub(crate) fn capture(
                     x: pending.selected_x_v59(),
                     kicked: pending.kicked,
                     optional_additional_cost_selected: pending.optional_additional_cost_paid,
-                    mandatory_mana_branch: pending.mandatory_additional_cost.and_then(|cost| cost.pay_mana),
-                    payment_terms_now: native::payment_terms(state, pending).map(TryInto::try_into).transpose()?,
+                    mandatory_mana_branch: pending
+                        .mandatory_additional_cost
+                        .and_then(|cost| cost.pay_mana),
+                    payment_terms_now: native::payment_terms(state, pending)
+                        .map(TryInto::try_into)
+                        .transpose()?,
                     finalized_method: None,
                 });
             }
@@ -324,7 +361,11 @@ pub(crate) fn capture(
     }
     if let Some(effect) = &state.engine.pending_effect {
         let item = &effect.resolving_item;
-        if !state.stack.iter().any(|row| row.v4.stack_item_id == item.v4.stack_item_id) {
+        if !state
+            .stack
+            .iter()
+            .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        {
             if let Some(row) = published(state, viewer, item, None)? {
                 casts.push(row);
             }

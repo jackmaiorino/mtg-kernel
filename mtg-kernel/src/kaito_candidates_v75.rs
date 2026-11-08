@@ -730,8 +730,10 @@ fn project_authenticated_parts_v75(
                 )
                 .map_err(error)?,
                 omniscience_action: crate::omniscience_consumer_v1::action(
-                    observation.omniscience.as_ref(), &action,
-                ).map_err(error)?,
+                    observation.omniscience.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
                 drakuseth_target: crate::drakuseth_consumer_v1::target_action(
                     observation.drakuseth.as_ref(),
                     &action,
@@ -977,8 +979,11 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                 != crate::zimone_consumer_v1::action(value.observation.zimone.as_ref(), &row.action)
                     .map_err(error)?
             || row.omniscience_action
-                != crate::omniscience_consumer_v1::action(value.observation.omniscience.as_ref(), &row.action)
-                    .map_err(error)?
+                != crate::omniscience_consumer_v1::action(
+                    value.observation.omniscience.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
             || row.drakuseth_target
                 != crate::drakuseth_consumer_v1::target_action(
                     value.observation.drakuseth.as_ref(),
