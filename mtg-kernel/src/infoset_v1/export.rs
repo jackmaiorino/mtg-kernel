@@ -75,6 +75,7 @@ pub struct ExportInputV1<'a> {
 /// The export: the canonical state, its bytes and its handle table.
 #[derive(Clone, Debug)]
 pub struct InfosetV1 {
+    pub schema: &'static str,
     pub state: GameState,
     pub bytes: Vec<u8>,
     pub sha256: String,
@@ -756,6 +757,21 @@ pub(crate) fn export_v1(
     input: &ExportInputV1<'_>,
     options: ExportOptionsV1,
 ) -> Result<InfosetV1, ExportErrorV1> {
+    export_versioned(input, options, false)
+}
+
+/// Opt in to event-time identity visibility. Historical v1 remains unchanged.
+/// Active face-down public objects refuse until the canonical allocator can
+/// represent them. A snapshot without visibility provenance also refuses.
+pub fn export_v2(input: &ExportInputV1<'_>) -> Result<InfosetV1, ExportErrorV1> {
+    export_versioned(input, ExportOptionsV1::default(), true)
+}
+
+fn export_versioned(
+    input: &ExportInputV1<'_>,
+    options: ExportOptionsV1,
+    visibility_v2: bool,
+) -> Result<InfosetV1, ExportErrorV1> {
     let state = input.state;
     let v = input.viewer;
     let opp = v.opponent();
@@ -763,7 +779,44 @@ pub(crate) fn export_v1(
     let is = |m: MutantV1| mutant == Some(m);
 
     // Step 2 (the projection feeds step 1's I1 and I4).
-    let projection = project_v1(state, input.journal, v);
+    if visibility_v2 {
+        // Refuse before any name-sensitive invariant, seam or allocation.
+        // Face-down status and the right to look are viewer-observable;
+        // neither this decision nor its detail consults the hidden name.
+        if state.objects.iter().any(|(_, o)| {
+            is_public(o.zone)
+                && o.v4
+                    .face_down_v1
+                    .is_some_and(|f| f.lookers & (1 << v.index()) == 0)
+        }) {
+            return Err(refuse(
+                RefusalCodeV1::R2,
+                "active face-down object is not representable in infoset v2",
+            ));
+        }
+        for (index, event) in state.engine.event_history.iter().enumerate() {
+            let object = match event {
+                crate::event::CommittedEvent::ZoneChange { object, .. }
+                | crate::event::CommittedEvent::SpellCast { spell: object, .. } => *object,
+                _ => continue,
+            };
+            if state
+                .observation_journal
+                .visibility_v2(index, object)
+                .is_none()
+            {
+                return Err(refuse(
+                    RefusalCodeV1::R2,
+                    "event-time visibility provenance unavailable for infoset v2",
+                ));
+            }
+        }
+    }
+    let projection = if visibility_v2 {
+        super::projection::project_v2(state, input.journal, v)
+    } else {
+        project_v1(state, input.journal, v)
+    };
     // Step 1.
     invariants(state, &projection, input.decklists)?;
     if is(MutantV1::L7) {
@@ -1483,6 +1536,14 @@ pub(crate) fn export_v1(
                 // unlinked reference in it becomes an unnamed tombstone.
                 | crate::event::CommittedEvent::PublishedCastIdentityV1 { .. }
         )
+            // This marker precedes a face-down battlefield departure. It
+            // carries only an object/epoch, so v2 can preserve it with an
+            // unnamed tombstone rather than revealing the old incarnation.
+            || (visibility_v2
+                && matches!(
+                    state.engine.event_history[e],
+                    crate::event::CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange { .. }
+                ))
     };
     let mut timestamps: BTreeSet<u64> = BTreeSet::new();
     let pinned_set: BTreeSet<ObjectId> = pinned_untracked.iter().copied().collect();
@@ -1815,9 +1876,16 @@ pub(crate) fn export_v1(
     if !hand.reveal.is_empty() || reveal_used.get() {
         return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_REVEAL_DETAIL));
     }
-    let bytes = canonical_bytes(&out, &handles);
+    let schema = if visibility_v2 {
+        super::INFOSET_SCHEMA_V2
+    } else {
+        INFOSET_SCHEMA_V1
+    };
+    let labels: Vec<String> = handles.iter().map(HandleV1::label).collect();
+    let bytes = canonical_bytes_with_schema(&out, &labels, schema);
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
     Ok(InfosetV1 {
+        schema,
         state: out,
         bytes,
         sha256,
@@ -2409,8 +2477,23 @@ fn canonical_bytes(state: &GameState, handles: &[HandleV1]) -> Vec<u8> {
 }
 
 fn canonical_bytes_from_labels(state: &GameState, labels: &[String]) -> Vec<u8> {
+    canonical_bytes_with_schema(state, labels, INFOSET_SCHEMA_V1)
+}
+
+pub(crate) fn canonical_digest_with_schema(
+    state: &GameState,
+    labels: &[String],
+    schema: &str,
+) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(canonical_bytes_with_schema(state, labels, schema))
+    )
+}
+
+fn canonical_bytes_with_schema(state: &GameState, labels: &[String], schema: &str) -> Vec<u8> {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(INFOSET_SCHEMA_V1.as_bytes());
+    bytes.extend_from_slice(schema.as_bytes());
     bytes.push(b'\n');
     bytes.extend_from_slice(&serde_json::to_vec(&labels).expect("labels serialize"));
     bytes.push(b'\n');
