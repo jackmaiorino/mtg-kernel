@@ -327,7 +327,7 @@ enum Owner {
     Eternal(EternalActorSessionV1),
 }
 enum Decision {
-    Limited(crate::current_mixed_policy_v1::KaitoDecision),
+    Limited(Box<crate::current_mixed_policy_v1::KaitoDecision>),
     Eternal(crate::rl_session::EternalActorDecisionV1),
 }
 impl Owner {
@@ -346,7 +346,7 @@ impl Owner {
                 let d = s.encode(h).map_err(|e| e.to_string())?;
                 let input = s.training_input_v1(&d).map_err(|e| e.to_string())?;
                 let actions = d.probe_actions_v1().to_vec();
-                Ok((Decision::Limited(d), input, actions))
+                Ok((Decision::Limited(Box::new(d)), input, actions))
             }
             Self::Eternal(s) => {
                 let d = s.encode(h).map_err(|e| e.to_string())?;
