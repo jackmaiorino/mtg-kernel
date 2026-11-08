@@ -392,7 +392,11 @@ Source verification: pinned Rust 1.94.1 formatting passed through the
 Tutelage checkpoint `98ee9ab7e9ee66e76d6481fa6d5a426f71e1df73`.
 The Mixed and Moon changes passed the pinned one-core formatter in
 `52f25a4fc9a45e200b90a4e032dd792e263159e2` (36 staged files, 17 changed).
-The Axe, Progenitus and Aberration successor still awaits pinned formatting and native checks.
+The Axe, Progenitus and Aberration successor passed pinned Rust 1.94.1
+formatting at `63e01fe12d60c6f541e0a5e7091b613b360d167f`: 43 staged files,
+27 changed. Receipt SHA-256
+`ab87e2a38cf315d95f9129ee60106d4bf9e775777429a0db6458f8a2181e839f`.
+Its native checks remain pending.
 Read-only review of Mixed `ac74b5322218e00cd0b33d65151efecf9ce29ace`
 found no blocking source issue in the explicit scope, candidate bindings,
 normalization, or fixture call signatures. Root reviewed the Moon printing,
@@ -410,7 +414,11 @@ Tutelage's public repeat helper attempted to move the static CardDef array.
 That failed attempt is retained. The next check at `aa45b00` reached a second
 error: the match runner passed a single-reference method to an iterator of
 double references. `8ff554f6` fixes that call with an explicit closure; its
-check is pending. The successor also fixes reported Human type visibility
+guarded library/test-code and Mixed/Moon binary check passed (exit 0,
+524.917 seconds, children drained). Receipt SHA-256
+`5b5d525361102c78d5060663422f6e2e9fa3dd9b1f17191b14317499ea658041`.
+That source is now building its focused native fixtures. The successor also
+fixes reported Human type visibility
 and unused wrapper warnings and boxes Eternal printed programs without
 changing their serialized payload.
 The separate #591 default-feature lane passed 21 V4/V3/privacy tests and its
