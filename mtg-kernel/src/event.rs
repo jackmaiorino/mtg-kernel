@@ -4457,6 +4457,44 @@ fn commit_with_entry_batch_and_source_color(
         }
         _ => None,
     };
+    // A Damage endpoint is attributable to its indexed public object before
+    // damage hooks can move it. Nominal zone markers and anonymous hidden
+    // sources do not suffice. A face-down battlefield permanent still has a
+    // public owner and is visibly the permanent dealing/receiving the damage;
+    // concealed exile/stack correspondence is deliberately not admitted.
+    let damage_public_owners = match &event {
+        ProposedEvent::Damage(damage) => {
+            let target = match damage.target {
+                Target::Object(object) => Some(object),
+                _ => None,
+            };
+            std::iter::once(damage.source)
+                .chain(target)
+                .filter_map(|id| {
+                    let object = state.objects.try_get(id)?;
+                    let public = match object.zone {
+                        Zone::Battlefield => state.players[object.controller.index()]
+                            .battlefield
+                            .contains(&id),
+                        Zone::Graveyard if object.v4.face_down_v1.is_none() => {
+                            state.players[object.owner.index()].graveyard.contains(&id)
+                        }
+                        Zone::Exile if object.v4.face_down_v1.is_none() => {
+                            state.exile.contains(&id)
+                        }
+                        Zone::Stack if object.v4.face_down_v1.is_none() => {
+                            state.stack.iter().any(|item| {
+                                item.kind == crate::state::StackItemKind::Spell && item.source == id
+                            })
+                        }
+                        _ => false,
+                    };
+                    public.then_some((id, object.owner))
+                })
+                .collect::<Vec<_>>()
+        }
+        _ => Vec::new(),
+    };
     let Some(MaterializedEventV1 {
         committed,
         alesha_power_departure,
@@ -4553,6 +4591,17 @@ fn commit_with_entry_batch_and_source_color(
         }
     );
     let entry_history_index = state.engine.event_history.len();
+    if let CommittedEvent::Damage { source, target, .. } = &committed {
+        for (object, owner) in damage_public_owners {
+            if object == *source || *target == Target::Object(object) {
+                state.observation_journal.record_damage_public_owner_v3(
+                    entry_history_index,
+                    object,
+                    owner,
+                );
+            }
+        }
+    }
     if let CommittedEvent::ZoneChange { object, .. } = &committed {
         let mask = concealed_exile_departure
             .filter(|(id, _)| id == object)
@@ -7156,6 +7205,8 @@ fn materialize_zone_change_v1(
     });
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
+    let source_face = state.objects.get(id).v4.face_down_v1;
+    let source_face_down = source_face.is_some();
     let nine_lives_cast_entry = to_zone == Zone::Battlefield
         && from_zone == Zone::Stack
         && crate::card_def::CARD_DEFS[usize::from(state.objects.get(id).card_def)].name
@@ -7210,6 +7261,7 @@ fn materialize_zone_change_v1(
             Zone::Battlefield => entering_face_down.is_none(),
             _ => true,
         };
+        state.record_hand_departure_v3(id, to_zone, named);
         state.forget_departing_hand_object(id, named);
     } else {
         state.forget_hand_object(id);
@@ -7517,10 +7569,36 @@ fn materialize_zone_change_v1(
         // Returning a publicly identified card to hand does not make that
         // identity secret again. The owner sees it through `own_hand`; the
         // other observer receives an incarnation-bound known-hand fact.
+        let meaning = match (from_zone, source_face_down) {
+            (Zone::Battlefield | Zone::Stack, true) => crate::reveal_meaning_v3::RevealV3::Present,
+            (
+                Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile | Zone::Command,
+                false,
+            ) => crate::reveal_meaning_v3::RevealV3::PublicTransfer(from_zone),
+            _ => crate::reveal_meaning_v3::RevealV3::Omit,
+        };
         // spellbench-public-reveal: hand card revealed by the card rules.
         for observer in [PlayerId::P0, PlayerId::P1] {
+            // Unlike battlefield/stack exits, concealed exile does not reveal
+            // its name. Capture look permission before reset_for_zone_change
+            // clears the face-down marker. Omit only suppresses the V3 journal;
+            // it does not suppress the legacy known-hand row below.
+            if from_zone == Zone::Exile
+                && observer != owner
+                && source_face.is_some_and(|face| face.lookers & (1 << observer.index()) == 0)
+            {
+                continue;
+            }
+            // A permitted look establishes a viewer-visible hand name, but
+            // concealed exile is not a continuously public arrival. Preserve
+            // that existence fact without claiming a distinct arriving copy.
+            let meaning = if from_zone == Zone::Exile && source_face_down {
+                crate::reveal_meaning_v3::RevealV3::Present
+            } else {
+                meaning
+            };
             state
-                .reveal_distinct_hand_card(observer, owner, id)
+                .reveal_distinct_hand_card_with_meaning_v3(observer, owner, id, meaning)
                 .expect("just moved this live public object into its owner's hand");
         }
     } else if to_zone == Zone::Hand && informed_observer_mask != 0 {
