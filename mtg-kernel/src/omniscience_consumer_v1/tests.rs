@@ -227,6 +227,7 @@ fn actual_route_indices_hidden_pair_restore_and_additional_discard_both_seats() 
         let omni = engine::omniscience_cast_v1::tests::paid(&mut state, actor);
         let spell = put(&mut state, actor, "Thrill of Possibility", Zone::Hand);
         let fodder = put(&mut state, actor, "Forest", Zone::Hand);
+        let retained_fodder = put(&mut state, actor, "Island", Zone::Hand);
         let hidden = put(&mut state, actor.opponent(), "Forest", Zone::Hand);
         let grave = put(&mut state, actor, "Thrill of Possibility", Zone::Graveyard);
         let opening = KaitoSession::from_session(fixture(&state)).unwrap();
@@ -387,6 +388,7 @@ fn actual_route_indices_hidden_pair_restore_and_additional_discard_both_seats() 
                 }
             );
             assert_eq!(paid.objects.get(fodder).zone, Zone::Graveyard);
+            assert_eq!(paid.objects.get(retained_fodder).zone, Zone::Hand);
             assert_eq!(paid.stack.last().unwrap().discarded, [fodder]);
             if route == RouteV1::ReplaceBaseMana {
                 free_state = Some(paid.clone());

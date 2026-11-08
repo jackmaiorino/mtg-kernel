@@ -226,7 +226,7 @@ fn exact_forty_card_v3_reset_pays_cast_and_both_abilities_both_seats() {
 fn paid_prefix_hidden_pair_native_human_wire_numeric_and_restore_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, source) = crate::zimone_paradox_sculptor_v1::tests::paid_ready(actor);
-        let first = put(&mut state, actor, "Viridian Longbow", Zone::Battlefield);
+        let first = put(&mut state, actor, "Fishing Pole", Zone::Battlefield);
         let second = put(&mut state, actor, "Fishing Pole", Zone::Battlefield);
         let hidden = put(&mut state, actor.opponent(), "Forest", Zone::Hand);
         state.objects.get_mut(first).counters.charge = 120_000;
