@@ -439,6 +439,14 @@ impl KaitoSessionV75 {
     pub(crate) fn uses_hand_knowledge_by_name_v2(&self) -> bool {
         self.inner.state.hand_knowledge_by_name_v2
     }
+    pub(crate) fn reveal_hand_minima_v3(&self) -> Option<[Vec<(u16, usize)>; 2]> {
+        let viewer = self.inner.current.as_ref()?.actor;
+        let knowledge = self.inner.state.reveal_knowledge_v4.as_ref()?;
+        let mut minima = [Vec::new(), Vec::new()];
+        minima[viewer.opponent().index()] =
+            knowledge[viewer.index()].hand(viewer.opponent()).collect();
+        Some(minima)
+    }
     pub fn snapshot_v75(&self) -> KaitoSnapshotV75 {
         KaitoSnapshotV75 {
             inner: self.inner.snapshot_v1(),

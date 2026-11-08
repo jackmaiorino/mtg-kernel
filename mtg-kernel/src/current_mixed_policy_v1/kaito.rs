@@ -38,12 +38,32 @@ impl KaitoDecision {
         &self.backend
     }
 }
+
+enum HandFacts {
+    CopyRows,
+    NamesV2,
+    RevealMinimaV3([Vec<(u16, usize)>; 2]),
+}
+
+fn opponent_hand_binding(value: &Value, opponent: &Value) -> bool {
+    match value {
+        Value::Object(fields) => {
+            (fields.contains_key("arena_id")
+                && fields.get("zone").is_some_and(|zone| zone == "Hand")
+                && fields.get("owner") == Some(opponent))
+                || fields.values().any(|value| opponent_hand_binding(value, opponent))
+        }
+        Value::Array(rows) => rows.iter().any(|value| opponent_hand_binding(value, opponent)),
+        _ => false,
+    }
+}
+
 // Pure normalization of the exact freshly validated backend input. This
 // function cannot capture another decision or acquire executable authority.
 fn packet_from_current(
     candidates: &crate::kaito_candidates_v75::KaitoCandidatesV75,
     actions: &[crate::rl::ActionSemanticV1],
-    hand_facts_by_name: bool,
+    hand_facts: &HandFacts,
 ) -> Result<Packet> {
     crate::kaito_candidates_v75::validate_artifact(candidates)
         .map_err(|e| Error::Projection(e.to_string()))?;
@@ -60,14 +80,28 @@ fn packet_from_current(
     // annotation remain present. Raw executable pairs and index maps are never encoded.
     let mut state =
         serde_json::to_value(candidates).map_err(|e| Error::Projection(e.to_string()))?;
-    if hand_facts_by_name {
-        let observed = &candidates.observation.common.common.known_hand_cards;
-        let counts = observed.each_ref().map(|cards| {
-            let mut names = BTreeMap::<u16, usize>::new();
-            for card in cards {
-                *names.entry(card.stable.card_db_id).or_default() += 1;
-            }
-            names
+    let minima = match hand_facts {
+        HandFacts::CopyRows => None,
+        HandFacts::NamesV2 => Some(
+            candidates
+                .observation
+                .common
+                .common
+                .known_hand_cards
+                .each_ref()
+                .map(|cards| {
+                    let mut counts = BTreeMap::<u16, usize>::new();
+                    for card in cards {
+                        *counts.entry(card.stable.card_db_id).or_default() += 1;
+                    }
+                    counts.into_iter().collect::<Vec<_>>()
+                }),
+        ),
+        HandFacts::RevealMinimaV3(minima) => Some(minima.clone()),
+    };
+    if let Some(minima) = minima {
+        let counts = minima.map(|cards| {
+            cards
                 .into_iter()
                 .map(|(id, copies)| {
                     serde_json::json!({
@@ -83,6 +117,17 @@ fn packet_from_current(
             .ok_or_else(|| Error::Projection("missing known hand facts".into()))? =
             serde_json::json!(counts);
     }
+    if matches!(hand_facts, HandFacts::RevealMinimaV3(_)) {
+        let opponent = match candidates.observation.common.common.acting_player {
+            crate::rl::PlayerSeatV1::P0 => "p1",
+            crate::rl::PlayerSeatV1::P1 => "p0",
+        };
+        if opponent_hand_binding(&state, &Value::from(opponent)) {
+            return Err(Error::Projection(
+                "opponent hand binding requires a public name action".into(),
+            ));
+        }
+    }
     let actions = candidates
         .candidates
         .iter()
@@ -92,6 +137,15 @@ fn packet_from_current(
     normalize::encode(Source::KaitoV75, state, actions)
 }
 impl KaitoSession {
+    fn hand_facts(&self) -> HandFacts {
+        if let Some(minima) = self.inner.reveal_hand_minima_v3() {
+            HandFacts::RevealMinimaV3(minima)
+        } else if self.inner.uses_hand_knowledge_by_name_v2() {
+            HandFacts::NamesV2
+        } else {
+            HandFacts::CopyRows
+        }
+    }
     pub fn from_session(session: FastActorSessionV1) -> Result<Self> {
         Ok(Self::from_kaito(
             KaitoSessionV75::from_session(session).map_err(|e| Error::Projection(e.to_string()))?,
@@ -157,10 +211,16 @@ impl KaitoSession {
         self.inner
             .validate_decision_v75(&decision.backend)
             .map_err(|_| Error::StaleBinding)?;
+        let facts = self.hand_facts();
+        if matches!(facts, HandFacts::RevealMinimaV3(_)) {
+            return Err(Error::Projection(
+                "use the separate closed-list V3 sampler".into(),
+            ));
+        }
         if packet_from_current(
             decision.backend.candidates_v75(),
             decision.backend.actions(),
-            self.inner.uses_hand_knowledge_by_name_v2(),
+            &facts,
         )? != decision.packet
         {
             return Err(Error::StaleBinding);
@@ -220,7 +280,7 @@ impl KaitoSession {
         let packet = packet_from_current(
             backend.candidates_v75(),
             backend.actions(),
-            self.inner.uses_hand_knowledge_by_name_v2(),
+            &self.hand_facts(),
         )?;
         Ok(KaitoDecision {
             backend,
@@ -243,12 +303,12 @@ impl KaitoSession {
         {
             return Err(Error::ActionRange);
         }
-        let name_facts = self.inner.uses_hand_knowledge_by_name_v2();
+        let name_facts = self.hand_facts();
         self.inner.step_with_current_check(
             &decision.backend,
             selected_index,
             |candidates, actions| {
-                if packet_from_current(candidates, actions, name_facts)? != decision.packet {
+                if packet_from_current(candidates, actions, &name_facts)? != decision.packet {
                     return Err(Error::StaleBinding);
                 }
                 Ok(())
@@ -274,7 +334,7 @@ impl KaitoSession {
         if packet_from_current(
             decision.backend.candidates_v75(),
             decision.backend.actions(),
-            self.inner.uses_hand_knowledge_by_name_v2(),
+            &self.hand_facts(),
         )? != decision.packet
         {
             return Err(Error::StaleBinding);

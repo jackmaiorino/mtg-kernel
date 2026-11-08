@@ -91,6 +91,14 @@ pub fn reset_numeric_v1(config: &ResetV1) -> Result<KaitoSession, String> {
     KaitoSession::from_session(native(config)?).map_err(|error| error.to_string())
 }
 
+/// Same exact finite owner with the reveal reducer's public hand minima for
+/// its authenticated learner input. The ledger starts before the first menu.
+pub fn reset_numeric_reveal_facts_v3(config: &ResetV1) -> Result<KaitoSession, String> {
+    let owner = FastActorSessionV1::reset_limited_return_reveal_facts_v3(config)
+        .map_err(|error| format!("{error:?}"))?;
+    KaitoSession::from_session(owner).map_err(|error| error.to_string())
+}
+
 /// A fixed-seat Human owner over the same exact profile and native decisions.
 pub fn reset_human_v1(config: &ResetV1, human_seat: PlayerSeatV1) -> Result<HumanKaitoSessionV75, String> {
     HumanKaitoSessionV75::from_session(native(config)?, human_seat).map_err(|error| error.to_string())

@@ -1,21 +1,23 @@
 # Original-deck Limited training check
 
 Issue #552 uses the authenticated #454 Kaito tree learner on exact DraftZero
-registrations. The four engineering fixtures below are 40-card lists. They
-have only Full definitions, have named typed printing recipes in source, and
-do not contain Drake Hatcher. The actor can still refuse a decision during
+registrations. The four engineering fixtures below are 40-card lists without
+Drake Hatcher. The typed return profile admits exactly its three registered
+Partial printings alongside Full cards. Only two original recipes contain one
+of those three and no other Partial printing. Each is paired with a Full-only
+recipe on the same source split. The actor can still refuse a decision during
 play. The roster and seeds are fixed before native execution.
 
 | Stage | Original decks | Environment seed |
 | --- | --- | --- |
-| Train | `FDN_top_09703_UB`, `FDN_top_22247_BR` | `552001` |
-| Evaluate | `FDN_top_25562_WG`, `FDN_top_30836_UR` | `552002` |
+| Train | `FDN_top_15157_BR` (Alesha), `FDN_top_09703_UB` | `552001` |
+| Evaluate | `FDN_top_26941_WB` (Valkyrie's Call), `FDN_top_30836_UR` | `552002` |
 
 `limited_training_inventory_v1.py` emits an 80-deck inventory with original
-deck hashes, exact sizes, Full-only registration checks and Drake Hatcher
-membership. The 80 lists contain 76 with 40 cards, three with 41 and one with
-49. The inventory reports registration eligibility separately from native
-actor coverage. The evaluation roster is disjoint from training.
+deck hashes, exact sizes, Full-only and typed-return registration checks and
+Drake Hatcher membership. The 80 lists contain 76 with 40 cards, three with 41
+and one with 49. The inventory reports registration eligibility separately
+from native actor coverage. The evaluation roster is disjoint from training.
 
 | Source split | Decks | Declared Full-only | Contains a Partial printing |
 | --- | ---: | ---: | ---: |
@@ -24,6 +26,13 @@ actor coverage. The evaluation roster is disjoint from training.
 
 Every listed card name resolves in the declared registries. Decks outside the
 four fixtures remain in the inventory and outside this bounded run.
+
+The opt-in learner owner projects sorted name minima from the shared reveal
+reducer. Opponent-hand copy rows and unresolved physical action bindings do
+not enter the learner input. The paired input fixture varies hidden name
+multiplicity and the allocation of revealed same-name copies, then compares
+authenticated inputs and logits for both seats. The rules-only closed-list V3
+search and typed learner use separate decision entry points.
 
 The two train games start with opposite seats and sample from one immutable
 tree model. The learner uses the first 32 non-forced decisions per seat per
@@ -41,17 +50,27 @@ play both seats. Natural wins, draws and losses, action traces and any stage
 failure are saved for both snapshots. This is an engineering evaluation of
 one update, with no playing-strength threshold.
 
-Build `kernel_limited_training_v1` with `--features limited-fdn-fixtures` and
-the repository's pinned toolchain. Under the coordinator's bounded native
-slot, run `kernel_limited_training_v1 OUT_DIR 1|2`. The output directory must
-be fresh. The checkpoint binds the exact decks, seeds, model feature identity,
-objective, Adam configuration and all optimizer bits. Evaluation reloads the
-atomic `training.json` file before either snapshot plays. A second process can
-replay the evaluation from that file with `kernel_limited_training_v1 OUT_DIR
-1|2 TRAINING_JSON SHA256`. Compare `evaluation.json` byte for byte. A replay
-of the whole batch at the other worker count also compares `training.json`.
-Keep the outer run manifest's exact commit, binary hash, Rust and linker
-versions, host slot and both output hashes alongside these files.
+## Guarded qualification
+
+1. Pin the exact composition, Rust, linker and host slot. Build with
+   `--features limited-fdn-fixtures`. Run `closed_list_v3`, `issue552_` and
+   `limited_return_consumer_v1::tests` on the same native test binary. Keep
+   each filter's listed count and result, including failures.
+2. Build `kernel_limited_match_v1`, `kernel_limited_return_env_v1` and
+   `kernel_limited_training_v1` from that composition. Exercise the V3 match
+   profile against the pinned disjoint belief pool in a bounded replay. The
+   tests and replay preserve search refusals separately from sampled actions.
+3. Run `kernel_limited_training_v1 OUT_DIR 1|2` in a fresh directory once
+   the bounded training run is admitted. The checkpoint binds the exact
+   decks, seeds, actor and reveal producer identities, feature contract,
+   objective and complete Adam state. Evaluation reloads `training.json`.
+   Replay the batch at the other worker count and compare `training.json`
+   and `evaluation.json` byte for byte. Verify eval-only resume using
+   `kernel_limited_training_v1 OUT_DIR 1|2 TRAINING_JSON SHA256`.
+4. Save input and output hashes with the binary hash. Report natural
+   outcomes, any refusal and whether deterministic replay matched. The
+   bounded run covers those exact recipes. Active fair-search coverage of
+   all 286 printings has its own acceptance work.
 
 Native execution and exact replay are pending. The bounded binary does not
 accept a custom roster, game count or additional updates. A substantial

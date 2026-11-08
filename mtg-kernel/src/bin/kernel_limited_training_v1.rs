@@ -1,13 +1,13 @@
 //! Bounded original-deck training and fixed-opponent engineering replay.
 //! The roster, batch count, maximum decisions and seeds are compile-bound.
 use mtg_kernel::card_def::KERNEL_CARDDB_HASH;
-use mtg_kernel::current_mixed_policy_v1::KaitoSession;
 use mtg_kernel::current_tree_learner_v1::{
     feature_identity_v1, AdamConfigV1, AuthenticatedInputV1, LearnerV1, ModelV1, SnapshotV1,
     TerminalExampleV1,
 };
 use mtg_kernel::ids::PlayerId;
 use mtg_kernel::limited_match_v1::DeckFileV1;
+use mtg_kernel::limited_return_consumer_v1::{reset_numeric_reveal_facts_v3, ResetV1, PROFILE_V1};
 use mtg_kernel::rl::{PlayerSeatV1, TerminalClassificationV1, TerminalOutcomeV1};
 use mtg_kernel::rl_session::{FastActorDecisionKindV1, FastActorResponseV1};
 use mtg_kernel::state::SplitMix64;
@@ -22,7 +22,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 type Result<T> = std::result::Result<T, String>;
-const SCHEMA: &str = "limited-original-deck-training-smoke/v1";
+const SCHEMA: &str = "limited-original-deck-training-smoke/v2";
 const MAX_STEPS: u64 = 4_000;
 const RETAIN_PER_SEAT: usize = 32;
 const TRAIN_SEED: u64 = 552_001;
@@ -40,8 +40,8 @@ macro_rules! fixture {
         )
     };
 }
-const TRAIN: [(&str, &[u8]); 2] = [fixture!("FDN_top_09703_UB"), fixture!("FDN_top_22247_BR")];
-const EVAL: [(&str, &[u8]); 2] = [fixture!("FDN_top_25562_WG"), fixture!("FDN_top_30836_UR")];
+const TRAIN: [(&str, &[u8]); 2] = [fixture!("FDN_top_15157_BR"), fixture!("FDN_top_09703_UB")];
+const EVAL: [(&str, &[u8]); 2] = [fixture!("FDN_top_26941_WB"), fixture!("FDN_top_30836_UR")];
 
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -65,7 +65,11 @@ fn config() -> Value {
         "binary_source_sha256": hash(include_bytes!("kernel_limited_training_v1.rs")),
         "card_db_hash": format!("{KERNEL_CARDDB_HASH:016x}"),
         "feature_sha256": feature_identity_v1(),
-        "hand_knowledge": "by-name-v2",
+        "actor_profile": PROFILE_V1,
+        "actor_producer_sha256": mtg_kernel::limited_return_consumer_v1::producer_sha256_v1(),
+        "hand_knowledge": "public-reveal-minima/v3",
+        "reveal_producer_sha256": hash(include_bytes!("../reveal_meaning_v3.rs")),
+        "reveal_reducer_sha256": hash(include_bytes!("../reveal_meaning_v3/reducer.rs")),
         "objective": "mean-terminal-reinforce-gamma1-zero-critic/v1",
         "sampler": "f64-exp-icdf-u53/v1",
         "optimizer": adam(),
@@ -167,14 +171,16 @@ fn game(roster: [(&str, &[u8]); 2], seed: u64, leg: usize, model: &ModelV1, coll
             Ok(cards)
         };
         let decks = [resolve(roster[0])?, resolve(roster[1])?];
-        let mut session = KaitoSession::reset_explicit_mainboards_hand_facts_v2(
-            seed,
-            seed,
-            (MAX_STEPS, MAX_STEPS),
-            receipt.decks.clone(),
-            decks,
-            start,
-        )
+        let mut session = reset_numeric_reveal_facts_v3(&ResetV1 {
+            expected_card_db_hash: KERNEL_CARDDB_HASH,
+            episode_id: seed,
+            env_seed: seed,
+            starting_player: start.into(),
+            deck_ids: receipt.decks.clone(),
+            mainboards: decks,
+            max_physical_decisions: MAX_STEPS,
+            max_policy_steps: MAX_STEPS,
+        })
         .map_err(|error| format!("session: {error}"))?;
         let mut rng = [
             SplitMix64::seed(seed ^ 0x3ac6_352a_54aa_8ba0),

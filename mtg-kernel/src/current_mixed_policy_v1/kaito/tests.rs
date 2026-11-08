@@ -1113,7 +1113,7 @@ fn paid_numeric_foreign_forged_packet_and_action_refusals_leave_native_unchanged
         let mut forged = d.backend.candidates_v75().clone();
         forged.observation.kaito.activations.clear();
         forged.observation.kaito.authorized_printings.clear();
-        assert!(packet_from_current(&forged, d.backend.actions(), false).is_err());
+        assert!(packet_from_current(&forged, d.backend.actions(), &HandFacts::CopyRows).is_err());
         assert!(a.apply(&d, u32::MAX).is_err());
         assert_eq!(a.fixture_state(), &before);
         assert_eq!(a.fixture_counts(), counts);

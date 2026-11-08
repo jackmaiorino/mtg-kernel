@@ -41,7 +41,11 @@ fn exact_forty_card_profile_reset_all_consumers_and_unchanged_full_gate_both_sea
         let owner = reset_numeric_v1(&config).unwrap();
         let current = decision(&owner);
         let input = owner.training_input_v1(&current).unwrap();
-        assert!(ModelV1::deterministic_fixture().forward(&input).unwrap().iter().all(|x| x.is_finite()));
+        assert!(ModelV1::deterministic_fixture()
+            .forward(&input)
+            .unwrap()
+            .iter()
+            .all(|x| x.is_finite()));
         let expected = current.fixture_backend_v75().expected();
         let human = reset_human_v1(&config, expected.acting_player).unwrap();
         let mut projector = HumanKaitoProjectorV75::new(expected.acting_player);
@@ -65,6 +69,23 @@ fn exact_forty_card_profile_reset_all_consumers_and_unchanged_full_gate_both_sea
         let mut bad = config.clone();
         bad.expected_card_db_hash ^= 1;
         assert!(reset_numeric_v1(&bad).is_err());
+    }
+}
+
+#[test]
+fn issue552_return_profile_enables_public_minima_before_its_first_owned_menu() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let config = config(actor);
+        let legacy = reset_numeric_v1(&config).unwrap();
+        let owner = reset_numeric_reveal_facts_v3(&config).unwrap();
+        assert!(legacy.fixture_state().reveal_knowledge_v4.is_none());
+        assert!(owner.fixture_state().reveal_knowledge_v4.is_some());
+        let current = decision(&owner);
+        let input = owner.training_input_v1(&current).unwrap();
+        assert!(ModelV1::deterministic_fixture().forward(&input).unwrap().iter().all(|x| x.is_finite()));
+        let mut bad = config;
+        bad.mainboards[actor.index()][0] = 460;
+        assert!(reset_numeric_reveal_facts_v3(&bad).is_err());
     }
 }
 

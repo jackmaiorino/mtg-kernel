@@ -462,6 +462,69 @@ fn issue552_name_facts_ignore_the_physical_reveal_copy() {
 }
 
 #[test]
+fn issue552_reveal_v3_learner_input_ignores_hidden_same_name_multiplicity() {
+    use crate::current_tree_learner_v1::ModelV1;
+    use crate::policy_observation_v6::tests::put;
+
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let opponent = player.opponent();
+        let make = |other_first, show| {
+            let (mut state, _, _) = scene(player);
+            state.reveal_knowledge_v4 = Some(Default::default());
+            state.reveal_meaning_v3.enable();
+            if other_first {
+                put(&mut state, opponent, "Island", Zone::Hand);
+            }
+            let first = put(&mut state, opponent, "Swamp", Zone::Hand);
+            let second = put(&mut state, opponent, "Swamp", Zone::Hand);
+            if !other_first {
+                put(&mut state, opponent, "Mountain", Zone::Hand);
+            }
+            if show {
+                state
+                    .reveal_distinct_hand_card(player, opponent, first)
+                    .unwrap();
+                state
+                    .reveal_distinct_hand_card(player, opponent, if other_first { second } else { first })
+                    .unwrap();
+                if other_first {
+                    // Simulate a legacy copy row that overstates what the
+                    // two public `present` events can establish.
+                    let generation = state.objects.get(second).zone_change_count;
+                    let rows = &mut state.hand_knowledge[player.index()][opponent.index()];
+                    rows.push(crate::state::HandKnowledgeEntry {
+                        object: second,
+                        zone_change_count: generation,
+                    });
+                    assert_eq!(rows.len(), 2);
+                }
+            }
+            let transcript = state.reveal_meaning_v3.transcript(player).unwrap();
+            let native = FastActorSessionV1::from_kaito_v75_fixture_state(state);
+            let owner = KaitoSession::from_session(native).unwrap();
+            let FastActorResponseV1::Decision(expected) = owner.current_response() else {
+                panic!("expected a current learner input");
+            };
+            assert_eq!(expected.acting_player, player.into());
+            let bound = owner.encode(expected).unwrap();
+            let input = owner.training_input_v1(&bound).unwrap();
+            (transcript, input)
+        };
+        let (transcript_a, a) = make(false, true);
+        let (transcript_b, b) = make(true, true);
+        assert_eq!(transcript_a, transcript_b);
+        assert_eq!(a.packet(), b.packet());
+        assert_eq!(a.action_flags(), b.action_flags());
+        let model = ModelV1::deterministic_fixture();
+        let logits = model.forward(&a).unwrap();
+        assert!(logits.iter().all(|value| value.is_finite()));
+        assert_eq!(logits, model.forward(&b).unwrap());
+        let (_, without_reveal) = make(false, false);
+        assert_ne!(a.packet(), without_reveal.packet());
+    }
+}
+
+#[test]
 fn issue552_signed_terminal_gradient_and_optimizer_resume() {
     use crate::current_tree_learner_v1::{LearnerV1, ModelV1, TerminalExampleV1};
 

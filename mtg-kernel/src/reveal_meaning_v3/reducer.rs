@@ -36,6 +36,7 @@ impl RevealKnowledgeV3 {
             .map(|(&name, count)| (name, count.minimum()))
     }
 
+    #[cfg(feature = "limited-fdn-fixtures")]
     pub(super) fn only_opponent(mut self, viewer: PlayerId) -> Self {
         self.0[viewer.index()].clear();
         self
@@ -107,6 +108,7 @@ impl RevealReducerV3 {
         self.knowledge.hand(owner).collect()
     }
 
+    #[cfg(feature = "limited-fdn-fixtures")]
     pub(crate) fn opponent_knowledge(self, viewer: PlayerId) -> RevealKnowledgeV3 {
         self.knowledge.only_opponent(viewer)
     }

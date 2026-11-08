@@ -161,6 +161,7 @@ impl RevealJournalV3 {
         Some(json!({"schema": "kernel-reveal-support/v3", "viewers": envelopes}))
     }
 
+    #[cfg(feature = "limited-fdn-fixtures")]
     pub(crate) fn transcript(&self, viewer: PlayerId) -> Option<Value> {
         Some(json!({"schema": "x_reveal_meaning_v3",
             "operations": self.viewers.as_ref()?.get(viewer.index())?}))

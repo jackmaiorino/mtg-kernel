@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SAMPLE = ROOT / "data/limited/draftzero_sample_v1"
 REGISTRIES = (ROOT / "data/cards_v1.json", ROOT / "data/limited/fdn_v1/cards_v1.json")
+RETURN_PRINTINGS = {"Alesha, Who Laughs at Fate", "Nine-Lives Familiar", "Valkyrie's Call"}
 
 
 def inventory() -> dict:
@@ -45,6 +46,7 @@ def inventory() -> dict:
         rows.append({"deck": name, "split": split, "cards": size, "sha256": hashlib.sha256(data).hexdigest(),
                      "declared_full_only": eligible, "unknown_printings": sorted(missing),
                      "non_full_printings": sorted(partial),
+                     "declared_return_profile_v1": not missing and partial <= RETURN_PRINTINGS,
                      "contains_drake_hatcher": any(card["name"] == "Drake Hatcher" for card in deck["cards"])})
         splits[split, size, eligible] += 1
         all_inputs.update(path.name.encode("utf-8"))

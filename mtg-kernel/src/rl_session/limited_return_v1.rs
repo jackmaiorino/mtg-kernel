@@ -5,9 +5,22 @@ impl FastActorSessionV1 {
     pub(crate) fn reset_limited_return_v1(
         config: &crate::limited_return_consumer_v1::ResetV1,
     ) -> Result<Self, RlSessionError> {
+        Self::reset_limited_return(config, false)
+    }
+
+    pub(crate) fn reset_limited_return_reveal_facts_v3(
+        config: &crate::limited_return_consumer_v1::ResetV1,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_limited_return(config, true)
+    }
+
+    fn reset_limited_return(
+        config: &crate::limited_return_consumer_v1::ResetV1,
+        reveal_facts: bool,
+    ) -> Result<Self, RlSessionError> {
         crate::limited_return_consumer_v1::preflight(config)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
-        let state = crate::rl::build_preflighted_deck_pair_environment_v2(
+        let mut state = crate::rl::build_preflighted_deck_pair_environment_v2(
             config.env_seed,
             &config.mainboards[0],
             &config.mainboards[1],
@@ -17,6 +30,9 @@ impl FastActorSessionV1 {
             },
         )
         .map_err(map_deck_pair_build_error_v2)?;
+        if reveal_facts {
+            state.reveal_knowledge_v4 = Some(Default::default());
+        }
         Self::initialize_kaito_v75(
             config.episode_id,
             (config.max_physical_decisions, config.max_policy_steps),
