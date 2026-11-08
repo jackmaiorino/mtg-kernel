@@ -70,6 +70,11 @@ pub const REPORTED_MAINBOARD_NAMES: &[&str] = &[
     "Wastescape Battlemage",
     "Yavimaya, Cradle of Growth",
 ];
+pub const GENERATED_PRINTING_NAMES: &[&str] = &["Karn Construct Token", "Enroot"];
+
+fn finite_printing(name: &str) -> bool {
+    REPORTED_MAINBOARD_NAMES.contains(&name) || GENERATED_PRINTING_NAMES.contains(&name)
+}
 
 fn unsupported() -> RlContractError {
     RlContractError("unrepresented Eternal printed definition field".into())
@@ -77,7 +82,7 @@ fn unsupported() -> RlContractError {
 
 pub fn printing_v1(id: u16) -> Result<Value> {
     let d = CARD_DEFS.get(usize::from(id)).ok_or_else(unsupported)?;
-    if !REPORTED_MAINBOARD_NAMES.contains(&d.name) {
+    if !finite_printing(d.name) {
         return Err(RlContractError(
             "printing outside finite Eternal descriptor pool".into(),
         ));
@@ -186,7 +191,6 @@ pub fn printing_v1(id: u16) -> Result<Value> {
         || flashback.is_some()
         || game_outcome_protection_v1.is_some()
         || generic_cost_reduction.is_some()
-        || *is_token
         || kicked_target_spec.is_some()
         || madness_cost.is_some()
         || *mana_ability_includes_chosen_color
@@ -233,6 +237,7 @@ pub fn printing_v1(id: u16) -> Result<Value> {
     field!("toughness", toughness);
     field!("starting_loyalty", starting_loyalty);
     field!("is_land", is_land);
+    field!("is_token", is_token);
     field!("produces_mana", produces_mana);
     field!("target_spec", target_spec);
     field!("keywords", keywords);
@@ -345,7 +350,14 @@ enum ExternalRule {
         chapter: u8,
         ability: SagaAbility,
     },
-    FaceUpPrintedLandsGainForestAndGreenTapUnlessAlreadyProducingGreen,
+    FaceUpPrintedLandsGainForest {
+        add_green_tap_unless_already_producing_green: bool,
+    },
+    SelfPowerToughnessPerControlledArtifact {
+        power: i16,
+        toughness: i16,
+    },
+    PreparedCopyCastPermissionFollowsPreparedCreatureControllerUntilCastOrCreatureDeparture,
     AnimateDeadGraveyardAttachmentThenReanimatedCreatureAttachment,
     LandBackFacePlayableFromHand {
         face: u8,
@@ -362,7 +374,7 @@ enum SagaAbility {
 
 fn external_rules(name: &str) -> Result<Vec<ExternalRule>> {
     use ExternalRule::*;
-    if !REPORTED_MAINBOARD_NAMES.contains(&name) {
+    if !finite_printing(name) {
         return Err(unsupported());
     }
     Ok(match name {
@@ -403,8 +415,17 @@ fn external_rules(name: &str) -> Result<Vec<ExternalRule>> {
             },
         ],
         "Yavimaya, Cradle of Growth" => {
-            vec![FaceUpPrintedLandsGainForestAndGreenTapUnlessAlreadyProducingGreen]
+            vec![FaceUpPrintedLandsGainForest {
+                add_green_tap_unless_already_producing_green: true,
+            }]
         }
+        "Karn Construct Token" => vec![SelfPowerToughnessPerControlledArtifact {
+            power: 1,
+            toughness: 1,
+        }],
+        "Enroot" => vec![
+            PreparedCopyCastPermissionFollowsPreparedCreatureControllerUntilCastOrCreatureDeparture,
+        ],
         "Animate Dead" => vec![AnimateDeadGraveyardAttachmentThenReanimatedCreatureAttachment],
         "Bridgeworks Battle" => vec![LandBackFacePlayableFromHand {
             face: 1,
@@ -594,7 +615,10 @@ mod tests {
     #[test]
     fn issue454_reported_mainboards_have_exact_printed_program_operands() {
         assert_eq!(REPORTED_MAINBOARD_NAMES.len(), 62);
-        for name in REPORTED_MAINBOARD_NAMES {
+        for name in REPORTED_MAINBOARD_NAMES
+            .iter()
+            .chain(GENERATED_PRINTING_NAMES)
+        {
             let id = card_id_by_name(name).expect(name);
             let printing = printing_v1(id).unwrap_or_else(|e| panic!("{name}: {e:?}"));
             assert!(printing["triggers"].is_array(), "{name}");
