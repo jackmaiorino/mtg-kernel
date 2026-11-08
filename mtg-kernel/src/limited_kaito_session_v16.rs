@@ -249,6 +249,20 @@ impl LimitedKaitoJsonlServerV16 {
         Self::default()
     }
 
+    /// Internal transfer of a genuine separately preflighted profile owner.
+    /// Public V16 Reset still resolves only Full decks. The caller must use its
+    /// own protocol envelope, never relabel this as V16 reset admission.
+    pub(crate) fn install_profile_core(&mut self, core: KaitoSessionV75) -> Result<(), &'static str> {
+        let next = self.generation.checked_add(1).ok_or("authority_exhausted")?;
+        self.active = Some(Active { core, owner: Arc::new(()) });
+        self.generation = next;
+        self.pending = None;
+        self.accepted = None;
+        self.snapshots.clear();
+        self.last_exchange = None;
+        Ok(())
+    }
+
     /// Process diagnostics only. Timings never enter replies, game state,
     /// snapshots, action selection or executable authority.
     pub fn enable_timings_v16(&mut self) {

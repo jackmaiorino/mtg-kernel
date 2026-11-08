@@ -30,6 +30,10 @@ impl KaitoDecision {
     pub fn packet(&self) -> &Packet {
         &self.packet
     }
+    #[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
+    pub(crate) fn fixture_backend_v75(&self) -> &KaitoDecisionV75 {
+        &self.backend
+    }
 }
 // Pure normalization of the exact freshly validated backend input. This
 // function cannot capture another decision or acquire executable authority.
@@ -126,7 +130,7 @@ impl KaitoSession {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    pub(super) fn fixture_state(&self) -> &crate::state::GameState {
+    pub(crate) fn fixture_state(&self) -> &crate::state::GameState {
         self.inner.fixture_state_v75()
     }
     #[cfg(all(
@@ -134,7 +138,7 @@ impl KaitoSession {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    pub(super) fn fixture_counts(&self) -> (u64, u64) {
+    pub(crate) fn fixture_counts(&self) -> (u64, u64) {
         self.inner.fixture_counts_v75()
     }
     pub fn snapshot(&self) -> KaitoSnapshot {

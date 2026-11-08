@@ -84,3 +84,40 @@ refusal, and Human/wire-to-native action parity. Existing V61/V62 tests remain
 intact. Full promotion waits on these observed checks, the shared training/fair
 search requirements and exact-head/default delivery. The other33 printings and
 Drake's #474 cost requirement remain open under #550.
+
+## Implemented source checkpoint
+
+`limited_return_consumer_v1` now owns the distinct `fdn-return-consumer/v1`
+profile. `ResetV1` binds the actual catalog hash and exact two mainboards.
+Preflight validates the exhaustive V61/V62 meanings for IDs457/458/459, rejects
+tokens and every other Partial printing, then applies the ordinary V75 scope
+check. The shared environment-v2 builder preserves the previous shuffle and
+opening-hand sequence. Its original public entry point still performs the
+unchanged Full-only preflight. The new native factory selects V75 before advance.
+
+`reset_numeric_v1` returns the existing sealed Kaito numeric owner, including
+authenticated learner capture, apply, sampling and snapshots. `reset_human_v1`
+returns the existing fixed-seat Human owner. `JsonlServerV1` and the separate
+`kernel_limited_return_env_v1` executable use a new request envelope; nested V16
+Reset is not part of its grammar. V16 supplies only the complete safe payload,
+action mapping and owned snapshot machinery. Installing a new profile owner
+increments transport authority and clears pending actions, accepted receipts,
+snapshots and retry state. The new outer producer hash includes the profile and
+factory sources as well as the existing numeric and transport provenance.
+
+Six focused source tests cover exact40-card resets, unchanged old reset
+refusal, declared-profile rejection, actual paid casts from an untouched reset,
+paid three-family mechanics, Alesha choice/learner ingress, independent hidden
+libraries with all three actually paid permanents, and monotonic wire restore
+and reset. The paid-scene checks compare original native indices and full state
+after each action, fixed-seat Human facts/actions, actor wire payloads and
+finite numeric scores. The actual-reset test uses28 basic lands plus four copies
+of each selected printing, against40 Forests, swapping both seats. These are
+engineering fixtures, not a Limited training campaign or playing-strength test.
+
+All new formatter/build/native checks remain **unrun** because host reservations
+have not admitted them. Source review and `git diff --check` do not qualify these
+three printings as Full. This branch also does not yet include #552's optional
+sorted name/count hand-knowledge feature. Its inherited ordinary sampling API
+is not advertised as the all286 closed-list fair-search contract; composing that
+lane must explicitly retain the separate by-name-v2 knowledge law.

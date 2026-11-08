@@ -153,13 +153,25 @@ impl FastActorSessionV1 {
             crate::rl::CommonProjectionScopeV42::KaitoV75,
             [&mainboards[0], &mainboards[1]],
         )?;
-        let mut state = crate::rl::build_deck_pair_state_environment_v2_with_starting_player_v1(
+        let state = crate::rl::build_deck_pair_state_environment_v2_with_starting_player_v1(
             env_seed,
             &mainboards[0],
             &mainboards[1],
             starting_player,
         )
         .map_err(map_deck_pair_build_error_v2)?;
+        Self::initialize_kaito_v75(episode_id, limits, deck_ids, &mainboards, state)
+    }
+
+    /// Only explicit preflighted factories may create the initial V75 owner.
+    /// This runs before the first decision and never promotes rules-only menus.
+    pub(super) fn initialize_kaito_v75(
+        episode_id: u64,
+        limits: (u64, u64),
+        deck_ids: SessionDeckIdsV1,
+        mainboards: &[Vec<u16>; 2],
+        mut state: GameState,
+    ) -> Result<Self, RlSessionError> {
         crate::combat_damage_v1::enable_foundations_combat_v1(&mut state)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
         crate::london_mulligan_v1::enable_london_mulligans_v1(&mut state)
