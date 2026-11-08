@@ -5,6 +5,8 @@ Each runtime first completes one update at 1/2/4 workers. The supported
 throughput gate selects its fastest measured allocation before a matched ABBA
 comparison of the complete prefix. All outputs and failed attempts are kept.
 This is engineering evidence on the named host, not a scientific training run.
+An owned Linux plan names the guest in ``owned_linux_computehost``. A WSL
+run also needs an outer Windows reservation and host-side resource containment.
 """
 from __future__ import annotations
 
@@ -33,17 +35,25 @@ def write(path, value):
     return dispatch.pin(path)
 
 
-def run(plan_path):
-    plan = dispatch.read(plan_path)
-    root, cold = Path(plan["root"]), Path(plan["cold_root"])
+def host_options(plan):
     host = plan.get("host", "desktop")
     if host not in ("desktop", "computehost"):
-        raise ValueError("this bounded comparison supports the two Windows PCs")
-    host_name = plan.get("compute_host_name")
-    if host == "computehost":
+        raise ValueError("this bounded comparison requires desktop or computehost placement")
+    key = dispatch.OWNED_LINUX_COMPUTEHOST
+    owned = {key: plan[key]} if key in plan else {}
+    host_name = None if owned else plan.get("compute_host_name")
+    if host == "computehost" and not owned:
         if not isinstance(host_name, str) or not host_name:
             raise ValueError("compute host name required")
         dispatch.HOSTS["computehost"] = host_name.upper()
+    dispatch.require_host({"placement": {"host": host}, **owned})
+    return host, host_name, owned
+
+
+def run(plan_path):
+    plan = dispatch.read(plan_path)
+    root, cold = Path(plan["root"]), Path(plan["cold_root"])
+    host, host_name, owned = host_options(plan)
     config = dispatch.read(dispatch.checked(plan["config"]))
     if not 2 <= len(config["iterations"]) <= 32:
         raise ValueError("engineering comparison needs 2..32 complete updates")
@@ -104,6 +114,7 @@ def run(plan_path):
                 "projected_additional_bytes": projection,
                 "projected_volume_bytes": volume_projection},
             "wall_seconds": 600,
+            **owned,
         }
         fraction = config.get("max_non_natural_episode_fraction", 0)
         if fraction:
@@ -155,7 +166,7 @@ def run(plan_path):
         })
         choice = {"schema": dispatch.CHOICE, "inventory": inventory,
                   "qualifications": [pin for _, pin, _ in canonical],
-                  "selected": {family: selected}}
+                  "selected": {family: selected}, **owned}
         choices[name] = write(root / f"choice-{name}.json", choice)
         settings[name] = best["placement"]
     if trials["baseline"][0][1]["fingerprint"] != trials["candidate"][0][1]["fingerprint"]:
@@ -206,7 +217,7 @@ def run(plan_path):
         "native_speedup": means["baseline"] / means["candidate"],
         "recovery_inclusive_speedup": recovery["baseline"] / recovery["candidate"],
         "full_adam_states_bit_identical": True,
-        "limitations": ["One fixed CS prefix on the named Windows CPU allocation.",
+        "limitations": ["One fixed CS prefix on the named CPU allocation.",
                         "First-update trajectories compared exactly; later output-root provenance differs.",
                         "No node deployment or playing-strength claim."],
     })
@@ -220,6 +231,7 @@ def main():
     plan = dispatch.read(args.plan)
     root = Path(plan["root"])
     if args.action == "launch":
+        host_options(plan)
         if root.exists():
             raise ValueError("fresh comparison root required")
         root.mkdir(parents=True)

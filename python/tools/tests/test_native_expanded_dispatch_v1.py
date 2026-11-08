@@ -1339,6 +1339,41 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
             self.assertEqual(dispatch.require_choice(self.save(choice), request, verify_outputs=True)["qualification"],
                              choice["qualifications"][1])
 
+    def test_owned_linux_choice_binds_qualified_guest(self):
+        key, guest = dispatch.OWNED_LINUX_COMPUTEHOST, "haley-linux"
+        self.runtime = self.linux_runtime()
+        choice = self.choice()
+        choice[key] = guest
+        choice["inventory"]["desktop"]["eligible"] = False
+        choice["inventory"]["computehost"]["eligible"] = True
+        for index, item in enumerate(choice["qualifications"]):
+            report = dispatch.read(item["path"])
+            original = dispatch.read(report["request"]["path"])
+            original[key] = guest
+            original["placement"]["host"] = report["placement"]["host"] = "computehost"
+            report["request"] = self.save(original)
+            choice["qualifications"][index] = self.save(report)
+        selected = choice["qualifications"][1]
+        choice["selected"][dispatch.workload(self.config, "training")] = selected
+        request = self.request(2)
+        request["placement"]["host"] = "computehost"
+        request[key] = guest
+        with patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)):
+            choice_ref = self.save(choice)
+            self.assertEqual(dispatch.require_choice(choice_ref, request, verify_outputs=True)["qualification"],
+                             selected)
+            request[key] = "other-linux"
+            with self.assertRaisesRegex(ValueError, "choice owned Linux computehost differs"):
+                dispatch.require_choice(choice_ref, request, verify_outputs=True)
+            # Restating the choice's hostname does not rebind its pinned trials.
+            choice[key] = request[key]
+            with self.assertRaisesRegex(ValueError, "qualification owned Linux computehost differs"):
+                dispatch.require_choice(self.save(choice), request, verify_outputs=True)
+            del request[key]
+            del choice[key]
+            with self.assertRaisesRegex(ValueError, "qualification owned Linux computehost differs"):
+                dispatch.require_choice(self.save(choice), request, verify_outputs=True)
+
     @unittest.skipUnless(LINUX, "Linux runtime checks")
     def test_linux_runtime_runs_only_on_linux_with_verified_pins_and_clean_loader(self):
         files = {name: self.save({"library": name}, self.root / "lib" / name) for name in dispatch.LIBRARIES}
@@ -1439,6 +1474,36 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
                                     ({"lease_work_seconds": 5000}, 1000)):
                 dispatch.require_host({**request, **extra})
                 lease.assert_called_with(expected)
+
+    def test_owned_linux_computehost_requires_explicit_exact_name(self):
+        key, guest = dispatch.OWNED_LINUX_COMPUTEHOST, "haley-linux"
+        request = self.request(1)
+        request["placement"]["host"] = "computehost"
+        with patch.object(dispatch, "WINDOWS", False), patch.object(dispatch.sys, "platform", "linux"), \
+                patch.object(dispatch.platform, "machine", return_value="x86_64"), \
+                patch.object(dispatch.platform, "node", return_value=guest), \
+                patch.dict(os.environ, {"RUNPOD_POD_ID": "", dispatch.LEASE_GUARD_ENV: ""}):
+            with self.assertRaisesRegex(ValueError, "wrong target host"):
+                dispatch.require_host(request)
+            for invalid in (None, "", "   ", 17):
+                with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "explicit hostname"):
+                    dispatch.require_host({**request, key: invalid})
+            for wrong in ("other-linux", guest.upper()):
+                with self.subTest(wrong=wrong), self.assertRaisesRegex(ValueError, "wrong owned Linux computehost"):
+                    dispatch.require_host({**request, key: wrong})
+            request[key] = guest
+            dispatch.require_host(request)
+            with patch.object(dispatch.platform, "machine", return_value="aarch64"), \
+                    self.assertRaisesRegex(ValueError, "wrong owned Linux computehost"):
+                dispatch.require_host(request)
+            for marker in ("RUNPOD_POD_ID", dispatch.LEASE_GUARD_ENV):
+                with self.subTest(marker=marker), patch.dict(os.environ, {marker: "pod"}), \
+                        self.assertRaisesRegex(ValueError, "cannot run on RunPod"):
+                    dispatch.require_host(request)
+            for host in ("desktop", "runpod"):
+                request["placement"]["host"] = host
+                with self.subTest(host=host), self.assertRaisesRegex(ValueError, "computehost placement"):
+                    dispatch.require_host(request)
 
     @unittest.skipUnless(LINUX, "runpod placements exist only on Linux")
     def test_runpod_needs_this_pods_fresh_unlatched_guard_and_lease_time(self):

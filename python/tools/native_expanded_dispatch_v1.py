@@ -5,8 +5,9 @@ Production requires compatible measured serial/parallel receipts and the fastest
 eligible allocation; for a study of several runs that may be a qualified pack of
 side-by-side slots (native_expanded_pack_v1.py). The runtime binding is
 independent of the launcher's commit.
-Runs on the two Windows hosts and, as the ``runpod`` placement, on a rented
-Linux pod with live lease-guard evidence (docs/native_expanded_dispatch_v1.md).
+Runs on the two Windows hosts, on an explicitly named owned Linux compute
+host, or on a rented Linux pod with live lease-guard evidence
+(docs/native_expanded_dispatch_v1.md).
 """
 from __future__ import annotations
 
@@ -39,6 +40,7 @@ SLOT_FIELDS = ("host", "cpu_affinity", "workers", "preparation_workers", "memory
 # The compute host's machine name is site configuration, not a public constant.
 HOSTS = {"desktop": "DESKTOP-DJ1C40R", "computehost": os.environ.get("COMPUTE_HOST_NAME", "COMPUTEHOST").upper()}
 PLACEMENTS = ("desktop", "computehost", "runpod")
+OWNED_LINUX_COMPUTEHOST = "owned_linux_computehost"
 CAP = 192 * 1024**3
 WINDOWS = os.name == "nt"
 # A Linux runtime also pins the system libraries its output bits depend on
@@ -611,11 +613,28 @@ def runpod_lease(work_seconds, now=None):
     return {"pod_id": pod, "lease": lease["name"], "available_seconds": available}
 
 
+def owned_linux_computehost(request):
+    """The explicit, case-sensitive Linux hostname for the computehost placement."""
+    if OWNED_LINUX_COMPUTEHOST not in request:
+        return None
+    name = request[OWNED_LINUX_COMPUTEHOST]
+    require(request["placement"]["host"] == "computehost" and type(name) is str
+            and bool(name) and name == name.strip(),
+            "owned_linux_computehost requires an explicit hostname and computehost placement")
+    return name
+
+
 def require_host(request):
-    """desktop/computehost only on that Windows machine; runpod only on its own leased pod."""
+    """Bind the named Windows or owned Linux host, or the pod with its live lease."""
     host = request["placement"]["host"]
     require(host in PLACEMENTS, "no paid or unknown placement")
-    if host == "runpod":
+    owned_name = owned_linux_computehost(request)
+    if owned_name is not None:
+        require(not os.environ.get("RUNPOD_POD_ID") and not os.environ.get(LEASE_GUARD_ENV),
+                "owned Linux computehost cannot run on RunPod")
+        require(not WINDOWS and sys.platform.startswith("linux") and platform.machine() == "x86_64"
+                and platform.node() == owned_name, "wrong owned Linux computehost")
+    elif host == "runpod":
         wall = positive(request["wall_seconds"], "wall-time limit")
         runpod_lease(min(positive(request.get("lease_work_seconds", wall), "lease work seconds"), wall))
     else:
@@ -995,6 +1014,10 @@ def qualification_evidence(report, request, config, runtime, family, resolve, ve
     original = read(resolve(report["request"]))
     require(not profile_gae_requested(original),
             "profiled qualification cannot select production allocation")
+    expected_host = (owned_linux_computehost(request)
+                     if original["placement"]["host"] == "computehost" else None)
+    require(owned_linux_computehost(original) == expected_host,
+            "qualification owned Linux computehost differs")
     actual_config = read(resolve(report["executed_config"]))
     original_config = read(resolve(original["config"]))
     other_runtime = runtime_for(original, resolve)
@@ -1211,6 +1234,9 @@ def require_choice(path, request, verify_outputs=False, validated=None):
     choice = read(checked(path))
     require(choice["schema"] == CHOICE, "unsupported throughput choice")
     config, runtime = validate_request(request, False) if validated is None else validated
+    owned_name = owned_linux_computehost(request)
+    require((OWNED_LINUX_COMPUTEHOST in choice) == (owned_name is not None)
+            and choice.get(OWNED_LINUX_COMPUTEHOST) == owned_name, "choice owned Linux computehost differs")
     family = workload(config, request["kind"], family=request.get("schedule_family"))
     require(set(choice["inventory"]) == {"desktop", "computehost", "runpod"},
             "inspect all three placement options")
