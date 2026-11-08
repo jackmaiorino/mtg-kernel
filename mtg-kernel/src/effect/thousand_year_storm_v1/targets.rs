@@ -117,6 +117,7 @@ pub(crate) fn for_snapshot(state: &GameState, spell: &StackItem) -> Result<Vec<F
             let cast = publications.next().ok_or("Storm target faces lost original trigger")?;
             if publications.next().is_some() { return Err("Storm target faces have duplicate trigger owners".into()); }
             let JournalV1::Cast { spell: original, .. } = at(state, cast)? else { return Err("Storm copy target faces lost original cast".into()); };
+            if original.is_copy || cast >= index as u64 { return Err("Storm target faces lost prior physical cast".into()); }
             let original_faces = for_snapshot(state, original)?;
             for (slot, face) in faces.iter().enumerate() {
                 if original.v4.target_contracts.get(slot) == Some(&face.contract) {
