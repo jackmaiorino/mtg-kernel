@@ -48,7 +48,7 @@ RECORD_SCHEMA = 'sd1-record/v1'
 PANEL_SCHEMA = 'sd1-panel/v1'
 VERSION = 'sd1-capture-v1'
 ARM_KEYS = ('arm', 'world', 'search_seed', 'seed_root', 'status', 'cpu_s', 'visits', 'n', 'wins', 'draws',
-            'value_units', 'perm_live', 'frozen_choice', 'pick_v2')
+            'value_units', 'perm_live', 'frozen_choice', 'pick_v2', 'fallback')
 SEARCH_KEYS = ('budget', 'transitions', 'attempted', 'completed', 'nonnatural', 'cap_reached', 'incomplete',
                'faults', 'sampler', 'world_receipt', 'failed', 'value_leaf')
 
@@ -106,18 +106,28 @@ def jobs(base, dose, out_dir, updates, arms, first_update=0, chain='sd1/panel', 
     return out
 
 
-JOB_STAMP = 'job.sha256'
+JOB_STAMP = '.job.sha256'
+
+
+def stamp_path(out):
+    """The job stamp sits beside the output directory (the engine creates the directory itself and refuses an
+    existing one)."""
+    out = Path(out)
+    return out.with_name(out.name + JOB_STAMP)
 
 
 def finished(job):
-    """Whether `job` already ran to completion with exactly these command bytes. Each output directory carries the
-    SHA-256 of the job file that produced it (written before the process starts); a finished output from another
-    command (changed arms, worlds, budgets or panel-only setting) is refused, never reused."""
+    """Whether `job` already ran to completion with exactly these command bytes. Each output directory has a
+    stamp beside it holding the SHA-256 of the job file that produced it (written before the process starts); a
+    finished or partial output from another command (changed arms, worlds, budgets or panel-only setting) is
+    refused, never reused."""
     out = Path(read(job)['output_directory'])
-    stamp = out / JOB_STAMP
+    stamp = stamp_path(out)
     if not (out / 'collection.json').exists():
-        if out.exists() and any(out.iterdir()) and stamp.exists() and stamp.read_text().strip() != sha256_file(job):
+        if out.exists() and (not stamp.exists() or stamp.read_text().strip() != sha256_file(job)):
             raise SystemExit(f'stop: {out} holds a partial run of another command')
+        if out.exists():
+            raise SystemExit(f'stop: {out} holds a partial run; move it aside before rerunning')
         return False
     if not stamp.exists() or stamp.read_text().strip() != sha256_file(job):
         raise SystemExit(f'stop: {out} was produced by another command than {job}')
@@ -137,8 +147,8 @@ def run(binary, out_dir, workers, log_every=300.0):
         while pending and len(running) < workers and not failed:
             job = pending.pop(0)
             out = Path(read(job)['output_directory'])
-            out.mkdir(parents=True, exist_ok=True)
-            (out / JOB_STAMP).write_text(sha256_file(job) + '\n', encoding='utf-8')
+            out.parent.mkdir(parents=True, exist_ok=True)
+            stamp_path(out).write_text(sha256_file(job) + '\n', encoding='utf-8')
             log = open(Path(job).with_suffix('.log'), 'wb')
             running[job] = (subprocess.Popen([binary, job], stdout=log, stderr=subprocess.STDOUT), log)
         for job, (proc, log) in list(running.items()):
@@ -190,6 +200,7 @@ def ladder(binary, job, out_dir, steps):
         started = time.time()
         for i in range(k):
             out = Path(out_dir) / f'k{k}' / f'c{i}'
+            out.parent.mkdir(parents=True, exist_ok=True)   # the engine creates `out` itself
             cmd = dict(command, output_directory=out.as_posix())
             path = Path(out_dir) / 'jobs' / f'k{k}-c{i}.json'
             write(path, cmd)

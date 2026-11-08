@@ -18,7 +18,7 @@ def capture_doc(reached, step, logits, arms=False):
     if arms:
         doc['arms'] = [{'arm': 'D64', 'world': 'fresh', 'search_seed': 0, 'seed_root': 'r', 'status': 'ok',
                         'cpu_s': 1.5, 'n': [8, 8], 'wins': [4, 5], 'draws': [0, 0], 'perm_live': [1, 0],
-                        'frozen_choice': 1, 'pick_v2': 1, 'visits': 16,
+                        'frozen_choice': 1, 'pick_v2': 1, 'visits': 16, 'fallback': 0,
                         'search': {'budget': 64000, 'completed': 16, 'wall': 9.0, 'nodes': 3}}]
         doc['references'] = {'half_rollouts': 2}
     return doc
@@ -45,7 +45,7 @@ def fake_run(root, episodes, arms=False, mutate=None):
         job = Path(root, 'jobs', f'u{u:06d}.json')
         job.parent.mkdir(parents=True, exist_ok=True)
         job.write_text(json.dumps({'output_directory': out.as_posix()}))
-        (out / capture.JOB_STAMP).write_text(capture.sha256_file(job) + '\n')
+        capture.stamp_path(out).write_text(capture.sha256_file(job) + '\n')
         jobs.append(job.as_posix())
     Path(root, 'jobs', 'manifest.json').write_text(json.dumps({
         'chain': 'sd1/panel', 'source_checkpoint_sha256': 'c' * 64, 'job_set_sha256': 'j' * 64, 'jobs': jobs}))
@@ -69,6 +69,7 @@ class Capture(unittest.TestCase):
             arm = recs[0]['arms'][0]
             self.assertNotIn('wall', arm['search'])
             self.assertEqual(arm['frozen_choice'], 1)
+            self.assertEqual(arm['fallback'], 0)
             self.assertEqual(recs[0]['references'], {'half_rollouts': 2})
             with self.assertRaises(SystemExit):
                 capture.panel(Path(d, 'panel'), 5, 2)
@@ -98,6 +99,18 @@ class Stamps(unittest.TestCase):
                 capture.finished(job.as_posix())
             with self.assertRaises(SystemExit):
                 list(capture.records(Path(d, 'arms')))
+
+    def test_fresh_job_is_pending_and_a_partial_output_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d, 'runs', 'u000000')
+            job = Path(d, 'jobs', 'u000000.json')
+            job.parent.mkdir(parents=True)
+            job.write_text(json.dumps({'output_directory': out.as_posix()}))
+            self.assertFalse(capture.finished(job.as_posix()))
+            self.assertFalse(out.exists())
+            out.mkdir(parents=True)
+            with self.assertRaises(SystemExit):
+                capture.finished(job.as_posix())
 
 
 if __name__ == '__main__':
