@@ -1027,6 +1027,7 @@ jobs:
           uv run --no-sync python -m unittest discover -v -s tools/ci/tests -p 'test_*.py'
           uv run --no-sync python -m unittest discover -v -s tools/w5/tests -p 'test_*.py'
           uv run --no-sync python -m unittest discover -v -s tools/sd1/tests -p 'test_*.py'
+          uv run --no-sync python -m unittest discover -v -s tools/native_fixture_bench/tests -p 'test_*.py'
 
       - name: Use the runner's persistent Python environment build
         if: runner.environment == 'self-hosted'
