@@ -5,6 +5,7 @@ use crate::{
     kaito_public_v75::StageV75, rl::ActionSemanticV1 as A,
 };
 mod archmage;
+mod actor_coverage;
 mod attack_triggers;
 mod balmor;
 mod bloodwitch;
