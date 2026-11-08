@@ -419,9 +419,27 @@ plus 30 s old (two provider timeouts), have no `latched`, `release_epoch` or
 `stop-request.json`, report `provider_ok` and `allow_new_dispatch`, and leave
 the work (`wall_seconds`, or a smaller `lease_work_seconds`) before
 `deadline_epoch - recovery_seconds`, when the guard latches `deadline`. The
-public entry and the reserved launch both check. desktop and computehost are
-refused on Linux, `runpod` on Windows. The dispatcher never rents compute and
+public entry and the reserved launch both check. `desktop` is refused on
+Linux, and `runpod` on Windows. The dispatcher never rents compute and
 does not write `progress.json`; its caller keeps the guard fed.
+
+An owned x86-64 Linux machine can use `computehost` when the request includes
+`"owned_linux_computehost": "EXACT_HOSTNAME"`, matching `platform.node()`.
+The same field must appear in the throughput choice and its pinned computehost
+qualification requests. Missing or different names are refused. This route
+also refuses `RUNPOD_POD_ID` or `MTG_LEASE_GUARD_DIR`; it cannot replace a pod's
+lease guard. Runtime/library pins, CPU affinity, storage, reservation and
+throughput requirements still apply. Other campaign drivers must explicitly
+forward this field before using this route.
+
+For WSL, guest affinity describes virtual CPUs. It does not reserve Windows
+CPUs or account for physical VHD growth. The bounded S comparison's
+`scripts/experiments/s_transformer_parallel_v1/qualify_wsl.py` holds an exclusive
+reservation on idle Haley, records the WSL VM's Windows process identity,
+checks physical disk/RAM limits, and restores the original absent `.wslconfig`
+after the owned distro and VM drain. It refuses an already running WSL guest.
+That engineering result does not replace native W5 full-layout qualification
+on the intended production machine.
 
 `nine_deck_campaign_v1.py` on `runpod` checks before every block attempt that
 the guard leaves 1.25x the longest block measured on runpod (else

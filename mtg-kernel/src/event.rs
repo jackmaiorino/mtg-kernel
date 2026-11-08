@@ -4430,6 +4430,22 @@ fn commit_with_entry_batch_and_source_color(
     let progenitus_input = progenitus_plan
         .as_ref()
         .map(|plan| plan.record_input(state));
+    // Exile does not have the battlefield/stack reveal-on-exit rule. A
+    // concealed exiled card can enter a hidden zone without naming itself.
+    let concealed_exile_departure = match &event {
+        ProposedEvent::ZoneChange(change)
+            if matches!(change.to_zone, Zone::Hand | Zone::Library)
+                && !(change.to_zone == Zone::Library
+                    && change.library_insert_visibility == LibraryInsertVisibility::Public) =>
+        {
+            let object = state.objects.get(change.object);
+            (object.zone == Zone::Exile)
+                .then_some(object.v4.face_down_v1)
+                .flatten()
+                .map(|face| (change.object, face.lookers))
+        }
+        _ => None,
+    };
     let Some(MaterializedEventV1 {
         committed,
         alesha_power_departure,
@@ -4526,6 +4542,22 @@ fn commit_with_entry_batch_and_source_color(
         }
     );
     let entry_history_index = state.engine.event_history.len();
+    if let CommittedEvent::ZoneChange { object, .. } = &committed {
+        let mask = concealed_exile_departure
+            .filter(|(id, _)| id == object)
+            .map(|(_, mask)| mask)
+            .unwrap_or_else(|| {
+                state
+                    .objects
+                    .get(*object)
+                    .v4
+                    .face_down_v1
+                    .map_or(3, |f| f.lookers)
+            });
+        state
+            .observation_journal
+            .record_visibility_v2(entry_history_index, *object, mask);
+    }
     state.engine.event_history.push(committed);
     record_copied_token_entry_v1(state, entry_history_index);
     crate::effect::curator_v1::record_entry(state, entry_history_index);
@@ -6794,6 +6826,15 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
 /// later, it doesn't replace the cast event itself).
 pub fn log_spell_cast(state: &mut GameState, spell: ObjectId, controller: PlayerId) {
     let committed = CommittedEvent::SpellCast { spell, controller };
+    let mask = state
+        .objects
+        .get(spell)
+        .v4
+        .face_down_v1
+        .map_or(3, |f| f.lookers);
+    state
+        .observation_journal
+        .record_visibility_v2(state.engine.event_history.len(), spell, mask);
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
     let kaito_cast = state.engine.event_history.len() - 1;

@@ -215,7 +215,7 @@ fn registry_names(relative: &str) -> Vec<String> {
         .collect()
 }
 
-fn fully_supported(name: &str) -> bool {
+pub(crate) fn fully_supported(name: &str) -> bool {
     card_id_by_name(name)
         .is_some_and(|id| CARD_DEFS[id as usize].capability == CardCapability::Full)
 }
@@ -225,11 +225,13 @@ fn fully_supported(name: &str) -> bool {
 /// trains; change this with the eternal catalog version.
 const STANDARD_DEFINITIONS: usize = 254;
 
-struct SnapshotDeck {
-    format: String,
-    archetype: String,
+pub(crate) struct SnapshotDeck {
+    pub(crate) format: String,
+    pub(crate) archetype: String,
     /// The mainboard and the companion, as the session takes them.
-    deck: CustomDeckV1,
+    pub(crate) deck: CustomDeckV1,
+    /// The sideboard rows, the companion among them.
+    pub(crate) sideboard: Vec<CustomCardCountV1>,
 }
 
 /// Metagame snapshots the catalog plays: mtggoldfish for Pauper, Legacy and
@@ -239,28 +241,32 @@ const SNAPSHOTS: [&str; 2] = [
     "data/eternal_v1/meta_snapshot_mtgtop8_premodern_20261101.json",
 ];
 
+/// One zone's decklist rows.
+fn snapshot_rows(rows: &Value) -> Vec<CustomCardCountV1> {
+    rows.as_array()
+        .unwrap()
+        .iter()
+        .map(|row| CustomCardCountV1 {
+            name: row[1].as_str().unwrap().to_owned(),
+            count: row[0].as_u64().unwrap() as _,
+        })
+        .collect()
+}
+
 /// Every snapshot deck, in snapshot order.
-fn snapshot_decks() -> Vec<SnapshotDeck> {
+pub(crate) fn snapshot_decks() -> Vec<SnapshotDeck> {
     let mut decks = Vec::new();
     for snapshot in SNAPSHOTS.map(read_json) {
         for (format, archetypes) in snapshot["formats"].as_object().unwrap() {
             for archetype in archetypes.as_array().unwrap() {
-                let cards = archetype["mainboard"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|row| CustomCardCountV1 {
-                        name: row[1].as_str().unwrap().to_owned(),
-                        count: row[0].as_u64().unwrap() as _,
-                    })
-                    .collect();
                 decks.push(SnapshotDeck {
                     format: format.clone(),
                     archetype: archetype["archetype"].as_str().unwrap().to_owned(),
                     deck: CustomDeckV1 {
-                        cards,
+                        cards: snapshot_rows(&archetype["mainboard"]),
                         companion: archetype["companion"].as_str().map(str::to_owned),
                     },
+                    sideboard: snapshot_rows(&archetype["sideboard"]),
                 });
             }
         }
@@ -504,7 +510,7 @@ fn stack_items_controlled(value: &Value, seat: &Value) -> usize {
 /// but never activates an ability; `Random` reaches activations, so lands,
 /// mana rocks and activated abilities run too.
 #[derive(Clone, Copy)]
-enum Policy {
+pub(crate) enum Policy {
     Ranked,
     Random(u64),
 }
@@ -517,16 +523,20 @@ fn splitmix64(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-struct Game {
-    transcript_sha256: String,
-    action_counts: BTreeMap<String, usize>,
-    casts_by_seat: [usize; 2],
-    companion_actions: usize,
+pub(crate) struct Game {
+    pub(crate) transcript_sha256: String,
+    pub(crate) action_counts: BTreeMap<String, usize>,
+    pub(crate) casts_by_seat: [usize; 2],
+    pub(crate) companion_actions: usize,
+    /// The winning seat, or `None` for a drawn game.
+    pub(crate) winner: Option<usize>,
+    /// Spells cast per seat, by card definition id.
+    pub(crate) cast_cards: [BTreeMap<u16, usize>; 2],
 }
 
 /// Plays one game to a natural terminal and returns its transcript hash,
-/// chosen action kinds and spells cast per seat.
-fn play(decks: [CustomDeckV1; 2], seed: u64, policy: Policy) -> Game {
+/// chosen action kinds, spells cast per seat and winner.
+pub(crate) fn play(decks: [CustomDeckV1; 2], seed: u64, policy: Policy) -> Game {
     const MAX_STEPS: usize = 131_072;
     let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
     let mut request = json!({"schema_version":5,"request_type":"reset","request_id":"reset",
@@ -536,6 +546,7 @@ fn play(decks: [CustomDeckV1; 2], seed: u64, policy: Policy) -> Game {
     let mut transcript = Sha256::new();
     let mut action_counts = BTreeMap::new();
     let mut casts_by_seat = [0; 2];
+    let mut cast_cards: [BTreeMap<u16, usize>; 2] = Default::default();
     let mut companion_actions = 0;
     // The last chosen actions, reported if a game fails closed.
     let mut recent: Vec<String> = Vec::new();
@@ -575,11 +586,19 @@ last actions:
 "
                 )
             );
+            let winner = match reply["terminal"]["winner"].as_str() {
+                Some("p0") => Some(0),
+                Some("p1") => Some(1),
+                None => None,
+                Some(other) => panic!("seed={seed}: unexpected winner {other:?}"),
+            };
             return Game {
                 transcript_sha256: format!("{:x}", transcript.finalize()),
                 action_counts,
                 casts_by_seat,
                 companion_actions,
+                winner,
+                cast_cards,
             };
         }
         let decision = &reply["decision"];
@@ -661,7 +680,11 @@ last actions:
         if action["semantic"]["action_kind"] == "cast_spell" {
             let actor: mtg_kernel::rl::PlayerSeatV1 =
                 serde_json::from_value(action["semantic"]["actor"].clone()).unwrap();
-            casts_by_seat[matches!(actor, mtg_kernel::rl::PlayerSeatV1::P1) as usize] += 1;
+            let seat = matches!(actor, mtg_kernel::rl::PlayerSeatV1::P1) as usize;
+            casts_by_seat[seat] += 1;
+            if let Some(id) = action["semantic"]["source"]["card_db_id"].as_u64() {
+                *cast_cards[seat].entry(id as u16).or_default() += 1;
+            }
         }
         *action_counts
             .entry(

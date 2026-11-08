@@ -268,6 +268,9 @@ pub mod effect;
 pub mod employment_public_v1;
 pub mod engine;
 mod equipment_damage_source_v4;
+/// Eternal best-of-three: format-aware 75-card registrations, a
+/// companion-aware game builder and a seeded random sideboarding policy.
+pub mod eternal_bo3_v1;
 /// Pauper, Legacy and Vintage catalog card programs (`eternal-fixtures`).
 pub mod eternal_cards_v1;
 /// Wave E5a card programs of the eternal catalog (Vintage Raker Shops, Oath
@@ -378,7 +381,7 @@ pub mod flat_policy_v5;
 pub mod heartfire_history_v1;
 pub mod heartfire_public_v1;
 pub mod ids;
-pub(crate) mod infoset_v1;
+pub mod infoset_v1;
 pub mod line_b_teacher_target_v1;
 pub mod ooze_public_v1;
 pub mod phase1_agent_v1;
