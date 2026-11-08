@@ -2485,6 +2485,9 @@ pub struct GameState {
     /// rows.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hand_departures_by_name_v1: bool,
+    /// Opt-in (issue #567): add name-level reveals to the v1 departure rules.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) hand_knowledge_by_name_v2: bool,
     /// Opt-in public session contract (Limited schema 5): the policy
     /// observation reports shroud on permanents and players instead of
     /// refusing it. Absent (false) in every historical mode, so their bytes
@@ -2762,6 +2765,9 @@ impl Hash for GameState {
         if self.hand_departures_by_name_v1 {
             "hand-departures-by-name/v1".hash(state);
         }
+        if self.hand_knowledge_by_name_v2 {
+            "hand-knowledge-by-name/v2".hash(state);
+        }
         if self.public_shroud_v1 {
             "public-shroud/v1".hash(state);
         }
@@ -2978,6 +2984,7 @@ impl GameState {
             nine_lives_delayed_v1: None,
             leyline_opening_v1: None,
             hand_departures_by_name_v1: false,
+            hand_knowledge_by_name_v2: false,
             public_shroud_v1: false,
             observation_journal: ObservationJournalV1::default(),
         };
@@ -3035,15 +3042,39 @@ impl GameState {
             .push(ObservationNoteV1 { history_len, kind });
     }
 
-    /// Records a revealed hand identity for exactly one observer. The entry
-    /// is incarnation-bound and stored in arena-id order for deterministic
-    /// snapshots and observation hashes.
+    /// Shows one card already in hand to one observer. Under v2 the reveal
+    /// proves at least one copy of the name, since it may be a repeat reveal.
     #[cfg_attr(test, track_caller)]
     pub fn reveal_hand_card(
         &mut self,
         observer: PlayerId,
         owner: PlayerId,
         object: ObjectId,
+    ) -> Result<(), String> {
+        self.record_hand_reveal(observer, owner, object, Some(1))
+    }
+
+    /// Records a visible arrival or a reveal that establishes this card is
+    /// distinct from the other known cards of the same name.
+    #[cfg_attr(test, track_caller)]
+    pub(crate) fn reveal_distinct_hand_card(
+        &mut self,
+        observer: PlayerId,
+        owner: PlayerId,
+        object: ObjectId,
+    ) -> Result<(), String> {
+        self.record_hand_reveal(observer, owner, object, None)
+    }
+
+    /// For simultaneous reveals, every shown card of a name uses the same
+    /// lower bound. The group may overlap previously known cards.
+    #[cfg_attr(test, track_caller)]
+    pub(crate) fn record_hand_reveal(
+        &mut self,
+        observer: PlayerId,
+        owner: PlayerId,
+        object: ObjectId,
+        minimum_named_copies: Option<usize>,
     ) -> Result<(), String> {
         #[cfg(test)]
         if observer != owner {
@@ -3066,6 +3097,7 @@ impl GameState {
             return Ok(());
         }
         let zone_change_count = card.zone_change_count;
+        let card_def = card.card_def;
         self.note_observation(ObservationNoteKindV1::HandCardRevealed {
             observer,
             owner,
@@ -3073,6 +3105,17 @@ impl GameState {
         });
         let entries = &mut self.hand_knowledge[observer.index()][owner.index()];
         if entries.iter().any(|entry| entry.object == object) {
+            return Ok(());
+        }
+        if self.hand_knowledge_by_name_v2
+            && minimum_named_copies.is_some_and(|minimum| {
+                entries
+                    .iter()
+                    .filter(|entry| self.objects.get(entry.object).card_def == card_def)
+                    .count()
+                    >= minimum
+            })
+        {
             return Ok(());
         }
         entries.push(HandKnowledgeEntry {
@@ -3130,6 +3173,11 @@ impl GameState {
         self.hand_departures_by_name_v1 = true;
     }
 
+    /// Enables name-level reveals and departures for a new game.
+    pub fn enable_hand_knowledge_by_name_v2(&mut self) {
+        self.hand_knowledge_by_name_v2 = true;
+    }
+
     /// Updates the other player's rows as `object` leaves its owner's hand,
     /// before the object takes its new zone. `named` says whether the move
     /// shows the card to the other player (a public zone face up, or a
@@ -3145,7 +3193,7 @@ impl GameState {
     /// `card_def`'s duplicate-name test); a hidden departure ends every row,
     /// since any known card may be the one that left.
     pub(crate) fn forget_departing_hand_object(&mut self, object: ObjectId, named: bool) {
-        if self.hand_departures_by_name_v1 {
+        if self.hand_departures_by_name_v1 || self.hand_knowledge_by_name_v2 {
             let (owner, card_def) = {
                 let departing = self.objects.get(object);
                 (departing.owner, departing.card_def)
@@ -3181,7 +3229,7 @@ impl GameState {
     /// tell which card it was, so every row of that hand ends, as for any
     /// hidden departure. Off, nothing changes.
     pub(crate) fn forget_hand_after_face_down_departure_v1(&mut self, owner: PlayerId) {
-        if self.hand_departures_by_name_v1 {
+        if self.hand_departures_by_name_v1 || self.hand_knowledge_by_name_v2 {
             self.hand_knowledge[owner.opponent().index()][owner.index()].clear();
         }
     }

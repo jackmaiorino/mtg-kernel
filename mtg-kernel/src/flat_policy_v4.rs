@@ -134,7 +134,7 @@ mod tests {
         shuffle_trigger_source_into_library_v1, FastActorResponseV1, FastActorSessionV1,
     };
 
-    #[derive(Default)]
+    #[derive(Debug, Default, PartialEq, Eq)]
     struct OwnedScoringV4 {
         objects: Vec<crate::flat_policy_v2::FlatObjectCoreV2>,
         relations: Vec<crate::flat_policy_v2::FlatRelationV2>,
@@ -149,6 +149,21 @@ mod tests {
     }
 
     impl OwnedScoringV4 {
+        fn buffers(&mut self) -> FlatScoringOwnedBuffersV2<'_> {
+            FlatScoringOwnedBuffersV2 {
+                objects: &mut self.objects,
+                relations: &mut self.relations,
+                object_subtypes: &mut self.object_subtypes,
+                ability_uses: &mut self.ability_uses,
+                goads: &mut self.goads,
+                completed_dungeons: &mut self.completed_dungeons,
+                effect_subtype_changes: &mut self.effect_subtype_changes,
+                context_path_elements: &mut self.context_path_elements,
+                actions: &mut self.actions,
+                action_refs: &mut self.action_refs,
+            }
+        }
+
         fn encode(
             &mut self,
             session: &FastActorSessionV1,
@@ -162,18 +177,7 @@ mod tests {
             session.encode_current_flat_scoring_decision_owned_v4(
                 expected,
                 &mut FlatDecisionEncoderV4::default(),
-                &mut FlatScoringOwnedBuffersV2 {
-                    objects: &mut self.objects,
-                    relations: &mut self.relations,
-                    object_subtypes: &mut self.object_subtypes,
-                    ability_uses: &mut self.ability_uses,
-                    goads: &mut self.goads,
-                    completed_dungeons: &mut self.completed_dungeons,
-                    effect_subtype_changes: &mut self.effect_subtype_changes,
-                    context_path_elements: &mut self.context_path_elements,
-                    actions: &mut self.actions,
-                    action_refs: &mut self.action_refs,
-                },
+                &mut self.buffers(),
             )
         }
 
@@ -244,6 +248,616 @@ mod tests {
         };
         assert_eq!(decision.acting_player as usize, actor.index());
         session
+    }
+
+    fn issue567_ninjutsu_worlds(
+        actor: PlayerId,
+        enable_knowledge: impl FnOnce(&mut crate::state::GameState),
+        activate_twice: bool,
+    ) -> [[crate::state::GameState; 2]; 2] {
+        use crate::engine::{self, Action, Decision};
+        use crate::event::{self, ProposedEvent};
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state_with_turn_authority};
+        use crate::state::{Step, Zone};
+
+        let mut initial = ready_state_with_turn_authority(actor);
+        enable_knowledge(&mut initial);
+        let observer = actor.opponent();
+        let known = put(
+            &mut initial,
+            actor,
+            "Ninja of the Deep Hours",
+            Zone::Battlefield,
+        );
+        event::propose_and_commit(&mut initial, ProposedEvent::zone_change(known, Zone::Hand));
+        let hidden = put(
+            &mut initial,
+            actor,
+            "Ninja of the Deep Hours",
+            Zone::Library,
+        );
+        assert_eq!(initial.draw_card(actor), Some(hidden));
+        assert_eq!(initial.known_hand_cards(observer, actor)[0].object, known);
+
+        let attackers = ["Faerie Seer", "Faerie Miscreant"].map(|name| {
+            let id = put(&mut initial, actor, name, Zone::Battlefield);
+            initial.objects.get_mut(id).tapped = true;
+            id
+        });
+        initial.step = Step::DeclareBlockers;
+        initial.engine.combat.attackers_declared = true;
+        initial.engine.combat.blockers_declared = true;
+        initial.engine.combat.attackers = attackers.to_vec();
+        initial.players[actor.index()].mana_pool[ManaColor::U.pool_index()] =
+            if activate_twice { 4 } else { 2 };
+        // Give the observer a real response, so the session cannot skip this
+        // decision as a forced pass.
+        put(&mut initial, observer, "Lightning Bolt", Zone::Hand);
+        initial.players[observer.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+
+        [known, hidden].map(|ninja| {
+            let mut state = initial.clone();
+            let sources = if activate_twice {
+                vec![known, ninja]
+            } else {
+                vec![ninja]
+            };
+            for (source, returned) in sources.into_iter().zip(attackers) {
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::CastSpellOrPass { activatable_abilities, .. }
+                        if activatable_abilities.contains(&(source, 0))
+                ));
+                engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+                if let Decision::ChooseCostTargets { candidates, .. } =
+                    engine::advance_until_decision(&mut state)
+                {
+                    assert!(candidates.contains(&returned));
+                    engine::step(&mut state, Action::ChooseCostTarget(returned)).unwrap();
+                }
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                assert_eq!(state.objects.get(returned).zone, Zone::Hand);
+            }
+            assert_eq!(state.stack.last().unwrap().source, ninja);
+            assert_eq!(state.objects.get(ninja).zone, Zone::Hand);
+
+            if state.priority_player == actor {
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert_eq!(state.priority_player, observer);
+            let stacked = state.clone();
+            engine::step(&mut state, Action::Pass).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert_eq!(state.stack.len(), usize::from(activate_twice));
+            assert_eq!(state.objects.get(ninja).zone, Zone::Battlefield);
+            if state.priority_player == actor {
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert_eq!(state.priority_player, observer);
+            [stacked, state]
+        })
+    }
+
+    fn issue567_ninja_row_count(state: &crate::state::GameState, actor: PlayerId) -> usize {
+        let observation = crate::rl::observe_policy_v5(
+            state,
+            &crate::policy_surface_v5::PolicySurfaceV5::new(),
+            actor.opponent(),
+            0,
+            0,
+            0,
+            1,
+        )
+        .unwrap();
+        observation.known_hand_cards[actor.index()]
+            .iter()
+            .filter(|row| row.card_name == "Ninja of the Deep Hours")
+            .count()
+    }
+
+    #[test]
+    fn issue567_ambiguous_ninjutsu_reveal_has_identical_opponent_tensors() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let [known, hidden] = issue567_ninjutsu_worlds(
+                actor,
+                crate::state::GameState::enable_hand_knowledge_by_name_v2,
+                false,
+            );
+            let mut encoder = FlatDecisionEncoderV4::default();
+            for ((known, hidden), expected) in known.into_iter().zip(hidden).zip([1, 0]) {
+                assert_eq!(issue567_ninja_row_count(&known, actor), expected);
+                assert_eq!(issue567_ninja_row_count(&hidden, actor), expected);
+                let tensors = [known, hidden]
+                    .map(|state| issue567_tensor(state, actor.opponent(), &mut encoder));
+                assert_eq!(tensors[0], tensors[1], "observer tensor for {actor:?}");
+            }
+        }
+    }
+
+    fn issue567_encode(
+        state: crate::state::GameState,
+        observer: PlayerId,
+        encoder: &mut FlatDecisionEncoderV4,
+    ) -> (OwnedScoringV4, FlatDecisionV4) {
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let FastActorResponseV1::Decision(current) = session.current_response() else {
+            panic!("expected an observer response decision");
+        };
+        assert_eq!(current.acting_player as usize, observer.index());
+        assert!(current.legal_action_count >= 2);
+        let mut owned = OwnedScoringV4::default();
+        let decision = session
+            .encode_current_flat_scoring_decision_owned_v4(current, encoder, &mut owned.buffers())
+            .unwrap();
+        (owned, decision)
+    }
+
+    fn issue567_tensor(
+        state: crate::state::GameState,
+        observer: PlayerId,
+        encoder: &mut FlatDecisionEncoderV4,
+    ) -> (
+        crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2,
+        Vec<i64>,
+    ) {
+        let (owned, decision) = issue567_encode(state, observer, encoder);
+        issue567_tensor_view(owned.view(&decision))
+    }
+
+    fn issue567_tensor_view(
+        view: FlatScoringDecisionViewV4<'_>,
+    ) -> (
+        crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2,
+        Vec<i64>,
+    ) {
+        use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
+        use crate::native_flat_tensorizer_v8::NativeFlatTensorizerV8;
+
+        let mut tensor = NativeFlatDecisionTensorV2::default();
+        let mut pairing = Vec::new();
+        let mut tensorizer = NativeFlatTensorizerV8::default();
+        tensorizer.set_state_digest_v1(true);
+        tensorizer.fill(view, &mut tensor, &mut pairing).unwrap();
+        (tensor, pairing)
+    }
+
+    #[test]
+    fn issue567_two_stack_items_do_not_link_equal_or_distinct_sources() {
+        let actor = PlayerId::P0;
+        let [[same, _], [different, _]] = issue567_ninjutsu_worlds(
+            actor,
+            crate::state::GameState::enable_hand_knowledge_by_name_v2,
+            true,
+        );
+        assert_eq!(same.stack.len(), 2);
+        assert_eq!(different.stack.len(), 2);
+        assert_eq!(same.stack[0].source, same.stack[1].source);
+        assert_ne!(different.stack[0].source, different.stack[1].source);
+        let mut encoder = FlatDecisionEncoderV4::default();
+        assert_eq!(
+            issue567_tensor(same, actor.opponent(), &mut encoder),
+            issue567_tensor(different, actor.opponent(), &mut encoder),
+        );
+    }
+
+    #[test]
+    fn issue567_monstrous_emergence_keeps_public_cost_without_identifying_a_copy() {
+        use crate::engine::{self, Action, Decision};
+        use crate::flat_policy_v2::{FlatObjectGroupV2, FlatRelationRoleV2};
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::{Target, Zone};
+
+        let mut initial = ready_state();
+        initial.enable_hand_knowledge_by_name_v2();
+        let actor = PlayerId::P0;
+        let observer = actor.opponent();
+        let spell = put(&mut initial, actor, "Monstrous Emergence", Zone::Hand);
+        let known = put(&mut initial, actor, "Avenging Hunter", Zone::Hand);
+        let hidden = put(&mut initial, actor, "Avenging Hunter", Zone::Hand);
+        initial.reveal_hand_card(observer, actor, known).unwrap();
+        put(&mut initial, actor, "Sacred Cat", Zone::Battlefield);
+        let target = put(&mut initial, observer, "Tinder Wall", Zone::Battlefield);
+        put(&mut initial, observer, "Lightning Bolt", Zone::Hand);
+        initial.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 2;
+        initial.players[observer.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        engine::step(&mut initial, Action::CastSpell(spell)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut initial),
+            Decision::ChooseTargets { .. }
+        ));
+        engine::step(&mut initial, Action::ChooseTarget(Target::Object(target))).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut initial),
+            Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            }
+        ));
+        engine::step(&mut initial, Action::ChooseEffectOption(1)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut initial),
+            Decision::ChooseCostTargets { .. }
+        ));
+
+        let mut encoder = FlatDecisionEncoderV4::default();
+        let tensors = [known, hidden].map(|chosen| {
+            let mut state = initial.clone();
+            engine::step(&mut state, Action::ChooseCostTarget(chosen)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert_eq!(state.known_hand_cards(observer, actor).len(), 1);
+            let paid = &state.stack.last().unwrap().v4.paid_cost_refs[0];
+            assert_eq!(paid.object, chosen);
+            assert!(paid.visible_to(observer));
+            if state.priority_player == actor {
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            let (owned, decision) = issue567_encode(state, observer, &mut encoder);
+            let [cost] = decision
+                .extensions
+                .finalized_chosen_creature_costs
+                .as_slice()
+            else {
+                panic!("expected one publicly revealed creature payment");
+            };
+            let chosen_row = owned.objects[cost.chosen_object as usize];
+            let hunter = crate::card_def::card_id_by_name("Avenging Hunter").unwrap();
+            assert_eq!(cost.power_lki, 5);
+            assert_eq!(chosen_row.card_token, u32::from(hunter) + 1);
+            assert_eq!(chosen_row.group, FlatObjectGroupV2::HistoricalPaidCost);
+            assert!(owned.relations.iter().any(|relation| {
+                relation.role == FlatRelationRoleV2::PaidCost
+                    && relation.primary_order == cost.stack_index
+                    && relation.source_object == Some(cost.source_object)
+                    && relation.target_object == Some(cost.chosen_object)
+            }));
+            issue567_tensor_view(owned.view(&decision))
+        });
+        assert_eq!(tensors[0], tensors[1]);
+    }
+
+    #[test]
+    fn issue567_default_and_departure_v1_retain_their_reveal_contract() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let default = issue567_ninjutsu_worlds(actor, |_| {}, false);
+            let departure_v1 = issue567_ninjutsu_worlds(
+                actor,
+                crate::state::GameState::enable_hand_departures_by_name_v1,
+                false,
+            );
+            for worlds in [default, departure_v1] {
+                let counts =
+                    worlds.map(|world| world.map(|state| issue567_ninja_row_count(&state, actor)));
+                assert_eq!(counts, [[1, 0], [2, 1]]);
+            }
+        }
+    }
+
+    #[test]
+    fn issue567_reused_encoder_clears_the_v2_hand_source_mode() {
+        let actor = PlayerId::P0;
+        let [[v2, _], _] = issue567_ninjutsu_worlds(
+            actor,
+            crate::state::GameState::enable_hand_knowledge_by_name_v2,
+            false,
+        );
+        let [[historical, _], _] = issue567_ninjutsu_worlds(actor, |_| {}, false);
+        let [[departure_v1, _], _] = issue567_ninjutsu_worlds(
+            actor,
+            crate::state::GameState::enable_hand_departures_by_name_v1,
+            false,
+        );
+        let observer = actor.opponent();
+        let mut encoder = FlatDecisionEncoderV4::default();
+        let fresh_historical = issue567_tensor(
+            historical.clone(),
+            observer,
+            &mut FlatDecisionEncoderV4::default(),
+        );
+        let v2_tensor = issue567_tensor(v2.clone(), observer, &mut encoder);
+        assert_ne!(v2_tensor, fresh_historical);
+        assert_eq!(
+            issue567_tensor(historical, observer, &mut encoder),
+            fresh_historical
+        );
+        assert_eq!(issue567_tensor(v2, observer, &mut encoder), v2_tensor);
+        assert_eq!(
+            issue567_tensor(departure_v1, observer, &mut encoder),
+            fresh_historical
+        );
+    }
+
+    #[test]
+    fn issue567_reset_only_session_opt_in_survives_snapshot_replay() {
+        let mut session =
+            FastActorSessionV1::reset_with_limits(23, 91, 128, 1024).into_flat_action_v3();
+        let FastActorResponseV1::Decision(current) = session.current_response() else {
+            panic!("expected a reset decision");
+        };
+        let before = OwnedScoringV4::default().encode(&session).unwrap();
+        session.enable_hand_knowledge_by_name_v2().unwrap();
+        let after = OwnedScoringV4::default().encode(&session).unwrap();
+        assert_eq!(before, after);
+        assert!(session.game_state().hand_knowledge_by_name_v2);
+        let snapshot = session.snapshot_v1();
+        let first = session.step(current.episode_id, current.step, 0).unwrap();
+        let hash = session.diagnostic_state_hash();
+        assert!(session.enable_hand_knowledge_by_name_v2().is_err());
+        session.restore_v1(&snapshot);
+        assert!(session.game_state().hand_knowledge_by_name_v2);
+        assert_eq!(
+            session.step(current.episode_id, current.step, 0).unwrap(),
+            first
+        );
+        assert_eq!(session.diagnostic_state_hash(), hash);
+    }
+
+    #[test]
+    fn issue567_v3_and_v5_actor_encoders_hide_the_hand_source_copy() {
+        use crate::flat_policy_v3::FlatDecisionEncoderV3;
+        use crate::flat_policy_v5::FlatDecisionEncoderV5;
+
+        let actor = PlayerId::P0;
+        let [[known, _], [hidden, _]] = issue567_ninjutsu_worlds(
+            actor,
+            crate::state::GameState::enable_hand_knowledge_by_name_v2,
+            false,
+        );
+        let v3 = [known.clone(), hidden.clone()].map(|state| {
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            let FastActorResponseV1::Decision(current) = session.current_response() else {
+                panic!("expected a V3 response decision");
+            };
+            assert_eq!(current.acting_player as usize, actor.opponent().index());
+            let mut owned = OwnedScoringV4::default();
+            let decision = session
+                .encode_current_flat_scoring_decision_owned_v3(
+                    current,
+                    &mut FlatDecisionEncoderV3::default(),
+                    &mut owned.buffers(),
+                )
+                .unwrap();
+            (owned, decision.globals, decision.extensions)
+        });
+        assert_eq!(v3[0], v3[1]);
+        let v5 = [known, hidden].map(|state| {
+            let session = FastActorSessionV1::from_v5_fixture_state(state);
+            let FastActorResponseV1::Decision(current) = session.current_response() else {
+                panic!("expected a V5 response decision");
+            };
+            assert_eq!(current.acting_player as usize, actor.opponent().index());
+            let mut owned = OwnedScoringV4::default();
+            let decision = session
+                .encode_current_flat_scoring_decision_owned_v5(
+                    current,
+                    &mut FlatDecisionEncoderV5::default(),
+                    &mut owned.buffers(),
+                )
+                .unwrap();
+            (owned, decision.globals, decision.extensions)
+        });
+        assert_eq!(v5[0], v5[1]);
+    }
+
+    #[cfg(feature = "standard-magezero-fixtures")]
+    #[test]
+    fn issue567_ward_binds_the_public_channel_stack_position() {
+        use crate::engine::{self, Action, Decision};
+        use crate::flat_policy_v3::FlatDecisionEncoderV3;
+        use crate::flat_policy_v5::FlatDecisionEncoderV5;
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::policy_observation_v6::HistoricalSourceContextV6;
+        use crate::policy_observation_v7::HistoricalSourceContextV7;
+        use crate::state::{Target, Zone};
+
+        let mut state = ready_state();
+        state.enable_hand_knowledge_by_name_v2();
+        let source = put(
+            &mut state,
+            PlayerId::P0,
+            "Otawara, Soaring City",
+            Zone::Hand,
+        );
+        let target = put(
+            &mut state,
+            PlayerId::P1,
+            "Tolarian Terror",
+            Zone::Battlefield,
+        );
+        put(&mut state, PlayerId::P1, "Lightning Bolt", Zone::Hand);
+        state.players[0].mana_pool[ManaColor::U.pool_index()] = 6;
+        state.players[1].mana_pool[ManaColor::R.pool_index()] = 1;
+        engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { .. }
+        ));
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+        if state.priority_player == PlayerId::P0 {
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        let session = FastActorSessionV1::from_v3_fixture_state(state.clone());
+        let FastActorResponseV1::Decision(current) = session.current_response() else {
+            panic!("expected the Ward controller's response decision");
+        };
+        assert_eq!(current.acting_player as usize, PlayerId::P1.index());
+        let mut owned = OwnedScoringV4::default();
+        let v3 = session
+            .encode_current_flat_scoring_decision_owned_v3(
+                current,
+                &mut FlatDecisionEncoderV3::default(),
+                &mut owned.buffers(),
+            )
+            .unwrap();
+        let ward = &v3.extensions.queued_ward_payments[0].payment;
+        let stack_index = ward.targeting_stack_index;
+        let source_row = v3
+            .extensions
+            .historical_public_sources
+            .iter()
+            .find(|row| row.context == HistoricalSourceContextV6::Stack { stack_index })
+            .unwrap()
+            .model_object_index;
+        assert_eq!(ward.targeting_source_object, source_row);
+
+        let v4 = owned.encode(&session).unwrap();
+        let ward = &v4.extensions.queued_ward_payments[0].payment;
+        let source_row = v4
+            .extensions
+            .historical_public_sources
+            .iter()
+            .find(|row| row.context == HistoricalSourceContextV7::Stack { stack_index })
+            .unwrap()
+            .model_object_index;
+        assert_eq!(ward.targeting_source_object, source_row);
+
+        let session = FastActorSessionV1::from_v5_fixture_state(state);
+        let FastActorResponseV1::Decision(current) = session.current_response() else {
+            panic!("expected the V5 Ward controller's response decision");
+        };
+        let v5 = session
+            .encode_current_flat_scoring_decision_owned_v5(
+                current,
+                &mut FlatDecisionEncoderV5::default(),
+                &mut owned.buffers(),
+            )
+            .unwrap();
+        let ward = &v5.extensions.queued_ward_payments[0].payment;
+        let source_row = v5
+            .extensions
+            .historical_public_sources
+            .iter()
+            .find(|row| row.context == HistoricalSourceContextV7::Stack { stack_index })
+            .unwrap()
+            .model_object_index;
+        assert_eq!(ward.targeting_source_object, source_row);
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn issue567_v2_pending_chancellor_source_stays_public_after_hidden_departure() {
+        use crate::engine::{self, Action, Decision};
+        use crate::event::{self, ProposedEvent};
+        use crate::flat_policy_v2::{
+            FlatContextSubroleV2, FlatObjectGroupV2, FlatRelationPayloadV2,
+        };
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::put;
+        use crate::state::{GameState, Step, Zone};
+
+        let island = crate::card_def::card_id_by_name("Island").unwrap();
+        let mut state = GameState::new_from_libraries(
+            &[island; 20],
+            &[island; 20],
+            crate::rl::card_name,
+            0x4348_414e,
+        );
+        state.enable_hand_knowledge_by_name_v2();
+        let chancellor = put(
+            &mut state,
+            PlayerId::P1,
+            "Chancellor of the Annex",
+            Zone::Hand,
+        );
+        for _ in 0..32 {
+            match engine::advance_until_decision(&mut state) {
+                Decision::ChooseEffectOption {
+                    player: PlayerId::P1,
+                    ..
+                } => {
+                    engine::step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+                }
+                Decision::CastSpellOrPass { .. }
+                    if state.step == Step::Main1 && state.stack.is_empty() =>
+                {
+                    break
+                }
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                other => panic!("expected opening reveal or priority, got {other:?}"),
+            }
+        }
+        assert_eq!(state.step, Step::Main1);
+        assert_eq!(
+            state.known_hand_cards(PlayerId::P0, PlayerId::P1)[0].object,
+            chancellor
+        );
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::private_top_library_insert(chancellor),
+        );
+        assert!(state
+            .known_hand_cards(PlayerId::P0, PlayerId::P1)
+            .is_empty());
+
+        let mox = put(&mut state, PlayerId::P0, "Mox Pearl", Zone::Hand);
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+        engine::step(&mut state, Action::CastSpell(mox)).unwrap();
+        for _ in 0..16 {
+            match engine::advance_until_decision(&mut state) {
+                Decision::ChooseEffectOption {
+                    player: PlayerId::P0,
+                    ..
+                } => break,
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                other => panic!("expected Chancellor tax or priority, got {other:?}"),
+            }
+        }
+        assert!(state.engine.pending_effect.is_some());
+        let session = FastActorSessionV1::from_v2_fixture_state(state);
+        let FastActorResponseV1::Decision(current) = session.current_response() else {
+            panic!("expected the V2 tax payment decision");
+        };
+        assert_eq!(current.acting_player as usize, PlayerId::P0.index());
+        let mut owned = OwnedScoringV4::default();
+        session
+            .encode_current_flat_scoring_decision_owned_v2(
+                current,
+                &mut FlatDecisionEncoderV2::default(),
+                &mut owned.buffers(),
+            )
+            .unwrap();
+        let source_row = owned
+            .relations
+            .iter()
+            .find_map(|relation| match relation.payload {
+                FlatRelationPayloadV2::Context(context)
+                    if context.subrole == FlatContextSubroleV2::PendingEffectSource =>
+                {
+                    relation.target_object
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            owned.objects[source_row as usize].group,
+            FlatObjectGroupV2::PendingContext
+        );
+        let chancellor = crate::card_def::card_id_by_name("Chancellor of the Annex").unwrap();
+        assert_eq!(
+            owned.objects[source_row as usize].card_token,
+            u32::from(chancellor) + 1
+        );
+        assert!(!owned.action_refs.is_empty());
+        assert!(owned
+            .action_refs
+            .iter()
+            .all(|reference| reference.model_object_index == source_row));
     }
 
     #[test]

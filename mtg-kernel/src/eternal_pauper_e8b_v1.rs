@@ -1462,10 +1462,16 @@ fn reveal_splices(state: &mut GameState, events: &[CommittedEvent]) {
             .into_iter()
             .take(spliced)
             .collect::<Vec<_>>();
+        let minimum_named_copies = cards.len();
         for card in cards {
             // spellbench-public-reveal: hand card revealed by the card rules.
             for observer in [PlayerId::P0, PlayerId::P1] {
-                let _ = state.reveal_hand_card(observer, controller, card);
+                let _ = state.record_hand_reveal(
+                    observer,
+                    controller,
+                    card,
+                    Some(minimum_named_copies),
+                );
             }
         }
     }

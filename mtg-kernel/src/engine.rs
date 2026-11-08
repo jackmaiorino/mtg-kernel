@@ -7498,7 +7498,7 @@ fn commit_cost_components_from_plan_v1(
                     // spellbench-public-reveal: hand card revealed by the card rules.
                     for observer in [PlayerId::P0, PlayerId::P1] {
                         state
-                            .reveal_hand_card(observer, player, object)
+                            .reveal_distinct_hand_card(observer, player, object)
                             .expect("preflighted live hand card remains revealable");
                     }
                 }
@@ -28140,6 +28140,14 @@ fn finalize_owned_cast(
             .iter_mut()
             .find(|reference| reference.object == binding.object)
             .expect("chosen creature is included in its paid provenance");
+        if state.hand_knowledge_by_name_v2
+            && pending.chosen_creature_cost_zone == Some(ChosenCreatureCostZoneV1::Hand)
+        {
+            // The prepared cost publicly revealed this card. Its paid
+            // receipt remains visible even if a prior same-name fact
+            // already supplies the observer's known-hand lower bound.
+            reference.visible_to_mask = 0b11;
+        }
         reference.power_lki = Some(power);
     }
     let selected_target_spec = if cast_method == CastMethodV4::Omen {
@@ -28461,7 +28469,7 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
         // spellbench-public-reveal: hand card revealed by the card rules.
         for observer in [PlayerId::P0, PlayerId::P1] {
             state
-                .reveal_hand_card(observer, owner, pending.spell)
+                .reveal_distinct_hand_card(observer, owner, pending.spell)
                 .expect("an aborted public stack spell just returned to hand");
         }
     }

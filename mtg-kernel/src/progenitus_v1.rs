@@ -215,6 +215,15 @@ pub(crate) fn reveal_order_sources(
     state: &mut GameState,
     original: &[crate::effect::EffectObjectBinding],
 ) -> Result<(), String> {
+    let hand_reveals = if state.hand_knowledge_by_name_v2 {
+        original
+            .iter()
+            .map(|binding| binding.object)
+            .filter(|&id| state.objects.get(id).zone == Zone::Hand && active(state, id, None))
+            .collect::<std::collections::HashSet<_>>()
+    } else {
+        std::collections::HashSet::new()
+    };
     for binding in original {
         if plan(
             state,
@@ -241,9 +250,18 @@ pub(crate) fn reveal_order_sources(
                 }
             }
             Zone::Hand => {
+                let minimum_named_copies = hand_reveals
+                    .iter()
+                    .filter(|&&id| state.objects.get(id).owner == owner)
+                    .count();
                 // spellbench-public-reveal: hand card revealed by the card rules.
                 for viewer in [crate::ids::PlayerId::P0, crate::ids::PlayerId::P1] {
-                    state.reveal_hand_card(viewer, owner, binding.object)?;
+                    state.record_hand_reveal(
+                        viewer,
+                        owner,
+                        binding.object,
+                        Some(minimum_named_copies.max(1)),
+                    )?;
                 }
             }
             _ => {}

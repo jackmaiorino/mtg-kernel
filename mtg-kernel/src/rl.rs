@@ -13736,6 +13736,27 @@ fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRef
     frozen_stack_source_ref(state, item)
 }
 
+pub(crate) fn public_pending_opponent_hand_source_v2(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<Option<CardStableRefV1>> {
+    if !state.hand_knowledge_by_name_v2 {
+        return Ok(None);
+    }
+    let Some(pending) = &state.engine.pending_effect else {
+        return Ok(None);
+    };
+    let item = &pending.resolving_item;
+    if item
+        .v4
+        .ability_source_contract
+        .is_some_and(|source| source.owner != actor && source.zone == Zone::Hand)
+    {
+        return stack_source_ref(state, item).map(Some);
+    }
+    Ok(None)
+}
+
 fn frozen_stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {
     let (card_def, owner, controller, zone, zone_change_count) = match item.kind {
         StackItemKind::Spell => return card_ref(state, item.source),
