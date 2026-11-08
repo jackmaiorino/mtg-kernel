@@ -292,36 +292,57 @@ mod tests {
             for other_can_look in [false, true] {
                 for name in ["Swamp", "Forest"] {
                     let mut state = empty();
-                    let card = put(&mut state, owner, name, Zone::Library);
-                    assert_eq!(state.players[owner.index()].library.pop(), Some(card));
-                    state.exile.push(card);
-                    state.objects.get_mut(card).zone = Zone::Exile;
-                    state.objects.get_mut(card).v4.face_down_v1 = Some(FaceDownV1 {
-                        disguised: false,
-                        lookers: if other_can_look {
-                            3
-                        } else {
-                            1 << owner.index()
-                        },
-                        hidden_by: None,
-                        hidden_by_source: None,
-                    });
-                    propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Hand));
-                    assert!(state.objects.get(card).v4.face_down_v1.is_none());
-                    assert!(state.players[owner.index()].hand.contains(&card));
-                    assert_eq!(
-                        crate::card_def::CARD_DEFS[usize::from(state.objects.get(card).card_def)]
-                            .name,
-                        name
-                    );
-                    assert!(state.known_hand_cards(owner, owner).is_empty());
-                    assert_eq!(
-                        state.known_hand_cards(owner.opponent(), owner).len(),
-                        usize::from(other_can_look),
-                    );
-                    // Look permission preserves a private fact; the concealed
-                    // move is still not a public named arrival in V3.
-                    assert_eq!(operations(&state, owner.opponent()), json!([]));
+                    for count in 1..=2 {
+                        let card = put(&mut state, owner, name, Zone::Library);
+                        assert_eq!(state.players[owner.index()].library.pop(), Some(card));
+                        state.exile.push(card);
+                        state.objects.get_mut(card).zone = Zone::Exile;
+                        state.objects.get_mut(card).v4.face_down_v1 = Some(FaceDownV1 {
+                            disguised: false,
+                            lookers: if other_can_look {
+                                3
+                            } else {
+                                1 << owner.index()
+                            },
+                            hidden_by: None,
+                            hidden_by_source: None,
+                        });
+                        propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Hand));
+                        assert!(state.objects.get(card).v4.face_down_v1.is_none());
+                        assert!(state.players[owner.index()].hand.contains(&card));
+                        assert_eq!(
+                            crate::card_def::CARD_DEFS[usize::from(state.objects.get(card).card_def)]
+                                .name,
+                            name
+                        );
+                        assert!(state.known_hand_cards(owner, owner).is_empty());
+                        assert_eq!(
+                            state.known_hand_cards(owner.opponent(), owner).len(),
+                            if other_can_look { count } else { 0 },
+                        );
+                        // Two distinct native copies are two visible presence
+                        // operations, not two continuously public arrivals.
+                        for viewer in [owner, owner.opponent()] {
+                            let visible = viewer == owner || other_can_look;
+                            let expected: Vec<_> = (0..if visible { count } else { 0 })
+                                .map(|sequence| {
+                                    json!({"sequence":sequence, "events":[{
+                                        "kind":"card_revealed", "owner_seat":seat(owner),
+                                        "card_name":name, "meaning":"present",
+                                    }]})
+                                })
+                                .collect();
+                            assert_eq!(operations(&state, viewer), json!(expected));
+                            let mut reducer = RevealReducerV3::default();
+                            reducer
+                                .absorb(&state.reveal_meaning_v3.transcript(viewer).unwrap())
+                                .unwrap();
+                            assert_eq!(
+                                reducer.hand(owner).values().sum::<usize>(),
+                                usize::from(visible)
+                            );
+                        }
+                    }
                 }
             }
         }

@@ -107,8 +107,12 @@ The successor based on canonical PR591 `a3adc349` addresses these findings:
   the native reveal helper for unauthorized observers, inserting a known-hand
   row and observation note. The materializer now captures look permission
   before the face-down marker resets and suppresses those unauthorized rows.
-  Owner access and permitted lookers remain; battlefield/stack reveal-on-exit
-  semantics are unchanged. Both-seat/two-name permission cases and existing
+  Owner access and permitted lookers remain. Authorized viewers receive
+  `present`, not `moved`: a concealed source does not prove a continuously
+  public arrival. Two same-name concealed returns therefore preserve native
+  rows for permitted viewers but establish only a V3 minimum of one.
+  Battlefield/stack reveal-on-exit semantics are unchanged.
+  Both-seat/two-name permission cases and existing
   V2 hidden-return coverage assert native hand knowledge as well as projection.
 
 Next exact default-feature libtest filters: `reveal_v4`,
