@@ -27056,14 +27056,18 @@ fn tutelage_remaining_v1(
         if let Some(outcome) = event::tutelage_public_outcome_v1(state, batch_index, player)? {
             if !outcome.repeat
                 || outcome.members.len() != ordered.len()
-                || outcome.members.iter().zip(ordered).any(|(member, binding)| {
-                    let live = state.objects.get(binding.object);
-                    member.object != binding.object
-                        || member.card_def != live.card_def
-                        || member.controller != live.controller
-                        || member.zone != live.zone
-                        || member.generation != live.zone_change_count
-                })
+                || outcome
+                    .members
+                    .iter()
+                    .zip(ordered)
+                    .any(|(member, binding)| {
+                        let live = state.objects.get(binding.object);
+                        member.object != binding.object
+                            || member.card_def != live.card_def
+                            || member.controller != live.controller
+                            || member.zone != live.zone
+                            || member.generation != live.zone_change_count
+                    })
             {
                 return Err("Tutelage public outcome changed before native continuation".into());
             }

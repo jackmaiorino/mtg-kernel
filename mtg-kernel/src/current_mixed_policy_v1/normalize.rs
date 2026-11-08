@@ -451,12 +451,16 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         }
     }
     let mut covered = BTreeSet::new();
-    if source == Source::KaitoV75 && state["schema"] == crate::tutelage_consumer_v1::CANDIDATES_SCHEMA {
+    if source == Source::KaitoV75
+        && state["schema"] == crate::tutelage_consumer_v1::CANDIDATES_SCHEMA
+    {
         let meaning: crate::tutelage_public_v1::MeaningV1 =
             serde_json::from_value(state["observation"]["tutelage"]["meaning"].clone())
                 .map_err(|e| Error::Projection(e.to_string()))?;
         if meaning != crate::tutelage_public_v1::printed_meaning().map_err(Error::Projection)? {
-            return Err(Error::Projection("Tutelage meaning differs from exact printing".into()));
+            return Err(Error::Projection(
+                "Tutelage meaning differs from exact printing".into(),
+            ));
         }
         covered.insert(meaning.card_id);
     }

@@ -440,17 +440,30 @@ fn genuinely_paid_tutelage_draw_mixed_progenitus_pair_stops_after_actual_public_
             finish(&mut r);
             assert_eq!(s, r);
             assert!(s.engine.halted.is_none());
-            let batches = s.engine.event_history.iter().enumerate().skip(start)
-                .filter(|(_, e)| matches!(e, event::CommittedEvent::SphinxsTutelageMillBatchV1 { .. }))
+            let batches = s
+                .engine
+                .event_history
+                .iter()
+                .enumerate()
+                .skip(start)
+                .filter(|(_, e)| {
+                    matches!(e, event::CommittedEvent::SphinxsTutelageMillBatchV1 { .. })
+                })
                 .map(|(index, _)| index)
                 .collect::<Vec<_>>();
             assert_eq!(batches.len(), 1);
             let outcome = event::tutelage_public_outcome_v1(&s, batches[0], p.opponent())
-                .unwrap().unwrap();
+                .unwrap()
+                .unwrap();
             assert!(!outcome.repeat);
-            assert_eq!(outcome.members.len(), names.iter().filter(|name| **name != NAME).count());
-            assert!(outcome.members.iter().all(|member| member.zone == Zone::Graveyard
-                && member.card_def != id(NAME)));
+            assert_eq!(
+                outcome.members.len(),
+                names.iter().filter(|name| **name != NAME).count()
+            );
+            assert!(outcome
+                .members
+                .iter()
+                .all(|member| member.zone == Zone::Graveyard && member.card_def != id(NAME)));
             for (i, name) in names.iter().enumerate() {
                 assert_eq!(
                     s.objects.get(top[i]).zone,

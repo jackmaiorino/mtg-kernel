@@ -523,10 +523,16 @@ pub(crate) fn stack_source_reference(
     let tutelage = source.card_def == crate::tutelage_public_v1::PRINTING
         && match item.kind {
             crate::state::StackItemKind::TriggeredAbility => matches!(
-                item.inline_effect, Some(crate::effect::EffectOp::SphinxsTutelageMillV1 { .. })
+                item.inline_effect,
+                Some(crate::effect::EffectOp::SphinxsTutelageMillV1 { .. })
             ),
-            crate::state::StackItemKind::ActivatedAbility => item.v4.activated_ability_index == Some(0)
-                && item.inline_effect.as_ref().is_some_and(crate::tutelage_public_v1::activation_program),
+            crate::state::StackItemKind::ActivatedAbility => {
+                item.v4.activated_ability_index == Some(0)
+                    && item
+                        .inline_effect
+                        .as_ref()
+                        .is_some_and(crate::tutelage_public_v1::activation_program)
+            }
             _ => false,
         };
     if !selected_source(source)
@@ -589,7 +595,10 @@ pub(crate) fn pending_source_reference(
         && pending.granted_by.is_none()
         && pending.effect == crate::zimone_public_v1::AbilityKindV1::CombatPutPlusOne.program();
     let tutelage = source.card_def == crate::tutelage_public_v1::PRINTING
-        && matches!(pending.effect, crate::effect::EffectOp::SphinxsTutelageMillV1 { .. });
+        && matches!(
+            pending.effect,
+            crate::effect::EffectOp::SphinxsTutelageMillV1 { .. }
+        );
     if !selected_source(source)
         && !artist_trigger
         && !drakuseth_trigger
