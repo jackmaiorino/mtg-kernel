@@ -240,4 +240,3 @@ fn remembered_attack_ignores_later_concealed_source_before_and_after_resolution_
         }
     }
 }
-

@@ -236,4 +236,3 @@ pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<
 
 #[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
 mod tests;
-
