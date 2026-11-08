@@ -298,11 +298,133 @@ fn bytes(state: &GameState) -> Vec<u8> {
 fn restore(state: &GameState) -> GameState {
     serde_json::from_slice(&bytes(state)).unwrap()
 }
-fn published(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
+pub(crate) fn published(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
     let (mut state, niv, archer, _) = cast_niv(actor);
     cast_bolt(actor, &mut state);
     advance_to_archer_damage_trigger(actor, archer, &mut state);
     (state, niv, archer)
+}
+
+#[test]
+fn paid_draw_counts_only_committed_cards_including_short_and_empty_libraries() {
+    use crate::engine::niv_mizzet_resolution_v1::{outcomes, EndV1};
+
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for cards_drawn in [0, 1, 3] {
+            let (mut state, _, archer, _) = cast_niv(actor);
+            // Setup only. The paid Bolt and the native damage/draw sequence
+            // are genuine. Remove the Archer to isolate the three-card draw.
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(archer, Zone::Exile),
+            );
+            let remove = state.players[actor.index()].library[cards_drawn as usize..].to_vec();
+            for object in remove {
+                crate::event::propose_and_commit(
+                    &mut state,
+                    crate::event::ProposedEvent::zone_change(object, Zone::Exile),
+                );
+            }
+            assert_eq!(
+                state.players[actor.index()].library.len(),
+                cards_drawn as usize
+            );
+            cast_bolt(actor, &mut state);
+            for _ in 0..40 {
+                let decision = engine::advance_until_decision(&mut state);
+                if !outcomes(&state).unwrap().is_empty() {
+                    break;
+                }
+                assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            let outcome = DrawOutcomeV1::Resolved { cards_drawn };
+            let facts = capture_for_consumer(&state, actor.opponent()).unwrap();
+            assert_eq!(facts.appendix.damage_draws[0].committed_damage, 3);
+            assert_eq!(facts.appendix.damage_draws[0].draw_count, 3);
+            assert_eq!(
+                facts.results,
+                vec![DrawResultV1 {
+                    occurrence: 0,
+                    outcome
+                }]
+            );
+            assert_eq!(
+                state.players[actor.index()].drew_from_empty,
+                cards_drawn < 3
+            );
+            assert_eq!(
+                capture_for_consumer(&restore(&state), actor.opponent()).unwrap(),
+                facts
+            );
+            let mut forged = state.clone();
+            let receipt = forged
+                .engine
+                .event_history
+                .iter_mut()
+                .find_map(|event| match event {
+                    CommittedEvent::NivMizzetVisionaryDrawEndedV1 {
+                        outcome: EndV1::Resolved { cards_drawn, .. },
+                        ..
+                    } => Some(cards_drawn),
+                    _ => None,
+                })
+                .unwrap();
+            *receipt += 1;
+            assert!(capture_for_consumer(&forged, actor.opponent()).is_err());
+        }
+    }
+}
+
+#[test]
+fn actual_published_draw_counter_and_direct_effect_refusal_never_claim_a_resolution() {
+    use crate::engine::niv_mizzet_resolution_v1::outcomes;
+
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _, _) = published(actor);
+        let item = state.stack.last().unwrap().clone();
+        assert!(matches!(
+            item.inline_effect,
+            Some(EffectOp::NivMizzetVisionaryDrawV1 { .. })
+        ));
+        let before = state.players[actor.index()].library.len();
+        let mut interrupted = state.clone();
+        let mut ctx = ExecCtx::no_targets(item.source, actor);
+        ctx.stack_item_id = Some(item.v4.stack_item_id);
+        ctx.ability_source_contract = item.v4.ability_source_contract;
+        crate::effect::execute(item.inline_effect.as_ref().unwrap(), &ctx, &mut interrupted);
+        assert!(interrupted.engine.halted.is_some());
+        assert!(outcomes(&interrupted).unwrap().is_empty());
+        assert_eq!(interrupted.players[actor.index()].library.len(), before);
+
+        // Explicit counter primitive for the genuine published ability.
+        engine::counter_stack_item_by_id(&mut state, item.v4.stack_item_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.players[actor.index()].library.len(), before);
+        let facts = capture_for_consumer(&state, actor).unwrap();
+        assert_eq!(
+            facts.results,
+            vec![DrawResultV1 {
+                occurrence: 0,
+                outcome: DrawOutcomeV1::Countered,
+            }]
+        );
+        assert_eq!(
+            capture_for_consumer(&restore(&state), actor).unwrap(),
+            facts
+        );
+        state
+            .engine
+            .event_history
+            .retain(|event| !matches!(event, CommittedEvent::NivMizzetVisionaryDrawEndedV1 { .. }));
+        let unknown = capture_for_consumer(&state, actor).unwrap();
+        assert!(unknown.results.is_empty());
+        assert_eq!(
+            unknown.appendix.damage_draws[0].stage,
+            StageV63::NoCurrentExecutableRow
+        );
+    }
 }
 #[test]
 fn closed_printed_program_and_complete_definition_keep_partial_and_refuse_forged_meaning() {

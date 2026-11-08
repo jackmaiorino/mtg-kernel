@@ -95,6 +95,7 @@ pub(crate) use standard_spell_copy::{
 
 pub mod ordinary_cleanup_v1;
 pub mod time_stop_v1;
+pub(crate) mod niv_mizzet_resolution_v1;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineState {
@@ -19086,6 +19087,7 @@ pub(crate) fn counter_stack_item_by_id(
         crate::effect::greatwurm_v1::validate_published(state, &item)?;
     }
     let lathril_counter_capture = crate::event::lathril_counter_capture_v1(state, &item)?;
+    let niv_counter = niv_mizzet_resolution_v1::acquire(state, &item)?;
     let curator_counter = if effect::curator_v1::selected(state, &item) {
         Some(effect::curator_v1::validate_trigger(state, &item)?)
     } else {
@@ -19107,6 +19109,9 @@ pub(crate) fn counter_stack_item_by_id(
         }
     } else {
         state.stack.remove(position);
+    }
+    if let Some(owner) = niv_counter {
+        niv_mizzet_resolution_v1::counter(state, owner)?;
     }
     tinybones_v72::countered(state, &item)?;
     if let Some(entry_history_index) = curator_counter {
@@ -20073,6 +20078,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let niv_owner = match niv_mizzet_resolution_v1::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                current.source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let native_execution_owner = match effect::acquire_native_execution_owner_v1(state, &current) {
         Ok(owner) => owner,
         Err(_) => {
@@ -20190,6 +20205,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             state.stack.push(item.clone());
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = niv_owner {
+        if niv_mizzet_resolution_v1::resolve(state, owner).is_err() {
+            state.engine.halted.get_or_insert((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                item.source,
+            ));
             return ResolutionProgress::Suspended;
         }
         return ResolutionProgress::Complete;

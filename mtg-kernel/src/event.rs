@@ -2077,6 +2077,10 @@ pub enum CommittedEvent {
     DrakusethDamageSourceV76 {
         journal: Box<crate::drakuseth_damage_source_v76::JournalV76>,
     },
+    NivMizzetVisionaryDrawEndedV1 {
+        stack_item_id: StackItemId,
+        outcome: crate::engine::niv_mizzet_resolution_v1::EndV1,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

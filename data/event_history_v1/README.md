@@ -54,6 +54,10 @@ Insert that line where the variant sits in `CommittedEvent`. When no test
 commits the kind, build the event by hand from its fields, reusing a harvested
 sibling's payload where the types match.
 
+`NivMizzetVisionaryDrawEndedV1` has a hand-built counter shape for the
+source checkpoint. Native qualification should replace it with the
+harvested event from the paid Niv outcome fixtures.
+
 ## Appended FDN event samples (October 21, 2026)
 
 The original 237 rows retain their exact byte prefix. The next 76 rows follow `EventKindV1` order and were harvested from native tests that completed successfully. These are serialization fixtures, not complete replay worlds or gameplay/profile acceptance. Labelled native setup and counter primitives retain that limited provenance. Snapshot-bearing events retain the actual emitted payload, including private synthetic fixture state.
