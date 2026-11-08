@@ -2344,6 +2344,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49(
         accepted_planes,
         false,
         None,
+        false,
     )
 }
 
@@ -2358,6 +2359,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     accepted_planes: AcceptedPlanesV49,
     accept_fake: bool,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
+    artist: bool,
 ) -> Result<ObservationV2> {
     if !matches!(
         text_mode,
@@ -2743,7 +2745,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
                 text_mode.complete_source_scope(),
                 conqueror_proof,
                 text_mode.complete_source_scope() == Some(CommonProjectionScopeV42::KaitoV75)
-                    && surface.artist_consumer_v1(),
+                    && artist,
             )?
         } else {
             engine_context_v2(
@@ -3414,6 +3416,7 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
         ),
         accept_fake,
         conqueror_proof,
+        surface.artist_consumer_v1(),
     )?;
     let context = policy_surface_context_v5(
         state,
