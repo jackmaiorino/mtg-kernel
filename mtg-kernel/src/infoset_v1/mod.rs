@@ -26,6 +26,8 @@ pub(crate) mod projection;
 pub(crate) mod rewrite;
 
 #[cfg(test)]
+mod face_down;
+#[cfg(test)]
 mod fcast;
 #[cfg(test)]
 mod fixtures;
@@ -42,13 +44,16 @@ mod tests;
 #[cfg(test)]
 mod transcript;
 
-pub(crate) use export::{export_v1, ExportInputV1, ExportOptionsV1, InfosetV1, MutantV1};
-pub(crate) use payload::PayloadV1;
+pub(crate) use export::{export_v1, ExportOptionsV1, MutantV1};
+pub use export::{export_v2, ExportInputV1, InfosetV1};
+pub use payload::PayloadV1;
 
 use serde::Serialize;
 
 /// Schema version written into every payload and receipt.
 pub const INFOSET_SCHEMA_V1: &str = "x_kernel_infoset_v1";
+/// Explicit opt-in exporter with event-time face-down visibility (#568).
+pub const INFOSET_SCHEMA_V2: &str = "x_kernel_infoset_v2";
 
 /// Refusal predicates (design 6.7). Soaks report counts per predicate
 /// (ruling 43).
