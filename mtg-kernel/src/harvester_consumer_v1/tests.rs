@@ -130,6 +130,8 @@ fn open_target_choice(actor: PlayerId, hidden: &str) -> (GameState, ObjectId, Ob
     native::hv_main(&mut state, actor.opponent());
     let first = native::hv_death(&mut state, actor.opponent());
     let second = native::hv_death(&mut state, actor.opponent());
+    event::propose_and_commit(&mut state, ProposedEvent::tap(source));
+    assert!(engine::attempt_untap(&mut state, source));
     put(&mut state, actor.opponent(), hidden, Zone::Hand);
     for _ in 0..4 {
         let d = engine::advance_until_decision(&mut state);
@@ -248,6 +250,26 @@ fn paid_activation_targets_other_graveyard_and_preserves_hidden_pairs_indices_an
         assert!(token.form.subtype_ids.contains(&Subtype::Nightmare.stable_id()));
         let restored: GameState = serde_json::from_slice(&serde_json::to_vec(&resolved).unwrap()).unwrap();
         assert_eq!(direct_facts(&restored, actor.opponent()), facts);
+        let mut earlier_payment = restored.clone();
+        let older_tap = earlier_payment.engine.event_history.iter().enumerate()
+            .filter(|(_, event)| matches!(event, CommittedEvent::Tap { object } if *object == source))
+            .nth(1).unwrap().0 as u64;
+        let publication_at = earlier_payment.engine.event_history.iter().enumerate()
+            .filter_map(|(at, event)| match event {
+                CommittedEvent::HarvesterCommitReceiptV1 { journal }
+                    if matches!(journal.as_ref(), crate::harvester_receipts_v1::JournalV1::Published(_)) =>
+                    Some(at),
+                _ => None,
+            })
+            .last().unwrap();
+        let mut publication = earlier_payment.engine.event_history.remove(publication_at);
+        let CommittedEvent::HarvesterCommitReceiptV1 { journal } = &mut publication else { panic!() };
+        let crate::harvester_receipts_v1::JournalV1::Published(row) = journal.as_mut() else { panic!() };
+        assert!(row.target_entry < older_tap && older_tap < row.tap_at);
+        row.tap_at = older_tap;
+        earlier_payment.engine.event_history.insert(publication_at, publication);
+        assert!(public::validate_native(&earlier_payment).is_err());
+
         let mut altered = restored;
         altered.engine.event_history.retain(|event| !matches!(event,
             CommittedEvent::HarvesterCommitReceiptV1 { journal }

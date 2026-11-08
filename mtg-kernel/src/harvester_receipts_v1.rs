@@ -256,6 +256,10 @@ pub(crate) fn operations(state: &GameState) -> Result<Vec<OperationSet<'_>>, Str
         if !(target_at < tap && tap < announced && announced.checked_add(1) == Some(published_at))
             || row.announced != Some(announced)
             || !matches!(history.get(tap), Some(E::Tap { object }) if *object == source.source)
+            || history.iter().take(announced).skip(tap + 1).any(|event| {
+                matches!(event, E::Tap { object } | E::ZoneChange { object, .. }
+                    if *object == source.source)
+            })
             || !matches!(history.get(announced), Some(E::HarvesterCommitReceiptV1 { journal })
                 if matches!(journal.as_ref(), JournalV1::TargetAnnounced { id: actual, target, generation, controller }
                     if *actual == id && *target == object && *generation == zone_change_count
