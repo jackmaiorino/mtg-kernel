@@ -198,6 +198,13 @@ impl VerifiedBytesCacheV1 {
     /// the new entry fits both bounds, then `bytes` are copied in; an entry
     /// whose charge exceeds the whole budget is not held.
     pub(crate) fn record_verified_v1(&self, path: &Path, sha256: &str, bytes: &[u8]) {
+        self.record_verified_shared_v1(path, sha256, Arc::new(bytes.to_vec()));
+    }
+
+    /// [`Self::record_verified_v1`] keeping the caller's allocation instead
+    /// of a copy (the bytes are immutable once shared): a publisher that
+    /// still hands its bytes to other readers records them without copying.
+    pub(crate) fn record_verified_shared_v1(&self, path: &Path, sha256: &str, bytes: Arc<Vec<u8>>) {
         let charge = charge_v1(path, sha256, bytes.len());
         if self.entry_limit == 0 || charge > self.budget {
             return;
@@ -222,7 +229,7 @@ impl VerifiedBytesCacheV1 {
         held.entries.push_back(EntryV1 {
             path: path.to_path_buf(),
             sha256: sha256.to_owned(),
-            bytes: Arc::new(bytes.to_vec()),
+            bytes,
             charge,
         });
     }

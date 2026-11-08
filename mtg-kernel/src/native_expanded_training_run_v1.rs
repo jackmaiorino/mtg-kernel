@@ -42,6 +42,7 @@ use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 const SCHEMA: &str = "mtg-kernel-native-expanded-training-run/v1";
@@ -981,15 +982,29 @@ fn read_pin(pin: &PinnedFileV1) -> Result<Value, String> {
 }
 /// A sealed record (`record_envelope_v1`) is parsed from its opened bytes.
 fn read_pin_bounded(pin: &PinnedFileV1, cap: u64) -> Result<Value, String> {
-    let bytes = read_pin_bounded_bytes(pin, cap)?;
+    let bytes = read_pin_bounded_shared_v1(pin, cap)?;
     let record = crate::expanded_deck_training_v1::record_envelope_v1::open_v1(&bytes, cap)?;
     serde_json::from_slice(&record).map_err(err)
 }
-/// `read_pin_bounded`'s checks, returning the verified bytes.
-fn read_pin_bounded_bytes(pin: &PinnedFileV1, cap: u64) -> Result<Vec<u8>, String> {
-    read_pin_bounded_bytes_in_v1(verified_bytes_cache_v1::global_v1(), pin, cap)
+/// `read_pin_bounded`'s checks, returning the verified bytes as shared bytes:
+/// with resident reads on and the pin's bytes held, the held allocation
+/// itself (no copy); otherwise a full read (`read_pin_bounded_bytes_in_v1`).
+fn read_pin_bounded_shared_v1(pin: &PinnedFileV1, cap: u64) -> Result<Arc<Vec<u8>>, String> {
+    let cache = verified_bytes_cache_v1::global_v1();
+    if cache.resident_v1() {
+        let file = File::open(&pin.path).map_err(err)?;
+        let meta = file.metadata().map_err(err)?;
+        check(
+            meta.is_file() && meta.len() <= cap,
+            "artifact is not a bounded regular file",
+        )?;
+        if let Some(held) = cache.resident_bytes_v1(&pin.path, &pin.sha256, meta.len()) {
+            return Ok(held);
+        }
+    }
+    read_pin_bounded_bytes_in_v1(cache, pin, cap).map(Arc::new)
 }
-/// `read_pin_bounded_bytes` against the verified-bytes cache `cache`.
+/// `read_pin_bounded`'s full read against the verified-bytes cache `cache`.
 fn read_pin_bounded_bytes_in_v1(
     cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
     pin: &PinnedFileV1,
@@ -1246,7 +1261,7 @@ fn validate_collection_episodes_with_sampler_v1(
             .zip(&admitted)
             .map(|(trajectory, admitted)| {
                 scope.spawn(move || -> Result<CollectionTrajectoryFieldsV1, String> {
-                    let bytes = read_pin_bounded_bytes(trajectory, ARTIFACT_CAP)?;
+                    let bytes = read_pin_bounded_shared_v1(trajectory, ARTIFACT_CAP)?;
                     admitted.check_v1(&bytes)?;
                     match take_collection_fields_v1(&trajectory.sha256, &bytes) {
                         Some(fields) => {
@@ -2753,10 +2768,17 @@ mod tests {
         for index in 0..2 {
             let plain_receipt = iteration_receipt_v1(&plain_result, index);
             let resident_receipt = iteration_receipt_v1(&resident_result, index);
-            assert_eq!(
-                resident_receipt["output_identity"],
-                plain_receipt["output_identity"]
-            );
+            // Every identity field but the checkpoint file's digest: the
+            // checkpoint names its run's own trajectory paths.
+            let identity = |receipt: &Value| {
+                let mut identity = receipt["output_identity"].clone();
+                identity
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("checkpoint_sha256");
+                identity
+            };
+            assert_eq!(identity(&resident_receipt), identity(&plain_receipt));
             let plain_update = read_pin(&parse_pin(&plain_receipt, "update").unwrap()).unwrap();
             let resident_update =
                 read_pin(&parse_pin(&resident_receipt, "update").unwrap()).unwrap();
