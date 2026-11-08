@@ -137,6 +137,15 @@ pub(crate) fn record_exiled(
     push(state, JournalV1::TopExiled { id, row: ExileV1 { original, arrival } });
 }
 
+pub(crate) fn owns_pending_cast(state: &GameState, spell: ObjectId) -> bool {
+    state.etali_commit_receipts_v1
+        && state.standard_v1.as_ref().and_then(|standard| standard.resolution_play.as_ref())
+            .is_some_and(|context|
+                context.permission.is_some_and(|permit| permit.card.object == spell)
+                    && context.suspended.as_ref()
+                        .is_some_and(|pending| selected(&pending.resolving_item)))
+}
+
 pub(crate) fn record_cast(
     state: &mut GameState,
     child: StackItemId,

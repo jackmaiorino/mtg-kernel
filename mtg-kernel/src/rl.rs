@@ -12797,7 +12797,10 @@ fn pending_cast_semantic_v2(
     // Retrace's discarded land card is not a sacrifice either.
     let object_cost_is_retrace = cfg!(feature = "eternal-fixtures")
         && crate::eternal_vintage_e7b_v1::pending_retrace(state, p);
-    let sacrifice_chosen = if p.source_contract.cast_method == CastMethodV4::Escape
+    let private_etali_cost = acting_player != p.controller
+        && crate::etali_primal_storm_receipts_v1::owns_pending_cast(state, p.spell);
+    let sacrifice_chosen = if private_etali_cost
+        || p.source_contract.cast_method == CastMethodV4::Escape
         || object_cost_is_tap
         || object_cost_is_alternative
         || object_cost_is_retrace
@@ -12813,8 +12816,8 @@ fn pending_cast_semantic_v2(
         is_flashback: p.is_flashback,
         cast_mode: p.cast_mode,
         additional_cost_discarded: match &p.additional_cost_discarded {
-            Some(ids) => Some(visible_card_refs(state, ids, acting_player)?),
-            None => None,
+            Some(ids) if !private_etali_cost => Some(visible_card_refs(state, ids, acting_player)?),
+            _ => None,
         },
         mode_chosen: p.mode_chosen,
         origin_zone: p.origin_zone,
