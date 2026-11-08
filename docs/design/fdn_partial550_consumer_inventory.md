@@ -119,5 +119,9 @@ All new formatter/build/native checks remain **unrun** because host reservations
 have not admitted them. Source review and `git diff --check` do not qualify these
 three printings as Full. This branch also does not yet include #552's optional
 sorted name/count hand-knowledge feature. Its inherited ordinary sampling API
-is not advertised as the all286 closed-list fair-search contract; composing that
-lane must explicitly retain the separate by-name-v2 knowledge law.
+is not advertised as the all286 closed-list fair-search contract. #552 checkpoint
+`35e134691` now uses the V3 public reveal stream and compact ledger because V2
+`reveal_distinct` can retain physical multiplicity for equal names. Composing
+reveal-active typed training requires a separate prospective projection of the
+selected V3 reducer's sorted public name/count minima; sorting raw V2 rows alone
+does not qualify it. The sealed Kaito capture/apply interface remains the boundary.
