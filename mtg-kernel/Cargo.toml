@@ -313,6 +313,11 @@ path = "src/bin/kernel_limited_omniscience_env_v1.rs"
 required-features = ["limited-fdn-fixtures"]
 
 [[bin]]
+name = "kernel_limited_tutelage_env_v1"
+path = "src/bin/kernel_limited_tutelage_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
 name = "kernel_limited_match_v1"
 path = "src/bin/kernel_limited_match_v1.rs"
 required-features = ["limited-fdn-fixtures"]

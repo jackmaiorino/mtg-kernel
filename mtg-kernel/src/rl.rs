@@ -2760,7 +2760,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
                 accept_fake,
                 text_mode.complete_source_scope(),
                 conqueror_proof,
-                owning_kaito && consumer == LimitedAppendixV1::Artist,
+                private_scope,
             )?
         } else {
             engine_context_v2(
@@ -11666,7 +11666,7 @@ fn engine_context_v2_conqueror_inner_v49(
         false,
         None,
         None,
-        false,
+        LimitedAppendixV1::Legacy,
     )
 }
 
@@ -11680,7 +11680,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
     accept_fake: bool,
     prepared_scope: Option<CommonProjectionScopeV42>,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
-    artist: bool,
+    appendix: LimitedAppendixV1,
 ) -> Result<EngineContextV2> {
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
@@ -11932,7 +11932,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     accept_fake,
                     prepared_scope,
                     conqueror_proof,
-                    artist,
+                    appendix,
                 )?
             } else {
                 pending_effect_semantic_v4(
@@ -12131,7 +12131,7 @@ fn pending_effect_semantic_v4_akroma_inner(
         false,
         None,
         None,
-        false,
+        LimitedAppendixV1::Legacy,
     )
 }
 
@@ -12145,9 +12145,9 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
     accept_fake: bool,
     prepared_scope: Option<CommonProjectionScopeV42>,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
-    artist: bool,
+    appendix: LimitedAppendixV1,
 ) -> Result<PendingEffectSemanticV4> {
-    let artist = artist
+    let artist = appendix == LimitedAppendixV1::Artist
         && pending
             .resolving_item
             .v4
@@ -12293,6 +12293,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                     let chooser_private = (matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard
+                            | crate::effect::EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::OrderLookedLibraryTop {
                                 ..
                             }
@@ -12488,7 +12489,10 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             crate::effect::EffectTargetSelectionPurpose::CuratorCardsV1 { .. } => return Err(RlContractError("Curator requires its distinct complete consumer".into())),
                             crate::effect::EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. } => { return Err(RlContractError("Blasphemous Edict requires a distinct complete consumer".into())); }
                             crate::effect::EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. } => {
-                                return Err(RlContractError("Tutelage mill requires its distinct complete consumer".into()));
+                                if appendix != LimitedAppendixV1::Tutelage {
+                                    return Err(RlContractError("Tutelage mill requires its distinct complete consumer".into()));
+                                }
+                                TargetSelectionPurposeV4::LibraryOrder
                             }
                             crate::effect::EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { .. } => {
                                 TargetSelectionPurposeV4::CostPayment
