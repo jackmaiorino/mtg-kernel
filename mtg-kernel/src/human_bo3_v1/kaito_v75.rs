@@ -55,7 +55,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     tutelage: Option<super::tutelage_consumer_v1::HumanFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    moon: Option<super::moon_consumer_v1::HumanFactsV1>
+    moon: Option<super::moon_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    leyline_axe: Option<super::leyline_axe_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -95,7 +97,9 @@ record!(HumanKaitoCandidateV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     tutelage_action: Option<crate::tutelage_consumer_v1::ActionV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    moon_action: Option<crate::moon_consumer_v1::ActionV1>
+    moon_action: Option<crate::moon_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    leyline_axe_action: Option<crate::leyline_axe_consumer_v1::ActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -317,6 +321,9 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
+    if let Some(label) = super::leyline_axe_consumer_v1::label(obs.leyline_axe.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
     if let Some(label) = super::moon_consumer_v1::label(obs.moon.as_ref(), a, h)? {
         return Ok(Some(label));
     }
@@ -781,6 +788,9 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::tutelage_consumer_v1::project(facts, &mut handles))
         .transpose()?;
+    let leyline_axe = obs.leyline_axe.as_ref()
+        .map(|facts| super::leyline_axe_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
     let moon = obs
         .moon
         .as_ref()
@@ -803,6 +813,7 @@ pub(super) fn project_with_handles(
                 omniscience_action: r.omniscience_action,
                 tutelage_action: r.tutelage_action,
                 moon_action: r.moon_action,
+                leyline_axe_action: r.leyline_axe_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -1063,6 +1074,8 @@ pub(super) fn project_with_handles(
                 "mtg-kernel-human-tutelage-decision/v1"
             } else if moon.is_some() {
                 "mtg-kernel-human-moon-decision/v1"
+            } else if leyline_axe.is_some() {
+                "mtg-kernel-human-leyline-axe-decision/v1"
             } else {
                 "mtg-kernel-human-kaito-decision/v75"
             }
@@ -1092,6 +1105,7 @@ pub(super) fn project_with_handles(
                 omniscience,
                 tutelage,
                 moon,
+                leyline_axe,
             },
             actions,
             action_meanings,

@@ -389,6 +389,7 @@ pub(crate) enum LimitedAppendixV1 {
     Omniscience,
     Tutelage,
     Moon,
+    LeylineAxe,
 }
 
 #[derive(Clone)]

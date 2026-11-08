@@ -310,6 +310,7 @@ pub(crate) enum ConsumerV1 {
     KaitoV75,
     KaitoOmniscienceV1,
     KaitoTutelageV1,
+    KaitoLeylineAxeV1,
 }
 impl ConsumerV1 {
     pub(crate) fn for_kaito(appendix: crate::policy_surface_v5::LimitedAppendixV1) -> Self {
@@ -317,6 +318,7 @@ impl ConsumerV1 {
         match appendix {
             LimitedAppendixV1::Omniscience => Self::KaitoOmniscienceV1,
             LimitedAppendixV1::Tutelage => Self::KaitoTutelageV1,
+            LimitedAppendixV1::LeylineAxe => Self::KaitoLeylineAxeV1,
             _ => Self::KaitoV75,
         }
     }
@@ -326,7 +328,10 @@ impl ConsumerV1 {
             Self::Legacy => crate::effect::require_no_copied_token_abilities_v1(state),
             Self::ChandraV74 => crate::effect::require_no_copied_token_abilities_chandra_v74(state),
             Self::KaitoV75 | Self::KaitoOmniscienceV1 | Self::KaitoTutelageV1 => {
-                crate::effect::require_no_copied_token_abilities_kaito_v75(state)
+                crate::effect::require_no_copied_token_abilities_kaito_v75(state, false)
+            }
+            Self::KaitoLeylineAxeV1 => {
+                crate::effect::require_no_copied_token_abilities_kaito_v75(state, true)
             }
         }
     }
