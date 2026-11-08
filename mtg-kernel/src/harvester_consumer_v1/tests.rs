@@ -64,6 +64,13 @@ fn declared_forty_card_v3_reset_pays_three_for_exact_harvester_both_seats() {
         assert!(reset_numeric_v1(&bad).is_err());
         let mut numeric = reset_numeric_reveal_facts_v3(&config).unwrap();
         assert!(numeric.fixture_state().harvester_commit_receipts_v1);
+        // The opt-in owner is already distinct before any source is public.
+        let hidden_only = numeric.fixture_state();
+        assert!(crate::effect::require_no_copied_token_abilities_v1(hidden_only).is_err());
+        assert!(crate::effect::require_no_copied_token_abilities_chandra_v74(hidden_only).is_err());
+        assert!(crate::effect::require_no_copied_token_abilities_kaito_v75(
+            hidden_only, crate::effect::KaitoCopyScopeV1::Base,
+        ).is_err());
         assert!(numeric.fixture_state().reveal_knowledge_v4.is_some());
         let mut wire = JsonlServerV1::new();
         let Body::State { state, .. } = body(&mut wire, 1, CommandV1::Reset { config: config.clone() })

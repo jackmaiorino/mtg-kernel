@@ -122,7 +122,8 @@ pub(crate) fn copiable_nightmare(state: &GameState, object: ObjectId) -> Result<
 }
 
 pub(crate) fn require_legacy_absence(state: &GameState) -> Result<(), String> {
-    if crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, definition)
+    if state.harvester_commit_receipts_v1
+        || crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, definition)
         || state.objects.iter().any(|(_, o)| {
             matches!(o.zone, Zone::Battlefield | Zone::Stack | Zone::Graveyard)
                 && o.v4.face_down_v1.is_none()
@@ -137,7 +138,8 @@ pub(crate) fn require_legacy_absence(state: &GameState) -> Result<(), String> {
             .engine
             .event_history
             .iter()
-            .any(|e| matches!(e, event::CommittedEvent::HarvesterResolvedV1 { .. })
+            .any(|e| matches!(e, event::CommittedEvent::HarvesterResolvedV1 { .. }
+                | event::CommittedEvent::HarvesterCommitReceiptV1 { .. })
                 || matches!(e, event::CommittedEvent::HarvesterCastAnnouncedV1 { cast } if definition(cast.card_def)))
     {
         return Err("Abyssal Harvester requires a distinct complete consumer".into());
