@@ -187,6 +187,10 @@ fn recast(actor: PlayerId, hidden: &str, grant: bool) -> (GameState, ObjectId, [
     crate::standard_cards_v1::gain_control(&mut state, stolen, actor);
     state.objects.get_mut(owned).counters.charge = 80_000;
     state.objects.get_mut(stolen).counters.stun = 3;
+    state.objects.get_mut(stolen).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+        disguised: true, lookers: 1 << actor.index(), hidden_by: None, hidden_by_source: None,
+    });
+    state.objects.get_mut(stolen).v4.ward_generic = 2;
     if grant {
         let grant = EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::GraveyardCreaturesCastableThisTurn);
         crate::effect::execute(&grant, &ExecCtx::no_targets(wurm, actor), &mut state);
@@ -273,12 +277,25 @@ fn genuine_graveyard_cast_keeps_private_units_original_indices_and_full_width_de
         assert_eq!(facts.casts[0].finalized_graveyard_route, Some(GraveyardRouteV1::PrintedSixCounterCost));
         assert_eq!(facts.paid[0].original_spell.object, wurm.0);
         let stolen = &facts.paid[0].removals[1];
+        assert_eq!(stolen.identity, IdentityV1::FaceDown { disguised: true });
         assert_eq!((stolen.original.owner, stolen.original.controller, stolen.original_count, stolen.remaining_count),
             (actor.opponent().into(), actor.into(), 3, 1));
         let mut finished = paid.clone();
         native::finish(&mut finished);
         let restored: GameState = serde_json::from_slice(&serde_json::to_vec(&finished).unwrap()).unwrap();
         assert_eq!(direct_facts(&restored, actor.opponent()).paid, facts.paid);
+        let mut leaked = restored.clone();
+        for event in leaked.engine.event_history.iter_mut() {
+            if let CommittedEvent::GreatwurmCommitReceiptV1 { journal } = event {
+                if let crate::greatwurm_receipts_v1::JournalV1::Debited { units, .. } = journal.as_mut() {
+                    for unit in units.iter_mut().filter(|unit| unit.unit.permanent.object == donors[1]) {
+                        unit.public_printing = id("Llanowar Elves");
+                    }
+                }
+            }
+        }
+        assert_eq!(public::validate_native(&leaked).unwrap_err(),
+            "Greatwurm debit lost its event-time public face");
         let mut changed = restored;
         for event in changed.engine.event_history.iter_mut() {
             match event {

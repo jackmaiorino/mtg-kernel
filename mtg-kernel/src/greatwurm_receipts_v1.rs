@@ -17,6 +17,8 @@ pub struct DebitV1 {
     pub owner: PlayerId,
     pub controller: PlayerId,
     pub public_printing: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_face_down: Option<bool>,
     pub before: u32,
     pub after: u32,
 }
@@ -97,6 +99,39 @@ pub(crate) fn capture_placement(
     Ok(EndV1::Resolved { controller, before, after, placement_history_index })
 }
 
+fn validate_debit_face(state: &GameState, at: usize, debit: &DebitV1) -> Result<(), String> {
+    let invalid = || "Greatwurm debit lost its event-time public face".to_string();
+    let binding = debit.unit.permanent;
+    if let Some(disguised) = debit.original_face_down {
+        let name = if disguised { "Face-down creature" } else { "Face-down card" };
+        if crate::card_def::card_id_by_name(name) != Some(debit.public_printing) {
+            return Err(invalid());
+        }
+    }
+    let live = state.objects.try_get(binding.object).ok_or_else(invalid)?;
+    if live.zone_change_count != binding.expected_zone_change_count {
+        return Ok(());
+    }
+    let turned_up = state.engine.event_history.iter().skip(at + 1).any(|event| matches!(
+        event, E::TurnedFaceUp { object, zone_change_count }
+            if *object == binding.object && *zone_change_count == binding.expected_zone_change_count
+    ));
+    if turned_up {
+        if debit.original_face_down.is_none() {
+            return Err(invalid());
+        }
+    } else if debit.original_face_down != live.v4.face_down_v1.map(|face| face.disguised)
+        || crate::rl::projected_card_def(state, binding.object, binding.expected_zone_change_count)
+            != debit.public_printing
+            && !(debit.original_face_down.is_none() && crate::standard_cards_v1::had_card_def(
+                state, binding.object, binding.expected_zone_change_count, debit.public_printing,
+            ))
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
 pub(crate) fn debits(state: &GameState) -> Result<Vec<(&PaidV1, &[DebitV1; 6])>, String> {
     let history = state.engine.event_history.scan_for_v1(&[
         EventKindV1::GreatwurmCounterInputV1,
@@ -140,10 +175,12 @@ pub(crate) fn debits(state: &GameState) -> Result<Vec<(&PaidV1, &[DebitV1; 6])>,
                                 || live.zone_change_count < unit.unit.permanent.expected_zone_change_count)
                         || crate::card_def::CARD_DEFS.get(usize::from(unit.public_printing)).is_none()
                         || previous.is_some_and(|earlier| earlier.owner != unit.owner
-                            || earlier.public_printing != unit.public_printing)
+                            || earlier.public_printing != unit.public_printing
+                            || earlier.original_face_down != unit.original_face_down)
                     {
                         return Err("Greatwurm actual debit changed incarnation, face or full-width count".into());
                     }
+                    validate_debit_face(state, debit_at, unit)?;
                 }
                 output.push((actual, units));
             }

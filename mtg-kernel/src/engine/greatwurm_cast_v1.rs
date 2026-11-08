@@ -197,11 +197,14 @@ impl PaymentV1 {
             let live = state.objects.get(object);
             let owner = live.owner;
             let controller = live.controller;
+            let original_face_down = live.v4.face_down_v1.map(|face| face.disguised);
             let public_printing = crate::rl::projected_card_def(state, object, live.zone_change_count);
             let before = native::count(state, object, unit.kind).expect("prepared counter debit");
             native::remove_unit(state, unit);
             let after = native::count(state, object, unit.kind).expect("actual counter debit");
-            crate::greatwurm_receipts_v1::DebitV1 { unit, owner, controller, public_printing, before, after }
+            crate::greatwurm_receipts_v1::DebitV1 {
+                unit, owner, controller, public_printing, original_face_down, before, after,
+            }
         });
         crate::greatwurm_receipts_v1::record_debit(state, id, units);
     }
