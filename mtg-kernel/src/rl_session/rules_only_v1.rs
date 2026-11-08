@@ -114,6 +114,23 @@ fn rules_only_deck_pair_state_v1(
 }
 
 impl FastActorSessionV1 {
+    #[cfg(test)]
+    pub(crate) fn install_rules_only_test_state_v1(&mut self, state: crate::state::GameState) {
+        assert_eq!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RulesOnlyV1
+        );
+        assert_eq!(self.policy_step_count, 0);
+        self.state = state;
+        self.surface = PolicySurfaceV5::new_with_priority_mode_v1(
+            crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+            SuppressionAuditMode::Off,
+        );
+        self.surface.enable_hunter_order_v45();
+        self.terminal = None;
+        self.advance_to_decision_or_terminal();
+    }
+
     /// A Limited game (40 or more cards per seat) whose every card is Full or
     /// accepted by `admit`. Same state, combat, mulligans, priority windows
     /// and trigger ordering as the owning Kaito V75 session.

@@ -83,8 +83,9 @@ hand, refer to hidden frozen sources or contain an unknown face-down identity ar
 V2 keeps native object bindings and history for rule execution. The paired opening test varies
 the hidden composition, reveal copy, own library order and future RNG while keeping the public
 decision fixed. A second probe attempts opening search in rules-only decks containing each of the
-286 frozen printings. Exercising those printings' later decisions and canonicalizing history
-across distinct but publicly equivalent native trajectories remain acceptance work for #552.
+286 frozen printings. Constructed main-phase fixtures exercise the cast or land action of each
+Partial printing. Later decisions and canonical history across distinct but publicly equivalent
+native trajectories remain acceptance work for #552.
 
 The `smoke` command runs a bounded pair on the original DraftZero evaluation decks and replays
 it at a second worker count. Its turn-limited or decision-limited rows are engineering checks.

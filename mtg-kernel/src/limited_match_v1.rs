@@ -144,18 +144,26 @@ impl DeckFileV1 {
 pub struct LimitedBeliefV1 {
     /// Sorted card-definition multiset per deck.
     decks: Vec<Vec<u16>>,
+    v2_executable: bool,
 }
 
 impl LimitedBeliefV1 {
     pub fn new(decks: impl IntoIterator<Item = Vec<u16>>) -> Self {
+        let decks: Vec<_> = decks
+            .into_iter()
+            .map(|mut cards| {
+                cards.sort_unstable();
+                cards
+            })
+            .collect();
+        let v2_executable = decks.iter().flatten().all(|&id| {
+            CARD_DEFS
+                .get(usize::from(id))
+                .is_some_and(|card| !card.is_token && card.is_executable())
+        });
         Self {
-            decks: decks
-                .into_iter()
-                .map(|mut cards| {
-                    cards.sort_unstable();
-                    cards
-                })
-                .collect(),
+            decks,
+            v2_executable,
         }
     }
 
@@ -424,10 +432,16 @@ pub fn sample_world_v1(
                 apply_belief_v1(state, actor, pinned, belief, seed).map(|_| ())
             })
         }
-        WorldModeV1::ClosedListV2 => session.limited_closed_list_clone_v2(
-            seed,
-            belief.ok_or("closedlist-v2 needs a belief corpus")?,
-        ),
+        WorldModeV1::ClosedListV2 => {
+            let belief = belief.ok_or("closedlist-v2 needs a belief corpus")?;
+            if belief.is_empty() {
+                return Err("empty belief corpus".into());
+            }
+            if !belief.v2_executable {
+                return Err("belief corpus contains a non-executable printing".into());
+            }
+            session.limited_closed_list_clone_v2(seed, belief)
+        }
     }
 }
 
