@@ -320,15 +320,15 @@ remain pending.
 
 ## Composed source checkpoint (2026-11-08)
 
-The source candidate at `0b897f060510633466d9a5a0426f95d21b05dae5` covers
-22 of the 36 Partial booster printings in twelve finite profiles: Return (3),
+The source candidate at `f0ca97a46760c749d7dc00427235b2e94a8348ec` covers
+23 of the 36 Partial booster printings in thirteen finite profiles: Return (3),
 V68-V75 (8), Artist (1), Chosen Type (2), Niv (1), Drakuseth (1),
 Embercleave (1), Zimone (1), Omniscience (1), Tutelage (1), Moon (1), and
-Leyline Axe (1). Fourteen original Partial consumer gaps remain. Catalog tiers are unchanged.
+Leyline Axe (1), Progenitus (1). Thirteen original Partial consumer gaps remain. Catalog tiers are unchanged.
 This is source coverage; the complete composition is not natively qualified.
 
 The additional `fdn-mixed-consumer/v1` owner composes the first twenty
-printings, excluding Moon and Leyline Axe. It authenticates every represented native printed
+printings, excluding Moon, Leyline Axe and Progenitus. It authenticates every represented native printed
 definition before reset and retains the real declared deck IDs. Its exact
 Mixed capability enables all eight existing appendices together. Its distinct
 observation and candidate schemas require all eight facts; single-family
@@ -359,6 +359,17 @@ repairs that caller. Integration keeps the copy-prefix exception exclusive to
 Axe and preserves Mixed's Chosen Type restricted-mana scope. Its kept-hand,
 paid-cast/equip, hidden-pair and restore fixtures are unrun.
 
+Progenitus has its own `fdn-progenitus-consumer/v1` profile. It authenticates
+its exact definition and protection facts, exposes only the actual chooser's
+pending graveyard-order menu, and preserves native shuffle replacement and
+knowledge invalidation. Completed public receipts omit object IDs, generations,
+RNG and library positions. Source fixtures separately cover declared 40-card
+reset, an actual ten-mana cast, battlefield/stack/hand shuffle replacement,
+and paid mass reveal/order with independent hidden suffixes. Review of
+`f3878c8c3aca0d6dd53981a2f883a216329de07a` found no remaining source blocker
+after its ConsumerV1 match repair. The integrated eleven-appendix shape still
+requires all three newer appendices absent for Mixed. Native checks are pending.
+
 The composition retains the complete histories for Chosen Type, Niv,
 Drakuseth, Embercleave, Zimone, Omniscience and Tutelage. The latter's new
 native receipt records actual post-replacement mill members and the original
@@ -371,7 +382,7 @@ Source verification: pinned Rust 1.94.1 formatting passed through the
 Tutelage checkpoint `98ee9ab7e9ee66e76d6481fa6d5a426f71e1df73`.
 The Mixed and Moon changes passed the pinned one-core formatter in
 `52f25a4fc9a45e200b90a4e032dd792e263159e2` (36 staged files, 17 changed).
-The separately committed Axe successor still awaits pinned formatting and native checks.
+The Axe and Progenitus successor still awaits pinned formatting and native checks.
 Read-only review of Mixed `ac74b5322218e00cd0b33d65151efecf9ce29ace`
 found no blocking source issue in the explicit scope, candidate bindings,
 normalization, or fixture call signatures. Root reviewed the Moon printing,
@@ -395,10 +406,11 @@ None of these
 predecessor results qualifies the larger Limited composition.
 
 The next guarded Limited job must first complete a type check and the focused
-consumer fixtures before building all twelve individual-profile binaries and
+consumer fixtures before building all thirteen individual-profile binaries and
 the Mixed binary. Filters include `limited_mixed_consumer_v1::tests::`,
 `moon_consumer_v1::tests::`, `chosen_type_consumer_v1::tests::`,
 `leyline_axe_consumer_v1::tests::`, `leyline_axe_v1::tests::`,
+`progenitus_consumer_v1::tests::`, `engine::progenitus_v1_tests::`,
 `rl::complete_copy_prefix_scope_tests::`,
 `niv_consumer_v1::tests::`, `niv_mizzet_public_v63::tests::`,
 `drakuseth_consumer_v1::tests::`, `artist_consumer_v1::tests::`,
