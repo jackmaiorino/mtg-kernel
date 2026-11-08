@@ -156,7 +156,7 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
     let mut positions = std::collections::BTreeMap::new();
     for (index, entry) in state.engine.event_history.scan_for_v1(&[
         crate::event_history_v1::EventKindV1::KykarExiledV1,
-        crate::event_history_v1::EventKindV1::KykarDelayedCollectedV1]).enumerate() {
+        crate::event_history_v1::EventKindV1::KykarDelayedCollectedV1]).iter().enumerate() {
         if !matches!(entry, E::KykarExiledV1 { .. }) { continue; }
         let index = u64::try_from(index).map_err(|_| "Kykar history width")?;
         let (source, exiled, owner) = native::validate_schedule(state, index)?;
