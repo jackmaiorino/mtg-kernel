@@ -804,9 +804,41 @@ impl OpponentCacheV1 {
     }
 }
 
+/// Sources a collection boundary verified in this process with resident
+/// reads on (`verified_bytes_cache_v1`); at most this many are remembered.
+const RESIDENT_VERIFIED_SOURCES_V1: usize = 64;
+
+/// With resident reads on, whether a collection boundary of this process
+/// already verified `source` (`remember` records it as verified). Off, never.
+fn resident_verified_source_v1(source: &ExpandedModelSourceV1, remember: bool) -> bool {
+    use std::sync::{Mutex, OnceLock, PoisonError};
+    static VERIFIED: OnceLock<Mutex<Vec<ExpandedModelSourceV1>>> = OnceLock::new();
+    if !verified_bytes_cache_v1::global_v1().resident_v1() {
+        return false;
+    }
+    let mut verified = VERIFIED
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if verified.contains(source) {
+        return true;
+    }
+    if remember && verified.len() < RESIDENT_VERIFIED_SOURCES_V1 {
+        verified.push(source.clone());
+    }
+    false
+}
+
 /// Revalidate every external byte pin once at a collection boundary before
 /// reusing a process-cached model. Schema-specific semantic validation remains
 /// the cache miss loader's responsibility; changed bytes cannot hit that cache.
+///
+/// With resident reads on (`verified_bytes_cache_v1`), a source this process
+/// already verified at an earlier boundary passes again without rereading
+/// its files: its verification is a pure function of the pinned bytes, so it
+/// holds for as long as the process trusts those bytes, which is the mode's
+/// contract (once per process, a W5 segment). Every other source is verified
+/// as before.
 fn verify_collection_opponent_sources_v1(
     episodes: &[ExpandedEpisodeV1],
 ) -> Result<Vec<ExpandedModelSourceV1>, String> {
@@ -822,6 +854,10 @@ fn verify_collection_opponent_sources_v1(
         checked.push(source.clone());
         // An S source keeps its own full load (`s_learner_v1`) every time.
         if source.s_learner.is_some() {
+            continue;
+        }
+        if resident_verified_source_v1(source, false) {
+            verified.push(source.clone());
             continue;
         }
         let bytes = read_pinned_bytes(&source.play_import)?;
@@ -853,6 +889,7 @@ fn verify_collection_opponent_sources_v1(
         if !verified_pins {
             continue;
         }
+        resident_verified_source_v1(source, true);
         verified.push(source.clone());
     }
     Ok(verified)
@@ -5762,6 +5799,34 @@ fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
     read_pinned_bytes_in_v1(verified_bytes_cache_v1::global_v1(), pin)
 }
 
+/// `read_pinned_bytes` for a caller that only needs the check: with resident
+/// reads on and the pin's bytes held, the metadata checks run and the held
+/// bytes are not copied; otherwise exactly `read_pinned_bytes`.
+fn check_pinned_v1(pin: &PinnedFileV1) -> Result<(), String> {
+    check_pinned_in_v1(verified_bytes_cache_v1::global_v1(), pin)
+}
+
+/// `check_pinned_v1` against the verified-bytes cache `cache`.
+fn check_pinned_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    pin: &PinnedFileV1,
+) -> Result<(), String> {
+    if cache.resident_v1() {
+        let metadata = fs::metadata(&pin.path).map_err(err)?;
+        ensure(
+            metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
+            "input is not a bounded regular file",
+        )?;
+        if cache
+            .resident_bytes_v1(&pin.path, &pin.sha256, metadata.len())
+            .is_some()
+        {
+            return Ok(());
+        }
+    }
+    read_pinned_bytes_in_v1(cache, pin).map(drop)
+}
+
 /// `read_pinned_bytes` against the verified-bytes cache `cache`.
 fn read_pinned_bytes_in_v1(
     cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
@@ -5772,6 +5837,11 @@ fn read_pinned_bytes_in_v1(
         metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
         "input is not a bounded regular file",
     )?;
+    // Resident reads: bytes this process verified against this pin, of the
+    // file's exact length (`verified_bytes_cache_v1`).
+    if let Some(held) = cache.resident_bytes_v1(&pin.path, &pin.sha256, metadata.len()) {
+        return Ok(held.as_ref().clone());
+    }
     let bytes = fs::read(&pin.path).map_err(err)?;
     // Bytes equal to bytes this process already verified against this pin
     // have its digest (`verified_bytes_cache_v1`); anything else is hashed as
@@ -5928,8 +5998,15 @@ fn publish_json_bytes_in_v1(
         "output exceeds file size limit",
     )?;
     let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
-    let receipt =
-        publish_new_bytes_v1(&parent, format!(".{name}.stage"), name, bytes).map_err(err)?;
+    // Resident reads also skip the two non-bracketing readbacks
+    // (`publish_new_bytes_bracketed_v1`).
+    let stage = format!(".{name}.stage");
+    let receipt = if cache.resident_v1() {
+        crate::durable_publication_v1::publish_new_bytes_bracketed_v1(&parent, stage, name, bytes)
+    } else {
+        publish_new_bytes_v1(&parent, stage, name, bytes)
+    }
+    .map_err(err)?;
     let pin = PinnedFileV1 {
         path: directory.join(name),
         sha256: hex(&receipt.sha256()),
