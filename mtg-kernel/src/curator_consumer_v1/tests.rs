@@ -261,6 +261,18 @@ fn hidden_partition_positions_and_names_leave_opponent_packet_human_wire_and_res
             }).unwrap();
             move_row.public_printing = Some(id("Mountain"));
             assert!(public::validate_native(&wrong_name).is_err());
+            let mut hidden_arrival = original.clone();
+            let mask = hidden_arrival.engine.event_history.iter_mut().find_map(|event| match event {
+                CommittedEvent::CuratorReceiptV1 { journal } => match journal.as_mut() {
+                    crate::curator_receipts_v1::JournalV1::ArrivalVisibility {
+                        mask, disclosed_printing: Some(_), ..
+                    } => Some(mask),
+                    _ => None,
+                },
+                _ => None,
+            }).unwrap();
+            *mask = 1;
+            assert!(public::validate_native(&hidden_arrival).is_err());
         }
         let mut missing = finished.clone();
         missing.engine.event_history.retain(|event| !matches!(event,

@@ -40,6 +40,13 @@ pub struct MovedV1 {
 pub enum JournalV1 {
     Revealed { entry: u64, controller: PlayerId, shown: Vec<ShownV1> },
     Moved { entry: u64, move_row: MovedV1 },
+    ArrivalVisibility {
+        entry: u64,
+        event_at: u64,
+        original: EffectObjectBinding,
+        mask: u8,
+        disclosed_printing: Option<u16>,
+    },
 }
 
 fn rows(state: &GameState) -> impl Iterator<Item = (usize, &JournalV1)> {
@@ -130,13 +137,20 @@ pub(crate) fn record_move(
         && live.v4.face_down_v1.is_none();
     let public_destination = matches!(destination, Zone::Battlefield | Zone::Graveyard
         | Zone::Exile | Zone::Stack | Zone::Command) && live.v4.face_down_v1.is_none();
+    let mask = state.observation_journal.visibility_v2(event_at, original.object)
+        .ok_or("Curator actual committed move lacks event-time visibility")?;
+    let disclosed_printing = (mask == 3 && (revealed_hand || public_destination)).then_some(live.card_def);
+    let event_at = u64::try_from(event_at).map_err(|_| "Curator history index width")?;
     let move_row = MovedV1 {
-        event_at: u64::try_from(event_at).map_err(|_| "Curator history index width")?,
+        event_at,
         original, owner: controller, planned: cause.planned, destination,
-        public_printing: (revealed_hand || public_destination).then_some(live.card_def),
+        public_printing: disclosed_printing,
     };
+    record(state, JournalV1::ArrivalVisibility {
+        entry: cause.entry, event_at, original, mask, disclosed_printing,
+    });
     record(state, JournalV1::Moved { entry: cause.entry, move_row });
-    if revealed_hand {
+    if revealed_hand && mask == 3 {
         // spellbench-public-reveal: the originally face-up pile arrived in hand.
         state.reveal_distinct_hand_card_with_meaning_v3(
             controller.opponent(), controller, original.object,
@@ -151,6 +165,8 @@ fn validate_move_identity(
     row: &MovedV1,
     event_at: usize,
     shown: Option<u16>,
+    mask: u8,
+    disclosed_printing: Option<u16>,
 ) -> Result<(), String> {
     let object = row.original.object;
     let arrival = row.original.expected_zone_change_count.checked_add(1)
@@ -164,9 +180,13 @@ fn validate_move_identity(
         Zone::Hand => shown.is_some(),
         _ => true,
     };
-    let event_visibility = state.observation_journal.visibility_v2(event_at, object);
+    if mask > 3 || row.public_printing != disclosed_printing
+        || state.observation_journal.visibility_v2(event_at, object).is_some_and(|observed| observed != mask)
+    {
+        return Err("Curator arrival differs from its committed event-time visibility".into());
+    }
     if let Some(printing) = row.public_printing {
-        if !may_name || event_visibility.is_some_and(|mask| mask != 3)
+        if !may_name || mask != 3
             || shown.is_some_and(|original| original != printing)
             || crate::card_def::CARD_DEFS.get(usize::from(printing)).is_none()
         {
@@ -177,9 +197,7 @@ fn validate_move_identity(
         if live.zone != row.destination {
             return Err("Curator exact arrival changed its native destination".into());
         }
-        if may_name && live.v4.face_down_v1.is_none()
-            && event_visibility.is_none_or(|mask| mask == 3)
-        {
+        if may_name && live.v4.face_down_v1.is_none() && mask == 3 {
             let printing = row.public_printing.ok_or("Curator public arrival lost its original name")?;
             let original = crate::state::AbilitySourceContractV4 {
                 source: object, card_def: printing, owner: row.owner, controller: row.owner,
@@ -222,7 +240,7 @@ pub(crate) fn resolved_moves(
         } else {
             Zone::Graveyard
         };
-        if event_at <= phase_at || at >= finished_at || event_at.checked_add(1) != Some(at)
+        if event_at <= phase_at || at >= finished_at || event_at.checked_add(2) != Some(at)
             || !choice.prefix.contains(&row.original) || !seen.insert(row.original.object)
             || row.owner != choice.player || row.planned != expected
             || !matches!(history.get(event_at), Some(E::ZoneChange {
@@ -231,7 +249,18 @@ pub(crate) fn resolved_moves(
         {
             return Err("Curator move receipt no longer binds an original committed move".into());
         }
-        validate_move_identity(state, row, event_at, shown_name)?;
+        let Some(E::CuratorReceiptV1 { journal }) = history.get(event_at + 1) else {
+            return Err("Curator committed move lost serialized event-time visibility".into());
+        };
+        let JournalV1::ArrivalVisibility {
+            entry, event_at: observed, original, mask, disclosed_printing,
+        } = journal.as_ref() else {
+            return Err("Curator committed move has a foreign visibility record".into());
+        };
+        if *entry != choice.entry || *observed != row.event_at || *original != row.original {
+            return Err("Curator serialized visibility changed original move occurrence".into());
+        }
+        validate_move_identity(state, row, event_at, shown_name, *mask, *disclosed_printing)?;
         actual.push(*row);
     }
     let mut departures = BTreeSet::<ObjectId>::new();
@@ -244,6 +273,11 @@ pub(crate) fn resolved_moves(
     }
     if seen != departures {
         return Err("Curator completed outcome lost an actual native departure".into());
+    }
+    if rows(state).filter(|(_, journal)| matches!(journal,
+        JournalV1::ArrivalVisibility { entry, .. } if *entry == choice.entry)).count() != actual.len()
+    {
+        return Err("Curator native move has duplicated or detached visibility evidence".into());
     }
     Ok(actual)
 }

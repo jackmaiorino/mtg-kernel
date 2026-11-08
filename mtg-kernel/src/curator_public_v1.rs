@@ -248,7 +248,8 @@ fn occurrence_rows(state: &GameState) -> Result<BTreeMap<u64, Journal<'_>>, Stri
             receipts::JournalV1::Revealed { entry, .. } =>
                 found.get(entry).and_then(|row| row.phases.get(1))
                     .is_some_and(|(phase, _)| at.checked_add(1) == Some(*phase)),
-            receipts::JournalV1::Moved { entry, .. } =>
+            receipts::JournalV1::Moved { entry, .. }
+            | receipts::JournalV1::ArrivalVisibility { entry, .. } =>
                 found.get(entry).and_then(|row| row.phases.get(2).zip(row.finished_at))
                     .is_some_and(|((phase, _), end)| *phase < at && at < end),
         };
