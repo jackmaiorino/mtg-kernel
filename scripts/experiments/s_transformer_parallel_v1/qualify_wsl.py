@@ -288,6 +288,8 @@ exec sleep "$1"
                 if self.wsl_started:
                     if self.distro_owned and not terminated and (not terminate_attempted
                             or self.distro.casefold() in self.distros(running=True)):
+                        require(registered_install(self.distro) == self.install,
+                                "WSL registration changed before termination")
                         terminate_attempted = True
                         self.wsl_command("--terminate", self.distro, timeout=30)
                         terminated = True
@@ -312,7 +314,11 @@ exec sleep "$1"
                 return
             except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
                 # Keep the guardian alive and the canonical reservation held until verified drain.
-                self.status("cleanup-held", physical_free(), error=str(error))
+                try:
+                    self.status("cleanup-held", physical_free(), error=str(error))
+                except (OSError, ValueError, RuntimeError):
+                    # Reporting is best effort while ownership remains unverified.
+                    pass
                 time.sleep(5)
 
     def run(self):
