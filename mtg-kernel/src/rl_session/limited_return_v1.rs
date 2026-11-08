@@ -172,6 +172,15 @@ impl FastActorSessionV1 {
         Self::initialize_limited_consumer_v1(config, reveal_facts, LimitedAppendixV1::Electroduplicate)
     }
 
+    pub(crate) fn reset_limited_curator_v1(
+        config: &crate::curator_consumer_v1::ResetV1,
+        reveal_facts: bool,
+    ) -> Result<Self, RlSessionError> {
+        crate::curator_consumer_v1::preflight(config)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        Self::initialize_limited_consumer_v1(config, reveal_facts, LimitedAppendixV1::Curator)
+    }
+
     fn initialize_limited_consumer_v1(
         config: &crate::limited_consumer_wire_v1::ResetV1,
         reveal_facts: bool,
@@ -190,6 +199,7 @@ impl FastActorSessionV1 {
         if reveal_facts {
             state.reveal_knowledge_v4 = Some(Default::default());
         }
+        state.curator_unordered_reveal_v1 = appendix == LimitedAppendixV1::Curator;
         Self::initialize_kaito_consumer_v1(
             config.episode_id,
             (config.max_physical_decisions, config.max_policy_steps),

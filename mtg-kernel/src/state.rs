@@ -2539,6 +2539,10 @@ pub struct GameState {
     /// Compact public name ledger carried only in reveal-v4 search worlds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) reveal_knowledge_v4: Option<[RevealKnowledgeV3; 2]>,
+    /// The declared Curator profile reveals the pile by name, without assigning
+    /// its publicly shown cards to the controller's private library positions.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) curator_unordered_reveal_v1: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2816,6 +2820,9 @@ impl Hash for GameState {
         if self.public_shroud_v1 {
             "public-shroud/v1".hash(state);
         }
+        if self.curator_unordered_reveal_v1 {
+            "curator-unordered-reveal/v1".hash(state);
+        }
     }
 }
 
@@ -3034,6 +3041,7 @@ impl GameState {
             observation_journal: ObservationJournalV1::default(),
             reveal_meaning_v3: Default::default(),
             reveal_knowledge_v4: None,
+            curator_unordered_reveal_v1: false,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         crate::life_loss_turn_v1::initialize_for_catalog(&mut state);

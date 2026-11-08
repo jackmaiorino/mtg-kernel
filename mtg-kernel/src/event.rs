@@ -315,6 +315,8 @@ pub struct ZoneChangeProposed {
     /// Installs a resolving-entry flying grant on the new incarnation.
     #[serde(default, skip_serializing_if = "is_false")]
     pub battlefield_grant_flying_v1: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) curator_move_owner: Option<crate::curator_receipts_v1::MoveOwnerV1>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -442,6 +444,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            curator_move_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -461,6 +464,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            curator_move_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -480,6 +484,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            curator_move_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -502,6 +507,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            curator_move_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -534,6 +540,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            curator_move_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -569,6 +576,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            curator_move_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -627,6 +635,17 @@ impl ProposedEvent {
             touched_by: Vec::new(),
         })
     }
+    pub(crate) fn curator_pile_move(
+        object: ObjectId,
+        cause: crate::curator_receipts_v1::MoveOwnerV1,
+    ) -> ProposedEvent {
+        let ProposedEvent::ZoneChange(mut change) = Self::zone_change(object, cause.planned) else {
+            unreachable!("zone_change constructs a zone change")
+        };
+        change.curator_move_owner = Some(cause);
+        ProposedEvent::ZoneChange(change)
+    }
+
     pub fn create_token(token_def: u16, controller: PlayerId) -> ProposedEvent {
         ProposedEvent::CreateToken(CreateTokenProposed {
             token_def,
@@ -2098,6 +2117,9 @@ pub enum CommittedEvent {
     },
     LathrilReceiptV1 {
         journal: Box<crate::lathril_receipts_v1::JournalV1>,
+    },
+    CuratorReceiptV1 {
+        journal: Box<crate::curator_receipts_v1::JournalV1>,
     },
 }
 
@@ -4497,6 +4519,18 @@ fn commit_with_entry_batch_and_source_color(
         _ => Vec::new(),
     };
     let lathril_operation = crate::lathril_receipts_v1::capture_operation(state, &event);
+    let curator_move = match &event {
+        ProposedEvent::ZoneChange(change) => change.curator_move_owner.map(|cause| {
+            let live = state.objects.get(change.object);
+            let original = crate::effect::EffectObjectBinding {
+                object: change.object,
+                expected_zone: live.zone,
+                expected_zone_change_count: live.zone_change_count,
+            };
+            (cause, original)
+        }),
+        _ => None,
+    };
     let Some(MaterializedEventV1 {
         committed,
         alesha_power_departure,
@@ -4621,6 +4655,15 @@ fn commit_with_entry_batch_and_source_color(
             .record_visibility_v2(entry_history_index, *object, mask);
     }
     state.engine.event_history.push(committed);
+    if let Some((cause, original)) = curator_move {
+        if crate::curator_receipts_v1::record_move(state, cause, original, entry_history_index).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                original.object,
+            ));
+            return;
+        }
+    }
     if let Some(operation) = lathril_operation {
         if operation.record(state, entry_history_index).is_err() {
             state.engine.halted = Some((

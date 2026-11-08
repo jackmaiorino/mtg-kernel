@@ -2429,7 +2429,9 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             .map_err(RlContractError)?;
     }
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
-    crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
+    if private_scope != LimitedAppendixV1::Curator {
+        crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
+    }
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
 
     if !matches!(
@@ -3069,7 +3071,9 @@ fn public_restricted_mana_v1(
         crate::effect::genesis_wave_v1::refuse_legacy(state, None).map_err(RlContractError)?;
     }
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
-    crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
+    if appendix != LimitedAppendixV1::Curator {
+        crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
+    }
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
     let mut pools = [Vec::new(), Vec::new()];
     for (index, pool) in pools.iter_mut().enumerate() {
@@ -5953,7 +5957,9 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             .map_err(RlContractError)?;
     }
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
-    crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
+    if private_scope != LimitedAppendixV1::Curator {
+        crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
+    }
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
 
     if !matches!(
@@ -10676,6 +10682,7 @@ fn private_card(
     }
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
+            && appendix != LimitedAppendixV1::Curator
             && CARD_DEFS[usize::from(o.card_def)].name == "Curator of Destinies"
     }) {
         return Err(RlContractError(
@@ -12186,6 +12193,11 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
     appendix: LimitedAppendixV1,
 ) -> Result<PendingEffectSemanticV4> {
+    let curator = appendix == LimitedAppendixV1::Curator
+        && crate::effect::curator_v1::pending_selected(state, pending);
+    if curator {
+        crate::effect::curator_v1::validate(state, pending).map_err(RlContractError)?;
+    }
     let artist = appendix.includes(LimitedAppendixV1::Artist)
         && pending
             .resolving_item
@@ -12335,6 +12347,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                     let chooser_private = (aberration_order || matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard
+                            | crate::effect::EffectTargetSelectionPurpose::CuratorCardsV1 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::OrderLookedLibraryTop {
                                 ..
@@ -12394,6 +12407,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                     let redact_search_shape = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::CuratorCardsV1 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
                             | crate::effect::EffectTargetSelectionPurpose::DiscardDraw { .. }
                             | crate::effect::EffectTargetSelectionPurpose::DiscardPaymentV1 { .. }
@@ -12535,7 +12549,16 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                                 crate::effect::genesis_wave_v1::selection_purpose_v69(choice)
                             },
                             crate::effect::EffectTargetSelectionPurpose::ChandraExileV74{..}=>{if !matches!(prepared_scope, Some(CommonProjectionScopeV42::ChandraV74 | CommonProjectionScopeV42::KaitoV75)) {return Err(RlContractError("Chandra requires its complete V74 consumer".into()));} TargetSelectionPurposeV4::CardSelection},
-                            crate::effect::EffectTargetSelectionPurpose::CuratorCardsV1 { .. } => return Err(RlContractError("Curator requires its distinct complete consumer".into())),
+                            crate::effect::EffectTargetSelectionPurpose::CuratorCardsV1 { .. } => {
+                                if !curator {
+                                    return Err(RlContractError("Curator requires its distinct complete consumer".into()));
+                                }
+                                if *ordered {
+                                    TargetSelectionPurposeV4::LibraryOrder
+                                } else {
+                                    TargetSelectionPurposeV4::CardSelection
+                                }
+                            }
                             crate::effect::EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. } => { return Err(RlContractError("Blasphemous Edict requires a distinct complete consumer".into())); }
                             crate::effect::EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. } => {
                                 if !appendix.includes(LimitedAppendixV1::Tutelage) {
@@ -12627,7 +12650,12 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                         | crate::effect::EffectBooleanChoicePurpose::PayExileFromGraveyardThen {
                             ..
                         } => BooleanChoicePurposeV4::PayCost,
-                        crate::effect::EffectBooleanChoicePurpose::CuratorPileV1 { .. } => return Err(RlContractError("Curator requires its distinct complete consumer".into())),
+                        crate::effect::EffectBooleanChoicePurpose::CuratorPileV1 { .. } => {
+                            if !curator {
+                                return Err(RlContractError("Curator requires its distinct complete consumer".into()));
+                            }
+                            BooleanChoicePurposeV4::OptionalEffect
+                        }
                         crate::effect::EffectBooleanChoicePurpose::AleshaRaidReturnV1
                         | crate::effect::EffectBooleanChoicePurpose::ExilePlay { .. }
                         | crate::effect::EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {

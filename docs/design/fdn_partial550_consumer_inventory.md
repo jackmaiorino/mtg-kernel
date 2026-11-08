@@ -38,7 +38,7 @@ reusable evidence only for the mechanics they actually exercise.
 | Blasphemous Edict | Native: effect and blasphemous_edict tests | Complete stack; alternate cost, APNAP thirteen-or-all selection, physical-owner graveyard ordering and simultaneous departure |
 | Secluded Courtyard | Appendix: chosen_type_public_v66 | Complete owner/Human/wire/numeric; entry subtype and unrestricted/restricted mana, including retained original choice after departure |
 | Electroduplicate | Native: effect/copy pipeline | Complete stack; complete copiable blueprint, haste, delayed sacrifice and flashback payment |
-| Curator of Destinies | Native: effect/curator_v1 | Complete stack; private looked cards, two piles and opponent choice without concealed pile identities |
+| Curator of Destinies | Appendix: curator_public_v1 | Finite owner, Human, JSONL and sealed numeric source. Scoped unordered reveal, chooser-only look and ordering, and actual moves. Native qualification and event-sample harvest pending |
 | Loot, Exuberant Explorer | Native: effect/loot_v1 | Complete stack; current land allowance, private top-six selection and random-bottom boundary |
 | Kykar, Zephyr Awakener | Native: effect/kykar_v1 | Complete stack; original cast-mode choice, linked exile/return and exact Spirit meaning |
 | Quilled Greatwurm | Native: effect/greatwurm_v1 | Complete stack; original combat amount and graveyard six-counter payment across exact permanents |

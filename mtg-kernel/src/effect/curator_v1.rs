@@ -212,7 +212,7 @@ pub(crate) fn record_entry(state: &mut GameState, entry: usize) {
     state.engine.event_log.push(receipt.clone());
     state.engine.event_history.push(receipt);
 }
-fn entry_source(state: &GameState, entry: u64) -> Result<AbilitySourceContractV4, String> {
+pub(crate) fn entry_source(state: &GameState, entry: u64) -> Result<AbilitySourceContractV4, String> {
     let rows = state
         .engine
         .event_history
@@ -347,6 +347,7 @@ fn validate_origin(
     state: &GameState,
     item: &StackItem,
     require_published: bool,
+    require_unfinished: bool,
 ) -> Result<u64, String> {
     let Some(EffectOp::CuratorDestiniesV1 {
         entry_history_index,
@@ -362,7 +363,7 @@ fn validate_origin(
         || !item.targets.is_empty() || !item.discarded.is_empty() || !item.v4.paid_cost_refs.is_empty() || item.v4.optional_additional_cost_paid.is_some()
         || item.is_copy || item.is_flashback || item.kicked || item.madness_offer || item.mode_chosen!=0
         || state.engine.event_history.iter().filter(|e|matches!(e,event::CommittedEvent::CuratorCollectedV1{entry_history_index:at} if *at==entry_history_index)).count()!=1
-        || state.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::CuratorFinishedV1{entry_history_index:at} if *at==entry_history_index))
+        || require_unfinished && state.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::CuratorFinishedV1{entry_history_index:at} if *at==entry_history_index))
     {return Err("Curator source/controller/program occurrence changed or consumed".into())}
     let published = state
         .engine
@@ -387,10 +388,16 @@ fn validate_origin(
     Ok(entry_history_index)
 }
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<u64, String> {
-    validate_origin(state, item, false)
+    validate_origin(state, item, false, true)
 }
 pub(crate) fn validate_trigger(state: &GameState, item: &StackItem) -> Result<u64, String> {
-    validate_origin(state, item, true)
+    validate_origin(state, item, true, true)
+}
+pub(crate) fn validate_archived_trigger(state: &GameState, item: &StackItem) -> Result<u64, String> {
+    if item.v4.stack_item_id == StackItemId::default() {
+        return Err("Curator archived publication has no stack occurrence".into());
+    }
+    validate_origin(state, item, true, false)
 }
 pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), String> {
     if !matches!(
@@ -410,7 +417,7 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
     {
         return Err("Curator publication lost its unique actual stack row".into());
     }
-    let entry_history_index = validate_origin(state, item, false)?;
+    let entry_history_index = validate_origin(state, item, false, true)?;
     if state.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::CuratorPublishedV1{entry_history_index:at,item:row} if *at==entry_history_index || row.v4.stack_item_id==item.v4.stack_item_id)){return Err("Curator native row published twice".into())}
     state
         .engine
@@ -434,13 +441,13 @@ pub(crate) fn finish(state: &mut GameState, item: &StackItem) -> Result<(), Stri
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChoiceV1 {
-    player: PlayerId,
-    entry: u64,
+    pub(crate) player: PlayerId,
+    pub(crate) entry: u64,
     original_len: u32,
-    prefix: Vec<EffectObjectBinding>,
-    phase: u8,
-    down: Vec<EffectObjectBinding>,
-    choose_down: Option<bool>,
+    pub(crate) prefix: Vec<EffectObjectBinding>,
+    pub(crate) phase: u8,
+    pub(crate) down: Vec<EffectObjectBinding>,
+    pub(crate) choose_down: Option<bool>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AnswerV1 {
@@ -456,6 +463,9 @@ pub(crate) fn public_order_library_receipts(
     state: &GameState,
     actor: PlayerId,
 ) -> Vec<crate::state::LibraryKnowledgeEntry> {
+    if state.curator_unordered_reveal_v1 {
+        return Vec::new();
+    }
     let Some(PendingEffectChoice::SelectTargets {
         player,
         purpose: EffectTargetSelectionPurpose::CuratorCardsV1 { choice },
@@ -537,15 +547,19 @@ fn validate_choice_data(
         {
             return Err("Curator private pile changed original relative order".into());
         }
-        for b in c.prefix.iter().filter(|b| !c.down.contains(b)) {
-            if !state
-                .known_library_cards(c.player.opponent(), c.player)
-                .iter()
-                .any(|k| {
-                    k.object == b.object && k.zone_change_count == b.expected_zone_change_count
-                })
-            {
-                return Err("Curator face-up pile was not revealed".into());
+        if state.curator_unordered_reveal_v1 {
+            crate::curator_receipts_v1::validate_reveal(state, c, true)?;
+        } else {
+            for b in c.prefix.iter().filter(|b| !c.down.contains(b)) {
+                if !state
+                    .known_library_cards(c.player.opponent(), c.player)
+                    .iter()
+                    .any(|k| {
+                        k.object == b.object && k.zone_change_count == b.expected_zone_change_count
+                    })
+                {
+                    return Err("Curator face-up pile was not revealed".into());
+                }
             }
         }
         if (c.phase == 1) != c.choose_down.is_none() {
@@ -770,10 +784,16 @@ pub(crate) fn apply(
                 .filter(|b| cards.contains(b))
                 .collect();
             c.phase = 1;
-            for (position, b) in c.prefix.iter().enumerate() {
-                if !c.down.contains(b) {
-                    // spellbench-public-reveal: cards revealed to the opponent by the card rules.
-                    state.reveal_library_position(c.player.opponent(), c.player, position);
+            if state.curator_unordered_reveal_v1 {
+                crate::curator_receipts_v1::record_reveal(
+                    state, c.entry, c.player, c.prefix.iter().copied().filter(|b| !c.down.contains(b)),
+                )?;
+            } else {
+                for (position, b) in c.prefix.iter().enumerate() {
+                    if !c.down.contains(b) {
+                        // spellbench-public-reveal: cards revealed to the opponent by the card rules.
+                        state.reveal_library_position(c.player.opponent(), c.player, position);
+                    }
                 }
             }
             stage(state, p, c)
@@ -793,8 +813,24 @@ pub(crate) fn apply(
             // Resolve the chosen hand pile first, then its owner's ordered
             // graveyard pile. The order decision precedes either native move.
             let mut final_state = state.clone();
-            commit_zone_change_batch(&mut final_state, &hand, Zone::Hand, true)?;
-            commit_zone_change_batch(&mut final_state, &order, Zone::Graveyard, true)?;
+            if state.curator_unordered_reveal_v1 {
+                for (roster, planned) in [(&hand, Zone::Hand), (&order, Zone::Graveyard)] {
+                    for &binding in roster {
+                        validate_effect_object_binding(&final_state, binding)?;
+                    }
+                    let cause = crate::curator_receipts_v1::MoveOwnerV1 {
+                        entry: c.entry, controller: c.player, planned,
+                    };
+                    event::propose_and_commit_batch(&mut final_state, roster.iter().map(|binding|
+                        event::ProposedEvent::curator_pile_move(binding.object, cause)).collect());
+                    if final_state.engine.halted.is_some() {
+                        return Err("Curator native pile move halted".into());
+                    }
+                }
+            } else {
+                commit_zone_change_batch(&mut final_state, &hand, Zone::Hand, true)?;
+                commit_zone_change_batch(&mut final_state, &order, Zone::Graveyard, true)?;
+            }
             if final_state.engine.halted.is_some() {
                 return Err("Curator native pile move halted".into());
             }
@@ -917,4 +953,4 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "curator_v1_tests.rs"]
-mod tests;
+pub(crate) mod tests;
