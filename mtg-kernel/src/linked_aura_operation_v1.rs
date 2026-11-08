@@ -2822,6 +2822,35 @@ pub(crate) fn replay_drake_enclosing_v1(
     replay_general(original, operation, answers, used_banner).map(|(world, _)| world)
 }
 
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+thread_local! {
+    static BORROWED_DRAKE_REPLAY_FOR_TEST: std::cell::Cell<bool> = const {
+        std::cell::Cell::new(false)
+    };
+}
+
+/// Run an entire recorded game with the former staging path, including
+/// reentrant validation, for receipt and timing comparisons in one binary.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn with_borrowed_drake_replays_for_test<T>(run: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            BORROWED_DRAKE_REPLAY_FOR_TEST.with(|mode| mode.set(self.0));
+        }
+    }
+    let _restore = Restore(BORROWED_DRAKE_REPLAY_FOR_TEST.with(|mode| mode.replace(true)));
+    run()
+}
+
 /// Consume the restored input of a custody validation. The original is
 /// reconstructed only if the operation must retain a suspended checkpoint.
 pub(crate) fn replay_drake_enclosing_owned_v1(
@@ -2831,6 +2860,14 @@ pub(crate) fn replay_drake_enclosing_owned_v1(
     used_banner: bool,
     restore_original: &dyn Fn() -> Result<GameState, String>,
 ) -> Result<GameState, String> {
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    if BORROWED_DRAKE_REPLAY_FOR_TEST.with(std::cell::Cell::get) {
+        return replay_drake_enclosing_v1(&original, operation, answers, used_banner);
+    }
     replay_general_input_v1(
         ReplayInputV1::DrakeValidation(Box::new(original)),
         operation,

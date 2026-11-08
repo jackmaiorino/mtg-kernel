@@ -169,6 +169,109 @@ fn every_engine_validation_of_the_four_slow_drake_deals_matches_the_reference() 
     }
 }
 
+/// Bounded performance diagnostics for #474. Each invocation plays the exact
+/// deal twice with cold thread-local replay caches, once per staging path.
+/// It compares every byte of the final state, including the entire event
+/// history, and reports decision windows without observer or printing time.
+/// Timing is evidence to inspect, not a platform-dependent unit-test gate.
+fn compare_slow_deal_staging(deal: &DealV1, borrowed_first: bool) {
+    use sha2::{Digest, Sha256};
+    use std::time::{Duration, Instant};
+
+    let mut outputs = Vec::new();
+    let mut reports = Vec::new();
+    for borrowed in [borrowed_first, !borrowed_first] {
+        custody::reset_replay_memo_for_test();
+        custody::clear_replay_prefix_for_test();
+        let mut run = || {
+            let mut previous = None::<Instant>;
+            let mut elapsed = Duration::ZERO;
+            let mut decision = 0;
+            let mut window_start = 0;
+            let mut windows = Vec::new();
+            let mut final_bytes = None;
+            play(deal, &mut |state| {
+                if let Some(started) = previous {
+                    elapsed += started.elapsed();
+                }
+                if decision > 0 && (decision % 100 == 0 || decision == deal.decisions) {
+                    windows.push(serde_json::json!({
+                        "first_decision": window_start + 1,
+                        "last_decision": decision,
+                        "elapsed_ns": u64::try_from(elapsed.as_nanos()).unwrap(),
+                        "history_len": state.engine.event_history.len(),
+                        "drake_rows": rows(state),
+                    }));
+                    window_start = decision;
+                    elapsed = Duration::ZERO;
+                }
+                if decision == deal.decisions {
+                    final_bytes = Some(serde_json::to_vec(state).unwrap());
+                }
+                decision += 1;
+                previous = Some(Instant::now());
+            });
+            assert_eq!(decision, deal.decisions + 1);
+            let bytes = final_bytes.unwrap();
+            let replays = custody::replay_memo_stats_for_test();
+            assert!(replays.executions > 0, "the staging path must actually run");
+            reports.push(serde_json::json!({
+                "schema": "drake-staging-timing/v1",
+                "split": deal.split,
+                "pair": deal.pair,
+                "seed": 1,
+                "leg": 0,
+                "decks": deal.decks,
+                "winner": format!("{:?}", deal.winner),
+                "staging": if borrowed { "borrowed" } else { "owned" },
+                "decisions": deal.decisions,
+                "final_state_sha256": format!("{:x}", Sha256::digest(&bytes)),
+                "replay_executions": replays.executions,
+                "windows": windows,
+            }));
+            outputs.push(bytes);
+        };
+        if borrowed {
+            crate::linked_aura_operation_v1::with_borrowed_drake_replays_for_test(run);
+        } else {
+            run();
+        }
+    }
+    assert!(
+        outputs[0] == outputs[1],
+        "complete final state and receipts differ ({} versus {} bytes)",
+        outputs[0].len(),
+        outputs[1].len()
+    );
+    for report in reports {
+        println!("drake_staging_timing_v1 {report}");
+    }
+}
+
+#[test]
+#[ignore = "paired recorded-game timing and full receipt comparison"]
+fn slow_drake_staging_train_241() {
+    compare_slow_deal_staging(&SLOW[0], true);
+}
+
+#[test]
+#[ignore = "paired recorded-game timing and full receipt comparison"]
+fn slow_drake_staging_train_436() {
+    compare_slow_deal_staging(&SLOW[1], false);
+}
+
+#[test]
+#[ignore = "paired recorded-game timing and full receipt comparison"]
+fn slow_drake_staging_train_597() {
+    compare_slow_deal_staging(&SLOW[2], true);
+}
+
+#[test]
+#[ignore = "paired recorded-game timing and full receipt comparison"]
+fn slow_drake_staging_eval_458() {
+    compare_slow_deal_staging(&SLOW[3], false);
+}
+
 fn kind_name(value: &JournalV1) -> &'static str {
     match value {
         JournalV1::CombatInput { .. } => "CombatInput",
