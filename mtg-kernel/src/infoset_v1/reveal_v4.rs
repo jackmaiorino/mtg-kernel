@@ -91,7 +91,11 @@ fn reveal_v4_roundtrip_continuation_matches_the_public_reducer() {
     for _ in 0..4 {
         propose_and_commit(&mut raw, ProposedEvent::draw(owner));
     }
-    for card in raw.players[owner.index()].hand[..2].to_vec() {
+    let revealed = [
+        raw.players[owner.index()].hand[0],
+        raw.players[owner.index()].hand[1],
+    ];
+    for card in revealed {
         propose_and_commit(&mut raw, ProposedEvent::zone_change(card, Zone::Graveyard));
         propose_and_commit(&mut raw, ProposedEvent::zone_change(card, Zone::Hand));
     }
