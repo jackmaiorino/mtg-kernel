@@ -166,7 +166,10 @@ fn resolve(deck: &Deck, expected: usize) -> Result<Vec<u16>, String> {
 
 fn configured(deck: &Deck, historical: bool) -> Result<Vec<u16>, String> {
     if historical && deck.mainboard_size != 60
-        || !historical && !(40..=crate::limited_session_v1::MAX_CUSTOM_DECK_CARDS_V1).contains(&deck.mainboard_size) {
+        || !historical
+            && !(40..=crate::limited_session_v1::MAX_CUSTOM_DECK_CARDS_V1)
+                .contains(&deck.mainboard_size)
+    {
         return Err("declared mainboard size is outside the selected cohort".into());
     }
     let mut main = resolve(deck, deck.mainboard_size)?;

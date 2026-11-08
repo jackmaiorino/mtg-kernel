@@ -1,8 +1,9 @@
 # Current numeric actor terminal coverage
 
 Source preparation for #454, based on PR585 head
-`af33869ca61b59e653d1f3e81562d4c63860e194`. No new games, build, formatter or
-probe have run for this checkpoint. Existing six Limited correctness results
+`af33869ca61b59e653d1f3e81562d4c63860e194`. Guarded source preparation and
+formatting do not constitute a native probe. No new games or build have run
+for this checkpoint. Existing six Limited correctness results
 remain evidence only for their earlier qualified composition. Capabilities,
 frozen FlatV4/V7/V8 code and the original digest probe remain unchanged.
 
@@ -50,14 +51,20 @@ manifest without launching games. It retains all80/86 deck inventory rows and
 the exact historical planned60 cases, using the recovered43/3 order rather
 than refiltering the schedule against today's broader registry. Requirements
 come from the original log's reported deck pairs and decision kinds. Every
-supplied input receives a hash. Original40 Limited and historical widened60
-are separate named cohorts. Eternal retains its published60/15 lists.
+supplied input receives a hash. `original_limited` and `historical60` are
+separate named cohorts. Eternal retains its published60/15 lists.
 
-The prospective primary120-game panel is original40 Limited60 plus Eternal60.
+The prospective primary120-game panel is original Limited60 plus Eternal60.
 The historical60 Limited manifest is an optional additional comparison, never
-a replacement for original40 acceptance. Its copy mixture changed during the
+a replacement for original-list acceptance. Its copy mixture changed during the
 old RT1 widening. Historic60 mainboards use the old sorted-ID ordering before
-environment-v2 shuffling; original40 keeps the supplied deck row order.
+environment-v2 shuffling; original Limited keeps the supplied deck row order.
+The80 original recipes contain76 lists of40, three of41 (`FDN_top_03718_UR`,
+`FDN_top_09446_URpG`, `FDN_top_24789_BGpW`), and one of49
+(`FDN_top_21511_WUR`). Every manifest declares and retains its actual size.
+The requested Krenko and attacker/blocker pair lists remain exactly40. The
+first guarded preparation rejected the former all40 assumption before games
+ran; its failed source-check directory remains preserved.
 
 The new selector is seeded rejection-sampled uniform over the genuine legal
 menu. Every current-tree deterministic-fixture logit is still evaluated and
@@ -96,7 +103,7 @@ decision. Existing source tests and terminal coverage remain separate gates.
 
 ## Next valid native check and launch boundary
 
-After current #474 native allocation releases, compile the Eternal feature
+When the coordinator admits native capacity, compile the Eternal feature
 composition, then run the64-printing extraction, the new paid Doomsday fixture,
 and ordinal-neutral audit check. These resolve concrete current uncertainty
 before a full probe. Run the existing six #454 Limited tests on the eventual
@@ -105,8 +112,11 @@ composed source where needed; do not reuse their old result as exact-head proof.
 Only after those pass, the launcher `sample` permits at most four games with
 one worker and then useful parallel worker counts. It invokes the supported
 host-slot guard, BelowNormal, with an explicit timeout/kill bound and optional
-reserved core pool. Each leg records binary/input/log/report hashes, actual
-host, workers, elapsed wall time and exit status. Worker results are ordered
+reserved core pool. Its supported `host_slots_v1.run` callback records requested
+and actual cores. Each leg records binary/input/log/report hashes, actual
+host, workers, elapsed wall time and exit status. Native completed-work time,
+guard admission time and post-admission launch overhead are separate fields.
+Worker results are ordered
 by planned game index, so the primary hash is comparable across worker counts.
 Samples with encoding failures or incomplete games cannot qualify throughput.
 
@@ -115,7 +125,10 @@ evidence. A choice supplies current desktop/computehost/RunPod inventory with
 hashed evidence and availability reasons, completed sample receipts for every
 eligible host, serial and parallel bit-identical primary outputs, setup,
 transfer and recovery costs, and the fastest qualified selected candidate.
-It runs only on the selected host and never provisions paid resources. Both
+It runs only on the selected host and exact measured actual core set; an
+incompatible command-line pool is rejected. Projection scales native report
+time and includes post-admission overhead, without charging an old queue wait
+as future native runtime. It never provisions paid resources. Both
 pool binaries need their own matching qualification. The native ignored test
 is an internal primitive; raw invocation is not the supported substantial
 launch path. This is a launcher enforcement rule, not an OS security boundary.
@@ -126,3 +139,18 @@ V3 reveal reducer and sorted name/count input projection must be composed
 separately for reveal-active training. This harness enables neither its new
 knowledge law nor an all286 fair-search claim. Issue454 remains open until the
 required native results, exact-head review/checks and default-branch delivery.
+
+## Source-check receipt
+
+At source `5fc14928dad871eff4d5c798a5dd19a6c40b84c1`, the supported guard
+admitted claim `1d571179d0f742178aefccb80620f5df` on core7, BelowNormal,
+with a60-second kill bound. Rust1.94.1 formatting, Python3.13.14 compilation
+and all three manifest preparations passed. Checks covered exact recipe and
+sideboard sizes, recovered43/3 schedule order,60/6 unique episode provenance,
+reported pair presence and every supplied input hash. The receipt is
+`D:/mtg-kernel-actor454-target/probe-sourcechecks-5fc149/receipt.json`.
+The original and widened Limited manifests each retain80 decks,60 planned
+games and19 required pairs; Eternal retains86 decks,60 planned games and
+three required pairs. No native build, game or throughput qualification ran.
+The inherited Eternal subtype and exhaustive-match compile repairs are
+included from coordinator commit `0fecd9e9421d946fefee73b5f7f61ba94a234bcb`.
