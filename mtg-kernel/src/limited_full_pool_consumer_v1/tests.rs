@@ -313,7 +313,19 @@ fn paid_axe_equips_the_real_harvester_nightmare_under_one_copy_scope_both_seats(
         assert!(crate::effect::harvester_v1::require_legacy_absence(&state).is_err());
         assert!(crate::leyline_axe_v1::require_legacy_absence(&state).is_err());
 
+        storm::cast(
+            &mut state, actor, "Electroduplicate", &[Target::Object(nightmare)], 3,
+        );
+        storm::finish(&mut state);
         let mut owner = KaitoSession::from_session(raw(&state)).unwrap();
+        let d = decision(&owner);
+        let mut forged = d.fixture_backend_v75().observation().clone();
+        let tokens = &mut forged.electroduplicate.as_mut().unwrap().copied_tokens;
+        assert_eq!(tokens.len(), 1);
+        tokens.clear();
+        forged.projection_sha256 = crate::kaito_observation_v75::commitment(&forged).unwrap();
+        assert!(crate::kaito_observation_v75::validate_artifact(&forged).is_err());
+
         let mut selected = false;
         let mut equipped = false;
         for _ in 0..24 {
