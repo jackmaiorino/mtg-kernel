@@ -136,6 +136,15 @@ impl FastActorSessionV1 {
         Self::initialize_limited_consumer_v1(config, reveal_facts, LimitedAppendixV1::LeylineAxe)
     }
 
+    pub(crate) fn reset_limited_sphinx_lore_v1(
+        config: &crate::sphinx_lore_consumer_v1::ResetV1,
+        reveal_facts: bool,
+    ) -> Result<Self, RlSessionError> {
+        crate::sphinx_lore_consumer_v1::preflight(config)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        Self::initialize_limited_consumer_v1(config, reveal_facts, LimitedAppendixV1::SphinxLore)
+    }
+
     pub(crate) fn reset_limited_kykar_v1(
         config: &crate::kykar_consumer_v1::ResetV1,
         reveal_facts: bool,

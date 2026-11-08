@@ -357,7 +357,9 @@ pub(crate) fn installation(
         .objects
         .try_get(object)
         .ok_or("Sphinx granted card absent")?;
-    if o.owner != owner || o.card_def != card_def || o.zone_change_count < zone_change_count {
+    if o.owner != owner
+        || (o.zone_change_count == zone_change_count && o.card_def != card_def)
+        || o.zone_change_count < zone_change_count {
         return Err("Sphinx granted original card changed".into());
     }
     let d = &card_def::CARD_DEFS[usize::from(card_def)];
@@ -709,4 +711,4 @@ pub(crate) fn definition(id: u16) -> bool {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "sphinx_lore_v1_tests.rs"]
-mod tests;
+pub(crate) mod tests;

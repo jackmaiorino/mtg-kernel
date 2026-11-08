@@ -487,6 +487,7 @@ mod leyline_axe_consumer_v1;
 mod loot_consumer_v1;
 mod moon_consumer_v1;
 mod omniscience_consumer_v1;
+mod sphinx_lore_consumer_v1;
 mod kykar_consumer_v1;
 mod progenitus_consumer_v1;
 mod tutelage_consumer_v1;

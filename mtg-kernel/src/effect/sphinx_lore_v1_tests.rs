@@ -10,10 +10,10 @@ const NAME: &str = "Sphinx of Forgotten Lore";
 fn id(n: &str) -> u16 {
     card_def::card_id_by_name(n).unwrap()
 }
-fn ready(p: PlayerId) -> GameState {
+pub(crate) fn ready(p: PlayerId) -> GameState {
     ready_hidden(p, "Forest")
 }
-fn ready_hidden(p: PlayerId, hidden: &str) -> GameState {
+pub(crate) fn ready_hidden(p: PlayerId, hidden: &str) -> GameState {
     let library = [id("Forest"); 80];
     let other = [id(hidden); 80];
     let (a, b) = if p == PlayerId::P0 {
@@ -44,13 +44,13 @@ fn restore(s: &GameState) -> GameState {
     assert_eq!(s.state_hash(), r.state_hash());
     r
 }
-fn next(s: &mut GameState) -> Decision {
+pub(crate) fn next(s: &mut GameState) -> Decision {
     let d = engine::advance_until_decision(s);
     assert!(s.engine.halted.is_none(), "{:?}", s.engine.halted);
     assert!(!matches!(d, Decision::Halted { .. }), "{d:?}");
     d
 }
-fn pass(s: &mut GameState, d: Decision) {
+pub(crate) fn pass(s: &mut GameState, d: Decision) {
     let a = match d {
         Decision::CastSpellOrPass { .. } => Action::Pass,
         Decision::DeclareAttackers { .. } => Action::DeclareAttackers(vec![]),
@@ -70,7 +70,7 @@ fn pass(s: &mut GameState, d: Decision) {
     };
     engine::step(s, a).unwrap();
 }
-fn priority(s: &mut GameState, p: PlayerId) {
+pub(crate) fn priority(s: &mut GameState, p: PlayerId) {
     for _ in 0..32 {
         let d = next(s);
         if matches!(d,Decision::CastSpellOrPass{player,..}if player==p) {
@@ -87,7 +87,7 @@ fn tapped(s: &GameState, p: PlayerId) -> usize {
         .filter(|o| s.objects.get(**o).tapped)
         .count()
 }
-fn cast(s: &mut GameState, p: PlayerId, n: &str, targets: &[Target], cost: usize) -> ObjectId {
+pub(crate) fn cast(s: &mut GameState, p: PlayerId, n: &str, targets: &[Target], cost: usize) -> ObjectId {
     priority(s, p);
     let card = put(s, p, n, Zone::Hand);
     let before = tapped(s, p);
@@ -125,7 +125,7 @@ fn cast(s: &mut GameState, p: PlayerId, n: &str, targets: &[Target], cost: usize
     }
     panic!("paid cast absent")
 }
-fn finish(s: &mut GameState) {
+pub(crate) fn finish(s: &mut GameState) {
     for _ in 0..48 {
         let d = next(s);
         if s.stack.is_empty() && s.engine.pending_effect.is_none() {
@@ -136,7 +136,7 @@ fn finish(s: &mut GameState) {
     panic!("stack unfinished")
 }
 
-fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
+pub(crate) fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
     let sphinx = cast(s, p, NAME, &[], 4);
     finish(s);
     assert_eq!(s.objects.get(sphinx).zone, Zone::Battlefield);
@@ -145,7 +145,7 @@ fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
     assert!(engine::has_effective_keyword(s, sphinx, Keywords::FLYING));
     sphinx
 }
-fn next_main(s: &mut GameState, p: PlayerId, after: u32) {
+pub(crate) fn next_main(s: &mut GameState, p: PlayerId, after: u32) {
     for _ in 0..192 {
         let d = next(s);
         if s.turn > after
@@ -159,7 +159,7 @@ fn next_main(s: &mut GameState, p: PlayerId, after: u32) {
     }
     panic!("next genuine main absent");
 }
-fn main2(s: &mut GameState, p: PlayerId) {
+pub(crate) fn main2(s: &mut GameState, p: PlayerId) {
     for _ in 0..80 {
         let d = next(s);
         if s.active_player == p
@@ -172,7 +172,7 @@ fn main2(s: &mut GameState, p: PlayerId) {
     }
     panic!("main2 absent");
 }
-fn attack(s: &mut GameState, p: PlayerId, sphinx: ObjectId, target: ObjectId) -> StackItem {
+pub(crate) fn attack(s: &mut GameState, p: PlayerId, sphinx: ObjectId, target: ObjectId) -> StackItem {
     let mut declared = false;
     let mut targeted = false;
     for _ in 0..96 {
@@ -224,7 +224,7 @@ fn attack(s: &mut GameState, p: PlayerId, sphinx: ObjectId, target: ObjectId) ->
     }
     panic!("authentic targeted attack not published");
 }
-fn scenario(p: PlayerId, name: &str) -> (GameState, ObjectId, ObjectId, StackItem) {
+pub(crate) fn scenario(p: PlayerId, name: &str) -> (GameState, ObjectId, ObjectId, StackItem) {
     let mut s = ready(p);
     let target = put(&mut s, p, name, Zone::Graveyard);
     let sphinx = paid(&mut s, p);
@@ -233,14 +233,14 @@ fn scenario(p: PlayerId, name: &str) -> (GameState, ObjectId, ObjectId, StackIte
     let row = attack(&mut s, p, sphinx, target);
     (s, sphinx, target, row)
 }
-fn install(s: &mut GameState, p: PlayerId, target: ObjectId) -> u64 {
+pub(crate) fn install(s: &mut GameState, p: PlayerId, target: ObjectId) -> u64 {
     finish(s);
     let grants = active_grants(s, target, p);
     assert_eq!(grants.len(), 1);
     installation(s, grants[0]).unwrap();
     grants[0]
 }
-fn pay_existing(
+pub(crate) fn pay_existing(
     s: &mut GameState,
     p: PlayerId,
     card: ObjectId,
