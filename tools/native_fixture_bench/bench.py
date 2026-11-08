@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import signal
 import statistics
@@ -208,7 +209,10 @@ def generate(args) -> int:
     if args.test_binary:
         test_binary = Path(args.test_binary).resolve()
         command = [str(test_binary), *selector]
-        cwd = None
+        # cargo runs a crate's tests from the package root.
+        cwd = Path(args.repo) / "mtg-kernel"
+        if not cwd.is_dir():
+            cwd = None
     else:
         test_binary = None
         command = ["cargo", "test", "--release", "--locked", "-p", "mtg-kernel", "--lib",
@@ -430,9 +434,8 @@ def storage(tree: Path) -> dict:
     for relative, path in files.items():
         size = path.stat().st_size
         total += size
-        kind = Path(relative).name
-        if kind.startswith("trajectory") or "/trajectories/" in f"/{relative}":
-            kind = "trajectories"
+        # One entry per file name pattern: episode-0001.json is "episode-#.json".
+        kind = re.sub(r"[0-9]+", "#", Path(relative).name)
         by_kind[kind] = by_kind.get(kind, 0) + size
     return {"files": len(files), "bytes": total, "bytes_by_name": dict(sorted(by_kind.items()))}
 
@@ -581,9 +584,11 @@ def describe(values: list[float]) -> dict:
 
 def verdict(baseline: list[float], candidate: list[float], blocks: list[tuple],
             lower_is_better: bool) -> dict:
-    """The comparison rule (#594 item 3): an effect no larger than the observed
-    run-to-run spread, or A-B-B-A blocks that disagree in direction, is
-    inconclusive; otherwise the median ratio is an improvement or regression.
+    """The comparison rule (#594 item 3): fewer than two complete A-B-B-A
+    blocks, an effect no larger than the observed run-to-run spread (the
+    larger arm's max minus min over its median), or blocks that disagree in
+    direction is inconclusive; otherwise the candidate/baseline median ratio
+    is an improvement or a regression.
     """
     if len(baseline) < 2 or len(candidate) < 2:
         return {"verdict": "inconclusive", "reason": "fewer than two samples per arm"}
@@ -596,7 +601,9 @@ def verdict(baseline: list[float], candidate: list[float], blocks: list[tuple],
     block_ratios = [sum(b) / sum(a) for a, b in blocks if sum(a) > 0]
     result = {"ratio_candidate_to_baseline": ratio, "effect_fraction": ratio - 1,
               "max_spread_fraction": spread, "block_ratios": block_ratios}
-    if abs(ratio - 1) <= spread:
+    if len(block_ratios) < 2:
+        result.update(verdict="inconclusive", reason="fewer than two complete A-B-B-A blocks")
+    elif abs(ratio - 1) <= spread:
         result.update(verdict="inconclusive", reason="the median effect is within the observed spread")
     elif block_ratios and not (all(r < 1 for r in block_ratios) or all(r > 1 for r in block_ratios)):
         result.update(verdict="inconclusive", reason="A-B-B-A blocks disagree in direction")

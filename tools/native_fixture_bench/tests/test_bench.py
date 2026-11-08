@@ -166,9 +166,14 @@ class PlanAndRuleTest(unittest.TestCase):
         self.assertEqual(bench.verdict(fast, base, swapped, True)["verdict"], "regression")
         self.assertEqual(bench.verdict(base, fast, blocks, False)["verdict"], "regression")
         noisy = [9.0, 11.0, 10.0, 10.5]
-        result = bench.verdict(base, noisy, [], True)
+        noisy_blocks = [([10.0, 10.3], [9.0, 11.0]), ([10.2, 10.1], [10.0, 10.5])]
+        result = bench.verdict(base, noisy, noisy_blocks, True)
         self.assertEqual(result["verdict"], "inconclusive")
         self.assertIn("spread", result["reason"])
+        # One block cannot show that the direction repeats: an A/A probe with
+        # a concurrent build once measured a 12% "effect" this way.
+        self.assertEqual(bench.verdict(base[:2], fast[:2], blocks[:1], True)["reason"],
+                         "fewer than two complete A-B-B-A blocks")
         disagree = [([10.0, 10.0], [9.0, 9.0]), ([9.0, 9.0], [10.0, 10.0])]
         self.assertEqual(bench.verdict([10.0] * 4, [9.0] * 4, disagree, True)["reason"],
                          "A-B-B-A blocks disagree in direction")

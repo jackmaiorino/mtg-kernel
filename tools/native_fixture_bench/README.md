@@ -106,10 +106,12 @@ The cold-resume check covers a fresh-process continuation after the completion m
 
 For each metric, the verdict is one of these:
 
-- **inconclusive**: there are fewer than two samples per arm, or the candidate/baseline median ratio is within the larger arm's relative spread (max minus min, over the median), or the A-B-B-A blocks disagree in direction;
+- **inconclusive**: there are fewer than two complete A-B-B-A blocks, or the candidate/baseline median ratio is within the larger arm's relative spread (max minus min, over the median), or the blocks disagree in direction;
 - **improvement** or **regression**: otherwise.
 
 Raw samples are always kept. Do not report the fastest sample.
+
+To see the noise floor of a machine, run an A/A comparison: pass the same binary as both arms under two names. One such probe here, with one block and a build running alongside, showed a 12% "effect" between identical binaries. That is why one block is never conclusive.
 
 `--keep-runs reference` deletes each compared run tree except the reference, to bound disk use.
 
