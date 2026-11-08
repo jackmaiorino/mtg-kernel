@@ -1590,7 +1590,7 @@ fn therapy(ctx: &ExecCtx, state: &mut GameState, named: u16) {
     for &card in &hand {
         // spellbench-public-reveal: hand card revealed by the card rules.
         if state
-            .reveal_hand_card(player.opponent(), player, card)
+            .reveal_distinct_hand_card(player.opponent(), player, card)
             .is_err()
         {
             halt(state, ctx.source);

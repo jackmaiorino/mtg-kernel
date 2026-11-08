@@ -393,6 +393,26 @@ fn a_same_name_land_drop_ends_the_revealed_forest_row_by_name() {
 }
 
 #[test]
+fn issue567_public_search_results_add_distinct_same_name_arrivals() {
+    let mut state = ready_main(&["Snow-Covered Forest"; 3], 0x4b48_5f35_3637_0000);
+    state.enable_hand_knowledge_by_name_v2();
+    for expected in 1..=2 {
+        add_mana(&mut state, ManaColor::C, 1);
+        let ent = put_object(&mut state, PlayerId::P0, "Generous Ent", Zone::Hand);
+        let (_, legal) = activate_landcycling_to_search(&mut state, ent);
+        engine::step(&mut state, Action::ChooseEffectTarget(legal[0])).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(
+            p1_known_p0_hand_names(&state),
+            vec!["Snow-Covered Forest"; expected]
+        );
+    }
+}
+
+#[test]
 fn landcycling_rejects_missing_cost_and_wrong_zone_and_may_fail_to_find() {
     let mut no_mana = ready_main(&["Forest"], 0x4c41_4e44_4359_0010);
     let ent = put_object(&mut no_mana, PlayerId::P0, "Generous Ent", Zone::Hand);

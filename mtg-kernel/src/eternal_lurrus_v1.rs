@@ -392,7 +392,7 @@ pub(crate) fn put_companion_into_hand(
     event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Hand));
     if state.objects.get(source).zone == Zone::Hand {
         // spellbench-public-reveal: hand card revealed by the card rules.
-        state.reveal_hand_card(player.opponent(), player, source)?;
+        state.reveal_distinct_hand_card(player.opponent(), player, source)?;
     }
     Ok(())
 }
@@ -1473,7 +1473,7 @@ pub(crate) fn execute(op: &LurrusOpV1, ctx: &ExecCtx, state: &mut GameState) {
             for card in state.players[player.index()].hand.clone() {
                 // spellbench-reviewed-look: the card rules let a player look at the other hand.
                 if state
-                    .reveal_hand_card(ctx.controller, player, card)
+                    .reveal_distinct_hand_card(ctx.controller, player, card)
                     .is_err()
                 {
                     halt(state, ctx.source);

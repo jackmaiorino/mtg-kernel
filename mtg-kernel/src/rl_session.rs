@@ -8000,6 +8000,17 @@ impl FastActorSessionV1 {
         Ok(())
     }
 
+    /// Opts a new game into name-level reveals and departures (issue #567).
+    /// Enable this before the first policy step and record it as part of the
+    /// runtime identity for any resulting policy or evaluation.
+    pub fn enable_hand_knowledge_by_name_v2(&mut self) -> Result<(), String> {
+        if self.policy_step_count != 0 {
+            return Err("name-level hand knowledge is a reset-only option".into());
+        }
+        self.state.enable_hand_knowledge_by_name_v2();
+        Ok(())
+    }
+
     /// Audit-only counterpart to
     /// [`RlEpisodeSessionV1::privileged_core_environment_hash`]. It is never
     /// computed by reset/step and therefore does not tax the actor loop.

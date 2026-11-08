@@ -1115,6 +1115,9 @@ struct PrivateObjectKeyV2 {
 #[derive(Default)]
 pub struct FlatDecisionEncoderV2 {
     cached_binding: Option<FlatActionDecisionBindingV2>,
+    hand_knowledge_by_name_v2: bool,
+    unlinked_hand_stack_sources: Vec<(u32, u32)>,
+    unlinked_pending_hand_source: Option<u32>,
     globals: FlatGlobalsV2,
     objects: Vec<FlatObjectCoreV2>,
     object_keys: Vec<Option<PrivateObjectKeyV2>>,
@@ -1427,9 +1430,12 @@ fn context_object_ordinal(context: FlatContextKindV2, order: u32) -> u32 {
 }
 
 impl FlatDecisionEncoderV2 {
-    fn clear_typed_cache(&mut self) {
+    fn clear_typed_cache(&mut self, state: &crate::state::GameState) {
         self.v3_action_objects = None;
         self.cached_binding = None;
+        self.hand_knowledge_by_name_v2 = state.hand_knowledge_by_name_v2;
+        self.unlinked_hand_stack_sources.clear();
+        self.unlinked_pending_hand_source = None;
         self.globals = FlatGlobalsV2::default();
         self.objects.clear();
         self.object_keys.clear();
@@ -2401,6 +2407,20 @@ impl FlatDecisionEncoderV2 {
             if observation.v3_source_authority && item.stack_item_kind != StackItemKindV2::Spell {
                 continue;
             }
+            if item.stack_item_kind != StackItemKindV2::Spell
+                && self.is_unlinked_hand_source(&item.source, actor)
+            {
+                let order = usize_u32(order)?;
+                let index = self.add_unlinked_source_row(
+                    &item.source,
+                    actor,
+                    order,
+                    FlatObjectGroupV2::Stack,
+                    FlatObjectSourceKindV2::Stack,
+                )?;
+                self.unlinked_hand_stack_sources.push((order, index));
+                continue;
+            }
             self.add_stable(
                 &item.source,
                 actor,
@@ -2804,7 +2824,10 @@ impl FlatDecisionEncoderV2 {
         kicked: bool,
     ) -> Result<(), FlatDecisionErrorV2> {
         let Some(stable) = stable else { return Ok(()) };
-        let object = self.resolve_reference(stable, actor)?;
+        let object = match (subrole, self.unlinked_pending_hand_source) {
+            (FlatContextSubroleV2::PendingEffectSource, Some(index)) => index,
+            _ => self.resolve_reference(stable, actor)?,
+        };
         let context_order = if context == FlatContextKindV2::PendingTrigger {
             primary_order
         } else {
@@ -2976,7 +2999,13 @@ impl FlatDecisionEncoderV2 {
         }
         for (stack_order, item) in p.stack.iter().enumerate() {
             let stack_order = usize_u32(stack_order)?;
-            let source = if common.v3_source_authority {
+            let unlinked_source = self
+                .unlinked_hand_stack_sources
+                .iter()
+                .find_map(|&(order, index)| (order == stack_order).then_some(index));
+            let source = if let Some(index) = unlinked_source {
+                index
+            } else if common.v3_source_authority {
                 self.resolve_reference(&item.source, actor)?
             } else {
                 self.resolve_live(&item.source, actor)?
@@ -3738,6 +3767,38 @@ impl FlatDecisionEncoderV2 {
         })
     }
 
+    fn is_unlinked_hand_source(&self, stable: &CardStableRefV1, actor: PlayerSeatV1) -> bool {
+        self.hand_knowledge_by_name_v2 && stable.owner != actor && stable.zone == Zone::Hand
+    }
+
+    /// A revealed opponent hand source establishes a name, but its private
+    /// copy cannot identify one of the known-hand rows. Register it once per
+    /// public context even if several abilities came from the same copy.
+    fn add_public_historical_source(
+        &mut self,
+        stable: &CardStableRefV1,
+        actor: PlayerSeatV1,
+        ordinal: u32,
+        pending_effect: bool,
+    ) -> Result<(u32, bool), FlatDecisionErrorV2> {
+        if !self.is_unlinked_hand_source(stable, actor) {
+            return self.add_validated_historical_source_v3(stable, actor, ordinal);
+        }
+        let index = self.add_unlinked_source_row(
+            stable,
+            actor,
+            ordinal,
+            FlatObjectGroupV2::PendingContext,
+            FlatObjectSourceKindV2::Pending,
+        )?;
+        if pending_effect {
+            self.unlinked_pending_hand_source = Some(index);
+        } else {
+            self.unlinked_hand_stack_sources.push((ordinal, index));
+        }
+        Ok((index, true))
+    }
+
     /// Called only after the V6 historical record matches its declared public
     /// stack or pending-effect context. Controller is the sole permitted
     /// same-incarnation distinction; card, owner, and zone remain immutable.
@@ -3875,7 +3936,7 @@ impl FlatDecisionEncoderV2 {
             {
                 return Err(FlatDecisionErrorV2::ObservationContract);
             }
-            let ordinal = match historical.context {
+            let (ordinal, pending_effect) = match historical.context {
                 HistoricalSourceContextV6::Stack { stack_index } => {
                     let item = public_stack
                         .get(
@@ -3889,7 +3950,7 @@ impl FlatDecisionEncoderV2 {
                     {
                         return Err(FlatDecisionErrorV2::InconsistentReference);
                     }
-                    stack_index
+                    (stack_index, false)
                 }
                 HistoricalSourceContextV6::PendingEffect => {
                     let pending = observation
@@ -3902,11 +3963,15 @@ impl FlatDecisionEncoderV2 {
                     if pending.source.as_ref() != Some(&historical.source) {
                         return Err(FlatDecisionErrorV2::InconsistentReference);
                     }
-                    usize_u32(public_stack.len())?
+                    (usize_u32(public_stack.len())?, true)
                 }
             };
-            let (model_index, appended) =
-                self.add_validated_historical_source_v3(&historical.source, actor, ordinal)?;
+            let (model_index, appended) = self.add_public_historical_source(
+                &historical.source,
+                actor,
+                ordinal,
+                pending_effect,
+            )?;
             if appended {
                 output.appended_object_indices.push(model_index);
             }
@@ -4138,7 +4203,7 @@ impl FlatDecisionEncoderV2 {
         buffers: &mut FlatScoringOwnedBuffersV2<'_>,
         repair_public_relations: bool,
     ) -> Result<crate::flat_policy_v3::FlatDecisionV3, FlatDecisionErrorV2> {
-        self.clear_typed_cache();
+        self.clear_typed_cache(session.game_state());
         self.v3_action_objects = Some(Vec::new());
         let action_count = usize::try_from(expected.legal_action_count)
             .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;
@@ -4261,7 +4326,7 @@ impl FlatDecisionEncoderV2 {
         session: &FastActorSessionV1,
         expected: FastActorDecisionV1,
     ) -> Result<(), FlatDecisionErrorV2> {
-        self.clear_typed_cache();
+        self.clear_typed_cache(session.game_state());
         let action_count = usize::try_from(expected.legal_action_count)
             .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;
         let max_refs = action_count
@@ -4654,7 +4719,8 @@ impl FlatDecisionEncoderV2 {
                         PlayerSeatV1::P0 => 0,
                         PlayerSeatV1::P1 => 1,
                     }
-                && binding.legal_action_count == expected.legal_action_count;
+                && binding.legal_action_count == expected.legal_action_count
+                && self.hand_knowledge_by_name_v2 == session.game_state().hand_knowledge_by_name_v2;
             if describes_expected {
                 session.flat_policy_validate_cached_binding_v2(expected, binding)?;
                 return Ok(binding);
@@ -4711,8 +4777,7 @@ impl FlatDecisionEncoderV2 {
 /// change, since `build.rs` byte-hashes this file whole regardless of
 /// which lines changed).
 impl FlatDecisionEncoderV2 {
-    /// Always inserts a fresh model row for a `PendingTrigger`-tagged
-    /// historical source, deliberately bypassing
+    /// Always inserts a fresh model row for a decision-local source, bypassing
     /// `add_validated_historical_source_v3`'s shared-object dedup (which
     /// keys reuse on `(arena_id, zone_change_count, controller)` alone,
     /// ignoring which context produced the row). Two simultaneously hidden
@@ -4731,18 +4796,20 @@ impl FlatDecisionEncoderV2 {
     /// `Stack`/`PendingEffect`/`PendingTrigger` dedup search either, since
     /// every `PendingTrigger` row is already deliberately non-reusable by
     /// construction.
-    fn add_pending_trigger_row_v4(
+    fn add_unlinked_source_row(
         &mut self,
         stable: &CardStableRefV1,
         actor: PlayerSeatV1,
         ordinal: u32,
+        group: FlatObjectGroupV2,
+        source_kind: FlatObjectSourceKindV2,
     ) -> Result<u32, FlatDecisionErrorV2> {
         let wanted = self.private_key(stable, actor, HISTORICAL_PUBLIC_SOURCE_KIND_V3);
         let index = usize_u32(self.objects.len())?;
         self.objects.push(FlatObjectCoreV2 {
             card_token: wanted.card_token,
-            group: FlatObjectGroupV2::PendingContext,
-            source_kind: FlatObjectSourceKindV2::Pending,
+            group,
+            source_kind,
             visible_ordinal: ordinal,
             owner: wanted.owner,
             controller: wanted.controller,
@@ -4808,7 +4875,7 @@ impl FlatDecisionEncoderV2 {
     /// `arena_id`/`zone_change_count`/`controller` names two different
     /// `PendingTrigger { position }` context values. Design choice: this
     /// registry always inserts one model row PER POSITION
-    /// (`add_pending_trigger_row_v4`, below, never
+    /// (`add_unlinked_source_row`, below, never
     /// `add_validated_historical_source_v3`'s shared-object dedup), so the
     /// two rows are distinct even though the physical card is not. This
     /// composes with `rl_session::flat_action_v4`'s action-side fix (which
@@ -4909,7 +4976,7 @@ impl FlatDecisionEncoderV2 {
         // Per-arm insertion (not a shared post-match block): `PendingTrigger`
         // rows must never share a model row with anything else, even when
         // their live source object is identical to another hidden
-        // position's (see `add_pending_trigger_row_v4`'s doc comment for
+        // position's (see `add_unlinked_source_row`'s doc comment for
         // the full collision-freedom argument), so that arm calls a
         // different, dedup-free insertion primitive than the `Stack`/
         // `PendingEffect` arms (which keep V3's exact
@@ -4939,10 +5006,11 @@ impl FlatDecisionEncoderV2 {
                     {
                         return Err(FlatDecisionErrorV2::InconsistentReference);
                     }
-                    let (model_index, appended) = self.add_validated_historical_source_v3(
+                    let (model_index, appended) = self.add_public_historical_source(
                         &historical.source,
                         actor,
                         stack_index,
+                        false,
                     )?;
                     if appended {
                         output.appended_object_indices.push(model_index);
@@ -4970,10 +5038,11 @@ impl FlatDecisionEncoderV2 {
                         return Err(FlatDecisionErrorV2::InconsistentReference);
                     }
                     let ordinal = usize_u32(public_stack.len())?;
-                    let (model_index, appended) = self.add_validated_historical_source_v3(
+                    let (model_index, appended) = self.add_public_historical_source(
                         &historical.source,
                         actor,
                         ordinal,
+                        true,
                     )?;
                     if appended {
                         output.appended_object_indices.push(model_index);
@@ -5006,8 +5075,13 @@ impl FlatDecisionEncoderV2 {
                         crate::trigger::historical_public_source_ordinal_ceiling_v1(state)
                             .and_then(|ceiling| ceiling.checked_add(position))
                             .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
-                    let model_index =
-                        self.add_pending_trigger_row_v4(&historical.source, actor, ordinal)?;
+                    let model_index = self.add_unlinked_source_row(
+                        &historical.source,
+                        actor,
+                        ordinal,
+                        FlatObjectGroupV2::PendingContext,
+                        FlatObjectSourceKindV2::Pending,
+                    )?;
                     output.appended_object_indices.push(model_index);
                     authority_mapping.push((
                         Self::extension_authority_v3(
@@ -5244,7 +5318,7 @@ impl FlatDecisionEncoderV2 {
         expected: FastActorDecisionV1,
         buffers: &mut FlatScoringOwnedBuffersV2<'_>,
     ) -> Result<crate::flat_policy_v4::FlatDecisionV4, FlatDecisionErrorV2> {
-        self.clear_typed_cache();
+        self.clear_typed_cache(session.game_state());
         let action_count = usize::try_from(expected.legal_action_count)
             .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;
         let max_refs = action_count
@@ -5426,7 +5500,7 @@ impl FlatDecisionEncoderV2 {
         // Per-arm insertion (not a shared post-match block): `PendingTrigger`
         // rows must never share a model row with anything else, even when
         // their live source object is identical to another hidden
-        // position's (see `add_pending_trigger_row_v4`'s doc comment for
+        // position's (see `add_unlinked_source_row`'s doc comment for
         // the full collision-freedom argument), so that arm calls a
         // different, dedup-free insertion primitive than the `Stack`/
         // `PendingEffect` arms (which keep V3's exact
@@ -5456,10 +5530,11 @@ impl FlatDecisionEncoderV2 {
                     {
                         return Err(FlatDecisionErrorV2::InconsistentReference);
                     }
-                    let (model_index, appended) = self.add_validated_historical_source_v3(
+                    let (model_index, appended) = self.add_public_historical_source(
                         &historical.source,
                         actor,
                         stack_index,
+                        false,
                     )?;
                     if appended {
                         output.appended_object_indices.push(model_index);
@@ -5487,10 +5562,11 @@ impl FlatDecisionEncoderV2 {
                         return Err(FlatDecisionErrorV2::InconsistentReference);
                     }
                     let ordinal = usize_u32(public_stack.len())?;
-                    let (model_index, appended) = self.add_validated_historical_source_v3(
+                    let (model_index, appended) = self.add_public_historical_source(
                         &historical.source,
                         actor,
                         ordinal,
+                        true,
                     )?;
                     if appended {
                         output.appended_object_indices.push(model_index);
@@ -5523,8 +5599,13 @@ impl FlatDecisionEncoderV2 {
                         crate::trigger::historical_public_source_ordinal_ceiling_v1(state)
                             .and_then(|ceiling| ceiling.checked_add(position))
                             .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
-                    let model_index =
-                        self.add_pending_trigger_row_v4(&historical.source, actor, ordinal)?;
+                    let model_index = self.add_unlinked_source_row(
+                        &historical.source,
+                        actor,
+                        ordinal,
+                        FlatObjectGroupV2::PendingContext,
+                        FlatObjectSourceKindV2::Pending,
+                    )?;
                     output.appended_object_indices.push(model_index);
                     authority_mapping.push((
                         Self::extension_authority_v3(
@@ -5809,6 +5890,7 @@ impl FlatDecisionEncoderV2 {
         }
         // Metadata adds no identities. Apply each captured source's trait
         // to all of its exact authorized aliases, including trigger rows.
+        let mut unlinked_hand_traits = Vec::new();
         for (index, trait_row) in extensions_v8.ward_life_card_traits.iter().enumerate() {
             if extensions_v8.ward_life_card_traits[..index]
                 .iter()
@@ -5836,19 +5918,34 @@ impl FlatDecisionEncoderV2 {
             // Hidden trigger rows deliberately have no ordinary object key.
             // Match their authenticated captured sources by exact record,
             // retaining every position without changing V4 registration.
+            let mut found_unlinked_hand_trait = false;
             for (historical, registered) in extensions_v8
                 .historical_public_sources
                 .iter()
                 .zip(&output.historical_public_sources)
             {
-                if historical.source == trait_row.source
-                    && !model_object_indices.contains(&registered.model_object_index)
-                {
+                if historical.source != trait_row.source {
+                    continue;
+                }
+                if self.is_unlinked_hand_source(&historical.source, actor) {
+                    // A shared trait record must not join the public source
+                    // position to the matching private hand row.
+                    found_unlinked_hand_trait = true;
+                    unlinked_hand_traits.push(crate::flat_policy_v5::FlatWardLifeCardTraitV5 {
+                        model_object_indices: vec![registered.model_object_index],
+                        life: trait_row.life,
+                        printed_face: trait_row.printed_face,
+                        effective: trait_row.effective,
+                    });
+                } else if !model_object_indices.contains(&registered.model_object_index) {
                     model_object_indices.push(registered.model_object_index);
                 }
             }
             model_object_indices.sort_unstable();
             if model_object_indices.is_empty() {
+                if found_unlinked_hand_trait {
+                    continue;
+                }
                 return Err(FlatDecisionErrorV2::InvalidReference);
             }
             output
@@ -5860,6 +5957,8 @@ impl FlatDecisionEncoderV2 {
                     effective: trait_row.effective,
                 });
         }
+        unlinked_hand_traits.sort_by_key(|row| row.model_object_indices[0]);
+        output.ward_life_card_traits.extend(unlinked_hand_traits);
         self.v3_action_objects = Some(authority_mapping);
         Ok(output)
     }
@@ -5870,7 +5969,7 @@ impl FlatDecisionEncoderV2 {
         expected: FastActorDecisionV1,
         buffers: &mut FlatScoringOwnedBuffersV2<'_>,
     ) -> Result<crate::flat_policy_v5::FlatDecisionV5, FlatDecisionErrorV2> {
-        self.clear_typed_cache();
+        self.clear_typed_cache(session.game_state());
         self.v3_action_objects = Some(Vec::new());
         let action_count = usize::try_from(expected.legal_action_count)
             .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;

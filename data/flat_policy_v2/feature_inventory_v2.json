@@ -8,8 +8,8 @@
   "typed_layout": {
     "domain": "mtg-kernel-flat-policy-typed-layout-v2\u0000",
     "base_sha256": "b57ca386ca0312fa85ef4d3022b9a86c0a36b3162e66579c5d7c11ecb25c64cd",
-    "overlay_sha256": "7d9c3c464e2b3815f7ff78b84f19ca35c2280e11b01c2b53ce9c0552b43ee3a4",
-    "composite_sha256": "7dc685b59bba7834dda4210c378ba1abf011ab08f9b4343c6dc95715202caf44"
+    "overlay_sha256": "6e7af7366ebfd96b9b605e55e57560f553f7ea66d769f1c02ea57cfcc1df0c05",
+    "composite_sha256": "c9fedc33b90e2f1bee92d2c542af75b8614006216e7c2ce6c64959c2d417be10"
   },
   "action_contract": {
     "path": "data/flat_policy_v2/action_contract_v2.json",

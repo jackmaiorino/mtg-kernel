@@ -134,7 +134,7 @@ mod tests {
         shuffle_trigger_source_into_library_v1, FastActorResponseV1, FastActorSessionV1,
     };
 
-    #[derive(Default)]
+    #[derive(Debug, Default, PartialEq, Eq)]
     struct OwnedScoringV4 {
         objects: Vec<crate::flat_policy_v2::FlatObjectCoreV2>,
         relations: Vec<crate::flat_policy_v2::FlatRelationV2>,
@@ -149,6 +149,21 @@ mod tests {
     }
 
     impl OwnedScoringV4 {
+        fn buffers(&mut self) -> FlatScoringOwnedBuffersV2<'_> {
+            FlatScoringOwnedBuffersV2 {
+                objects: &mut self.objects,
+                relations: &mut self.relations,
+                object_subtypes: &mut self.object_subtypes,
+                ability_uses: &mut self.ability_uses,
+                goads: &mut self.goads,
+                completed_dungeons: &mut self.completed_dungeons,
+                effect_subtype_changes: &mut self.effect_subtype_changes,
+                context_path_elements: &mut self.context_path_elements,
+                actions: &mut self.actions,
+                action_refs: &mut self.action_refs,
+            }
+        }
+
         fn encode(
             &mut self,
             session: &FastActorSessionV1,
@@ -162,18 +177,7 @@ mod tests {
             session.encode_current_flat_scoring_decision_owned_v4(
                 expected,
                 &mut FlatDecisionEncoderV4::default(),
-                &mut FlatScoringOwnedBuffersV2 {
-                    objects: &mut self.objects,
-                    relations: &mut self.relations,
-                    object_subtypes: &mut self.object_subtypes,
-                    ability_uses: &mut self.ability_uses,
-                    goads: &mut self.goads,
-                    completed_dungeons: &mut self.completed_dungeons,
-                    effect_subtype_changes: &mut self.effect_subtype_changes,
-                    context_path_elements: &mut self.context_path_elements,
-                    actions: &mut self.actions,
-                    action_refs: &mut self.action_refs,
-                },
+                &mut self.buffers(),
             )
         }
 
@@ -249,6 +253,7 @@ mod tests {
     fn issue567_ninjutsu_worlds(
         actor: PlayerId,
         enable_knowledge: impl FnOnce(&mut crate::state::GameState),
+        activate_twice: bool,
     ) -> [[crate::state::GameState; 2]; 2] {
         use crate::engine::{self, Action, Decision};
         use crate::event::{self, ProposedEvent};
@@ -284,7 +289,8 @@ mod tests {
         initial.engine.combat.attackers_declared = true;
         initial.engine.combat.blockers_declared = true;
         initial.engine.combat.attackers = attackers.to_vec();
-        initial.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 2;
+        initial.players[actor.index()].mana_pool[ManaColor::U.pool_index()] =
+            if activate_twice { 4 } else { 2 };
         // Give the observer a real response, so the session cannot skip this
         // decision as a forced pass.
         put(&mut initial, observer, "Lightning Bolt", Zone::Hand);
@@ -292,21 +298,30 @@ mod tests {
 
         [known, hidden].map(|ninja| {
             let mut state = initial.clone();
-            assert!(matches!(
-                engine::advance_until_decision(&mut state),
-                Decision::CastSpellOrPass { activatable_abilities, .. }
-                    if activatable_abilities.contains(&(ninja, 0))
-            ));
-            engine::step(&mut state, Action::ActivateAbility(ninja, 0)).unwrap();
-            assert!(matches!(
-                engine::advance_until_decision(&mut state),
-                Decision::ChooseCostTargets { candidates, .. } if candidates.contains(&attackers[0])
-            ));
-            engine::step(&mut state, Action::ChooseCostTarget(attackers[0])).unwrap();
-            assert!(matches!(
-                engine::advance_until_decision(&mut state),
-                Decision::CastSpellOrPass { .. }
-            ));
+            let sources = if activate_twice {
+                vec![known, ninja]
+            } else {
+                vec![ninja]
+            };
+            for (source, returned) in sources.into_iter().zip(attackers) {
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::CastSpellOrPass { activatable_abilities, .. }
+                        if activatable_abilities.contains(&(source, 0))
+                ));
+                engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+                if let Decision::ChooseCostTargets { candidates, .. } =
+                    engine::advance_until_decision(&mut state)
+                {
+                    assert!(candidates.contains(&returned));
+                    engine::step(&mut state, Action::ChooseCostTarget(returned)).unwrap();
+                }
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                assert_eq!(state.objects.get(returned).zone, Zone::Hand);
+            }
             assert_eq!(state.stack.last().unwrap().source, ninja);
             assert_eq!(state.objects.get(ninja).zone, Zone::Hand);
 
@@ -320,7 +335,7 @@ mod tests {
                 engine::advance_until_decision(&mut state),
                 Decision::CastSpellOrPass { .. }
             ));
-            assert!(state.stack.is_empty());
+            assert_eq!(state.stack.len(), usize::from(activate_twice));
             assert_eq!(state.objects.get(ninja).zone, Zone::Battlefield);
             if state.priority_player == actor {
                 engine::step(&mut state, Action::Pass).unwrap();
@@ -349,50 +364,81 @@ mod tests {
 
     #[test]
     fn issue567_ambiguous_ninjutsu_reveal_has_identical_opponent_tensors() {
-        use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
-        use crate::native_flat_tensorizer_v8::NativeFlatTensorizerV8;
-
         for actor in [PlayerId::P0, PlayerId::P1] {
             let [known, hidden] = issue567_ninjutsu_worlds(
                 actor,
-                crate::state::GameState::enable_hand_departures_by_name_v1,
+                crate::state::GameState::enable_hand_knowledge_by_name_v2,
+                false,
             );
+            let mut encoder = FlatDecisionEncoderV4::default();
             for ((known, hidden), expected) in known.into_iter().zip(hidden).zip([1, 0]) {
                 assert_eq!(issue567_ninja_row_count(&known, actor), expected);
-                assert_eq!(
-                    issue567_ninja_row_count(&hidden, actor),
-                    expected,
-                    "opponent of {actor:?} must see the same lower bound regardless of copy"
-                );
-                let tensors = [known, hidden].map(|state| {
-                    let session = FastActorSessionV1::from_v3_fixture_state(state);
-                    let FastActorResponseV1::Decision(current) = session.current_response() else {
-                        panic!("expected an observer response decision");
-                    };
-                    assert_eq!(current.acting_player as usize, actor.opponent().index());
-                    let mut owned = OwnedScoringV4::default();
-                    let decision = owned.encode(&session).unwrap();
-                    let mut tensor = NativeFlatDecisionTensorV2::default();
-                    let mut pairing = Vec::new();
-                    let mut tensorizer = NativeFlatTensorizerV8::default();
-                    tensorizer.set_state_digest_v1(true);
-                    tensorizer
-                        .fill(owned.view(&decision), &mut tensor, &mut pairing)
-                        .unwrap();
-                    (tensor, pairing)
-                });
+                assert_eq!(issue567_ninja_row_count(&hidden, actor), expected);
+                let tensors = [known, hidden]
+                    .map(|state| issue567_tensor(state, actor.opponent(), &mut encoder));
                 assert_eq!(tensors[0], tensors[1], "observer tensor for {actor:?}");
             }
         }
     }
 
+    fn issue567_tensor(
+        state: crate::state::GameState,
+        observer: PlayerId,
+        encoder: &mut FlatDecisionEncoderV4,
+    ) -> (
+        crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2,
+        Vec<i64>,
+    ) {
+        use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
+        use crate::native_flat_tensorizer_v8::NativeFlatTensorizerV8;
+
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let FastActorResponseV1::Decision(current) = session.current_response() else {
+            panic!("expected an observer response decision");
+        };
+        assert_eq!(current.acting_player as usize, observer.index());
+        assert!(current.legal_action_count >= 2);
+        let mut owned = OwnedScoringV4::default();
+        let decision = session
+            .encode_current_flat_scoring_decision_owned_v4(current, encoder, &mut owned.buffers())
+            .unwrap();
+        let mut tensor = NativeFlatDecisionTensorV2::default();
+        let mut pairing = Vec::new();
+        let mut tensorizer = NativeFlatTensorizerV8::default();
+        tensorizer.set_state_digest_v1(true);
+        tensorizer
+            .fill(owned.view(&decision), &mut tensor, &mut pairing)
+            .unwrap();
+        (tensor, pairing)
+    }
+
+    #[test]
+    fn issue567_two_stack_items_do_not_link_equal_or_distinct_sources() {
+        let actor = PlayerId::P0;
+        let [[same, _], [different, _]] = issue567_ninjutsu_worlds(
+            actor,
+            crate::state::GameState::enable_hand_knowledge_by_name_v2,
+            true,
+        );
+        assert_eq!(same.stack.len(), 2);
+        assert_eq!(different.stack.len(), 2);
+        assert_eq!(same.stack[0].source, same.stack[1].source);
+        assert_ne!(different.stack[0].source, different.stack[1].source);
+        let mut encoder = FlatDecisionEncoderV4::default();
+        assert_eq!(
+            issue567_tensor(same, actor.opponent(), &mut encoder),
+            issue567_tensor(different, actor.opponent(), &mut encoder),
+        );
+    }
+
     #[test]
     fn issue567_default_and_departure_v1_retain_their_reveal_contract() {
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let default = issue567_ninjutsu_worlds(actor, |_| {});
+            let default = issue567_ninjutsu_worlds(actor, |_| {}, false);
             let departure_v1 = issue567_ninjutsu_worlds(
                 actor,
                 crate::state::GameState::enable_hand_departures_by_name_v1,
+                false,
             );
             for worlds in [default, departure_v1] {
                 let counts =
@@ -400,6 +446,112 @@ mod tests {
                 assert_eq!(counts, [[1, 0], [2, 1]]);
             }
         }
+    }
+
+    #[test]
+    fn issue567_reused_encoder_clears_the_v2_hand_source_mode() {
+        let actor = PlayerId::P0;
+        let [[v2, _], _] = issue567_ninjutsu_worlds(
+            actor,
+            crate::state::GameState::enable_hand_knowledge_by_name_v2,
+            false,
+        );
+        let [[historical, _], _] = issue567_ninjutsu_worlds(actor, |_| {}, false);
+        let [[departure_v1, _], _] = issue567_ninjutsu_worlds(
+            actor,
+            crate::state::GameState::enable_hand_departures_by_name_v1,
+            false,
+        );
+        let observer = actor.opponent();
+        let mut encoder = FlatDecisionEncoderV4::default();
+        let fresh_historical = issue567_tensor(
+            historical.clone(),
+            observer,
+            &mut FlatDecisionEncoderV4::default(),
+        );
+        let v2_tensor = issue567_tensor(v2.clone(), observer, &mut encoder);
+        assert_ne!(v2_tensor, fresh_historical);
+        assert_eq!(
+            issue567_tensor(historical, observer, &mut encoder),
+            fresh_historical
+        );
+        assert_eq!(issue567_tensor(v2, observer, &mut encoder), v2_tensor);
+        assert_eq!(
+            issue567_tensor(departure_v1, observer, &mut encoder),
+            fresh_historical
+        );
+    }
+
+    #[test]
+    fn issue567_reset_only_session_opt_in_survives_snapshot_replay() {
+        let mut session =
+            FastActorSessionV1::reset_with_limits(23, 91, 128, 1024).into_flat_action_v3();
+        let FastActorResponseV1::Decision(current) = session.current_response() else {
+            panic!("expected a reset decision");
+        };
+        let before = OwnedScoringV4::default().encode(&session).unwrap();
+        session.enable_hand_knowledge_by_name_v2().unwrap();
+        let after = OwnedScoringV4::default().encode(&session).unwrap();
+        assert_eq!(before, after);
+        assert!(session.game_state().hand_knowledge_by_name_v2);
+        let snapshot = session.snapshot_v1();
+        let first = session.step(current.episode_id, current.step, 0).unwrap();
+        let hash = session.diagnostic_state_hash();
+        assert!(session.enable_hand_knowledge_by_name_v2().is_err());
+        session.restore_v1(&snapshot);
+        assert!(session.game_state().hand_knowledge_by_name_v2);
+        assert_eq!(
+            session.step(current.episode_id, current.step, 0).unwrap(),
+            first
+        );
+        assert_eq!(session.diagnostic_state_hash(), hash);
+    }
+
+    #[test]
+    fn issue567_v3_and_v5_actor_encoders_hide_the_hand_source_copy() {
+        use crate::flat_policy_v3::FlatDecisionEncoderV3;
+        use crate::flat_policy_v5::FlatDecisionEncoderV5;
+
+        let actor = PlayerId::P0;
+        let [[known, _], [hidden, _]] = issue567_ninjutsu_worlds(
+            actor,
+            crate::state::GameState::enable_hand_knowledge_by_name_v2,
+            false,
+        );
+        let v3 = [known.clone(), hidden.clone()].map(|state| {
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            let FastActorResponseV1::Decision(current) = session.current_response() else {
+                panic!("expected a V3 response decision");
+            };
+            assert_eq!(current.acting_player as usize, actor.opponent().index());
+            let mut owned = OwnedScoringV4::default();
+            let decision = session
+                .encode_current_flat_scoring_decision_owned_v3(
+                    current,
+                    &mut FlatDecisionEncoderV3::default(),
+                    &mut owned.buffers(),
+                )
+                .unwrap();
+            (owned, decision.globals, decision.extensions)
+        });
+        assert_eq!(v3[0], v3[1]);
+        let v5 = [known, hidden].map(|state| {
+            let session = FastActorSessionV1::from_v5_fixture_state(state);
+            let FastActorResponseV1::Decision(current) = session.current_response() else {
+                panic!("expected a V5 response decision");
+            };
+            assert_eq!(current.acting_player as usize, actor.opponent().index());
+            let mut owned = OwnedScoringV4::default();
+            let decision = session
+                .encode_current_flat_scoring_decision_owned_v5(
+                    current,
+                    &mut FlatDecisionEncoderV5::default(),
+                    &mut owned.buffers(),
+                )
+                .unwrap();
+            (owned, decision.globals, decision.extensions)
+        });
+        assert_eq!(v5[0], v5[1]);
     }
 
     #[test]

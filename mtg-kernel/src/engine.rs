@@ -7498,7 +7498,7 @@ fn commit_cost_components_from_plan_v1(
                     // spellbench-public-reveal: hand card revealed by the card rules.
                     for observer in [PlayerId::P0, PlayerId::P1] {
                         state
-                            .reveal_hand_card(observer, player, object)
+                            .reveal_distinct_hand_card(observer, player, object)
                             .expect("preflighted live hand card remains revealable");
                     }
                 }
@@ -28461,7 +28461,7 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
         // spellbench-public-reveal: hand card revealed by the card rules.
         for observer in [PlayerId::P0, PlayerId::P1] {
             state
-                .reveal_hand_card(observer, owner, pending.spell)
+                .reveal_distinct_hand_card(observer, owner, pending.spell)
                 .expect("an aborted public stack spell just returned to hand");
         }
     }
