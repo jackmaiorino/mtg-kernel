@@ -28440,7 +28440,9 @@ fn finalize_owned_cast(
     crate::cast_identity_v1::publish(state, finalized_source_contract, stack_item_id);
     let cast_at = state.engine.event_history.len();
     event::log_spell_cast(state, pending.spell, pending.controller);
-    crate::etali_primal_storm_receipts_v1::record_cast(state, stack_item_id, finalized_source_contract)?;
+    crate::etali_primal_storm_receipts_v1::record_cast(
+        state, stack_item_id, finalized_source_contract, cast_at,
+    )?;
     if let Some((creatures_before, _)) = edict_input {
         crate::edict_receipts_v1::record_paid(
             state,

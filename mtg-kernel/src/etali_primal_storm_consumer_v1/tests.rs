@@ -322,5 +322,9 @@ fn paid_etali_keeps_actual_zero_x_and_native_target_choice_both_seats() {
         assert_eq!(spell.targets, [Target::Player(actor.opponent())]);
         assert_eq!(spell.v4.source_contract.unwrap().owner, actor.opponent());
         assert_eq!(spell.controller, actor);
+        let result = receipts::occurrences(numeric.fixture_state()).unwrap().pop().unwrap();
+        let bolt_receipt = result.casts.last().unwrap();
+        assert!(matches!(numeric.fixture_state().engine.event_history.get(bolt_receipt.cast_at as usize),
+            Some(E::SpellCast { spell, controller }) if *spell == bolt && *controller == actor));
     }
 }

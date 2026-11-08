@@ -22,6 +22,7 @@ pub struct ExileV1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CastV1 {
+    pub cast_at: u64,
     pub original: EffectObjectBinding,
     pub child: StackItemId,
     pub source: StackSourceContractV4,
@@ -150,6 +151,7 @@ pub(crate) fn record_cast(
     state: &mut GameState,
     child: StackItemId,
     source: StackSourceContractV4,
+    cast_at: usize,
 ) -> Result<(), String> {
     if !state.etali_commit_receipts_v1 {
         return Ok(());
@@ -167,8 +169,9 @@ pub(crate) fn record_cast(
         return Err("Etali actual native child changed free Exile route".into());
     }
     let id = context.parent;
+    let cast_at = u64::try_from(cast_at).map_err(|_| "Etali cast index width")?;
     push(state, JournalV1::Cast {
-        id, row: CastV1 { original: permission.card, child, source },
+        id, row: CastV1 { cast_at, original: permission.card, child, source },
     });
     Ok(())
 }
@@ -336,7 +339,8 @@ pub(crate) fn occurrences(state: &GameState) -> Result<Vec<Occurrence>, String> 
             else { return Err("Etali child cast was not in original exile batch".into()) };
             let spell = row.source;
             let Some(origin) = spell.spell_cast_origin else { return Err("Etali actual cast origin absent".into()) };
-            if at <= last || at < 2 || terminal.is_some_and(|end| end <= at)
+            let cast_at = usize::try_from(row.cast_at).map_err(|_| "Etali cast index width")?;
+            if cast_at <= last || cast_at >= at || terminal.is_some_and(|end| end <= at)
                 || !cast_objects.insert(spell.source)
                 || row.original.expected_zone != Zone::Exile
                 || row.original.expected_zone_change_count != top.arrival.zone_change_count
@@ -349,10 +353,11 @@ pub(crate) fn occurrences(state: &GameState) -> Result<Vec<Occurrence>, String> 
                 || origin.route != (SpellCastRouteV4::ResolvingEffectV1 {
                     holder: source.controller, maximum_mana_value: None,
                 })
-                || !matches!(history.get(at - 1), Some(E::SpellCast { spell: actual, controller })
+                || !matches!(history.get(cast_at), Some(E::SpellCast { spell: actual, controller })
                     if *actual == spell.source && *controller == source.controller)
-                || !matches!(history.get(at - 2), Some(E::PublishedCastIdentityV1 { receipt })
-                    if receipt.spell == spell.source && receipt.stack_item_id == row.child
+                || !matches!(history.get(cast_at - 1), Some(E::PublishedCastIdentityV1 { receipt })
+                    if receipt.spell_cast_history_index == row.cast_at
+                        && receipt.spell == spell.source && receipt.stack_item_id == row.child
                         && receipt.owner == spell.owner && receipt.controller == spell.controller
                         && receipt.origin_zone == Zone::Exile
                         && receipt.origin_zone_change_count == row.original.expected_zone_change_count
