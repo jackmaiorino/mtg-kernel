@@ -146,6 +146,53 @@ pub(crate) fn record_move(
     Ok(())
 }
 
+fn validate_move_identity(
+    state: &GameState,
+    row: &MovedV1,
+    event_at: usize,
+    shown: Option<u16>,
+) -> Result<(), String> {
+    let object = row.original.object;
+    let arrival = row.original.expected_zone_change_count.checked_add(1)
+        .ok_or("Curator arrival generation overflow")?;
+    let live = state.objects.try_get(object).ok_or("Curator arrival object absent")?;
+    if live.owner != row.owner || live.zone_change_count < arrival {
+        return Err("Curator arrival lost its original physical owner or incarnation".into());
+    }
+    let may_name = match row.destination {
+        Zone::Library => false,
+        Zone::Hand => shown.is_some(),
+        _ => true,
+    };
+    let event_visibility = state.observation_journal.visibility_v2(event_at, object);
+    if let Some(printing) = row.public_printing {
+        if !may_name || event_visibility.is_some_and(|mask| mask != 3)
+            || shown.is_some_and(|original| original != printing)
+            || crate::card_def::CARD_DEFS.get(usize::from(printing)).is_none()
+        {
+            return Err("Curator arrival name was not publicly disclosed by the native move".into());
+        }
+    }
+    if live.zone_change_count == arrival {
+        if live.zone != row.destination {
+            return Err("Curator exact arrival changed its native destination".into());
+        }
+        if may_name && live.v4.face_down_v1.is_none()
+            && event_visibility.is_none_or(|mask| mask == 3)
+        {
+            let printing = row.public_printing.ok_or("Curator public arrival lost its original name")?;
+            let original = crate::state::AbilitySourceContractV4 {
+                source: object, card_def: printing, owner: row.owner, controller: row.owner,
+                zone: row.destination, zone_change_count: arrival, attached_to: None,
+            };
+            if !crate::engine::source_card_def_matches(state, original, live.card_def) {
+                return Err("Curator public arrival name differs from the exact committed incarnation".into());
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn resolved_moves(
     state: &GameState,
     choice: &crate::effect::curator_v1::ChoiceV1,
@@ -168,8 +215,8 @@ pub(crate) fn resolved_moves(
             continue;
         }
         let event_at = usize::try_from(row.event_at).map_err(|_| "Curator history index width")?;
-        let private_hand = row.destination == Zone::Hand && !shown.iter().any(|shown|
-            shown.original == row.original && Some(shown.printing) == row.public_printing);
+        let shown_name = shown.iter().find(|shown| shown.original == row.original)
+            .map(|shown| shown.printing);
         let expected = if choice.down.contains(&row.original) == choose_down {
             Zone::Hand
         } else {
@@ -178,16 +225,13 @@ pub(crate) fn resolved_moves(
         if event_at <= phase_at || at >= finished_at || event_at.checked_add(1) != Some(at)
             || !choice.prefix.contains(&row.original) || !seen.insert(row.original.object)
             || row.owner != choice.player || row.planned != expected
-            || row.public_printing.is_some_and(|printing| {
-                private_hand || row.destination == Zone::Library
-                    || crate::card_def::CARD_DEFS.get(usize::from(printing)).is_none()
-            })
             || !matches!(history.get(event_at), Some(E::ZoneChange {
                 object, from: Zone::Library, to, ..
             }) if *object == row.original.object && *to == row.destination)
         {
             return Err("Curator move receipt no longer binds an original committed move".into());
         }
+        validate_move_identity(state, row, event_at, shown_name)?;
         actual.push(*row);
     }
     let mut departures = BTreeSet::<ObjectId>::new();

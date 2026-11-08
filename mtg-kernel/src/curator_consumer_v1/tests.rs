@@ -249,6 +249,19 @@ fn hidden_partition_positions_and_names_leave_opponent_packet_human_wire_and_res
         assert_eq!(knowledge.get(&id("Plains")), Some(&1));
         let restored: GameState = serde_json::from_slice(&serde_json::to_vec(finished).unwrap()).unwrap();
         assert_eq!(public::capture(&restored, chooser).unwrap(), facts);
+        for original in [finished, &restored] {
+            let mut wrong_name = original.clone();
+            let move_row = wrong_name.engine.event_history.iter_mut().find_map(|event| match event {
+                CommittedEvent::CuratorReceiptV1 { journal } => match journal.as_mut() {
+                    crate::curator_receipts_v1::JournalV1::Moved { move_row, .. }
+                        if move_row.destination == Zone::Graveyard => Some(move_row),
+                    _ => None,
+                },
+                _ => None,
+            }).unwrap();
+            move_row.public_printing = Some(id("Mountain"));
+            assert!(public::validate_native(&wrong_name).is_err());
+        }
         let mut missing = finished.clone();
         missing.engine.event_history.retain(|event| !matches!(event,
             CommittedEvent::CuratorReceiptV1 { journal }
