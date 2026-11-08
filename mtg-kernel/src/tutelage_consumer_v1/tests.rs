@@ -197,7 +197,9 @@ fn paid_order(actor: PlayerId) -> GameState {
     let mut state = native::ready(
         actor,
         &[
-            "Elvish Mystic",
+            // Distinct green nonlands with owning printed roots preserve the
+            // repeat and order checks without widening the profile for a fixture.
+            "Giant Growth",
             "Llanowar Elves",
             "Think Twice",
             "Think Twice",
