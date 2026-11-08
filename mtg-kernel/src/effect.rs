@@ -27976,7 +27976,7 @@ pub(crate) fn begin_owned_lathril_v1(
 pub(crate) mod blasphemous_edict_v1 {
     use super::*;
 
-    fn definition(id: u16) -> bool {
+    pub(crate) fn definition(id: u16) -> bool {
         card_def::CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
             d.is_executable()
                 && d.name == "Blasphemous Edict"
@@ -28037,6 +28037,18 @@ pub(crate) mod blasphemous_edict_v1 {
         chosen: [Vec<EffectObjectBinding>; 2],
         graveyard: [Vec<EffectObjectBinding>; 2],
         graveyard_order: [Vec<EffectObjectBinding>; 2],
+    }
+
+    impl ChoiceV1 {
+        pub(crate) fn stage_for_consumer(&self) -> (PlayerId, bool) {
+            (self.active, self.phase >= 2)
+        }
+
+        pub(crate) fn completed_sacrifices_for_consumer(&self, player: PlayerId) -> Vec<EffectObjectBinding> {
+            let chosen = &self.chosen[player.index()];
+            self.candidates[player.index()].iter().copied()
+                .filter(|binding| chosen.contains(binding)).collect()
+        }
     }
     fn candidates(state: &GameState, player: PlayerId) -> Result<Vec<EffectObjectBinding>, String> {
         let mut found = Vec::new();
@@ -28342,10 +28354,19 @@ pub(crate) mod blasphemous_edict_v1 {
         // Both controllers choose before any sacrifice. The physical owners
         // then order their actual graveyard destinations, including stolen cards.
         // Replacements and all departure observers remain one native batch.
+        let victims = if pending.resolving_item.v4.source_contract
+            .is_some_and(|source| crate::edict_receipts_v1::is_printing(source.card_def))
+        {
+            Some(crate::edict_receipts_v1::capture_victims(state, &sacrificed)?)
+        } else {
+            None
+        };
         let mut committed = state.clone();
+        let sacrifice_start = committed.engine.event_history.len();
         for b in &sacrificed {
             event::log_sacrifice(&mut committed, b.object);
         }
+        let move_start = committed.engine.event_history.len();
         event::propose_and_commit_batch(
             &mut committed,
             destinations
@@ -28355,6 +28376,12 @@ pub(crate) mod blasphemous_edict_v1 {
         );
         if committed.engine.halted.is_some() {
             return Err("Edict native sacrifice batch halted".into());
+        }
+        if let Some(victims) = victims {
+            crate::edict_receipts_v1::record_batch(
+                &mut committed, &pending.resolving_item, choice.active,
+                victims, sacrifice_start, move_start,
+            )?;
         }
         *state = committed;
         Ok(false)

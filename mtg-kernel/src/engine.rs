@@ -9738,6 +9738,22 @@ fn pending_cast_selected_mana_cost(
     }
 }
 
+pub(crate) fn edict_pending_mana_quote_v1(
+    state: &GameState,
+    pending: &PendingCast,
+    mode: CastMode,
+) -> Option<u32> {
+    let def = &card_def::CARD_DEFS[usize::from(pending.source_contract.card_def)];
+    let method = match mode {
+        CastMode::Normal => CastMethodV4::Normal,
+        CastMode::Alternative => CastMethodV4::Alternative,
+    };
+    let payment = pending_cast_quote_v1(def, pending, method, false, 0, state)?;
+    let plan = payment.mana;
+    let tapped_and_restricted = u32::try_from(plan.taps.len() + plan.restricted_pool_used.len()).ok()?;
+    tapped_and_restricted.checked_add(plan.pool_used.iter().map(|&amount| u32::from(amount)).sum())
+}
+
 fn pending_cast_quote_v1(
     def: &card_def::CardDef,
     pending: &PendingCast,
@@ -28107,6 +28123,11 @@ fn finalize_owned_cast(
     payment: spell_costs_v1::PreparedSpellPaymentV1,
 ) -> Result<(), String> {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let edict_creatures_before = if crate::edict_receipts_v1::is_printing(pending.source_contract.card_def) {
+        Some(crate::edict_receipts_v1::creature_count(state)?)
+    } else {
+        None
+    };
     let x_value = pending.selected_x_v59().unwrap_or(0);
     // The complete local plan was prepared before any real discard or mana
     // payment. Capture provenance inputs before consuming it exactly once.
@@ -28337,7 +28358,14 @@ fn finalize_owned_cast(
     .spells_cast_this_turn
     .saturating_add(1);
     crate::cast_identity_v1::publish(state, finalized_source_contract, stack_item_id);
+    let cast_at = state.engine.event_history.len();
     event::log_spell_cast(state, pending.spell, pending.controller);
+    if let Some(creatures_before) = edict_creatures_before {
+        crate::edict_receipts_v1::record_paid(
+            state, stack_item_id, finalized_source_contract,
+            creatures_before, mana_spent, cast_at,
+        )?;
+    }
     crate::extra_turn_v1::record_publication(state, stack_item_id);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::e3::note_cast(state, stack_item_id);

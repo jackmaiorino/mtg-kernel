@@ -793,6 +793,7 @@ pub mod moon_consumer_v1;
 pub mod leyline_axe_consumer_v1;
 pub mod leyline_axe_public_v1;
 pub(crate) mod lathril_receipts_v1;
+pub(crate) mod edict_receipts_v1;
 pub mod lathril_consumer_v1;
 pub mod lathril_public_v1;
 pub mod tutelage_consumer_v1;

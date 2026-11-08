@@ -2086,6 +2086,9 @@ pub enum CommittedEvent {
     LathrilReceiptV1 {
         journal: Box<crate::lathril_receipts_v1::JournalV1>,
     },
+    BlasphemousEdictReceiptV1 {
+        journal: Box<crate::edict_receipts_v1::JournalV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
