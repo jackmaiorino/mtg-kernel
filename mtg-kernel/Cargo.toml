@@ -324,6 +324,10 @@ path = "src/bin/kernel_limited_moon_env_v1.rs"
 [[bin]]
 name = "kernel_limited_leyline_axe_env_v1"
 path = "src/bin/kernel_limited_leyline_axe_env_v1.rs"
+
+[[bin]]
+name = "kernel_limited_lathril_env_v1"
+path = "src/bin/kernel_limited_lathril_env_v1.rs"
 required-features = ["limited-fdn-fixtures"]
 
 [[bin]]

@@ -2083,6 +2083,9 @@ pub enum CommittedEvent {
         stack_item_id: StackItemId,
         outcome: crate::engine::niv_mizzet_resolution_v1::EndV1,
     },
+    LathrilReceiptV1 {
+        journal: Box<crate::lathril_receipts_v1::JournalV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -10345,6 +10348,22 @@ pub(crate) fn validate_lathril_trigger_v1(
     state: &GameState,
     item: &crate::state::StackItem,
 ) -> Result<u64, String> {
+    let capture = validate_historical_lathril_trigger_v1(state, item)?;
+    if state.engine.event_history.iter().any(|entry| {
+        matches!(entry,
+            CommittedEvent::LathrilCombatResolvedV1 { capture_history_index }
+                | CommittedEvent::LathrilCombatCounteredV1 { capture_history_index }
+            if *capture_history_index == capture)
+    }) {
+        return Err("Lathril trigger already consumed".into());
+    }
+    Ok(capture)
+}
+
+pub(crate) fn validate_historical_lathril_trigger_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<u64, String> {
     let Some(crate::effect::EffectOp::LathrilCombatTokensV1 {
         capture_history_index,
     }) = item.inline_effect.as_ref()
@@ -10385,14 +10404,8 @@ pub(crate) fn validate_lathril_trigger_v1(
             })
             .count()
             != 1
-        || state.engine.event_history.iter().any(|entry| {
-            matches!(entry,
-            CommittedEvent::LathrilCombatResolvedV1 { capture_history_index: other }
-                | CommittedEvent::LathrilCombatCounteredV1 { capture_history_index: other }
-            if other == capture_history_index)
-        })
     {
-        return Err("Lathril trigger source/controller/recipe changed or consumed".into());
+        return Err("Lathril trigger source/controller/recipe changed".into());
     }
     Ok(*capture_history_index)
 }

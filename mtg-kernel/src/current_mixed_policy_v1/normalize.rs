@@ -451,6 +451,16 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         }
     }
     let mut covered = BTreeSet::new();
+    if source == Source::KaitoV75 && state["schema"] == crate::lathril_consumer_v1::CANDIDATES_SCHEMA {
+        let meaning: crate::lathril_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["lathril"]["meaning"].clone())
+                .map_err(|error| Error::Projection(error.to_string()))?;
+        if meaning != crate::lathril_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection("Lathril meaning differs from exact printing".into()));
+        }
+        covered.insert(meaning.card_id);
+        covered.insert(meaning.token_id);
+    }
     if source == Source::KaitoV75 && state["schema"] == crate::leyline_axe_consumer_v1::CANDIDATES_SCHEMA {
         let meaning: crate::leyline_axe_public_v1::MeaningV1 =
             serde_json::from_value(state["observation"]["leyline_axe"]["meaning"].clone())

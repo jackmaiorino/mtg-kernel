@@ -8167,6 +8167,21 @@ fn activation_controlled_cost_candidates(
         .collect()
 }
 
+pub(crate) fn lathril_payment_candidates_v1(
+    state: &GameState,
+    pending: &PendingActivation,
+) -> Vec<EffectObjectBinding> {
+    activation_controlled_cost_candidates(
+        None,
+        pending.controller,
+        crate::lathril_receipts_v1::payer_filter(),
+        true,
+        pending.source,
+        state,
+        &pending.object_cost_chosen,
+    )
+}
+
 /// The card type of a craft cost's material: an artifact, or a creature
 /// for Tithing Blade's "Craft with creature".
 fn craft_material_type(state: &GameState, source: ObjectId) -> CardType {
@@ -18342,6 +18357,7 @@ pub(crate) fn validated_stack_item_target_spec(
     state: &GameState,
 ) -> Result<Option<TargetSpec>, String> {
     validate_spell_stack_source(state, item)?;
+    crate::lathril_receipts_v1::validate_live(state, item)?;
     if crate::event::lathril_item_selected_v1(state, item) {
         crate::event::validate_published_lathril_v1(state, item)?;
     }
@@ -19113,6 +19129,7 @@ pub(crate) fn counter_stack_item_by_id(
     if let Some(owner) = niv_counter {
         niv_mizzet_resolution_v1::counter(state, owner)?;
     }
+    crate::lathril_receipts_v1::record_ended(state, &item, None)?;
     tinybones_v72::countered(state, &item)?;
     if let Some(entry_history_index) = curator_counter {
         state
@@ -20651,6 +20668,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         if progress == ResolutionProgress::Complete {
             if crate::librarian_activation_v1::record_resolved(state, &item, effect_history_start)
                 .is_err()
+                || crate::lathril_receipts_v1::record_ended(state, &item, Some(effect_history_start))
+                    .is_err()
                 || crate::fixed_source_damage_v3::record_removed(
                     state,
                     fixed_removal_owner,
@@ -29131,6 +29150,13 @@ fn push_paid_activation(
         },
     });
     if effect::fiend_artisan_v1::record_paid(state, stack_item_id, frozen.fiend_input).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
+    if crate::lathril_receipts_v1::record_paid(state, frozen.payment_history_start).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.source,
