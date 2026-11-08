@@ -116,6 +116,27 @@ fn declared_forty_card_v3_reset_pays_six_and_resolves_actual_combat_both_seats()
                         &serde_json::to_vec(numeric.fixture_state()).unwrap(),
                     ).unwrap();
                     public::validate_native(&restored).unwrap();
+                    for mode in 0..3 {
+                        let mut changed_terminal = restored.clone();
+                        for event in changed_terminal.engine.event_history.iter_mut() {
+                            let CommittedEvent::GreatwurmCommitReceiptV1 { journal } = event else {
+                                continue;
+                            };
+                            let crate::greatwurm_receipts_v1::JournalV1::Ended { result, .. } =
+                                journal.as_mut() else { continue };
+                            let crate::greatwurm_receipts_v1::EndV1::Resolved { controller, before, .. } =
+                                *result else { continue };
+                            use crate::greatwurm_receipts_v1::EndV1;
+                            *result = match mode {
+                                0 => EndV1::Countered,
+                                1 => EndV1::OriginalCreatureGone,
+                                _ => EndV1::Resolved {
+                                    controller, before, after: before, placement_history_index: None,
+                                },
+                            };
+                        }
+                        assert!(public::validate_native(&changed_terminal).is_err());
+                    }
                     let mut wrong_placement = restored;
                     for event in wrong_placement.engine.event_history.iter_mut() {
                         if let CommittedEvent::GreatwurmCommitReceiptV1 { journal } = event {

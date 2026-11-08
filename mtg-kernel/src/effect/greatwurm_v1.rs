@@ -578,6 +578,7 @@ pub(super) fn execute(
     };
     let c = capture(state, *capture_history_index)?;
     let (creature, amount) = (c.creature, c.amount);
+    let id = proof.owner.item.v4.stack_item_id;
     let result = if state.objects.try_get(creature.source).is_some_and(|o| {
         o.zone == Zone::Battlefield && o.zone_change_count == creature.zone_change_count
     }) {
@@ -586,6 +587,11 @@ pub(super) fn execute(
         let before = original.counters.plus1_plus1;
         let mut staged = state.clone();
         let start = staged.engine.event_history.len();
+        crate::greatwurm_receipts_v1::record_dispatch(
+            &mut staged, id, crate::greatwurm_receipts_v1::DispatchV1::Resolve {
+                recipient: Some((controller, before)),
+            },
+        );
         let mut counters = crate::standard_creatures_v1::CounterTransferV1::default();
         counters.counters.plus1_plus1 = amount;
         crate::standard_creatures_v1::place_counters_checked_v1(
@@ -606,10 +612,13 @@ pub(super) fn execute(
         *state = staged;
         result
     } else {
+        crate::greatwurm_receipts_v1::record_dispatch(
+            state, id, crate::greatwurm_receipts_v1::DispatchV1::Resolve { recipient: None },
+        );
         Some(crate::greatwurm_receipts_v1::EndV1::OriginalCreatureGone)
     };
     if let Some(result) = result {
-        crate::greatwurm_receipts_v1::record_end(state, proof.owner.item.v4.stack_item_id, result);
+        crate::greatwurm_receipts_v1::record_end(state, id, result);
     }
     state
         .engine

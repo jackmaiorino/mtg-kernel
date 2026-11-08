@@ -34,11 +34,19 @@ pub enum EndV1 {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum DispatchV1 {
+    Countered,
+    Resolve { recipient: Option<(PlayerId, i32)> },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum JournalV1 {
     Debited { id: StackItemId, units: Box<[DebitV1; 6]> },
     Ended { id: StackItemId, result: EndV1 },
+    Dispatched { id: StackItemId, operation: DispatchV1 },
 }
 
 fn record(state: &mut GameState, journal: JournalV1) {
@@ -52,6 +60,12 @@ pub(crate) fn record_debit(state: &mut GameState, id: StackItemId, units: [Debit
 pub(crate) fn record_end(state: &mut GameState, id: StackItemId, result: EndV1) {
     if state.greatwurm_commit_receipts_v1 {
         record(state, JournalV1::Ended { id, result });
+    }
+}
+
+pub(crate) fn record_dispatch(state: &mut GameState, id: StackItemId, operation: DispatchV1) {
+    if state.greatwurm_commit_receipts_v1 {
+        record(state, JournalV1::Dispatched { id, operation });
     }
 }
 
@@ -149,7 +163,8 @@ pub(crate) fn end(
     finished_at: usize,
     creature: AbilitySourceContractV4,
 ) -> Result<EndV1, String> {
-    let mut endings = state.engine.event_history.scan_for_v1(&[EventKindV1::GreatwurmCommitReceiptV1])
+    let history = state.engine.event_history.scan_for_v1(&[EventKindV1::GreatwurmCommitReceiptV1]);
+    let mut endings = history
         .iter().enumerate().filter_map(|(at, row)| match row {
             E::GreatwurmCommitReceiptV1 { journal } => match journal.as_ref() {
                 JournalV1::Ended { id: source, result } if *source == id => Some((at, *result)),
@@ -161,23 +176,44 @@ pub(crate) fn end(
     if published_at >= at || at.checked_add(1) != Some(finished_at) || endings.next().is_some() {
         return Err("Greatwurm terminal lost its exact original occurrence".into());
     }
-    if let EndV1::Resolved { controller, before, after, placement_history_index } = result {
-        let count = after.checked_sub(before).filter(|&n| n >= 0)
-            .ok_or("Greatwurm actual counter total changed")?;
-        match (count, placement_history_index) {
-            (0, None) => {}
-            (actual, Some(index)) if actual > 0 => {
-                let index = usize::try_from(index).map_err(|_| "Greatwurm placement index width")?;
-                if index <= published_at || index >= at || !matches!(state.engine.event_history.get(index),
-                    Some(E::PlusOneCountersAdded { object, zone_change_count, player, count, .. })
+    let mut dispatches = history.iter().enumerate().filter_map(|(index, row)| match row {
+        E::GreatwurmCommitReceiptV1 { journal } => match journal.as_ref() {
+            JournalV1::Dispatched { id: source, operation } if *source == id => Some((index, *operation)),
+            _ => None,
+        },
+        _ => None,
+    });
+    let (dispatched, operation) = dispatches.next().ok_or("Greatwurm result lacks native dispatch")?;
+    if dispatched <= published_at || dispatched >= at || dispatches.next().is_some() {
+        return Err("Greatwurm native dispatch changed original lifetime".into());
+    }
+    let actual = match operation {
+        DispatchV1::Countered if dispatched.checked_add(1) == Some(at) => EndV1::Countered,
+        DispatchV1::Resolve { recipient: None } if dispatched.checked_add(1) == Some(at) =>
+            EndV1::OriginalCreatureGone,
+        DispatchV1::Resolve { recipient: Some((controller, before)) } => {
+            let mut placements = history[dispatched + 1..at].iter().enumerate()
+                .filter_map(|(offset, event)| match event {
+                    E::PlusOneCountersAdded { object, zone_change_count, player, count, .. }
                         if *object == creature.source && *zone_change_count == creature.zone_change_count
-                            && *player == controller && *count == actual)
-                {
-                    return Err("Greatwurm result lost its actual native placement".into());
-                }
-            }
-            _ => return Err("Greatwurm placement presence changed".into()),
+                            && *player == controller =>
+                        Some((dispatched + 1 + offset, *count)),
+                    _ => None,
+                });
+            let (after, placement_history_index) = match (placements.next(), placements.next()) {
+                (None, None) => (before, None),
+                (Some((index, amount)), None) if amount > 0 => (
+                    before.checked_add(amount).ok_or("Greatwurm actual placement width")?,
+                    Some(u64::try_from(index).map_err(|_| "Greatwurm placement index width")?),
+                ),
+                _ => return Err("Greatwurm actual native placement duplicated or changed".into()),
+            };
+            EndV1::Resolved { controller, before, after, placement_history_index }
         }
+        _ => return Err("Greatwurm counter or missing-creature dispatch contains extra operations".into()),
+    };
+    if result != actual {
+        return Err("Greatwurm terminal disagrees with actual native dispatch and placement".into());
     }
     Ok(result)
 }

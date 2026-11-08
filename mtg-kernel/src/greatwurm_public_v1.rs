@@ -256,6 +256,7 @@ fn combat(state: &GameState, viewer: PlayerId) -> Result<Vec<CombatV1>, String> 
     let mut published = BTreeMap::<Key, (usize, &StackItem)>::new();
     let mut finished = BTreeMap::new();
     let mut endings = BTreeSet::new();
+    let mut dispatches = BTreeSet::new();
     for (at, row) in history.iter().enumerate() {
         let duplicated = match row {
             E::GreatwurmCombatCaptureV1 { .. } => {
@@ -270,6 +271,7 @@ fn combat(state: &GameState, viewer: PlayerId) -> Result<Vec<CombatV1>, String> 
             E::GreatwurmFinishedV1 { stack_item_id } => finished.insert(*stack_item_id, at).is_some(),
             E::GreatwurmCommitReceiptV1 { journal } => match journal.as_ref() {
                 JournalV1::Ended { id, .. } => !endings.insert(*id),
+                JournalV1::Dispatched { id, .. } => !dispatches.insert(*id),
                 _ => false,
             },
             _ => false,
@@ -318,7 +320,7 @@ fn combat(state: &GameState, viewer: PlayerId) -> Result<Vec<CombatV1>, String> 
                 }
                 let id = row.v4.stack_item_id;
                 if let Some(finished_at) = finished.remove(&id) {
-                    if !endings.remove(&id) || stacked.contains_key(&id) {
+                    if !endings.remove(&id) || !dispatches.remove(&id) || stacked.contains_key(&id) {
                         return Err("Greatwurm terminal disagrees with live occurrence".into());
                     }
                     match receipts::end(state, id, published_at, finished_at, capture.creature)? {
@@ -363,6 +365,7 @@ fn combat(state: &GameState, viewer: PlayerId) -> Result<Vec<CombatV1>, String> 
         }
     }
     if !(bound.is_empty() && collected.is_empty() && published.is_empty() && finished.is_empty() && endings.is_empty()
+        && dispatches.is_empty()
         && held.is_empty() && stacked.is_empty())
     {
         return Err("Greatwurm lifecycle contains a detached native operation".into());

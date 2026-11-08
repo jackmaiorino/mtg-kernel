@@ -19153,6 +19153,9 @@ pub(crate) fn counter_stack_item_by_id(
             .push(CommittedEvent::CopiedTokenSacrificeFinishedV1 { stack_item_id });
     }
     if greatwurm_counter {
+        crate::greatwurm_receipts_v1::record_dispatch(
+            state, item.v4.stack_item_id, crate::greatwurm_receipts_v1::DispatchV1::Countered,
+        );
         crate::greatwurm_receipts_v1::record_end(
             state, item.v4.stack_item_id, crate::greatwurm_receipts_v1::EndV1::Countered,
         );
