@@ -90,7 +90,7 @@ mod standard_spell_copy;
 pub(crate) use standard_spell_copy::copy_snapshot_assignment_is_legal;
 pub(crate) use standard_spell_copy::{
     copy_snapshot_prefix_can_complete, copy_snapshot_replacement_targets,
-    materialize_copy_snapshot, validate_copy_snapshot,
+    materialize_copy_snapshot, materialize_storm_copy_snapshot, validate_copy_snapshot,
 };
 
 pub(crate) mod niv_mizzet_resolution_v1;
@@ -2219,8 +2219,9 @@ fn validate_spell_copy_origin_chain(
         .objects
         .try_get(origin.parent)
         .ok_or("spell copy parent object no longer exists")?;
+    let storm_parent = effect::thousand_year_storm_v1::historical_parent_cast(state, origin)?;
     if child_card_def != origin.parent_card_def
-        || parent.card_def != origin.parent_card_def
+        || (parent.card_def != origin.parent_card_def && storm_parent.is_none())
         || parent.owner != origin.parent_owner
         || origin.parent_was_copy != parent.spell_copy_origin.is_some()
         || if origin.parent_was_copy {
@@ -2243,6 +2244,10 @@ fn validate_spell_copy_origin_chain(
             return Err("spell copy changed its parent's effective source types".into());
         }
         validate_spell_copy_origin_chain(state, origin.parent, parent.card_def, parent_origin)?;
+    } else if let Some(method) = storm_parent {
+        if origin.source_types_v1 != crate::source_type_hexproof_v1::copy_projection(origin.parent_card_def,method) {
+            return Err("Storm copy changed original parent source types".into());
+        }
     } else if crate::source_type_hexproof_v1::enabled() {
         let types = crate::source_type_hexproof_v1::source_types(
             state,
@@ -3343,8 +3348,13 @@ fn validate_ability_source_contract(
             Some(contract),
         )?;
     }
+    let historical_storm = state.thousand_year_storm_consumer_v1
+        && item.kind == StackItemKind::TriggeredAbility
+        && source.zone_change_count > contract.zone_change_count
+        && effect::thousand_year_storm_v1::selected(state, item);
+    if historical_storm { effect::thousand_year_storm_v1::validate_item(state, item)?; }
     if contract.source != item.source
-        || (!historical_sphinx && !source_card_def_matches(state, contract, source.card_def))
+        || (!historical_sphinx && !historical_storm && !source_card_def_matches(state, contract, source.card_def))
         || contract.owner != source.owner
         || contract.controller != item.controller
         || contract.zone == Zone::Stack
@@ -18665,6 +18675,7 @@ fn validated_stack_item_target_metadata(
             contract
         };
         if !stack_target_contract_is_structurally_valid(state, spec, target_index, target, contract)
+            && !crate::state::stack_target_contract_for_storm_snapshot(state, item, spec, target_index, target, contract)
             && !crate::fiendish_panda_v1::custody::authenticates_stale_target(
                 state,
                 item,

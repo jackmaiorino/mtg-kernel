@@ -83,7 +83,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     fiend_artisan: Option<super::fiend_artisan_consumer_v1::HumanFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    etali: Option<super::etali_primal_storm_consumer_v1::HumanFactsV1>
+    etali: Option<super::etali_primal_storm_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thousand_year_storm: Option<super::thousand_year_storm_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -151,7 +153,9 @@ record!(HumanKaitoCandidateV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     fiend_artisan_action: Option<crate::fiend_artisan_consumer_v1::ActionV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    etali_action: Option<crate::etali_primal_storm_consumer_v1::ActionV1>
+    etali_action: Option<crate::etali_primal_storm_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thousand_year_storm_action: Option<crate::thousand_year_storm_consumer_v1::ActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -373,6 +377,7 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
+    if let Some(label)=super::thousand_year_storm_consumer_v1::label(obs.thousand_year_storm.as_ref(),a,h)? {return Ok(Some(label));}
     if let Some(label) = super::etali_primal_storm_consumer_v1::label(obs.etali.as_ref(), a, h)? {
         return Ok(Some(label));
     }
@@ -952,6 +957,7 @@ pub(super) fn project_with_handles(
     let etali = obs.etali.as_ref()
         .map(|facts| super::etali_primal_storm_consumer_v1::project(facts, &mut handles))
         .transpose()?;
+    let thousand_year_storm=obs.thousand_year_storm.as_ref().map(|f|super::thousand_year_storm_consumer_v1::project(f,&mut handles,&mut roles)).transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
@@ -983,6 +989,7 @@ pub(super) fn project_with_handles(
                 harvester_action: r.harvester_action,
                 fiend_artisan_action: r.fiend_artisan_action,
                 etali_action: r.etali_action,
+                thousand_year_storm_action: r.thousand_year_storm_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -1255,6 +1262,8 @@ pub(super) fn project_with_handles(
                 "mtg-kernel-human-lathril-decision/v1"
             } else if electroduplicate.is_some() {
                 "mtg-kernel-human-electroduplicate-decision/v1"
+            } else if thousand_year_storm.is_some() {
+                "mtg-kernel-human-thousand-year-storm-decision/v1"
             } else if harvester.is_some() {
                 "mtg-kernel-human-harvester-decision/v1"
             } else if etali.is_some() {
@@ -1316,6 +1325,7 @@ pub(super) fn project_with_handles(
                 harvester,
                 fiend_artisan,
                 etali,
+                thousand_year_storm,
             },
             actions,
             action_meanings,

@@ -1307,6 +1307,26 @@ pub fn stack_target_contract_is_structurally_valid(
     target: Target,
     contract: StackTargetContractV4,
 ) -> bool {
+    stack_target_contract_shape(state,spec,target_index,target,contract,false)
+}
+
+/// Only a full native Storm snapshot can retain historical targets without
+/// reading a later hidden printing. Owner, generation, kind and current stack
+/// identity still use the ordinary structural checks below.
+pub(crate) fn stack_target_contract_for_storm_snapshot(
+    state:&GameState,spell:&StackItem,spec:TargetSpec,target_index:usize,
+    target:Target,contract:StackTargetContractV4,
+)->bool {
+    crate::effect::thousand_year_storm_v1::owns_snapshot(state,spell)
+        && spell.targets.get(target_index)==Some(&target)
+        && spell.v4.target_contracts.get(target_index)==Some(&contract)
+        && stack_target_contract_shape(state,spec,target_index,target,contract,true)
+}
+
+fn stack_target_contract_shape(
+    state:&GameState,spec:TargetSpec,target_index:usize,target:Target,
+    contract:StackTargetContractV4,historical_storm:bool,
+)->bool {
     if contract.target() != target {
         return false;
     }
@@ -1337,7 +1357,7 @@ pub fn stack_target_contract_is_structurally_valid(
             && stack_item_id.0 > 0
             && stack_item_id.0 <= state.engine.next_stack_item_id
             && state.objects.try_get(source).is_some_and(|live| {
-                live.card_def == card_def
+                (live.card_def == card_def || historical_storm && live.zone_change_count > source_zone_change_count)
                     && live.owner == owner
                     && live.zone_change_count >= source_zone_change_count
             })
@@ -1555,7 +1575,7 @@ pub fn stack_target_contract_is_structurally_valid(
         return true;
     };
     state.objects.try_get(object).is_some_and(|live| {
-        live.card_def == card_def
+        (live.card_def == card_def || historical_storm && live.zone_change_count > zone_change_count)
             && live.owner == owner
             && live.spell_copy_origin == spell_copy_origin
             && if spell_copy_origin.is_some() {
@@ -2551,6 +2571,8 @@ pub struct GameState {
     pub(crate) fiend_artisan_receipts_v1: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) etali_commit_receipts_v1: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) thousand_year_storm_consumer_v1: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2837,6 +2859,9 @@ impl Hash for GameState {
         if self.etali_commit_receipts_v1 {
             "etali-primal-storm-commit-receipts/v1".hash(state);
         }
+        if self.thousand_year_storm_consumer_v1 {
+            "thousand-year-storm-consumer/v1".hash(state);
+        }
         if self.greatwurm_commit_receipts_v1 {
             "greatwurm-commit-receipts/v1".hash(state);
         }
@@ -3066,6 +3091,7 @@ impl GameState {
             harvester_commit_receipts_v1: false,
             fiend_artisan_receipts_v1: false,
             etali_commit_receipts_v1: false,
+            thousand_year_storm_consumer_v1: false,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         crate::life_loss_turn_v1::initialize_for_catalog(&mut state);
