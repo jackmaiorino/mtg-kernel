@@ -1,6 +1,8 @@
-"""Scratch segments (chains.py): reaping, persisting and resetting, with the bind mount simulated."""
+"""Scratch segments (chains.py): reaping, persisting and resetting, with the bind mount simulated; and the counting
+fixture of scratch_bench.py (mtg-kernel#601)."""
 import hashlib
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -9,6 +11,9 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import chains  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import scratch_bench  # noqa: E402
 
 
 def write(path, data):
@@ -188,6 +193,122 @@ class Scratch(unittest.TestCase):
     def test_plan_accepts_scratch_only_for_c_in_stage_0(self):
         src = Path(chains.__file__).read_text(encoding='utf-8')
         self.assertIn("recipe == 'C' and a != 'F' and stage == '0'", src)
+
+
+@unittest.skipUnless(sys.platform.startswith('linux'), 'scratch segments are Linux only (rename onto an empty directory)')
+class ScratchWork(unittest.TestCase):
+    """mtg-kernel#601: the counting fixture behind scratch_bench.py (reap, persist, scratch_settle unchanged)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.profile = scratch_bench.PROFILES['small']
+
+    def segment(self, name, n):
+        sim = scratch_bench.MountSim(chains)
+        sim.__enter__()
+        self.addCleanup(sim.__exit__)
+        seg = scratch_bench.Segment(chains, self.base / name / 'work', self.base / name / 'shm', self.profile, 7)
+        seg.build(n, sim)
+        return seg
+
+    def test_fixture_is_deterministic_and_location_free(self):
+        def tree(seg):
+            return {p.relative_to(seg.target).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                    for p in seg.target.rglob('*') if p.is_file()}
+        a, b = self.segment('a', 3), self.segment('b', 3)
+        self.assertEqual(tree(a), tree(b))
+        self.assertEqual(a.fixture_digest(), b.fixture_digest())
+        self.assertEqual(len([f for f in tree(a) if f.endswith('checkpoint.json')]), 1)  # the newest; others reaped
+
+    def test_ticks_delete_exactly_the_reaped_bulk_and_persist_keeps_every_member(self):
+        out = scratch_bench.run_segment(chains, 4, self.profile, 7, self.base / 'shm', self.base / 'work', True)
+        bulk = self.profile['episodes'] + 1  # trajectories and the checkpoint
+        prod, idle = out['reap']['productive'], out['reap']['idle']
+        self.assertEqual(prod['deleted'], [0, bulk, bulk, bulk])
+        self.assertEqual(idle['deleted'], [0] * 4)
+        self.assertEqual(prod['unlink'], prod['deleted'])  # the counter sees every deletion
+        self.assertEqual(prod['new'][0], 0)  # the first tick has nothing to reap
+        self.assertTrue(out['persist']['identical'])
+        self.assertEqual(out['persist']['logical_digest'], out['persist']['fixture_digest'])
+        self.assertEqual(out['persist']['returned_bytes'], out['persist']['physical_bytes'])
+        self.assertLess(out['compress_config']['out_bytes'], out['compress_config']['in_bytes'])
+
+    def test_counts_are_deterministic(self):
+        runs = [scratch_bench.run_segment(chains, 3, self.profile, 7, self.base / f'shm{k}', self.base / f'work{k}',
+                                          True) for k in range(2)]
+        self.assertEqual(runs[0]['reap'], runs[1]['reap'])
+        for scenario, field in scratch_bench.DETERMINISTIC:
+            self.assertEqual(runs[0][scenario][field], runs[1][scenario][field], (scenario, field))
+
+    def test_persist_durability_operations_in_order(self):
+        """Every staged member and staging directory is fsynced before the marker, the marker before the swap, the
+        swap and the parent fsync under the index lock: milestones 3 and 4 must keep these boundaries."""
+        seg = self.segment('p', 3)
+        with scratch_bench.Ops(full=True, classify=scratch_bench.persist_classifier(seg), events=True) as ops:
+            chains.persist(seg.arm, seg.native, seg.cdir)
+        ev = ops.events
+        at = {k: [i for i, (op, cat, _) in enumerate(ev) if (cat, op) == k] for k in {(c, o) for o, c, _ in ev}}
+        tmp = str(seg.tmp)
+        staged = {p for op, cat, p in ev if (cat, op) == ('staging', 'fsync_file')}
+        members = {os.path.join(tmp, os.path.relpath(p, seg.native)) for p in map(str, seg.native.rglob('*'))
+                   if Path(p).is_file() and not p.endswith(chains.PERSIST_MARKER)}
+        self.assertEqual(staged, members)
+        synced_dirs = {p for op, cat, p in ev if (cat, op) == ('staging', 'fsync_dir')}
+        dirs = {tmp} | {os.path.join(tmp, os.path.relpath(p, seg.native)) for p in map(str, seg.native.rglob('*'))
+                        if Path(p).is_dir()}
+        self.assertEqual(synced_dirs, dirs)
+        marker_write = at[('marker', 'open')][0]
+        self.assertGreater(marker_write, max(at[('staging', 'fsync_file')] + at[('staging', 'fsync_dir')][:-1]))
+        self.assertGreater(at[('marker', 'fsync_file')][0], marker_write)
+        lock, rename = at[('lock', 'flock')][0], at[('staging', 'rename')][0]
+        parent, unlock = at[('chain_dir', 'fsync_dir')][0], at[('lock', 'funlock')][0]
+        self.assertTrue(at[('marker', 'fsync_file')][0] < at[('staging', 'fsync_dir')][-1] < lock)  # staging root
+        self.assertTrue(lock < rename < parent < unlock, (lock, rename, parent, unlock))
+
+    def test_settle_cases_reach_their_states(self):
+        out = scratch_bench.run_settle(chains, 3, self.profile, 7, self.base / 'shm', self.base / 'work', False)
+        state = {case: out[case]['outcome'] for case in out}
+        for case in ('steady', 'swap_finish', 'late_persist'):
+            self.assertEqual(state[case], {'segment_persisted': True, 'mounted': False, 'scratch_left': False}, case)
+        self.assertEqual(state['reset'], {'segment_persisted': False, 'mounted': False, 'scratch_left': False})
+
+    def test_schedule_runs_each_size_a_b_b_a(self):
+        order = scratch_bench.schedule([16, 64], ['A', 'B'], 2)
+        for n in (16, 64):
+            self.assertEqual([v for r, m, v in order if m == n], ['A', 'B', 'B', 'A'])
+        self.assertEqual([m for r, m, v in order], [16, 16, 64, 64, 64, 64, 16, 16])
+
+    def test_paired_verdict_needs_a_difference_beyond_each_arm_range(self):
+        def receipt(a, b):
+            samples = [{'variant': v, 'n': 2, 'round': r, 'reap': {'productive': {'wall_ns': [x]},
+                                                                   'idle': {'wall_ns': [0]}},
+                        'persist': {'wall_ns': x}} for v, xs in (('A', a), ('B', b)) for r, x in enumerate(xs)]
+            return {'sizes': [2], 'rounds': len(a), 'samples': samples}
+        same = scratch_bench.paired(receipt([100, 120], [110, 105]), 'A', 'B')['by_size']['2']['persist_ns']
+        self.assertEqual(same['verdict'], 'inconclusive')
+        fast = scratch_bench.paired(receipt([100, 104], [50, 52]), 'A', 'B')['by_size']['2']['persist_ns']
+        self.assertEqual(fast['verdict'], 'b_faster')
+        one = scratch_bench.paired(receipt([100], [50]), 'A', 'B')['by_size']['2']['persist_ns']
+        self.assertEqual(one['verdict'], 'inconclusive')
+
+    def test_bench_writes_a_complete_receipt(self):
+        out = self.base / 'receipt.json'
+        rc = scratch_bench.main(['--out', str(out), '--sizes', '2', '--rounds', '2', '--scratch-dir', self.tmp.name,
+                                 '--work-dir', self.tmp.name, '--max-wall-seconds', '120', '--quiet'])
+        self.assertEqual(rc, 0)
+        r = json.loads(out.read_text())
+        self.assertEqual((r['schema'], r['complete'], r['sizes']), (scratch_bench.SCHEMA, True, [2]))
+        self.assertTrue(r['counts']['A']['2']['deterministic'])
+        self.assertTrue(r['summary']['A']['2']['counts']['persist_identical'])
+        self.assertEqual([s['round'] for s in r['samples']], [0, 1])
+        self.assertEqual([len(s['reap']['idle']['wall_us']) for s in r['samples']], [2, 2])  # every tick kept
+        self.assertEqual(r['counts']['A']['2']['reap']['productive']['totals']['deleted'],
+                         self.profile['episodes'] + 1)
+        self.assertEqual(r['variants']['A']['files']['chains.py'], hashlib.sha256(
+            Path(chains.__file__).read_bytes()).hexdigest())
+        self.assertEqual(sorted(p.name for p in self.base.iterdir()), ['receipt.json'])  # workers clean up
 
 
 if __name__ == '__main__':
