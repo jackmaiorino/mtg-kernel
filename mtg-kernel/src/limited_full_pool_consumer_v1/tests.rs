@@ -147,6 +147,7 @@ fn paid_etali_storm(actor: PlayerId) -> (GameState, crate::ids::ObjectId) {
 
     // Seed the next authentic top-card batch with one nonland and one land.
     let hit = put(&mut state, actor.opponent(), "Burst Lightning", Zone::Library);
+    state.players[actor.opponent().index()].library.rotate_right(1);
     for _ in 0..24 {
         match etali::next(&mut state) {
             NativeDecision::DeclareAttackers { player, eligible } if player == actor => {
