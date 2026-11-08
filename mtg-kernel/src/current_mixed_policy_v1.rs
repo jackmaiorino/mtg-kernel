@@ -11,11 +11,13 @@ mod fiery_public_operands;
 mod fishing_public_operands;
 mod graveyard_return;
 pub use call::{CallDecision, CallSession, CallSnapshot};
+mod eternal;
 mod kellan_public_operands;
 mod network;
 mod next_five;
 mod next_five_support;
 mod normalize;
+pub(crate) use eternal::{eternal_packet_v1, EternalPublicV1};
 mod numeric;
 mod prepared;
 mod public_projection_operands;
@@ -73,6 +75,7 @@ pub enum Source {
     LilianaV73,
     ChandraV74,
     KaitoV75,
+    EternalActorV1,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {
@@ -102,6 +105,12 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1.rs"),
             include_str!("current_mixed_policy_v1/numeric.rs"),
             include_str!("current_mixed_policy_v1/normalize.rs"),
+            include_str!("current_mixed_policy_v1/eternal.rs"),
+            include_str!("eternal_actor_printed_v1.rs"),
+            include_str!("eternal_actor_public_v1.rs"),
+            include_str!("eternal_actor_choice_v1.rs"),
+            include_str!("eternal_actor_stack_v1.rs"),
+            include_str!("rl_session/eternal_actor_v1.rs"),
             include_str!("current_mixed_policy_v1/public_projection_operands.rs"),
             include_str!("current_mixed_policy_v1/canonical_semantic_booleans.rs"),
             include_str!("current_mixed_policy_v1/divine_printing.rs"),

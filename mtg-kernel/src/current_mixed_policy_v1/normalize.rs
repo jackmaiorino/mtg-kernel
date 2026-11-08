@@ -842,6 +842,114 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     })
 }
 
+/// This distinct source accepts only the sealed owner's typed public parts.
+/// Every visible or publicly named printing receives its full finite meaning;
+/// the Limited meaning allowlist remains unchanged.
+pub(super) fn encode_eternal(
+    public: &super::eternal::EternalPublicV1,
+    actions: &[(
+        crate::rl::ActionSemanticV1,
+        Option<crate::eternal_actor_public_v1::EntryOptionV1>,
+    )],
+) -> Result<Packet> {
+    let conversion = |error: serde_json::Error| Error::Projection(error.to_string());
+    let mut observation = serde_json::to_value(&public.observation).map_err(conversion)?;
+    super::public_projection_operands::prepare(&mut observation)?;
+    let public = serde_json::to_value(public).map_err(conversion)?;
+    let actions = actions
+        .iter()
+        .map(|(action, option)| {
+            Ok(
+                json!({"action": serde_json::to_value(action).map_err(conversion)?,
+            "entry_option": serde_json::to_value(option).map_err(conversion)?}),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut state = public;
+    state["observation"] = observation;
+    let mut cards = BTreeSet::new();
+    collect_cards(&state, &mut cards)?;
+    fn named(value: &Value, cards: &mut BTreeSet<u16>) -> Result<()> {
+        match value {
+            Value::Object(fields) => {
+                for (key, value) in fields {
+                    if matches!(key.as_str(), "named_card_id" | "printing") {
+                        cards.insert(u16::try_from(uint(value)?).map_err(|_| Error::Range)?);
+                    } else {
+                        named(value, cards)?;
+                    }
+                }
+            }
+            Value::Array(values) => {
+                for value in values {
+                    named(value, cards)?;
+                }
+            }
+            _ => (),
+        }
+        Ok(())
+    }
+    named(&state, &mut cards)?;
+    for action in &actions {
+        collect_cards(action, &mut cards)?;
+        named(action, &mut cards)?;
+    }
+    let meanings = cards
+        .into_iter()
+        .map(|printing| {
+            crate::eternal_actor_printed_v1::printing_v1(printing)
+                .map(|meaning| json!({"printing":printing,"meaning":meaning}))
+                .map_err(|error| Error::Projection(error.to_string()))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut refs = References::default();
+    let mut times = BTreeSet::new();
+    timestamps(&state, "", &mut times);
+    for action in &actions {
+        timestamps(action, "", &mut times);
+    }
+    refs.timestamps = times
+        .into_iter()
+        .enumerate()
+        .map(|(i, t)| (t, i as u64))
+        .collect();
+    // Establish object correspondence from the ordinary public observation
+    // before visiting supplemental ledger rows or action operands.
+    rewrite(&state["observation"], &mut refs, "")?;
+    state["printing_meanings"] = Value::Array(meanings);
+    let mut state = rewrite(&state, &mut refs, "")?;
+    // These are sets of public facts, unlike stack/pending order or per-seat
+    // arrays. Native ledger insertion order must not become an actor feature.
+    for key in [
+        "cavern_types",
+        "needle_names",
+        "uncounterable_spells",
+        "cast_mana",
+        "saga_abilities",
+        "prepare_copies",
+        "animate_dead_waiting",
+        "animate_dead_attached",
+        "granted_opponent_draw_on_leave",
+    ] {
+        let rows = state["dynamic"][key]
+            .as_array_mut()
+            .ok_or_else(|| Error::UnsupportedOperand(key.into()))?;
+        rows.sort_by_cached_key(Value::to_string);
+    }
+    let actions = actions
+        .iter()
+        .map(|action| NumericTree::encode(&rewrite(action, &mut refs, "")?))
+        .collect::<Result<Vec<_>>>()?;
+    if actions.is_empty() {
+        return Err(Error::NoDecision);
+    }
+    Ok(Packet {
+        source: Source::EternalActorV1,
+        state: NumericTree::encode(&state)?,
+        actions,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
