@@ -105,9 +105,10 @@ class Guardian:
                 f"{decode_wsl(result.stderr or result.stdout).strip()}")
         return decode_wsl(result.stdout)
 
-    def distros(self, running=False):
+    def distros(self, running=False, timeout=10):
         args = ["--list", "--quiet"] + (["--running"] if running else [])
-        return {line.strip().casefold() for line in self.wsl_command(*args).splitlines() if line.strip()}
+        return {line.strip().casefold() for line in self.wsl_command(*args, timeout=timeout).splitlines()
+                if line.strip()}
 
     def status(self, phase, resources, **detail):
         write_json(ROOT / "guardian-status.json", {
@@ -119,9 +120,7 @@ class Guardian:
     def check(self, phase):
         now = time.monotonic()
         resources = physical_free()
-        if now - self.last_status >= 5:
-            self.status(phase, resources)
-            self.last_status = now
+        sample_status = now - self.last_status >= 5
         require(now < self.deadline, "Windows guardian wall limit reached")
         require(not (ROOT / "STOP").exists(), "task STOP is present")
         require(resources["c_free_bytes"] >= C_PREEMPT, "physical C: reached the preemption threshold")
@@ -130,6 +129,12 @@ class Guardian:
             require(vm_pids() == [self.vm[0]] and reservations.process_state(*self.vm) == "alive",
                     "the recorded WSL VM disappeared or changed")
             require(self.anchor.poll() is None, "the WSL idle anchor exited")
+            if sample_status:
+                require(self.distros(running=True, timeout=1) == {self.distro.casefold()},
+                        "the owned WSL distro is no longer the only running distro")
+        if sample_status:
+            self.status(phase, resources)
+            self.last_status = now
 
     def start(self, phase, *args):
         self.check(phase)
@@ -224,6 +229,7 @@ exec sleep "$1"
 
     def cleanup(self):
         terminate_attempted = False
+        terminated = False
         while True:
             try:
                 # Closing wsl.exe prevents late launches. Its exit does not prove the guest exited.
@@ -232,13 +238,11 @@ exec sleep "$1"
                         proc.kill()
                         proc.wait(timeout=10)
                 if self.import_started:
-                    if self.imported and not terminate_attempted:
+                    if self.imported and not terminated and (not terminate_attempted
+                            or self.distro.casefold() in self.distros(running=True)):
                         terminate_attempted = True
-                        try:
-                            self.wsl_command("--terminate", self.distro, timeout=30)
-                        except RuntimeError:
-                            # WSL can refuse termination when the distro already stopped.
-                            pass
+                        self.wsl_command("--terminate", self.distro, timeout=30)
+                        terminated = True
                     running = self.distros(running=True)
                     require(not running and not vm_pids() and
                             (self.vm is None or reservations.process_state(*self.vm) == "absent"),
