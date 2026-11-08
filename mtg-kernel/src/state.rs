@@ -2323,11 +2323,26 @@ pub(crate) fn take_opponent_reveal_sites_v1() -> Vec<(&'static str, &'static str
 /// snapshot and golden is unchanged and two states that differ only in what
 /// was journalled compare equal.
 #[derive(Debug, Clone, Default)]
-pub struct ObservationJournalV1(Vec<ObservationNoteV1>);
+pub struct ObservationJournalV1(
+    Vec<ObservationNoteV1>,
+    // Private exporter provenance, never part of notes(), snapshots or hashes.
+    std::collections::BTreeMap<usize, (ObjectId, u8)>,
+);
 
 impl ObservationJournalV1 {
     pub fn notes(&self) -> &[ObservationNoteV1] {
         &self.0
+    }
+
+    pub(crate) fn visibility_v2(&self, event: usize, object: ObjectId) -> Option<u8> {
+        self.1
+            .get(&event)
+            .filter(|(id, _)| *id == object)
+            .map(|(_, mask)| *mask)
+    }
+
+    pub(crate) fn record_visibility_v2(&mut self, event: usize, object: ObjectId, mask: u8) {
+        self.1.insert(event, (object, mask));
     }
 }
 

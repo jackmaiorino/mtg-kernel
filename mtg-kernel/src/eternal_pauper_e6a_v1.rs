@@ -1422,6 +1422,7 @@ pub(crate) fn foretell(
     if !crate::engine::pay_effect_mana(player, &[], 2, state) {
         return Err("foretell's {2} is not payable".to_string());
     }
+    let history_start = state.engine.event_history.len();
     event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Exile));
     if state.objects.get(source).zone != Zone::Exile {
         return Ok(());
@@ -1435,6 +1436,18 @@ pub(crate) fn foretell(
         hidden_by: None,
         hidden_by_source: None,
     });
+    // Foretell becomes face down after the generic move commits. Correct its
+    // event-time exporter provenance before another decision can observe it.
+    for index in history_start..state.engine.event_history.len() {
+        if matches!(state.engine.event_history[index], CommittedEvent::ZoneChange {
+            object, from: Zone::Hand, to: Zone::Exile, ..
+        } if object == source)
+        {
+            state
+                .observation_journal
+                .record_visibility_v2(index, source, 1 << player.index());
+        }
+    }
     let permission = crate::engine::PlayPermission {
         without_mana_cost: crate::engine::FreeCastV1::default(),
         object: source,
