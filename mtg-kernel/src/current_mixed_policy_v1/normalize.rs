@@ -521,6 +521,20 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         covered.insert(meaning.card_id);
     }
     if source == Source::KaitoV75
+        && state["schema"] == crate::kykar_consumer_v1::CANDIDATES_SCHEMA
+    {
+        let meaning: crate::kykar_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["kykar"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        if meaning != crate::kykar_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Kykar meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+        covered.insert(meaning.spirit_card_id);
+    }
+    if source == Source::KaitoV75
         && state["schema"] == crate::loot_consumer_v1::CANDIDATES_SCHEMA
     {
         let meaning: crate::loot_public_v1::MeaningV1 =

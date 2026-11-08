@@ -81,6 +81,8 @@ pub(crate) fn project_limited_kaito_v16(
                 "mtg-kernel-limited-lathril-decision/v1"
             } else if observation.electroduplicate.is_some() {
                 "mtg-kernel-limited-electroduplicate-decision/v1"
+            } else if observation.kykar.is_some() {
+                "mtg-kernel-limited-kykar-decision/v1"
             } else if observation.loot.is_some() {
                 "mtg-kernel-limited-loot-decision/v1"
             } else if observation.edict.is_some() {

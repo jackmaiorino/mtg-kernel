@@ -397,6 +397,7 @@ pub(crate) enum LimitedAppendixV1 {
     Electroduplicate,
     Edict,
     Loot,
+    Kykar,
 }
 
 impl LimitedAppendixV1 {
