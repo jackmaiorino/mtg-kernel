@@ -464,6 +464,59 @@ class StageFTreeBytesTests(unittest.TestCase):
         with self.listings(hook):
             self.assertEqual(stagef.tree_bytes(self.root), 5 + 10)
 
+    def test_windows_delete_pending_directory_is_retried_until_missing(self):
+        self.file("keep.bin", 5)
+        gone = self.file("_hold-thin/x/a.bin", 10)
+        folder = gone.parent
+        real = os.scandir
+        denied = PermissionError("directory is pending deletion")
+        denied.winerror = 5
+        first = True
+
+        def scan(path):
+            nonlocal first
+            if Path(path) == folder and first:
+                first = False
+                gone.unlink()
+                folder.rmdir()
+                raise denied
+            return real(path)
+
+        with mock.patch.object(stagef.os, "scandir", side_effect=scan), \
+                mock.patch.object(stagef.time, "sleep"):
+            self.assertEqual(stagef.tree_bytes(self.root), 5)
+        self.assertFalse(first)
+
+    def test_windows_transient_access_denial_does_not_drop_existing_bytes(self):
+        self.file("keep.bin", 5)
+        self.file("_hold-thin/x/a.bin", 10)
+        folder = self.root / "_hold-thin" / "x"
+        real = os.scandir
+        denied = PermissionError("transient directory access denial")
+        denied.winerror = 5
+        first = True
+
+        def scan(path):
+            nonlocal first
+            if Path(path) == folder and first:
+                first = False
+                raise denied
+            return real(path)
+
+        with mock.patch.object(stagef.os, "scandir", side_effect=scan), \
+                mock.patch.object(stagef.time, "sleep"):
+            self.assertEqual(stagef.tree_bytes(self.root), 15)
+
+    def test_windows_persistent_access_denial_still_refuses_the_byte_count(self):
+        self.file("keep.bin", 5)
+        denied = PermissionError("real access restriction")
+        denied.winerror = 5
+        with mock.patch.object(stagef.os, "scandir", side_effect=denied), \
+                mock.patch.object(stagef.time, "sleep"):
+            with self.assertRaises(PermissionError) as raised:
+                stagef.tree_bytes(self.root)
+        self.assertIs(raised.exception, denied)
+
     def test_a_file_thin_moves_into_the_holding_folder_during_the_walk_is_still_counted(self):
         moving = self.file("chains/x/native/update/checkpoint.json", 100)
         self.file("_hold-thin/y/held.bin", 7)

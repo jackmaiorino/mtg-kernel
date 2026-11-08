@@ -4,7 +4,7 @@ import copy
 from pathlib import Path
 import shutil
 import subprocess
-from prepare_postboard_qualification_v1 import read, write, pin
+from prepare_postboard_qualification_v1 import read, read_pinned_checkpoint, write, pin
 from postboard_bo3_qualification_v1 import execute, audit_match
 from run_postboard_pilot_v1 import evaluate, verify_pin
 
@@ -133,7 +133,7 @@ def prepare_panel(root, pilot, qualification):
     for arm in ('preboard', 'mixed'):
         audit = read(pilot / arm / 'training-audit.json')
         assert audit['complete'] and audit['updates'] == 200 and audit['natural_games'] == 2000
-        checkpoint = read(verify_pin(audit['source']['checkpoint']))
+        checkpoint = read_pinned_checkpoint(audit['source']['checkpoint'])
         assert checkpoint['state_sha256'] == audit['full_model_state_sha256'] and checkpoint['adam_step'] == 32600
         manifest['reused_training'][arm] = pin(pilot / arm / 'training-audit.json')
         for filename in ('training-audit.json', 'execution.json'):

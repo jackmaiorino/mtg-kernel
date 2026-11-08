@@ -284,6 +284,35 @@ def descendant_ticks(table: dict[int, tuple[int, int]], root: int, stop=frozense
     return total
 
 
+def walk_overlapped(root: Path, previous: float) -> bool:
+    """A walk's CPU can be in a live sample or the accumulated ticks of an interval it just ended in."""
+    try:
+        record = json.loads((root / native_dispatch.OWN_WALK_RECORD).read_text(encoding="utf-8"))
+        completed = record["completed_unix"]
+        return not native_dispatch.finite_time(completed) or completed >= previous
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError, KeyError, TypeError):
+        return True
+
+
+def archive_bytes_written(root: Path) -> int:
+    try:
+        record = json.loads((root / native_dispatch.ARCHIVE_PROGRESS_RECORD).read_text(encoding="utf-8"))
+        cold = Path(record["root"])
+        if not cold.is_absolute():
+            return 0
+    except (OSError, ValueError, KeyError, TypeError):
+        return 0
+    size = 0
+    for shard in (cold / "native-0.zip", cold / "native-1.zip"):
+        try:
+            size += shard.stat().st_size
+        except OSError:
+            pass
+    return size
+
+
 class LeaseProgress:
     """progress.json for the pod's resident lease guard (phase1_cloud/lease_guard.py).
 
@@ -294,7 +323,7 @@ class LeaseProgress:
     the native run, fingerprints and archive, until wait_block returns) or in the
     driver's own child processes, a driver step finishing (``touch``: a dispatch, a native run's end,
     each kept file of a retention, each saved step of finishing a block), or the
-    driver itself computing (at least DRIVER_BUSY_SHARE of a core since the last
+    an archive shard growing, or the driver itself computing (at least DRIVER_BUSY_SHARE of a core since the last
     beat, as during a long collection or hash), never the beat alone, so a driver
     stuck outside a native part goes idle and the guard releases the pod.
     last_productive_epoch is the latest block completion (else this driver's
@@ -312,6 +341,7 @@ class LeaseProgress:
         self.productive = self.activity = time.time()
         self.cpu = (self.activity, driver_cpu_seconds())
         self.active, self.ticks, self.lock, self.done = {}, {}, threading.Lock(), threading.Event()
+        self.archive_sizes = {}
         self.thread = threading.Thread(target=self.loop, name="lease-progress", daemon=True)
 
     def start(self) -> None:
@@ -332,6 +362,12 @@ class LeaseProgress:
     def excluded_children(self) -> frozenset:
         """Children of the driver whose CPU is not activity (a subclass observes their work another way)."""
         return frozenset()
+
+    def observe_archive(self, key: str, root: Path, stamp: float) -> None:
+        size = archive_bytes_written(root)
+        if size > self.archive_sizes.get(key, 0):
+            self.activity = stamp
+            self.archive_sizes[key] = size
 
     def completed(self) -> None:
         self.productive = time.time()
@@ -354,7 +390,8 @@ class LeaseProgress:
         """Advance ``activity`` from CPU time (the driver, its children, in-flight attempts' supervised
         processes and the native runs); whether a native run is alive. Called under ``lock``."""
         alive, cpu = False, driver_cpu_seconds()
-        if cpu - self.cpu[1] >= DRIVER_BUSY_SHARE * (stamp - self.cpu[0]) > 0:
+        previous = self.cpu[0]
+        if cpu - self.cpu[1] >= DRIVER_BUSY_SHARE * (stamp - previous) > 0:
             self.activity = stamp
         self.cpu = (stamp, cpu)
         # Work in child processes: the driver's own children (the dispatch command's checks), and, outside
@@ -373,8 +410,11 @@ class LeaseProgress:
         table = process_table()
         observed = {"driver-children": descendant_ticks(table, os.getpid(),
                                                          frozenset(supervisors.values()) | self.excluded_children())}
+        after_native = {root for root in in_flight if native.get(root) is None}
         observed |= {root + ":supervised": descendant_ticks(table, pid) for root, pid in supervisors.items()
-                     if root in in_flight and native.get(root) is None}
+                     if root in after_native and not walk_overlapped(Path(root), previous)}
+        for root in after_native:
+            self.observe_archive(root, Path(root), stamp)
         for root in supervisors:  # unobserved during the native part: a fresh baseline when it ends
             if root + ":supervised" not in observed:
                 self.ticks.pop(root + ":supervised", None)
@@ -390,6 +430,7 @@ class LeaseProgress:
                 self.activity = stamp
             self.ticks[str(root)] = ticks
         return alive
+
 
 
 def touch(campaign: Campaign) -> None:

@@ -651,8 +651,8 @@ impl NativeExpandedTrainingRunV1 {
                         self.loss_selection,
                         ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
                     ),
-                "an S learner run requires the ordinary sequential CPU GAE update, record \
-                 format v1 and the legacy sampler, without line (b), E, SQ1 or search targets",
+                "an S learner run requires the ordinary CPU GAE update, record format v1 and \
+                 the legacy sampler, without net-8 backward modes, line (b), E, SQ1 or search targets",
             )?;
         }
         if let Some(options) = &self.e_supported {
@@ -1350,7 +1350,10 @@ fn validate_update(
             == line_b_frozen_sha256,
         "line (b) frozen tensors differ from the run's initial source",
     )?;
-    update_backend.validate_update_execution_v1(&document)?;
+    let s_parallel_workers =
+        (source.s_learner.is_some() && ex1.is_none() && preparation_workers > 1)
+            .then_some(preparation_workers);
+    update_backend.validate_update_execution_v1(&document, s_parallel_workers)?;
     validate_preparation_execution(
         &document,
         preparation_workers,

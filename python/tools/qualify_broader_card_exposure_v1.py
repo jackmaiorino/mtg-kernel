@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import time
 
-from prepare_postboard_qualification_v1 import BASE, REPO, BINARY, BINARY_SHA, read, write, pin
+from prepare_postboard_qualification_v1 import BASE, REPO, BINARY, BINARY_SHA, read, read_pinned_checkpoint, write, pin
 from postboard_bo3_qualification_v1 import seed
 from run_postboard_qualification_v1 import execute, audit_arm, compare_replay, checked_pin
 from phase1_breadth_v1.catalog_v1 import to_native
@@ -21,7 +21,7 @@ def prepare(root):
     prior=read(PRIOR/'manifest.json'); assert read(PRIOR/'qualification-result.json')['verdict']=='ENGINEERING-PASS'
     template=PRIOR/'preboard/config.json'; control=read(template)
     assert pin(BINARY)['sha256']==BINARY_SHA
-    source=read(checked_pin(control['initial_source']['checkpoint']))
+    source=read_pinned_checkpoint(control['initial_source']['checkpoint'])
     assert source['adam_step']==32400 and source['loss_identity']=='gae_advantage_value/v1'
     v=read(VARIANTS/'manifest.json'); selected=read(checked_pin(v['selection']))
     registry_path=checked_pin(v['registry']); cards={c['name']:(i,c) for i,c in enumerate(read(registry_path)['cards'])}
@@ -91,7 +91,7 @@ def prepare(root):
 
 def audit_embeddings(root,manifest,arms):
     prior=read(checked_pin(manifest['embedding_audit']))
-    original=read(checked_pin(manifest['initial_source']['checkpoint']))
+    original=read_pinned_checkpoint(manifest['initial_source']['checkpoint'])
     tensor=lambda checkpoint,field:next(t['values'] for t in checkpoint[field] if t['name']=='card_embedding.weight')
     original_weights=tensor(original,'parameters')
     rows={r['card_id']:r for r in prior['models']['g115']['rows'] if r['no_retained_embedding_update']}
@@ -99,7 +99,7 @@ def audit_embeddings(root,manifest,arms):
     substituted={card for r in read(checked_pin(manifest['schedule'])) if r['additional'] for card in r['after_registration']['mainboard']}
     reports={}
     for arm in ('preboard','mixed','mixed-replay'):
-        endpoint=read(checked_pin(arms[arm]['iterations'][-1]['checkpoint']))
+        endpoint=read_pinned_checkpoint(arms[arm]['iterations'][-1]['checkpoint'])
         fields={f:tensor(endpoint,f) for f in ('parameters','first_moments','second_moments')}
         updated=[]
         for card,row in rows.items():

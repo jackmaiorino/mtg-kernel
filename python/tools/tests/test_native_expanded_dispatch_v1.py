@@ -84,7 +84,7 @@ class AdmissionTestCase(unittest.TestCase):
                             "projected_volume_bytes": {self.root.drive.upper(): 1000}}}
 
     def trial(self, workers, seconds, e_packet=None, update_seconds=None, stdout_updates=1,
-              artifact_timing=None):
+              artifact_timing=None, s_state=None):
         """A one-update qualification report. With `update_seconds` it pins a
         stdout whose `stdout_updates` update lines carry that native timing, and
         records `artifact_timing` (by default a 1 s fingerprint and a 0.5 s
@@ -102,11 +102,19 @@ class AdmissionTestCase(unittest.TestCase):
         if e_packet is not None:
             packet = self.save(e_packet, native/"update"/"e-supported-teacher.json")
             e_supported = {"continuation": {"treatment": True}, "packet": packet}
-        checkpoint = self.save({"trajectories": [trajectory], "parameters": [123],
-                                "first_moments": [456], "second_moments": [789], "adam_step": 32401}
-                               | ({"e_supported": e_supported} if e_supported else {}),
-                               native/"checkpoint.json")
-        update = self.save({"complete": True, "checkpoint": checkpoint}
+        checkpoint_fields = {"parameters": [123], "first_moments": [456], "second_moments": [789]}
+        update_fields = {}
+        if s_state is not None:
+            state_path = native/"s-train-state.bin"
+            state_path.write_bytes(s_state)
+            state = dispatch.pin(state_path)
+            checkpoint_fields = {"schema": "w5-s-learner-checkpoint/v1", "state": state,
+                                 "state_sha256": "c" * 64}
+            update_fields = {"s_learner": {"state": state}, "after_state_sha256": "c" * 64,
+                             "adam_step": 32401}
+        checkpoint = self.save({"trajectories": [trajectory], "adam_step": 32401} | checkpoint_fields
+                               | ({"e_supported": e_supported} if e_supported else {}), native/"checkpoint.json")
+        update = self.save({"complete": True, "checkpoint": checkpoint} | update_fields
                            | ({"e_supported": {"packet": e_supported["packet"],
                                                "scheduled": e_packet["scheduled"]}} if e_supported else {}))
         receipt = self.save({"iteration": 0, "collection": collection, "update": update})
@@ -240,6 +248,34 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         actual = dispatch.output_fingerprint(dispatch.read(second["executed_config"]["path"]),
                                              "training", result, self.runtime, True)
         self.assertNotEqual(first["fingerprint"], actual)
+
+    def test_s_checkpoint_fingerprint_binds_state_bytes_across_trial_roots(self):
+        state_bytes = b"weights and full Adam state\x00\x01"
+        first = dispatch.read(self.trial(1, 10, s_state=state_bytes)["path"])
+        second = dispatch.read(self.trial(2, 6, s_state=state_bytes)["path"])
+        changed = dispatch.read(self.trial(3, 6, s_state=state_bytes + b"\x02")["path"])
+        self.assertEqual(first["fingerprint"], second["fingerprint"])
+        self.assertNotEqual(first["fingerprint"], changed["fingerprint"])
+
+        result = dispatch.read(second["native_result"]["path"])
+        receipt = dispatch.read(result["iterations"][0]["path"])
+        update = dispatch.read(receipt["update"]["path"])
+        state = update["s_learner"]["state"]
+        state_path = Path(state["path"])
+        validated = dispatch.iteration_fingerprint(0, result["iterations"][0], 1, False, False)[1]
+        self.assertEqual(validated[str(state_path.resolve())], state["sha256"])
+
+        state_path.write_bytes(b"corrupted")
+        with self.assertRaisesRegex(ValueError, "changed pinned input"):
+            dispatch.iteration_fingerprint(0, result["iterations"][0], 1, False, False)
+        state_path.unlink()
+        with self.assertRaises(FileNotFoundError):
+            dispatch.iteration_fingerprint(0, result["iterations"][0], 1, False, False)
+
+        state_path.write_bytes(state_bytes)
+        receipt["update"] = self.save(update | {"adam_step": update["adam_step"] + 1})
+        with self.assertRaisesRegex(ValueError, "does not bind this update"):
+            dispatch.iteration_fingerprint(0, self.save(receipt), 1, False, False)
 
     def test_e_packet_is_bound_by_content_not_output_root(self):
         packet = {"schema": "mtg-kernel-e-supported-teacher-packet/v1", "scheduled": 1, "valid": 1}
@@ -703,6 +739,23 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
             with self.assertRaisesRegex(ValueError, "absolute accounting roots"):
                 dispatch.validate_storage(storage, admission=self.admission())
 
+    def test_a_stale_shared_admission_never_walks_in_the_dispatcher(self):
+        storage = self.request(2)["storage"]
+        shared = self.root / "volume-walk.json"
+        admission = self.admission(age=dispatch.ADMISSION_WALK_SECONDS + 1, shared=str(shared))
+        roomy = type("Disk", (), {"free": 100 * 1024**3})()
+        with patch.object(dispatch.shutil, "disk_usage", return_value=roomy), \
+                patch.object(dispatch, "accounting_bytes", side_effect=AssertionError("must not walk")):
+            with self.assertRaisesRegex(ValueError, "storage admission walk is stale"):
+                dispatch.validate_storage(storage, admission=admission)
+            now = time.time()
+            dispatch.publish_walk(shared, 3000, now - 60, now, "driver-background", in_flight=2)
+            checked = dispatch.validate_storage(storage, admission=admission)
+            self.assertEqual((checked["source"], checked["logical_bytes"]), ("shared-walk", 5000))
+            storage["max_logical_bytes"] = 5999
+            with self.assertRaisesRegex(ValueError, "retained plus projected"):
+                dispatch.validate_storage(storage, admission=admission)
+
     def test_validation_seeds_the_emergency_samples_aged_by_the_walk_start(self):
         storage = self.request(2)["storage"]
         storage["emergency"] = {"volume_bytes": 10**12, "margin_fraction": 0.1}
@@ -742,6 +795,8 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
             dispatch.publish_walk(shared, 600, now - 2565, now - 1900, "driver-background", in_flight=3)
             dispatch.EMERGENCY_WALK.update(unix=now - 2600)
             self.assertEqual(dispatch.running_storage(storage, str(shared))["logical_bytes"], 600 + 3 * 1000)
+            dispatch.publish_walk(shared, 600, now - 2565, now - 1900, "driver-background", in_flight=4)
+            self.assertEqual(dispatch.running_storage(storage, str(shared))["logical_bytes"], 600 + 4 * 1000)
             self.assertIsNone(dispatch.EMERGENCY_WALK["thread"])  # no walk of its own while the walker is live
             self.assertEqual(walks, [])
             stopped = now - dispatch.EMERGENCY_FALLBACK_SECONDS - 60  # the walker stopped publishing
@@ -858,7 +913,8 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         inside the monitor loop, so execution.json waited for it after the native child had exited and the lease
         guard, seeing no native work, released the Pod. Now the walk runs aside: the end is recorded within one
         sample interval, and the attempt has left its native part, so the dispatcher's work after it is activity."""
-        import nine_deck_campaign_v1 as campaign
+        import g_references_campaign_v1 as campaign
+        from test_nine_deck_campaign_v1 import lease_guard_files
         request = self.request(1)
         request["storage"]["emergency"] = {"volume_bytes": 10**12, "margin_fraction": 0.1}
         # The admission walk is old enough that the first sample's walk is due, and the walk is slow.
@@ -876,9 +932,45 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
             self.assertTrue(dispatch.EMERGENCY_WALK["thread"].is_alive())  # and still runs
         self.assertIsNone(execution["error"])
         self.assertLess(execution["child_seconds"], 0.3 + 2 * 0.05 + 0.5)
-        self.assertIsNone(campaign.native_ticks(Path(request["root"])))  # outside the native part: activity counts
-        release.set()
-        dispatch.EMERGENCY_WALK["thread"].join(10)
+        root = Path(request["root"])
+        self.assertIsNone(campaign.base.native_ticks(root))
+        self.assertTrue(campaign.base.walk_overlapped(root, time.time()))
+
+        guard = self.root / "guard"
+        lease_guard_files(guard)
+        table = {os.getpid(): (0, 0), 200: (os.getpid(), 0), 201: (200, 10)}
+        with patch.dict(os.environ, {dispatch.LEASE_GUARD_ENV: str(guard), "RUNPOD_POD_ID": "testpod"}), \
+                patch.object(campaign.base, "driver_cpu_seconds", return_value=0), \
+                patch.object(campaign.base, "supervisor_owned", return_value=True), \
+                patch.object(campaign.base, "process_table", return_value=table):
+            observer = campaign.LeaseProgress(None)
+            observer.active["G1"] = {"attempts": [{"root": str(root), "dispatch": {"pid": 200, "token": "t"}}]}
+            stamp = observer.activity
+            self.assertFalse(observer.observe(stamp + 1))
+            table[201] = (200, 1000)  # CPU in the still-running walk cannot hide a hung finish
+            self.assertFalse(observer.observe(stamp + 2))
+            self.assertEqual(observer.activity, stamp)
+
+            cold = self.root / "archive"
+            cold.mkdir()
+            dispatch.write(root / dispatch.ARCHIVE_PROGRESS_RECORD, {"root": str(cold)})
+            (cold / "native-0.zip").write_bytes(b"growing")
+            self.assertFalse(observer.observe(stamp + 3))
+            self.assertEqual(observer.activity, stamp + 3)  # actual archive progress needs no CPU gain
+            self.assertFalse(observer.observe(stamp + 4))
+            self.assertEqual(observer.activity, stamp + 3)  # unchanged bytes do not mask a stall
+
+            release.set()
+            dispatch.EMERGENCY_WALK["thread"].join(10)
+            marker = root / dispatch.OWN_WALK_RECORD
+            self.assertIsNotNone(dispatch.read(marker)["completed_unix"])
+            marker.write_text(json.dumps({"completed_unix": stamp + 4.5}), encoding="utf-8")
+            observer.observe(stamp + 5)  # the walk ran in this interval
+            self.assertEqual(observer.activity, stamp + 3)
+            observer.observe(stamp + 6)  # a new CPU baseline
+            table[201] = (200, 2000)
+            observer.observe(stamp + 7)
+            self.assertEqual(observer.activity, stamp + 7)
 
     def test_an_interruption_record_tells_a_running_child_from_an_exited_one(self):
         """Positive per-attempt evidence of a stop from outside (AMENDMENT-3 draft): the signal, and whether the
@@ -1002,8 +1094,10 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         self.assertEqual((record["signal"], record["child_running"]), ("SIGTERM", True))
         self.assertIn("not mapped", execution["error"])
 
+        signal_to_latch = getattr(dispatch.signal, "SIGHUP", dispatch.signal.SIGINT)
+
         def polling_check(child, runtime, checkpoint=None):  # the library check's own poll sees the stop
-            dispatch.STOP.update(signal=dispatch.signal.SIGHUP, at=time.time())
+            dispatch.STOP.update(signal=signal_to_latch, at=time.time())
             checkpoint()
         request = self.request(1)
         request["root"] += "-poll"
@@ -1011,8 +1105,8 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         with patch.object(dispatch, "WINDOWS", False):
             execution = self.run_native(request, child_seconds=5.0, require_mapped_libraries=polling_check)
         record = dispatch.read(Path(request["root"]) / "interruption.json")
-        self.assertEqual((record["signal"], record["child_running"]), ("SIGHUP", True))
-        self.assertIn("stopped from outside by SIGHUP", execution["error"])
+        self.assertEqual((record["signal"], record["child_running"]), (signal_to_latch.name, True))
+        self.assertIn(f"stopped from outside by {signal_to_latch.name}", execution["error"])
 
         def latch_at_native_end():  # a stop after the native part, then another error ends the attempt
             dispatch.STOP.update(signal=dispatch.signal.SIGTERM, at=time.time())
