@@ -765,4 +765,3 @@ pub(crate) mod tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 mod sampler_tests;
-
