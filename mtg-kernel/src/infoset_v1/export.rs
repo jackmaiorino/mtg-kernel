@@ -806,6 +806,11 @@ pub fn export_reveal_v4(input: &ExportInputV1<'_>) -> Result<InfosetV1, ExportEr
     export_reveal_v4_from_journal(input, &input.state.reveal_meaning_v3)
 }
 
+struct RevealEvidenceV4 {
+    knowledge: crate::reveal_meaning_v3::RevealKnowledgeV3,
+    possible_eventless_moves: Vec<u16>,
+}
+
 pub(crate) fn export_reveal_v4_from_journal(
     input: &ExportInputV1<'_>,
     journal: &crate::reveal_meaning_v3::RevealJournalV3,
@@ -817,12 +822,16 @@ pub(crate) fn export_reveal_v4_from_journal(
     reducer
         .absorb(&transcript)
         .map_err(|detail| refuse(RefusalCodeV1::R8, detail))?;
+    let possible_eventless_moves = reducer.possible_eventless_moves(input.viewer.opponent());
     export_versioned(
         input,
         ExportOptionsV1::default(),
         true,
         true,
-        Some(reducer.opponent_knowledge(input.viewer)),
+        Some(RevealEvidenceV4 {
+            knowledge: reducer.opponent_knowledge(input.viewer),
+            possible_eventless_moves,
+        }),
     )
 }
 
@@ -857,7 +866,7 @@ fn export_versioned(
     options: ExportOptionsV1,
     visibility_v2: bool,
     recovery_v3: bool,
-    reveal_knowledge_v4: Option<crate::reveal_meaning_v3::RevealKnowledgeV3>,
+    reveal_evidence_v4: Option<RevealEvidenceV4>,
 ) -> Result<InfosetV1, ExportErrorV1> {
     let state = input.state;
     let v = input.viewer;
@@ -899,11 +908,18 @@ fn export_versioned(
             }
         }
     }
-    let projection = if visibility_v2 {
+    let mut projection = if visibility_v2 {
         super::projection::project_v2(state, input.journal, v)
     } else {
         project_v1(state, input.journal, v)
     };
+    if let Some(evidence) = &reveal_evidence_v4 {
+        // The old guard treated every reveal as a possible event-less move.
+        // Search arrivals and continuously public non-stack transfers now
+        // have positive evidence. Other reference, epoch and seam checks
+        // still apply, including for a potentially ambiguous stack return.
+        projection.revealed.clone_from(&evidence.possible_eventless_moves);
+    }
     // Step 1.
     invariants(state, &projection, input.decklists)?;
     if is(MutantV1::L7) {
@@ -1045,6 +1061,36 @@ fn export_versioned(
                 if projection.span_of(r.object, *g).is_some()
                     && unread_paid.contains(&(r.object, *g)))
     };
+    // V4 can keep a publicly receipted payment without claiming that an
+    // earlier incarnation is the same copy now seen in a public zone or
+    // named in the opponent's hand. The reader audit above excludes every
+    // receipt whose live resolution consumes the paid object.
+    let mut detached_receipts = BTreeMap::new();
+    if reveal_evidence_v4.is_some() {
+        for receipt in state.stack.iter().flat_map(|item| &item.v4.paid_cost_refs) {
+            let key = (receipt.object, receipt.zone_change_count);
+            if unread_paid.contains(&key) {
+                let printing = (receipt.owner, receipt.card_def);
+                if detached_receipts
+                    .insert(key, printing)
+                    .is_some_and(|old| old != printing)
+                {
+                    return Err(refuse(
+                        RefusalCodeV1::R2,
+                        "conflicting public paid-cost receipts",
+                    ));
+                }
+            }
+        }
+    }
+    let detached_paid = |r: &RefV1| -> Option<(PlayerId, u16)> {
+        match r.generations.as_slice() {
+            [epoch] if r.class == ClassV1::Live && r.paid_cost => {
+                detached_receipts.get(&(r.object, *epoch)).copied()
+            }
+            _ => None,
+        }
+    };
 
     // Lead ruling 7 (a): a live reference keeps its link across an unlinked
     // visible move (6.5, the Lembas table) only while V can tell which copy
@@ -1069,7 +1115,18 @@ fn export_versioned(
     // every other test still runs, on every reference it does not refuse,
     // and the export refuses with the reveal subclass only where it would
     // otherwise deliver (the end of this function).
-    let hand = same_name_hand_v1(state, &projection, &refs, opp);
+    let checked_refs = (!detached_receipts.is_empty()).then(|| {
+        refs.iter()
+            .filter(|(r, _)| detached_paid(r).is_none())
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    let hand = same_name_hand_v1(
+        state,
+        &projection,
+        checked_refs.as_deref().unwrap_or(&refs),
+        opp,
+    );
     if hand.seam.is_some() {
         return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
     }
@@ -1098,6 +1155,7 @@ fn export_versioned(
     let bounds = projection.batch_bounds(input.marks);
     for (r, region) in &refs {
         if *region == "live"
+            && detached_paid(r).is_none()
             && !hand.reveal_refuses(r)
             && batch_twin_v1(state, &projection, &bounds, r).is_some()
         {
@@ -1108,7 +1166,7 @@ fn export_versioned(
     // R1b (a name-level, public-event predicate), then R1 and R2. A
     // reference the reveal-triggered rule refused takes none of them.
     for (r, region) in &refs {
-        if *region != "live" || hand.reveal_refuses(r) {
+        if *region != "live" || detached_paid(r).is_some() || hand.reveal_refuses(r) {
             continue;
         }
         for &g in &r.generations {
@@ -1149,7 +1207,11 @@ fn export_versioned(
         }
     }
     for (r, region) in &refs {
-        if *region != "live" || projection.tracked(r.object) || hand.reveal_refuses(r) {
+        if *region != "live"
+            || detached_paid(r).is_some()
+            || projection.tracked(r.object)
+            || hand.reveal_refuses(r)
+        {
             continue;
         }
         if pinned_untracked.contains(&r.object) || paid_tomb(r) {
@@ -1224,9 +1286,9 @@ fn export_versioned(
     let hand_mutant =
         is(MutantV1::L8) || is(MutantV1::L11) || is(MutantV1::L12) || is(MutantV1::L14);
     let mut bound_names = Vec::new();
-    if let Some(knowledge) = &reveal_knowledge_v4 {
+    if let Some(evidence) = &reveal_evidence_v4 {
         let hand_size = state.players[opp.index()].hand.len();
-        for (def, count) in knowledge.hand(opp) {
+        for (def, count) in evidence.knowledge.hand(opp) {
             if count > hand_size - bound_names.len() {
                 return Err(refuse(
                     RefusalCodeV1::R8,
@@ -1236,7 +1298,7 @@ fn export_versioned(
             bound_names.extend(std::iter::repeat_n(def, count));
         }
     }
-    if reveal_knowledge_v4.is_some() && pinned_defs(opp).iter().any(|id| bound_names.contains(id)) {
+    if reveal_evidence_v4.is_some() && pinned_defs(opp).iter().any(|id| bound_names.contains(id)) {
         return Err(refuse(
             RefusalCodeV1::R7,
             "reveal-name bound overlaps an unresolved physical pin",
@@ -1254,7 +1316,7 @@ fn export_versioned(
     }
     bound_names.sort_by_key(|d| name_key(*d));
     subtract(&mut pool5, bound_names.iter().copied()).map_err(|d| {
-        if reveal_knowledge_v4.is_some() {
+        if reveal_evidence_v4.is_some() {
             return refuse(
                 RefusalCodeV1::R8,
                 "reveal minima exceed the public refill pool",
@@ -1574,6 +1636,9 @@ fn export_versioned(
     };
     let mut p0: HashMap<ObjectId, u32> = HashMap::new();
     for (r, region) in &refs {
+        if detached_paid(r).is_some() {
+            continue;
+        }
         // Mutant L4 links raw history references to current handles; its
         // epochs map on the same path, so they count toward p0 too.
         let raw_l4 =
@@ -1678,10 +1743,15 @@ fn export_versioned(
             // becomes a placeholder tombstone, so that the rest of the export
             // runs every other test; the export then refuses with the reveal
             // subclass instead of delivering these bytes.
-            if paid_tomb(&r) || reveal_placeholder(&r) {
-                let def = state.objects.get(o).card_def;
+            let historical = detached_paid(&r).or_else(|| {
+                (paid_tomb(&r) || reveal_placeholder(&r)).then(|| {
+                    let source = state.objects.get(o);
+                    (source.owner, source.card_def)
+                })
+            });
+            if let Some((owner, def)) = historical {
                 let id = tomb_base + tombstones.len() as u32;
-                tombstones.push(template(state.objects.get(o).owner, def, Zone::Command, 0));
+                tombstones.push(template(owner, def, Zone::Command, 0));
                 handles.push(HandleV1::H {
                     e: paid_e,
                     j: paid_k,
@@ -2008,10 +2078,10 @@ fn export_versioned(
     let mut out: GameState = serde_json::from_value(tagged)
         .map_err(|e| refuse(RefusalCodeV1::R2, format!("the export does not load: {e}")))?;
     out.resample_future_randomness_for_search_v3(INFOSET_RNG_SEED_V1);
-    let has_reveal_knowledge = reveal_knowledge_v4.is_some();
-    out.reveal_knowledge_v4 = reveal_knowledge_v4.map(|knowledge| {
+    let has_reveal_knowledge = reveal_evidence_v4.is_some();
+    out.reveal_knowledge_v4 = reveal_evidence_v4.map(|evidence| {
         let mut viewers = [Default::default(), Default::default()];
-        viewers[v.index()] = knowledge;
+        viewers[v.index()] = evidence.knowledge;
         viewers
     });
     if has_reveal_knowledge {

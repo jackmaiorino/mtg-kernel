@@ -15,8 +15,12 @@ The allocator reserves named canonical hand occupants, subtracts them from
 the public refill pool and fills the remaining slots through the existing
 canonical allocation. It refuses a bound beyond the hand size or available
 pool. A bound that may overlap an unresolved public pin also refuses until the
-allocator can represent that overlap. Existing ambiguous historical-reference
-refusals still apply. The digest binds a compact operation-boundary ledger
+allocator can represent that overlap. The selected transcript distinguishes
+search and continuously public non-stack arrivals from events that might hide
+an event-less move. For a public paid-cost receipt with no live reader, a
+named historical object carries the receipt without linking it to a later
+copy. References with a live identity consumer still require visible epoch
+evidence. The digest binds a compact operation-boundary ledger
 that retains the separate arrival count and present minimum for each name.
 Simulated reveal and departure hooks apply the same max-overlap and survivor
 arithmetic as the transcript reducer. The sampler sees deterministic rows

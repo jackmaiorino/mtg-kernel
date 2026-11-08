@@ -144,3 +144,67 @@ fn reveal_v4_roundtrip_continuation_matches_the_public_reducer() {
     }
     compare(&raw, &simulated, 0);
 }
+
+#[test]
+fn reveal_v4_real_aborted_cast_refills_by_public_name_in_paired_worlds() {
+    use crate::engine::{self, Action, Decision};
+    use crate::mana::ManaColor;
+    use crate::state::{Step, Target};
+
+    let id = super::fixtures::id;
+    let spell_def = id("Cast Down");
+    let island = id("Island");
+    let forest = id("Forest");
+    let target_def = id("Aegis Turtle");
+    let owner = PlayerId::P0;
+    let viewer = owner.opponent();
+    let decks = [
+        vec![spell_def, island, spell_def, forest],
+        vec![target_def, island],
+    ];
+    let world = |library: [u16; 4]| {
+        let mut state = GameState::new_from_libraries(&library, &decks[1], crate::rl::card_name, 543);
+        state.reveal_meaning_v3.enable();
+        state.step = Step::Main1;
+        for _ in 0..2 {
+            propose_and_commit(&mut state, ProposedEvent::draw(owner));
+        }
+        let target = state.players[viewer.index()].library[0];
+        propose_and_commit(&mut state, ProposedEvent::zone_change(target, Zone::Battlefield));
+        let spell = state.players[owner.index()]
+            .hand
+            .iter()
+            .copied()
+            .find(|&object| state.objects.get(object).card_def == spell_def)
+            .unwrap();
+        state.players[owner.index()].mana_pool[ManaColor::B.pool_index()] = 2;
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&spell)));
+        engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+        assert_eq!(state.objects.get(spell).zone, Zone::Stack);
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { .. }
+        ));
+        state.players[owner.index()].mana_pool.fill(0);
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        assert_eq!(state.objects.get(spell).zone, Zone::Hand);
+        state
+    };
+    let a = world([spell_def, island, spell_def, forest]);
+    let b = world([forest, spell_def, island, spell_def]);
+    assert_ne!(a.players[owner.index()].hand, b.players[owner.index()].hand);
+    assert_eq!(
+        a.reveal_meaning_v3.transcript(viewer),
+        b.reveal_meaning_v3.transcript(viewer)
+    );
+    let exported = export_reveal_v4(&input(&a, viewer, &decks)).unwrap();
+    assert_eq!(
+        exported.bytes,
+        export_reveal_v4(&input(&b, viewer, &decks)).unwrap().bytes
+    );
+    let known = exported.state.known_hand_cards(viewer, owner);
+    assert_eq!(known.len(), 1);
+    assert_eq!(exported.state.objects.get(known[0].object).card_def, spell_def);
+    super::payload::validate_reveal_knowledge_v4(&exported.state, viewer).unwrap();
+}
