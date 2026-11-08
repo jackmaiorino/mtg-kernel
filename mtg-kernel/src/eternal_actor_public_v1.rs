@@ -101,8 +101,9 @@ pub fn entry_option_v1(
         "Cavern of Souls" => {
             // The sealed owner derives this public menu from its exact own
             // reset mainboard. Do not inspect physical hidden library copies.
-            let options = known_cavern_types.ok_or_else(|| RlContractError(
-                "Cavern needs authenticated own-deck creature types".into()))?;
+            let options = known_cavern_types.ok_or_else(|| {
+                RlContractError("Cavern needs authenticated own-deck creature types".into())
+            })?;
             if options.len() != usize::from(*option_count) {
                 return Err(RlContractError("stale public creature-type menu".into()));
             }
@@ -148,12 +149,22 @@ pub(crate) fn require_continuous_needle_sources(state: &GameState) -> Result<(),
             (frozen.source, frozen.zone, frozen.zone_change_count)
         } else if let Some(frozen) = item.v4.ability_source_contract {
             (frozen.source, frozen.zone, frozen.zone_change_count)
-        } else { return Err(refusal()); };
-        if source != item.source || !matches!(zone, Zone::Battlefield | Zone::Stack | Zone::Graveyard | Zone::Exile) {
+        } else {
+            return Err(refusal());
+        };
+        if source != item.source
+            || !matches!(
+                zone,
+                Zone::Battlefield | Zone::Stack | Zone::Graveyard | Zone::Exile
+            )
+        {
             return Err(refusal());
         }
         let live = state.objects.try_get(source).ok_or_else(refusal)?;
-        if live.zone_change_count != incarnation || live.zone != zone || live.v4.face_down_v1.is_some() {
+        if live.zone_change_count != incarnation
+            || live.zone != zone
+            || live.v4.face_down_v1.is_some()
+        {
             return Err(refusal());
         }
     }
@@ -363,27 +374,48 @@ mod tests {
         for viewer in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(viewer);
             let needle = put(&mut state, viewer, "Pithing Needle", Zone::Battlefield);
-            let source = put(&mut state, viewer.opponent(), "Wasteland", Zone::Battlefield);
+            let source = put(
+                &mut state,
+                viewer.opponent(),
+                "Wasteland",
+                Zone::Battlefield,
+            );
             let frozen = AbilitySourceContractV4::capture(&state, source);
             state.stack.push(StackItem {
-                kind: StackItemKind::ActivatedAbility, source, controller: viewer.opponent(),
-                targets: Vec::new(), is_copy: false, inline_effect: None, discarded: Vec::new(),
-                is_flashback: false, mode_chosen: 0, madness_offer: false, kicked: false,
-                v4: StackStateV4 { ability_source_contract: Some(frozen), ..Default::default() },
+                kind: StackItemKind::ActivatedAbility,
+                source,
+                controller: viewer.opponent(),
+                targets: Vec::new(),
+                is_copy: false,
+                inline_effect: None,
+                discarded: Vec::new(),
+                is_flashback: false,
+                mode_chosen: 0,
+                madness_offer: false,
+                kicked: false,
+                v4: StackStateV4 {
+                    ability_source_contract: Some(frozen),
+                    ..Default::default()
+                },
             });
             let action = crate::rl::ActionSemanticV1::ChooseEffectOption {
-                actor: viewer.into(), source: crate::rl::card_ref(&state, needle).unwrap(),
-                option_index: 0, option_count: 1,
+                actor: viewer.into(),
+                source: crate::rl::card_ref(&state, needle).unwrap(),
+                option_index: 0,
+                option_count: 1,
             };
             assert!(require_continuous_needle_sources(&state).is_ok());
-            for (zone, incarnation) in [(Zone::Hand, 1), (Zone::Library, 1), (Zone::Battlefield, 2)] {
+            for (zone, incarnation) in [(Zone::Hand, 1), (Zone::Library, 1), (Zone::Battlefield, 2)]
+            {
                 for name in ["Island", "Forest", "Force of Will"] {
                     let live = state.objects.get_mut(source);
                     live.zone = zone;
                     live.zone_change_count = incarnation;
                     live.card_def = crate::card_def::card_id_by_name(name).unwrap();
-                    assert_eq!(entry_option_v1(&state, &action, None).unwrap_err().0,
-                        "Needle menu needs continuous public stack sources");
+                    assert_eq!(
+                        entry_option_v1(&state, &action, None).unwrap_err().0,
+                        "Needle menu needs continuous public stack sources"
+                    );
                 }
             }
         }
