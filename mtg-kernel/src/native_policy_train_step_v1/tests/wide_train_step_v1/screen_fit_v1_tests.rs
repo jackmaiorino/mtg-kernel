@@ -425,7 +425,8 @@ fn screen_fit_records_game_ids_and_outcome_provenance() {
 #[test]
 fn screen_fit_one_update_consumes_manual_acting_seat_targets() {
     let (fit, heldout) = (fit_games_v1(), heldout_games_v1());
-    let config = config_v1(1, 8);
+    let mut config = config_v1(1, 8);
+    config.heldout_every_steps = 1;
     let mut actual = narrow_state_v1();
     let mut expected = actual.clone();
     let order = screen_minibatch_order_v1(config.minibatch_seed, 8, 8, 1);
