@@ -3386,7 +3386,7 @@ mod tests {
         serde_json::from_value(update["checkpoint"].clone()).unwrap()
     }
 
-    fn checkpoint_identity_v1(pin: &PinnedFileV1) -> (String, String, u64) {
+    fn checkpoint_document_v1(pin: &PinnedFileV1) -> Value {
         // The default writes containers for these kinds; read either format.
         let bytes = fs::read(&pin.path).unwrap();
         let bytes =
@@ -3396,7 +3396,11 @@ mod tests {
             } else {
                 bytes
             };
-        let checkpoint: Value = serde_json::from_slice(&bytes).unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    fn checkpoint_identity_v1(pin: &PinnedFileV1) -> (String, String, u64) {
+        let checkpoint = checkpoint_document_v1(pin);
         (
             checkpoint["feature_contract_digest"]
                 .as_str()
@@ -3500,6 +3504,26 @@ mod tests {
                 (FEATURE_CONTRACT_DIGEST_V8, FEATURE_ENCODING_DIGEST_V8)
             );
             assert_eq!(adam_step, step);
+        }
+        // The same two updates without a pause must reach identical full
+        // train states, including all optimizer moments after the next update.
+        let mut uninterrupted = v8.clone();
+        uninterrupted.output_directory = temporary_directory("flat-v8-uninterrupted").join("run");
+        let continuous = run_native_expanded_training_v1(&uninterrupted, None).unwrap();
+        for index in 0..2 {
+            let resumed = checkpoint_document_v1(&iteration_checkpoint_v1(&result, index));
+            let straight = checkpoint_document_v1(&iteration_checkpoint_v1(&continuous, index));
+            assert_eq!(
+                resumed["state_sha256"], straight["state_sha256"],
+                "update {index} state"
+            );
+            for field in ["first_moments", "second_moments"] {
+                assert_eq!(resumed[field].as_array().unwrap().len(), 37);
+                assert_eq!(
+                    resumed[field], straight[field],
+                    "update {index} {field} bits"
+                );
+            }
         }
     }
 
