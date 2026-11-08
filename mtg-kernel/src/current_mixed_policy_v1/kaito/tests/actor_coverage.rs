@@ -239,6 +239,66 @@ fn learner_fixture() -> crate::current_tree_learner_v1::AuthenticatedInputV1 {
     crate::current_tree_learner_v1::AuthenticatedInputV1::from_current(packet, &actions).unwrap()
 }
 
+#[test]
+fn issue454_authenticated_ingress_maps_all_six_typed_action_flags() {
+    use crate::current_tree_learner_v1::AuthenticatedInputV1;
+    let actor = crate::rl::PlayerSeatV1::P0;
+    let source = crate::rl::CardStableRefV1 {
+        arena_id: 7,
+        card_db_id: 0,
+        owner: actor,
+        controller: actor,
+        zone: Zone::Battlefield,
+        zone_change_count: 0,
+    };
+    let packet = learner_fixture();
+    for bit in [false, true] {
+        let variants = [
+            A::ChooseKicker {
+                actor,
+                source: source.clone(),
+                pay: bit,
+            },
+            A::ChooseSpellCopyRetarget {
+                actor,
+                source: source.clone(),
+                change_target: bit,
+            },
+            A::ChooseOptionalCostUse {
+                actor,
+                use_cost: bit,
+            },
+            A::ChooseMadnessCast {
+                actor,
+                card: source.clone(),
+                cast_it: bit,
+            },
+            A::ChooseEffectBoolean {
+                actor,
+                source: source.clone(),
+                value: bit,
+            },
+            A::ChooseAttackerInclusion {
+                actor,
+                attacker: source.clone(),
+                include: bit,
+            },
+        ];
+        for (index, action) in variants.into_iter().enumerate() {
+            // Internal unit boundary only. The live fixture separately proves
+            // sealed capture authenticates the packet and the actual actions.
+            let input = AuthenticatedInputV1::from_current(
+                packet.packet().clone(),
+                &[action.clone(), action],
+            )
+            .unwrap();
+            let mut expected = [false; 6];
+            expected[index] = bit;
+            assert_eq!(input.action_flags(), &[expected; 2]);
+        }
+    }
+}
+
 fn adam() -> crate::current_tree_learner_v1::AdamConfigV1 {
     crate::current_tree_learner_v1::AdamConfigV1 {
         learning_rate: 0.001,
