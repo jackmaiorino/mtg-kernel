@@ -381,17 +381,11 @@ mod tests {
         }
     }
 
-    fn issue567_tensor(
+    fn issue567_encode(
         state: crate::state::GameState,
         observer: PlayerId,
         encoder: &mut FlatDecisionEncoderV4,
-    ) -> (
-        crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2,
-        Vec<i64>,
-    ) {
-        use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
-        use crate::native_flat_tensorizer_v8::NativeFlatTensorizerV8;
-
+    ) -> (OwnedScoringV4, FlatDecisionV4) {
         let session = FastActorSessionV1::from_v3_fixture_state(state);
         let FastActorResponseV1::Decision(current) = session.current_response() else {
             panic!("expected an observer response decision");
@@ -402,13 +396,35 @@ mod tests {
         let decision = session
             .encode_current_flat_scoring_decision_owned_v4(current, encoder, &mut owned.buffers())
             .unwrap();
+        (owned, decision)
+    }
+
+    fn issue567_tensor(
+        state: crate::state::GameState,
+        observer: PlayerId,
+        encoder: &mut FlatDecisionEncoderV4,
+    ) -> (
+        crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2,
+        Vec<i64>,
+    ) {
+        let (owned, decision) = issue567_encode(state, observer, encoder);
+        issue567_tensor_view(owned.view(&decision))
+    }
+
+    fn issue567_tensor_view(
+        view: FlatScoringDecisionViewV4<'_>,
+    ) -> (
+        crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2,
+        Vec<i64>,
+    ) {
+        use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
+        use crate::native_flat_tensorizer_v8::NativeFlatTensorizerV8;
+
         let mut tensor = NativeFlatDecisionTensorV2::default();
         let mut pairing = Vec::new();
         let mut tensorizer = NativeFlatTensorizerV8::default();
         tensorizer.set_state_digest_v1(true);
-        tensorizer
-            .fill(owned.view(&decision), &mut tensor, &mut pairing)
-            .unwrap();
+        tensorizer.fill(view, &mut tensor, &mut pairing).unwrap();
         (tensor, pairing)
     }
 
@@ -434,6 +450,7 @@ mod tests {
     #[test]
     fn issue567_monstrous_emergence_keeps_public_cost_without_identifying_a_copy() {
         use crate::engine::{self, Action, Decision};
+        use crate::flat_policy_v2::{FlatObjectGroupV2, FlatRelationRoleV2};
         use crate::mana::ManaColor;
         use crate::policy_observation_v6::tests::{put, ready_state};
         use crate::state::{Target, Zone};
@@ -485,7 +502,26 @@ mod tests {
             if state.priority_player == actor {
                 engine::step(&mut state, Action::Pass).unwrap();
             }
-            issue567_tensor(state, observer, &mut encoder)
+            let (owned, decision) = issue567_encode(state, observer, &mut encoder);
+            let [cost] = decision
+                .extensions
+                .finalized_chosen_creature_costs
+                .as_slice()
+            else {
+                panic!("expected one publicly revealed creature payment");
+            };
+            let chosen_row = owned.objects[cost.chosen_object as usize];
+            let hunter = crate::card_def::card_id_by_name("Avenging Hunter").unwrap();
+            assert_eq!(cost.power_lki, 5);
+            assert_eq!(chosen_row.card_token, u32::from(hunter) + 1);
+            assert_eq!(chosen_row.group, FlatObjectGroupV2::HistoricalPaidCost);
+            assert!(owned.relations.iter().any(|relation| {
+                relation.role == FlatRelationRoleV2::PaidCost
+                    && relation.primary_order == cost.stack_index
+                    && relation.source_object == Some(cost.source_object)
+                    && relation.target_object == Some(cost.chosen_object)
+            }));
+            issue567_tensor_view(owned.view(&decision))
         });
         assert_eq!(tensors[0], tensors[1]);
     }
@@ -811,6 +847,11 @@ mod tests {
         assert_eq!(
             owned.objects[source_row as usize].group,
             FlatObjectGroupV2::PendingContext
+        );
+        let chancellor = crate::card_def::card_id_by_name("Chancellor of the Annex").unwrap();
+        assert_eq!(
+            owned.objects[source_row as usize].card_token,
+            u32::from(chancellor) + 1
         );
         assert!(!owned.action_refs.is_empty());
         assert!(owned
