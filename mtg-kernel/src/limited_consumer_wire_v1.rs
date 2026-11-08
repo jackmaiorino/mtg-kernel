@@ -208,3 +208,49 @@ impl ProfileWireV1 {
         Ok(self.inner.handle_request(delegated))
     }
 }
+
+pub(crate) fn preflight_single_appendix(
+    config: &ResetV1,
+    printing: u16,
+    exact_printing: impl FnOnce() -> Result<u16, String>,
+    label: &str,
+) -> Result<(), String> {
+    if !cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) {
+        return Err(format!("{label} profile requires the Foundations catalog"));
+    }
+    if config.expected_card_db_hash != crate::card_def::KERNEL_CARDDB_HASH {
+        return Err("catalog mismatch".into());
+    }
+    if config.max_physical_decisions == 0
+        || config.max_policy_steps == 0
+        || config.mainboards.iter().any(|deck| {
+            !(40..=crate::limited_session_v1::MAX_CUSTOM_DECK_CARDS_V1).contains(&deck.len())
+        })
+    {
+        return Err(format!("invalid {label} profile reset"));
+    }
+    if exact_printing()? != printing {
+        return Err(format!("{label} profile printing identity changed"));
+    }
+    for deck in &config.mainboards {
+        for &id in deck {
+            let def = crate::card_def::CARD_DEFS
+                .get(usize::from(id))
+                .ok_or("unknown declared card")?;
+            if def.is_token || !(def.has_full_support() || (id == printing && def.is_executable()))
+            {
+                return Err(format!("card {id} is outside the {label} consumer profile"));
+            }
+            if id != printing {
+                crate::rl::require_declared_cards_for_scope(
+                    crate::rl::CommonProjectionScopeV42::KaitoV75,
+                    std::slice::from_ref(&id),
+                )?;
+            }
+        }
+    }
+    Ok(())
+}

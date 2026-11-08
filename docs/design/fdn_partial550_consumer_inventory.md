@@ -264,3 +264,30 @@ update. Current-slot sampling refuses this profile until native entry
 checkpoints can be rebound safely. Native qualification requires
 `chosen_type_consumer_v1::tests::`, the rules-only Courtyard regression,
 and the `kernel_limited_chosen_type_env_v1` binary.
+
+## Niv-Mizzet declared-deck source
+
+`fdn-niv-consumer/v1` gates the exact Niv-Mizzet, Visionary461 definition and
+ordinary Full cards. It selects a separate private appendix scope before the
+first V75 menu. The existing Artist, Return, V68 through V75, and standalone
+V75 entry points preserve their prior scopes. `kernel_limited_niv_env_v1`
+requires the Niv profile envelope and returns the current actor's distinct
+safe Human payload.
+
+The native resolution route consumes a move-only owner of the published draw
+row after actual stack removal. A completed receipt recaptures the exact
+committed draw span, including unsuccessful draws from an empty library.
+Countering records a separate terminal outcome and produces no draw count.
+Other removals and histories predating the receipt carry the neutral stage
+with no result. Public facts bind the result to its original damage occurrence
+and keep draw identities, private stack IDs, and history offsets in native
+state. They retain the damage-event controller, captured observer controller,
+final damage, commanded amount, and current no-maximum-hand-size result.
+
+Focused source tests cover genuine paid 40-card resets in both seats,
+native draw counts with full, short and empty libraries, explicit counter
+and interrupted raw-effect refusal, and sealed native/Human/wire/numeric
+action parity across independently initialized hidden draws and restores.
+The V3 learner reset installs the public name/count ledger before advance.
+The profile refuses current-slot sampling. Native qualification, including
+harvest of the new event-kind sample, remains pending.

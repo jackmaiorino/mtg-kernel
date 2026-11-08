@@ -2344,7 +2344,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49(
         accepted_planes,
         false,
         None,
-        crate::policy_surface_v5::KaitoConsumerV1::Legacy,
+        crate::policy_surface_v5::LimitedAppendixV1::Legacy,
     )
 }
 
@@ -2359,11 +2359,11 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     accepted_planes: AcceptedPlanesV49,
     accept_fake: bool,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
-    consumer: crate::policy_surface_v5::KaitoConsumerV1,
+    consumer: crate::policy_surface_v5::LimitedAppendixV1,
 ) -> Result<ObservationV2> {
-    use crate::policy_surface_v5::KaitoConsumerV1;
+    use crate::policy_surface_v5::LimitedAppendixV1;
     let owning_kaito = text_mode == ObservationTextModeV2::KaitoV75Artifact;
-    let chosen_type = owning_kaito && consumer == KaitoConsumerV1::ChosenType;
+    let chosen_type = owning_kaito && consumer == LimitedAppendixV1::ChosenType;
     if !matches!(
         text_mode,
         ObservationTextModeV2::NextFiveV59Artifact
@@ -2749,7 +2749,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
                 accept_fake,
                 text_mode.complete_source_scope(),
                 conqueror_proof,
-                owning_kaito && consumer == KaitoConsumerV1::Artist,
+                owning_kaito && consumer == LimitedAppendixV1::Artist,
             )?
         } else {
             engine_context_v2(
@@ -3423,7 +3423,7 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
         ),
         accept_fake,
         conqueror_proof,
-        surface.kaito_consumer_v1(),
+        surface.limited_appendix_v1(),
     )?;
     let context = policy_surface_context_v5(
         state,
@@ -4401,7 +4401,7 @@ fn common_family_observation_storage_with_proof(
             crate::chandra_observation_v74::validate_state(state)
         }
         CommonProjectionScopeV42::KaitoV75 => {
-            crate::kaito_observation_v75::validate_state_scoped(state, surface.kaito_consumer_v1())
+            crate::kaito_observation_v75::validate_state_scoped(state, surface.limited_appendix_v1())
         }
         CommonProjectionScopeV42::GenesisWaveV69 => {
             crate::genesis_wave_observation_v69::validate_state(state)
@@ -5598,8 +5598,8 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
                 state,
                 text_mode,
                 text_mode == ObservationTextModeV2::KaitoV75Artifact
-                    && surface.kaito_consumer_v1()
-                        == crate::policy_surface_v5::KaitoConsumerV1::ChosenType,
+                    && surface.limited_appendix_v1()
+                        == crate::policy_surface_v5::LimitedAppendixV1::ChosenType,
             )?,
             surface: base.projection,
             policy_surface_context,
@@ -10409,10 +10409,9 @@ pub(crate) fn core_policy_action_candidates_chandra_v74(
 pub(crate) fn core_policy_action_candidates_kaito_scoped_v75(
     decision: &PolicyDecisionV5,
     state: &GameState,
-    consumer: crate::policy_surface_v5::KaitoConsumerV1,
+    appendix: crate::policy_surface_v5::LimitedAppendixV1,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
-    crate::kaito_observation_v75::validate_state_scoped(state, consumer)
-        .map_err(RlContractError)?;
+    crate::kaito_observation_v75::validate_state_scoped(state, appendix).map_err(RlContractError)?;
     core_policy_action_candidates_next_five_scoped_v59(
         decision,
         state,

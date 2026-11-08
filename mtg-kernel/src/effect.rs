@@ -20924,26 +20924,11 @@ fn execute_with_native_row_v1(
                 ctx.source,
             ));
         }
-        EffectOp::NivMizzetVisionaryDrawV1 {
-            damage_history_index,
-        } => {
-            let count = match event::resolve_niv_mizzet_visionary_draw_count_v1(
-                state,
-                ctx,
-                *damage_history_index,
-            ) {
-                Ok(count) => count,
-                Err(_) => {
-                    state.engine.halted = Some((
-                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                        ctx.source,
-                    ));
-                    return;
-                }
-            };
-            for _ in 0..count.max(0) {
-                event::propose_and_commit(state, event::ProposedEvent::draw(ctx.controller));
-            }
+        EffectOp::NivMizzetVisionaryDrawV1 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::EachPlayerControllingDefinitionDrawsCard { card_def } => {
             // APNAP-stable order: P0 then P1. Bonder's Ornament's own

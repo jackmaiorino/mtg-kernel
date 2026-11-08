@@ -8,7 +8,7 @@ use crate::{
     limited_kaito_session_v16::{LimitedKaitoBodyV16 as Body, LimitedKaitoStateV16 as State},
     mana::ManaColor,
     policy_observation_v6::tests::put,
-    policy_surface_v5::KaitoConsumerV1,
+    policy_surface_v5::LimitedAppendixV1,
     rl::ActionSemanticV1 as A,
     rl_session::{FastActorResponseV1, KaitoSessionV75},
 };
@@ -227,9 +227,9 @@ fn genuine_courtyard_choices_preserve_private_world_and_all_consumer_index_bindi
                 let mut state = crate::call_observation_v62::tests::ready(actor, hidden);
                 put(&mut state, actor.opponent(), hand, Zone::Hand);
                 let courtyard = put(&mut state, actor, "Secluded Courtyard", Zone::Hand);
-                let mut raw = FastActorSessionV1::from_kaito_consumer_fixture_state(
+                let mut raw = FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
                     state,
-                    KaitoConsumerV1::ChosenType,
+                    LimitedAppendixV1::ChosenType,
                 );
                 let FastActorResponseV1::Decision(expected) = raw.current_response() else {
                     panic!("initial fixture menu absent");

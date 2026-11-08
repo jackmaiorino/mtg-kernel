@@ -15,7 +15,7 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
 use crate::phase_profile::{measure_optional, RlPhaseProfileV1, RlPhaseV1};
 use crate::policy_surface_v5::{
-    FastActorInPlaceApplyErrorV1, KaitoConsumerV1, PolicyActionV5, PolicyDecisionV5,
+    FastActorInPlaceApplyErrorV1, LimitedAppendixV1, PolicyActionV5, PolicyDecisionV5,
     PolicySurfaceContextIdsV5, PolicySurfaceV5, POLICY_ENVIRONMENT_HASH_ALGORITHM,
     POLICY_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2, POLICY_SURFACE_VERSION,
 };
@@ -537,9 +537,9 @@ pub(crate) fn kaito_candidates_v75(
     state: &crate::state::GameState,
     surface: &PolicySurfaceV5,
 ) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
-    let scope = surface.kaito_consumer_v1();
+    let scope = surface.limited_appendix_v1();
     crate::kaito_observation_v75::validate_state_scoped(state, scope).map_err(RlContractError)?;
-    if scope == KaitoConsumerV1::ChosenType {
+    if scope == LimitedAppendixV1::ChosenType {
         if let Some(candidates) = crate::chosen_type_consumer_v1::entry_candidates(state, origin)? {
             return Ok(candidates);
         }

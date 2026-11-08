@@ -3,7 +3,7 @@
 //! This module grants no session, action execution, model or transport admission.
 use crate::{
     ids::PlayerId,
-    policy_surface_v5::{KaitoConsumerV1, PolicyDecisionV5, PolicySurfaceV5},
+    policy_surface_v5::{LimitedAppendixV1, PolicyDecisionV5, PolicySurfaceV5},
     rl::{CardStableRefV1, RlContractError},
     state::GameState,
 };
@@ -63,6 +63,8 @@ pub struct KaitoObservationV75 {
         deserialize_with = "strict_value"
     )]
     pub chosen_type: Option<crate::chosen_type_consumer_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "strict_value")]
+    pub niv: Option<crate::niv_mizzet_public_v63::ConsumerFactsV1>,
     pub complete_ordinary_observation: bool,
     pub owning_consumer_admitted: bool,
     pub projection_sha256: String,
@@ -200,11 +202,11 @@ pub fn commitment(value: &KaitoObservationV75) -> Result<String, RlContractError
         .collect())
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
-    validate_state_scoped(state, KaitoConsumerV1::Legacy)
+    validate_state_scoped(state, LimitedAppendixV1::Legacy)
 }
 pub(crate) fn validate_state_scoped(
     state: &GameState,
-    scope: KaitoConsumerV1,
+    appendix: LimitedAppendixV1,
 ) -> Result<(), String> {
     crate::effect::kaito_cunning_v75::validate_state(state)?;
     crate::effect::kaito_cunning_v75::validate_pending(state)?;
@@ -220,8 +222,8 @@ pub(crate) fn validate_state_scoped(
     crate::engine::ordinary_cleanup_v1::validate(state)?;
     crate::engine::validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
-    require_supported(state, None, scope)?;
-    if scope == KaitoConsumerV1::ChosenType {
+    require_supported(state, None, appendix)?;
+    if appendix == LimitedAppendixV1::ChosenType {
         crate::banner_of_kinship_v1::entry::validate_state(state)?;
     }
     crate::ravenous_observation_v51::validate_state_complete_recipient_scope(
@@ -229,7 +231,7 @@ pub(crate) fn validate_state_scoped(
         crate::planeswalker_v1::RecipientScopeV1::KaitoV75,
     )?;
     crate::elenda_public_v52::capture(state).map_err(|e| e.0)?;
-    crate::drake_public_v53::capture_kaito_compat_v75(state, scope == KaitoConsumerV1::ChosenType)
+    crate::drake_public_v53::capture_kaito_compat_v75(state, appendix == LimitedAppendixV1::ChosenType)
         .map_err(|e| e.0)?;
     crate::spinner_public_v54::capture_kaito_compat_v75(state)?;
     crate::phoenix_public_v56::capture(state).map_err(|e| e.0)?;
@@ -250,16 +252,18 @@ pub(crate) fn validate_state_scoped(
 fn require_supported(
     state: &GameState,
     viewer: Option<PlayerId>,
-    scope: KaitoConsumerV1,
+    appendix: LimitedAppendixV1,
 ) -> Result<(), String> {
     use crate::{event::CommittedEvent as E, optional_trigger_public_v1 as public};
-    let artist = (scope == KaitoConsumerV1::Artist)
-        .then(crate::rules_meaning_artist_v64::selected_id)
-        .transpose()?;
+    let selected = match appendix {
+        LimitedAppendixV1::Legacy | LimitedAppendixV1::ChosenType => None,
+        LimitedAppendixV1::Artist => Some(crate::rules_meaning_artist_v64::selected_id()?),
+        LimitedAppendixV1::Niv => Some(crate::rules_meaning_niv_mizzet_v63::selected_id()?),
+    };
     let unsupported = |id: u16| {
         id >= 460
-            && artist != Some(id)
-            && !(scope == KaitoConsumerV1::ChosenType
+            && selected != Some(id)
+            && !(appendix == LimitedAppendixV1::ChosenType
                 && crate::banner_of_kinship_v1::entry::owns_entry_definition(id))
             && !crate::engine::time_stop_v1::definition(id)
             && !crate::effect::genesis_wave_v1::definition(id)
@@ -332,7 +336,8 @@ fn require_supported(
             E::NivMizzetVisionaryDamageSourceDepartureV1 { source, .. } => {
                 unsupported(source.card_def)
             }
-            E::KinshipEntryV1 { .. } => scope != KaitoConsumerV1::ChosenType,
+            E::NivMizzetVisionaryDrawEndedV1 { .. } => appendix != LimitedAppendixV1::Niv,
+            E::KinshipEntryV1 { .. } => appendix != LimitedAppendixV1::ChosenType,
             E::SphinxsTutelageDrawV1 { .. }
             | E::SphinxsTutelageCollectedV1 { .. }
             | E::SphinxsTutelagePublishedV1 { .. }
@@ -438,7 +443,13 @@ pub(crate) fn stack_source_reference(
     let artist_trigger = item.kind == crate::state::StackItemKind::TriggeredAbility
         && source.card_def == crate::artist_consumer_v1::PRINTING_V1
         && item.inline_effect.as_ref() == Some(&crate::effect::perforating_artist_v1::raid());
-    if !selected_source(source) && !artist_trigger {
+    let niv_trigger = item.kind == crate::state::StackItemKind::TriggeredAbility
+        && source.card_def == crate::niv_consumer_v1::PRINTING_V1
+        && matches!(
+            item.inline_effect,
+            Some(crate::effect::EffectOp::NivMizzetVisionaryDrawV1 { .. })
+        );
+    if !selected_source(source) && !artist_trigger && !niv_trigger {
         return Ok(None);
     }
     crate::engine::time_stop_v1::validate(state).map_err(RlContractError)?;
@@ -476,7 +487,12 @@ pub(crate) fn pending_source_reference(
     };
     let artist_trigger = source.card_def == crate::artist_consumer_v1::PRINTING_V1
         && pending.effect == crate::effect::perforating_artist_v1::raid();
-    if !selected_source(source) && !artist_trigger {
+    let niv_trigger = source.card_def == crate::niv_consumer_v1::PRINTING_V1
+        && matches!(
+            pending.effect,
+            crate::effect::EffectOp::NivMizzetVisionaryDrawV1 { .. }
+        );
+    if !selected_source(source) && !artist_trigger && !niv_trigger {
         return Ok(None);
     }
     crate::engine::time_stop_v1::validate(state).map_err(RlContractError)?;
@@ -508,9 +524,9 @@ pub fn observe_v75(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<KaitoObservationV75, RlContractError> {
-    if surface.kaito_consumer_v1() != KaitoConsumerV1::Legacy {
+    if surface.limited_appendix_v1() != crate::policy_surface_v5::LimitedAppendixV1::Legacy {
         return Err(RlContractError(
-            "Artist decisions require their owning profile".into(),
+            "Appendix decisions require their owning profile".into(),
         ));
     }
     observe_parts_v75(state, surface, actor_and_origin, step, physical, substep)
@@ -524,9 +540,9 @@ pub(crate) fn observe_parts_v75(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<KaitoPublicPartsV75, RlContractError> {
-    let scope = surface.kaito_consumer_v1();
-    validate_state_scoped(state, scope).map_err(RlContractError)?;
-    require_supported(state, Some(actor_and_origin.0), scope).map_err(RlContractError)?;
+    let appendix = surface.limited_appendix_v1();
+    validate_state_scoped(state, appendix).map_err(RlContractError)?;
+    require_supported(state, Some(actor_and_origin.0), appendix).map_err(RlContractError)?;
     let (inherited, families) = crate::ravenous_observation_v51::observe_parts_complete_kaito_v75(
         state,
         surface,
@@ -544,17 +560,18 @@ pub(crate) fn observe_parts_v75(
     };
     common.projection_sha256 = crate::elenda_observation_v52::commitment(&common)?;
     let mut value = KaitoObservationV75 {
-        schema: match scope {
-            KaitoConsumerV1::Artist => crate::artist_consumer_v1::OBSERVATION_SCHEMA,
-            KaitoConsumerV1::ChosenType => crate::chosen_type_consumer_v1::OBSERVATION_SCHEMA,
-            KaitoConsumerV1::Legacy => SCHEMA,
+        schema: match appendix {
+            LimitedAppendixV1::Legacy => SCHEMA,
+            LimitedAppendixV1::Artist => crate::artist_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Niv => crate::niv_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::ChosenType => crate::chosen_type_consumer_v1::OBSERVATION_SCHEMA,
         }
         .into(),
         producer_sha256: producer_sha256(),
         common,
         drake: crate::drake_public_v53::capture_kaito_compat_v75(
             state,
-            scope == KaitoConsumerV1::ChosenType,
+            appendix == LimitedAppendixV1::ChosenType,
         )?,
         spinner: crate::spinner_public_v54::capture_kaito_compat_v75(state)
             .map_err(RlContractError)?,
@@ -594,11 +611,15 @@ pub(crate) fn observe_parts_v75(
             .map_err(RlContractError)?,
         kaito: crate::kaito_public_v75::capture(state, actor_and_origin.0)
             .map_err(RlContractError)?,
-        artist: (scope == KaitoConsumerV1::Artist)
+        artist: (appendix == LimitedAppendixV1::Artist)
             .then(|| crate::artist_consumer_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
-        chosen_type: (scope == KaitoConsumerV1::ChosenType)
+        niv: (appendix == LimitedAppendixV1::Niv)
+            .then(|| crate::niv_mizzet_public_v63::capture_for_consumer(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
+        chosen_type: (appendix == LimitedAppendixV1::ChosenType)
             .then(|| crate::chosen_type_consumer_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
@@ -623,22 +644,22 @@ pub(crate) fn observe_parts_v75(
 /// Standalone checks do not prove that an untrusted sender supplied every
 /// historical row or terminal. Neither function grants action or restore authority.
 pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractError> {
-    let schema = if let Some(chosen_type) = &value.chosen_type {
-        if value.artist.is_some() {
-            return Err(RlContractError("mixed Kaito profile appendices".into()));
+    let actor = value.common.common.acting_player;
+    let schema = match (&value.artist, &value.niv, &value.chosen_type) {
+        (Some(artist), None, None) => {
+            crate::artist_consumer_v1::validate_facts(artist, actor).map_err(RlContractError)?;
+            crate::artist_consumer_v1::OBSERVATION_SCHEMA
         }
-        crate::chosen_type_consumer_v1::validate_facts(
-            chosen_type,
-            value.common.common.acting_player,
-        )
-        .map_err(RlContractError)?;
-        crate::chosen_type_consumer_v1::OBSERVATION_SCHEMA
-    } else if let Some(artist) = &value.artist {
-        crate::artist_consumer_v1::validate_facts(artist, value.common.common.acting_player)
-            .map_err(RlContractError)?;
-        crate::artist_consumer_v1::OBSERVATION_SCHEMA
-    } else {
-        SCHEMA
+        (None, Some(niv), None) => {
+            crate::niv_consumer_v1::validate_facts(niv, actor).map_err(RlContractError)?;
+            crate::niv_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (None, None, Some(chosen_type)) => {
+            crate::chosen_type_consumer_v1::validate_facts(chosen_type, actor).map_err(RlContractError)?;
+            crate::chosen_type_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (None, None, None) => SCHEMA,
+        _ => return Err(RlContractError("mixed appendix profiles".into())),
     };
     crate::muldrotha_public_v71::validate_tinybones_compat_v72(&value.muldrotha)
         .map_err(RlContractError)?;

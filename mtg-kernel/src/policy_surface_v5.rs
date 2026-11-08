@@ -376,10 +376,12 @@ impl CombatScanV5 {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum KaitoConsumerV1 {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum LimitedAppendixV1 {
+    #[default]
     Legacy,
     Artist,
+    Niv,
     ChosenType,
 }
 
@@ -389,7 +391,7 @@ pub struct PolicySurfaceV5 {
     scan: Option<CombatScanV5>,
     hunter_order_enabled_v45: bool,
     hunter_order_v45: Option<hunter_order_v45::TriggerOrderV45>,
-    kaito_consumer_v1: KaitoConsumerV1,
+    limited_appendix_v1: LimitedAppendixV1,
     /// W1 producer (lead ruling 7 (a)): where each presented decision fell
     /// in the committed stream, as (seat, event-history length, observation
     /// journal length), oldest first. A seat's marks bound the batches its
@@ -1025,7 +1027,7 @@ impl PolicySurfaceV5 {
             scan: None,
             hunter_order_enabled_v45: false,
             hunter_order_v45: None,
-            kaito_consumer_v1: KaitoConsumerV1::Legacy,
+            limited_appendix_v1: LimitedAppendixV1::Legacy,
             infoset_marks_v1: Default::default(),
         }
     }
@@ -1039,17 +1041,17 @@ impl PolicySurfaceV5 {
             scan: None,
             hunter_order_enabled_v45: false,
             hunter_order_v45: None,
-            kaito_consumer_v1: KaitoConsumerV1::Legacy,
+            limited_appendix_v1: LimitedAppendixV1::Legacy,
             infoset_marks_v1: Default::default(),
         }
     }
 
-    pub(crate) fn set_kaito_consumer_v1(&mut self, consumer: KaitoConsumerV1) {
-        self.kaito_consumer_v1 = consumer;
+    pub(crate) fn set_limited_appendix_v1(&mut self, appendix: LimitedAppendixV1) {
+        self.limited_appendix_v1 = appendix;
     }
 
-    pub(crate) fn kaito_consumer_v1(&self) -> KaitoConsumerV1 {
-        self.kaito_consumer_v1
+    pub(crate) fn limited_appendix_v1(&self) -> LimitedAppendixV1 {
+        self.limited_appendix_v1
     }
 
     pub fn harness_surface(&self) -> &HarnessSurfaceV2 {

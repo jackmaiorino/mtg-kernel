@@ -1,5 +1,6 @@
 use super::*;
 use crate::{
+    card_def::KERNEL_CARDDB_HASH,
     current_mixed_policy_v1::KaitoDecision,
     current_tree_learner_v1::{AdamConfigV1, LearnerV1, ModelV1, TrainingExampleV1},
     effect::perforating_artist_v1::tests as native_paid,
@@ -195,7 +196,12 @@ struct Owners {
 
 impl Owners {
     fn fixture(state: GameState, seat: PlayerSeatV1) -> Self {
-        let make = || FastActorSessionV1::from_kaito_v75_fixture_state_scoped(state.clone(), true);
+        let make = || {
+            FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
+                state.clone(),
+                crate::policy_surface_v5::LimitedAppendixV1::Artist,
+            )
+        };
         let mut wire = JsonlServerV1::new();
         wire.0
             .install_fixture_core(KaitoSessionV75::from_session(make()).unwrap());
@@ -394,7 +400,7 @@ fn paid_artist_choice_parity_private_hand_pairs_and_authenticated_restore_both_s
                 let human_controller = HumanKaitoSessionV75::from_session(
                     FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
                         a.numeric.fixture_state().clone(),
-                        true,
+                        crate::policy_surface_v5::LimitedAppendixV1::Artist,
                     ),
                     controller.into(),
                 )

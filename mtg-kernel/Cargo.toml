@@ -293,6 +293,11 @@ path = "src/bin/kernel_limited_chosen_type_env_v1.rs"
 required-features = ["limited-fdn-fixtures"]
 
 [[bin]]
+name = "kernel_limited_niv_env_v1"
+path = "src/bin/kernel_limited_niv_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
 name = "kernel_limited_match_v1"
 path = "src/bin/kernel_limited_match_v1.rs"
 required-features = ["limited-fdn-fixtures"]

@@ -1081,3 +1081,4 @@ mod limited_consumer_wire_v1;
 pub mod limited_kaito_session_v16;
 pub mod limited_return_consumer_v1;
 pub mod limited_v68_v75_consumer_v1;
+pub mod niv_consumer_v1;
