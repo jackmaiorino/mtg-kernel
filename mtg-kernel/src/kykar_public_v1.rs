@@ -173,6 +173,11 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                 owner: owner.into(), controller: owner.into(), zone: Zone::Exile },
             physical_owner: owner.into(), current_original_exile, collected_at_first_end_step: collected == 1 });
     }
+    for entry in state.engine.event_history.scan_for_v1(&[crate::event_history_v1::EventKindV1::KykarDelayedCollectedV1]) {
+        if let E::KykarDelayedCollectedV1 { schedule_history_index, .. } = entry {
+            if !positions.contains_key(schedule_history_index) { return Err("Kykar collected an absent original schedule".into()); }
+        }
+    }
     let mut abilities = vec![];
     for (position, pending) in public::held(state).into_iter().enumerate() {
         let Some(source) = pending.source_contract.filter(|source| native::definition(source.card_def)) else { continue; };

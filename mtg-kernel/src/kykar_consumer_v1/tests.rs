@@ -103,8 +103,9 @@ fn paid_modes_and_stolen_original_return_preserve_all_consumer_indices_both_seat
         assert!(ModelV1::deterministic_fixture().forward(&numeric.training_input_v1(&d).unwrap()).unwrap().iter().all(|x| x.is_finite()));
 
         let mut state = native::ready(actor); let source = native::paid(&mut state, actor);
-        let elf = native::cast(&mut state, actor.opponent(), "Llanowar Elves", &[], 1); native::finish(&mut state);
-        // Native control setup is not a claimed paid control spell.
+        // Native foreign-creature and control setup; Kykar and its triggering
+        // noncreature spell are genuinely cast and paid in this fixture.
+        let elf = crate::policy_observation_v6::tests::put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Battlefield);
         crate::standard_cards_v1::gain_control(&mut state, elf, actor);
         native::start(&mut state, actor, source);
         let selected = parity(&state, ActionV1::ChooseExileMode);
