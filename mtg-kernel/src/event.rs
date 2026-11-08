@@ -320,6 +320,8 @@ pub struct ZoneChangeProposed {
     pub(crate) edict_move_owner: Option<crate::ids::StackItemId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) curator_move_owner: Option<crate::curator_receipts_v1::MoveOwnerV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) harvester_owner: Option<crate::ids::StackItemId>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -383,6 +385,8 @@ pub struct CreateTokenProposed {
     pub entry_tapped: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initialization_v48: Option<crate::doubling_season_v48::TokenEntryV48>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) harvester_owner: Option<crate::ids::StackItemId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) lathril_owner: Option<crate::lathril_receipts_v1::OperationOwnerV1>,
     pub touched_by: Vec<ReplacementId>,
@@ -449,6 +453,7 @@ impl ProposedEvent {
             battlefield_grant_flying_v1: false,
             edict_move_owner: None,
             curator_move_owner: None,
+            harvester_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -470,6 +475,7 @@ impl ProposedEvent {
             battlefield_grant_flying_v1: false,
             edict_move_owner: None,
             curator_move_owner: None,
+            harvester_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -491,6 +497,7 @@ impl ProposedEvent {
             battlefield_grant_flying_v1: false,
             edict_move_owner: None,
             curator_move_owner: None,
+            harvester_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -515,6 +522,7 @@ impl ProposedEvent {
             battlefield_grant_flying_v1: false,
             edict_move_owner: None,
             curator_move_owner: None,
+            harvester_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -549,6 +557,7 @@ impl ProposedEvent {
             battlefield_grant_flying_v1: false,
             edict_move_owner: None,
             curator_move_owner: None,
+            harvester_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -586,6 +595,7 @@ impl ProposedEvent {
             battlefield_grant_flying_v1: false,
             edict_move_owner: None,
             curator_move_owner: None,
+            harvester_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -662,6 +672,7 @@ impl ProposedEvent {
             entry_face_index: None,
             entry_tapped: false,
             initialization_v48: None,
+            harvester_owner: None,
             lathril_owner: None,
             touched_by: Vec::new(),
         })
@@ -673,6 +684,7 @@ impl ProposedEvent {
             entry_face_index: Some(1),
             entry_tapped: false,
             initialization_v48: None,
+            harvester_owner: None,
             lathril_owner: None,
             touched_by: Vec::new(),
         })
@@ -2135,6 +2147,9 @@ pub enum CommittedEvent {
     },
     GreatwurmCommitReceiptV1 {
         journal: Box<crate::greatwurm_receipts_v1::JournalV1>,
+    },
+    HarvesterCommitReceiptV1 {
+        journal: Box<crate::harvester_receipts_v1::JournalV1>,
     },
 }
 
@@ -4534,6 +4549,7 @@ fn commit_with_entry_batch_and_source_color(
         _ => Vec::new(),
     };
     let lathril_operation = crate::lathril_receipts_v1::capture_operation(state, &event);
+    let harvester_operation = crate::harvester_receipts_v1::capture_operation(state, &event);
     let edict_departure = match &event {
         ProposedEvent::ZoneChange(change) => change.edict_move_owner.map(|owner| {
             let object = state.objects.get(change.object);
@@ -4684,6 +4700,12 @@ fn commit_with_entry_batch_and_source_color(
             .record_visibility_v2(entry_history_index, *object, mask);
     }
     state.engine.event_history.push(committed);
+    if let Some(operation) = harvester_operation {
+        if operation.record(state, entry_history_index).is_err() {
+            state.engine.halted = Some((crate::engine::UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+            return;
+        }
+    }
     if let Some((cause, original)) = curator_move {
         if crate::curator_receipts_v1::record_move(state, cause, original, entry_history_index)
             .is_err()

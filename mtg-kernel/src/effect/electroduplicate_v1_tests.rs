@@ -1253,7 +1253,7 @@ fn genuine_paid_soul_copy_and_nightmare_entry_primitive_keep_original_etb_creati
 
 // Harvester fixtures below use real registered FDN54, actual paid spells and
 // native activation/payment/publication. Initial lands/library are setup.
-fn hv_ready(p: PlayerId) -> GameState {
+pub(crate) fn hv_ready(p: PlayerId) -> GameState {
     let mut s = ready(p);
     for seat in [p, p.opponent()] {
         for _ in 0..12 {
@@ -1262,7 +1262,7 @@ fn hv_ready(p: PlayerId) -> GameState {
     }
     s
 }
-fn hv_main(s: &mut GameState, p: PlayerId) {
+pub(crate) fn hv_main(s: &mut GameState, p: PlayerId) {
     for _ in 0..600 {
         let d = engine::advance_until_decision(s);
         assert!(s.engine.halted.is_none(), "{:?}", s.engine.halted);
@@ -1281,7 +1281,7 @@ fn hv_main(s: &mut GameState, p: PlayerId) {
     }
     panic!("actual subsequent own main absent");
 }
-fn hv_death(s: &mut GameState, p: PlayerId) -> ObjectId {
+pub(crate) fn hv_death(s: &mut GameState, p: PlayerId) -> ObjectId {
     let elf = paid(s, p, "Llanowar Elves", 1);
     cast(s, p.opponent(), "Lightning Bolt", &[Target::Object(elf)], 1);
     finish(s);
@@ -1289,7 +1289,7 @@ fn hv_death(s: &mut GameState, p: PlayerId) -> ObjectId {
     assert!(harvester_v1::eligible(s, elf));
     elf
 }
-fn hv_activate(s: &mut GameState, p: PlayerId, source: ObjectId, target: ObjectId) -> StackItem {
+pub(crate) fn hv_activate(s: &mut GameState, p: PlayerId, source: ObjectId, target: ObjectId) -> StackItem {
     priority(s, p);
     assert!(
         matches!(engine::advance_until_decision(s), Decision::CastSpellOrPass {activatable_abilities,..}
@@ -1322,7 +1322,7 @@ fn hv_activate(s: &mut GameState, p: PlayerId, source: ObjectId, target: ObjectI
     assert_eq!(item.inline_effect, Some(harvester_v1::marker()));
     item
 }
-fn hv_nightmares(s: &GameState, p: PlayerId) -> Vec<ObjectId> {
+pub(crate) fn hv_nightmares(s: &GameState, p: PlayerId) -> Vec<ObjectId> {
     s.players[p.index()]
         .battlefield
         .iter()
@@ -1333,7 +1333,7 @@ fn hv_nightmares(s: &GameState, p: PlayerId) -> Vec<ObjectId> {
         })
         .collect()
 }
-fn hv_finish_pair(s: &mut GameState) {
+pub(crate) fn hv_finish_pair(s: &mut GameState) {
     let mut replay = restore(s);
     finish(s);
     finish(&mut replay);

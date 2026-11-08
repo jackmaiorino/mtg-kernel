@@ -320,6 +320,7 @@ pub(crate) enum ConsumerV1 {
     KaitoKykarV1,
     KaitoSphinxLoreV1,
     KaitoGreatwurmV1,
+    KaitoHarvesterV1,
 }
 impl ConsumerV1 {
     pub(crate) fn for_kaito(appendix: crate::policy_surface_v5::LimitedAppendixV1) -> Self {
@@ -337,11 +338,13 @@ impl ConsumerV1 {
             LimitedAppendixV1::Kykar => Self::KaitoKykarV1,
             LimitedAppendixV1::SphinxLore => Self::KaitoSphinxLoreV1,
             LimitedAppendixV1::Greatwurm => Self::KaitoGreatwurmV1,
+            LimitedAppendixV1::Harvester => Self::KaitoHarvesterV1,
             _ => Self::KaitoV75,
         }
     }
 
     pub(crate) fn validate_copy_prefix(self, state: &GameState) -> Result<(), String> {
+        use crate::effect::KaitoCopyScopeV1 as Scope;
         match self {
             Self::Legacy => crate::effect::require_no_copied_token_abilities_v1(state),
             Self::ChandraV74 => crate::effect::require_no_copied_token_abilities_chandra_v74(state),
@@ -357,10 +360,13 @@ impl ConsumerV1 {
             | Self::KaitoKykarV1
             | Self::KaitoSphinxLoreV1
             | Self::KaitoGreatwurmV1 => {
-                crate::effect::require_no_copied_token_abilities_kaito_v75(state, false)
+                crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::Base)
+            }
+            Self::KaitoHarvesterV1 => {
+                crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::Harvester)
             }
             Self::KaitoLeylineAxeV1 => {
-                crate::effect::require_no_copied_token_abilities_kaito_v75(state, true)
+                crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::LeylineAxe)
             }
         }
     }

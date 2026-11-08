@@ -44,7 +44,7 @@ reusable evidence only for the mechanics they actually exercise.
 | Quilled Greatwurm | Appendix: greatwurm_public_v1 | Finite owner, Human, JSONL and sealed numeric source. Original combat amount, actual placement and exact six-counter graveyard payment. Native qualification and event-sample harvest pending |
 | Sphinx of Forgotten Lore | Appendix: sphinx_lore_public_v1 | Finite owner, Human, JSONL and numeric source; original attack target, exact-incarnation temporary flashback, native printed/granted costs. Native qualification pending |
 | Omniscience | Native: engine/omniscience_cast_v1 | Complete stack; optional free hand casting and its restrictions, original route and remaining costs |
-| Abyssal Harvester | Native: effect/harvester_v1 | Complete stack; this-turn graveyard eligibility, exact exile, Nightmare copy and other-token exile batch |
+| Abyssal Harvester | Appendix: harvester_public_v1 | Finite owner, Human, JSONL and sealed numeric source. This-turn graveyard eligibility and actual tap, Nightmare births and replacement-aware departures. Native qualification and event-sample harvest pending |
 | Progenitus | Native: progenitus_v1 | Complete stack; protection from everything and actual reveal/shuffle replacement from hidden and public zones |
 | Etali, Primal Storm | Native: resolution-play and etali tests | Complete stack; simultaneous top exile and optional repeated free casting during resolution |
 | Leyline Axe | Native: leyline_axe_v1 | Complete stack; kept-hand pregame choice and actual entry/equip/host effects |
@@ -320,19 +320,19 @@ remain pending.
 
 ## Composed source checkpoint (2026-11-08)
 
-The source candidate at `59924e865` covers
-32 of the 36 Partial booster printings in twenty-two finite profiles: Return (3),
+The source candidate combining `edda3dcc6` with reviewed Harvester `579f4bc12` covers
+33 of the 36 Partial booster printings in twenty-three finite profiles: Return (3),
 V68-V75 (8), Artist (1), Chosen Type (2), Niv (1), Drakuseth (1),
 Embercleave (1), Zimone (1), Omniscience (1), Tutelage (1), Moon (1), and
 Leyline Axe (1), Progenitus (1), Aberration (1), Lathril (1), and
 Electroduplicate (1), Blasphemous Edict (1), Loot (1), Curator (1), Kykar (1),
-Sphinx of Forgotten Lore (1), and Quilled Greatwurm (1). Four original Partial consumer
+Sphinx of Forgotten Lore (1), Quilled Greatwurm (1), and Abyssal Harvester (1). Three original Partial consumer
 gaps remain. Catalog tiers are unchanged.
 This is source coverage; the complete composition is not natively qualified.
 
 The additional `fdn-mixed-consumer/v1` owner composes the first twenty
 printings, excluding Moon, Leyline Axe, Progenitus, Aberration, Lathril and
-Electroduplicate, Blasphemous Edict, Loot, Curator, Kykar, Sphinx and Greatwurm. It authenticates every represented native printed
+Electroduplicate, Blasphemous Edict, Loot, Curator, Kykar, Sphinx, Greatwurm and Harvester. It authenticates every represented native printed
 definition before reset and retains the real declared deck IDs. Its exact
 Mixed capability enables all eight existing appendices together. Its distinct
 observation and candidate schemas require all eight facts; single-family
@@ -519,7 +519,7 @@ None of these
 predecessor results qualifies the larger Limited composition.
 
 The next guarded Limited job must first complete a type check and the focused
-consumer fixtures before building all twenty-two individual-profile binaries and
+consumer fixtures before building all twenty-three individual-profile binaries and
 the Mixed binary. Filters include `limited_mixed_consumer_v1::tests::`,
 `moon_consumer_v1::tests::`, `chosen_type_consumer_v1::tests::`,
 `leyline_axe_consumer_v1::tests::`, `leyline_axe_v1::tests::`,
@@ -533,6 +533,9 @@ the Mixed binary. Filters include `limited_mixed_consumer_v1::tests::`,
 `kykar_consumer_v1::tests::`, `effect::kykar_v1::tests::`,
 `sphinx_lore_consumer_v1::tests::`, `effect::sphinx_lore_v1::tests::`,
 `greatwurm_consumer_v1::tests::`, `effect::greatwurm_v1::tests::`,
+`harvester_consumer_v1::tests::`,
+`effect::electroduplicate_v1_tests::genuine_paid_harvester`,
+`engine::harvester_cast_reversal_v1_tests::`,
 `rl::complete_copy_prefix_scope_tests::`,
 `niv_consumer_v1::tests::`, `niv_mizzet_public_v63::tests::`,
 `drakuseth_consumer_v1::tests::`, `artist_consumer_v1::tests::`,
@@ -574,6 +577,16 @@ inputs; all 25 changed outputs were independently hash-verified and applied in
 `e68ce9757`. Receipt SHA-256
 `625599aa9d5a8906c13864558b5a6fe631d981298bfd25f3755e9206406f1c67`.
 Its combined type check and native execution are pending.
+
+Harvester's reviewed source `579f4bc12` binds the actual activation tap and
+original this-turn graveyard target, replacement-aware physical departures,
+and actual Nightmare births with their copied form. Its private/public scope
+does not enable Harvester for older consumers. The latest same-source tap must
+precede the target announcement without an intervening source move; an older
+tap cannot substitute for the genuine payment. Its event kind is appended at
+319, preserving Greatwurm 318. Both-seat paid and hidden-pair, Human/wire,
+restore, fizzle and removed-operation fixtures remain unrun. A genuine receipt
+sample is still required.
 
 The bounded learner pilot still selects Return. No Mixed learner, all-286
 fair-search run, training/evaluation result or Full promotion is qualified.

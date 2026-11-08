@@ -484,6 +484,7 @@ mod electroduplicate_consumer_v1;
 mod embercleave_consumer_v1;
 mod greatwurm_consumer_v1;
 mod kykar_consumer_v1;
+mod harvester_consumer_v1;
 mod lathril_consumer_v1;
 mod leyline_axe_consumer_v1;
 mod loot_consumer_v1;

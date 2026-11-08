@@ -354,11 +354,12 @@ pub enum EventKindV1 {
     BlasphemousEdictReceiptV1,
     CuratorReceiptV1,
     GreatwurmCommitReceiptV1,
+    HarvesterCommitReceiptV1,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 319;
-const _: () = assert!(EventKindV1::GreatwurmCommitReceiptV1 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 320;
+const _: () = assert!(EventKindV1::HarvesterCommitReceiptV1 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -779,6 +780,7 @@ impl CommittedEvent {
             Self::BlasphemousEdictReceiptV1 { .. } => EventKindV1::BlasphemousEdictReceiptV1,
             Self::CuratorReceiptV1 { .. } => EventKindV1::CuratorReceiptV1,
             Self::GreatwurmCommitReceiptV1 { .. } => EventKindV1::GreatwurmCommitReceiptV1,
+            Self::HarvesterCommitReceiptV1 { .. } => EventKindV1::HarvesterCommitReceiptV1,
         }
     }
 }

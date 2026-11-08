@@ -2177,6 +2177,7 @@ fn conflicts_in_scope(
             | BlasphemousEdictReceiptV1 { .. }
             | CuratorReceiptV1 { .. }
             | GreatwurmCommitReceiptV1 { .. }
+            | HarvesterCommitReceiptV1 { .. }
             | TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..} | TwinflameCombatPublishedV38 {..} | TwinflameCombatInputV38 {..} | TwinflameCombatOperationV38 {..} | TwinflameDynamicDamageSampleV38 {..} | TwinflameFieryCaptureV38 {..} | TwinflameFieryFinishedV38 {..}
             | InspirationResolutionInputV1 { .. } | InspirationResolutionOperationV1 { .. }
                 | InspirationEngineDepartureV1 { .. } | FaebloomJournalV43 { .. }
