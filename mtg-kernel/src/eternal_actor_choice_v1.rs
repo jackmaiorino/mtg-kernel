@@ -94,7 +94,11 @@ fn project(
     }
     Ok(Some(match &choice.kind {
         E3ChoiceKindV1::RetargetSpellV1 { spell } => {
-            if !state.stack.iter().any(|item| item.id == *spell) {
+            if !state
+                .stack
+                .iter()
+                .any(|item| item.v4.stack_item_id == *spell)
+            {
                 return Err(RlContractError("missing retargeted public spell".into()));
             }
             SelectionV1::RetargetSpell {
@@ -169,6 +173,17 @@ mod tests {
                     }],
                     later: Vec::new(),
                 };
+                choice.remaining = vec![crate::effect::EffectFrame::MoveObjectsBatch {
+                    objects: vec![EffectObjectBinding {
+                        object: hidden,
+                        expected_zone: Zone::Hand,
+                        expected_zone_change_count: 0,
+                    }],
+                    to_zone: Zone::Battlefield,
+                    preserve_known_identity: false,
+                    order_resolved: true,
+                    path: Vec::new(),
+                }];
                 assert_eq!(project(&state, viewer, &choice).unwrap(), baseline);
                 assert_eq!(project(&state, viewer.opponent(), &choice).unwrap(), None);
             }
