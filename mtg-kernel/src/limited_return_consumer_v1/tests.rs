@@ -11,6 +11,7 @@ use crate::{
     rl::{ActionSemanticV1 as A, TargetRefV1},
     rl_session::{FastActorResponseV1, KaitoSessionV75},
     state::{GameState, Zone},
+    valkyries_call_public_v62::StageV62,
 };
 
 fn request(id: impl ToString, command: CommandV1) -> RequestV1 {
@@ -393,16 +394,46 @@ fn paid_three_printing_cast_death_return_and_all_consumer_index_parity_both_seat
         pair.cast(elf, None);
         pair.drain();
         pair.cast(bolt, Some(elf));
+        // Stop at the real return trigger. The return row represents a live
+        // continuation and disappears as soon as the trigger resolves.
+        for _ in 0..100 {
+            if pair.state().objects.get(elf).zone == Zone::Graveyard {
+                break;
+            }
+            pair.quiet();
+        }
+        let dead = pair.state().objects.get(elf);
+        assert_eq!(dead.zone, Zone::Graveyard);
+        let pending = pair.current();
+        let facts = &pending.fixture_backend_v75().observation().call;
+        let [returning] = facts.returns.as_slice() else {
+            panic!("expected one published Call return, got {:?}", facts.returns);
+        };
+        assert_eq!(returning.stage, StageV62::Published);
+        assert_eq!(returning.source.original_source.object, call.0);
+        assert_eq!(returning.original_graveyard.object, elf.0);
+        assert_eq!(
+            returning.original_graveyard.generation,
+            dead.zone_change_count
+        );
+        assert_eq!(returning.under_physical_owner, actor.into());
+        assert!(returning.return_eligible_now);
+        let occurrence = returning.death_occurrence;
+
         pair.drain();
         assert_eq!(pair.state().objects.get(elf).zone, Zone::Battlefield);
         assert_eq!(pair.state().objects.get(elf).counters.plus1_plus1, 1);
-        assert!(!pair
-            .current()
-            .fixture_backend_v75()
-            .observation()
-            .call
-            .returns
-            .is_empty());
+        let settled = pair.current();
+        let facts = &settled.fixture_backend_v75().observation().call;
+        assert!(facts.returns.is_empty());
+        let death = facts
+            .deaths
+            .iter()
+            .find(|row| row.occurrence == occurrence)
+            .unwrap();
+        assert_eq!(death.original_graveyard.object, elf.0);
+        assert!(death.collection_completed);
+        assert!(death.current_exact_graveyard_card.is_none());
 
         let mut state = native::ready(actor);
         let familiar = put(&mut state, actor, "Nine-Lives Familiar", Zone::Hand);
