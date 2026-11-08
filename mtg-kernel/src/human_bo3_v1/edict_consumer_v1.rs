@@ -15,7 +15,7 @@ use crate::{
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct HumanFactsV1 {
+pub struct HumanFactsV1 {
     meaning: MeaningV1,
     effective_creatures_now: u32,
     alternate_condition_now: bool,
