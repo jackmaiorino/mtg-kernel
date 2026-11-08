@@ -67,9 +67,27 @@ Snapshots retain exact f64 parameter/moment bits, optimizer configuration,
 step and feature identity. Invalid inputs and nonfinite updates are atomic
 failures. Durable publication and production collection remain caller work.
 
-Native validation is pending. No experiment, playing-strength claim or
-production admission follows from these source tests. The remaining Eternal
-transport/coverage and production collection work keep #454 and #552 open.
+Native Limited validation passed all six `issue454_` tests on the isolated
+composition `384c8a4e5103f40384928adb69720268e4ecd8cb`, including all 647
+finite-difference gradients and exact optimizer continuation. This composition
+contains the learner and coverage changes through `b5cc1e4b2`, plus the owned
+root #576/#583 integration changes and the early public supplement. The
+release test binary SHA-256 is
+`9dd77e1e512809cd9401faa39b4ac085272b5f4cb24beedfbb3864d3d4c7f9e3`.
+Rust 1.94.1, MSVC linker 14.50.35717 and Python 3.13.14 were used through the
+four-core BelowNormal host-slot guard. Exact-head CI remains required.
+
+The same Limited-feature binary passed nine widening tests, the owned Drake
+enclosing replay witness and the Banner pending-original witness. It failed
+the #576 one-step screen-fit fixture's known heldout-frequency configuration,
+and two existing V7/V8 collection tests refused `Action(CorruptCurrentBinding)`
+before their new assertions. Those are retained Limited-feature compatibility
+failures, not failures of the separate default-feature Linux checks. Ignored
+measurement and slow Drake diagnostics were not run. Durable local receipts
+are under `D:/mtg-kernel-actor454-target/receipts/`; no bulk artifacts are
+committed. No experiment, playing-strength claim or production admission
+follows from this correctness validation. Eternal validation and complete
+transport/coverage still keep #454 and #552 open.
 
 ## Eternal dynamic supplement
 
@@ -99,9 +117,21 @@ and hidden-card variants of the public cast fact.
 
 `eternal_actor_printed_v1` extracts the generated CardDef, ordered costs,
 programs, activated abilities, and triggers for the 62-name union of the exact
-legacy-reanimator, legacy-doomsday, and vintage-red-prison mainboards. Its
-exhaustive CardDef destructuring rejects unrepresented fields. This printed
-component is not an admission gate: external static handlers, generated token
-printings, dynamic continuations, and canonical public-reference integration
-remain separate work. The 62-name extraction and operand checks need native
-Eternal validation before use.
+legacy-reanimator, legacy-doomsday, and vintage-red-prison mainboards, plus
+their generated Karn Construct Token and Enroot printings. Its exhaustive
+CardDef destructuring rejects unrepresented fields. Finite external static
+and replacement rules are explicit descriptors, including chosen-name/type
+effects, restricted mana, tax effects and Saga abilities.
+
+`eternal_actor_choice_v1` binds the finite chooser-only selection operands,
+without saved continuations or another player's saved answer. Retargeting
+uses the public stack position instead of a native stack ID. Ordinary public
+observation knowledge remains responsible for already revealed Show and Tell
+choices. `eternal_actor_stack_v1` binds exact printed spell, activation and
+trigger programs, including normalized captured-counter targets. Entry menu
+indices have explicit subtype, named-printing or life-payment meanings.
+
+These components are not an admission gate. Complete resolving/pending
+program binding, canonical public-reference integration and sealed Eternal
+scoring remain work in progress. All 64 printing extractions and the new
+Eternal source/choice/stack tests still require native Eternal validation.
