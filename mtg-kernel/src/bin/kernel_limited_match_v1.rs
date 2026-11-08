@@ -541,7 +541,7 @@ fn play_one(
     }
     if seat_policies
         .iter()
-        .any(PolicySpecV1::uses_versioned_closed_list)
+        .any(|policy| policy.uses_versioned_closed_list())
     {
         row["env_seed"] = json!(env_seed);
         row["searched_decisions"] = json!(result.searched_decisions);
