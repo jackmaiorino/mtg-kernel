@@ -248,11 +248,20 @@ mod tests {
         policy_observation_v6::tests::{put, ready_state_for},
     };
 
+    fn stack_source(state: &mut GameState, player: PlayerId, name: &str) -> crate::ids::ObjectId {
+        let source = put(state, player, name, Zone::Hand);
+        state.players[player.index()]
+            .hand
+            .retain(|id| *id != source);
+        state.objects.get_mut(source).zone = Zone::Stack;
+        source
+    }
+
     #[test]
     fn issue454_leave_draw_grant_distinguishes_pending_entry_from_active_permanent() {
         for player in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(player);
-            let source = put(&mut state, player, "Thief of Existence", Zone::Stack);
+            let source = stack_source(&mut state, player, "Thief of Existence");
             state
                 .eternal_v1
                 .get_or_insert_with(Default::default)
@@ -283,7 +292,7 @@ mod tests {
     fn issue454_public_cast_fact_ignores_hidden_conditional_ledgers() {
         for player in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(player);
-            let spell = put(&mut state, player, "Ponder", Zone::Stack);
+            let spell = stack_source(&mut state, player, "Ponder");
             crate::event::log_spell_cast(&mut state, spell, player);
             let baseline = capture_v1(&state).unwrap();
             assert!(baseline.has_cast_spell[player.index()]);
@@ -310,7 +319,7 @@ mod tests {
         let creature = put(
             &mut state,
             PlayerId::P1,
-            "Goblin Boarders",
+            "Thief of Existence",
             Zone::Battlefield,
         );
         let link = |object| ObjectLinkV4 {
@@ -343,9 +352,9 @@ mod tests {
         for player in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(player);
             let cavern = put(&mut state, player, "Cavern of Souls", Zone::Battlefield);
-            put(&mut state, player, "Goblin Boarders", Zone::Hand);
+            put(&mut state, player, "Wastescape Battlemage", Zone::Hand);
             let options = crate::eternal_cards_v1::e3::cavern_type_options(&state, player);
-            let selected = options.iter().position(|t| *t == Subtype::Goblin).unwrap();
+            let selected = options.iter().position(|t| *t == Subtype::Eldrazi).unwrap();
             crate::eternal_cards_v1::e3::answer_entry_choice(&mut state, selected as u16).unwrap();
             let needle = put(&mut state, player, "Pithing Needle", Zone::Battlefield);
             let options = crate::eternal_lurrus_v1::needle_name_options(&state, player);
@@ -355,7 +364,7 @@ mod tests {
                 crate::eternal_lurrus_v1::answer_entry_choice(&mut state, selected as u16).unwrap()
             );
             let public = capture_v1(&state).unwrap();
-            assert_eq!(public.cavern_types[0].chosen_type, Subtype::Goblin);
+            assert_eq!(public.cavern_types[0].chosen_type, Subtype::Eldrazi);
             assert_eq!(public.needle_names[0].named_card_id, named);
             // No inspection of the concealed source's underlying printing may
             // decide whether this incomplete continuity contract accepts it.

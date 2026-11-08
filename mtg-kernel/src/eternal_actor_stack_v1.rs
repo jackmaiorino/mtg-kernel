@@ -163,6 +163,15 @@ mod tests {
         state::{StackItem, StackStateV4, Zone},
     };
 
+    fn stack_source(state: &mut GameState, name: &str) -> crate::ids::ObjectId {
+        let source = put(state, PlayerId::P0, name, Zone::Hand);
+        state.players[PlayerId::P0.index()]
+            .hand
+            .retain(|id| *id != source);
+        state.objects.get_mut(source).zone = Zone::Stack;
+        source
+    }
+
     #[test]
     fn issue454_bound_counter_uses_public_stack_position_and_not_native_id() {
         use crate::{
@@ -170,7 +179,7 @@ mod tests {
             ids::StackItemId, standard_cards_v1::StandardOpV1 as S,
         };
         let mut state = ready_state_for(PlayerId::P0);
-        let source = put(&mut state, PlayerId::P0, "Ponder", Zone::Stack);
+        let source = stack_source(&mut state, "Ponder");
         let counter = |id| {
             EffectOp::StandardV1(S::EternalV1(E::VintageV1(V::CounterCastSpellV1 {
                 spell: StackItemId(id),
@@ -213,12 +222,7 @@ mod tests {
     #[test]
     fn issue454_stack_program_distinguishes_two_wastescape_cast_triggers() {
         let mut state = ready_state_for(PlayerId::P0);
-        let source = put(
-            &mut state,
-            PlayerId::P0,
-            "Wastescape Battlemage",
-            Zone::Stack,
-        );
+        let source = stack_source(&mut state, "Wastescape Battlemage");
         let printing = state.objects.get(source).card_def;
         let triggers = crate::trigger::triggers_for(printing);
         assert_eq!(triggers.len(), 2);
