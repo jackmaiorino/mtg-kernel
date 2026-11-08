@@ -44,6 +44,14 @@ pub struct PublicLinkV1 {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct GrantedLeaveDrawV1 {
+    pub source: CardStableRefV1,
+    /// The cast trigger can grant this to the spell's next battlefield
+    /// incarnation. It is not yet an active battlefield ability in that case.
+    pub pending_battlefield_entry: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PublicChoicesV1 {
     pub schema: String,
     pub energy: [u32; 2],
@@ -58,6 +66,7 @@ pub struct PublicChoicesV1 {
     pub prepare_copies: Vec<PublicLinkV1>,
     pub animate_dead_waiting: Vec<PublicLinkV1>,
     pub animate_dead_attached: Vec<PublicLinkV1>,
+    pub granted_opponent_draw_on_leave: Vec<GrantedLeaveDrawV1>,
 }
 
 /// Check public zone and exact incarnation before asking for a projected
@@ -107,6 +116,7 @@ pub fn capture_v1(state: &GameState) -> Result<PublicChoicesV1, RlContractError>
         prepare_copies: Vec::new(),
         animate_dead_waiting: Vec::new(),
         animate_dead_attached: Vec::new(),
+        granted_opponent_draw_on_leave: Vec::new(),
     };
     for event in state.engine.event_history.iter() {
         if let crate::event::CommittedEvent::SpellCast { controller, .. } = event {
@@ -118,6 +128,28 @@ pub fn capture_v1(state: &GameState) -> Result<PublicChoicesV1, RlContractError>
     };
     out.energy = eternal.energy;
     out.city_blessing = eternal.e5b.city_blessing;
+    for &grant in &eternal.e9b.thief_grants {
+        let Some(object) = state.objects.try_get(grant.object) else {
+            continue;
+        };
+        let pending = object.zone == Zone::Stack
+            && object.zone_change_count.checked_add(1) == Some(grant.zone_change_count);
+        let live =
+            object.zone == Zone::Battlefield && object.zone_change_count == grant.zone_change_count;
+        if !pending && !live {
+            continue;
+        }
+        let current = ObjectLinkV4 {
+            object: grant.object,
+            zone_change_count: object.zone_change_count,
+        };
+        let source = current_public(state, current, object.zone)?
+            .ok_or_else(|| RlContractError("missing public leave-draw grant source".into()))?;
+        out.granted_opponent_draw_on_leave.push(GrantedLeaveDrawV1 {
+            source,
+            pending_battlefield_entry: pending,
+        });
+    }
     for &(source, copy) in &eternal.e7b.prepared {
         let Some(object) = state.objects.try_get(copy) else {
             return Err(RlContractError("missing public prepare copy".into()));
@@ -215,6 +247,37 @@ mod tests {
         ids::PlayerId,
         policy_observation_v6::tests::{put, ready_state_for},
     };
+
+    #[test]
+    fn issue454_leave_draw_grant_distinguishes_pending_entry_from_active_permanent() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(player);
+            let source = put(&mut state, player, "Thief of Existence", Zone::Stack);
+            state
+                .eternal_v1
+                .get_or_insert_with(Default::default)
+                .e9b
+                .thief_grants
+                .push(ObjectLinkV4 {
+                    object: source,
+                    zone_change_count: 1,
+                });
+            let pending = capture_v1(&state).unwrap();
+            assert!(pending.granted_opponent_draw_on_leave[0].pending_battlefield_entry);
+            state.objects.get_mut(source).zone = Zone::Battlefield;
+            state.objects.get_mut(source).zone_change_count = 1;
+            let active = capture_v1(&state).unwrap();
+            assert!(!active.granted_opponent_draw_on_leave[0].pending_battlefield_entry);
+            assert_ne!(pending, active);
+            state.objects.get_mut(source).zone = Zone::Hand;
+            state.objects.get_mut(source).zone_change_count = 2;
+            let departed = capture_v1(&state).unwrap();
+            assert!(departed.granted_opponent_draw_on_leave.is_empty());
+            state.objects.get_mut(source).card_def =
+                crate::card_def::card_id_by_name("Island").unwrap();
+            assert_eq!(capture_v1(&state).unwrap(), departed);
+        }
+    }
 
     #[test]
     fn issue454_public_cast_fact_ignores_hidden_conditional_ledgers() {
