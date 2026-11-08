@@ -21065,8 +21065,8 @@ pub use liliana_v73::{LilianaDecisionV73, LilianaSessionV73, LilianaSnapshotV73}
 pub(crate) mod chandra_v74;
 pub use chandra_v74::{ChandraDecisionV74, ChandraSessionV74, ChandraSnapshotV74};
 
-pub(crate) mod kaito_v75;
 mod eternal_actor_v1;
+pub(crate) mod kaito_v75;
 pub use eternal_actor_v1::{EternalActorDecisionV1, EternalActorSessionV1, EternalActorSnapshotV1};
 #[cfg(feature = "limited-fdn-fixtures")]
 mod rules_only_v1;
