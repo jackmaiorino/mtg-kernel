@@ -195,6 +195,54 @@ impl KaitoSession {
             |error| Error::Projection(error.to_string()),
         )
     }
+
+    /// Capture a learner input only from this owner's genuine current decision.
+    /// The immutable capture may outlive the decision for synchronous learning;
+    /// it carries no authority to execute an action after the owner advances.
+    pub fn training_input_v1(
+        &self,
+        decision: &KaitoDecision,
+    ) -> Result<crate::current_tree_learner_v1::AuthenticatedInputV1> {
+        if !Arc::ptr_eq(&self.owner, &decision.owner) || self.generation != decision.generation {
+            return Err(Error::StaleBinding);
+        }
+        self.inner
+            .validate_decision_v75(&decision.backend)
+            .map_err(|_| Error::StaleBinding)?;
+        if packet_from_current(
+            decision.backend.candidates_v75(),
+            decision.backend.actions(),
+        )? != decision.packet
+        {
+            return Err(Error::StaleBinding);
+        }
+        crate::current_tree_learner_v1::AuthenticatedInputV1::from_current(
+            decision.packet.clone(),
+            decision.backend.actions(),
+        )
+    }
+
+    pub fn score_and_apply_tree_v1(
+        &mut self,
+        decision: &KaitoDecision,
+        model: &crate::current_tree_learner_v1::ModelV1,
+    ) -> Result<(Vec<f64>, u32, FastActorResponseV1)> {
+        let logits = model.forward(&self.training_input_v1(decision)?)?;
+        let selected =
+            logits.iter().enumerate().fold(
+                0,
+                |best, (i, value)| {
+                    if *value > logits[best] {
+                        i
+                    } else {
+                        best
+                    }
+                },
+            );
+        let selected = u32::try_from(selected).map_err(|_| Error::Range)?;
+        let response = self.apply(decision, selected)?;
+        Ok((logits, selected, response))
+    }
     pub fn score_and_apply(
         &mut self,
         decision: &KaitoDecision,

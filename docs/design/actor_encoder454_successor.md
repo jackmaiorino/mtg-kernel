@@ -21,8 +21,8 @@ The existing `current_mixed_policy_v1` is a useful distinct consumer:
   tree model, independently of the FlatV4/Net8 checkpoint loaders.
 
 This is not yet the production successor. V75 reset is Foundations-only and
-Full-only. Its numeric model has forward inference but no learner, optimizer
-snapshot or production collection interface. The printed-meaning registry and
+Full-only. Its original numeric model has forward inference but no learner,
+optimizer snapshot or production collection interface. The printed-meaning registry and
 public transport must cover Eternal before accepting that catalog. Removing
 the catalog gate or treating unsupported roots as card IDs would discard
 requirements of this consumer.
@@ -51,7 +51,22 @@ requirements of this consumer.
    witnesses. Acceptance requires every declared fixture, not only successful
    episodes or an aggregate count of skipped games.
 
-Only stage 1 is implemented in the initial coverage patch. Native validation
-is pending; no training, evaluation, playing-strength claim or production
-admission follows from the source tests. A successful coverage-only PR does
-not close #454 or #552.
+The prospective `current_tree_learner_v1` implements stage 2's learner core:
+647 f64 parameters, 20 input limbs per tree node, 16 tanh units, both parent
+and preceding-node recurrence, mean pooling, state/action/interaction readout,
+and six additional named Boolean coefficients. It backpropagates through all
+tree nodes and both recurrent edges. An update minimizes mean cross entropy
+against supplied normalized target distributions using synchronous Adam in
+fixed example order. This defines a new engineering contract, not a change
+to the campaign's objective, sampling, optimizer or architecture selection.
+
+Only the current sealed Kaito owner can expose its public training input;
+stale and foreign decisions refuse. A capture contains no executable authority.
+Scoring uses the same captured input and applies through the existing owner.
+Snapshots retain exact f64 parameter/moment bits, optimizer configuration,
+step and feature identity. Invalid inputs and nonfinite updates are atomic
+failures. Durable publication and production collection remain caller work.
+
+Native validation is pending. No experiment, playing-strength claim or
+production admission follows from these source tests. The remaining Eternal
+transport/coverage and production collection work keep #454 and #552 open.

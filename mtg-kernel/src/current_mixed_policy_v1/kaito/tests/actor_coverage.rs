@@ -221,3 +221,142 @@ fn issue454_original_limited_attacker_and_blocker_include_tensors_differ() {
         assert_eq!(seen, [true; 2]);
     }
 }
+
+fn learner_fixture() -> crate::current_tree_learner_v1::AuthenticatedInputV1 {
+    let actions = [false, true].map(|use_cost| A::ChooseOptionalCostUse {
+        actor: crate::rl::PlayerSeatV1::P0,
+        use_cost,
+    });
+    let packet = super::super::super::normalize::encode(
+        Source::KaitoV75,
+        serde_json::json!({"observation": {"turn": 3, "nested": [1, 7]}}),
+        actions
+            .iter()
+            .map(|a| serde_json::to_value(a).unwrap())
+            .collect(),
+    )
+    .unwrap();
+    crate::current_tree_learner_v1::AuthenticatedInputV1::from_current(packet, &actions).unwrap()
+}
+
+fn adam() -> crate::current_tree_learner_v1::AdamConfigV1 {
+    crate::current_tree_learner_v1::AdamConfigV1 {
+        learning_rate: 0.001,
+        beta1: 0.9,
+        beta2: 0.999,
+        epsilon: 1e-8,
+    }
+}
+
+#[test]
+fn issue454_tree_full_gradient_matches_finite_differences_and_optimizer_resumes_exactly() {
+    use crate::current_tree_learner_v1::{LearnerV1, ModelV1, TrainingExampleV1};
+    let input = learner_fixture();
+    let examples = [TrainingExampleV1 {
+        input: &input,
+        targets: &[0.2, 0.8],
+    }];
+    let model = ModelV1::deterministic_fixture();
+    let (_, gradient) = model.loss_and_gradient(&examples).unwrap();
+    let epsilon = 1e-5;
+    for (i, actual) in gradient.iter().enumerate() {
+        let mut plus = model.parameters().to_vec();
+        let mut minus = plus.clone();
+        plus[i] += epsilon;
+        minus[i] -= epsilon;
+        let high = ModelV1::from_parameters(plus)
+            .unwrap()
+            .loss_and_gradient(&examples)
+            .unwrap()
+            .0;
+        let low = ModelV1::from_parameters(minus)
+            .unwrap()
+            .loss_and_gradient(&examples)
+            .unwrap()
+            .0;
+        let expected = (high - low) / (2. * epsilon);
+        assert!(
+            (actual - expected).abs() < 2e-8,
+            "parameter {i}: {actual} != {expected}"
+        );
+    }
+    // Require activity in the input, recurrent, bias, interaction and flag
+    // parameter groups, not only a final-head update.
+    for range in [0..320, 320..576, 576..592, 624..640, 640..646] {
+        assert!(gradient[range].iter().any(|v| v.abs() > 1e-10));
+    }
+    let mut learner = LearnerV1::new(model, adam()).unwrap();
+    learner.update(&examples).unwrap();
+    let snapshot = learner.snapshot();
+    let bytes = serde_json::to_vec(&snapshot).unwrap();
+    let mut resumed = LearnerV1::restore(serde_json::from_slice(&bytes).unwrap()).unwrap();
+    assert_eq!(resumed.snapshot(), snapshot);
+    for _ in 0..3 {
+        assert_eq!(
+            learner.update(&examples).unwrap().to_bits(),
+            resumed.update(&examples).unwrap().to_bits()
+        );
+        assert_eq!(learner.snapshot(), resumed.snapshot());
+    }
+    let before = learner.snapshot();
+    assert!(learner
+        .update(&[TrainingExampleV1 {
+            input: &input,
+            targets: &[f64::NAN, 1.]
+        }])
+        .is_err());
+    assert_eq!(learner.snapshot(), before);
+    let mut corrupt = serde_json::to_value(&before).unwrap();
+    corrupt["second_moment_bits"][0] = serde_json::json!((-1.0f64).to_bits());
+    assert!(LearnerV1::restore(serde_json::from_value(corrupt).unwrap()).is_err());
+}
+
+#[test]
+fn issue454_real_actor_training_ingress_rejects_stale_and_foreign_decisions() {
+    use crate::current_tree_learner_v1::{LearnerV1, ModelV1, TrainingExampleV1};
+    let (state, _, _) = scene(PlayerId::P0);
+    let mut own = KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state(
+        state.clone(),
+    ))
+    .unwrap();
+    let foreign =
+        KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state(state))
+            .unwrap();
+    let FastActorResponseV1::Decision(h) = own.current_response() else {
+        panic!("expected actor decision")
+    };
+    let decision = own.encode(h).unwrap();
+    assert!(matches!(
+        foreign.training_input_v1(&decision),
+        Err(Error::StaleBinding)
+    ));
+    let input = own.training_input_v1(&decision).unwrap();
+    let mut learner = LearnerV1::new(ModelV1::deterministic_fixture(), adam()).unwrap();
+    let mut targets = vec![0.; input.action_flags().len()];
+    targets[0] = 1.;
+    let before = learner.snapshot();
+    let loss = learner
+        .update(&[TrainingExampleV1 {
+            input: &input,
+            targets: &targets,
+        }])
+        .unwrap();
+    assert!(loss.is_finite());
+    assert_ne!(before, learner.snapshot());
+    let (logits, selected, _) = own
+        .score_and_apply_tree_v1(&decision, learner.model())
+        .unwrap();
+    assert_eq!(logits.len(), h.legal_action_count as usize);
+    assert!((selected as usize) < logits.len());
+    assert!(matches!(
+        own.training_input_v1(&decision),
+        Err(Error::StaleBinding)
+    ));
+    // Retained authenticated data remains trainable after its actor advances.
+    learner
+        .update(&[TrainingExampleV1 {
+            input: &input,
+            targets: &targets,
+        }])
+        .unwrap();
+}
