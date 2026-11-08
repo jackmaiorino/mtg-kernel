@@ -83,6 +83,8 @@ mod root_rebuild;
 mod sbroot;
 mod seeds;
 mod serve;
+#[cfg(test)]
+pub(crate) use serve::worker_answer_v4 as qualify_worker_request_v4;
 mod serve_ac2;
 mod sharing;
 mod tensor_dump;
@@ -172,6 +174,8 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-sbroot"
             | "s4a-serve"
             | "s4a-serve-worker"
+            | "s4a-serve-reveal-v4"
+            | "s4a-serve-reveal-v4-worker"
             | "s4a-serve-ac2"
     )
 }
@@ -1748,11 +1752,17 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
     {
         return Err("reused-action modes require interchange off".into());
     }
-    if cfg.mode == serve::SERVE_MODE {
+    if matches!(
+        cfg.mode.as_str(),
+        serve::SERVE_MODE | serve::REVEAL_SERVE_MODE
+    ) {
         return serve::run_pool(cfg);
     }
-    if cfg.mode == serve::WORKER_MODE {
-        return serve::run_worker(policy);
+    if matches!(
+        cfg.mode.as_str(),
+        serve::WORKER_MODE | serve::REVEAL_WORKER_MODE
+    ) {
+        return serve::run_worker(policy, cfg.mode == serve::REVEAL_WORKER_MODE);
     }
     if cfg.mode == serve_ac2::AC2_MODE {
         return serve_ac2::run(cfg, policy);

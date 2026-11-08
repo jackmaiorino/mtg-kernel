@@ -13,13 +13,15 @@ mtg_kernel::fast_global_allocator!();
 
 use mtg_kernel::agent_bridge_v1::{
     read_bridge_input_line_v1, BridgeInputLineV1, SpellbenchBridgeOptionsV1,
-    SpellbenchBridgeServerV1, SpellbenchEngineIdentityV1, SPELLBENCH_FLAG_V2_SUPPORT,
-    SPELLBENCH_FLAG_X_KERNEL_FLAT_V4, SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1,
+    SpellbenchBridgeServerV1, SpellbenchEngineIdentityV1, SPELLBENCH_FLAG_REVEAL_MEANING_V3,
+    SPELLBENCH_FLAG_V2_SUPPORT, SPELLBENCH_FLAG_X_KERNEL_FLAT_V4,
+    SPELLBENCH_FLAG_X_KERNEL_INFOSET_REVEAL_V4, SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1,
 };
 use std::io::{self, Write};
 
 fn main() {
     let mut options = SpellbenchBridgeOptionsV1::default();
+    let mut reveal_search_v4 = false;
     for argument in std::env::args_os().skip(1) {
         if argument.to_str() == Some(SPELLBENCH_FLAG_X_KERNEL_FLAT_V4) {
             options.x_kernel_flat_v4 = true;
@@ -29,16 +31,28 @@ fn main() {
             options.x_kernel_flat_v4 = true;
         } else if argument.to_str() == Some(SPELLBENCH_FLAG_V2_SUPPORT) {
             options.private_v2_support = true;
+        } else if argument.to_str() == Some(SPELLBENCH_FLAG_REVEAL_MEANING_V3) {
+            options.reveal_meaning_v3 = true;
+        } else if argument.to_str() == Some(SPELLBENCH_FLAG_X_KERNEL_INFOSET_REVEAL_V4) {
+            reveal_search_v4 = true;
         } else {
-            eprintln!("usage: agent_bridge_v1 [{SPELLBENCH_FLAG_X_KERNEL_FLAT_V4}] [{SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1}] [{SPELLBENCH_FLAG_V2_SUPPORT}]");
+            eprintln!("usage: agent_bridge_v1 [{SPELLBENCH_FLAG_X_KERNEL_FLAT_V4}] [{SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1} | {SPELLBENCH_FLAG_X_KERNEL_INFOSET_REVEAL_V4}] [{SPELLBENCH_FLAG_V2_SUPPORT}] [{SPELLBENCH_FLAG_REVEAL_MEANING_V3}]");
             std::process::exit(2);
         }
+    }
+    if reveal_search_v4 && options.x_kernel_infoset_v1 {
+        eprintln!("choose one infoset export mode");
+        std::process::exit(2);
     }
     let stdin = io::stdin();
     let mut reader = stdin.lock();
     let mut stdout = io::stdout().lock();
-    let mut server =
-        SpellbenchBridgeServerV1::with_options(SpellbenchEngineIdentityV1::current(), options);
+    let identity = SpellbenchEngineIdentityV1::current();
+    let mut server = if reveal_search_v4 {
+        SpellbenchBridgeServerV1::with_reveal_search_v4(identity)
+    } else {
+        SpellbenchBridgeServerV1::with_options(identity, options)
+    };
     let mut buffer: Vec<u8> = Vec::new();
 
     loop {

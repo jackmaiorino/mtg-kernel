@@ -7502,14 +7502,10 @@ fn commit_cost_components_from_plan_v1(
             }
             CostComponent::RevealHandIfNoCardsWithType(_) => {
                 let hand = state.players[player.index()].hand.clone();
-                for object in hand {
-                    // spellbench-public-reveal: hand card revealed by the card rules.
-                    for observer in [PlayerId::P0, PlayerId::P1] {
-                        state
-                            .reveal_distinct_hand_card(observer, player, object)
-                            .expect("preflighted live hand card remains revealable");
-                    }
-                }
+                // spellbench-public-reveal: the paid cost shows the entire hand.
+                state
+                    .reveal_public_hand_group_v3(player, hand.into_iter())
+                    .expect("preflighted live hand card remains revealable");
             }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {}
             CostComponent::Loyalty(delta) => {
@@ -28477,6 +28473,16 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
             state.reveal_library_position(observer, owner, 0);
         }
     }
+    if to_zone == Zone::Hand && !was_face_down {
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            state.note_hand_reveal_v3(
+                observer,
+                owner,
+                pending.spell,
+                crate::reveal_meaning_v3::RevealV3::PublicTransfer(Zone::Stack),
+            );
+        }
+    }
     match resolution_cast_v1::finish_child(state) {
         Ok(true) => return,
         Ok(false) => {}
@@ -28492,7 +28498,12 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
         // spellbench-public-reveal: hand card revealed by the card rules.
         for observer in [PlayerId::P0, PlayerId::P1] {
             state
-                .reveal_distinct_hand_card(observer, owner, pending.spell)
+                .reveal_distinct_hand_card_with_meaning_v3(
+                    observer,
+                    owner,
+                    pending.spell,
+                    crate::reveal_meaning_v3::RevealV3::Omit,
+                )
                 .expect("an aborted public stack spell just returned to hand");
         }
     }
@@ -29245,6 +29256,7 @@ fn move_to_stack(state: &mut GameState, id: ObjectId, from_zone: Zone, face_down
         _ => state.players[owner.index()].hand.retain(|&x| x != id),
     }
     if from_zone == Zone::Hand {
+        state.record_hand_departure_v3(id, Zone::Stack, !face_down);
         state.forget_departing_hand_object(id, !face_down);
     } else {
         state.forget_hand_object(id);
