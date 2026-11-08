@@ -161,12 +161,20 @@ pub(crate) fn validate_inherited(
     let expected_casts = common.stack.iter().filter(|row|
         row.stack_item_kind == StackItemKindV2::Spell && row.source.card_db_id == PRINTING).count();
     if expected_casts != facts.casts.len() { return Err("Electroduplicate cast roster differs from common stack".into()); }
+    let mut positions = std::collections::BTreeSet::new();
     for cast in &facts.casts {
+        if !positions.insert(cast.stack_position) {
+            return Err("Electroduplicate cast roster repeats a stack position".into());
+        }
         let row = common.stack.iter().find(|row| row.stack_index == cast.stack_position
             && row.stack_item_kind == StackItemKindV2::Spell && binds(&cast.spell, &row.source))
             .ok_or("Electroduplicate cast lost its inherited stack row")?;
-        if row.controller != cast.spell.controller || row.cast_method != cast.finalized_method
+        if row.controller != cast.spell.controller || row.cast_method.is_none()
             || row.is_copy != (cast.stage == public::CastStageV1::UncastCopy)
+            || cast.stage == public::CastStageV1::Published
+                && (row.cast_method != cast.finalized_method
+                    || row.is_flashback != (cast.finalized_method == Some(CastMethodV4::Flashback)))
+            || cast.stage == public::CastStageV1::UncastCopy && row.is_flashback
             || cast.finalized_method == Some(CastMethodV4::Flashback)
                 && (cast.origin_zone != Some(Zone::Graveyard) || !row.is_flashback)
         { return Err("Electroduplicate cast route differs from common stack".into()); }
@@ -174,7 +182,10 @@ pub(crate) fn validate_inherited(
             let pending = common.engine_context.pending_cast.as_ref().filter(|pending|
                 pending.source.as_ref().is_some_and(|source| binds(&cast.spell, source)))
                 .ok_or("Electroduplicate announcement lost its pending cast")?;
-            if Some(pending.origin_zone) != cast.origin_zone || pending.controller != cast.spell.controller {
+            if Some(pending.origin_zone) != cast.origin_zone || pending.controller != cast.spell.controller
+                || row.is_flashback != pending.is_flashback
+                || pending.is_flashback != (row.cast_method == Some(CastMethodV4::Flashback))
+                || pending.is_flashback && pending.origin_zone != Zone::Graveyard {
                 return Err("Electroduplicate pending origin differs".into());
             }
             &pending.chosen_targets
@@ -196,8 +207,10 @@ pub(crate) fn validate_inherited(
             .map(|card| (card, entry.sacrifice_instances))
     }).collect();
     if entries.len() != facts.copied_tokens.len() { return Err("Electroduplicate token roster differs from V74".into()); }
+    let mut incarnations = std::collections::BTreeSet::new();
     for token in &facts.copied_tokens {
-        if entries.iter().filter(|(card, count)| *card == &token.card
+        if !incarnations.insert((token.card.object, token.card.generation))
+            || entries.iter().filter(|(card, count)| *card == &token.card
             && *count == token.copiable_haste_and_each_end_step_sacrifice_instances).count() != 1
             || !value.tinybones.battlefield.iter().flatten().any(|current|
                 current.card == token.card && current.is_token && current.form == token.form

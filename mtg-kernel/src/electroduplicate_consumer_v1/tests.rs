@@ -214,6 +214,22 @@ fn paid_cast_target_hidden_pair_indices_restore_and_fizzle_on_new_incarnation_bo
 
         let input = numeric.training_input_v1(&decision(&numeric)).unwrap();
         assert!(ModelV1::deterministic_fixture().forward(&input).unwrap().iter().all(|v| v.is_finite()));
+        // The native copy operation publishes an uncast spell with a stack
+        // method, but no finalized cast origin. Both real stack rows must survive.
+        let mut spell_copy = numeric.fixture_state().clone();
+        engine::copy_spell_for(&mut spell_copy, source, actor).unwrap();
+        let spell_copy_owner = KaitoSession::from_session(fixture(&spell_copy)).unwrap();
+        let spell_copy_decision = decision(&spell_copy_owner);
+        let spell_copy_observation = spell_copy_decision.fixture_backend_v75().observation();
+        let casts = &spell_copy_observation.electroduplicate.as_ref().unwrap().casts;
+        assert_eq!(casts.len(), 2);
+        assert_eq!(casts[1].stage, public::CastStageV1::UncastCopy);
+        assert!(casts[1].finalized_method.is_none());
+        let mut forged = spell_copy_observation.clone();
+        let casts = &mut forged.electroduplicate.as_mut().unwrap().casts;
+        casts[1] = casts[0].clone();
+        forged.projection_sha256 = crate::kaito_observation_v75::commitment(&forged).unwrap();
+        assert!(crate::kaito_observation_v75::validate_artifact(&forged).is_err());
         let mut copied = numeric.fixture_state().clone();
         native::finish(&mut copied);
         assert_eq!(copied.objects.get(source).zone, Zone::Graveyard);
@@ -241,6 +257,11 @@ fn paid_cast_target_hidden_pair_indices_restore_and_fizzle_on_new_incarnation_bo
         assert_eq!(copy_decision.fixture_backend_v75().observation().chandra.copied_tokens.len(), 2);
         let mut forged = copy_decision.fixture_backend_v75().observation().clone();
         forged.electroduplicate.as_mut().unwrap().copied_tokens[0].copiable_haste_and_each_end_step_sacrifice_instances = 42;
+        forged.projection_sha256 = crate::kaito_observation_v75::commitment(&forged).unwrap();
+        assert!(crate::kaito_observation_v75::validate_artifact(&forged).is_err());
+        let mut forged = copy_decision.fixture_backend_v75().observation().clone();
+        let tokens = &mut forged.electroduplicate.as_mut().unwrap().copied_tokens;
+        tokens[1] = tokens[0].clone();
         forged.projection_sha256 = crate::kaito_observation_v75::commitment(&forged).unwrap();
         assert!(crate::kaito_observation_v75::validate_artifact(&forged).is_err());
         assert!(ModelV1::deterministic_fixture().forward(&copy_owner.training_input_v1(&copy_decision).unwrap()).unwrap().iter().all(|v| v.is_finite()));
