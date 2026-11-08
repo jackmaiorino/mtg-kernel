@@ -2430,7 +2430,9 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     }
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
-    crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact || private_scope != LimitedAppendixV1::Loot {
+        crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
+    }
 
     if !matches!(
         text_mode,
@@ -3070,7 +3072,9 @@ fn public_restricted_mana_v1(
     }
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
-    crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact || appendix != LimitedAppendixV1::Loot {
+        crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
+    }
     let mut pools = [Vec::new(), Vec::new()];
     for (index, pool) in pools.iter_mut().enumerate() {
         for unit in &state.players[index].restricted_mana_pool.0 {
@@ -5954,7 +5958,9 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     }
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
-    crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact || private_scope != LimitedAppendixV1::Loot {
+        crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
+    }
 
     if !matches!(
         text_mode,
