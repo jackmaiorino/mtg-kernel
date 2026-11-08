@@ -2389,7 +2389,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
     }
-    let allowed_moon = (private_scope == LimitedAppendixV1::Moon)
+    let allowed_moon = (private_scope.includes(LimitedAppendixV1::Moon))
         .then(crate::moon_public_v1::selected_id)
         .transpose()
         .map_err(RlContractError)?;
@@ -2429,16 +2429,16 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
-    if text_mode != ObservationTextModeV2::KaitoV75Artifact || private_scope != LimitedAppendixV1::ThousandYearStorm {
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact || !private_scope.includes(LimitedAppendixV1::ThousandYearStorm) {
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if text_mode != ObservationTextModeV2::KaitoV75Artifact
-        || private_scope != LimitedAppendixV1::Curator
+        || !private_scope.includes(LimitedAppendixV1::Curator)
     {
         crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if text_mode != ObservationTextModeV2::KaitoV75Artifact
-        || private_scope != LimitedAppendixV1::Loot
+        || !private_scope.includes(LimitedAppendixV1::Loot)
     {
         crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
@@ -3079,15 +3079,15 @@ fn public_restricted_mana_v1(
     ) {
         crate::effect::genesis_wave_v1::refuse_legacy(state, None).map_err(RlContractError)?;
     }
-    if text_mode != ObservationTextModeV2::KaitoV75Artifact || appendix != LimitedAppendixV1::ThousandYearStorm {
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact || !appendix.includes(LimitedAppendixV1::ThousandYearStorm) {
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if text_mode != ObservationTextModeV2::KaitoV75Artifact
-        || appendix != LimitedAppendixV1::Curator
+        || !appendix.includes(LimitedAppendixV1::Curator)
     {
         crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
-    if text_mode != ObservationTextModeV2::KaitoV75Artifact || appendix != LimitedAppendixV1::Loot {
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact || !appendix.includes(LimitedAppendixV1::Loot) {
         crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     let mut pools = [Vec::new(), Vec::new()];
@@ -5971,16 +5971,16 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
         crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
-    if text_mode != ObservationTextModeV2::KaitoV75Artifact || private_scope != LimitedAppendixV1::ThousandYearStorm {
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact || !private_scope.includes(LimitedAppendixV1::ThousandYearStorm) {
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if text_mode != ObservationTextModeV2::KaitoV75Artifact
-        || private_scope != LimitedAppendixV1::Curator
+        || !private_scope.includes(LimitedAppendixV1::Curator)
     {
         crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if text_mode != ObservationTextModeV2::KaitoV75Artifact
-        || private_scope != LimitedAppendixV1::Loot
+        || !private_scope.includes(LimitedAppendixV1::Loot)
     {
         crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
@@ -10688,20 +10688,20 @@ fn private_card(
 ) -> Result<CardPrivateV1> {
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
-            && ((appendix != LimitedAppendixV1::Progenitus
+            && ((!appendix.includes(LimitedAppendixV1::Progenitus)
                 && crate::progenitus_v1::definition(o.card_def))
-                || (appendix != LimitedAppendixV1::LeylineAxe
+                || (!appendix.includes(LimitedAppendixV1::LeylineAxe)
                     && crate::leyline_axe_v1::definition(o.card_def))
-                || (appendix != LimitedAppendixV1::ThousandYearStorm && crate::effect::thousand_year_storm_v1::definition(o.card_def))
-                || (appendix != LimitedAppendixV1::Harvester
+                || (!appendix.includes(LimitedAppendixV1::ThousandYearStorm) && crate::effect::thousand_year_storm_v1::definition(o.card_def))
+                || (!appendix.includes(LimitedAppendixV1::Harvester)
                     && crate::effect::harvester_v1::definition(o.card_def))
                 || (!appendix.includes(LimitedAppendixV1::Omniscience)
                     && crate::engine::omniscience_cast_v1::definition(o.card_def))
-                || (appendix != LimitedAppendixV1::SphinxLore
+                || (!appendix.includes(LimitedAppendixV1::SphinxLore)
                     && crate::effect::sphinx_lore_v1::definition(o.card_def))
-                || (appendix != LimitedAppendixV1::Greatwurm
+                || (!appendix.includes(LimitedAppendixV1::Greatwurm)
                     && crate::effect::greatwurm_v1::definition(o.card_def))
-                || (appendix != LimitedAppendixV1::Kykar
+                || (!appendix.includes(LimitedAppendixV1::Kykar)
                     && (crate::effect::kykar_v1::definition(o.card_def)
                         || crate::effect::kykar_v1::token_definition(o.card_def))))
     }) {
@@ -10711,20 +10711,20 @@ fn private_card(
     }
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
-            && appendix != LimitedAppendixV1::Loot
+            && !appendix.includes(LimitedAppendixV1::Loot)
             && CARD_DEFS[usize::from(o.card_def)].name == "Loot, Exuberant Explorer"
     }) {
         return Err(RlContractError(
             "Loot requires a distinct complete consumer".into(),
         ));
     }
-    if appendix != LimitedAppendixV1::FiendArtisan
+    if !appendix.includes(LimitedAppendixV1::FiendArtisan)
         && state.objects.try_get(id).is_some_and(|o| o.v4.face_down_v1.is_none()
             && crate::effect::fiend_artisan_v1::definition(o.card_def))
     {
         return Err(RlContractError("Fiend Artisan requires its distinct complete consumer".into()));
     }
-    if appendix != LimitedAppendixV1::Etali
+    if !appendix.includes(LimitedAppendixV1::Etali)
         && state.objects.try_get(id).is_some_and(|o| o.v4.face_down_v1.is_none()
             && crate::etali_primal_storm_public_v1::definition(o.card_def))
     {
@@ -10732,7 +10732,7 @@ fn private_card(
     }
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
-            && appendix != LimitedAppendixV1::Curator
+            && !appendix.includes(LimitedAppendixV1::Curator)
             && CARD_DEFS[usize::from(o.card_def)].name == "Curator of Destinies"
     }) {
         return Err(RlContractError(
@@ -10741,7 +10741,7 @@ fn private_card(
     }
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
-            && appendix != LimitedAppendixV1::Electroduplicate
+            && !appendix.includes(LimitedAppendixV1::Electroduplicate)
             && CARD_DEFS[usize::from(o.card_def)].name == "Electroduplicate"
     }) {
         return Err(RlContractError(
@@ -12244,9 +12244,9 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
     appendix: LimitedAppendixV1,
 ) -> Result<PendingEffectSemanticV4> {
-    let etali = appendix == LimitedAppendixV1::Etali
+    let etali = appendix.includes(LimitedAppendixV1::Etali)
         && crate::effect::standard_exile::top_batch_pending(pending);
-    let curator = appendix == LimitedAppendixV1::Curator
+    let curator = appendix.includes(LimitedAppendixV1::Curator)
         && crate::effect::curator_v1::pending_selected(state, pending);
     if curator {
         crate::effect::curator_v1::validate(state, pending).map_err(RlContractError)?;
@@ -12272,7 +12272,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
         state,
         &pending.resolving_item,
     );
-    let edict = appendix == LimitedAppendixV1::Edict
+    let edict = appendix.includes(LimitedAppendixV1::Edict)
         && pending
             .resolving_item
             .v4
@@ -12401,7 +12401,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             "nonland sacrifice payment requires its distinct consumer".into(),
                         ));
                     }
-                    let aberration_order = appendix == LimitedAppendixV1::Aberration
+                    let aberration_order = appendix.includes(LimitedAppendixV1::Aberration)
                         && crate::effect::aberration_item_v1(&pending.resolving_item)
                         && matches!(purpose, crate::effect::EffectTargetSelectionPurpose::OrderRevealedIntoGraveyard { .. });
                     let private_etali_menu = etali && matches!(
@@ -12538,7 +12538,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                                 TargetSelectionPurposeV4::CardSelection
                             },
                             crate::effect::EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 { .. } => {
-                                if appendix != LimitedAppendixV1::Progenitus {
+                                if !appendix.includes(LimitedAppendixV1::Progenitus) {
                                     return Err(RlContractError("Progenitus mill ordering needs a complete successor".into()));
                                 }
                                 TargetSelectionPurposeV4::LibraryOrder

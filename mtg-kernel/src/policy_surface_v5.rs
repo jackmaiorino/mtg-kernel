@@ -405,11 +405,40 @@ pub(crate) enum LimitedAppendixV1 {
     FiendArtisan,
     Etali,
     ThousandYearStorm,
+    FullPool,
 }
 
 impl LimitedAppendixV1 {
     pub(crate) fn includes(self, family: Self) -> bool {
         self == family
+            || (self == Self::FullPool
+                && matches!(
+                    family,
+                        Self::Artist
+                        | Self::Niv
+                        | Self::ChosenType
+                        | Self::Drakuseth
+                        | Self::Embercleave
+                        | Self::Zimone
+                        | Self::Omniscience
+                        | Self::Tutelage
+                        | Self::Moon
+                        | Self::LeylineAxe
+                        | Self::Progenitus
+                        | Self::Aberration
+                        | Self::Lathril
+                        | Self::Electroduplicate
+                        | Self::Edict
+                        | Self::Loot
+                        | Self::Curator
+                        | Self::Kykar
+                        | Self::SphinxLore
+                        | Self::Greatwurm
+                        | Self::Harvester
+                        | Self::FiendArtisan
+                        | Self::Etali
+                        | Self::ThousandYearStorm
+                ))
             || (self == Self::Mixed
                 && matches!(
                     family,

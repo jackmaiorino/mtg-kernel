@@ -28935,6 +28935,7 @@ pub(crate) enum KaitoCopyScopeV1 {
     LeylineAxe,
     Harvester,
     Etali,
+    FullPool,
 }
 
 pub(crate) fn require_no_copied_token_abilities_kaito_v75(
@@ -28962,19 +28963,19 @@ fn require_unrepresented_copy_sources_v1(
     state: &GameState,
     scope: KaitoCopyScopeV1,
 ) -> Result<(), String> {
-    if scope == KaitoCopyScopeV1::Etali {
+    if matches!(scope, KaitoCopyScopeV1::Etali | KaitoCopyScopeV1::FullPool) {
         if !state.etali_commit_receipts_v1 {
             return Err("Etali owning copy scope lacks its native receipt mode".into());
         }
     } else {
         standard_exile::refuse_top_batch_legacy(state)?;
     }
-    if scope == KaitoCopyScopeV1::LeylineAxe {
+    if matches!(scope, KaitoCopyScopeV1::LeylineAxe | KaitoCopyScopeV1::FullPool) {
         crate::leyline_axe_v1::validate(state)?;
     } else {
         crate::leyline_axe_v1::require_legacy_absence(state)?;
     }
-    if scope == KaitoCopyScopeV1::Harvester {
+    if matches!(scope, KaitoCopyScopeV1::Harvester | KaitoCopyScopeV1::FullPool) {
         harvester_v1::validate_state(state)?;
     } else {
         harvester_v1::require_legacy_absence(state)?;

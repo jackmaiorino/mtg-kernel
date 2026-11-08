@@ -54,6 +54,29 @@ pub(crate) fn preflight(config: &ResetV1) -> Result<(), String> {
     {
         return Err("invalid mixed Foundations profile reset".into());
     }
+    let exact = exact_partial_printings()?;
+    for &id in config.mainboards.iter().flatten() {
+        let card = CARD_DEFS
+            .get(usize::from(id))
+            .ok_or("unknown declared card")?;
+        if card.is_token
+            || !(card.has_full_support() || (exact.contains(&id) && card.is_executable()))
+        {
+            return Err(format!(
+                "card {id} is outside the mixed Foundations profile"
+            ));
+        }
+        if !exact.contains(&id) {
+            crate::rl::require_declared_cards_for_scope(
+                crate::rl::CommonProjectionScopeV42::KaitoV75,
+                std::slice::from_ref(&id),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn exact_partial_printings() -> Result<[u16; 20], String> {
     use crate::rules_meaning_chosen_type_v66::{self as chosen, FamilyV66};
     use crate::rules_meaning_graveyard_return_v61::{self as graveyard, FamilyV61};
     // Authenticate the exact native definitions and generated tokens before
@@ -83,25 +106,7 @@ pub(crate) fn preflight(config: &ResetV1) -> Result<(), String> {
     if exact != PARTIAL_PRINTINGS_V1 {
         return Err("mixed Foundations printing identities changed".into());
     }
-    for &id in config.mainboards.iter().flatten() {
-        let card = CARD_DEFS
-            .get(usize::from(id))
-            .ok_or("unknown declared card")?;
-        if card.is_token
-            || !(card.has_full_support() || (exact.contains(&id) && card.is_executable()))
-        {
-            return Err(format!(
-                "card {id} is outside the mixed Foundations profile"
-            ));
-        }
-        if !exact.contains(&id) {
-            crate::rl::require_declared_cards_for_scope(
-                crate::rl::CommonProjectionScopeV42::KaitoV75,
-                std::slice::from_ref(&id),
-            )?;
-        }
-    }
-    Ok(())
+    Ok(exact)
 }
 
 fn native(config: &ResetV1) -> Result<FastActorSessionV1, String> {
