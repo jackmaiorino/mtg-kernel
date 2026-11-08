@@ -225,39 +225,40 @@ fn widening_keeps_old_coordinates_and_zeroes_every_new_fan_out_and_moment() {
     assert!(counts[&NewFanOut] > 0 && counts[&NewBias] > 0);
 }
 
-/// The draws follow the documented law and order, recomputed here without
-/// the class function: object_encoder.0.weight is the first drawn tensor
-/// (the embedding draws nothing); in each of its 64 old rows the 16 new
-/// embedding columns 114..130 are drawn first, and the first new-unit row
-/// (row 64) starts at draw 64 * 16.
+/// Every drawn coordinate follows one continuous RNG stream across all
+/// tensors and input widths. The independent oracle uses the published
+/// shapes, not the production coordinate classifier or layout mapper.
 #[test]
 fn widening_draws_follow_the_documented_law_and_order() {
     let (_, parent) = trained_parent_v1();
     let wide = widen_v1(&parent, WIDENING_SEED_V1).snapshot_v1().unwrap();
-    let fan_in = W_OBJECT_ENCODER_INPUT;
     let mut rng = SplitMix64::seed(WIDENING_SEED_V1);
-    let mut draw = || {
-        let unit = (rng.next_u64() >> 40) as f64 / 16_777_216.0;
-        ((2.0 * unit - 1.0) / (fan_in as f64).sqrt()) as f32
-    };
-    let weight = &wide.parameters[OBJECT_FIRST_WEIGHT].values;
-    let first_new_column = OBJECT_FEATURE_DIM_V1 + CARD_EMBEDDING_DIM_V1;
-    for row in 0..HIDDEN_DIM_V1 {
-        for column in first_new_column..fan_in {
-            assert_eq!(
-                weight[row * fan_in + column].to_bits(),
-                draw().to_bits(),
-                "row {row} column {column}"
-            );
+    let mut witnessed_widths = std::collections::BTreeSet::new();
+    for tensor in 1..wide.parameters.len() {
+        let shape = W_EXPECTED_PARAMETER_SHAPES[tensor];
+        if shape.len() != 2 {
+            continue;
+        }
+        let old_rows = EXPECTED_PARAMETER_SHAPES[tensor][0];
+        for row in 0..shape[0] {
+            for column in 0..shape[1] {
+                let drawn = row >= old_rows
+                    || (tensor == OBJECT_FIRST_WEIGHT
+                        && column >= OBJECT_FEATURE_DIM_V1 + CARD_EMBEDDING_DIM_V1);
+                if drawn {
+                    let unit = (rng.next_u64() >> 40) as f64 / 16_777_216.0;
+                    let expected = ((2.0 * unit - 1.0) * (1.0 / (shape[1] as f64).sqrt())) as f32;
+                    assert_eq!(
+                        wide.parameters[tensor].values[row * shape[1] + column].to_bits(),
+                        expected.to_bits(),
+                        "tensor {tensor} row {row} column {column}"
+                    );
+                    witnessed_widths.insert(shape[1]);
+                }
+            }
         }
     }
-    for column in 0..fan_in {
-        assert_eq!(
-            weight[HIDDEN_DIM_V1 * fan_in + column].to_bits(),
-            draw().to_bits(),
-            "row 64 column {column}"
-        );
-    }
+    assert!(witnessed_widths.len() > 3);
     assert_eq!(
         WideningInitLawV1::from_name_v1(TORCH_DEFAULT_UNIFORM_V1).unwrap(),
         WideningInitLawV1::TorchDefaultUniformV1
@@ -456,20 +457,27 @@ fn widened_first_update_moves_new_fan_out_and_embedding_columns_first() {
             }
         }
         for space in &HIDDEN_SPACES_V1 {
-            let moved = space.fan_out.iter().any(|&(tensor, segment)| {
+            for &(tensor, segment) in space.fan_out {
+                // This fixture pools only its declared object groups. An
+                // absent group is identically zero, so has no exercised edge.
+                if tensor == STATE_FIRST_WEIGHT
+                    && !GRADIENT_GROUPS_V1.contains(&((segment - 1) as i64))
+                {
+                    continue;
+                }
                 let columns = W_EXPECTED_PARAMETER_SHAPES[tensor][1];
                 let old_rows = EXPECTED_PARAMETER_SHAPES[tensor][0];
-                (HIDDEN_DIM_V1..W_HIDDEN_DIM_V1).any(|unit| {
+                let moved = (HIDDEN_DIM_V1..W_HIDDEN_DIM_V1).any(|unit| {
                     let column = wide_segment_column_v1(tensor, segment, unit);
                     (0..old_rows)
                         .any(|row| result.gradients[tensor].values[row * columns + column] != 0.0)
-                })
-            });
-            assert!(
-                moved,
-                "{route:?} {} new fan-out has no gradient",
-                space.name
-            );
+                });
+                assert!(
+                    moved,
+                    "{route:?} {} tensor {tensor} segment {segment} new fan-out has no gradient",
+                    space.name
+                );
+            }
         }
         let embedding = &result.gradients[CARD_EMBEDDING].values;
         for &card in &present_cards {

@@ -23,7 +23,8 @@
 //! **Update.** The ordinary CPU GAE update (`gae_advantage_value/v1`,
 //! entropy 0) with full Adam: the same trajectory checks and replay as
 //! net-8's (serial or prepared), the same GAE targets and advantage
-//! normalization, then one S step (`STrainStateV1::train_step_gae_v1`).
+//! normalization, then one S step. Prepared ordinary GAE updates also use
+//! the preparation worker count for S's forward and backward passes.
 //! The receipt has the net-8 update's fields, so the run driver validates and
 //! chains it unchanged.
 //!
@@ -81,10 +82,16 @@ pub const S_LEARNER_SOURCE_SCHEMA_V1: &str = "w5-s-learner/v1";
 pub const S_LEARNER_CHECKPOINT_SCHEMA_V1: &str = "w5-s-learner-checkpoint/v1";
 /// The S container file each update publishes beside its record.
 pub const S_LEARNER_STATE_FILE_V1: &str = "s-train-state.bin";
+pub(super) const S_PARALLEL_UPDATE_BACKEND_V1: &str = "native-cpu-exact-parallel-s";
 /// The net-8 loader's refusal of an S source.
 pub(super) const S_LEARNER_NET8_REFUSAL_V1: &str =
     "an S learner source loads only through the S learner paths (Collect, CollectParallel, \
      Update, UpdatePrepared and inference); this command is net-8's";
+
+pub(super) fn record_parallel_update_execution_v1(document: &mut Value, workers: usize) {
+    document["numerical_backend"] = json!(S_PARALLEL_UPDATE_BACKEND_V1);
+    document["s_learner_workers_requested"] = json!(workers);
+}
 
 /// The `s_learner` member of a source.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -595,6 +602,11 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         groups.len()
     );
     let learner_started = std::time::Instant::now();
+    let learner_workers = if ex1.is_none() {
+        preparation_workers.unwrap_or(1)
+    } else {
+        1
+    };
     let (step, ex1_exposure) = match (&ex1_teacher, &ex1) {
         (Some((_, rows)), Some(options)) => {
             let masked_rows = policy_mask.len();
@@ -628,11 +640,12 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
             (step, Some(exposure))
         }
         (None, None) => (
-            state.train_step_gae_v1(
+            state.train_step_gae_with_workers_v1(
                 &groups,
                 value_coefficient,
                 learning_rate,
                 &mut SWorkV1::default(),
+                learner_workers,
             )?,
             None,
         ),
@@ -738,6 +751,9 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
     result["input_read_seconds"] = json!(input_read_seconds);
     result["behavior_replay_seconds"] = json!(behavior_replay_seconds);
     result["learner_update_seconds"] = json!(learner_update_seconds);
+    if learner_workers > 1 {
+        record_parallel_update_execution_v1(&mut result, learner_workers);
+    }
     result["checkpoint_io_seconds"] = json!(checkpoint_started.elapsed().as_secs_f64());
     result["update_elapsed_seconds"] = json!(started.elapsed().as_secs_f64());
     publish_json(&output_directory, "update.json", &result)?;

@@ -208,6 +208,26 @@ class CreateTests(Base):
                          funds=funds_ok, provider=world.provider, clock=clock)
         self.assertEqual(posts, [])
 
+    def test_funding_age_is_checked_after_the_attempt_lock(self):
+        root = self.control(); clock = FakeClock(time.time()); posts = []
+        guard = lease.external_guard
+        enter = guard.StoreLock.__enter__; attempt = guard.record_create_attempt
+
+        def delayed(lock):
+            acquired = enter(lock)
+            clock.advance(lease.FUNDING_MAX_AGE_SECONDS + 1)
+            return acquired
+
+        def attempt_with_delay(*args, **kwargs):
+            with patch.object(guard.StoreLock, '__enter__', delayed):
+                return attempt(*args, **kwargs)
+
+        with patch.object(guard, 'record_create_attempt', side_effect=attempt_with_delay):
+            with self.assertRaisesRegex(ValueError, 'funding observation older than 120 s'):
+                self.create(root, World(), lambda body: posts.append(body), clock=clock)
+        self.assertEqual(posts, [])
+        self.assertFalse((root / 'lease/create-attempt.json').exists())
+
     def test_malformed_or_above_ceiling_price_at_create_deletes(self):
         for returned in (pod(costPerHr="n/a"), pod(costPerHr=None), pod(adjustedCostPerHr=1.5), pod(vcpuCount=64)):
             with self.subTest(returned=returned):
@@ -327,6 +347,21 @@ class ReleaseVerificationTests(Base):
         observations = lease.read(root / "verify-absent.json")["observations"]
         self.assertGreaterEqual(observations[1]["epoch"] - observations[0]["epoch"], lease.ABSENT_SPACING_SECONDS)
 
+    def test_release_verification_covers_raw_and_claimed_ids_after_completion(self):
+        root = self.control()
+        guard = lease.external_guard
+        lease.write(root / "lease/create-attempt.json", {})
+        lease.write(root / "lease/create-returned-id.json", {"pod_id": "raw"})
+        lease.write(guard.release_claim_path(root / guard.KNOWN_DIR, "claim"), {"id": "claim"})
+        lease.write(root / "external-guard-completion.json", {"absent_confirmations": 2})
+        for pod_id in ("raw", "claim"):
+            with self.subTest(pod_id=pod_id):
+                world = World([pod(pod_id, name="another-name")])
+                world.census = lambda current: []
+                self.assertFalse(self.check(root, world))
+                self.assertIn(("GET", pod_id), world.log)
+        self.assertTrue(self.check(root, World([])))
+
     def test_failed_census_is_never_absence(self):
         root = self.recorded()
         lease.write(root / "external-guard-completion.json", {"absent_confirmations": 2})
@@ -385,7 +420,7 @@ class ReleaseVerificationTests(Base):
     def test_unreadable_retained_record_blocks_release(self):
         root = self.recorded()
         lease.write(root / "external-guard-completion.json", {"absent_confirmations": 2})
-        lease.external_guard.remember(root, "B", "duplicate", 1000.0)
+        lease.external_guard.remember_in(root / lease.external_guard.KNOWN_DIR, "B", "duplicate", 1000.0)
         (root / lease.external_guard.KNOWN_DIR / "B.json").write_text("{broken")
         self.assertFalse(self.check(root, World([])))
 
