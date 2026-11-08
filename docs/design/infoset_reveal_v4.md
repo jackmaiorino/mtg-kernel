@@ -208,8 +208,16 @@ repairs that pin before the passing attempt. Twelve helper receipt-binding
 unit tests passed before this pin-only edit.
 
 The earlier b4cd794 native executable passed all 21 V4/V3/privacy cases.
-A fresh 28-case run adds the seven recovery cases with the real paid-spell
-fixture repair. Its result is pending. Integration source
+The fresh exact-964 run passed all 28 cases: recovery 7/7, V4 9/9,
+V3 11/11, and hidden face-down privacy 1/1, none failed or ignored.
+Libtest receipt SHA-256:
+`04092445b1bf535ea8132927f11f01e6837c0ee25ff19a418ce563948cf5e2f8`;
+archived executable:
+`05674ef7ba5ddebd85db5d872bbdc761f43ed8514a19c9057aad718b0d196322`.
+All 12 Python receipt-binding tests also passed against integration source
+31fec0c7; receipt
+`b73bb2965dc6dddc3fd1975395929212d8a75e36eef89627744ff1d913858989`.
+Integration source
 `2ac295ddd485595c44407dd33660270ea7b20da9` merges main 87d5 cleanly and keeps
 all reveal/recovery/process source files identical to 964; the only overlap
 with imported main files adds its existing Eternal BO3 module declaration.
