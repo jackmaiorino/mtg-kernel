@@ -13,7 +13,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum SelectionV1 {
     RetargetSpell {
-        stack_item_id: u64,
+        target_stack_index: u32,
     },
     DoomsdayOrderedFive,
     Oracle {
@@ -94,15 +94,14 @@ fn project(
     }
     Ok(Some(match &choice.kind {
         E3ChoiceKindV1::RetargetSpellV1 { spell } => {
-            if !state
+            let index = state
                 .stack
                 .iter()
-                .any(|item| item.v4.stack_item_id == *spell)
-            {
-                return Err(RlContractError("missing retargeted public spell".into()));
-            }
+                .position(|item| item.v4.stack_item_id == *spell)
+                .ok_or_else(|| RlContractError("missing retargeted public spell".into()))?;
             SelectionV1::RetargetSpell {
-                stack_item_id: u64::from(spell.0),
+                target_stack_index: u32::try_from(index)
+                    .map_err(|_| RlContractError("public stack index overflow".into()))?,
             }
         }
         E3ChoiceKindV1::DoomsdayV1 => SelectionV1::DoomsdayOrderedFive,
@@ -111,8 +110,9 @@ fn project(
             looked: own_looked(state, viewer, prefix)?,
         },
         E3ChoiceKindV1::ShowAndTellV1 { chosen: _, later } => SelectionV1::ShowAndTell {
-            // Earlier choices have not been revealed. Do not inspect their
-            // bindings, lengths, card definitions, or saved effect frames.
+            // Native resolution reveals prior selections through ordinary
+            // observation knowledge. Do not separately expose the saved answer
+            // bindings, lengths, card definitions, or continuation frames here.
             later_players: later.clone(),
         },
         E3ChoiceKindV1::AtraxaV1 { revealed, picked } => SelectionV1::Atraxa {
@@ -141,6 +141,66 @@ fn project(
 mod tests {
     use super::*;
     use crate::policy_observation_v6::tests::{put, ready_state_for};
+
+    #[test]
+    fn issue454_retarget_uses_public_stack_position_for_both_seats() {
+        use crate::{
+            ids::StackItemId,
+            state::{StackItem, StackItemKind, StackStateV4},
+        };
+        for viewer in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(viewer);
+            let source = put(&mut state, viewer, "Ponder", Zone::Hand);
+            state.players[viewer.index()]
+                .hand
+                .retain(|id| *id != source);
+            state.objects.get_mut(source).zone = Zone::Stack;
+            let mut outputs = Vec::new();
+            for id in [51, 999] {
+                state.stack = vec![StackItem {
+                    kind: StackItemKind::Spell,
+                    source,
+                    controller: viewer,
+                    targets: Vec::new(),
+                    is_copy: false,
+                    inline_effect: None,
+                    discarded: Vec::new(),
+                    is_flashback: false,
+                    mode_chosen: 0,
+                    madness_offer: false,
+                    kicked: false,
+                    v4: StackStateV4 {
+                        stack_item_id: StackItemId(id),
+                        ..Default::default()
+                    },
+                }];
+                let choice = E3ChoiceV1 {
+                    kind: E3ChoiceKindV1::RetargetSpellV1 {
+                        spell: StackItemId(id),
+                    },
+                    player: viewer,
+                    candidates: Vec::new(),
+                    bindings: Vec::new(),
+                    min: 0,
+                    max: 1,
+                    ordered: false,
+                    path: Vec::new(),
+                    remaining: Vec::new(),
+                };
+                outputs.push(project(&state, viewer, &choice).unwrap());
+                assert_eq!(project(&state, viewer.opponent(), &choice).unwrap(), None);
+                state.stack.clear();
+                assert!(project(&state, viewer, &choice).is_err());
+            }
+            assert_eq!(outputs[0], outputs[1]);
+            assert_eq!(
+                outputs[0],
+                Some(SelectionV1::RetargetSpell {
+                    target_stack_index: 0
+                })
+            );
+        }
+    }
 
     #[test]
     fn issue454_show_and_tell_hides_prior_private_answers_and_saved_frames() {
