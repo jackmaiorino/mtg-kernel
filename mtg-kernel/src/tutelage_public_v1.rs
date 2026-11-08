@@ -38,8 +38,9 @@ pub(crate) fn selected_id() -> Result<u16, String> {
         return Err("Tutelage requires its exact pure Limited printing".into());
     }
     let d = &card_def::CARD_DEFS[usize::from(PRINTING)];
-    if !crate::rules_meaning_graveyard_return_v61::ordinary_foreign_fields_except_activated_absent(d)
-        || d.name != NAME
+    if !crate::rules_meaning_graveyard_return_v61::ordinary_foreign_fields_except_activated_absent(
+        d,
+    ) || d.name != NAME
         || d.capability != CardCapability::Partial
         || d.cost.generic != 2
         || d.cost.x_count != 0
@@ -54,10 +55,11 @@ pub(crate) fn selected_id() -> Result<u16, String> {
         || d.keywords != Keywords::NONE
         || d.is_token
         || d.target_spec != TargetSpec::None
-        || (d.spell_effect)() != Some(EffectOp::MoveObject {
-            object: ObjectRef::ThisSource,
-            to_zone: Zone::Battlefield,
-        })
+        || (d.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
     {
         return Err("complete Tutelage printing changed".into());
     }
@@ -243,9 +245,12 @@ struct MillRun<'a> {
 }
 
 pub(crate) fn require_receipts(state: &GameState) -> Result<(), String> {
-    if state.engine.event_history.iter().any(|e| {
-        matches!(e, E::SphinxsTutelageMillBatchV1 { outcome, .. } if outcome.0.is_none())
-    }) {
+    if state
+        .engine
+        .event_history
+        .iter()
+        .any(|e| matches!(e, E::SphinxsTutelageMillBatchV1 { outcome, .. } if outcome.0.is_none()))
+    {
         return Err("Tutelage consumer requires event-time public mill evidence".into());
     }
     Ok(())
@@ -269,7 +274,12 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                 let mut observers = vec![];
                 for &source in sources {
                     if source.card_def != PRINTING
-                        || roots.insert((index as u64, source.source), (draws.len(), observers.len())).is_some()
+                        || roots
+                            .insert(
+                                (index as u64, source.source),
+                                (draws.len(), observers.len()),
+                            )
+                            .is_some()
                     {
                         return Err("Tutelage exact draw observer changed".into());
                     }
@@ -281,11 +291,17 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                         batches: vec![],
                     });
                 }
-                draws.push(DrawV1 { player: sources[0].controller.into(), observers });
+                draws.push(DrawV1 {
+                    player: sources[0].controller.into(),
+                    observers,
+                });
             }
-            E::SphinxsTutelageCollectedV1 { capture_history_index } => {
+            E::SphinxsTutelageCollectedV1 {
+                capture_history_index,
+            } => {
                 for source in event::tutelage_observers_v1(state, *capture_history_index)? {
-                    let key = roots.get(&(*capture_history_index, source.source))
+                    let key = roots
+                        .get(&(*capture_history_index, source.source))
                         .ok_or("Tutelage collection preceded its draw")?;
                     let trigger = row(&mut draws, *key);
                     if trigger.stage != StageV1::Captured {
@@ -294,7 +310,10 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                     trigger.stage = StageV1::Collected;
                 }
             }
-            E::SphinxsTutelagePublishedV1 { item, capture_history_index } => {
+            E::SphinxsTutelagePublishedV1 {
+                item,
+                capture_history_index,
+            } => {
                 event::validate_published_tutelage_v1(state, item)?;
                 let key = key_for_item(state, item)?;
                 let target = item.controller.opponent();
@@ -304,16 +323,24 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                 {
                     return Err("Tutelage original opponent target changed".into());
                 }
-                let occurrence = *roots.get(&key).ok_or("Tutelage publication lacks original draw")?;
+                let occurrence = *roots
+                    .get(&key)
+                    .ok_or("Tutelage publication lacks original draw")?;
                 let trigger = row(&mut draws, occurrence);
                 if trigger.stage != StageV1::Collected
-                    || published.insert(item.v4.stack_item_id, occurrence).is_some()
+                    || published
+                        .insert(item.v4.stack_item_id, occurrence)
+                        .is_some()
                 {
                     return Err("duplicate Tutelage publication".into());
                 }
                 trigger.original_target = Some(target.into());
                 trigger.stage = StageV1::LeftStackBeforeMill;
-                if let Some(position) = state.stack.iter().position(|live| live.v4.stack_item_id == item.v4.stack_item_id) {
+                if let Some(position) = state
+                    .stack
+                    .iter()
+                    .position(|live| live.v4.stack_item_id == item.v4.stack_item_id)
+                {
                     if state.stack[position] != **item {
                         return Err("Tutelage original live stack row changed".into());
                     }
@@ -323,29 +350,52 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
             }
             E::SphinxsTutelageMillStartedV1 { item, library } => {
                 event::validate_published_tutelage_v1(state, item)?;
-                let occurrence = *published.get(&item.v4.stack_item_id)
+                let occurrence = *published
+                    .get(&item.v4.stack_item_id)
                     .ok_or("Tutelage mill start lacks original publication")?;
                 let trigger = row(&mut draws, occurrence);
                 if matches!(trigger.stage, StageV1::Resolving | StageV1::MillEnded) {
                     return Err("duplicate Tutelage mill start".into());
                 }
                 let active = active_item == Some(item.as_ref());
-                trigger.stage = if active { StageV1::Resolving } else { StageV1::MillEnded };
-                runs.insert(index as u64, MillRun {
-                    occurrence, library, target: item.controller.opponent(), active,
-                    offset: 0, previous: None, repeat: true,
-                });
+                trigger.stage = if active {
+                    StageV1::Resolving
+                } else {
+                    StageV1::MillEnded
+                };
+                runs.insert(
+                    index as u64,
+                    MillRun {
+                        occurrence,
+                        library,
+                        target: item.controller.opponent(),
+                        active,
+                        offset: 0,
+                        previous: None,
+                        repeat: true,
+                    },
+                );
             }
             E::SphinxsTutelageMillBatchV1 {
-                start_history_index, previous_batch, ordered, move_start, ..
+                start_history_index,
+                previous_batch,
+                ordered,
+                move_start,
+                ..
             } => {
-                let run = runs.get_mut(start_history_index).ok_or("Tutelage batch lacks original start")?;
+                let run = runs
+                    .get_mut(start_history_index)
+                    .ok_or("Tutelage batch lacks original start")?;
                 let pair = &run.library[run.offset..run.library.len().min(run.offset + 2)];
-                if !run.repeat || pair.is_empty()
+                if !run.repeat
+                    || pair.is_empty()
                     || *previous_batch != run.previous
                     || *move_start <= run.previous.unwrap_or(*start_history_index)
                     || pair.len() != ordered.len()
-                    || ordered.iter().enumerate().any(|(i, member)| !pair.contains(member) || ordered[..i].contains(member))
+                    || ordered
+                        .iter()
+                        .enumerate()
+                        .any(|(i, member)| !pair.contains(member) || ordered[..i].contains(member))
                 {
                     return Err("Tutelage completed original pair or repeat chain changed".into());
                 }
@@ -353,14 +403,20 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                     .ok_or("Tutelage missing actual public batch")?;
                 row(&mut draws, run.occurrence).batches.push(BatchV1 {
                     attempted_count: pair.len() as u8,
-                    visible_milled_in_move_order: outcome.members.iter().map(|member| public::ReferenceV1 {
-                        object: member.object.0,
-                        generation: member.generation,
-                        owner: run.target.into(),
-                        controller: member.controller.into(),
-                        zone: member.zone,
-                        identity: public::IdentityV1::Known { card_id: member.card_def },
-                    }).collect(),
+                    visible_milled_in_move_order: outcome
+                        .members
+                        .iter()
+                        .map(|member| public::ReferenceV1 {
+                            object: member.object.0,
+                            generation: member.generation,
+                            owner: run.target.into(),
+                            controller: member.controller.into(),
+                            zone: member.zone,
+                            identity: public::IdentityV1::Known {
+                                card_id: member.card_def,
+                            },
+                        })
+                        .collect(),
                     repeated: outcome.repeat,
                 });
                 run.offset += pair.len();
@@ -377,11 +433,15 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
     }
 
     for (position, trigger) in public::held(state).into_iter().enumerate() {
-        let EffectOp::SphinxsTutelageMillV1 { capture_history_index } = trigger.effect else {
+        let EffectOp::SphinxsTutelageMillV1 {
+            capture_history_index,
+        } = trigger.effect
+        else {
             continue;
         };
         engine::validate_pending_trigger_identity(state, trigger)?;
-        let occurrence = *roots.get(&(capture_history_index, trigger.source))
+        let occurrence = *roots
+            .get(&(capture_history_index, trigger.source))
             .ok_or("Tutelage held trigger lacks its original draw")?;
         let row = row(&mut draws, occurrence);
         if row.stage != StageV1::Collected || !trigger.targets.is_empty() {
@@ -396,19 +456,33 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
     }
 
     let current_order = if let Some(PendingEffectChoice::SelectTargets {
-        player, selected, legal,
-        purpose: EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { start_history_index, .. },
+        player,
+        selected,
+        legal,
+        purpose:
+            EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 {
+                start_history_index,
+                ..
+            },
         ..
-    }) = pending.and_then(|effect| effect.choice.as_ref()) {
+    }) = pending.and_then(|effect| effect.choice.as_ref())
+    {
         if *player == viewer {
-            let run = runs.get(start_history_index).ok_or("Tutelage order lacks original mill start")?;
+            let run = runs
+                .get(start_history_index)
+                .ok_or("Tutelage order lacks original mill start")?;
             let project = |targets: &[crate::effect::EffectTargetCandidate]| {
-                targets.iter().map(|candidate| {
-                    let Target::Object(object) = candidate.target else {
-                        return Err("Tutelage order is not an object".into());
-                    };
-                    public::reference(state, object, Some(viewer)).ok_or_else(|| "Tutelage order card is not visible to its chooser".into())
-                }).collect::<Result<Vec<_>, String>>()
+                targets
+                    .iter()
+                    .map(|candidate| {
+                        let Target::Object(object) = candidate.target else {
+                            return Err("Tutelage order is not an object".into());
+                        };
+                        public::reference(state, object, Some(viewer)).ok_or_else(|| {
+                            "Tutelage order card is not visible to its chooser".into()
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()
             };
             Some(OrderV1 {
                 draw_ordinal: ord(run.occurrence.0)?,
@@ -417,28 +491,55 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                 selected: project(selected)?,
                 legal: project(legal)?,
             })
-        } else { None }
-    } else { None };
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let activation_discard = if let Some(discard) = &state.engine.pending_discard {
         let id = match discard.resume {
             engine::DiscardResume::FinishAbilityResolution { stack_item_id }
-            | engine::DiscardResume::FinishEffectContinuation { stack_item_id, .. } => Some(stack_item_id),
+            | engine::DiscardResume::FinishEffectContinuation { stack_item_id, .. } => {
+                Some(stack_item_id)
+            }
             _ => None,
         };
         let item = id.and_then(|id| state.stack.iter().find(|item| item.v4.stack_item_id == id));
-        if let Some(item) = item.filter(|item| item.kind == StackItemKind::ActivatedAbility
-            && item.v4.ability_source_contract.is_some_and(|source| source.card_def == PRINTING)) {
+        if let Some(item) = item.filter(|item| {
+            item.kind == StackItemKind::ActivatedAbility
+                && item
+                    .v4
+                    .ability_source_contract
+                    .is_some_and(|source| source.card_def == PRINTING)
+        }) {
             engine::validated_stack_item_target_spec(item, state)?;
-            if item.v4.activated_ability_index != Some(0) || item.controller != discard.player
-                || discard.count != 1 || !item.inline_effect.as_ref().is_some_and(activation_program) {
+            if item.v4.activated_ability_index != Some(0)
+                || item.controller != discard.player
+                || discard.count != 1
+                || !item.inline_effect.as_ref().is_some_and(activation_program)
+            {
                 return Err("Tutelage draw/discard continuation changed".into());
             }
-            Some(public::root(state, item.v4.ability_source_contract.unwrap(), Some(viewer))?)
-        } else { None }
-    } else { None };
+            Some(public::root(
+                state,
+                item.v4.ability_source_contract.unwrap(),
+                Some(viewer),
+            )?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     Ok(FactsV1 {
-        schema: SCHEMA.into(), viewer: viewer.into(), meaning, draws, current_order, activation_discard,
+        schema: SCHEMA.into(),
+        viewer: viewer.into(),
+        meaning,
+        draws,
+        current_order,
+        activation_discard,
     })
 }

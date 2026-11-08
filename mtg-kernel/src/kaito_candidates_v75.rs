@@ -741,8 +741,10 @@ fn project_authenticated_parts_v75(
                 )
                 .map_err(error)?,
                 tutelage_action: crate::tutelage_consumer_v1::action(
-                    observation.tutelage.as_ref(), &action,
-                ).map_err(error)?,
+                    observation.tutelage.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
                 drakuseth_target: crate::drakuseth_consumer_v1::target_action(
                     observation.drakuseth.as_ref(),
                     &action,
@@ -1013,8 +1015,11 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                 != artist::payment_action(value.observation.artist.as_ref(), &row.action)
                     .map_err(error)?
             || row.tutelage_action
-                != crate::tutelage_consumer_v1::action(value.observation.tutelage.as_ref(), &row.action)
-                    .map_err(error)?
+                != crate::tutelage_consumer_v1::action(
+                    value.observation.tutelage.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
             || row.chosen_type_answer
                 != chosen_type::answer(value.observation.chosen_type.as_ref(), &row.action)
                     .map_err(error)?

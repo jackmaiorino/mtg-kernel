@@ -9918,8 +9918,12 @@ pub(crate) fn tutelage_public_outcome_v1(
     index: usize,
     target: PlayerId,
 ) -> Result<Option<&TutelagePublicMillOutcomeV1>, String> {
-    let Some(CommittedEvent::SphinxsTutelageMillBatchV1 { ordered, move_start, outcome, .. }) =
-        state.engine.event_history.get(index)
+    let Some(CommittedEvent::SphinxsTutelageMillBatchV1 {
+        ordered,
+        move_start,
+        outcome,
+        ..
+    }) = state.engine.event_history.get(index)
     else {
         return Err("Tutelage outcome has no original batch".into());
     };
@@ -9927,27 +9931,41 @@ pub(crate) fn tutelage_public_outcome_v1(
         return Ok(None);
     };
     let start = usize::try_from(*move_start).map_err(|_| "Tutelage move range overflow")?;
-    let moves = state.engine.event_history.get(start..index).ok_or("Tutelage move range changed")?;
+    let moves = state
+        .engine
+        .event_history
+        .get(start..index)
+        .ok_or("Tutelage move range changed")?;
     let mut prior = None;
     let mut move_prior = None;
     for member in &outcome.members {
-        let position = ordered.iter().position(|binding| {
-            binding.object == member.object
-                && binding.expected_zone == Zone::Library
-                && binding.expected_zone_change_count.checked_add(1) == Some(member.generation)
-        }).ok_or("Tutelage outcome member is outside the original pair")?;
+        let position = ordered
+            .iter()
+            .position(|binding| {
+                binding.object == member.object
+                    && binding.expected_zone == Zone::Library
+                    && binding.expected_zone_change_count.checked_add(1) == Some(member.generation)
+            })
+            .ok_or("Tutelage outcome member is outside the original pair")?;
         let mut moved = moves.iter().enumerate().filter_map(|(i, event)| {
             matches!(event, CommittedEvent::ZoneChange {
                 object, from: Zone::Library, to, controller_before,
             } if *object == member.object && *to == member.zone && *controller_before == target)
-                .then_some(i)
+            .then_some(i)
         });
-        let movement = moved.next().ok_or("Tutelage outcome has no exact native move")?;
+        let movement = moved
+            .next()
+            .ok_or("Tutelage outcome has no exact native move")?;
         if moved.next().is_some()
             || prior.is_some_and(|prior| position <= prior)
             || move_prior.is_some_and(|prior| movement <= prior)
-            || !matches!(member.zone, Zone::Graveyard | Zone::Exile | Zone::Battlefield | Zone::Stack)
-            || crate::card_def::CARD_DEFS.get(usize::from(member.card_def)).is_none()
+            || !matches!(
+                member.zone,
+                Zone::Graveyard | Zone::Exile | Zone::Battlefield | Zone::Stack
+            )
+            || crate::card_def::CARD_DEFS
+                .get(usize::from(member.card_def))
+                .is_none()
         {
             return Err("Tutelage public move order or visibility changed".into());
         }
@@ -9976,7 +9994,9 @@ pub(crate) fn tutelage_card_pair_repeats_v1(
 ) -> bool {
     !a.has_type(crate::card_def::CardType::Land)
         && !b.has_type(crate::card_def::CardType::Land)
-        && a.colors.iter().any(|color| *color != ManaColor::C && b.colors.contains(color))
+        && a.colors
+            .iter()
+            .any(|color| *color != ManaColor::C && b.colors.contains(color))
 }
 
 pub(crate) fn is_sphinxs_tutelage_v1(card_def: u16) -> bool {

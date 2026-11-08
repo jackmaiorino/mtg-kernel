@@ -403,16 +403,18 @@ pub(crate) fn validate_state_for_consumer(
         return Err("Aberration CDA and mill require a distinct complete consumer".into());
     }
 
-    if !matches!(consumer, ConsumerV1::KaitoTutelageV1 | ConsumerV1::KaitoMixedV1) && (state.objects.iter().any(|(_, object)| {
-        matches!(object.zone, Zone::Battlefield | Zone::Stack)
-            && object.v4.face_down_v1.is_none()
-            && crate::event::is_sphinxs_tutelage_v1(object.card_def)
-    }) || state.engine.event_history.iter().any(|event| {
-        matches!(
-            event,
-            crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
-        )
-    })) {
+    if !matches!(consumer, ConsumerV1::KaitoTutelageV1 | ConsumerV1::KaitoMixedV1)
+        && (state.objects.iter().any(|(_, object)| {
+            matches!(object.zone, Zone::Battlefield | Zone::Stack)
+                && object.v4.face_down_v1.is_none()
+                && crate::event::is_sphinxs_tutelage_v1(object.card_def)
+        }) || state.engine.event_history.iter().any(|event| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
+            )
+        }))
+    {
         return Err("Tutelage native history requires a distinct complete consumer".into());
     }
 

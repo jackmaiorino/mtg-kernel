@@ -4,11 +4,11 @@ use crate::{
     current_mixed_policy_v1::KaitoSession,
     human_bo3_v1::HumanKaitoSessionV75,
     limited_consumer_wire_v1::ProfileWireV1,
-    tutelage_public_v1::{self as public, FactsV1, OrderV1, StageV1, TriggerV1, PRINTING},
     optional_trigger_public_v1::{IdentityV1, ReferenceV1, RootV1},
     rl::{ActionSemanticV1 as Action, CardStableRefV1, PlayerSeatV1, TargetRefV1},
     rl_session::FastActorSessionV1,
     state::Zone,
+    tutelage_public_v1::{self as public, FactsV1, OrderV1, StageV1, TriggerV1, PRINTING},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -96,13 +96,14 @@ impl JsonlServerV1 {
     }
 }
 
-
 fn original_source(root: &RootV1, controller: PlayerSeatV1) -> bool {
     root.captured_controller == controller
         && root.original_source.zone == Zone::Battlefield
         && root.original_source.controller == controller
-        && matches!(root.original_source.identity,
-            IdentityV1::Known { card_id: PRINTING } | IdentityV1::FaceDown { .. })
+        && matches!(
+            root.original_source.identity,
+            IdentityV1::Known { card_id: PRINTING } | IdentityV1::FaceDown { .. }
+        )
         && root.current_original_source.as_ref().is_none_or(|current| {
             current.zone == Zone::Battlefield
                 && current.object == root.original_source.object
@@ -112,12 +113,18 @@ fn original_source(root: &RootV1, controller: PlayerSeatV1) -> bool {
 }
 
 fn order_trigger<'a>(facts: &'a FactsV1, order: &OrderV1) -> Option<&'a TriggerV1> {
-    facts.draws.get(order.draw_ordinal as usize)?
-        .observers.get(order.observer_ordinal as usize)
+    facts
+        .draws
+        .get(order.draw_ordinal as usize)?
+        .observers
+        .get(order.observer_ordinal as usize)
 }
 
 pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(), String> {
-    if facts.viewer != actor || facts.schema != public::SCHEMA || facts.meaning != public::printed_meaning()? {
+    if facts.viewer != actor
+        || facts.schema != public::SCHEMA
+        || facts.meaning != public::printed_meaning()?
+    {
         return Err("invalid Tutelage viewer facts".into());
     }
     for draw in &facts.draws {
@@ -125,8 +132,13 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
             return Err("empty Tutelage draw observer roster".into());
         }
         for observer in &draw.observers {
-            let has_target = matches!(observer.stage, StageV1::Published | StageV1::Resolving
-                | StageV1::MillEnded | StageV1::LeftStackBeforeMill);
+            let has_target = matches!(
+                observer.stage,
+                StageV1::Published
+                    | StageV1::Resolving
+                    | StageV1::MillEnded
+                    | StageV1::LeftStackBeforeMill
+            );
             if !original_source(&observer.source, draw.player)
                 || observer.original_target.is_some() != has_target
                 || observer.original_target == Some(draw.player)
@@ -149,8 +161,13 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
                 }
                 let repeats = match batch.visible_milled_in_move_order.as_slice() {
                     [a, b] => {
-                        let (IdentityV1::Known { card_id: a_id }, IdentityV1::Known { card_id: b_id }) =
-                            (&a.identity, &b.identity) else { unreachable!("validated above") };
+                        let (
+                            IdentityV1::Known { card_id: a_id },
+                            IdentityV1::Known { card_id: b_id },
+                        ) = (&a.identity, &b.identity)
+                        else {
+                            unreachable!("validated above")
+                        };
                         if a.object == b.object {
                             return Err("duplicate Tutelage public batch member".into());
                         }
@@ -168,17 +185,27 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
         }
     }
     if let Some(order) = &facts.current_order {
-        let trigger = order_trigger(facts, order).ok_or("Tutelage order missing original observer")?;
-        if order.chooser != actor || trigger.original_target != Some(actor)
+        let trigger =
+            order_trigger(facts, order).ok_or("Tutelage order missing original observer")?;
+        if order.chooser != actor
+            || trigger.original_target != Some(actor)
             || trigger.stage != StageV1::Resolving
-            || order.legal.is_empty() || order.selected.len() + order.legal.len() != 2
-            || order.selected.iter().chain(&order.legal)
+            || order.legal.is_empty()
+            || order.selected.len() + order.legal.len() != 2
+            || order
+                .selected
+                .iter()
+                .chain(&order.legal)
                 .any(|card| card.owner != actor || card.zone != Zone::Library)
         {
             return Err("invalid Tutelage chooser-private order".into());
         }
     }
-    if facts.activation_discard.as_ref().is_some_and(|root| !original_source(root, root.captured_controller)) {
+    if facts
+        .activation_discard
+        .as_ref()
+        .is_some_and(|root| !original_source(root, root.captured_controller))
+    {
         return Err("invalid Tutelage activation discard source".into());
     }
     Ok(())
@@ -188,8 +215,15 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
 #[serde(deny_unknown_fields)]
 pub enum ActionV1 {
     ActivateDrawDiscard,
-    TargetOpponent { draw_ordinal: u32, observer_ordinal: u32 },
-    OrderMilledCard { draw_ordinal: u32, observer_ordinal: u32, selected_count: u16 },
+    TargetOpponent {
+        draw_ordinal: u32,
+        observer_ordinal: u32,
+    },
+    OrderMilledCard {
+        draw_ordinal: u32,
+        observer_ordinal: u32,
+        selected_count: u16,
+    },
     DiscardAfterDraw,
 }
 
@@ -213,34 +247,59 @@ fn binds(card: &ReferenceV1, stable: &CardStableRefV1) -> bool {
 pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<ActionV1>, String> {
     let Some(facts) = facts else { return Ok(None) };
     match action {
-        Action::ActivateAbility { source, ability_index: 0, granted_ability, .. }
-            if source.card_db_id == PRINTING && granted_ability.is_none() =>
-        {
+        Action::ActivateAbility {
+            source,
+            ability_index: 0,
+            granted_ability,
+            ..
+        } if source.card_db_id == PRINTING && granted_ability.is_none() => {
             Ok(Some(ActionV1::ActivateDrawDiscard))
         }
-        Action::ChooseTarget { actor, source, target, remaining } => {
+        Action::ChooseTarget {
+            actor,
+            source,
+            target,
+            remaining,
+        } => {
             for (draw_index, draw) in facts.draws.iter().enumerate() {
                 for (observer_index, trigger) in draw.observers.iter().enumerate() {
-                    if trigger.stage != StageV1::ChoosingOpponent || !binds(&trigger.source.original_source, source) {
+                    if trigger.stage != StageV1::ChoosingOpponent
+                        || !binds(&trigger.source.original_source, source)
+                    {
                         continue;
                     }
-                    if *actor != draw.player || *remaining != 1
+                    if *actor != draw.player
+                        || *remaining != 1
                         || !matches!(target, TargetRefV1::Player { player } if player != actor)
                     {
-                        return Err("Tutelage target action differs from original native choice".into());
+                        return Err(
+                            "Tutelage target action differs from original native choice".into()
+                        );
                     }
                     return Ok(Some(ActionV1::TargetOpponent {
-                        draw_ordinal: u32::try_from(draw_index).map_err(|_| "Tutelage draw ordinal overflow")?,
-                        observer_ordinal: u32::try_from(observer_index).map_err(|_| "Tutelage observer ordinal overflow")?,
+                        draw_ordinal: u32::try_from(draw_index)
+                            .map_err(|_| "Tutelage draw ordinal overflow")?,
+                        observer_ordinal: u32::try_from(observer_index)
+                            .map_err(|_| "Tutelage observer ordinal overflow")?,
                     }));
                 }
             }
             Ok(None)
         }
-        Action::ChooseEffectTarget { actor, source, target, selected_count, min_targets, max_targets } => {
-            let Some(order) = &facts.current_order else { return Ok(None) };
+        Action::ChooseEffectTarget {
+            actor,
+            source,
+            target,
+            selected_count,
+            min_targets,
+            max_targets,
+        } => {
+            let Some(order) = &facts.current_order else {
+                return Ok(None);
+            };
             let row = order_trigger(facts, order).ok_or("Tutelage missing current order root")?;
-            if *actor != order.chooser || !binds(&row.source.original_source, source)
+            if *actor != order.chooser
+                || !binds(&row.source.original_source, source)
                 || (*min_targets, *max_targets) != (2, 2)
                 || usize::from(*selected_count) != order.selected.len()
                 || !matches!(target, TargetRefV1::Object { object } if order.legal.iter().any(|card| binds(card, object)))
@@ -254,7 +313,10 @@ pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<
             }))
         }
         Action::Discard { actor, cards }
-            if facts.activation_discard.as_ref().is_some_and(|root| root.captured_controller == *actor) =>
+            if facts
+                .activation_discard
+                .as_ref()
+                .is_some_and(|root| root.captured_controller == *actor) =>
         {
             if cards.len() != 1 {
                 return Err("Tutelage draw/discard action changed".into());
