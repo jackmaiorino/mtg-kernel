@@ -20850,7 +20850,10 @@ fn execute_with_native_row_v1(
         }
         EffectOp::GainLife { player, amount } => {
             let player = ctx.resolve_player(*player, state);
-            event::propose_and_commit(state, event::ProposedEvent::life_gain(player, *amount));
+            let owner = crate::lathril_receipts_v1::life_owner(state, ctx);
+            event::propose_and_commit(state, crate::lathril_receipts_v1::owned_proposal(
+                event::ProposedEvent::life_gain(player, *amount), owner,
+            ));
         }
         EffectOp::GainLifeDynamic { player, amount } => {
             let player = ctx.resolve_player(*player, state);
@@ -20897,7 +20900,10 @@ fn execute_with_native_row_v1(
         }
         EffectOp::LoseLife { player, amount } => {
             let player = ctx.resolve_player(*player, state);
-            event::propose_and_commit(state, event::ProposedEvent::life_loss(player, *amount));
+            let owner = crate::lathril_receipts_v1::life_owner(state, ctx);
+            event::propose_and_commit(state, crate::lathril_receipts_v1::owned_proposal(
+                event::ProposedEvent::life_loss(player, *amount), owner,
+            ));
         }
         EffectOp::DrawCards { player, count } => {
             let player = ctx.resolve_player(*player, state);
@@ -27949,9 +27955,10 @@ pub(crate) fn begin_owned_lathril_v1(
     events
         .try_reserve_exact(original)
         .map_err(|_| "Lathril original token roster allocation failed")?;
-    events.extend(
-        (0..original).map(|_| event::ProposedEvent::create_token(token_def, source.controller)),
-    );
+    let operation_owner = crate::lathril_receipts_v1::OperationOwnerV1::Tokens { capture: owner.capture };
+    events.extend((0..original).map(|_| crate::lathril_receipts_v1::owned_proposal(
+        event::ProposedEvent::create_token(token_def, source.controller), Some(operation_owner),
+    )));
     // One complete original simultaneous entry batch. Commit only a successful
     // staged world, preserving the public row on any checked replacement error.
     let mut staged = state.clone();

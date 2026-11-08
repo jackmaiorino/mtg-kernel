@@ -1,8 +1,8 @@
 //! Native occurrence bindings for Lathril's realized token and life outcomes.
 use crate::{
     card_def::{self, PermanentFilter, Subtype, TargetSpec},
-    effect::{EffectOp, PlayerRef},
-    event::CommittedEvent as E,
+    effect::{EffectOp, ExecCtx, PlayerRef},
+    event::{CommittedEvent as E, ProposedEvent},
     event_history_v1::EventKindV1,
     ids::{ObjectId, PlayerId, StackItemId},
     state::{AbilitySourceContractV4, GameState, PaidCostRefV4, StackItem, StackItemKind, Zone},
@@ -30,23 +30,41 @@ pub enum EndV1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PayerInputV1 {
-    reference: PaidCostRefV4,
-    face_down_disguised: Option<bool>,
+    pub(crate) reference: PaidCostRefV4,
+    pub(crate) face_down_disguised: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PaymentInputV1 {
     source: AbilitySourceContractV4,
-    roster: Vec<PayerInputV1>,
+    pub(crate) roster: Vec<PayerInputV1>,
     tap_start: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LifeOutcomeV1 {
-    opponent_lost: u64,
-    controller_gained: u64,
+    pub(crate) opponent_lost: u64,
+    pub(crate) controller_gained: u64,
+}
+
+/// Temporary ownership follows the specific native proposal, including any
+/// replacement copies, without tagging other operations in the same batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum OperationOwnerV1 {
+    Tokens { capture: u64 },
+    Drain { id: StackItemId },
+    Payment { source: ObjectId, start: usize },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum ActualOperationV1 {
+    Token { object: ObjectId, definition: u16, controller: PlayerId },
+    Life { player: PlayerId, gain: bool, amount: u64 },
+    Tap(PayerInputV1),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -58,6 +76,7 @@ pub enum JournalV1 {
     Paid { item: Box<StackItem>, public_printings: Vec<u16> },
     DrainBegin { id: StackItemId },
     DrainEnded { id: StackItemId, end: EndV1, actual: Option<LifeOutcomeV1> },
+    Operation { owner: OperationOwnerV1, event_at: usize, actual: ActualOperationV1 },
 }
 
 fn records(state: &GameState) -> impl Iterator<Item = (usize, &JournalV1)> {
@@ -83,6 +102,113 @@ pub(crate) fn payer_filter() -> PermanentFilter {
     PermanentFilter::AnotherWithSubtype(Subtype::Elf)
 }
 
+pub(crate) fn owned_proposal(mut event: ProposedEvent, owner: Option<OperationOwnerV1>) -> ProposedEvent {
+    if let Some(owner) = owner {
+        match &mut event {
+            ProposedEvent::CreateToken(event) => event.lathril_owner = Some(owner),
+            ProposedEvent::LifeLoss(event) => event.lathril_owner = Some(owner),
+            ProposedEvent::LifeGain(event) => event.lathril_owner = Some(owner),
+            ProposedEvent::Tap(event) => event.lathril_owner = Some(owner),
+            _ => unreachable!("Lathril binds only its native token, life and tap operations"),
+        }
+    }
+    event
+}
+
+pub(crate) fn payment_owner(state: &GameState, source: ObjectId, cost: &[card_def::CostComponent]) -> Option<OperationOwnerV1> {
+    use card_def::CostComponent;
+    (state.objects.try_get(source).is_some_and(|live|
+        live.zone == Zone::Battlefield && live.card_def == PRINTING && crate::event::is_lathril_v1(live.card_def))
+        && cost == [CostComponent::Tap, CostComponent::TapControlled { count: ELVES, filter: payer_filter() }])
+        .then_some(OperationOwnerV1::Payment { source, start: state.engine.event_history.len() })
+}
+
+pub(crate) fn life_owner(state: &GameState, ctx: &ExecCtx) -> Option<OperationOwnerV1> {
+    if ctx.ability_source_contract.is_none_or(|source| source.card_def != PRINTING) {
+        return None;
+    }
+    let id = ctx.stack_item_id?;
+    let (_, item, _) = paid(state, id).ok().flatten()?;
+    (item.source == ctx.source
+        && item.controller == ctx.controller
+        && item.v4.ability_source_contract == ctx.ability_source_contract
+        && drain_begin(state, id).ok().flatten().is_some()
+        && ending(state, id).ok().is_some_and(|end| end.is_none()))
+        .then_some(OperationOwnerV1::Drain { id })
+}
+
+pub(crate) struct CommitOperationV1 {
+    owner: OperationOwnerV1,
+    payer: Option<PayerInputV1>,
+}
+
+fn payer_at_event(state: &GameState, object: ObjectId) -> PayerInputV1 {
+    PayerInputV1 {
+        reference: PaidCostRefV4::capture(state, object),
+        face_down_disguised: state.objects.get(object).v4.face_down_v1.map(|face| face.disguised),
+    }
+}
+
+pub(crate) fn capture_operation(state: &GameState, event: &ProposedEvent) -> Option<CommitOperationV1> {
+    let (owner, payer) = match event {
+        ProposedEvent::CreateToken(event) => (event.lathril_owner?, None),
+        ProposedEvent::LifeLoss(event) => (event.lathril_owner?, None),
+        ProposedEvent::LifeGain(event) => (event.lathril_owner?, None),
+        ProposedEvent::Tap(event) => (event.lathril_owner?, Some(payer_at_event(state, event.object))),
+        _ => return None,
+    };
+    Some(CommitOperationV1 { owner, payer })
+}
+
+impl CommitOperationV1 {
+    pub(crate) fn record(self, state: &mut GameState, event_at: usize) -> Result<(), String> {
+        let actual = match (self.owner, state.engine.event_history.get(event_at), self.payer) {
+            (OperationOwnerV1::Tokens { .. }, Some(E::CreateToken { object, token_def, controller, .. }), None) =>
+                ActualOperationV1::Token { object: *object, definition: *token_def, controller: *controller },
+            (OperationOwnerV1::Drain { .. }, Some(E::LifeLoss { player, amount }), None) =>
+                ActualOperationV1::Life { player: *player, gain: false, amount: u64::try_from(*amount).map_err(|_| "negative Lathril loss")? },
+            (OperationOwnerV1::Drain { .. }, Some(E::LifeGain { player, amount }), None) =>
+                ActualOperationV1::Life { player: *player, gain: true, amount: u64::try_from(*amount).map_err(|_| "negative Lathril gain")? },
+            (OperationOwnerV1::Payment { .. }, Some(E::Tap { object }), Some(payer))
+                if *object == payer.reference.object => ActualOperationV1::Tap(payer),
+            _ => return Err("Lathril native operation changed its actual event type".into()),
+        };
+        push(state, JournalV1::Operation { owner: self.owner, event_at, actual });
+        Ok(())
+    }
+}
+
+fn operations(
+    state: &GameState,
+    owner: OperationOwnerV1,
+    start: usize,
+    end: usize,
+) -> Result<Vec<ActualOperationV1>, String> {
+    let mut actuals = vec![];
+    for (at, row) in records(state) {
+        let JournalV1::Operation { owner: bound, event_at, actual } = row else { continue };
+        if *bound != owner {
+            continue;
+        }
+        let original = state.engine.event_history.get(*event_at);
+        let matches = match (actual, original) {
+            (ActualOperationV1::Token { object, definition, controller },
+                Some(E::CreateToken { object: actual, token_def, controller: recipient, .. })) =>
+                object == actual && definition == token_def && controller == recipient,
+            (ActualOperationV1::Life { player, gain: false, amount }, Some(E::LifeLoss { player: actual, amount: value }))
+            | (ActualOperationV1::Life { player, gain: true, amount }, Some(E::LifeGain { player: actual, amount: value })) =>
+                player == actual && u64::try_from(*value).ok() == Some(*amount),
+            (ActualOperationV1::Tap(payer), Some(E::Tap { object })) => payer.reference.object == *object,
+            _ => false,
+        };
+        if !matches || event_at.checked_add(1) != Some(at) || *event_at < start || at >= end {
+            return Err("Lathril native operation lost original committed event or span".into());
+        }
+        actuals.push(*actual);
+    }
+    Ok(actuals)
+}
+
 pub(crate) fn pending_selected(state: &GameState, pending: &crate::engine::PendingActivation) -> bool {
     cfg!(all(feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))
         && pending.ability_index == 0
@@ -93,10 +219,6 @@ pub(crate) fn pending_selected(state: &GameState, pending: &crate::engine::Pendi
 
 fn push(state: &mut GameState, journal: JournalV1) {
     state.engine.event_history.push(E::LathrilReceiptV1 { journal: Box::new(journal) });
-}
-
-fn span(state: &GameState, start: usize, end: usize) -> Result<&[E], String> {
-    state.engine.event_history.get(start..end).ok_or_else(|| "Lathril history span changed".into())
 }
 
 pub(crate) fn record_token_begin(state: &mut GameState, capture: u64) {
@@ -115,10 +237,11 @@ fn token_begin(state: &GameState, capture: u64) -> Result<usize, String> {
 
 pub(crate) fn record_tokens(state: &mut GameState, capture: u64) -> Result<(), String> {
     let begin = token_begin(state, capture)?;
-    let created = span(state, begin + 1, state.engine.event_history.len())?.iter().filter_map(|event| match event {
-        E::CreateToken { object, .. } => Some(*object),
-        _ => None,
-    }).collect();
+    let created = operations(state, OperationOwnerV1::Tokens { capture }, begin + 1, state.engine.event_history.len())?
+        .into_iter().map(|actual| match actual {
+            ActualOperationV1::Token { object, .. } => Ok(object),
+            _ => Err("Lathril token batch contains foreign native operation"),
+        }).collect::<Result<_, _>>()?;
     push(state, JournalV1::Tokens { capture, created });
     Ok(())
 }
@@ -151,6 +274,12 @@ pub(crate) fn validate_combat_links(state: &GameState) -> Result<(), String> {
                             Some(E::LathrilCombatResolvedV1 { capture_history_index }) if capture_history_index == capture)
                         {
                             return Err("Lathril token batch lacks its actual resolved terminal".into());
+                        }
+                        *capture
+                    }
+                    JournalV1::Operation { owner: OperationOwnerV1::Tokens { capture }, .. } => {
+                        if token_begin(state, *capture)? >= index {
+                            return Err("Lathril token operation predates its native batch".into());
                         }
                         *capture
                     }
@@ -191,15 +320,16 @@ pub(crate) fn token_batch(
     }
     let mut created = Vec::new();
     let mut seen = BTreeSet::new();
-    for event in span(state, begin + 1, receipt)? {
-        if let E::CreateToken { object, token_def: actual, controller: recipient, .. } = event {
-            if *actual != token_def || *recipient != controller || !seen.insert(*object)
-                || state.objects.try_get(*object).is_none_or(|live| live.owner != controller || !live.v4.is_token)
-            {
-                return Err("Lathril actual Elf Warrior token batch changed".into());
-            }
-            created.push(*object);
+    for actual in operations(state, OperationOwnerV1::Tokens { capture }, begin + 1, receipt)? {
+        let ActualOperationV1::Token { object, definition, controller: recipient } = actual else {
+            return Err("Lathril token batch contains foreign native operation".into());
+        };
+        if definition != token_def || recipient != controller || !seen.insert(object)
+            || state.objects.try_get(object).is_none_or(|live| live.owner != controller || !live.v4.is_token)
+        {
+            return Err("Lathril actual Elf Warrior token batch changed".into());
         }
+        created.push(object);
     }
     if created != *recorded {
         return Err("Lathril committed token roster differs from its native terminal".into());
@@ -217,11 +347,7 @@ pub(crate) fn freeze_payment(
     pending_selected(state, pending).then(|| PaymentInputV1 {
         source,
         tap_start: state.engine.event_history.len(),
-        roster: pending.object_cost_chosen.iter().map(|binding| PayerInputV1 {
-            reference: PaidCostRefV4::capture(state, binding.object),
-            face_down_disguised: state.objects.get(binding.object).v4.face_down_v1
-                .map(|face| face.disguised),
-        }).collect(),
+        roster: pending.object_cost_chosen.iter().map(|binding| payer_at_event(state, binding.object)).collect(),
     })
 }
 
@@ -256,12 +382,21 @@ fn verify_paid(state: &GameState, item: &StackItem, input: &PaymentInputV1, end:
             return Err("Lathril original Elf payment incarnation changed".into());
         }
     }
-    let taps = span(state, input.tap_start, end)?.iter().filter_map(|event| match event {
-        E::Tap { object } => Some(*object),
-        _ => None,
-    });
-    if !taps.eq(std::iter::once(source.source).chain(item.v4.paid_cost_refs.iter().map(|paid| paid.object))) {
-        return Err("Lathril paid Elf roster lost actual native taps".into());
+    let taps = operations(state, OperationOwnerV1::Payment {
+        source: source.source, start: input.tap_start,
+    }, input.tap_start, end)?;
+    let Some((ActualOperationV1::Tap(source_tap), other_taps)) = taps.split_first() else {
+        return Err("Lathril paid roster lost native source tap".into());
+    };
+    let expected_source = PaidCostRefV4 {
+        object: source.source, card_def: source.card_def, owner: source.owner,
+        controller: source.controller, zone: source.zone, zone_change_count: source.zone_change_count,
+        visible_to_mask: 3, power_lki: None,
+    };
+    if source_tap.reference != expected_source || source_tap.face_down_disguised.is_some()
+        || !input.roster.iter().copied().map(ActualOperationV1::Tap).eq(other_taps.iter().copied())
+    {
+        return Err("Lathril paid Elf roster changed from actual native tap incarnations or faces".into());
     }
     Ok(())
 }
@@ -388,7 +523,7 @@ pub(crate) fn record_ended(
     let actual = match (end, drain_begin(state, item.v4.stack_item_id)?) {
         (EndV1::Countered, None) => None,
         (EndV1::Resolved, Some(begin)) => Some(life_outcome(
-            state, item.controller, begin + 1, state.engine.event_history.len(),
+            state, item.v4.stack_item_id, item.controller, begin + 1, state.engine.event_history.len(),
         )?),
         _ => return Err("Lathril drain terminal disagrees with original native start".into()),
     };
@@ -396,18 +531,15 @@ pub(crate) fn record_ended(
     Ok(())
 }
 
-fn life_outcome(state: &GameState, controller: PlayerId, start: usize, end: usize) -> Result<LifeOutcomeV1, String> {
+fn life_outcome(state: &GameState, id: StackItemId, controller: PlayerId, start: usize, end: usize) -> Result<LifeOutcomeV1, String> {
     let mut outcome = LifeOutcomeV1 { opponent_lost: 0, controller_gained: 0 };
-    for event in span(state, start, end)? {
-        let (total, amount) = match event {
-            E::LifeLoss { player, amount } if *player == controller.opponent() =>
-                (&mut outcome.opponent_lost, u64::try_from(*amount).map_err(|_| "negative Lathril life loss")?),
-            E::LifeGain { player, amount } if *player == controller =>
-                (&mut outcome.controller_gained, u64::try_from(*amount).map_err(|_| "negative Lathril life gain")?),
-            E::LifeLossWideV59 { player, amount } if *player == controller.opponent() =>
-                (&mut outcome.opponent_lost, u64::from(*amount)),
-            E::LifeGainWideV59 { player, amount } if *player == controller =>
-                (&mut outcome.controller_gained, u64::from(*amount)),
+    for actual in operations(state, OperationOwnerV1::Drain { id }, start, end)? {
+        let ActualOperationV1::Life { player, gain, amount } = actual else {
+            return Err("Lathril drain contains foreign native operation".into());
+        };
+        let total = match (player, gain) {
+            (player, false) if player == controller.opponent() => &mut outcome.opponent_lost,
+            (player, true) if player == controller => &mut outcome.controller_gained,
             _ => continue,
         };
         *total = total.checked_add(amount).ok_or("Lathril actual life outcome overflow")?;
@@ -449,6 +581,19 @@ pub(crate) fn drains(state: &GameState) -> Result<Vec<(&StackItem, DrainOutcomeV
                     return Err("Lathril native prepayment lost its subsequent paid row".into());
                 }
             }
+            JournalV1::Operation { owner: OperationOwnerV1::Drain { id }, .. } => {
+                if drain_begin(state, *id)?.is_none_or(|begin| begin >= at) {
+                    return Err("Lathril life operation lacks its original drain".into());
+                }
+            }
+            JournalV1::Operation { owner: OperationOwnerV1::Payment { source, start }, .. } => {
+                if records(state).filter(|(later, row)| *later > at && matches!(row,
+                    JournalV1::PaymentInput { input, .. }
+                        if input.source.source == *source && input.tap_start == *start
+                )).count() != 1 {
+                    return Err("Lathril actual tap lacks its unique original payment".into());
+                }
+            }
             _ => {}
         }
     }
@@ -477,7 +622,7 @@ pub(crate) fn drains(state: &GameState) -> Result<Vec<(&StackItem, DrainOutcomeV
                 if begin <= at || begin >= end {
                     return Err("Lathril life outcome reordered its native start or payment".into());
                 }
-                if life_outcome(state, item.controller, begin + 1, end)? != actual {
+                if life_outcome(state, id, item.controller, begin + 1, end)? != actual {
                     return Err("Lathril life span differs from its native terminal".into());
                 }
                 DrainOutcomeV1::Resolved {

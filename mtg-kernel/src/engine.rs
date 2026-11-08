@@ -7356,10 +7356,13 @@ fn commit_cost_components_from_plan_v1(
     object_cost_chosen: &[ObjectId],
     mana_plan: Option<&mana::PaymentPlan>,
 ) -> Option<u16> {
+    let lathril_payment = crate::lathril_receipts_v1::payment_owner(state, source, components);
     let mut mana_spent = 0;
     for c in components {
         match c {
-            CostComponent::Tap => event::propose_and_commit(state, ProposedEvent::tap(source)),
+            CostComponent::Tap => event::propose_and_commit(
+                state, crate::lathril_receipts_v1::owned_proposal(ProposedEvent::tap(source), lathril_payment),
+            ),
             CostComponent::SacrificeSelf => commit_sacrifice(state, &[source]),
             CostComponent::ExileSelf => {
                 event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Exile))
@@ -7392,7 +7395,9 @@ fn commit_cost_components_from_plan_v1(
             CostComponent::TapControlled { count, .. } => {
                 debug_assert_eq!(object_cost_chosen.len(), usize::from(*count));
                 for &object in object_cost_chosen {
-                    event::propose_and_commit(state, ProposedEvent::tap(object));
+                    event::propose_and_commit(
+                        state, crate::lathril_receipts_v1::owned_proposal(ProposedEvent::tap(object), lathril_payment),
+                    );
                 }
             }
             CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {

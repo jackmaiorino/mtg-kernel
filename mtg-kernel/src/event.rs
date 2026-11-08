@@ -325,6 +325,8 @@ fn is_false(value: &bool) -> bool {
 pub struct LifeLossProposed {
     pub player: PlayerId,
     pub amount: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) lathril_owner: Option<crate::lathril_receipts_v1::OperationOwnerV1>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -340,6 +342,8 @@ pub struct WideLifeProposedV59 {
 pub struct LifeGainProposed {
     pub player: PlayerId,
     pub amount: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) lathril_owner: Option<crate::lathril_receipts_v1::OperationOwnerV1>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -352,6 +356,8 @@ pub struct DrawProposed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TapProposed {
     pub object: ObjectId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) lathril_owner: Option<crate::lathril_receipts_v1::OperationOwnerV1>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -372,6 +378,8 @@ pub struct CreateTokenProposed {
     pub entry_tapped: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initialization_v48: Option<crate::doubling_season_v48::TokenEntryV48>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) lathril_owner: Option<crate::lathril_receipts_v1::OperationOwnerV1>,
     pub touched_by: Vec<ReplacementId>,
 }
 fn token_entry_untapped_v48(value: &bool) -> bool {
@@ -568,6 +576,7 @@ impl ProposedEvent {
         ProposedEvent::LifeLoss(LifeLossProposed {
             player,
             amount,
+            lathril_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -594,6 +603,7 @@ impl ProposedEvent {
         ProposedEvent::LifeGain(LifeGainProposed {
             player,
             amount,
+            lathril_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -606,6 +616,7 @@ impl ProposedEvent {
     pub fn tap(object: ObjectId) -> ProposedEvent {
         ProposedEvent::Tap(TapProposed {
             object,
+            lathril_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -623,6 +634,7 @@ impl ProposedEvent {
             entry_face_index: None,
             entry_tapped: false,
             initialization_v48: None,
+            lathril_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -633,6 +645,7 @@ impl ProposedEvent {
             entry_face_index: Some(1),
             entry_tapped: false,
             initialization_v48: None,
+            lathril_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -4483,6 +4496,7 @@ fn commit_with_entry_batch_and_source_color(
         }
         _ => Vec::new(),
     };
+    let lathril_operation = crate::lathril_receipts_v1::capture_operation(state, &event);
     let Some(MaterializedEventV1 {
         committed,
         alesha_power_departure,
@@ -4607,6 +4621,15 @@ fn commit_with_entry_batch_and_source_color(
             .record_visibility_v2(entry_history_index, *object, mask);
     }
     state.engine.event_history.push(committed);
+    if let Some(operation) = lathril_operation {
+        if operation.record(state, entry_history_index).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    }
     record_copied_token_entry_v1(state, entry_history_index);
     crate::effect::curator_v1::record_entry(state, entry_history_index);
     if !tutelage_observers.is_empty()

@@ -9,7 +9,7 @@ use crate::{
     human_bo3_v1::{project_limited_kaito_v16, HumanActionRequestV1, HumanKaitoProjectorV75},
     ids::{ObjectId, PlayerId},
     lathril_public_v1::{CombatStageV1, DrainStageV1},
-    lathril_receipts_v1::JournalV1,
+    lathril_receipts_v1::{JournalV1, LifeOutcomeV1},
     limited_kaito_session_v16::{LimitedKaitoBodyV16 as Body, LimitedKaitoStateV16 as State},
     policy_observation_v6::tests::{advance_to_next_main_for, put},
     policy_surface_v5::LimitedAppendixV1,
@@ -55,6 +55,23 @@ fn body(wire: &mut JsonlServerV1, serial: u64, command: CommandV1) -> Body {
         panic!("Lathril wire request rejected: {reply:?}");
     };
     payload.body
+}
+
+#[test]
+fn ordinary_native_operations_keep_their_original_wire_shape() {
+    use serde_json::{json, to_value};
+    let token = card("Elf Warrior Token");
+    for (event, original) in [
+        (ProposedEvent::tap(ObjectId(4)), json!({"Tap": {"object": 4, "touched_by": []}})),
+        (ProposedEvent::life_loss(PlayerId::P1, 3), json!({"LifeLoss": {"player": 1, "amount": 3, "touched_by": []}})),
+        (ProposedEvent::life_gain(PlayerId::P0, 2), json!({"LifeGain": {"player": 0, "amount": 2, "touched_by": []}})),
+        (ProposedEvent::create_token(token, PlayerId::P1), json!({"CreateToken": {
+            "token_def": token, "controller": 1, "entry_face_index": null, "touched_by": [],
+        }})),
+    ] {
+        assert_eq!(to_value(&event).unwrap(), original);
+        assert_eq!(serde_json::from_value::<ProposedEvent>(original).unwrap(), event);
+    }
 }
 
 #[test]
@@ -107,7 +124,11 @@ fn declared_forty_card_v3_reset_pays_lathril_and_real_combat_creates_two_elves_b
                     move_receipt_start_to_terminal(
                         &mut truncated,
                         |journal| matches!(journal, JournalV1::TokenBegin { .. }),
-                        |journal| matches!(journal, JournalV1::Tokens { .. }),
+                        |journal| {
+                            let JournalV1::Tokens { created, .. } = journal else { return false };
+                            created.clear();
+                            true
+                        },
                     );
                     assert!(public::capture(&truncated, actor).is_err());
                     let input = numeric.training_input_v1(&d).unwrap();
@@ -166,17 +187,27 @@ fn payment_fixture(actor: PlayerId, hidden: &str) -> (GameState, ObjectId, Vec<O
 fn move_receipt_start_to_terminal(
     state: &mut GameState,
     is_start: impl Fn(&JournalV1) -> bool,
-    is_terminal: impl Fn(&JournalV1) -> bool,
+    truncate_terminal: impl Fn(&mut JournalV1) -> bool,
 ) {
     let history = &mut state.engine.event_history;
     let start = history.iter().position(|row|
         matches!(row, CommittedEvent::LathrilReceiptV1 { journal } if is_start(journal))
     ).unwrap();
-    let start = history.remove(start);
-    let end = history.iter().position(|row|
-        matches!(row, CommittedEvent::LathrilReceiptV1 { journal } if is_terminal(journal))
-    ).unwrap();
-    history.insert(end, start);
+    let marker = history.remove(start);
+    let end = history.iter_mut().position(|row| match row {
+        CommittedEvent::LathrilReceiptV1 { journal } => truncate_terminal(journal),
+        _ => false,
+    }).unwrap();
+    // Keep the independent actual commit rows anchored to their base events.
+    // Only the auxiliary marker and its stated terminal outcome are forged.
+    for row in &mut history[start..end] {
+        if let CommittedEvent::LathrilReceiptV1 { journal } = row {
+            if let JournalV1::Operation { event_at, .. } = journal.as_mut() {
+                *event_at -= 1;
+            }
+        }
+    }
+    history.insert(end, marker);
 }
 
 #[test]
@@ -278,7 +309,11 @@ fn paid_ten_elf_hidden_pairs_keep_original_indices_and_observe_actual_life_both_
         move_receipt_start_to_terminal(
             &mut truncated,
             |journal| matches!(journal, JournalV1::DrainBegin { .. }),
-            |journal| matches!(journal, JournalV1::DrainEnded { .. }),
+            |journal| {
+                let JournalV1::DrainEnded { actual, .. } = journal else { return false };
+                *actual = Some(LifeOutcomeV1 { opponent_lost: 0, controller_gained: 0 });
+                true
+            },
         );
         assert!(public::capture(&truncated, actor).is_err());
         for corrupt_generation in [true, false] {
@@ -287,13 +322,19 @@ fn paid_ten_elf_hidden_pairs_keep_original_indices_and_observe_actual_life_both_
             let at = history.iter().position(|row| matches!(row,
                 CommittedEvent::LathrilReceiptV1 { journal } if matches!(journal.as_ref(), JournalV1::Paid { .. })
             )).unwrap();
-            let CommittedEvent::LathrilReceiptV1 { journal } = &mut history[at] else { panic!() };
+            let (before, paid) = history.split_at_mut(at);
+            let CommittedEvent::LathrilReceiptV1 { journal: input } = before.last_mut().unwrap()
+            else { panic!() };
+            let JournalV1::PaymentInput { input, .. } = input.as_mut() else { panic!() };
+            let CommittedEvent::LathrilReceiptV1 { journal } = &mut paid[0] else { panic!() };
             let JournalV1::Paid { item, public_printings } = journal.as_mut() else { panic!() };
             if corrupt_generation {
                 assert_eq!(item.v4.paid_cost_refs[0].object, elves[0]);
                 item.v4.paid_cost_refs[0].zone_change_count -= 1;
+                input.roster[0].reference.zone_change_count -= 1;
             } else {
                 public_printings[0] = card("Face-down creature");
+                input.roster[0].face_down_disguised = Some(true);
             }
             assert!(public::capture(&forged, actor).is_err());
         }
