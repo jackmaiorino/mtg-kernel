@@ -4512,11 +4512,14 @@ fn commit_with_entry_batch_and_source_color(
     let edict_departure = match &event {
         ProposedEvent::ZoneChange(change) => change.edict_move_owner.map(|owner| {
             let object = state.objects.get(change.object);
-            (owner, crate::effect::EffectObjectBinding {
-                object: change.object,
-                expected_zone: object.zone,
-                expected_zone_change_count: object.zone_change_count,
-            })
+            (
+                owner,
+                crate::effect::EffectObjectBinding {
+                    object: change.object,
+                    expected_zone: object.zone,
+                    expected_zone_change_count: object.zone_change_count,
+                },
+            )
         }),
         _ => None,
     };
@@ -4690,7 +4693,9 @@ fn commit_with_entry_batch_and_source_color(
         }
     }
     if let Some((owner, original)) = edict_departure {
-        if crate::edict_receipts_v1::record_move(state, owner, original, entry_history_index).is_err() {
+        if crate::edict_receipts_v1::record_move(state, owner, original, entry_history_index)
+            .is_err()
+        {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 original.object,

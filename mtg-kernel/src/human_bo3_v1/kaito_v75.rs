@@ -345,7 +345,9 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
-    if let Some(label) = super::loot_consumer_v1::label(obs.loot.as_ref(), a, h)? { return Ok(Some(label)); }
+    if let Some(label) = super::loot_consumer_v1::label(obs.loot.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
     if let Some(label) = super::edict_consumer_v1::label(obs.edict.as_ref(), a, h)? {
         return Ok(Some(label));
     }
@@ -364,7 +366,9 @@ pub(super) fn choice_label(
     if let Some(label) = super::aberration_consumer_v1::label(obs.aberration.as_ref(), a, h)? {
         return Ok(Some(label));
     }
-    if let Some(label) = super::electroduplicate_consumer_v1::label(obs.electroduplicate.as_ref(), a, h)? {
+    if let Some(label) =
+        super::electroduplicate_consumer_v1::label(obs.electroduplicate.as_ref(), a, h)?
+    {
         return Ok(Some(label));
     }
     if let Some(label) = super::tutelage_consumer_v1::label(obs.tutelage.as_ref(), a, h)? {
@@ -828,14 +832,24 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::tutelage_consumer_v1::project(facts, &mut handles))
         .transpose()?;
-    let lathril = obs.lathril.as_ref()
+    let lathril = obs
+        .lathril
+        .as_ref()
         .map(|facts| super::lathril_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
-    let loot = obs.loot.as_ref().map(|facts| super::loot_consumer_v1::project(facts, &mut handles)).transpose()?;
-    let edict = obs.edict.as_ref()
+    let loot = obs
+        .loot
+        .as_ref()
+        .map(|facts| super::loot_consumer_v1::project(facts, &mut handles))
+        .transpose()?;
+    let edict = obs
+        .edict
+        .as_ref()
         .map(|facts| super::edict_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
-    let leyline_axe = obs.leyline_axe.as_ref()
+    let leyline_axe = obs
+        .leyline_axe
+        .as_ref()
         .map(|facts| super::leyline_axe_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
     let moon = obs

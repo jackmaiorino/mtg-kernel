@@ -1,5 +1,6 @@
 //! Exact printed copy/flashback meaning and viewer-public Electroduplicate casts.
 //! Existing V74 copied-token and end-step facts retain complete native lifecycle receipts.
+pub use crate::moon_public_v1::{CastStageV1, CastV1, TargetV1};
 use crate::{
     card_def::{self, CardType, TargetSpec},
     engine, event,
@@ -12,7 +13,6 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-pub use crate::moon_public_v1::{CastStageV1, CastV1, TargetV1};
 
 pub const NAME: &str = "Electroduplicate";
 pub const PRINTING: u16 = 471;
@@ -23,7 +23,9 @@ const TARGET: TargetSpec = TargetSpec::ControlledCreature;
 pub(crate) fn selected_id() -> Result<u16, String> {
     if card_def::card_id_by_name(NAME) != Some(PRINTING)
         || !crate::effect::electroduplicate_definition_v1(PRINTING)
-    { return Err("complete Electroduplicate printing changed".into()); }
+    {
+        return Err("complete Electroduplicate printing changed".into());
+    }
     Ok(PRINTING)
 }
 
@@ -31,57 +33,94 @@ pub fn producer_sha256() -> String {
     static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     HASH.get_or_init(|| {
         let mut hash = Sha256::new();
-        for source in [SCHEMA, MEANING_SCHEMA, include_str!("electroduplicate_public_v1.rs"),
-            include_str!("moon_public_v1.rs"), include_str!("effect.rs"), include_str!("event.rs"),
-            include_str!("engine.rs"), include_str!("state.rs"), include_str!("../build.rs")] {
-            hash.update((source.len() as u64).to_le_bytes()); hash.update(source.as_bytes());
+        for source in [
+            SCHEMA,
+            MEANING_SCHEMA,
+            include_str!("electroduplicate_public_v1.rs"),
+            include_str!("moon_public_v1.rs"),
+            include_str!("effect.rs"),
+            include_str!("event.rs"),
+            include_str!("engine.rs"),
+            include_str!("state.rs"),
+            include_str!("../build.rs"),
+        ] {
+            hash.update((source.len() as u64).to_le_bytes());
+            hash.update(source.as_bytes());
         }
         format!("{:x}", hash.finalize())
-    }).clone()
+    })
+    .clone()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MeaningV1 {
-    pub schema: String, pub producer_sha256: String, pub card_db_hash: u64, pub card_id: u16,
-    pub card_type: CardType, pub color: ManaColor, pub generic_mana: u8, pub red_mana: u8,
-    pub mana_value: u16, pub target_controlled_creature: bool,
+    pub schema: String,
+    pub producer_sha256: String,
+    pub card_db_hash: u64,
+    pub card_id: u16,
+    pub card_type: CardType,
+    pub color: ManaColor,
+    pub generic_mana: u8,
+    pub red_mana: u8,
+    pub mana_value: u16,
+    pub target_controlled_creature: bool,
     pub token_copies_copiable_values_at_resolution: bool,
-    pub adds_copiable_haste: bool, pub adds_copiable_each_end_step_sacrifice_ability: bool,
-    pub flashback_generic_mana: u8, pub flashback_red_mana: u8,
-    pub flashback_casts_from_own_graveyard: bool, pub flashback_exiles_on_stack_departure: bool,
+    pub adds_copiable_haste: bool,
+    pub adds_copiable_each_end_step_sacrifice_ability: bool,
+    pub flashback_generic_mana: u8,
+    pub flashback_red_mana: u8,
+    pub flashback_casts_from_own_graveyard: bool,
+    pub flashback_exiles_on_stack_departure: bool,
 }
 pub fn printed_meaning() -> Result<MeaningV1, String> {
-    Ok(MeaningV1 { schema: MEANING_SCHEMA.into(), producer_sha256: producer_sha256(),
-        card_db_hash: card_def::KERNEL_CARDDB_HASH, card_id: selected_id()?,
-        card_type: CardType::Sorcery, color: ManaColor::R, generic_mana: 2, red_mana: 1,
-        mana_value: 3, target_controlled_creature: true,
-        token_copies_copiable_values_at_resolution: true, adds_copiable_haste: true,
+    Ok(MeaningV1 {
+        schema: MEANING_SCHEMA.into(),
+        producer_sha256: producer_sha256(),
+        card_db_hash: card_def::KERNEL_CARDDB_HASH,
+        card_id: selected_id()?,
+        card_type: CardType::Sorcery,
+        color: ManaColor::R,
+        generic_mana: 2,
+        red_mana: 1,
+        mana_value: 3,
+        target_controlled_creature: true,
+        token_copies_copiable_values_at_resolution: true,
+        adds_copiable_haste: true,
         adds_copiable_each_end_step_sacrifice_ability: true,
-        flashback_generic_mana: 2, flashback_red_mana: 2,
-        flashback_casts_from_own_graveyard: true, flashback_exiles_on_stack_departure: true,
+        flashback_generic_mana: 2,
+        flashback_red_mana: 2,
+        flashback_casts_from_own_graveyard: true,
+        flashback_exiles_on_stack_departure: true,
     })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TokenV1 {
-    pub card: public::ReferenceV1, pub form: public::FormV1, pub counters: CountersV72,
+    pub card: public::ReferenceV1,
+    pub form: public::FormV1,
+    pub counters: CountersV72,
     pub copiable_haste_and_each_end_step_sacrifice_instances: u32,
-    pub tapped: bool, pub summoning_sick: bool,
+    pub tapped: bool,
+    pub summoning_sick: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactsV1 {
-    pub schema: String, pub viewer: PlayerSeatV1, pub meaning: MeaningV1,
-    pub casts: Vec<CastV1>, pub copied_tokens: Vec<TokenV1>,
+    pub schema: String,
+    pub viewer: PlayerSeatV1,
+    pub meaning: MeaningV1,
+    pub casts: Vec<CastV1>,
+    pub copied_tokens: Vec<TokenV1>,
 }
 fn ordinal(position: usize) -> Result<u32, String> {
     u32::try_from(position).map_err(|_| "Electroduplicate native position overflow".into())
 }
 
 fn card(state: &GameState, viewer: PlayerId, id: ObjectId) -> Result<public::ReferenceV1, String> {
-    public::reference(state, id, Some(viewer)).ok_or_else(|| "Electroduplicate visible card missing".into())
+    public::reference(state, id, Some(viewer))
+        .ok_or_else(|| "Electroduplicate visible card missing".into())
 }
 
 fn target(
@@ -219,15 +258,25 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
     for player in &state.players {
         for &id in &player.battlefield {
             let live = state.objects.get(id);
-            if live.v4.copied_end_step_sacrifices_v1 == 0 || live.v4.face_down_v1.is_some() { continue; }
+            if live.v4.copied_end_step_sacrifices_v1 == 0 || live.v4.face_down_v1.is_some() {
+                continue;
+            }
             let instances = event::copiable_token_abilities_v1(state, id)?;
             copied_tokens.push(TokenV1 {
-                card: card(state, viewer, id)?, form: public::checked_form(state, id)?,
+                card: card(state, viewer, id)?,
+                form: public::checked_form(state, id)?,
                 counters: crate::tinybones_public_v72::counters(state, id)?,
                 copiable_haste_and_each_end_step_sacrifice_instances: instances,
-                tapped: live.tapped, summoning_sick: live.summoning_sick,
+                tapped: live.tapped,
+                summoning_sick: live.summoning_sick,
             });
         }
     }
-    Ok(FactsV1 { schema: SCHEMA.into(), viewer: viewer.into(), meaning, casts, copied_tokens })
+    Ok(FactsV1 {
+        schema: SCHEMA.into(),
+        viewer: viewer.into(),
+        meaning,
+        casts,
+        copied_tokens,
+    })
 }

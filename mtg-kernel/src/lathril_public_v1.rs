@@ -1,8 +1,8 @@
 //! Exact actor-visible Lathril combat, payment, and realized outcomes.
 use crate::{
     card_def::{
-        self, ActivationTargetFilter, CardCapability, CardType, CostComponent, Keywords,
-        Subtype, Supertype, TargetSpec,
+        self, ActivationTargetFilter, CardCapability, CardType, CostComponent, Keywords, Subtype,
+        Supertype, TargetSpec,
     },
     effect::{EffectObjectBinding, EffectOp, ObjectRef},
     engine,
@@ -52,8 +52,10 @@ fn token_id() -> Result<u16, String> {
 }
 
 pub(crate) fn selected_id() -> Result<u16, String> {
-    if !cfg!(all(feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))
-        || card_def::card_id_by_name(NAME) != Some(PRINTING)
+    if !cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) || card_def::card_id_by_name(NAME) != Some(PRINTING)
     {
         return Err("Lathril requires its exact pure Limited printing".into());
     }
@@ -64,8 +66,9 @@ pub(crate) fn selected_id() -> Result<u16, String> {
     let [trigger] = crate::trigger::triggers_for(PRINTING) else {
         return Err("Lathril printed combat trigger count changed".into());
     };
-    if !crate::rules_meaning_graveyard_return_v61::ordinary_foreign_fields_except_activated_absent(def)
-        || def.name != NAME
+    if !crate::rules_meaning_graveyard_return_v61::ordinary_foreign_fields_except_activated_absent(
+        def,
+    ) || def.name != NAME
         || def.capability != CardCapability::Partial
         || def.cost.generic != 2
         || def.cost.x_count != 0
@@ -80,8 +83,19 @@ pub(crate) fn selected_id() -> Result<u16, String> {
         || def.keywords != Keywords::MENACE
         || def.is_token
         || def.target_spec != TargetSpec::None
-        || (def.spell_effect)() != Some(EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield })
-        || ability.cost != [CostComponent::Tap, CostComponent::TapControlled { count: ELVES, filter: receipts::payer_filter() }]
+        || (def.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        || ability.cost
+            != [
+                CostComponent::Tap,
+                CostComponent::TapControlled {
+                    count: ELVES,
+                    filter: receipts::payer_filter(),
+                },
+            ]
         || ability.activation_zone != Zone::Battlefield
         || ability.sorcery_speed_only
         || ability.activation_target_filter != ActivationTargetFilter::TargetSpecOnly
@@ -95,7 +109,8 @@ pub(crate) fn selected_id() -> Result<u16, String> {
         || trigger.intervening_if_kicked
         || trigger.intervening_if_controls_another_source_card
         || (trigger.effect)() != EffectOp::BindLathrilCombatTokensV1
-        || crate::trigger::target_spec_for_trigger(PRINTING, &(trigger.effect)()) != Some(TargetSpec::None)
+        || crate::trigger::target_spec_for_trigger(PRINTING, &(trigger.effect)())
+            != Some(TargetSpec::None)
     {
         return Err("complete Lathril printing changed".into());
     }
@@ -108,7 +123,8 @@ pub fn producer_sha256() -> String {
     HASH.get_or_init(|| {
         let mut hash = Sha256::new();
         for source in [
-            SCHEMA, MEANING_SCHEMA,
+            SCHEMA,
+            MEANING_SCHEMA,
             include_str!("lathril_public_v1.rs"),
             include_str!("lathril_receipts_v1.rs"),
             include_str!("effect.rs"),
@@ -122,7 +138,8 @@ pub fn producer_sha256() -> String {
             hash.update(source.as_bytes());
         }
         format!("{:x}", hash.finalize())
-    }).clone()
+    })
+    .clone()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -241,10 +258,15 @@ pub struct PaymentV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum DrainStageV1 {
-    Published { stack_position: u32 },
+    Published {
+        stack_position: u32,
+    },
     RemovedWithoutResolution,
     Countered,
-    Resolved { opponent_lost: u64, controller_gained: u64 },
+    Resolved {
+        opponent_lost: u64,
+        controller_gained: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -272,45 +294,66 @@ fn ordinal(index: usize) -> Result<u32, String> {
     u32::try_from(index).map_err(|_| "Lathril native position overflow".into())
 }
 
-fn visible(state: &GameState, viewer: PlayerId, id: ObjectId) -> Result<public::ReferenceV1, String> {
+fn visible(
+    state: &GameState,
+    viewer: PlayerId,
+    id: ObjectId,
+) -> Result<public::ReferenceV1, String> {
     public::reference(state, id, Some(viewer)).ok_or_else(|| "Lathril visible card missing".into())
 }
 
-fn root(state: &GameState, viewer: PlayerId, source: AbilitySourceContractV4) -> Result<public::RootV1, String> {
+fn root(
+    state: &GameState,
+    viewer: PlayerId,
+    source: AbilitySourceContractV4,
+) -> Result<public::RootV1, String> {
     let mut root = public::root(state, source, Some(viewer))?;
     root.original_source.identity = public::IdentityV1::Known { card_id: PRINTING };
     Ok(root)
 }
 
-fn combat(
-    state: &GameState,
-    viewer: PlayerId,
-    token_id: u16,
-) -> Result<Vec<CombatV1>, String> {
+fn combat(state: &GameState, viewer: PlayerId, token_id: u16) -> Result<Vec<CombatV1>, String> {
     let history = &state.engine.event_history;
     let held = public::held(state);
     let mut combat = vec![];
     for (index, event) in history.iter().enumerate() {
-        let E::LathrilCombatDamageV1 { player, .. } = event else { continue };
+        let E::LathrilCombatDamageV1 { player, .. } = event else {
+            continue;
+        };
         let capture = u64::try_from(index).map_err(|_| "Lathril capture width")?;
         let (source, final_damage) = event::lathril_damage_v1(state, capture)?;
         if source.card_def != PRINTING {
             return Err("Lathril capture lost its selected exact printing".into());
         }
-        let mut publications = history.iter().enumerate().filter_map(|(position, event)| match event {
-            E::LathrilCombatPublishedV1 { capture_history_index, item } if *capture_history_index == capture =>
-                Some((position, item.as_ref())),
-            _ => None,
+        let mut publications =
+            history
+                .iter()
+                .enumerate()
+                .filter_map(|(position, event)| match event {
+                    E::LathrilCombatPublishedV1 {
+                        capture_history_index,
+                        item,
+                    } if *capture_history_index == capture => Some((position, item.as_ref())),
+                    _ => None,
+                });
+        let mut ends = history
+            .iter()
+            .enumerate()
+            .filter_map(|(position, event)| match event {
+                E::LathrilCombatResolvedV1 {
+                    capture_history_index,
+                } if *capture_history_index == capture => Some((position, true)),
+                E::LathrilCombatCounteredV1 {
+                    capture_history_index,
+                } if *capture_history_index == capture => Some((position, false)),
+                _ => None,
+            });
+        let mut pending = held.iter().enumerate().filter(|(_, trigger)| {
+            trigger.effect
+                == EffectOp::LathrilCombatTokensV1 {
+                    capture_history_index: capture,
+                }
         });
-        let mut ends = history.iter().enumerate().filter_map(|(position, event)| match event {
-            E::LathrilCombatResolvedV1 { capture_history_index } if *capture_history_index == capture =>
-                Some((position, true)),
-            E::LathrilCombatCounteredV1 { capture_history_index } if *capture_history_index == capture =>
-                Some((position, false)),
-            _ => None,
-        });
-        let mut pending = held.iter().enumerate().filter(|(_, trigger)|
-            trigger.effect == EffectOp::LathrilCombatTokensV1 { capture_history_index: capture });
         let publication = publications.next();
         let end = ends.next();
         let waiting = pending.next();
@@ -323,16 +366,24 @@ fn combat(
                 if trigger.source_contract != Some(source) {
                     return Err("Lathril original held source changed".into());
                 }
-                CombatStageV1::Held { position: ordinal(position)? }
+                CombatStageV1::Held {
+                    position: ordinal(position)?,
+                }
             }
             (Some((published, original)), end, None) => {
-                if published <= index || event::validate_historical_lathril_trigger_v1(state, original)? != capture {
+                if published <= index
+                    || event::validate_historical_lathril_trigger_v1(state, original)? != capture
+                {
                     return Err("Lathril historical publication changed".into());
                 }
-                let mut live = state.stack.iter().enumerate()
+                let mut live = state
+                    .stack
+                    .iter()
+                    .enumerate()
                     .filter(|(_, row)| row.v4.stack_item_id == original.v4.stack_item_id);
                 let current = live.next();
-                if live.next().is_some() || current.is_some_and(|(_, row)| row != original || end.is_some())
+                if live.next().is_some()
+                    || current.is_some_and(|(_, row)| row != original || end.is_some())
                     || end.is_some_and(|(ended, _)| ended <= published)
                 {
                     return Err("Lathril live stack lifetime changed".into());
@@ -340,33 +391,62 @@ fn combat(
                 match (current, end) {
                     (Some((position, row)), None) => {
                         event::validate_published_lathril_v1(state, row)?;
-                        CombatStageV1::Published { stack_position: ordinal(position)? }
+                        CombatStageV1::Published {
+                            stack_position: ordinal(position)?,
+                        }
                     }
                     (None, Some((_, false))) => CombatStageV1::Countered,
                     (None, Some((position, true))) => {
-                        let tokens = receipts::token_batch(state, capture, position, source.controller, token_id)?
-                            .into_iter().map(|object| IncarnationV72 {
-                                object: object.0, generation: 0, owner: source.controller.into(),
-                                controller: source.controller.into(), zone: Zone::Battlefield,
-                            }).collect();
+                        let tokens = receipts::token_batch(
+                            state,
+                            capture,
+                            position,
+                            source.controller,
+                            token_id,
+                        )?
+                        .into_iter()
+                        .map(|object| IncarnationV72 {
+                            object: object.0,
+                            generation: 0,
+                            owner: source.controller.into(),
+                            controller: source.controller.into(),
+                            zone: Zone::Battlefield,
+                        })
+                        .collect();
                         CombatStageV1::Resolved { tokens }
                     }
                     (None, None) => CombatStageV1::RemovedWithoutResolution,
-                    (Some(_), Some(_)) => return Err("ended Lathril combat trigger still live".into()),
+                    (Some(_), Some(_)) => {
+                        return Err("ended Lathril combat trigger still live".into())
+                    }
                 }
             }
-            _ => return Err("Lathril combat occurrence lacks exact held or published custody".into()),
+            _ => {
+                return Err(
+                    "Lathril combat occurrence lacks exact held or published custody".into(),
+                )
+            }
         };
-        combat.push(CombatV1 { source: root(state, viewer, source)?, damaged_player: (*player).into(),
-            final_damage, stage });
+        combat.push(CombatV1 {
+            source: root(state, viewer, source)?,
+            damaged_player: (*player).into(),
+            final_damage,
+            stage,
+        });
     }
     Ok(combat)
 }
 
-fn choice_binding(state: &GameState, viewer: PlayerId, binding: &EffectObjectBinding) -> Result<public::ReferenceV1, String> {
+fn choice_binding(
+    state: &GameState,
+    viewer: PlayerId,
+    binding: &EffectObjectBinding,
+) -> Result<public::ReferenceV1, String> {
     let card = visible(state, viewer, binding.object)?;
-    if card.zone != Zone::Battlefield || card.zone != binding.expected_zone
-        || card.generation != binding.expected_zone_change_count || card.controller != viewer.into()
+    if card.zone != Zone::Battlefield
+        || card.zone != binding.expected_zone
+        || card.generation != binding.expected_zone_change_count
+        || card.controller != viewer.into()
     {
         return Err("Lathril native Elf candidate changed incarnation".into());
     }
@@ -374,25 +454,42 @@ fn choice_binding(state: &GameState, viewer: PlayerId, binding: &EffectObjectBin
 }
 
 fn payment(state: &GameState, viewer: PlayerId) -> Result<Option<PaymentV1>, String> {
-    let Some(pending) = state.engine.pending_activation.as_ref().filter(|pending|
-        pending.controller == viewer && pending.ability_index == 0
+    let Some(pending) = state.engine.pending_activation.as_ref().filter(|pending| {
+        pending.controller == viewer
+            && pending.ability_index == 0
             && public::visible_known(state, pending.source, Some(viewer), |id| id == PRINTING)
-    ) else { return Ok(None) };
+    }) else {
+        return Ok(None);
+    };
     engine::validate_pending_activation(state, pending)?;
     if pending.target_spec != TargetSpec::None || !pending.cauldron_grant.is_empty() {
         return Err("Lathril pending payment lost exact printed activation".into());
     }
-    let chosen = u8::try_from(pending.object_cost_chosen.len()).map_err(|_| "Lathril Elf cost width")?;
-    let remaining = ELVES.checked_sub(chosen).filter(|left| *left > 0).ok_or("Lathril pending Elf cost complete")?;
-    let selected = pending.object_cost_chosen.iter().map(|binding| choice_binding(state, viewer, binding))
+    let chosen =
+        u8::try_from(pending.object_cost_chosen.len()).map_err(|_| "Lathril Elf cost width")?;
+    let remaining = ELVES
+        .checked_sub(chosen)
+        .filter(|left| *left > 0)
+        .ok_or("Lathril pending Elf cost complete")?;
+    let selected = pending
+        .object_cost_chosen
+        .iter()
+        .map(|binding| choice_binding(state, viewer, binding))
         .collect::<Result<_, _>>()?;
-    let candidates = engine::lathril_payment_candidates_v1(state, pending).iter()
-        .map(|binding| choice_binding(state, viewer, binding)).collect::<Result<Vec<_>, _>>()?;
+    let candidates = engine::lathril_payment_candidates_v1(state, pending)
+        .iter()
+        .map(|binding| choice_binding(state, viewer, binding))
+        .collect::<Result<Vec<_>, _>>()?;
     if candidates.len() < usize::from(remaining) {
         return Err("Lathril native chooser lost payable Elf roster".into());
     }
-    Ok(Some(PaymentV1 { source: visible(state, viewer, pending.source)?, chooser: viewer.into(),
-        selected, remaining, candidates }))
+    Ok(Some(PaymentV1 {
+        source: visible(state, viewer, pending.source)?,
+        chooser: viewer.into(),
+        selected,
+        remaining,
+        candidates,
+    }))
 }
 
 fn require_live_drain_receipts(state: &GameState) -> Result<(), String> {
@@ -417,7 +514,9 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
     let mut battlefield = vec![];
     for player in [PlayerId::P0, PlayerId::P1] {
         for &id in &state.players[player.index()].battlefield {
-            if !public::visible_known(state, id, Some(viewer), |id| id == PRINTING || id == meaning.token_id) {
+            if !public::visible_known(state, id, Some(viewer), |id| {
+                id == PRINTING || id == meaning.token_id
+            }) {
                 continue;
             }
             let live = state.objects.get(id);
@@ -439,8 +538,16 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
             continue;
         }
         let target = engine::validated_stack_item_target_spec(item, state)?;
-        let origin = item.v4.source_contract.ok_or("Lathril native spell source absent")?.spell_cast_origin;
-        let pending = state.engine.pending_cast.as_ref().filter(|pending| pending.spell == item.source);
+        let origin = item
+            .v4
+            .source_contract
+            .ok_or("Lathril native spell source absent")?
+            .spell_cast_origin;
+        let pending = state
+            .engine
+            .pending_cast
+            .as_ref()
+            .filter(|pending| pending.spell == item.source);
         if let Some(pending) = pending {
             engine::validate_pending_cast(state, pending)?;
         }
@@ -458,25 +565,57 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
     }
     require_live_drain_receipts(state)?;
     receipts::validate_combat_links(state)?;
-    let drains = receipts::drains(state)?.into_iter().map(|(item, stage)| {
-        let source = root(state, viewer, item.v4.ability_source_contract.ok_or("Lathril paid source absent")?)?;
-        let original_paid_elves = item.v4.paid_cost_refs.iter().map(|paid| IncarnationV72 {
-            object: paid.object.0,
-            generation: paid.zone_change_count,
-            owner: paid.owner.into(),
-            controller: paid.controller.into(),
-            zone: paid.zone,
-        }).collect();
-        let stage = match stage {
-            DrainOutcomeV1::Live(position) => DrainStageV1::Published { stack_position: ordinal(position)? },
-            DrainOutcomeV1::RemovedWithoutResolution => DrainStageV1::RemovedWithoutResolution,
-            DrainOutcomeV1::Countered => DrainStageV1::Countered,
-            DrainOutcomeV1::Resolved { opponent_lost, controller_gained } =>
-                DrainStageV1::Resolved { opponent_lost, controller_gained },
-        };
-        Ok(DrainV1 { source, original_paid_elves, stage })
-    }).collect::<Result<_, String>>()?;
-    Ok(FactsV1 { schema: SCHEMA.into(), viewer: viewer.into(),
-        combat: combat(state, viewer, meaning.token_id)?, payment: payment(state, viewer)?,
-        meaning, battlefield, casts, drains })
+    let drains = receipts::drains(state)?
+        .into_iter()
+        .map(|(item, stage)| {
+            let source = root(
+                state,
+                viewer,
+                item.v4
+                    .ability_source_contract
+                    .ok_or("Lathril paid source absent")?,
+            )?;
+            let original_paid_elves = item
+                .v4
+                .paid_cost_refs
+                .iter()
+                .map(|paid| IncarnationV72 {
+                    object: paid.object.0,
+                    generation: paid.zone_change_count,
+                    owner: paid.owner.into(),
+                    controller: paid.controller.into(),
+                    zone: paid.zone,
+                })
+                .collect();
+            let stage = match stage {
+                DrainOutcomeV1::Live(position) => DrainStageV1::Published {
+                    stack_position: ordinal(position)?,
+                },
+                DrainOutcomeV1::RemovedWithoutResolution => DrainStageV1::RemovedWithoutResolution,
+                DrainOutcomeV1::Countered => DrainStageV1::Countered,
+                DrainOutcomeV1::Resolved {
+                    opponent_lost,
+                    controller_gained,
+                } => DrainStageV1::Resolved {
+                    opponent_lost,
+                    controller_gained,
+                },
+            };
+            Ok(DrainV1 {
+                source,
+                original_paid_elves,
+                stage,
+            })
+        })
+        .collect::<Result<_, String>>()?;
+    Ok(FactsV1 {
+        schema: SCHEMA.into(),
+        viewer: viewer.into(),
+        combat: combat(state, viewer, meaning.token_id)?,
+        payment: payment(state, viewer)?,
+        meaning,
+        battlefield,
+        casts,
+        drains,
+    })
 }

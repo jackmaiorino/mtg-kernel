@@ -495,7 +495,8 @@ fn ordinary_foreign_fields_core_absent(d: &CardDef) -> bool {
 }
 
 pub(crate) fn ordinary_foreign_fields_except_alt_cost_absent(d: &CardDef) -> bool {
-    d.activated_abilities.is_empty() && d.attachment.is_none()
+    d.activated_abilities.is_empty()
+        && d.attachment.is_none()
         && ordinary_foreign_fields_core_except_alt_cost_absent(d)
 }
 

@@ -2430,7 +2430,9 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     }
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
-    if text_mode != ObservationTextModeV2::KaitoV75Artifact || private_scope != LimitedAppendixV1::Loot {
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact
+        || private_scope != LimitedAppendixV1::Loot
+    {
         crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
 
@@ -5958,7 +5960,9 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     }
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
-    if text_mode != ObservationTextModeV2::KaitoV75Artifact || private_scope != LimitedAppendixV1::Loot {
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact
+        || private_scope != LimitedAppendixV1::Loot
+    {
         crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
 
@@ -9891,10 +9895,14 @@ fn stack_paid_cost_card_refs(
     item: &StackItem,
     acting_player: PlayerId,
 ) -> Result<Vec<CardStableRefV1>> {
-    if let Some(printings) = crate::lathril_receipts_v1::payment_printings(state, item)
-        .map_err(RlContractError)?
+    if let Some(printings) =
+        crate::lathril_receipts_v1::payment_printings(state, item).map_err(RlContractError)?
     {
-        return Ok(item.v4.paid_cost_refs.iter().zip(printings)
+        return Ok(item
+            .v4
+            .paid_cost_refs
+            .iter()
+            .zip(printings)
             .filter(|(paid, _)| paid.visible_to(acting_player))
             .map(|(paid, &printing)| CardStableRefV1 {
                 arena_id: paid.object.0,
@@ -9903,9 +9911,14 @@ fn stack_paid_cost_card_refs(
                 controller: paid.controller.into(),
                 zone: paid.zone,
                 zone_change_count: paid.zone_change_count,
-            }).collect());
+            })
+            .collect());
     }
-    Ok(paid_cost_card_refs(state, &item.v4.paid_cost_refs, acting_player))
+    Ok(paid_cost_card_refs(
+        state,
+        &item.v4.paid_cost_refs,
+        acting_player,
+    ))
 }
 
 pub(crate) fn stack_item_target_ref_from_contract(
@@ -10673,7 +10686,8 @@ fn private_card(
         ));
     }
     if state.objects.try_get(id).is_some_and(|o| {
-        o.v4.face_down_v1.is_none() && appendix != LimitedAppendixV1::Loot
+        o.v4.face_down_v1.is_none()
+            && appendix != LimitedAppendixV1::Loot
             && CARD_DEFS[usize::from(o.card_def)].name == "Loot, Exuberant Explorer"
     }) {
         return Err(RlContractError(
@@ -10689,7 +10703,8 @@ fn private_card(
         ));
     }
     if state.objects.try_get(id).is_some_and(|o| {
-        o.v4.face_down_v1.is_none() && appendix != LimitedAppendixV1::Electroduplicate
+        o.v4.face_down_v1.is_none()
+            && appendix != LimitedAppendixV1::Electroduplicate
             && CARD_DEFS[usize::from(o.card_def)].name == "Electroduplicate"
     }) {
         return Err(RlContractError(
@@ -12214,8 +12229,11 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
         &pending.resolving_item,
     );
     let edict = appendix == LimitedAppendixV1::Edict
-        && pending.resolving_item.v4.source_contract.is_some_and(|source|
-            crate::edict_receipts_v1::is_printing(source.card_def));
+        && pending
+            .resolving_item
+            .v4
+            .source_contract
+            .is_some_and(|source| crate::edict_receipts_v1::is_printing(source.card_def));
     if crate::effect::blasphemous_edict_v1::selected(state, &pending.resolving_item)
         && !liliana_sacrifice
         && !edict
@@ -12763,8 +12781,8 @@ fn pending_activation_semantic_v2(
 ) -> Result<PendingActivationSemanticV2> {
     engine::validate_pending_activation(state, p)
         .map_err(|error| RlContractError(format!("invalid pending activation: {error}")))?;
-    let hide_object_cost = acting_player != p.controller
-        && crate::lathril_receipts_v1::pending_selected(state, p);
+    let hide_object_cost =
+        acting_player != p.controller && crate::lathril_receipts_v1::pending_selected(state, p);
     let object_cost_chosen = p
         .object_cost_chosen
         .iter()

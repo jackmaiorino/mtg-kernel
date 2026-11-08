@@ -2,10 +2,10 @@
 pub use crate::limited_consumer_wire_v1::{CommandV1, ReplyBodyV1, ReplyV1, RequestV1, ResetV1};
 use crate::{
     current_mixed_policy_v1::KaitoSession,
+    electroduplicate_public_v1::{self as public, FactsV1, PRINTING},
     human_bo3_v1::HumanKaitoSessionV75,
     limited_consumer_wire_v1::ProfileWireV1,
     optional_trigger_public_v1::{IdentityV1, ReferenceV1},
-    electroduplicate_public_v1::{self as public, FactsV1, PRINTING},
     rl::{ActionSemanticV1 as Action, CardStableRefV1, PlayerSeatV1, TargetRefV1},
     rl_session::FastActorSessionV1,
     state::Zone,
@@ -102,7 +102,10 @@ fn exact_printing(card: &ReferenceV1) -> bool {
 
 pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(), String> {
     use public::CastStageV1;
-    if facts.viewer != actor || facts.schema != public::SCHEMA || facts.meaning != public::printed_meaning()? {
+    if facts.viewer != actor
+        || facts.schema != public::SCHEMA
+        || facts.meaning != public::printed_meaning()?
+    {
         return Err("invalid Electroduplicate viewer facts".into());
     }
     for cast in &facts.casts {
@@ -141,7 +144,9 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
         }
     }
     for token in &facts.copied_tokens {
-        if token.card.zone != Zone::Battlefield || token.copiable_haste_and_each_end_step_sacrifice_instances == 0 {
+        if token.card.zone != Zone::Battlefield
+            || token.copiable_haste_and_each_end_step_sacrifice_instances == 0
+        {
             return Err("invalid Electroduplicate copied token facts".into());
         }
         crate::tinybones_public_v72::nonnegative(&token.counters)?;
@@ -158,18 +163,32 @@ pub(crate) fn validate_inherited(
     use crate::rl::StackItemKindV2;
     use crate::state::CastMethodV4;
     let common = &value.common.common.projection.surface;
-    let expected_casts = common.stack.iter().filter(|row|
-        row.stack_item_kind == StackItemKindV2::Spell && row.source.card_db_id == PRINTING).count();
-    if expected_casts != facts.casts.len() { return Err("Electroduplicate cast roster differs from common stack".into()); }
+    let expected_casts = common
+        .stack
+        .iter()
+        .filter(|row| {
+            row.stack_item_kind == StackItemKindV2::Spell && row.source.card_db_id == PRINTING
+        })
+        .count();
+    if expected_casts != facts.casts.len() {
+        return Err("Electroduplicate cast roster differs from common stack".into());
+    }
     let mut positions = std::collections::BTreeSet::new();
     for cast in &facts.casts {
         if !positions.insert(cast.stack_position) {
             return Err("Electroduplicate cast roster repeats a stack position".into());
         }
-        let row = common.stack.iter().find(|row| row.stack_index == cast.stack_position
-            && row.stack_item_kind == StackItemKindV2::Spell && binds(&cast.spell, &row.source))
+        let row = common
+            .stack
+            .iter()
+            .find(|row| {
+                row.stack_index == cast.stack_position
+                    && row.stack_item_kind == StackItemKindV2::Spell
+                    && binds(&cast.spell, &row.source)
+            })
             .ok_or("Electroduplicate cast lost its inherited stack row")?;
-        if row.controller != cast.spell.controller || row.cast_method.is_none()
+        if row.controller != cast.spell.controller
+            || row.cast_method.is_none()
             || row.is_copy != (cast.stage == public::CastStageV1::UncastCopy)
             || cast.stage == public::CastStageV1::Published
                 && (row.cast_method != cast.finalized_method
@@ -177,53 +196,96 @@ pub(crate) fn validate_inherited(
             || cast.stage == public::CastStageV1::UncastCopy && row.is_flashback
             || cast.finalized_method == Some(CastMethodV4::Flashback)
                 && (cast.origin_zone != Some(Zone::Graveyard) || !row.is_flashback)
-        { return Err("Electroduplicate cast route differs from common stack".into()); }
+        {
+            return Err("Electroduplicate cast route differs from common stack".into());
+        }
         let targets = if cast.stage == public::CastStageV1::Announcing {
-            let pending = common.engine_context.pending_cast.as_ref().filter(|pending|
-                pending.source.as_ref().is_some_and(|source| binds(&cast.spell, source)))
+            let pending = common
+                .engine_context
+                .pending_cast
+                .as_ref()
+                .filter(|pending| {
+                    pending
+                        .source
+                        .as_ref()
+                        .is_some_and(|source| binds(&cast.spell, source))
+                })
                 .ok_or("Electroduplicate announcement lost its pending cast")?;
-            if Some(pending.origin_zone) != cast.origin_zone || pending.controller != cast.spell.controller
+            if Some(pending.origin_zone) != cast.origin_zone
+                || pending.controller != cast.spell.controller
                 || row.is_flashback != pending.is_flashback
                 || pending.is_flashback != (row.cast_method == Some(CastMethodV4::Flashback))
-                || pending.is_flashback && pending.origin_zone != Zone::Graveyard {
+                || pending.is_flashback && pending.origin_zone != Zone::Graveyard
+            {
                 return Err("Electroduplicate pending origin differs".into());
             }
             &pending.chosen_targets
-        } else { &row.targets };
+        } else {
+            &row.targets
+        };
         match (cast.target.as_ref(), targets.as_slice()) {
-            (None, []) => {},
+            (None, []) => {}
             (Some(target), [TargetRefV1::Object { object }])
                 if target.original.object == object.arena_id
                     && target.original.generation == object.zone_change_count
                     && target.original.owner == object.owner
                     && target.original.controller == object.controller
-                    && target.original.zone == object.zone => {},
-            _ => return Err("Electroduplicate original target differs from inherited stack".into()),
+                    && target.original.zone == object.zone => {}
+            _ => {
+                return Err("Electroduplicate original target differs from inherited stack".into())
+            }
         }
     }
-    let entries: Vec<_> = value.chandra.copied_tokens.iter().filter_map(|entry| {
-        entry.source.current_original_source.as_ref().filter(|card|
-            card.zone == Zone::Battlefield && matches!(card.identity, IdentityV1::Known { .. }))
-            .map(|card| (card, entry.sacrifice_instances))
-    }).collect();
-    if entries.len() != facts.copied_tokens.len() { return Err("Electroduplicate token roster differs from V74".into()); }
+    let entries: Vec<_> = value
+        .chandra
+        .copied_tokens
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .source
+                .current_original_source
+                .as_ref()
+                .filter(|card| {
+                    card.zone == Zone::Battlefield
+                        && matches!(card.identity, IdentityV1::Known { .. })
+                })
+                .map(|card| (card, entry.sacrifice_instances))
+        })
+        .collect();
+    if entries.len() != facts.copied_tokens.len() {
+        return Err("Electroduplicate token roster differs from V74".into());
+    }
     let mut incarnations = std::collections::BTreeSet::new();
     for token in &facts.copied_tokens {
         if !incarnations.insert((token.card.object, token.card.generation))
-            || entries.iter().filter(|(card, count)| *card == &token.card
-            && *count == token.copiable_haste_and_each_end_step_sacrifice_instances).count() != 1
-            || !value.tinybones.battlefield.iter().flatten().any(|current|
-                current.card == token.card && current.is_token && current.form == token.form
-                    && current.counters == token.counters && current.tapped == token.tapped
-                    && current.summoning_sick == token.summoning_sick)
-        { return Err("Electroduplicate current token differs from inherited facts".into()); }
+            || entries
+                .iter()
+                .filter(|(card, count)| {
+                    *card == &token.card
+                        && *count == token.copiable_haste_and_each_end_step_sacrifice_instances
+                })
+                .count()
+                != 1
+            || !value.tinybones.battlefield.iter().flatten().any(|current| {
+                current.card == token.card
+                    && current.is_token
+                    && current.form == token.form
+                    && current.counters == token.counters
+                    && current.tapped == token.tapped
+                    && current.summoning_sick == token.summoning_sick
+            })
+        {
+            return Err("Electroduplicate current token differs from inherited facts".into());
+        }
     }
     Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub enum ActionV1 { ChooseCopyTarget }
+pub enum ActionV1 {
+    ChooseCopyTarget,
+}
 
 fn binds(card: &ReferenceV1, stable: &CardStableRefV1) -> bool {
     let card_id = match card.identity {
@@ -244,18 +306,34 @@ fn binds(card: &ReferenceV1, stable: &CardStableRefV1) -> bool {
 
 pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<ActionV1>, String> {
     let Some(facts) = facts else { return Ok(None) };
-    if let Action::ChooseTarget { actor, source, target, remaining } = action {
+    if let Action::ChooseTarget {
+        actor,
+        source,
+        target,
+        remaining,
+    } = action
+    {
         if source.card_db_id == PRINTING {
-            if *actor != facts.viewer || *remaining != 1
-                || !facts.casts.iter().any(|cast| cast.stage == public::CastStageV1::Announcing
-                    && cast.spell.controller == *actor && binds(&cast.spell, source))
+            if *actor != facts.viewer
+                || *remaining != 1
+                || !facts.casts.iter().any(|cast| {
+                    cast.stage == public::CastStageV1::Announcing
+                        && cast.spell.controller == *actor
+                        && binds(&cast.spell, source)
+                })
                 || !matches!(target, TargetRefV1::Object { object } if object.zone == Zone::Battlefield && object.controller == *actor)
-            { return Err("Electroduplicate target lost its native source or controller".into()); }
+            {
+                return Err("Electroduplicate target lost its native source or controller".into());
+            }
             return Ok(Some(ActionV1::ChooseCopyTarget));
         }
     }
     Ok(None)
 }
 
-#[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 mod tests;

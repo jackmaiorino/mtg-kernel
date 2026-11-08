@@ -1,6 +1,9 @@
 //! Exact actor-visible Blasphemous Edict quotes, menus, and outcomes.
 use crate::{
-    card_def::{self, AltCostCondition, AltCostDef, CardCapability, CardType, CostComponent, Keywords, TargetSpec},
+    card_def::{
+        self, AltCostCondition, AltCostDef, CardCapability, CardType, CostComponent, Keywords,
+        TargetSpec,
+    },
     edict_receipts_v1 as native,
     effect::{EffectOp, EffectTargetCandidate, EffectTargetSelectionPurpose, PendingEffectChoice},
     engine::{self, CastMode, Decision},
@@ -26,19 +29,27 @@ pub(crate) fn selected_id() -> Result<u16, String> {
         return Err("Edict requires its exact pure Limited printing".into());
     }
     let def = &card_def::CARD_DEFS[usize::from(PRINTING)];
-    let Some(AltCostDef { components, condition }) = def.alt_cost else {
+    let Some(AltCostDef {
+        components,
+        condition,
+    }) = def.alt_cost
+    else {
         return Err("Edict alternative payment absent".into());
     };
-    if !crate::rules_meaning_graveyard_return_v61::ordinary_foreign_fields_except_alt_cost_absent(def)
-        || def.name != NAME
+    if !crate::rules_meaning_graveyard_return_v61::ordinary_foreign_fields_except_alt_cost_absent(
+        def,
+    ) || def.name != NAME
         || def.capability != CardCapability::Partial
         || def.cost.generic != 3
         || def.cost.x_count != 0
         || def.cost.pips != [Pip::Colored(ManaColor::B); 2]
         || condition != AltCostCondition::BattlefieldCreatureCountAtLeast(13)
-        || components != [CostComponent::Mana(Cost {
-            pips: &[Pip::Colored(ManaColor::B)], generic: 0, x_count: 0,
-        })]
+        || components
+            != [CostComponent::Mana(Cost {
+                pips: &[Pip::Colored(ManaColor::B)],
+                generic: 0,
+                x_count: 0,
+            })]
         || def.mana_value != 5
         || def.types != [CardType::Sorcery]
         || !def.subtypes.is_empty()
@@ -62,7 +73,8 @@ pub fn producer_sha256() -> String {
     HASH.get_or_init(|| {
         let mut hash = Sha256::new();
         for source in [
-            SCHEMA, MEANING_SCHEMA,
+            SCHEMA,
+            MEANING_SCHEMA,
             include_str!("edict_public_v1.rs"),
             include_str!("edict_receipts_v1.rs"),
             include_str!("spell_costs_v1.rs"),
@@ -76,7 +88,8 @@ pub fn producer_sha256() -> String {
             hash.update(source.as_bytes());
         }
         format!("{:x}", hash.finalize())
-    }).clone()
+    })
+    .clone()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,8 +142,11 @@ pub struct PaymentV1 {
 
 impl From<native::PaymentV1> for PaymentV1 {
     fn from(payment: native::PaymentV1) -> Self {
-        Self { method: payment.source.cast_method, creatures_before: payment.creatures_before,
-            mana_spent: payment.mana_spent }
+        Self {
+            method: payment.source.cast_method,
+            creatures_before: payment.creatures_before,
+            mana_spent: payment.mana_spent,
+        }
     }
 }
 
@@ -213,22 +229,36 @@ pub struct FactsV1 {
     pub resolved: Vec<OutcomeV1>,
 }
 
-fn visible(state: &GameState, viewer: PlayerId, object: ObjectId) -> Result<public::ReferenceV1, String> {
-    public::reference(state, object, Some(viewer)).ok_or_else(|| "Edict original card is not visible".into())
+fn visible(
+    state: &GameState,
+    viewer: PlayerId,
+    object: ObjectId,
+) -> Result<public::ReferenceV1, String> {
+    public::reference(state, object, Some(viewer))
+        .ok_or_else(|| "Edict original card is not visible".into())
 }
 
-fn targets(state: &GameState, viewer: PlayerId, list: &[EffectTargetCandidate]) -> Result<Vec<public::ReferenceV1>, String> {
-    list.iter().map(|candidate| {
-        let binding = candidate.expected_object.ok_or("Edict original object binding absent")?;
-        let card = visible(state, viewer, binding.object)?;
-        if card.zone != Zone::Battlefield || card.zone != binding.expected_zone
-            || card.generation != binding.expected_zone_change_count
-            || candidate.target != Target::Object(binding.object)
-        {
-            return Err("Edict original choice incarnation changed".into());
-        }
-        Ok(card)
-    }).collect()
+fn targets(
+    state: &GameState,
+    viewer: PlayerId,
+    list: &[EffectTargetCandidate],
+) -> Result<Vec<public::ReferenceV1>, String> {
+    list.iter()
+        .map(|candidate| {
+            let binding = candidate
+                .expected_object
+                .ok_or("Edict original object binding absent")?;
+            let card = visible(state, viewer, binding.object)?;
+            if card.zone != Zone::Battlefield
+                || card.zone != binding.expected_zone
+                || card.generation != binding.expected_zone_change_count
+                || candidate.target != Target::Object(binding.object)
+            {
+                return Err("Edict original choice incarnation changed".into());
+            }
+            Ok(card)
+        })
+        .collect()
 }
 
 fn identity(printing: u16) -> public::IdentityV1 {
@@ -240,43 +270,61 @@ fn identity(printing: u16) -> public::IdentityV1 {
 }
 
 fn outcomes(state: &GameState) -> Result<Vec<OutcomeV1>, String> {
-    native::outcomes(state)?.into_iter().map(|row| {
-        let source = row.item;
-        let sacrifices_in_apnap_order = row.victims.into_iter().map(|(victim, committed_destination)| VictimV1 {
-            original: IncarnationV72 {
-                object: victim.binding.object.0,
-                generation: victim.binding.expected_zone_change_count,
-                owner: victim.owner.into(),
-                controller: victim.controller.into(),
-                zone: Zone::Battlefield,
-            },
-            identity: identity(victim.public_printing),
-            committed_destination,
-        }).collect::<Vec<_>>();
-        let mut actual_graveyard_order = [vec![], vec![]];
-        for (seat, ids) in row.graveyard.iter().enumerate() {
-            for object in ids {
-                let victim = sacrifices_in_apnap_order.iter().find(|victim| victim.original.object == object.0)
-                    .ok_or("Edict graveyard order lost original victim")?;
-                actual_graveyard_order[seat].push(victim.original.clone());
+    native::outcomes(state)?
+        .into_iter()
+        .map(|row| {
+            let source = row.item;
+            let sacrifices_in_apnap_order = row
+                .victims
+                .into_iter()
+                .map(|(victim, committed_destination)| VictimV1 {
+                    original: IncarnationV72 {
+                        object: victim.binding.object.0,
+                        generation: victim.binding.expected_zone_change_count,
+                        owner: victim.owner.into(),
+                        controller: victim.controller.into(),
+                        zone: Zone::Battlefield,
+                    },
+                    identity: identity(victim.public_printing),
+                    committed_destination,
+                })
+                .collect::<Vec<_>>();
+            let mut actual_graveyard_order = [vec![], vec![]];
+            for (seat, ids) in row.graveyard.iter().enumerate() {
+                for object in ids {
+                    let victim = sacrifices_in_apnap_order
+                        .iter()
+                        .find(|victim| victim.original.object == object.0)
+                        .ok_or("Edict graveyard order lost original victim")?;
+                    actual_graveyard_order[seat].push(victim.original.clone());
+                }
             }
-        }
-        Ok(OutcomeV1 {
-            original_spell: IncarnationV72 {
-                object: source.source.0, generation: source.zone_change_count, owner: source.owner.into(),
-                controller: source.controller.into(), zone: source.zone,
-            },
-            copied_spell: row.copied_spell, active: row.active.into(), payment: row.payment.map(Into::into),
-            sacrifices_in_apnap_order, actual_graveyard_order,
+            Ok(OutcomeV1 {
+                original_spell: IncarnationV72 {
+                    object: source.source.0,
+                    generation: source.zone_change_count,
+                    owner: source.owner.into(),
+                    controller: source.controller.into(),
+                    zone: source.zone,
+                },
+                copied_spell: row.copied_spell,
+                active: row.active.into(),
+                payment: row.payment.map(Into::into),
+                sacrifices_in_apnap_order,
+                actual_graveyard_order,
+            })
         })
-    }).collect()
+        .collect()
 }
 
 pub(crate) fn validate_native(state: &GameState) -> Result<(), String> {
     let pending = state.engine.pending_cast.as_ref();
     for item in &state.stack {
         if item.kind == StackItemKind::Spell
-            && item.v4.source_contract.is_some_and(|source| native::is_printing(source.card_def))
+            && item
+                .v4
+                .source_contract
+                .is_some_and(|source| native::is_printing(source.card_def))
             && !pending.is_some_and(|pending| pending.spell == item.source)
         {
             native::payment_for(state, item)?;
@@ -294,22 +342,42 @@ pub(crate) fn capture(
     let meaning = printed_meaning()?;
     let effective_creatures_now = native::creature_count(state)?;
     let pending = state.engine.pending_cast.as_ref();
-    let chooser_cast_quotes = if let PolicyDecisionV5::Surface(SurfaceDecision::Decision(
-        Decision::ChooseCastMode { player, spell, options }
-    )) = origin
-    {
-        if *player == viewer && public::visible_known(state, *spell, Some(viewer), |id| id == PRINTING) {
-            let pending = pending.filter(|pending| pending.spell == *spell && pending.controller == viewer)
-                .ok_or("Edict quote lost original announcing cast")?;
-            engine::validate_pending_cast(state, pending)?;
-            let modes = options.iter().map(|&mode| {
-                let payable_mana_now = engine::edict_pending_mana_quote_v1(state, pending, mode)
-                    .ok_or("Edict native payment option lost its quote")?;
-                Ok(QuoteV1 { mode, payable_mana_now })
-            }).collect::<Result<_, String>>()?;
-            Some(QuotesV1 { card: visible(state, viewer, *spell)?, modes })
-        } else { None }
-    } else { None };
+    let chooser_cast_quotes =
+        if let PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseCastMode {
+            player,
+            spell,
+            options,
+        })) = origin
+        {
+            if *player == viewer
+                && public::visible_known(state, *spell, Some(viewer), |id| id == PRINTING)
+            {
+                let pending = pending
+                    .filter(|pending| pending.spell == *spell && pending.controller == viewer)
+                    .ok_or("Edict quote lost original announcing cast")?;
+                engine::validate_pending_cast(state, pending)?;
+                let modes = options
+                    .iter()
+                    .map(|&mode| {
+                        let payable_mana_now =
+                            engine::edict_pending_mana_quote_v1(state, pending, mode)
+                                .ok_or("Edict native payment option lost its quote")?;
+                        Ok(QuoteV1 {
+                            mode,
+                            payable_mana_now,
+                        })
+                    })
+                    .collect::<Result<_, String>>()?;
+                Some(QuotesV1 {
+                    card: visible(state, viewer, *spell)?,
+                    modes,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
     let mut casts = vec![];
     for (position, item) in state.stack.iter().enumerate() {
         if item.kind != StackItemKind::Spell
@@ -318,25 +386,44 @@ pub(crate) fn capture(
             continue;
         }
         let validated = engine::validated_stack_item_target_spec(item, state)?;
-        let source = item.v4.source_contract.ok_or("Edict original stack source absent")?;
+        let source = item
+            .v4
+            .source_contract
+            .ok_or("Edict original stack source absent")?;
         let announcing = pending.is_some_and(|pending| pending.spell == item.source);
         if validated != (!announcing).then_some(TargetSpec::None) {
             return Err("Edict targetless stack shape changed".into());
         }
-        let resolving = state.engine.pending_effect.as_ref().is_some_and(|p| p.resolving_item == *item);
+        let resolving = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|p| p.resolving_item == *item);
         casts.push(CastV1 {
-            stack_position: u32::try_from(position).map_err(|_| "Edict stack position exceeds u32")?,
+            stack_position: u32::try_from(position)
+                .map_err(|_| "Edict stack position exceeds u32")?,
             card: visible(state, viewer, item.source)?,
-            announcing, resolving, uncast_copy: item.is_copy,
+            announcing,
+            resolving,
+            uncast_copy: item.is_copy,
             origin_zone: source.spell_cast_origin.map(|origin| origin.origin_zone),
-            payment: if announcing { None } else { native::payment_for(state, item)?.map(Into::into) },
+            payment: if announcing {
+                None
+            } else {
+                native::payment_for(state, item)?.map(Into::into)
+            },
         });
     }
     let mut chooser_sacrifice_or_order = None;
     if let Some(pending) = state.engine.pending_effect.as_ref() {
         if let Some(PendingEffectChoice::SelectTargets {
-            player, selected, legal, min_targets, ordered,
-            purpose: EffectTargetSelectionPurpose::BlasphemousEdictV1 { choice }, ..
+            player,
+            selected,
+            legal,
+            min_targets,
+            ordered,
+            purpose: EffectTargetSelectionPurpose::BlasphemousEdictV1 { choice },
+            ..
         }) = pending.choice.as_ref()
         {
             crate::effect::validate_pending_effect_choice(state)?;
@@ -353,15 +440,24 @@ pub(crate) fn capture(
                             || card.zone != Zone::Battlefield
                             || card.controller != seat.into()
                         {
-                            return Err("Edict completed controller choice lost its original binding".into());
+                            return Err(
+                                "Edict completed controller choice lost its original binding"
+                                    .into(),
+                            );
                         }
                         completed_controller_choices[seat.index()].push(card);
                     }
                 }
                 chooser_sacrifice_or_order = Some(ChoiceV1 {
                     source: visible(state, viewer, pending.resolving_item.source)?,
-                    active: active.into(), chooser: (*player).into(), required: *min_targets,
-                    stage: if graveyard { ChoiceStageV1::PhysicalOwnerGraveyardOrder } else { ChoiceStageV1::SacrificeSelection },
+                    active: active.into(),
+                    chooser: (*player).into(),
+                    required: *min_targets,
+                    stage: if graveyard {
+                        ChoiceStageV1::PhysicalOwnerGraveyardOrder
+                    } else {
+                        ChoiceStageV1::SacrificeSelection
+                    },
                     selected: targets(state, viewer, selected)?,
                     legal: targets(state, viewer, legal)?,
                     completed_controller_choices,
@@ -370,8 +466,14 @@ pub(crate) fn capture(
         }
     }
     Ok(FactsV1 {
-        schema: SCHEMA.into(), viewer: viewer.into(), meaning, effective_creatures_now,
+        schema: SCHEMA.into(),
+        viewer: viewer.into(),
+        meaning,
+        effective_creatures_now,
         alternate_condition_now: effective_creatures_now >= native::LIMIT as u32,
-        casts, chooser_cast_quotes, chooser_sacrifice_or_order, resolved: outcomes(state)?,
+        casts,
+        chooser_cast_quotes,
+        chooser_sacrifice_or_order,
+        resolved: outcomes(state)?,
     })
 }

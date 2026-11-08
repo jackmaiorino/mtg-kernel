@@ -76,66 +76,89 @@ pub(super) fn project(
     handles: &mut Handles,
     roles: &mut Incarnations,
 ) -> Result<HumanFactsV1, Error> {
-    let casts = facts.casts.iter().map(|row| {
-        Ok(HumanCastV1 {
-            stack_position: row.stack_position,
-            card: href(&row.card, handles)?,
-            announcing: row.announcing,
-            resolving: row.resolving,
-            uncast_copy: row.uncast_copy,
-            origin_zone: row.origin_zone,
-            payment: row.payment,
-        })
-    }).collect::<Result<_, Error>>()?;
-    let chooser_cast_quotes = facts.chooser_cast_quotes.as_ref().map(|row| {
-        Ok::<_, Error>(HumanQuotesV1 {
-            card: href(&row.card, handles)?,
-            modes: row.modes.clone(),
-        })
-    }).transpose()?;
-    let chooser_sacrifice_or_order = facts.chooser_sacrifice_or_order.as_ref().map(|row| {
-        let source = href(&row.source, handles)?;
-        let mut cards = |list: &[ReferenceV1]| -> Result<Vec<_>, Error> {
-            list.iter().map(|card| href(card, handles)).collect()
-        };
-        Ok::<_, Error>(HumanChoiceV1 {
-            source,
-            active: row.active,
-            chooser: row.chooser,
-            stage: row.stage,
-            required: row.required,
-            selected: cards(&row.selected)?,
-            legal: cards(&row.legal)?,
-            completed_controller_choices: [
-                cards(&row.completed_controller_choices[0])?,
-                cards(&row.completed_controller_choices[1])?,
-            ],
-        })
-    }).transpose()?;
-    let resolved = facts.resolved.iter().map(|row| {
-        let original_spell = roles.relation(&row.original_spell)?;
-        let sacrifices_in_apnap_order = row.sacrifices_in_apnap_order.iter().map(|victim| {
-            Ok(HumanVictimV1 {
-                original: roles.relation(&victim.original)?,
-                identity: victim.identity.clone(),
-                committed_destination: victim.committed_destination,
+    let casts = facts
+        .casts
+        .iter()
+        .map(|row| {
+            Ok(HumanCastV1 {
+                stack_position: row.stack_position,
+                card: href(&row.card, handles)?,
+                announcing: row.announcing,
+                resolving: row.resolving,
+                uncast_copy: row.uncast_copy,
+                origin_zone: row.origin_zone,
+                payment: row.payment,
             })
-        }).collect::<Result<_, Error>>()?;
-        let mut actual_graveyard_order = [vec![], vec![]];
-        for (output, source) in actual_graveyard_order.iter_mut().zip(&row.actual_graveyard_order) {
-            for entry in source {
-                output.push(roles.relation(entry)?);
-            }
-        }
-        Ok(HumanOutcomeV1 {
-            original_spell,
-            copied_spell: row.copied_spell,
-            active: row.active,
-            payment: row.payment,
-            sacrifices_in_apnap_order,
-            actual_graveyard_order,
         })
-    }).collect::<Result<_, Error>>()?;
+        .collect::<Result<_, Error>>()?;
+    let chooser_cast_quotes = facts
+        .chooser_cast_quotes
+        .as_ref()
+        .map(|row| {
+            Ok::<_, Error>(HumanQuotesV1 {
+                card: href(&row.card, handles)?,
+                modes: row.modes.clone(),
+            })
+        })
+        .transpose()?;
+    let chooser_sacrifice_or_order = facts
+        .chooser_sacrifice_or_order
+        .as_ref()
+        .map(|row| {
+            let source = href(&row.source, handles)?;
+            let mut cards = |list: &[ReferenceV1]| -> Result<Vec<_>, Error> {
+                list.iter().map(|card| href(card, handles)).collect()
+            };
+            Ok::<_, Error>(HumanChoiceV1 {
+                source,
+                active: row.active,
+                chooser: row.chooser,
+                stage: row.stage,
+                required: row.required,
+                selected: cards(&row.selected)?,
+                legal: cards(&row.legal)?,
+                completed_controller_choices: [
+                    cards(&row.completed_controller_choices[0])?,
+                    cards(&row.completed_controller_choices[1])?,
+                ],
+            })
+        })
+        .transpose()?;
+    let resolved = facts
+        .resolved
+        .iter()
+        .map(|row| {
+            let original_spell = roles.relation(&row.original_spell)?;
+            let sacrifices_in_apnap_order = row
+                .sacrifices_in_apnap_order
+                .iter()
+                .map(|victim| {
+                    Ok(HumanVictimV1 {
+                        original: roles.relation(&victim.original)?,
+                        identity: victim.identity.clone(),
+                        committed_destination: victim.committed_destination,
+                    })
+                })
+                .collect::<Result<_, Error>>()?;
+            let mut actual_graveyard_order = [vec![], vec![]];
+            for (output, source) in actual_graveyard_order
+                .iter_mut()
+                .zip(&row.actual_graveyard_order)
+            {
+                for entry in source {
+                    output.push(roles.relation(entry)?);
+                }
+            }
+            Ok(HumanOutcomeV1 {
+                original_spell,
+                copied_spell: row.copied_spell,
+                active: row.active,
+                payment: row.payment,
+                sacrifices_in_apnap_order,
+                actual_graveyard_order,
+            })
+        })
+        .collect::<Result<_, Error>>()?;
     Ok(HumanFactsV1 {
         meaning: facts.meaning.clone(),
         effective_creatures_now: facts.effective_creatures_now,
@@ -155,20 +178,34 @@ pub(super) fn label(
     let annotated = crate::edict_consumer_v1::action(facts, action)
         .map_err(|_| Error::InvalidVisibleReference)?;
     Ok(match (annotated, action) {
-        (Some(ActionV1::ChooseCastPayment { mode, payable_mana_now }), _) => {
+        (
+            Some(ActionV1::ChooseCastPayment {
+                mode,
+                payable_mana_now,
+            }),
+            _,
+        ) => {
             let route = match mode {
                 CastMode::Normal => "normal",
                 CastMode::Alternative => "alternative",
             };
-            Some(format!("Pay {payable_mana_now} mana for Blasphemous Edict's {route} cost"))
+            Some(format!(
+                "Pay {payable_mana_now} mana for Blasphemous Edict's {route} cost"
+            ))
         }
-        (Some(ActionV1::ChoosePermanent { stage, .. }), Action::ChooseEffectTarget {
-            target: TargetRefV1::Object { object }, ..
-        }) => {
+        (
+            Some(ActionV1::ChoosePermanent { stage, .. }),
+            Action::ChooseEffectTarget {
+                target: TargetRefV1::Object { object },
+                ..
+            },
+        ) => {
             let name = handles.name(object)?;
             Some(match stage {
                 ChoiceStageV1::SacrificeSelection => format!("Choose {name} to sacrifice"),
-                ChoiceStageV1::PhysicalOwnerGraveyardOrder => format!("Put {name} next in your graveyard order"),
+                ChoiceStageV1::PhysicalOwnerGraveyardOrder => {
+                    format!("Put {name} next in your graveyard order")
+                }
             })
         }
         (None, _) => None,

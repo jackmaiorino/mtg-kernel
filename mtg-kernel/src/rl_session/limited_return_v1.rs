@@ -178,7 +178,11 @@ impl FastActorSessionV1 {
     ) -> Result<Self, RlSessionError> {
         crate::electroduplicate_consumer_v1::preflight(config)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
-        Self::initialize_limited_consumer_v1(config, reveal_facts, LimitedAppendixV1::Electroduplicate)
+        Self::initialize_limited_consumer_v1(
+            config,
+            reveal_facts,
+            LimitedAppendixV1::Electroduplicate,
+        )
     }
 
     pub(crate) fn reset_limited_edict_v1(

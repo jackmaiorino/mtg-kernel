@@ -381,28 +381,30 @@ pub(crate) fn validate_state_for_consumer(
         crate::effect::loot_v1::refuse_legacy(state)?;
     }
     consumer.validate_copy_prefix(state)?;
-    if !matches!(consumer, ConsumerV1::KaitoLathrilV1) && (state.objects.iter().any(|(_, o)| {
-        matches!(o.zone, Zone::Battlefield | Zone::Stack)
-            && o.v4.face_down_v1.is_none()
-            && crate::event::is_lathril_v1(o.card_def)
-    }) || state.engine.event_history.iter().any(|entry| {
-        matches!(
-            entry,
-            crate::event::CommittedEvent::LathrilCombatDamageV1 { .. }
-                | crate::event::CommittedEvent::LathrilReceiptV1 { .. }
-        )
-    }) || state.stack.iter().any(|row| {
-        row.v4
-            .ability_source_contract
-            .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
-    }) || held(state).iter().any(|row| {
-        row.source_contract
-            .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
-    }) || state.engine.pending_effect.as_ref().is_some_and(|p| {
-        p.ctx
-            .ability_source_contract
-            .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
-    })) {
+    if !matches!(consumer, ConsumerV1::KaitoLathrilV1)
+        && (state.objects.iter().any(|(_, o)| {
+            matches!(o.zone, Zone::Battlefield | Zone::Stack)
+                && o.v4.face_down_v1.is_none()
+                && crate::event::is_lathril_v1(o.card_def)
+        }) || state.engine.event_history.iter().any(|entry| {
+            matches!(
+                entry,
+                crate::event::CommittedEvent::LathrilCombatDamageV1 { .. }
+                    | crate::event::CommittedEvent::LathrilReceiptV1 { .. }
+            )
+        }) || state.stack.iter().any(|row| {
+            row.v4
+                .ability_source_contract
+                .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
+        }) || held(state).iter().any(|row| {
+            row.source_contract
+                .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
+        }) || state.engine.pending_effect.as_ref().is_some_and(|p| {
+            p.ctx
+                .ability_source_contract
+                .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
+        }))
+    {
         return Err(
             "Lathril native combat/cost history requires a distinct complete consumer".into(),
         );

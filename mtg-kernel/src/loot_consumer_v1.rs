@@ -4,8 +4,8 @@ use crate::{
     current_mixed_policy_v1::KaitoSession,
     human_bo3_v1::HumanKaitoSessionV75,
     limited_consumer_wire_v1::ProfileWireV1,
-    optional_trigger_public_v1::{IdentityV1, ReferenceV1},
     loot_public_v1::{self as public, FactsV1, PRINTING},
+    optional_trigger_public_v1::{IdentityV1, ReferenceV1},
     rl::{ActionSemanticV1 as Action, CardStableRefV1, PlayerSeatV1, TargetRefV1},
     rl_session::FastActorSessionV1,
     state::Zone,
@@ -53,8 +53,7 @@ pub(crate) fn preflight(config: &ResetV1) -> Result<(), String> {
 }
 
 fn native(config: &ResetV1) -> Result<FastActorSessionV1, String> {
-    FastActorSessionV1::reset_limited_loot_v1(config, false)
-        .map_err(|error| format!("{error:?}"))
+    FastActorSessionV1::reset_limited_loot_v1(config, false).map_err(|error| format!("{error:?}"))
 }
 
 pub fn reset_numeric_v1(config: &ResetV1) -> Result<KaitoSession, String> {
@@ -97,21 +96,37 @@ impl JsonlServerV1 {
 }
 
 pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(), String> {
-    if facts.viewer != actor || facts.schema != public::SCHEMA || facts.meaning != public::printed_meaning()? {
+    if facts.viewer != actor
+        || facts.schema != public::SCHEMA
+        || facts.meaning != public::printed_meaning()?
+    {
         return Err("invalid Loot actor facts".into());
     }
     let printing = IdentityV1::Known { card_id: PRINTING };
     let mut seen = std::collections::BTreeSet::new();
     for permanent in &facts.battlefield {
-        if permanent.card.identity != printing || permanent.card.zone != Zone::Battlefield
-            || !seen.insert(permanent.card.object) { return Err("invalid Loot public permanent".into()); }
+        if permanent.card.identity != printing
+            || permanent.card.zone != Zone::Battlefield
+            || !seen.insert(permanent.card.object)
+        {
+            return Err("invalid Loot public permanent".into());
+        }
         crate::tinybones_public_v72::nonnegative(&permanent.counters)?;
     }
     for (index, lands) in facts.lands.iter().enumerate() {
         let player = [PlayerSeatV1::P0, PlayerSeatV1::P1][index];
-        let active = facts.battlefield.iter().filter(|card| card.card.controller == player && card.form.printed_abilities_active).count();
-        if lands.player != player || usize::try_from(lands.total_plays_allowed).ok() != active.checked_add(1)
-            || lands.remaining_plays != lands.total_plays_allowed.saturating_sub(u32::from(lands.plays_used)) {
+        let active = facts
+            .battlefield
+            .iter()
+            .filter(|card| card.card.controller == player && card.form.printed_abilities_active)
+            .count();
+        if lands.player != player
+            || usize::try_from(lands.total_plays_allowed).ok() != active.checked_add(1)
+            || lands.remaining_plays
+                != lands
+                    .total_plays_allowed
+                    .saturating_sub(u32::from(lands.plays_used))
+        {
             return Err("invalid Loot current land allowance".into());
         }
     }
@@ -119,27 +134,50 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
     let mut private_choices = 0;
     for ability in &facts.abilities {
         let root = &ability.source;
-        if root.original_source.identity != printing || root.original_source.zone != Zone::Battlefield
+        if root.original_source.identity != printing
+            || root.original_source.zone != Zone::Battlefield
             || root.captured_controller != root.original_source.controller
-            || root.current_original_source.as_ref().is_some_and(|current|
-                current.object != root.original_source.object || current.generation != root.original_source.generation)
-            || (ability.stage == public::StageV1::Published) != ability.native_stack_position.is_some()
-            || ability.native_stack_position.is_some_and(|position| !stack_positions.insert(position)) {
+            || root
+                .current_original_source
+                .as_ref()
+                .is_some_and(|current| {
+                    current.object != root.original_source.object
+                        || current.generation != root.original_source.generation
+                })
+            || (ability.stage == public::StageV1::Published)
+                != ability.native_stack_position.is_some()
+            || ability
+                .native_stack_position
+                .is_some_and(|position| !stack_positions.insert(position))
+        {
             return Err("invalid Loot original ability source or stage".into());
         }
         if let Some(choice) = &ability.choice {
             private_choices += 1;
             let mut looked = std::collections::BTreeSet::new();
             let mut chosen = std::collections::BTreeSet::new();
-            if private_choices > 1 || ability.stage != public::StageV1::Resolving
-                || choice.chooser != actor || choice.chooser != root.captured_controller
-                || choice.looked_in_original_order.len() > 6 || choice.selected.len() > 1
-                || choice.maximum_mana_value != facts.lands[match actor { PlayerSeatV1::P0 => 0, PlayerSeatV1::P1 => 1 }].controlled_lands
-                || choice.looked_in_original_order.iter().any(|card|
-                    card.zone != Zone::Library || card.owner != actor
-                        || !matches!(card.identity, IdentityV1::Known { .. }) || !looked.insert(card.object))
-                || choice.selected.iter().chain(&choice.legal).any(|card|
-                    !choice.looked_in_original_order.contains(card) || !chosen.insert(card.object)) {
+            if private_choices > 1
+                || ability.stage != public::StageV1::Resolving
+                || choice.chooser != actor
+                || choice.chooser != root.captured_controller
+                || choice.looked_in_original_order.len() > 6
+                || choice.selected.len() > 1
+                || choice.maximum_mana_value
+                    != facts.lands[match actor {
+                        PlayerSeatV1::P0 => 0,
+                        PlayerSeatV1::P1 => 1,
+                    }]
+                    .controlled_lands
+                || choice.looked_in_original_order.iter().any(|card| {
+                    card.zone != Zone::Library
+                        || card.owner != actor
+                        || !matches!(card.identity, IdentityV1::Known { .. })
+                        || !looked.insert(card.object)
+                })
+                || choice.selected.iter().chain(&choice.legal).any(|card| {
+                    !choice.looked_in_original_order.contains(card) || !chosen.insert(card.object)
+                })
+            {
                 return Err("invalid Loot chooser-private look".into());
             }
         }
@@ -149,38 +187,77 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub enum ActionV1 { ChooseCreature, ConfirmCreature, DeclineCreature }
+pub enum ActionV1 {
+    ChooseCreature,
+    ConfirmCreature,
+    DeclineCreature,
+}
 
 fn binds(card: &ReferenceV1, stable: &CardStableRefV1) -> bool {
-    card.identity == (IdentityV1::Known { card_id: stable.card_db_id })
-        && card.object == stable.arena_id && card.generation == stable.zone_change_count
-        && card.owner == stable.owner && card.controller == stable.controller && card.zone == stable.zone
+    card.identity
+        == (IdentityV1::Known {
+            card_id: stable.card_db_id,
+        })
+        && card.object == stable.arena_id
+        && card.generation == stable.zone_change_count
+        && card.owner == stable.owner
+        && card.controller == stable.controller
+        && card.zone == stable.zone
 }
 
 pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Result<Option<ActionV1>, String> {
     let Some(facts) = facts else { return Ok(None) };
     let (actor, source, selected_count) = match action {
-        Action::ChooseEffectTarget { actor, source, selected_count, .. }
-        | Action::FinishEffectSelection { actor, source, selected_count } => (actor, source, selected_count),
+        Action::ChooseEffectTarget {
+            actor,
+            source,
+            selected_count,
+            ..
+        }
+        | Action::FinishEffectSelection {
+            actor,
+            source,
+            selected_count,
+        } => (actor, source, selected_count),
         _ => return Ok(None),
     };
-    if source.card_db_id != PRINTING { return Ok(None); }
-    let ability = facts.abilities.iter().find(|ability| ability.choice.is_some()
-        && binds(&ability.source.original_source, source))
+    if source.card_db_id != PRINTING {
+        return Ok(None);
+    }
+    let ability = facts
+        .abilities
+        .iter()
+        .find(|ability| ability.choice.is_some() && binds(&ability.source.original_source, source))
         .ok_or("Loot private action lost its native ability")?;
     let choice = ability.choice.as_ref().unwrap();
-    if *actor != facts.viewer || *actor != choice.chooser || usize::from(*selected_count) != choice.selected.len() {
+    if *actor != facts.viewer
+        || *actor != choice.chooser
+        || usize::from(*selected_count) != choice.selected.len()
+    {
         return Err("Loot action changed original chooser or selected count".into());
     }
     match action {
-        Action::ChooseEffectTarget { target: TargetRefV1::Object { object }, min_targets: 0, max_targets: 1, .. }
-            if choice.legal.iter().any(|card| binds(card, object)) => Ok(Some(ActionV1::ChooseCreature)),
-        Action::FinishEffectSelection { .. } if choice.selected.is_empty() => Ok(Some(ActionV1::DeclineCreature)),
-        Action::FinishEffectSelection { .. } if choice.selected.len() == 1 => Ok(Some(ActionV1::ConfirmCreature)),
+        Action::ChooseEffectTarget {
+            target: TargetRefV1::Object { object },
+            min_targets: 0,
+            max_targets: 1,
+            ..
+        } if choice.legal.iter().any(|card| binds(card, object)) => {
+            Ok(Some(ActionV1::ChooseCreature))
+        }
+        Action::FinishEffectSelection { .. } if choice.selected.is_empty() => {
+            Ok(Some(ActionV1::DeclineCreature))
+        }
+        Action::FinishEffectSelection { .. } if choice.selected.len() == 1 => {
+            Ok(Some(ActionV1::ConfirmCreature))
+        }
         _ => Err("Loot action changed original optional creature menu".into()),
     }
 }
 
-#[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 mod tests;
-

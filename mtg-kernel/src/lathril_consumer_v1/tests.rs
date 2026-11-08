@@ -24,8 +24,11 @@ fn card(name: &str) -> u16 {
 fn config(actor: PlayerId) -> ResetV1 {
     let mut mainboards = [vec![card("Forest"); 40], vec![card("Forest"); 40]];
     mainboards[actor.index()] = [
-        vec![PRINTING; 8], vec![card("Forest"); 16], vec![card("Swamp"); 16],
-    ].concat();
+        vec![PRINTING; 8],
+        vec![card("Forest"); 16],
+        vec![card("Swamp"); 16],
+    ]
+    .concat();
     ResetV1 {
         expected_card_db_hash: KERNEL_CARDDB_HASH,
         episode_id: 550,
@@ -62,15 +65,30 @@ fn ordinary_native_operations_keep_their_original_wire_shape() {
     use serde_json::{json, to_value};
     let token = card("Elf Warrior Token");
     for (event, original) in [
-        (ProposedEvent::tap(ObjectId(4)), json!({"Tap": {"object": 4, "touched_by": []}})),
-        (ProposedEvent::life_loss(PlayerId::P1, 3), json!({"LifeLoss": {"player": 1, "amount": 3, "touched_by": []}})),
-        (ProposedEvent::life_gain(PlayerId::P0, 2), json!({"LifeGain": {"player": 0, "amount": 2, "touched_by": []}})),
-        (ProposedEvent::create_token(token, PlayerId::P1), json!({"CreateToken": {
-            "token_def": token, "controller": 1, "entry_face_index": null, "touched_by": [],
-        }})),
+        (
+            ProposedEvent::tap(ObjectId(4)),
+            json!({"Tap": {"object": 4, "touched_by": []}}),
+        ),
+        (
+            ProposedEvent::life_loss(PlayerId::P1, 3),
+            json!({"LifeLoss": {"player": 1, "amount": 3, "touched_by": []}}),
+        ),
+        (
+            ProposedEvent::life_gain(PlayerId::P0, 2),
+            json!({"LifeGain": {"player": 0, "amount": 2, "touched_by": []}}),
+        ),
+        (
+            ProposedEvent::create_token(token, PlayerId::P1),
+            json!({"CreateToken": {
+                "token_def": token, "controller": 1, "entry_face_index": null, "touched_by": [],
+            }}),
+        ),
     ] {
         assert_eq!(to_value(&event).unwrap(), original);
-        assert_eq!(serde_json::from_value::<ProposedEvent>(original).unwrap(), event);
+        assert_eq!(
+            serde_json::from_value::<ProposedEvent>(original).unwrap(),
+            event
+        );
     }
 }
 
@@ -85,13 +103,31 @@ fn declared_forty_card_v3_reset_pays_lathril_and_real_combat_creates_two_elves_b
         let mut numeric = reset_numeric_reveal_facts_v3(&config).unwrap();
         assert!(numeric.fixture_state().reveal_knowledge_v4.is_some());
         let mut wire = JsonlServerV1::new();
-        let Body::State { state, .. } = body(&mut wire, 1, CommandV1::Reset { config: config.clone() })
-        else { panic!() };
-        let State::Decision { decision: wire_opening, .. } = *state else { panic!() };
-        assert_eq!(wire_opening.schema, "mtg-kernel-limited-lathril-decision/v1");
+        let Body::State { state, .. } = body(
+            &mut wire,
+            1,
+            CommandV1::Reset {
+                config: config.clone(),
+            },
+        ) else {
+            panic!()
+        };
+        let State::Decision {
+            decision: wire_opening,
+            ..
+        } = *state
+        else {
+            panic!()
+        };
+        assert_eq!(
+            wire_opening.schema,
+            "mtg-kernel-limited-lathril-decision/v1"
+        );
         let expected = decision(&numeric).fixture_backend_v75().expected();
         let human = reset_human_v1(&config, expected.acting_player).unwrap();
-        let prompt = HumanKaitoProjectorV75::new(expected.acting_player).project_current(&human, expected).unwrap();
+        let prompt = HumanKaitoProjectorV75::new(expected.acting_player)
+            .project_current(&human, expected)
+            .unwrap();
         assert_eq!(prompt.schema, "mtg-kernel-human-lathril-decision/v1");
         assert_eq!(prompt.actions, wire_opening.actions);
 
@@ -118,21 +154,31 @@ fn declared_forty_card_v3_reset_pays_lathril_and_real_combat_creates_two_elves_b
                     }
                     let restored: GameState = serde_json::from_slice(
                         &serde_json::to_vec(numeric.fixture_state()).unwrap(),
-                    ).unwrap();
-                    assert_eq!(public::capture(&restored, actor).unwrap().combat, facts.combat);
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        public::capture(&restored, actor).unwrap().combat,
+                        facts.combat
+                    );
                     let mut truncated = restored.clone();
                     move_receipt_start_to_terminal(
                         &mut truncated,
                         |journal| matches!(journal, JournalV1::TokenBegin { .. }),
                         |journal| {
-                            let JournalV1::Tokens { created, .. } = journal else { return false };
+                            let JournalV1::Tokens { created, .. } = journal else {
+                                return false;
+                            };
                             created.clear();
                             true
                         },
                     );
                     assert!(public::capture(&truncated, actor).is_err());
                     let input = numeric.training_input_v1(&d).unwrap();
-                    assert!(ModelV1::deterministic_fixture().forward(&input).unwrap().iter().all(|value| value.is_finite()));
+                    assert!(ModelV1::deterministic_fixture()
+                        .forward(&input)
+                        .unwrap()
+                        .iter()
+                        .all(|value| value.is_finite()));
                     completed = true;
                     break;
                 }
@@ -152,8 +198,13 @@ fn declared_forty_card_v3_reset_pays_lathril_and_real_combat_creates_two_elves_b
                     | Action::Discard { .. }
                 ))).expect("missing native Lathril fixture action");
             let row = &rows[choose];
-            let tapped_lands = |state: &GameState| state.players[actor.index()].battlefield.iter()
-                .filter(|&&id| state.objects.get(id).tapped).count();
+            let tapped_lands = |state: &GameState| {
+                state.players[actor.index()]
+                    .battlefield
+                    .iter()
+                    .filter(|&&id| state.objects.get(id).tapped)
+                    .count()
+            };
             let before = tapped_lands(numeric.fixture_state());
             numeric.apply(&d, choose as u32).unwrap();
             if let Action::CastSpell { source: card, .. } = &row.action {
@@ -161,26 +212,37 @@ fn declared_forty_card_v3_reset_pays_lathril_and_real_combat_creates_two_elves_b
                 assert_eq!(tapped_lands(numeric.fixture_state()) - before, 4);
             }
         }
-        assert!(completed, "declared reset did not resolve Lathril's genuine combat trigger");
+        assert!(
+            completed,
+            "declared reset did not resolve Lathril's genuine combat trigger"
+        );
     }
 }
 
 fn fixture(state: &GameState) -> FastActorSessionV1 {
-    FastActorSessionV1::from_kaito_v75_fixture_state_scoped(state.clone(), LimitedAppendixV1::Lathril)
+    FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
+        state.clone(),
+        LimitedAppendixV1::Lathril,
+    )
 }
 
 fn payment_fixture(actor: PlayerId, hidden: &str) -> (GameState, ObjectId, Vec<ObjectId>) {
     let (mut state, source) = native_fixture::paid(actor);
     advance_to_next_main_for(&mut state, actor);
     let physical = put(&mut state, actor, "Llanowar Elves", Zone::Hand);
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(physical, Zone::Battlefield));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(physical, Zone::Battlefield),
+    );
     let mut elves = vec![physical];
     elves.extend(native_fixture::create_elves(&mut state, actor));
     put(&mut state, actor.opponent(), hidden, Zone::Hand);
     engine::step(&mut state, engine::Action::ActivateAbility(source, 0)).unwrap();
-    assert!(matches!(engine::advance_until_decision(&mut state), engine::Decision::ChooseCostTargets {
+    assert!(
+        matches!(engine::advance_until_decision(&mut state), engine::Decision::ChooseCostTargets {
         player, source: actual, remaining: 10, ..
-    } if player == actor && actual == source));
+    } if player == actor && actual == source)
+    );
     (state, source, elves)
 }
 
@@ -190,14 +252,20 @@ fn move_receipt_start_to_terminal(
     truncate_terminal: impl Fn(&mut JournalV1) -> bool,
 ) {
     let history = &mut state.engine.event_history;
-    let start = history.iter().position(|row|
-        matches!(row, CommittedEvent::LathrilReceiptV1 { journal } if is_start(journal))
-    ).unwrap();
+    let start = history
+        .iter()
+        .position(
+            |row| matches!(row, CommittedEvent::LathrilReceiptV1 { journal } if is_start(journal)),
+        )
+        .unwrap();
     let marker = history.remove(start);
-    let end = history.iter_mut().position(|row| match row {
-        CommittedEvent::LathrilReceiptV1 { journal } => truncate_terminal(journal),
-        _ => false,
-    }).unwrap();
+    let end = history
+        .iter_mut()
+        .position(|row| match row {
+            CommittedEvent::LathrilReceiptV1 { journal } => truncate_terminal(journal),
+            _ => false,
+        })
+        .unwrap();
     // Keep the independent actual commit rows anchored to their base events.
     // Only the auxiliary marker and its stated terminal outcome are forged.
     for row in &mut history[start..end] {
@@ -216,16 +284,22 @@ fn paid_ten_elf_hidden_pairs_keep_original_indices_and_observe_actual_life_both_
         let (state, source, elves) = payment_fixture(actor, "Island");
         let (hidden, _, _) = payment_fixture(actor, "Swamp");
         assert_ne!(state.state_hash(), hidden.state_hash());
-        assert!(public::capture(&state, actor.opponent()).unwrap().payment.is_none());
+        assert!(public::capture(&state, actor.opponent())
+            .unwrap()
+            .payment
+            .is_none());
         let mut raw = fixture(&state);
         let mut numeric = KaitoSession::from_session(fixture(&state)).unwrap();
         let mut other = KaitoSession::from_session(fixture(&hidden)).unwrap();
         let mut human = HumanKaitoSessionV75::from_session(fixture(&state), actor.into()).unwrap();
         let mut projector = HumanKaitoProjectorV75::new(actor.into());
         let mut wire = JsonlServerV1::new();
-        wire.0.install_fixture_core(KaitoSessionV75::from_session(fixture(&state)).unwrap());
+        wire.0
+            .install_fixture_core(KaitoSessionV75::from_session(fixture(&state)).unwrap());
         let mut hidden_wire = JsonlServerV1::new();
-        hidden_wire.0.install_fixture_core(KaitoSessionV75::from_session(fixture(&hidden)).unwrap());
+        hidden_wire
+            .0
+            .install_fixture_core(KaitoSessionV75::from_session(fixture(&hidden)).unwrap());
 
         let d = decision(&numeric);
         assert_eq!(d.packet(), decision(&other).packet());
@@ -233,45 +307,105 @@ fn paid_ten_elf_hidden_pairs_keep_original_indices_and_observe_actual_life_both_
         let save = numeric.snapshot();
         assert!(other.restore(&save).is_err());
         let backend = d.fixture_backend_v75();
-        let payment = backend.observation().lathril.as_ref().unwrap().payment.as_ref().unwrap();
+        let payment = backend
+            .observation()
+            .lathril
+            .as_ref()
+            .unwrap()
+            .payment
+            .as_ref()
+            .unwrap();
         assert_eq!(payment.remaining, 10);
-        assert_eq!(payment.candidates.iter().map(|card| ObjectId(card.object)).collect::<Vec<_>>(), elves);
+        assert_eq!(
+            payment
+                .candidates
+                .iter()
+                .map(|card| ObjectId(card.object))
+                .collect::<Vec<_>>(),
+            elves
+        );
         let candidates = &backend.candidates_v75().candidates;
         assert_eq!(candidates.len(), elves.len());
         for (index, elf) in elves.iter().enumerate() {
-            assert_eq!(backend.fixture_original_index_v75(index as u32), Some(index as u32));
-            assert_eq!(candidates[index].lathril_action, Some(ActionV1::ChooseElfPayment { remaining: 10 }));
-            assert!(matches!(&candidates[index].action, Action::ChooseCostTarget { candidate, .. } if candidate.arena_id == elf.0));
+            assert_eq!(
+                backend.fixture_original_index_v75(index as u32),
+                Some(index as u32)
+            );
+            assert_eq!(
+                candidates[index].lathril_action,
+                Some(ActionV1::ChooseElfPayment { remaining: 10 })
+            );
+            assert!(
+                matches!(&candidates[index].action, Action::ChooseCostTarget { candidate, .. } if candidate.arena_id == elf.0)
+            );
         }
         let expected = backend.expected();
         let prompt = projector.project_current(&human, expected).unwrap();
         let human_save = human.snapshot_v75();
         let current = body(&mut wire, 1, CommandV1::Current);
         assert_eq!(current, body(&mut hidden_wire, 1, CommandV1::Current));
-        let Body::State { state: current, .. } = current else { panic!() };
-        let State::Decision { episode_id, authority_generation, decision: visible } = *current else { panic!() };
-        let (projected, indices) = project_limited_kaito_v16(backend, expected.acting_player, visible.prompt_seq).unwrap();
+        let Body::State { state: current, .. } = current else {
+            panic!()
+        };
+        let State::Decision {
+            episode_id,
+            authority_generation,
+            decision: visible,
+        } = *current
+        else {
+            panic!()
+        };
+        let (projected, indices) =
+            project_limited_kaito_v16(backend, expected.acting_player, visible.prompt_seq).unwrap();
         assert_eq!(*visible, projected);
         assert_eq!(prompt.state, visible.state);
         assert_eq!(prompt.actions, visible.actions);
         assert_eq!(prompt.action_meanings, visible.action_meanings);
         let original = backend.fixture_original_index_v75(indices[0]).unwrap();
-        let request = HumanActionRequestV1 { prompt_seq: prompt.prompt_seq, action_index: 0 };
-        let wire_action = CommandV1::Step { episode_id, authority_generation, actor: actor.into(),
-            prompt_seq: visible.prompt_seq, action_index: 0 };
-        let Body::State { snapshot_id: Some(snapshot_id), .. } = body(&mut wire, 2, CommandV1::Snapshot)
-        else { panic!() };
-        let response = raw.step(expected.episode_id, expected.step, original).unwrap();
+        let request = HumanActionRequestV1 {
+            prompt_seq: prompt.prompt_seq,
+            action_index: 0,
+        };
+        let wire_action = CommandV1::Step {
+            episode_id,
+            authority_generation,
+            actor: actor.into(),
+            prompt_seq: visible.prompt_seq,
+            action_index: 0,
+        };
+        let Body::State {
+            snapshot_id: Some(snapshot_id),
+            ..
+        } = body(&mut wire, 2, CommandV1::Snapshot)
+        else {
+            panic!()
+        };
+        let response = raw
+            .step(expected.episode_id, expected.step, original)
+            .unwrap();
         assert_eq!(numeric.apply(&d, indices[0]).unwrap(), response);
         projector.submit(&mut human, request.clone()).unwrap();
         assert_eq!(human.current_response(), response);
-        assert!(matches!(body(&mut wire, 3, wire_action.clone()), Body::State { receipt: Some(_), .. }));
+        assert!(matches!(
+            body(&mut wire, 3, wire_action.clone()),
+            Body::State {
+                receipt: Some(_),
+                ..
+            }
+        ));
         assert_eq!(raw.kaito_fixture_state(), numeric.fixture_state());
 
         for (offset, elf) in elves[1..10].iter().enumerate() {
             let pay = decision(&numeric);
             let current = pay.fixture_backend_v75();
-            let facts = current.observation().lathril.as_ref().unwrap().payment.as_ref().unwrap();
+            let facts = current
+                .observation()
+                .lathril
+                .as_ref()
+                .unwrap()
+                .payment
+                .as_ref()
+                .unwrap();
             assert_eq!(facts.selected.len(), offset + 1);
             assert_eq!(facts.selected[0].object, elves[0].0);
             let index = current.candidates_v75().candidates.iter().position(|row|
@@ -282,36 +416,72 @@ fn paid_ten_elf_hidden_pairs_keep_original_indices_and_observe_actual_life_both_
         let paid = numeric.fixture_state();
         let live = public::capture(paid, actor.opponent()).unwrap();
         assert!(live.payment.is_none());
-        assert_eq!(live.drains[0].original_paid_elves.iter().map(|elf| ObjectId(elf.object)).collect::<Vec<_>>(), elves[..10]);
-        assert!(matches!(live.drains[0].stage, DrainStageV1::Published { .. }));
+        assert_eq!(
+            live.drains[0]
+                .original_paid_elves
+                .iter()
+                .map(|elf| ObjectId(elf.object))
+                .collect::<Vec<_>>(),
+            elves[..10]
+        );
+        assert!(matches!(
+            live.drains[0].stage,
+            DrainStageV1::Published { .. }
+        ));
         assert!(paid.objects.get(source).tapped);
         assert!(elves[..10].iter().all(|&elf| paid.objects.get(elf).tapped));
         assert!(elves[10..].iter().all(|&elf| !paid.objects.get(elf).tapped));
         let life = paid.players.each_ref().map(|p| p.life);
         let id = paid.stack.last().unwrap().v4.stack_item_id;
         let mut countered = paid.clone();
-        engine::counter_stack_item_by_id(&mut countered, id).unwrap().unwrap();
-        assert_eq!(public::capture(&countered, actor).unwrap().drains[0].stage, DrainStageV1::Countered);
+        engine::counter_stack_item_by_id(&mut countered, id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            public::capture(&countered, actor).unwrap().drains[0].stage,
+            DrainStageV1::Countered
+        );
         assert_eq!(countered.players.each_ref().map(|p| p.life), life);
 
         let mut resolved = paid.clone();
         // Exact native zone change as a source-lifetime operand after the genuine paid ability.
-        event::propose_and_commit(&mut resolved, ProposedEvent::zone_change(source, Zone::Hand));
+        event::propose_and_commit(
+            &mut resolved,
+            ProposedEvent::zone_change(source, Zone::Hand),
+        );
         native_fixture::finish(&mut resolved);
         let facts = public::capture(&resolved, actor.opponent()).unwrap();
         assert!(facts.drains[0].source.current_original_source.is_none());
-        assert_eq!(facts.drains[0].stage, DrainStageV1::Resolved { opponent_lost: 10, controller_gained: 10 });
-        assert_eq!(resolved.players[actor.index()].life, life[actor.index()] + 10);
-        assert_eq!(resolved.players[actor.opponent().index()].life, life[actor.opponent().index()] - 10);
-        let restored: GameState = serde_json::from_slice(&serde_json::to_vec(&resolved).unwrap()).unwrap();
+        assert_eq!(
+            facts.drains[0].stage,
+            DrainStageV1::Resolved {
+                opponent_lost: 10,
+                controller_gained: 10
+            }
+        );
+        assert_eq!(
+            resolved.players[actor.index()].life,
+            life[actor.index()] + 10
+        );
+        assert_eq!(
+            resolved.players[actor.opponent().index()].life,
+            life[actor.opponent().index()] - 10
+        );
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&resolved).unwrap()).unwrap();
         assert_eq!(public::capture(&restored, actor.opponent()).unwrap(), facts);
         let mut truncated = restored.clone();
         move_receipt_start_to_terminal(
             &mut truncated,
             |journal| matches!(journal, JournalV1::DrainBegin { .. }),
             |journal| {
-                let JournalV1::DrainEnded { actual, .. } = journal else { return false };
-                *actual = Some(LifeOutcomeV1 { opponent_lost: 0, controller_gained: 0 });
+                let JournalV1::DrainEnded { actual, .. } = journal else {
+                    return false;
+                };
+                *actual = Some(LifeOutcomeV1 {
+                    opponent_lost: 0,
+                    controller_gained: 0,
+                });
                 true
             },
         );
@@ -324,10 +494,22 @@ fn paid_ten_elf_hidden_pairs_keep_original_indices_and_observe_actual_life_both_
             )).unwrap();
             let (before, paid) = history.split_at_mut(at);
             let CommittedEvent::LathrilReceiptV1 { journal: input } = before.last_mut().unwrap()
-            else { panic!() };
-            let JournalV1::PaymentInput { input, .. } = input.as_mut() else { panic!() };
-            let CommittedEvent::LathrilReceiptV1 { journal } = &mut paid[0] else { panic!() };
-            let JournalV1::Paid { item, public_printings } = journal.as_mut() else { panic!() };
+            else {
+                panic!()
+            };
+            let JournalV1::PaymentInput { input, .. } = input.as_mut() else {
+                panic!()
+            };
+            let CommittedEvent::LathrilReceiptV1 { journal } = &mut paid[0] else {
+                panic!()
+            };
+            let JournalV1::Paid {
+                item,
+                public_printings,
+            } = journal.as_mut()
+            else {
+                panic!()
+            };
             if corrupt_generation {
                 assert_eq!(item.v4.paid_cost_refs[0].object, elves[0]);
                 item.v4.paid_cost_refs[0].zone_change_count -= 1;
@@ -339,7 +521,10 @@ fn paid_ten_elf_hidden_pairs_keep_original_indices_and_observe_actual_life_both_
             assert!(public::capture(&forged, actor).is_err());
         }
         let mut legacy = paid.clone();
-        legacy.engine.event_history.retain(|row| !matches!(row, CommittedEvent::LathrilReceiptV1 { .. }));
+        legacy
+            .engine
+            .event_history
+            .retain(|row| !matches!(row, CommittedEvent::LathrilReceiptV1 { .. }));
         assert!(public::capture(&legacy, actor).is_err());
 
         numeric.restore(&save).unwrap();
@@ -348,6 +533,9 @@ fn paid_ten_elf_hidden_pairs_keep_original_indices_and_observe_actual_life_both_
         assert!(numeric.apply(&d, indices[0]).is_err());
         assert!(projector.submit(&mut human, request).is_err());
         body(&mut wire, 4, CommandV1::Restore { snapshot_id });
-        assert!(matches!(body(&mut wire, 5, wire_action), Body::Error { .. }));
+        assert!(matches!(
+            body(&mut wire, 5, wire_action),
+            Body::Error { .. }
+        ));
     }
 }

@@ -805,17 +805,19 @@ fn project_authenticated_parts_v75(
                 )
                 .map_err(error)?,
                 lathril_action: crate::lathril_consumer_v1::action(
-                    observation.lathril.as_ref(), &action,
-                ).map_err(error)?,
+                    observation.lathril.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
                 electroduplicate_action: crate::electroduplicate_consumer_v1::action(
                     observation.electroduplicate.as_ref(),
                     &action,
                 )
                 .map_err(error)?,
-                edict_action: crate::edict_consumer_v1::action(
-                    observation.edict.as_ref(), &action,
-                ).map_err(error)?,
-                loot_action: crate::loot_consumer_v1::action(observation.loot.as_ref(), &action).map_err(error)?,
+                edict_action: crate::edict_consumer_v1::action(observation.edict.as_ref(), &action)
+                    .map_err(error)?,
+                loot_action: crate::loot_consumer_v1::action(observation.loot.as_ref(), &action)
+                    .map_err(error)?,
                 drakuseth_target: crate::drakuseth_consumer_v1::target_action(
                     observation.drakuseth.as_ref(),
                     &action,
@@ -1022,8 +1024,10 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
     let authorized = authorized_references(&value.observation)?;
     if let Some(facts) = &value.observation.edict {
         crate::edict_consumer_v1::validate_candidate_order(
-            facts, value.candidates.iter().map(|row| &row.action),
-        ).map_err(error)?;
+            facts,
+            value.candidates.iter().map(|row| &row.action),
+        )
+        .map_err(error)?;
     }
     if let Some(active) = value
         .observation
@@ -1158,15 +1162,20 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                 )
                 .map_err(error)?
             || row.lathril_action
-                != crate::lathril_consumer_v1::action(value.observation.lathril.as_ref(), &row.action)
-                    .map_err(error)?
+                != crate::lathril_consumer_v1::action(
+                    value.observation.lathril.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
             || row.electroduplicate_action
                 != crate::electroduplicate_consumer_v1::action(
                     value.observation.electroduplicate.as_ref(),
                     &row.action,
                 )
                 .map_err(error)?
-            || row.loot_action != crate::loot_consumer_v1::action(value.observation.loot.as_ref(), &row.action).map_err(error)?
+            || row.loot_action
+                != crate::loot_consumer_v1::action(value.observation.loot.as_ref(), &row.action)
+                    .map_err(error)?
             || row.edict_action
                 != crate::edict_consumer_v1::action(value.observation.edict.as_ref(), &row.action)
                     .map_err(error)?

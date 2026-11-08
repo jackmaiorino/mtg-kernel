@@ -7361,7 +7361,11 @@ fn commit_cost_components_from_plan_v1(
     for c in components {
         match c {
             CostComponent::Tap => event::propose_and_commit(
-                state, crate::lathril_receipts_v1::owned_proposal(ProposedEvent::tap(source), lathril_payment),
+                state,
+                crate::lathril_receipts_v1::owned_proposal(
+                    ProposedEvent::tap(source),
+                    lathril_payment,
+                ),
             ),
             CostComponent::SacrificeSelf => commit_sacrifice(state, &[source]),
             CostComponent::ExileSelf => {
@@ -7396,7 +7400,11 @@ fn commit_cost_components_from_plan_v1(
                 debug_assert_eq!(object_cost_chosen.len(), usize::from(*count));
                 for &object in object_cost_chosen {
                     event::propose_and_commit(
-                        state, crate::lathril_receipts_v1::owned_proposal(ProposedEvent::tap(object), lathril_payment),
+                        state,
+                        crate::lathril_receipts_v1::owned_proposal(
+                            ProposedEvent::tap(object),
+                            lathril_payment,
+                        ),
                     );
                 }
             }
@@ -19149,7 +19157,9 @@ pub(crate) fn counter_stack_item_by_id(
         niv_mizzet_resolution_v1::counter(state, owner)?;
     }
     crate::lathril_receipts_v1::record_ended(
-        state, &item, crate::lathril_receipts_v1::EndV1::Countered,
+        state,
+        &item,
+        crate::lathril_receipts_v1::EndV1::Countered,
     )?;
     tinybones_v72::countered(state, &item)?;
     if let Some(entry_history_index) = curator_counter {
@@ -20695,8 +20705,11 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             if crate::librarian_activation_v1::record_resolved(state, &item, effect_history_start)
                 .is_err()
                 || crate::lathril_receipts_v1::record_ended(
-                    state, &item, crate::lathril_receipts_v1::EndV1::Resolved,
-                ).is_err()
+                    state,
+                    &item,
+                    crate::lathril_receipts_v1::EndV1::Resolved,
+                )
+                .is_err()
                 || crate::fixed_source_damage_v3::record_removed(
                     state,
                     fixed_removal_owner,
@@ -28140,7 +28153,8 @@ fn finalize_owned_cast(
     let edict_input = if crate::edict_receipts_v1::is_printing(pending.source_contract.card_def) {
         Some((
             crate::edict_receipts_v1::creature_count(state)?,
-            payment.planned_mana_count_v1(state, pending.controller)
+            payment
+                .planned_mana_count_v1(state, pending.controller)
                 .ok_or("Edict prepared mana plan no longer validates")?,
         ))
     } else {
@@ -28183,7 +28197,12 @@ fn finalize_owned_cast(
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
     if let Some((creatures, quoted)) = edict_input {
         crate::edict_receipts_v1::record_mana_committed(
-            state, &pending, cast_method, creatures, quoted, mana_spent,
+            state,
+            &pending,
+            cast_method,
+            creatures,
+            quoted,
+            mana_spent,
         )?;
     }
     let greatwurm_payment_v1 = greatwurm_cast_v1::record_paid(state, greatwurm_payment_input)?;
@@ -28385,8 +28404,12 @@ fn finalize_owned_cast(
     event::log_spell_cast(state, pending.spell, pending.controller);
     if let Some((creatures_before, _)) = edict_input {
         crate::edict_receipts_v1::record_paid(
-            state, stack_item_id, finalized_source_contract,
-            creatures_before, mana_spent, cast_at,
+            state,
+            stack_item_id,
+            finalized_source_contract,
+            creatures_before,
+            mana_spent,
+            cast_at,
         )?;
     }
     crate::extra_turn_v1::record_publication(state, stack_item_id);

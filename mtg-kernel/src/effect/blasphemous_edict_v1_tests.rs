@@ -611,9 +611,12 @@ fn genuine_paid_edict_orders_stolen_creatures_by_physical_owner_after_all_choice
         assert_eq!(actual, expected);
         let receipt = &crate::edict_receipts_v1::outcomes(&s).unwrap()[0];
         assert_eq!(receipt.graveyard[actor.index()], expected);
-        assert!(receipt.victims.iter().any(|(victim, destination)|
-            victim.binding.object == own[0]
-                && victim.owner == actor && victim.controller == actor.opponent()
+        assert!(receipt
+            .victims
+            .iter()
+            .any(|(victim, destination)| victim.binding.object == own[0]
+                && victim.owner == actor
+                && victim.controller == actor.opponent()
                 && *destination == Some(Zone::Graveyard)));
         assert!(other
             .iter()

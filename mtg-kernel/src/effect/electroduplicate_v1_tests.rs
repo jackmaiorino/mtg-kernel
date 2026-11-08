@@ -12,11 +12,17 @@ const NAME: &str = "Electroduplicate";
 fn id(name: &str) -> u16 {
     card_def::card_id_by_name(name).unwrap()
 }
-fn ready(actor: PlayerId) -> GameState { ready_with_hidden(actor, "Forest") }
+fn ready(actor: PlayerId) -> GameState {
+    ready_with_hidden(actor, "Forest")
+}
 pub(crate) fn ready_with_hidden(actor: PlayerId, opponent_hidden: &str) -> GameState {
     let library = [id("Forest"); 40];
     let other = [id(opponent_hidden); 40];
-    let (left, right) = if actor == PlayerId::P0 { (&library, &other) } else { (&other, &library) };
+    let (left, right) = if actor == PlayerId::P0 {
+        (&library, &other)
+    } else {
+        (&other, &library)
+    };
     let mut s = GameState::new_from_libraries_with_starting_player_v1(
         left,
         right,

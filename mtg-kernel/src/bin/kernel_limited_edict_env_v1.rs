@@ -1,6 +1,6 @@
 //! Declared-deck actor transport for Blasphemous Edict.
-use mtg_kernel::limited_session_v1::MAX_LIMITED_LINE_BYTES_V1;
 use mtg_kernel::edict_consumer_v1::JsonlServerV1;
+use mtg_kernel::limited_session_v1::MAX_LIMITED_LINE_BYTES_V1;
 use std::io::{self, BufRead, Read, Write};
 
 fn main() -> io::Result<()> {

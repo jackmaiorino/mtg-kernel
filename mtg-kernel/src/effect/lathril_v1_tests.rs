@@ -874,10 +874,14 @@ fn native_final_packet_prevention_season_suppression_noncombat_and_width_both_se
             );
             let view = crate::lathril_public_v1::capture(&state, actor.opponent()).unwrap();
             if mode < 2 {
-                let [combat] = view.combat.as_slice() else { panic!("one original combat receipt") };
+                let [combat] = view.combat.as_slice() else {
+                    panic!("one original combat receipt")
+                };
                 assert_eq!(combat.final_damage, if mode == 0 { 5 } else { 3 });
                 let crate::lathril_public_v1::CombatStageV1::Resolved { tokens } = &combat.stage
-                else { panic!("actual Elf Warrior roster absent") };
+                else {
+                    panic!("actual Elf Warrior roster absent")
+                };
                 assert_eq!(tokens.len(), if mode == 0 { 10 } else { 3 });
             } else {
                 assert!(view.combat.is_empty());
@@ -952,11 +956,15 @@ fn paid_self_reflection_copy_uses_its_own_original_combat_source_both_seats() {
         finish(&mut state);
         assert_eq!(tokens(&state, actor), 2);
         let view = crate::lathril_public_v1::capture(&state, actor.opponent()).unwrap();
-        let [combat] = view.combat.as_slice() else { panic!("copy's original combat receipt absent") };
+        let [combat] = view.combat.as_slice() else {
+            panic!("copy's original combat receipt absent")
+        };
         assert_eq!(combat.source.original_source.object, copy.0);
         assert_eq!(combat.source.captured_controller, actor.into());
-        assert!(matches!(&combat.stage, crate::lathril_public_v1::CombatStageV1::Resolved { tokens }
-            if tokens.len() == 2));
+        assert!(
+            matches!(&combat.stage, crate::lathril_public_v1::CombatStageV1::Resolved { tokens }
+            if tokens.len() == 2)
+        );
     }
 }
 

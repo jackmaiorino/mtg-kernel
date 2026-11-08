@@ -20851,9 +20851,13 @@ fn execute_with_native_row_v1(
         EffectOp::GainLife { player, amount } => {
             let player = ctx.resolve_player(*player, state);
             let owner = crate::lathril_receipts_v1::life_owner(state, ctx);
-            event::propose_and_commit(state, crate::lathril_receipts_v1::owned_proposal(
-                event::ProposedEvent::life_gain(player, *amount), owner,
-            ));
+            event::propose_and_commit(
+                state,
+                crate::lathril_receipts_v1::owned_proposal(
+                    event::ProposedEvent::life_gain(player, *amount),
+                    owner,
+                ),
+            );
         }
         EffectOp::GainLifeDynamic { player, amount } => {
             let player = ctx.resolve_player(*player, state);
@@ -20901,9 +20905,13 @@ fn execute_with_native_row_v1(
         EffectOp::LoseLife { player, amount } => {
             let player = ctx.resolve_player(*player, state);
             let owner = crate::lathril_receipts_v1::life_owner(state, ctx);
-            event::propose_and_commit(state, crate::lathril_receipts_v1::owned_proposal(
-                event::ProposedEvent::life_loss(player, *amount), owner,
-            ));
+            event::propose_and_commit(
+                state,
+                crate::lathril_receipts_v1::owned_proposal(
+                    event::ProposedEvent::life_loss(player, *amount),
+                    owner,
+                ),
+            );
         }
         EffectOp::DrawCards { player, count } => {
             let player = ctx.resolve_player(*player, state);
@@ -27959,10 +27967,15 @@ pub(crate) fn begin_owned_lathril_v1(
     events
         .try_reserve_exact(original)
         .map_err(|_| "Lathril original token roster allocation failed")?;
-    let operation_owner = crate::lathril_receipts_v1::OperationOwnerV1::Tokens { capture: owner.capture };
-    events.extend((0..original).map(|_| crate::lathril_receipts_v1::owned_proposal(
-        event::ProposedEvent::create_token(token_def, source.controller), Some(operation_owner),
-    )));
+    let operation_owner = crate::lathril_receipts_v1::OperationOwnerV1::Tokens {
+        capture: owner.capture,
+    };
+    events.extend((0..original).map(|_| {
+        crate::lathril_receipts_v1::owned_proposal(
+            event::ProposedEvent::create_token(token_def, source.controller),
+            Some(operation_owner),
+        )
+    }));
     // One complete original simultaneous entry batch. Commit only a successful
     // staged world, preserving the public row on any checked replacement error.
     let mut staged = state.clone();
@@ -28055,10 +28068,16 @@ pub(crate) mod blasphemous_edict_v1 {
             (self.active, self.phase >= 2)
         }
 
-        pub(crate) fn completed_sacrifices_for_consumer(&self, player: PlayerId) -> Vec<EffectObjectBinding> {
+        pub(crate) fn completed_sacrifices_for_consumer(
+            &self,
+            player: PlayerId,
+        ) -> Vec<EffectObjectBinding> {
             let chosen = &self.chosen[player.index()];
-            self.candidates[player.index()].iter().copied()
-                .filter(|binding| chosen.contains(binding)).collect()
+            self.candidates[player.index()]
+                .iter()
+                .copied()
+                .filter(|binding| chosen.contains(binding))
+                .collect()
         }
     }
     fn candidates(state: &GameState, player: PlayerId) -> Result<Vec<EffectObjectBinding>, String> {
@@ -28365,13 +28384,18 @@ pub(crate) mod blasphemous_edict_v1 {
         // Both controllers choose before any sacrifice. The physical owners
         // then order their actual graveyard destinations, including stolen cards.
         // Replacements and all departure observers remain one native batch.
-        let edict_owner = pending.resolving_item.v4.source_contract
+        let edict_owner = pending
+            .resolving_item
+            .v4
+            .source_contract
             .is_some_and(|source| crate::edict_receipts_v1::is_printing(source.card_def))
             .then_some(pending.resolving_item.v4.stack_item_id);
         let mut committed = state.clone();
         if edict_owner.is_some() {
             crate::edict_receipts_v1::record_batch_begin(
-                &mut committed, &pending.resolving_item, choice.active,
+                &mut committed,
+                &pending.resolving_item,
+                choice.active,
             );
         }
         for b in &sacrificed {

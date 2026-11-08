@@ -3,8 +3,8 @@ use crate::{
     card_def::{card_id_by_name, KERNEL_CARDDB_HASH},
     current_mixed_policy_v1::KaitoDecision,
     current_tree_learner_v1::ModelV1,
-    engine,
     effect::electroduplicate_v1_tests as native,
+    engine,
     human_bo3_v1::{project_limited_kaito_v16, HumanActionRequestV1, HumanKaitoProjectorV75},
     ids::{ObjectId, PlayerId},
     limited_kaito_session_v16::{LimitedKaitoBodyV16 as Body, LimitedKaitoStateV16 as State},
@@ -53,7 +53,10 @@ fn declared_decks_keep_electroduplicate_exclusive_and_share_the_opening_menu() {
             episode_id: 550,
             env_seed: 550_480,
             starting_player: actor,
-            deck_ids: ["electroduplicate-left".into(), "electroduplicate-right".into()],
+            deck_ids: [
+                "electroduplicate-left".into(),
+                "electroduplicate-right".into(),
+            ],
             mainboards: [deck.clone(), deck],
             max_physical_decisions: 500,
             max_policy_steps: 500,
@@ -74,7 +77,10 @@ fn declared_decks_keep_electroduplicate_exclusive_and_share_the_opening_menu() {
         let prompt = HumanKaitoProjectorV75::new(expected.acting_player)
             .project_current(&human, expected)
             .unwrap();
-        assert_eq!(prompt.schema, "mtg-kernel-human-electroduplicate-decision/v1");
+        assert_eq!(
+            prompt.schema,
+            "mtg-kernel-human-electroduplicate-decision/v1"
+        );
         let mut wire = JsonlServerV1::new();
         let Body::State { state, .. } = body(&mut wire, 1, CommandV1::Reset { config }) else {
             panic!()
@@ -85,7 +91,10 @@ fn declared_decks_keep_electroduplicate_exclusive_and_share_the_opening_menu() {
         else {
             panic!()
         };
-        assert_eq!(visible.schema, "mtg-kernel-limited-electroduplicate-decision/v1");
+        assert_eq!(
+            visible.schema,
+            "mtg-kernel-limited-electroduplicate-decision/v1"
+        );
         assert_eq!(prompt.state, visible.state);
         assert_eq!(prompt.actions, visible.actions);
         assert_eq!(prompt.action_meanings, visible.action_meanings);
@@ -213,7 +222,11 @@ fn paid_cast_target_hidden_pair_indices_restore_and_fizzle_on_new_incarnation_bo
         );
 
         let input = numeric.training_input_v1(&decision(&numeric)).unwrap();
-        assert!(ModelV1::deterministic_fixture().forward(&input).unwrap().iter().all(|v| v.is_finite()));
+        assert!(ModelV1::deterministic_fixture()
+            .forward(&input)
+            .unwrap()
+            .iter()
+            .all(|v| v.is_finite()));
         // The native copy operation publishes an uncast spell with a stack
         // method, but no finalized cast origin. Both real stack rows must survive.
         let mut spell_copy = numeric.fixture_state().clone();
@@ -221,7 +234,11 @@ fn paid_cast_target_hidden_pair_indices_restore_and_fizzle_on_new_incarnation_bo
         let spell_copy_owner = KaitoSession::from_session(fixture(&spell_copy)).unwrap();
         let spell_copy_decision = decision(&spell_copy_owner);
         let spell_copy_observation = spell_copy_decision.fixture_backend_v75().observation();
-        let casts = &spell_copy_observation.electroduplicate.as_ref().unwrap().casts;
+        let casts = &spell_copy_observation
+            .electroduplicate
+            .as_ref()
+            .unwrap()
+            .casts;
         assert_eq!(casts.len(), 2);
         assert_eq!(casts[1].stage, public::CastStageV1::UncastCopy);
         assert!(casts[1].finalized_method.is_none());
@@ -235,28 +252,56 @@ fn paid_cast_target_hidden_pair_indices_restore_and_fizzle_on_new_incarnation_bo
         assert_eq!(copied.objects.get(source).zone, Zone::Graveyard);
         let initial = public::capture(&copied, actor).unwrap();
         assert_eq!(initial.copied_tokens.len(), 1);
-        assert_eq!(initial.copied_tokens[0].copiable_haste_and_each_end_step_sacrifice_instances, 1);
-        assert_ne!(initial.copied_tokens[0].form.keyword_bits & crate::card_def::Keywords::HASTE.0, 0);
+        assert_eq!(
+            initial.copied_tokens[0].copiable_haste_and_each_end_step_sacrifice_instances,
+            1
+        );
+        assert_ne!(
+            initial.copied_tokens[0].form.keyword_bits & crate::card_def::Keywords::HASTE.0,
+            0
+        );
         let token = ObjectId(initial.copied_tokens[0].card.object);
         // The graveyard spell pays actual 2RR, targeting the first real copy.
         native::cast_card(&mut copied, actor, source, &[Target::Object(token)], 4);
         let flashback = public::capture(&copied, actor.opponent()).unwrap();
         assert_eq!(flashback.casts[0].origin_zone, Some(Zone::Graveyard));
-        assert_eq!(flashback.casts[0].finalized_method, Some(crate::state::CastMethodV4::Flashback));
+        assert_eq!(
+            flashback.casts[0].finalized_method,
+            Some(crate::state::CastMethodV4::Flashback)
+        );
         let flashback_owner = KaitoSession::from_session(fixture(&copied)).unwrap();
-        let mut forged = decision(&flashback_owner).fixture_backend_v75().observation().clone();
+        let mut forged = decision(&flashback_owner)
+            .fixture_backend_v75()
+            .observation()
+            .clone();
         forged.electroduplicate.as_mut().unwrap().casts[0].origin_zone = Some(Zone::Hand);
         forged.projection_sha256 = crate::kaito_observation_v75::commitment(&forged).unwrap();
         assert!(crate::kaito_observation_v75::validate_artifact(&forged).is_err());
         native::finish(&mut copied);
         assert_eq!(copied.objects.get(source).zone, Zone::Exile);
         let copies = public::capture(&copied, actor).unwrap();
-        assert_eq!(copies.copied_tokens.iter().map(|row| row.copiable_haste_and_each_end_step_sacrifice_instances).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(
+            copies
+                .copied_tokens
+                .iter()
+                .map(|row| row.copiable_haste_and_each_end_step_sacrifice_instances)
+                .collect::<Vec<_>>(),
+            [1, 2]
+        );
         let copy_owner = KaitoSession::from_session(fixture(&copied)).unwrap();
         let copy_decision = decision(&copy_owner);
-        assert_eq!(copy_decision.fixture_backend_v75().observation().chandra.copied_tokens.len(), 2);
+        assert_eq!(
+            copy_decision
+                .fixture_backend_v75()
+                .observation()
+                .chandra
+                .copied_tokens
+                .len(),
+            2
+        );
         let mut forged = copy_decision.fixture_backend_v75().observation().clone();
-        forged.electroduplicate.as_mut().unwrap().copied_tokens[0].copiable_haste_and_each_end_step_sacrifice_instances = 42;
+        forged.electroduplicate.as_mut().unwrap().copied_tokens[0]
+            .copiable_haste_and_each_end_step_sacrifice_instances = 42;
         forged.projection_sha256 = crate::kaito_observation_v75::commitment(&forged).unwrap();
         assert!(crate::kaito_observation_v75::validate_artifact(&forged).is_err());
         let mut forged = copy_decision.fixture_backend_v75().observation().clone();
@@ -264,15 +309,23 @@ fn paid_cast_target_hidden_pair_indices_restore_and_fizzle_on_new_incarnation_bo
         tokens[1] = tokens[0].clone();
         forged.projection_sha256 = crate::kaito_observation_v75::commitment(&forged).unwrap();
         assert!(crate::kaito_observation_v75::validate_artifact(&forged).is_err());
-        assert!(ModelV1::deterministic_fixture().forward(&copy_owner.training_input_v1(&copy_decision).unwrap()).unwrap().iter().all(|v| v.is_finite()));
-        let restored: GameState = serde_json::from_slice(&serde_json::to_vec(&copied).unwrap()).unwrap();
+        assert!(ModelV1::deterministic_fixture()
+            .forward(&copy_owner.training_input_v1(&copy_decision).unwrap())
+            .unwrap()
+            .iter()
+            .all(|v| v.is_finite()));
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&copied).unwrap()).unwrap();
         assert_eq!(copied.state_hash(), restored.state_hash());
         assert_eq!(public::capture(&restored, actor).unwrap(), copies);
         let end = native::end_priority(&mut copied);
         let published = native::publish_end(&mut copied, end);
         assert_eq!(published.len(), 3);
         native::finish(&mut copied);
-        assert!(public::capture(&copied, actor).unwrap().copied_tokens.is_empty());
+        assert!(public::capture(&copied, actor)
+            .unwrap()
+            .copied_tokens
+            .is_empty());
 
         let mut departed = numeric.fixture_state().clone();
         let generation = departed.objects.get(host).zone_change_count;
