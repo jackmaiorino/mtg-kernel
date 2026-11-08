@@ -21,7 +21,8 @@ impl RevealV3 {
     pub(crate) fn apply(self, knowledge: &mut RevealKnowledgeV3, owner: PlayerId, name: u16) {
         match self {
             Self::Present => knowledge.present(owner, name),
-            Self::SearchReveal | Self::CuratorPileArrival
+            Self::SearchReveal
+            | Self::CuratorPileArrival
             | Self::PublicTransfer(
                 Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile | Zone::Command,
             ) => knowledge.arrive(owner, name),

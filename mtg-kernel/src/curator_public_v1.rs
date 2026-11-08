@@ -2,8 +2,10 @@
 use crate::{
     card_def::{self, CardType, Subtype},
     curator_receipts_v1 as receipts,
-    effect::{curator_v1 as native, EffectObjectBinding, EffectOp, EffectTargetCandidate,
-        EffectTargetSelectionPurpose, PendingEffectChoice},
+    effect::{
+        curator_v1 as native, EffectObjectBinding, EffectOp, EffectTargetCandidate,
+        EffectTargetSelectionPurpose, PendingEffectChoice,
+    },
     event::CommittedEvent as E,
     event_history_v1::EventKindV1,
     ids::PlayerId,
@@ -43,16 +45,23 @@ pub fn producer_sha256() -> String {
     HASH.get_or_init(|| {
         let mut hash = Sha256::new();
         for source in [
-            SCHEMA, MEANING_SCHEMA, include_str!("curator_public_v1.rs"),
-            include_str!("effect/curator_v1.rs"), include_str!("curator_receipts_v1.rs"),
-            include_str!("event.rs"), include_str!("engine.rs"), include_str!("state.rs"),
-            include_str!("reveal_meaning_v3.rs"), include_str!("../build.rs"),
+            SCHEMA,
+            MEANING_SCHEMA,
+            include_str!("curator_public_v1.rs"),
+            include_str!("effect/curator_v1.rs"),
+            include_str!("curator_receipts_v1.rs"),
+            include_str!("event.rs"),
+            include_str!("engine.rs"),
+            include_str!("state.rs"),
+            include_str!("reveal_meaning_v3.rs"),
+            include_str!("../build.rs"),
         ] {
             hash.update((source.len() as u64).to_le_bytes());
             hash.update(source.as_bytes());
         }
         format!("{:x}", hash.finalize())
-    }).clone()
+    })
+    .clone()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,12 +87,22 @@ pub struct MeaningV1 {
 
 pub fn printed_meaning() -> Result<MeaningV1, String> {
     Ok(MeaningV1 {
-        schema: MEANING_SCHEMA.into(), producer_sha256: producer_sha256(),
-        card_db_hash: card_def::KERNEL_CARDDB_HASH, card_id: selected_id()?,
-        card_type: CardType::Creature, subtype: Subtype::Sphinx,
-        printed_generic: 4, printed_blue: 2, mana_value: 6, power: 5, toughness: 5,
-        flying: true, spell_cannot_be_countered: true, private_look_up_to: 5,
-        opponent_selects_face_up_or_face_down: true, chosen_pile_to_hand_other_to_graveyard: true,
+        schema: MEANING_SCHEMA.into(),
+        producer_sha256: producer_sha256(),
+        card_db_hash: card_def::KERNEL_CARDDB_HASH,
+        card_id: selected_id()?,
+        card_type: CardType::Creature,
+        subtype: Subtype::Sphinx,
+        printed_generic: 4,
+        printed_blue: 2,
+        mana_value: 6,
+        power: 5,
+        toughness: 5,
+        flying: true,
+        spell_cannot_be_countered: true,
+        private_look_up_to: 5,
+        opponent_selects_face_up_or_face_down: true,
+        chosen_pile_to_hand_other_to_graveyard: true,
     })
 }
 
@@ -131,9 +150,16 @@ pub struct OutcomeV1 {
 #[serde(deny_unknown_fields)]
 pub enum StageV1 {
     Entered,
-    Held { position: u32 },
-    Published { stack_position: u32 },
-    Resolving { shown_piles: Option<PilesV1>, chosen: Option<PileV1> },
+    Held {
+        position: u32,
+    },
+    Published {
+        stack_position: u32,
+    },
+    Resolving {
+        shown_piles: Option<PilesV1>,
+        chosen: Option<PileV1>,
+    },
     Resolved(OutcomeV1),
     Countered,
 }
@@ -188,7 +214,10 @@ fn names(cards: impl Iterator<Item = u16>) -> Vec<NameCountV1> {
     for card_id in cards {
         *counts.entry(card_id).or_insert(0) += 1;
     }
-    counts.into_iter().map(|(card_id, copies)| NameCountV1 { card_id, copies }).collect()
+    counts
+        .into_iter()
+        .map(|(card_id, copies)| NameCountV1 { card_id, copies })
+        .collect()
 }
 
 fn piles(choice: &native::ChoiceV1, shown: &[receipts::ShownV1]) -> PilesV1 {
@@ -199,7 +228,11 @@ fn piles(choice: &native::ChoiceV1, shown: &[receipts::ShownV1]) -> PilesV1 {
 }
 
 fn pile(chose_down: bool) -> PileV1 {
-    if chose_down { PileV1::FaceDown } else { PileV1::FaceUp }
+    if chose_down {
+        PileV1::FaceDown
+    } else {
+        PileV1::FaceUp
+    }
 }
 
 #[derive(Default)]
@@ -214,23 +247,60 @@ struct Journal<'a> {
 fn occurrence_rows(state: &GameState) -> Result<BTreeMap<u64, Journal<'_>>, String> {
     use EventKindV1 as K;
     let history = state.engine.event_history.scan_for_v1(&[
-        K::CuratorEnteredV1, K::CuratorCollectedV1, K::CuratorPublishedV1,
-        K::CuratorProgressV1, K::CuratorFinishedV1, K::CuratorReceiptV1,
+        K::CuratorEnteredV1,
+        K::CuratorCollectedV1,
+        K::CuratorPublishedV1,
+        K::CuratorProgressV1,
+        K::CuratorFinishedV1,
+        K::CuratorReceiptV1,
     ]);
     let mut found = BTreeMap::<u64, Journal>::new();
     let mut auxiliary = Vec::new();
     for (at, event) in history.iter().enumerate() {
         let duplicated = match event {
-            E::CuratorEnteredV1 { entry_history_index: entry, .. } =>
-                found.entry(*entry).or_default().entry_at.replace(at).is_some(),
-            E::CuratorCollectedV1 { entry_history_index: entry } =>
-                found.entry(*entry).or_default().collected_at.replace(at).is_some(),
-            E::CuratorPublishedV1 { entry_history_index: entry, item } =>
-                found.entry(*entry).or_default().published.replace((at, item.as_ref())).is_some(),
-            E::CuratorFinishedV1 { entry_history_index: entry } =>
-                found.entry(*entry).or_default().finished_at.replace(at).is_some(),
-            E::CuratorProgressV1 { entry_history_index: entry, choice } => {
-                found.entry(*entry).or_default().phases.push((at, choice.as_ref()));
+            E::CuratorEnteredV1 {
+                entry_history_index: entry,
+                ..
+            } => found
+                .entry(*entry)
+                .or_default()
+                .entry_at
+                .replace(at)
+                .is_some(),
+            E::CuratorCollectedV1 {
+                entry_history_index: entry,
+            } => found
+                .entry(*entry)
+                .or_default()
+                .collected_at
+                .replace(at)
+                .is_some(),
+            E::CuratorPublishedV1 {
+                entry_history_index: entry,
+                item,
+            } => found
+                .entry(*entry)
+                .or_default()
+                .published
+                .replace((at, item.as_ref()))
+                .is_some(),
+            E::CuratorFinishedV1 {
+                entry_history_index: entry,
+            } => found
+                .entry(*entry)
+                .or_default()
+                .finished_at
+                .replace(at)
+                .is_some(),
+            E::CuratorProgressV1 {
+                entry_history_index: entry,
+                choice,
+            } => {
+                found
+                    .entry(*entry)
+                    .or_default()
+                    .phases
+                    .push((at, choice.as_ref()));
                 false
             }
             E::CuratorReceiptV1 { journal } => {
@@ -245,13 +315,15 @@ fn occurrence_rows(state: &GameState) -> Result<BTreeMap<u64, Journal<'_>>, Stri
     }
     for (at, row) in auxiliary {
         let ok = match row {
-            receipts::JournalV1::Revealed { entry, .. } =>
-                found.get(entry).and_then(|row| row.phases.get(1))
-                    .is_some_and(|(phase, _)| at.checked_add(1) == Some(*phase)),
+            receipts::JournalV1::Revealed { entry, .. } => found
+                .get(entry)
+                .and_then(|row| row.phases.get(1))
+                .is_some_and(|(phase, _)| at.checked_add(1) == Some(*phase)),
             receipts::JournalV1::Moved { entry, .. }
-            | receipts::JournalV1::ArrivalVisibility { entry, .. } =>
-                found.get(entry).and_then(|row| row.phases.get(2).zip(row.finished_at))
-                    .is_some_and(|((phase, _), end)| *phase < at && at < end),
+            | receipts::JournalV1::ArrivalVisibility { entry, .. } => found
+                .get(entry)
+                .and_then(|row| row.phases.get(2).zip(row.finished_at))
+                .is_some_and(|((phase, _), end)| *phase < at && at < end),
         };
         if !ok {
             return Err("Curator native receipt lost its original lifecycle stage".into());
@@ -261,7 +333,9 @@ fn occurrence_rows(state: &GameState) -> Result<BTreeMap<u64, Journal<'_>>, Stri
 }
 
 fn validate_phases(row: &Journal<'_>, entry: u64, controller: PlayerId) -> Result<(), String> {
-    let Some(&(first, original)) = row.phases.first() else { return Ok(()) };
+    let Some(&(first, original)) = row.phases.first() else {
+        return Ok(());
+    };
     let Some((published, _)) = row.published else {
         return Err("Curator progress lacks original trigger publication".into());
     };
@@ -269,19 +343,27 @@ fn validate_phases(row: &Journal<'_>, entry: u64, controller: PlayerId) -> Resul
         return Err("Curator native progress changed range".into());
     }
     let mut prefix = BTreeSet::new();
-    if original.prefix.iter().any(|binding| binding.expected_zone != Zone::Library
-        || !prefix.insert(binding.object))
+    if original
+        .prefix
+        .iter()
+        .any(|binding| binding.expected_zone != Zone::Library || !prefix.insert(binding.object))
     {
         return Err("Curator original library prefix is malformed".into());
     }
     for (phase, (at, choice)) in row.phases.iter().enumerate() {
-        if choice.entry != entry || choice.player != controller || usize::from(choice.phase) != phase
+        if choice.entry != entry
+            || choice.player != controller
+            || usize::from(choice.phase) != phase
             || choice.prefix != original.prefix
             || row.finished_at.is_some_and(|end| *at >= end)
             || (phase == 0 && !choice.down.is_empty())
             || (phase == 2) != choice.choose_down.is_some()
             || (phase == 2 && row.phases[1].1.down != choice.down)
-            || choice.prefix.iter().filter(|card| choice.down.contains(card)).ne(choice.down.iter())
+            || choice
+                .prefix
+                .iter()
+                .filter(|card| choice.down.contains(card))
+                .ne(choice.down.iter())
         {
             return Err("Curator private native progress changed original pile".into());
         }
@@ -293,11 +375,17 @@ fn entries(state: &GameState, viewer: PlayerId) -> Result<Vec<EntryV1>, String> 
     let held = public::held(state);
     let mut pending_by_entry = BTreeMap::new();
     for (position, pending) in held.into_iter().enumerate() {
-        let EffectOp::CuratorDestiniesV1 { entry_history_index: entry } = pending.effect else {
+        let EffectOp::CuratorDestiniesV1 {
+            entry_history_index: entry,
+        } = pending.effect
+        else {
             continue;
         };
         crate::engine::validate_pending_trigger_identity(state, pending)?;
-        if pending_by_entry.insert(entry, (position, pending)).is_some() {
+        if pending_by_entry
+            .insert(entry, (position, pending))
+            .is_some()
+        {
             return Err("Curator native held trigger duplicated".into());
         }
     }
@@ -311,8 +399,11 @@ fn entries(state: &GameState, viewer: PlayerId) -> Result<Vec<EntryV1>, String> 
             return Err("Curator native live publication duplicated".into());
         }
     }
-    let resolving = state.engine.pending_effect.as_ref().filter(|pending|
-        native::pending_selected(state, pending));
+    let resolving = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .filter(|pending| native::pending_selected(state, pending));
     if let Some(pending) = resolving {
         native::validate(state, pending)?;
     }
@@ -321,17 +412,26 @@ fn entries(state: &GameState, viewer: PlayerId) -> Result<Vec<EntryV1>, String> 
         let source = native::entry_source(state, entry)?;
         let entered = row.entry_at.ok_or("Curator native entry receipt missing")?;
         if row.collected_at.is_some_and(|at| at <= entered)
-            || row.published.is_some_and(|(at, item)| row.collected_at.is_none_or(|start| start >= at)
-                || native::validate_archived_trigger(state, item) != Ok(entry))
-            || row.finished_at.is_some_and(|at| row.published.is_none_or(|(start, _)| start >= at))
+            || row.published.is_some_and(|(at, item)| {
+                row.collected_at.is_none_or(|start| start >= at)
+                    || native::validate_archived_trigger(state, item) != Ok(entry)
+            })
+            || row
+                .finished_at
+                .is_some_and(|at| row.published.is_none_or(|(start, _)| start >= at))
         {
             return Err("Curator native lifecycle reordered or publication changed".into());
         }
         validate_phases(&row, entry, source.controller)?;
-        let shown_piles = row.phases.get(1).map(|(_, choice)| {
-            let (_, shown) = receipts::validate_reveal(state, choice, row.finished_at.is_none())?;
-            Ok::<_, String>(piles(choice, shown))
-        }).transpose()?;
+        let shown_piles = row
+            .phases
+            .get(1)
+            .map(|(_, choice)| {
+                let (_, shown) =
+                    receipts::validate_reveal(state, choice, row.finished_at.is_none())?;
+                Ok::<_, String>(piles(choice, shown))
+            })
+            .transpose()?;
         let active = resolving.is_some_and(|pending| matches!(pending.resolving_item.inline_effect,
             Some(EffectOp::CuratorDestiniesV1 { entry_history_index }) if entry_history_index == entry));
         let live = published_live.remove(&entry);
@@ -344,27 +444,40 @@ fn entries(state: &GameState, viewer: PlayerId) -> Result<Vec<EntryV1>, String> 
                 [] => StageV1::Countered,
                 [_, _, (phase_at, choice)] => {
                     let actual = receipts::resolved_moves(state, choice, *phase_at, finished)?;
-                    let hand = actual.iter().filter(|move_row| move_row.destination == Zone::Hand);
-                    let public_moves = actual.iter().filter(|move_row|
-                        !matches!(move_row.destination, Zone::Hand | Zone::Library))
+                    let hand = actual
+                        .iter()
+                        .filter(|move_row| move_row.destination == Zone::Hand);
+                    let public_moves = actual
+                        .iter()
+                        .filter(|move_row| {
+                            !matches!(move_row.destination, Zone::Hand | Zone::Library)
+                        })
                         .map(|move_row| PublicMoveV1 {
                             original: IncarnationV72 {
                                 object: move_row.original.object.0,
                                 generation: move_row.original.expected_zone_change_count,
-                                owner: move_row.owner.into(), controller: move_row.owner.into(),
+                                owner: move_row.owner.into(),
+                                controller: move_row.owner.into(),
                                 zone: Zone::Library,
                             },
                             destination: move_row.destination,
                             card_id: move_row.public_printing,
-                        }).collect();
+                        })
+                        .collect();
                     StageV1::Resolved(OutcomeV1 {
                         chosen: pile(choice.choose_down.unwrap()),
                         shown_piles: shown_piles.ok_or("Curator terminal lost its face-up pile")?,
-                        actual_hand_arrivals: u8::try_from(hand.clone().count()).map_err(|_| "Curator hand width")?,
+                        actual_hand_arrivals: u8::try_from(hand.clone().count())
+                            .map_err(|_| "Curator hand width")?,
                         revealed_hand_arrivals: names(hand.filter_map(|row| row.public_printing)),
                         public_moves,
-                        hidden_library_moves: u8::try_from(actual.iter().filter(|row| row.destination == Zone::Library).count())
-                            .map_err(|_| "Curator hidden movement width")?,
+                        hidden_library_moves: u8::try_from(
+                            actual
+                                .iter()
+                                .filter(|row| row.destination == Zone::Library)
+                                .count(),
+                        )
+                        .map_err(|_| "Curator hidden movement width")?,
                     })
                 }
                 _ => return Err("Curator terminal lost a required native progress stage".into()),
@@ -372,18 +485,29 @@ fn entries(state: &GameState, viewer: PlayerId) -> Result<Vec<EntryV1>, String> 
         } else if active {
             StageV1::Resolving {
                 shown_piles,
-                chosen: row.phases.get(2).and_then(|(_, choice)| choice.choose_down).map(pile),
+                chosen: row
+                    .phases
+                    .get(2)
+                    .and_then(|(_, choice)| choice.choose_down)
+                    .map(pile),
             }
         } else if let Some((position, _)) = live {
             if !row.phases.is_empty() || held.is_some() {
                 return Err("Curator waiting publication carries impossible later progress".into());
             }
-            StageV1::Published { stack_position: u32::try_from(position).map_err(|_| "Curator stack width")? }
+            StageV1::Published {
+                stack_position: u32::try_from(position).map_err(|_| "Curator stack width")?,
+            }
         } else if let Some((position, pending)) = held {
-            if row.collected_at.is_none() || row.published.is_some() || pending.source_contract != Some(source) {
+            if row.collected_at.is_none()
+                || row.published.is_some()
+                || pending.source_contract != Some(source)
+            {
                 return Err("Curator held trigger lost original entry/controller".into());
             }
-            StageV1::Held { position: u32::try_from(position).map_err(|_| "Curator held width")? }
+            StageV1::Held {
+                position: u32::try_from(position).map_err(|_| "Curator held width")?,
+            }
         } else if row.collected_at.is_none() && row.published.is_none() {
             StageV1::Entered
         } else {
@@ -391,7 +515,10 @@ fn entries(state: &GameState, viewer: PlayerId) -> Result<Vec<EntryV1>, String> 
         };
         let mut root = public::root(state, source, Some(viewer))?;
         root.original_source.identity = IdentityV1::Known { card_id: PRINTING };
-        result.push(EntryV1 { source: root, stage });
+        result.push(EntryV1 {
+            source: root,
+            stage,
+        });
     }
     if !published_live.is_empty() || !pending_by_entry.is_empty() {
         return Err("Curator live trigger lacks its original entry".into());
@@ -400,27 +527,39 @@ fn entries(state: &GameState, viewer: PlayerId) -> Result<Vec<EntryV1>, String> 
 }
 
 fn looked(
-    state: &GameState, viewer: PlayerId, binding: EffectObjectBinding,
+    state: &GameState,
+    viewer: PlayerId,
+    binding: EffectObjectBinding,
 ) -> Result<ReferenceV1, String> {
     let card = public::reference(state, binding.object, Some(viewer))
         .ok_or("Curator chooser lacks its genuine private look")?;
-    if card.zone != Zone::Library || card.generation != binding.expected_zone_change_count
-        || binding.expected_zone != card.zone || card.owner != viewer.into()
+    if card.zone != Zone::Library
+        || card.generation != binding.expected_zone_change_count
+        || binding.expected_zone != card.zone
+        || card.owner != viewer.into()
     {
         return Err("Curator chooser's original private incarnation changed".into());
     }
     Ok(card)
 }
 
-fn menu_cards(state: &GameState, viewer: PlayerId, cards: &[EffectTargetCandidate])
-    -> Result<Vec<ReferenceV1>, String> {
-    cards.iter().map(|candidate| {
-        let binding = candidate.expected_object.ok_or("Curator private action lacks native binding")?;
-        if candidate.target != Target::Object(binding.object) {
-            return Err("Curator action changed original library target".into());
-        }
-        looked(state, viewer, binding)
-    }).collect()
+fn menu_cards(
+    state: &GameState,
+    viewer: PlayerId,
+    cards: &[EffectTargetCandidate],
+) -> Result<Vec<ReferenceV1>, String> {
+    cards
+        .iter()
+        .map(|candidate| {
+            let binding = candidate
+                .expected_object
+                .ok_or("Curator private action lacks native binding")?;
+            if candidate.target != Target::Object(binding.object) {
+                return Err("Curator action changed original library target".into());
+            }
+            looked(state, viewer, binding)
+        })
+        .collect()
 }
 
 pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, String> {
@@ -428,44 +567,95 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
         return Err("Curator owner requires prospective unordered-pile state".into());
     }
     let entries = entries(state, viewer)?;
-    let chooser = state.engine.pending_effect.as_ref().filter(|pending|
-        native::pending_selected(state, pending)).and_then(|pending| {
-        let Some(choice) = pending.choice.as_ref() else { return None };
-        Some((pending, choice))
-    }).map(|(pending, choice)| -> Result<Option<ChoiceV1>, String> {
-        let source = pending.resolving_item.v4.ability_source_contract
-            .ok_or("Curator choice lost original public entry source")?;
-        let mut source = public::root(state, source, Some(viewer))?.original_source;
-        source.identity = IdentityV1::Known { card_id: PRINTING };
-        match choice {
-            PendingEffectChoice::SelectTargets {
-                player, purpose: EffectTargetSelectionPurpose::CuratorCardsV1 { choice },
-                selected, legal, min_targets, max_targets, ordered, ..
-            } if *player == viewer => {
-                let looked = if *ordered { vec![] } else {
-                    choice.prefix.iter().map(|&binding| looked(state, viewer, binding)).collect::<Result<_, _>>()?
-                };
-                Ok(Some(ChoiceV1::Cards {
-                    source, chooser: viewer.into(), looked,
-                    stage: if *ordered { CardsStageV1::OrderGraveyard } else { CardsStageV1::SetFaceDownPile },
-                    selected: menu_cards(state, viewer, selected)?, legal: menu_cards(state, viewer, legal)?,
-                    required: *min_targets, limit: *max_targets,
-                    can_finish: selected.len() >= usize::from(*min_targets),
-                }))
+    let chooser = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .filter(|pending| native::pending_selected(state, pending))
+        .and_then(|pending| {
+            let Some(choice) = pending.choice.as_ref() else {
+                return None;
+            };
+            Some((pending, choice))
+        })
+        .map(|(pending, choice)| -> Result<Option<ChoiceV1>, String> {
+            let source = pending
+                .resolving_item
+                .v4
+                .ability_source_contract
+                .ok_or("Curator choice lost original public entry source")?;
+            let mut source = public::root(state, source, Some(viewer))?.original_source;
+            source.identity = IdentityV1::Known { card_id: PRINTING };
+            match choice {
+                PendingEffectChoice::SelectTargets {
+                    player,
+                    purpose: EffectTargetSelectionPurpose::CuratorCardsV1 { choice },
+                    selected,
+                    legal,
+                    min_targets,
+                    max_targets,
+                    ordered,
+                    ..
+                } if *player == viewer => {
+                    let looked = if *ordered {
+                        vec![]
+                    } else {
+                        choice
+                            .prefix
+                            .iter()
+                            .map(|&binding| looked(state, viewer, binding))
+                            .collect::<Result<_, _>>()?
+                    };
+                    Ok(Some(ChoiceV1::Cards {
+                        source,
+                        chooser: viewer.into(),
+                        looked,
+                        stage: if *ordered {
+                            CardsStageV1::OrderGraveyard
+                        } else {
+                            CardsStageV1::SetFaceDownPile
+                        },
+                        selected: menu_cards(state, viewer, selected)?,
+                        legal: menu_cards(state, viewer, legal)?,
+                        required: *min_targets,
+                        limit: *max_targets,
+                        can_finish: selected.len() >= usize::from(*min_targets),
+                    }))
+                }
+                PendingEffectChoice::ChooseBoolean {
+                    player,
+                    purpose:
+                        crate::effect::EffectBooleanChoicePurpose::CuratorPileV1 {
+                            face_down_count,
+                            face_up_count,
+                        },
+                    ..
+                } if *player == viewer => {
+                    let choice = native::prepare_pile_answer(
+                        state,
+                        pending,
+                        *face_down_count,
+                        *face_up_count,
+                    )?;
+                    let (_, shown) = receipts::validate_reveal(state, &choice, true)?;
+                    Ok(Some(ChoiceV1::Pile {
+                        source,
+                        chooser: viewer.into(),
+                        piles: piles(&choice, shown),
+                    }))
+                }
+                _ => Ok(None),
             }
-            PendingEffectChoice::ChooseBoolean {
-                player, purpose: crate::effect::EffectBooleanChoicePurpose::CuratorPileV1 {
-                    face_down_count, face_up_count,
-                }, ..
-            } if *player == viewer => {
-                let choice = native::prepare_pile_answer(state, pending, *face_down_count, *face_up_count)?;
-                let (_, shown) = receipts::validate_reveal(state, &choice, true)?;
-                Ok(Some(ChoiceV1::Pile { source, chooser: viewer.into(), piles: piles(&choice, shown) }))
-            }
-            _ => Ok(None),
-        }
-    }).transpose()?.flatten();
-    Ok(FactsV1 { schema: SCHEMA.into(), viewer: viewer.into(), meaning: printed_meaning()?, entries, chooser })
+        })
+        .transpose()?
+        .flatten();
+    Ok(FactsV1 {
+        schema: SCHEMA.into(),
+        viewer: viewer.into(),
+        meaning: printed_meaning()?,
+        entries,
+        chooser,
+    })
 }
 
 pub(crate) fn validate_native(state: &GameState) -> Result<(), String> {

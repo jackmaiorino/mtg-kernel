@@ -2429,8 +2429,10 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             .map_err(RlContractError)?;
     }
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
-    if text_mode != ObservationTextModeV2::KaitoV75Artifact || private_scope != LimitedAppendixV1::Curator {
-    crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact
+        || private_scope != LimitedAppendixV1::Curator
+    {
+        crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if text_mode != ObservationTextModeV2::KaitoV75Artifact
         || private_scope != LimitedAppendixV1::Loot
@@ -3075,8 +3077,10 @@ fn public_restricted_mana_v1(
         crate::effect::genesis_wave_v1::refuse_legacy(state, None).map_err(RlContractError)?;
     }
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
-    if text_mode != ObservationTextModeV2::KaitoV75Artifact || appendix != LimitedAppendixV1::Curator {
-    crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact
+        || appendix != LimitedAppendixV1::Curator
+    {
+        crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if text_mode != ObservationTextModeV2::KaitoV75Artifact || appendix != LimitedAppendixV1::Loot {
         crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
@@ -5963,8 +5967,10 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             .map_err(RlContractError)?;
     }
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
-    if text_mode != ObservationTextModeV2::KaitoV75Artifact || private_scope != LimitedAppendixV1::Curator {
-    crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact
+        || private_scope != LimitedAppendixV1::Curator
+    {
+        crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if text_mode != ObservationTextModeV2::KaitoV75Artifact
         || private_scope != LimitedAppendixV1::Loot
@@ -10684,8 +10690,9 @@ fn private_card(
                     && crate::engine::omniscience_cast_v1::definition(o.card_def))
                 || crate::effect::sphinx_lore_v1::definition(o.card_def)
                 || crate::effect::greatwurm_v1::definition(o.card_def)
-                || (appendix != LimitedAppendixV1::Kykar && (crate::effect::kykar_v1::definition(o.card_def)
-                || crate::effect::kykar_v1::token_definition(o.card_def))))
+                || (appendix != LimitedAppendixV1::Kykar
+                    && (crate::effect::kykar_v1::definition(o.card_def)
+                        || crate::effect::kykar_v1::token_definition(o.card_def))))
     }) {
         return Err(RlContractError(
             "Kykar requires a distinct complete consumer".into(),

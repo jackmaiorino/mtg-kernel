@@ -4682,7 +4682,9 @@ fn commit_with_entry_batch_and_source_color(
     }
     state.engine.event_history.push(committed);
     if let Some((cause, original)) = curator_move {
-        if crate::curator_receipts_v1::record_move(state, cause, original, entry_history_index).is_err() {
+        if crate::curator_receipts_v1::record_move(state, cause, original, entry_history_index)
+            .is_err()
+        {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 original.object,

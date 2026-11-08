@@ -350,7 +350,6 @@ impl ConsumerV1 {
             | Self::KaitoLathrilV1
             | Self::KaitoLootV1
             | Self::KaitoCuratorV1
-
             | Self::KaitoKykarV1 => {
                 crate::effect::require_no_copied_token_abilities_kaito_v75(state, false)
             }

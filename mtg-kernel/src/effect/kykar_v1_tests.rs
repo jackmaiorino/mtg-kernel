@@ -79,7 +79,13 @@ fn tapped(s: &GameState, p: PlayerId) -> usize {
         .filter(|o| s.objects.get(**o).tapped)
         .count()
 }
-pub(crate) fn cast(s: &mut GameState, p: PlayerId, n: &str, targets: &[Target], cost: usize) -> ObjectId {
+pub(crate) fn cast(
+    s: &mut GameState,
+    p: PlayerId,
+    n: &str,
+    targets: &[Target],
+    cost: usize,
+) -> ObjectId {
     priority(s, p);
     let card = put(s, p, n, Zone::Hand);
     let before = tapped(s, p);
@@ -141,7 +147,13 @@ pub(crate) fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
     assert!(engine::has_effective_keyword(s, k, Keywords::FLYING));
     k
 }
-pub(crate) fn start_named(s: &mut GameState, p: PlayerId, k: ObjectId, name: &str, cost: usize) -> ObjectId {
+pub(crate) fn start_named(
+    s: &mut GameState,
+    p: PlayerId,
+    k: ObjectId,
+    name: &str,
+    cost: usize,
+) -> ObjectId {
     priority(s, p);
     let spell = put(s, p, name, Zone::Hand);
     let before = tapped(s, p);
@@ -173,7 +185,12 @@ pub(crate) fn start(s: &mut GameState, p: PlayerId, k: ObjectId) -> ObjectId {
     start_named(s, p, k, "Ravenous Amulet", 2)
 }
 
-pub(crate) fn choose(s: &mut GameState, p: PlayerId, mode: u8, target: Option<ObjectId>) -> StackItem {
+pub(crate) fn choose(
+    s: &mut GameState,
+    p: PlayerId,
+    mode: u8,
+    target: Option<ObjectId>,
+) -> StackItem {
     engine::step(s, Action::ChooseTriggerMode(mode)).unwrap();
     if let Some(t) = target {
         match next(s) {

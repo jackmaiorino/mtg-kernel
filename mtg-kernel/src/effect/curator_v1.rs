@@ -212,7 +212,10 @@ pub(crate) fn record_entry(state: &mut GameState, entry: usize) {
     state.engine.event_log.push(receipt.clone());
     state.engine.event_history.push(receipt);
 }
-pub(crate) fn entry_source(state: &GameState, entry: u64) -> Result<AbilitySourceContractV4, String> {
+pub(crate) fn entry_source(
+    state: &GameState,
+    entry: u64,
+) -> Result<AbilitySourceContractV4, String> {
     let rows = state
         .engine
         .event_history
@@ -393,7 +396,10 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<u64, 
 pub(crate) fn validate_trigger(state: &GameState, item: &StackItem) -> Result<u64, String> {
     validate_origin(state, item, true, true)
 }
-pub(crate) fn validate_archived_trigger(state: &GameState, item: &StackItem) -> Result<u64, String> {
+pub(crate) fn validate_archived_trigger(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<u64, String> {
     if item.v4.stack_item_id == StackItemId::default() {
         return Err("Curator archived publication has no stack occurrence".into());
     }
@@ -786,7 +792,10 @@ pub(crate) fn apply(
             c.phase = 1;
             if state.curator_unordered_reveal_v1 {
                 crate::curator_receipts_v1::record_reveal(
-                    state, c.entry, c.player, c.prefix.iter().copied().filter(|b| !c.down.contains(b)),
+                    state,
+                    c.entry,
+                    c.player,
+                    c.prefix.iter().copied().filter(|b| !c.down.contains(b)),
                 )?;
             } else {
                 for (position, b) in c.prefix.iter().enumerate() {
@@ -819,10 +828,19 @@ pub(crate) fn apply(
                         validate_effect_object_binding(&final_state, binding)?;
                     }
                     let cause = crate::curator_receipts_v1::MoveOwnerV1 {
-                        entry: c.entry, controller: c.player, planned,
+                        entry: c.entry,
+                        controller: c.player,
+                        planned,
                     };
-                    event::propose_and_commit_batch(&mut final_state, roster.iter().map(|binding|
-                        event::ProposedEvent::curator_pile_move(binding.object, cause)).collect());
+                    event::propose_and_commit_batch(
+                        &mut final_state,
+                        roster
+                            .iter()
+                            .map(|binding| {
+                                event::ProposedEvent::curator_pile_move(binding.object, cause)
+                            })
+                            .collect(),
+                    );
                     if final_state.engine.halted.is_some() {
                         return Err("Curator native pile move halted".into());
                     }
