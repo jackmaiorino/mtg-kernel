@@ -672,11 +672,15 @@ pub(crate) fn capture_tinybones_compat_v72(state: &GameState) -> Result<FactsV53
         crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72,
     )
 }
-pub(crate) fn capture_kaito_compat_v75(state: &GameState) -> Result<FactsV53, RlContractError> {
+pub(crate) fn capture_kaito_compat_v75(
+    state: &GameState,
+    chosen_type: bool,
+) -> Result<FactsV53, RlContractError> {
     capture_for_consumer(
         state,
         crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72,
         crate::optional_trigger_public_v1::ConsumerV1::KaitoV75,
+        chosen_type,
     )
 }
 pub(crate) fn capture_chandra_compat_v74(state: &GameState) -> Result<FactsV53, RlContractError> {
@@ -684,6 +688,7 @@ pub(crate) fn capture_chandra_compat_v74(state: &GameState) -> Result<FactsV53, 
         state,
         crate::optional_trigger_public_v1::CounterScopeV61::TinybonesV72,
         crate::optional_trigger_public_v1::ConsumerV1::ChandraV74,
+        false,
     )
 }
 fn capture_scoped(
@@ -694,12 +699,14 @@ fn capture_scoped(
         state,
         scope,
         crate::optional_trigger_public_v1::ConsumerV1::Legacy,
+        false,
     )
 }
 fn capture_for_consumer(
     state: &GameState,
     scope: crate::optional_trigger_public_v1::CounterScopeV61,
     consumer: crate::optional_trigger_public_v1::ConsumerV1,
+    chosen_type: bool,
 ) -> Result<FactsV53, RlContractError> {
     consumer.validate_copy_prefix(state).map_err(error)?;
     crate::engine::validate_battlefield_pt(state)
@@ -713,15 +720,15 @@ fn capture_for_consumer(
     // current-counter anthem. Neither that entry checkpoint nor its live
     // metadata has a representation in this frozen V53 appendix. Inspect
     // public battlefield rows only, never hidden hand/library printings.
-    if state
-        .engine
-        .linked_aura_operation_v1
-        .pending_kinship_v1
-        .is_some()
-        || state
-            .objects
-            .iter()
-            .any(|(_, live)| live.zone == Zone::Battlefield && live.v4.kinship_type_v1.is_some())
+    if !chosen_type
+        && (state
+            .engine
+            .linked_aura_operation_v1
+            .pending_kinship_v1
+            .is_some()
+            || state.objects.iter().any(|(_, live)| {
+                live.zone == Zone::Battlefield && live.v4.kinship_type_v1.is_some()
+            }))
     {
         return Err(error(
             "V53 does not expose native creature-type entry mechanics",

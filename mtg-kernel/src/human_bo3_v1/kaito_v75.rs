@@ -39,7 +39,9 @@ record!(HumanVisibleStateKaitoV75 {
     chandra: HumanChandraFactsV74,
     kaito: HumanKaitoFactsV75,
     #[serde(skip_serializing_if = "Option::is_none")]
-    artist: Option<HumanArtistFactsV1>
+    artist: Option<HumanArtistFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chosen_type: Option<super::chosen_type_v1::HumanChosenTypeFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -65,7 +67,9 @@ record!(HumanKaitoCandidateV75 {
     vivien_choices:Vec<crate::vivien_public_v70::ChoiceContextV70>,
     vivien_activation:Option<HumanLoyaltyCostV71>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    artist_payment: Option<crate::artist_consumer_v1::PaymentActionV1>
+    artist_payment: Option<crate::artist_consumer_v1::PaymentActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chosen_type_answer: Option<crate::chosen_type_consumer_v1::AnswerV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -173,6 +177,15 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
+    if let Some(answer) = crate::chosen_type_consumer_v1::answer(obs.chosen_type.as_ref(), a)
+        .map_err(|_| Error::InvalidVisibleReference)?
+    {
+        let printing = crate::card_def::CARD_DEFS[usize::from(answer.printing.card_id())].name;
+        return Ok(Some(format!(
+            "{printing}: choose {}",
+            answer.creature_type.canonical_name()
+        )));
+    }
     if let Some(payment) = crate::artist_consumer_v1::payment_action(obs.artist.as_ref(), a)
         .map_err(|_| Error::InvalidVisibleReference)?
     {
@@ -495,6 +508,11 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|v| artist_facts(v, &mut handles))
         .transpose()?;
+    let chosen_type = obs
+        .chosen_type
+        .as_ref()
+        .map(|facts| super::chosen_type_v1::project(facts, &mut handles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
@@ -505,6 +523,7 @@ pub(super) fn project_with_handles(
                 .ok_or(Error::InvalidAction)?;
             Ok(HumanKaitoCandidateV75 {
                 artist_payment: r.artist_payment,
+                chosen_type_answer: r.chosen_type_answer,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -747,7 +766,9 @@ pub(super) fn project_with_handles(
         .collect::<Result<_, Error>>()?;
     Ok((
         HumanDecisionKaitoV75 {
-            schema: if artist.is_some() {
+            schema: if chosen_type.is_some() {
+                "mtg-kernel-human-chosen-type-decision/v1"
+            } else if artist.is_some() {
                 "mtg-kernel-human-artist-decision/v1"
             } else {
                 "mtg-kernel-human-kaito-decision/v75"
@@ -770,6 +791,7 @@ pub(super) fn project_with_handles(
                 chandra,
                 kaito,
                 artist,
+                chosen_type,
             },
             actions,
             action_meanings,

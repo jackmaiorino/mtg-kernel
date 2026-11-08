@@ -245,3 +245,22 @@ learner update and authenticated restore are exercised at the actual prompts.
 Native execution and catalog promotion are pending. Niv-Mizzet remains a
 separate appendix until native receipts distinguish the realized draw count
 from the commanded count when its trigger is countered or interrupted.
+
+## Banner and Courtyard declared-deck source
+
+`fdn-chosen-type-consumer/v1` admits exact Banner 463 and Courtyard 470
+alongside ordinary Full cards. The native reset installs its own V75 scope
+before advance. A distinct schema binds the active printing, entry ordinal,
+and the complete 324-type domain to the native answer indices. Published
+facts also carry entry history, fellowship, current bonuses and the
+producing incarnation of each floating restricted mana unit. The Human
+and JSONL routes translate card references into prompt-local handles.
+
+The fixtures drive both seats from an exact 40-card reset through a real
+land play, restricted Elf mana, a paid Banner cast, and both type choices.
+A separate native land entry fixture compares hidden worlds, action indices,
+Human and wire projections, authenticated restore, and a finite learner
+update. Current-slot sampling refuses this profile until native entry
+checkpoints can be rebound safely. Native qualification requires
+`chosen_type_consumer_v1::tests::`, the rules-only Courtyard regression,
+and the `kernel_limited_chosen_type_env_v1` binary.

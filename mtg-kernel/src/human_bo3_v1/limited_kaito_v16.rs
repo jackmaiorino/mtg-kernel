@@ -51,7 +51,9 @@ pub(crate) fn project_limited_kaito_v16(
         .transpose()?;
     Ok((
         LimitedKaitoDecisionV16 {
-            schema: if observation.artist.is_some() {
+            schema: if observation.chosen_type.is_some() {
+                "mtg-kernel-limited-chosen-type-decision/v1"
+            } else if observation.artist.is_some() {
                 "mtg-kernel-limited-artist-decision/v1"
             } else {
                 "mtg-kernel-limited-kaito-decision/v16"

@@ -970,6 +970,7 @@ pub mod spinner_public_v54;
 
 pub mod alesha_v1;
 pub mod artist_public_v64;
+pub mod chosen_type_consumer_v1;
 pub mod chosen_type_public_v66;
 pub mod giada_v1;
 pub mod graveyard_return_candidates_v61;
@@ -1075,8 +1076,8 @@ pub mod limited_liliana_session_v14;
 
 pub mod limited_chandra_session_v15;
 
+pub mod artist_consumer_v1;
 mod limited_consumer_wire_v1;
 pub mod limited_kaito_session_v16;
 pub mod limited_return_consumer_v1;
 pub mod limited_v68_v75_consumer_v1;
-pub mod artist_consumer_v1;

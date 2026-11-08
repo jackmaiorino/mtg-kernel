@@ -20,7 +20,7 @@ impl FastActorSessionV1 {
     ) -> Result<Self, RlSessionError> {
         crate::limited_return_consumer_v1::preflight(config)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
-        Self::initialize_limited_consumer_v1(config, reveal_facts, false)
+        Self::initialize_limited_consumer_v1(config, reveal_facts, KaitoConsumerV1::Legacy)
     }
 
     pub(crate) fn reset_limited_v68_v75_v1(
@@ -29,7 +29,7 @@ impl FastActorSessionV1 {
     ) -> Result<Self, RlSessionError> {
         crate::limited_v68_v75_consumer_v1::preflight(config)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
-        Self::initialize_limited_consumer_v1(config, reveal_facts, false)
+        Self::initialize_limited_consumer_v1(config, reveal_facts, KaitoConsumerV1::Legacy)
     }
 
     pub(crate) fn reset_limited_artist_v1(
@@ -38,13 +38,22 @@ impl FastActorSessionV1 {
     ) -> Result<Self, RlSessionError> {
         crate::artist_consumer_v1::preflight(config)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
-        Self::initialize_limited_consumer_v1(config, reveal_facts, true)
+        Self::initialize_limited_consumer_v1(config, reveal_facts, KaitoConsumerV1::Artist)
+    }
+
+    pub(crate) fn reset_limited_chosen_type_v1(
+        config: &crate::chosen_type_consumer_v1::ResetV1,
+        reveal_facts: bool,
+    ) -> Result<Self, RlSessionError> {
+        crate::chosen_type_consumer_v1::preflight(config)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        Self::initialize_limited_consumer_v1(config, reveal_facts, KaitoConsumerV1::ChosenType)
     }
 
     fn initialize_limited_consumer_v1(
         config: &crate::limited_consumer_wire_v1::ResetV1,
         reveal_facts: bool,
-        artist: bool,
+        scope: KaitoConsumerV1,
     ) -> Result<Self, RlSessionError> {
         let mut state = crate::rl::build_preflighted_deck_pair_environment_v2(
             config.env_seed,
@@ -65,7 +74,7 @@ impl FastActorSessionV1 {
             config.deck_ids.clone(),
             &config.mainboards,
             state,
-            artist,
+            scope,
         )
     }
 }
