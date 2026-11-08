@@ -15,7 +15,7 @@ compare byte for byte; every difference is either accounted for (a timing
 field, a build-provenance field across builds, or the pin of a file that
 differs only that way) or reported as a mismatch.
 
-Standard library only; Linux (os.wait4). See README.md for the commands.
+Standard library only; Linux or macOS (os.wait4). See README.md for the commands.
 """
 from __future__ import annotations
 
@@ -143,6 +143,11 @@ def command_output(command: list[str]) -> str | None:
     return (done.stdout or done.stderr).strip() or None
 
 
+def max_rss_mib(ru_maxrss: int, system: str = sys.platform) -> float:
+    """wait4's peak RSS in MiB: Linux reports KiB, macOS bytes."""
+    return ru_maxrss / (1 << 20) if system == "darwin" else ru_maxrss / 1024
+
+
 def host_record() -> dict:
     cpu = None
     try:
@@ -151,14 +156,17 @@ def host_record() -> dict:
                 cpu = line.split(":", 1)[1].strip()
                 break
     except OSError:
-        pass
+        cpu = command_output(["sysctl", "-n", "machdep.cpu.brand_string"])
     memory_kib = None
     try:
         for line in Path("/proc/meminfo").read_text().splitlines():
             if line.startswith("MemTotal:"):
                 memory_kib = int(line.split()[1])
     except (OSError, ValueError):
-        pass
+        try:
+            memory_kib = int(command_output(["sysctl", "-n", "hw.memsize"]) or "") // 1024
+        except ValueError:
+            pass
     first_line = lambda text: text.splitlines()[0] if text else None  # noqa: E731
     return {
         "hostname": platform.node(),
@@ -294,7 +302,7 @@ def run_process(command: list[str], env: dict, stdout_path: Path, stderr_path: P
         "wall_seconds": wall,
         "user_seconds": usage.ru_utime,
         "sys_seconds": usage.ru_stime,
-        "max_rss_mib": usage.ru_maxrss / 1024,
+        "max_rss_mib": max_rss_mib(usage.ru_maxrss),
         "major_page_faults": usage.ru_majflt,
         "voluntary_context_switches": usage.ru_nvcsw,
         "involuntary_context_switches": usage.ru_nivcsw,

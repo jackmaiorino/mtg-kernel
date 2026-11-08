@@ -175,8 +175,12 @@ class PlanAndRuleTest(unittest.TestCase):
         self.assertEqual(bench.verdict([10.0], [9.0], [], True)["reason"],
                          "fewer than two samples per arm")
 
+    def test_peak_rss_units_follow_the_platform(self):
+        self.assertEqual(bench.max_rss_mib(2048, "linux"), 2.0)
+        self.assertEqual(bench.max_rss_mib(2 << 20, "darwin"), 2.0)
 
-@unittest.skipUnless(sys.platform.startswith("linux"), "the driver uses os.wait4 and process groups")
+
+@unittest.skipUnless(sys.platform.startswith(("linux", "darwin")), "the driver uses os.wait4 and process groups")
 class DriverTest(unittest.TestCase):
     def setUp(self):
         self.temp = Path(tempfile.mkdtemp()).resolve()

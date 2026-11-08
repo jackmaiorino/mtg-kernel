@@ -3,7 +3,7 @@
 An opt-in local benchmark of `native_expanded_training_run_v1` on a small
 deterministic workload. It follows the common benchmark contract in #594 and
 needs no private checkpoint, plan or fleet access. Standard-library Python 3.11+
-on Linux.
+on Linux or macOS (the driver uses `os.wait4`).
 
 The workload is the source-generated net-8 fixture that the run's own tests use:
 
