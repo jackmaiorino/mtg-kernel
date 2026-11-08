@@ -9,7 +9,7 @@ use mtg_kernel::card_def::{
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
-use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, StackItemKind, Step, Target, Zone};
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
@@ -1235,6 +1235,20 @@ fn martyr_of_sands_reveals_distinct_copies_from_the_activation_payer() {
     pool(&mut state, P0, &[], 1);
 
     activate(&mut state, martyr, 1, &[]);
+    // The activation is staged until the engine advances through payment.
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass { player: P0, .. }
+    ));
+    let ability = state.stack.last().expect("Martyr's paid ability");
+    assert_eq!(ability.kind, StackItemKind::ActivatedAbility);
+    assert_eq!(ability.source, martyr);
+    assert_eq!(ability.controller, P0);
+    assert_eq!(ability.v4.activated_ability_index, Some(1));
+    let payer = &state.players[P0.index()];
+    assert_eq!(payer.mana_pool[ManaColor::C.pool_index()], 0);
+    assert!(state.players[P1.index()].graveyard.contains(&martyr));
+    assert_eq!(life(&state, P0), 20);
 
     let known = state.known_hand_cards(P1, P0);
     assert_eq!(
@@ -1244,7 +1258,6 @@ fn martyr_of_sands_reveals_distinct_copies_from_the_activation_payer() {
     assert!(state.known_hand_cards(P0, P1).is_empty());
     settled(&mut state);
     assert_eq!(life(&state, P0), 26);
-    assert!(state.players[P1.index()].graveyard.contains(&martyr));
 }
 
 // ---- Foot Ninjas -------------------------------------------------------------------
