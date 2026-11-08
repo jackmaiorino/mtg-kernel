@@ -39,8 +39,10 @@ current pack and acquired cards. Choices bind fresh session prompts. Copies have
 private physical identifiers; replays validate both the visible index and copy.
 
 Deck construction takes explicit per-seat partitions and added basic lands. It
-conserves every drafted copy between mainboard and reserve, allows duplicate
-cards, and permits only the five ordinary basics as additions. It uses the
+conserves acquired counts by exact card name between mainboard and reserve,
+allows duplicates, and permits only the five ordinary basics as additions.
+Printing and foil annotations are retained as supplied, not authenticated as
+physical inventory during construction. It uses the
 existing executable mainboard admission, which requires at least 40 Full cards.
 Partial printings may be drafted and reserved, but this tool does not grant them
 Full consumer admission. That remains #550. The builder validates a choice; it
