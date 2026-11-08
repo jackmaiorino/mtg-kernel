@@ -96,10 +96,6 @@ impl JsonlServerV1 {
     }
 }
 
-fn exact_printing(card: &ReferenceV1) -> bool {
-    card.identity == (IdentityV1::Known { card_id: PRINTING })
-}
-
 pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(), String> {
     if facts.viewer != actor
         || facts.schema != public::SCHEMA

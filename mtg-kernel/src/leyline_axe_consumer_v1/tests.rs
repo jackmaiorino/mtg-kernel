@@ -10,7 +10,7 @@ use crate::{
     limited_kaito_session_v16::{LimitedKaitoBodyV16 as Body, LimitedKaitoStateV16 as State},
     policy_observation_v6::tests::put,
     policy_surface_v5::LimitedAppendixV1,
-    rl_session::{FastActorResponseV1, KaitoSessionV75},
+    rl_session::FastActorResponseV1,
     state::{GameState, Step},
 };
 
