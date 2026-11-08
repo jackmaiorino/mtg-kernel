@@ -4390,9 +4390,10 @@ fn common_family_observation_storage_with_proof(
         CommonProjectionScopeV42::ChandraV74 => {
             crate::chandra_observation_v74::validate_state(state)
         }
-        CommonProjectionScopeV42::KaitoV75 => {
-            crate::kaito_observation_v75::validate_state_scoped(state, surface.artist_consumer_v1())
-        }
+        CommonProjectionScopeV42::KaitoV75 => crate::kaito_observation_v75::validate_state_scoped(
+            state,
+            surface.limited_appendix_v1(),
+        ),
         CommonProjectionScopeV42::GenesisWaveV69 => {
             crate::genesis_wave_observation_v69::validate_state(state)
         }
@@ -10393,9 +10394,10 @@ pub(crate) fn core_policy_action_candidates_chandra_v74(
 pub(crate) fn core_policy_action_candidates_kaito_scoped_v75(
     decision: &PolicyDecisionV5,
     state: &GameState,
-    artist: bool,
+    appendix: crate::policy_surface_v5::LimitedAppendixV1,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
-    crate::kaito_observation_v75::validate_state_scoped(state, artist).map_err(RlContractError)?;
+    crate::kaito_observation_v75::validate_state_scoped(state, appendix)
+        .map_err(RlContractError)?;
     core_policy_action_candidates_next_five_scoped_v59(
         decision,
         state,

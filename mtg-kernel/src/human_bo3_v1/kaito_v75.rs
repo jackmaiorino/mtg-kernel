@@ -39,7 +39,9 @@ record!(HumanVisibleStateKaitoV75 {
     chandra: HumanChandraFactsV74,
     kaito: HumanKaitoFactsV75,
     #[serde(skip_serializing_if = "Option::is_none")]
-    artist: Option<HumanArtistFactsV1>
+    artist: Option<HumanArtistFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    drakuseth: Option<super::drakuseth_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -65,7 +67,9 @@ record!(HumanKaitoCandidateV75 {
     vivien_choices:Vec<crate::vivien_public_v70::ChoiceContextV70>,
     vivien_activation:Option<HumanLoyaltyCostV71>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    artist_payment: Option<crate::artist_consumer_v1::PaymentActionV1>
+    artist_payment: Option<crate::artist_consumer_v1::PaymentActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    drakuseth_target: Option<crate::drakuseth_consumer_v1::TargetActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -173,6 +177,58 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
+    if let Some(answer) = crate::drakuseth_consumer_v1::target_action(obs.drakuseth.as_ref(), a)
+        .map_err(|_| Error::InvalidVisibleReference)?
+    {
+        return Ok(Some(match answer {
+            crate::drakuseth_consumer_v1::TargetActionV1::Finish { chosen_slots } => {
+                format!("Finish Drakuseth targets with {chosen_slots} original slots")
+            }
+            crate::drakuseth_consumer_v1::TargetActionV1::Choose {
+                original_slot,
+                printed_damage,
+            } => {
+                let ActionSemanticV1::ChooseTarget { target, .. } = a else {
+                    return Err(Error::InvalidVisibleReference);
+                };
+                let label = match target {
+                    TargetRefV1::Player { player } => format!("player {player:?}"),
+                    TargetRefV1::Object { object } => h.name(object)?,
+                    _ => return Err(Error::InvalidVisibleReference),
+                };
+                format!(
+                    "Drakuseth target slot {}: {printed_damage} damage to {label}",
+                    original_slot + 1
+                )
+            }
+        }));
+    }
+    if let (
+        Some(menu),
+        ActionSemanticV1::ChooseEffectOption {
+            source,
+            option_index,
+            ..
+        },
+    ) = (
+        obs.drakuseth
+            .as_ref()
+            .and_then(|f| f.pending_damage.as_ref()),
+        a,
+    ) {
+        if source.card_db_id == crate::drakuseth_consumer_v1::PRINTING_V1 {
+            let option = menu
+                .options
+                .get(usize::from(*option_index))
+                .ok_or(Error::InvalidVisibleReference)?;
+            return Ok(Some(format!(
+                "Apply {:?} to Drakuseth target slot {} ({} damage remaining)",
+                option.kind,
+                menu.active_original_slot + 1,
+                menu.remaining_amount
+            )));
+        }
+    }
     if let Some(payment) = crate::artist_consumer_v1::payment_action(obs.artist.as_ref(), a)
         .map_err(|_| Error::InvalidVisibleReference)?
     {
@@ -495,6 +551,11 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|v| artist_facts(v, &mut handles))
         .transpose()?;
+    let drakuseth = obs
+        .drakuseth
+        .as_ref()
+        .map(|facts| super::drakuseth_consumer_v1::capture(facts, &mut handles, &mut roles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
@@ -505,6 +566,7 @@ pub(super) fn project_with_handles(
                 .ok_or(Error::InvalidAction)?;
             Ok(HumanKaitoCandidateV75 {
                 artist_payment: r.artist_payment,
+                drakuseth_target: r.drakuseth_target,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -747,7 +809,9 @@ pub(super) fn project_with_handles(
         .collect::<Result<_, Error>>()?;
     Ok((
         HumanDecisionKaitoV75 {
-            schema: if artist.is_some() {
+            schema: if drakuseth.is_some() {
+                "mtg-kernel-human-drakuseth-decision/v1"
+            } else if artist.is_some() {
                 "mtg-kernel-human-artist-decision/v1"
             } else {
                 "mtg-kernel-human-kaito-decision/v75"
@@ -770,6 +834,7 @@ pub(super) fn project_with_handles(
                 chandra,
                 kaito,
                 artist,
+                drakuseth,
             },
             actions,
             action_meanings,

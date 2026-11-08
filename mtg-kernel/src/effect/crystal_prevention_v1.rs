@@ -3541,7 +3541,7 @@ fn validate_live_creature_power(
     Ok(())
 }
 
-fn batch_capture_at<'a>(
+pub(crate) fn batch_capture_at<'a>(
     state: &'a GameState,
     index: u32,
     path: &[u16],

@@ -171,10 +171,10 @@ fn restored(state: &GameState) -> GameState {
     assert_eq!(&restored, state);
     restored
 }
-fn paid(actor: PlayerId) -> (GameState, ObjectId) {
+pub(crate) fn paid(actor: PlayerId) -> (GameState, ObjectId) {
     paid_with_hidden(actor, None)
 }
-fn paid_with_hidden(actor: PlayerId, hidden: Option<&str>) -> (GameState, ObjectId) {
+pub(crate) fn paid_with_hidden(actor: PlayerId, hidden: Option<&str>) -> (GameState, ObjectId) {
     let mut state = crate::extra_turn_v1::tests::ready(actor);
     if let Some(name) = hidden {
         // Independently initialized private operand, before every paid action.
@@ -209,7 +209,7 @@ fn paid_with_hidden(actor: PlayerId, hidden: Option<&str>) -> (GameState, Object
     assert!(state.objects.get(source).summoning_sick);
     (state, source)
 }
-fn attack(state: &mut GameState, source: ObjectId, actor: PlayerId) {
+pub(crate) fn attack(state: &mut GameState, source: ObjectId, actor: PlayerId) {
     let cast_turn = state.turn_key_v1();
     let generation = state.objects.get(source).zone_change_count;
     let mut saw_sick_declaration = false;
@@ -244,7 +244,7 @@ fn attack(state: &mut GameState, source: ObjectId, actor: PlayerId) {
     }
     panic!("genuinely cast source did not reach its next legal attack");
 }
-fn choose(state: &mut GameState, source: ObjectId, targets: &[Target]) {
+pub(crate) fn choose(state: &mut GameState, source: ObjectId, targets: &[Target]) {
     for (index, target) in targets.iter().enumerate() {
         assert!(
             matches!(next(state), Decision::ChooseTargets { spell, legal_targets, can_finish, .. }
@@ -275,7 +275,11 @@ fn choose(state: &mut GameState, source: ObjectId, targets: &[Target]) {
         ))
     );
 }
-fn damage_since(state: &GameState, start: usize, source: ObjectId) -> Vec<(Target, i32)> {
+pub(crate) fn damage_since(
+    state: &GameState,
+    start: usize,
+    source: ObjectId,
+) -> Vec<(Target, i32)> {
     state.engine.event_history[start..]
         .iter()
         .filter_map(|event| match event {
@@ -481,7 +485,7 @@ fn paid_attack_departed_reentered_and_stolen_source_retains_original_controller_
     }
 }
 
-fn mixed_prevention_scene(
+pub(crate) fn mixed_prevention_scene(
     actor: PlayerId,
     form: u8,
 ) -> (GameState, ObjectId, [ObjectId; 2], usize) {

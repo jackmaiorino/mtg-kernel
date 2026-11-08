@@ -376,13 +376,21 @@ impl CombatScanV5 {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum LimitedAppendixV1 {
+    #[default]
+    Legacy,
+    Artist,
+    Drakuseth,
+}
+
 #[derive(Clone)]
 pub struct PolicySurfaceV5 {
     inner: HarnessSurfaceV2,
     scan: Option<CombatScanV5>,
     hunter_order_enabled_v45: bool,
     hunter_order_v45: Option<hunter_order_v45::TriggerOrderV45>,
-    artist_consumer_v1: bool,
+    limited_appendix_v1: LimitedAppendixV1,
     /// W1 producer (lead ruling 7 (a)): where each presented decision fell
     /// in the committed stream, as (seat, event-history length, observation
     /// journal length), oldest first. A seat's marks bound the batches its
@@ -1018,7 +1026,7 @@ impl PolicySurfaceV5 {
             scan: None,
             hunter_order_enabled_v45: false,
             hunter_order_v45: None,
-            artist_consumer_v1: false,
+            limited_appendix_v1: LimitedAppendixV1::Legacy,
             infoset_marks_v1: Default::default(),
         }
     }
@@ -1032,17 +1040,23 @@ impl PolicySurfaceV5 {
             scan: None,
             hunter_order_enabled_v45: false,
             hunter_order_v45: None,
-            artist_consumer_v1: false,
+            limited_appendix_v1: LimitedAppendixV1::Legacy,
             infoset_marks_v1: Default::default(),
         }
     }
 
+    pub(crate) fn limited_appendix_v1(&self) -> LimitedAppendixV1 {
+        self.limited_appendix_v1
+    }
+    pub(crate) fn set_limited_appendix_v1(&mut self, value: LimitedAppendixV1) {
+        self.limited_appendix_v1 = value;
+    }
     pub(crate) fn enable_artist_consumer_v1(&mut self) {
-        self.artist_consumer_v1 = true;
+        self.limited_appendix_v1 = LimitedAppendixV1::Artist;
     }
 
     pub(crate) fn artist_consumer_v1(&self) -> bool {
-        self.artist_consumer_v1
+        self.limited_appendix_v1 == LimitedAppendixV1::Artist
     }
 
     pub fn harness_surface(&self) -> &HarnessSurfaceV2 {

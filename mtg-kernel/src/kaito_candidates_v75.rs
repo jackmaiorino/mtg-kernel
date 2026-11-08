@@ -35,6 +35,8 @@ pub struct CandidateMeaningV75 {
     pub action: A,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artist_payment: Option<artist::PaymentActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drakuseth_target: Option<crate::drakuseth_consumer_v1::TargetActionV1>,
     #[serde(deserialize_with = "required_optional")]
     pub drake_activation: Option<crate::next_five_observation_v59::NextFiveActivationV59>,
     /// Complete current programs at this genuine decision, in native stage and
@@ -124,6 +126,11 @@ pub fn producer_sha256() -> String {
             include_str!("tinybones_candidates_v72.rs"),
             include_str!("kaito_candidates_v75.rs"),
             include_str!("artist_consumer_v1.rs"),
+            include_str!("drakuseth_consumer_v1.rs"),
+            include_str!("drakuseth_consumer_v1/damage.rs"),
+            include_str!("human_bo3_v1/drakuseth_consumer_v1.rs"),
+            include_str!("fdn_family_source_v76.rs"),
+            include_str!("drakuseth_damage_source_v76.rs"),
             include_str!("kaito_observation_v75.rs"),
             include_str!("rl_session/kaito_v75.rs"),
             include_str!("current_mixed_policy_v1/kaito.rs"),
@@ -611,7 +618,7 @@ pub(crate) fn project_parts_v75(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<(KaitoCandidatesV75, NativeCandidateProjectionV75), RlContractError> {
-    if surface.artist_consumer_v1() {
+    if surface.limited_appendix_v1() != crate::policy_surface_v5::LimitedAppendixV1::Legacy {
         return Err(error("Artist candidates require their owning profile"));
     }
     observation::validate_state(state).map_err(error)?;
@@ -694,6 +701,11 @@ fn project_authenticated_parts_v75(
             CandidateMeaningV75 {
                 schema: annotation_schema.into(),
                 ordinal: 0,
+                drakuseth_target: crate::drakuseth_consumer_v1::target_action(
+                    observation.drakuseth.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
                 artist_payment: artist::payment_action(observation.artist.as_ref(), &action)
                     .map_err(error)?,
                 selected_graveyard_target: selected_graveyard_target(&observation, &action)?,
@@ -792,7 +804,12 @@ fn project_authenticated_parts_v75(
 }
 
 fn schemas(observation: &KaitoObservationV75) -> (&'static str, &'static str) {
-    if observation.artist.is_some() {
+    if observation.drakuseth.is_some() {
+        (
+            crate::drakuseth_consumer_v1::CANDIDATES_SCHEMA,
+            crate::drakuseth_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.artist.is_some() {
         (artist::CANDIDATES_SCHEMA, artist::ACTION_SCHEMA)
     } else {
         (SCHEMA, ANNOTATION_SCHEMA)
@@ -876,6 +893,12 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
             || row.liliana_choices
                 != crate::liliana_public_v73::choice_contexts(&value.observation.liliana)
             || row.schema != annotation_schema
+            || row.drakuseth_target
+                != crate::drakuseth_consumer_v1::target_action(
+                    value.observation.drakuseth.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
             || row.artist_payment
                 != artist::payment_action(value.observation.artist.as_ref(), &row.action)
                     .map_err(error)?

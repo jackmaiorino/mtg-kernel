@@ -276,7 +276,7 @@ pub(crate) fn candidates_kaito_v75(
     surface: &PolicySurfaceV5,
     decision: &PolicyDecisionV5,
 ) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
-    crate::kaito_observation_v75::validate_state_scoped(state, surface.artist_consumer_v1())
+    crate::kaito_observation_v75::validate_state_scoped(state, surface.limited_appendix_v1())
         .map_err(RlContractError)?;
     candidates_current_scope_kaito_v75(
         state,
@@ -688,7 +688,7 @@ fn candidates_current_scope_inner_v68(
                     crate::rl::core_policy_action_candidates_kaito_scoped_v75(
                         decision,
                         state,
-                        surface.artist_consumer_v1(),
+                        surface.limited_appendix_v1(),
                     )?
                 } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::ChandraV74) {
                     crate::rl::core_policy_action_candidates_chandra_v74(decision, state)?
