@@ -449,18 +449,19 @@ fn knowledge_check(
     // may claim more than V's conservative readings.
     // Revision c (lead ruling 15, fallback D): P claims no hand facts, so
     // only the validity mutants that claim them check them.
-    let mut hand = multiset(
-        state.players[opp.index()]
-            .hand
-            .iter()
-            .map(|id| state.objects.get(*id).card_def),
-    );
-    if hand_claims && subtract(&mut hand, projection.hand_facts.iter().map(|f| f.card_def)).is_err()
-    {
-        return Err(refuse(
-            RefusalCodeV1::R5,
-            "hand facts claim a card the hand does not hold",
-        ));
+    if hand_claims {
+        let mut hand = multiset(
+            state.players[opp.index()]
+                .hand
+                .iter()
+                .map(|id| state.objects.get(*id).card_def),
+        );
+        if subtract(&mut hand, projection.hand_facts.iter().map(|f| f.card_def)).is_err() {
+            return Err(refuse(
+                RefusalCodeV1::R5,
+                "hand facts claim a card the hand does not hold",
+            ));
+        }
     }
     for owner in [PlayerId::P0, PlayerId::P1] {
         let projected: BTreeSet<(u32, u32, u32)> = projection.library[owner.index()]
@@ -782,20 +783,59 @@ pub(crate) fn export_v1(
     input: &ExportInputV1<'_>,
     options: ExportOptionsV1,
 ) -> Result<InfosetV1, ExportErrorV1> {
-    export_versioned(input, options, false, false)
+    export_versioned(input, options, false, false, None)
 }
 
 /// Opt in to event-time identity visibility. Historical v1 remains unchanged.
 /// Active face-down public objects refuse until the canonical allocator can
 /// represent them. A snapshot without visibility provenance also refuses.
 pub fn export_v2(input: &ExportInputV1<'_>) -> Result<InfosetV1, ExportErrorV1> {
-    export_versioned(input, ExportOptionsV1::default(), true, false)
+    export_versioned(input, ExportOptionsV1::default(), true, false, None)
 }
 
 /// Opt in to bounded recovery from historical export refusals (#579).
 /// This successor retains v2 event-time visibility and preserves v1/v2.
 pub fn export_v3(input: &ExportInputV1<'_>) -> Result<InfosetV1, ExportErrorV1> {
-    export_versioned(input, ExportOptionsV1::default(), true, true)
+    export_versioned(input, ExportOptionsV1::default(), true, true, None)
+}
+
+/// Opt in to viewer-local reveal-name constraints. Only the event-time public
+/// transcript can supply hand minima. Old copy rows remain outside this mode's
+/// refill evidence and are never used to select the named hand occupants.
+pub fn export_reveal_v4(input: &ExportInputV1<'_>) -> Result<InfosetV1, ExportErrorV1> {
+    export_reveal_v4_from_journal(input, &input.state.reveal_meaning_v3)
+}
+
+pub(crate) fn export_reveal_v4_from_journal(
+    input: &ExportInputV1<'_>,
+    journal: &crate::reveal_meaning_v3::RevealJournalV3,
+) -> Result<InfosetV1, ExportErrorV1> {
+    let transcript = journal
+        .transcript(input.viewer)
+        .ok_or_else(|| refuse(RefusalCodeV1::R8, "visible reveal transcript unavailable"))?;
+    let mut reducer = crate::reveal_meaning_v3::RevealReducerV3::default();
+    reducer
+        .absorb(&transcript)
+        .map_err(|detail| refuse(RefusalCodeV1::R8, detail))?;
+    let opponent = input.viewer.opponent();
+    let hand_size = input.state.players[opponent.index()].hand.len();
+    let mut bound_names = Vec::new();
+    for (def, count) in reducer.hand(opponent) {
+        if count > hand_size - bound_names.len() {
+            return Err(refuse(
+                RefusalCodeV1::R8,
+                "reveal minima exceed the public hand size",
+            ));
+        }
+        bound_names.extend(std::iter::repeat_n(def, count));
+    }
+    export_versioned(
+        input,
+        ExportOptionsV1::default(),
+        true,
+        true,
+        Some(&bound_names),
+    )
 }
 
 /// The audited W1 pool has no persistent damage-identity custody consumer.
@@ -829,6 +869,7 @@ fn export_versioned(
     options: ExportOptionsV1,
     visibility_v2: bool,
     recovery_v3: bool,
+    reveal_names_v4: Option<&[u16]>,
 ) -> Result<InfosetV1, ExportErrorV1> {
     let state = input.state;
     let v = input.viewer;
@@ -1194,7 +1235,13 @@ fn export_versioned(
     // soundness check and the validity mutants, which still claim them.
     let hand_mutant =
         is(MutantV1::L8) || is(MutantV1::L11) || is(MutantV1::L12) || is(MutantV1::L14);
-    let mut bound_names: Vec<u16> = Vec::new();
+    let mut bound_names: Vec<u16> = reveal_names_v4.unwrap_or_default().to_vec();
+    if reveal_names_v4.is_some() && pinned_defs(opp).iter().any(|id| bound_names.contains(id)) {
+        return Err(refuse(
+            RefusalCodeV1::R7,
+            "reveal-name bound overlaps an unresolved physical pin",
+        ));
+    }
     for f in projection
         .hand_facts
         .iter()
@@ -1207,6 +1254,12 @@ fn export_versioned(
     }
     bound_names.sort_by_key(|d| name_key(*d));
     subtract(&mut pool5, bound_names.iter().copied()).map_err(|d| {
+        if reveal_names_v4.is_some() {
+            return refuse(
+                RefusalCodeV1::R8,
+                "reveal minima exceed the public refill pool",
+            );
+        }
         fault(
             FaultCodeV1::I4,
             format!("{} known in the hand beyond the decklist", card_name(d)),
@@ -1955,6 +2008,9 @@ fn export_versioned(
     let mut out: GameState = serde_json::from_value(tagged)
         .map_err(|e| refuse(RefusalCodeV1::R2, format!("the export does not load: {e}")))?;
     out.resample_future_randomness_for_search_v3(INFOSET_RNG_SEED_V1);
+    if reveal_names_v4.is_some() {
+        out.enable_hand_knowledge_by_name_v2();
+    }
     crate::effect::refresh_binding_fingerprints_v1(&mut out);
     static_assertions(&out, &handles, v)?;
     // Lead ruling 19: every other test passed, so the reveal-triggered rule
@@ -1962,7 +2018,9 @@ fn export_versioned(
     if !hand.reveal.is_empty() || reveal_used.get() {
         return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_REVEAL_DETAIL));
     }
-    let schema = if recovery_v3 {
+    let schema = if reveal_names_v4.is_some() {
+        super::INFOSET_SCHEMA_REVEAL_V4
+    } else if recovery_v3 {
         super::INFOSET_SCHEMA_V3
     } else if visibility_v2 {
         super::INFOSET_SCHEMA_V2

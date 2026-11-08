@@ -91,7 +91,10 @@ impl PayloadV1 {
         let p: Self = serde_json::from_slice(bytes).map_err(|e| format!("payload: {e}"))?;
         if !matches!(
             p.schema.as_str(),
-            INFOSET_SCHEMA_V1 | super::INFOSET_SCHEMA_V2 | super::INFOSET_SCHEMA_V3
+            INFOSET_SCHEMA_V1
+                | super::INFOSET_SCHEMA_V2
+                | super::INFOSET_SCHEMA_V3
+                | super::INFOSET_SCHEMA_REVEAL_V4
         ) {
             return Err(format!("payload schema {}", p.schema));
         }
@@ -103,7 +106,10 @@ impl PayloadV1 {
     pub fn import(&self) -> Result<FastActorSessionV1, String> {
         if !matches!(
             self.schema.as_str(),
-            INFOSET_SCHEMA_V1 | super::INFOSET_SCHEMA_V2 | super::INFOSET_SCHEMA_V3
+            INFOSET_SCHEMA_V1
+                | super::INFOSET_SCHEMA_V2
+                | super::INFOSET_SCHEMA_V3
+                | super::INFOSET_SCHEMA_REVEAL_V4
         ) {
             return Err(format!("payload schema {}", self.schema));
         }
@@ -112,6 +118,9 @@ impl PayloadV1 {
         }
         let state: crate::state::GameState = serde_json::from_value(self.state.clone())
             .map_err(|e| format!("payload state: {e}"))?;
+        if self.schema == super::INFOSET_SCHEMA_REVEAL_V4 && !state.hand_knowledge_by_name_v2 {
+            return Err("reveal-v4 payload requires name-level hand knowledge".into());
+        }
         if state.objects.len() != self.handles.len() {
             return Err("payload handles do not cover the arena".into());
         }
