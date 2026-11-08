@@ -14251,6 +14251,7 @@ fn drive_resumable_inner_with_native_row_v1(
                         .map_err(|error| error.to_string())?;
                     match destination {
                         LibrarySearchDestinationV1::FirstBattlefieldTappedRestHand => {
+                            let mut shown = Vec::new();
                             for (index, binding) in selected.iter().enumerate() {
                                 let event = if index == 0 {
                                     event::ProposedEvent::zone_change_to_battlefield_tapped(
@@ -14268,12 +14269,20 @@ fn drive_resumable_inner_with_native_row_v1(
                                                 observer,
                                                 player,
                                                 binding.object,
-                                                crate::reveal_meaning_v3::RevealV3::SearchReveal,
+                                                crate::reveal_meaning_v3::RevealV3::Omit,
                                             )
                                             .map_err(|error| error.to_string())?;
                                     }
+                                    if state.reveal_meaning_v3.enabled() {
+                                        shown.push(binding.object);
+                                    }
                                 }
                             }
+                            state.note_public_hand_reveal_group_v3(
+                                player,
+                                shown,
+                                crate::reveal_meaning_v3::RevealV3::SearchReveal,
+                            );
                             state
                                 .commit_library_shuffle(player, shuffle_token)
                                 .map_err(|error| error.to_string())?;
@@ -14386,6 +14395,7 @@ fn drive_resumable_inner_with_native_row_v1(
                         .preflight_library_shuffle(player)
                         .map_err(|error| error.to_string())?;
                     commit_zone_change_batch(state, &selected, Zone::Hand, false)?;
+                    let mut shown = Vec::new();
                     for binding in selected {
                         if filter.reveals_selected_card()
                             && state.objects.get(binding.object).zone == Zone::Hand
@@ -14397,12 +14407,20 @@ fn drive_resumable_inner_with_native_row_v1(
                                         observer,
                                         player,
                                         binding.object,
-                                        crate::reveal_meaning_v3::RevealV3::SearchReveal,
+                                        crate::reveal_meaning_v3::RevealV3::Omit,
                                     )
                                     .expect("a successful searched-card move is publicly revealed");
                             }
+                            if state.reveal_meaning_v3.enabled() {
+                                shown.push(binding.object);
+                            }
                         }
                     }
+                    state.note_public_hand_reveal_group_v3(
+                        player,
+                        shown,
+                        crate::reveal_meaning_v3::RevealV3::SearchReveal,
+                    );
                     state
                         .commit_library_shuffle(player, shuffle_token)
                         .map_err(|error| error.to_string())?;
@@ -16269,16 +16287,9 @@ fn drive_resumable_inner_with_native_row_v1(
                 };
                 let original_hand = bind_hand(state, player);
                 validate_bound_hand_exact(state, player, &original_hand)?;
-                for binding in &original_hand {
-                    // spellbench-public-reveal: hand card revealed by the card rules.
-                    for observer in [PlayerId::P0, PlayerId::P1] {
-                        state
-                            .reveal_distinct_hand_card(observer, player, binding.object)
-                            .map_err(|error| {
-                                format!("linked-exile public hand reveal failed: {error}")
-                            })?;
-                    }
-                }
+                // spellbench-public-reveal: the card rules reveal the entire hand.
+                state.reveal_public_hand_group_v3(player, original_hand.iter().map(|binding| binding.object))
+                    .map_err(|error| format!("linked-exile public hand reveal failed: {error}"))?;
                 let candidates = original_hand
                     .iter()
                     .copied()
@@ -16606,12 +16617,8 @@ fn drive_resumable_inner_with_native_row_v1(
                 }
                 let original_hand = bind_hand(state, player);
                 validate_bound_hand_exact(state, player, &original_hand)?;
-                for binding in &original_hand {
-                    // spellbench-public-reveal: hand card revealed by the card rules.
-                    for observer in [PlayerId::P0, PlayerId::P1] {
-                        state.reveal_distinct_hand_card(observer, player, binding.object)?;
-                    }
-                }
+                // spellbench-public-reveal: the card rules reveal the entire hand.
+                state.reveal_public_hand_group_v3(player, original_hand.iter().map(|binding| binding.object))?;
                 let eligible =
                     revealed_discard_eligible_hand(state, &original_hand, exclude_creatures)?;
                 if !eligible.is_empty() {
@@ -18063,16 +18070,30 @@ fn resume_library_partition_frame(
                 }
             }
             if filter.reveals_selected() {
+                let mut shown = Vec::new();
                 for binding in selected {
                     if state.objects.get(binding.object).zone == Zone::Hand {
                         // spellbench-public-reveal: hand card revealed by the card rules.
                         for observer in [PlayerId::P0, PlayerId::P1] {
                             state
-                                .reveal_distinct_hand_card(observer, player, binding.object)
+                                .reveal_distinct_hand_card_with_meaning_v3(
+                                    observer,
+                                    player,
+                                    binding.object,
+                                    crate::reveal_meaning_v3::RevealV3::Omit,
+                                )
                                 .expect("a successful selected-card move is publicly revealed");
+                        }
+                        if state.reveal_meaning_v3.enabled() {
+                            shown.push(binding.object);
                         }
                     }
                 }
+                state.note_public_hand_reveal_group_v3(
+                    player,
+                    shown,
+                    crate::reveal_meaning_v3::RevealV3::Present,
+                );
             }
             if revealed {
                 // A revealed partition's rest goes to the graveyard in the
