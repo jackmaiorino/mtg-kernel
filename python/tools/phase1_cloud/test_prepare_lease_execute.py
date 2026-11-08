@@ -50,6 +50,30 @@ def funded(**funds):
 
 
 class LiveFundingTests(unittest.TestCase):
+    def test_funding_age_is_checked_after_the_store_lock(self):
+        import external_guard
+        from lease_test_support import FakeClock
+
+        with tempfile.TemporaryDirectory() as temporary:
+            output = prepared_output(temporary)
+            snapshot = snapshot_path(temporary)
+            api = funded()
+            clock = FakeClock(NOW)
+            enter = external_guard.StoreLock.__enter__
+
+            def delayed(lock):
+                acquired = enter(lock)
+                clock.advance(pl.FUNDING_MAX_AGE_SECONDS + 1)
+                return acquired
+
+            with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}), \
+                    patch.object(external_guard.StoreLock, '__enter__', delayed):
+                with self.assertRaisesRegex(ValueError, 'funding observation older than 120 s'):
+                    pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api,
+                                      now=NOW, release={'clock': clock, 'sleep': clock.sleep})
+            api.create.assert_not_called()
+            self.assertFalse((output / 'create-attempt.json').exists())
+
     def execute(self, api, release=None):
         temporary = self.enterContext(tempfile.TemporaryDirectory())
         output = prepared_output(temporary)
@@ -437,9 +461,9 @@ class ResponsibilityTests(unittest.TestCase):
             self.assertEqual(read(output / 'known-pods' / 'pod123.json')['role'], 'receipt')
             self.assertIn('requires rechecking', read(output / 'create-handoff-recovered.json')['state'])
 
-    def test_handoff_recovered_after_a_delete_attempt_claims_ownership_not_liveness(self):
-        # #388 item 1: the POST and census handoffs fail, the cleanup sends a DELETE (which fails here),
-        # and only the following GET hands the ID off durably. The record must not call the Pod alive.
+    def test_cleanup_claim_prevents_handoff_after_a_delete_attempt(self):
+        # The POST and first census handoffs fail. Once cleanup claims release,
+        # a successful GET cannot hand a Pod with an in-flight DELETE back to the guard.
         from lease_test_support import FakeClock, World, no_network
         import external_guard
         with tempfile.TemporaryDirectory() as temporary:
@@ -456,16 +480,16 @@ class ResponsibilityTests(unittest.TestCase):
                 if not world.deletes:
                     raise OSError('transient')
                 return real(folder, pod_id, role, epoch, **options)
-            with no_network(), patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}),                     patch.object(external_guard, 'handoff_in', side_effect=handoff):
-                result = pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api,
-                                           now=NOW, release=release)
-            self.assertEqual(result['id'], 'pod123')
-            self.assertEqual(world.deletes, ['pod123'])            # the DELETE was sent before the handoff
-            self.assertEqual(calls[-1], ['pod123'])                 # the persisting handoff came after it
-            self.assertEqual(read(output / 'created-pod.json')['id'], 'pod123')
-            state = read(output / 'create-handoff-recovered.json')['state']
-            self.assertNotIn('alive', state)
-            self.assertIn('requires rechecking', state)
+            with no_network(), patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}), \
+                    patch.object(external_guard, 'handoff_in', side_effect=handoff):
+                with self.assertRaisesRegex(RuntimeError, 'deleted and verified absent'):
+                    pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api,
+                                      now=NOW, release=release)
+            self.assertGreaterEqual(world.deletes.count('pod123'), 2)
+            self.assertIn(['pod123'], calls)  # the GET attempted a handoff after the first DELETE
+            self.assertNotIn('pod123', world.pods)
+            self.assertFalse((output / 'created-pod.json').exists())
+            self.assertEqual(read(output / 'release-claims/pod123.json')['id'], 'pod123')
 
     def test_failed_handoff_and_failed_release_fail_loudly(self):
         from lease_test_support import World

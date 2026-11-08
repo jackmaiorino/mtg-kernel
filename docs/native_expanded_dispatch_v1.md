@@ -85,12 +85,14 @@ walk as `admission` (`native-expanded-storage-admission/v1`: `logical_bytes`,
 (other blocks in flight), optional absolute `shared_walk`). While the walk
 completed at most 900 s ago the dispatcher checks the cap, reserve and
 projections on `logical_bytes` plus `finished_since` times
-`projected_additional_bytes`, without walking; an older one means a walk as
-before. With `storage.emergency`, the first emergency sample is that bound plus
+`projected_additional_bytes`, without walking. A stale admission with a shared
+walk uses a fresh published bound or refuses before spawn. A dispatcher without
+a shared walk can still measure its storage directly. With `storage.emergency`, the first emergency sample is that bound plus
 `in_flight` times `projected_additional_bytes`, and no sample waits for a walk
 (the monitor loop records a native child's end at once). With `shared_walk`, the record the
 driver's one background walker publishes, each sample reads the newest walk, plus
-each block in flight at its start at `projected_additional_bytes`; the attempt
+`projected_additional_bytes` for each block that was in flight at its start or admitted later. The
+driver also uses this walk for admissions and starts the walker when resuming in-flight blocks. The attempt
 walks for itself (in the background, during its native part) only when no walk
 completed for 3,600 s. Without it, the attempt walks in the background at most
 every 600 s, during its native part. The attempt's own outputs (its native tree
@@ -417,9 +419,27 @@ plus 30 s old (two provider timeouts), have no `latched`, `release_epoch` or
 `stop-request.json`, report `provider_ok` and `allow_new_dispatch`, and leave
 the work (`wall_seconds`, or a smaller `lease_work_seconds`) before
 `deadline_epoch - recovery_seconds`, when the guard latches `deadline`. The
-public entry and the reserved launch both check. desktop and computehost are
-refused on Linux, `runpod` on Windows. The dispatcher never rents compute and
+public entry and the reserved launch both check. `desktop` is refused on
+Linux, and `runpod` on Windows. The dispatcher never rents compute and
 does not write `progress.json`; its caller keeps the guard fed.
+
+An owned x86-64 Linux machine can use `computehost` when the request includes
+`"owned_linux_computehost": "EXACT_HOSTNAME"`, matching `platform.node()`.
+The same field must appear in the throughput choice and its pinned computehost
+qualification requests. Missing or different names are refused. This route
+also refuses `RUNPOD_POD_ID` or `MTG_LEASE_GUARD_DIR`; it cannot replace a pod's
+lease guard. Runtime/library pins, CPU affinity, storage, reservation and
+throughput requirements still apply. Other campaign drivers must explicitly
+forward this field before using this route.
+
+For WSL, guest affinity describes virtual CPUs. It does not reserve Windows
+CPUs or account for physical VHD growth. The bounded S comparison's
+`scripts/experiments/s_transformer_parallel_v1/qualify_wsl.py` holds an exclusive
+reservation on idle Haley, records the WSL VM's Windows process identity,
+checks physical disk/RAM limits, and restores the original absent `.wslconfig`
+after the owned distro and VM drain. It refuses an already running WSL guest.
+That engineering result does not replace native W5 full-layout qualification
+on the intended production machine.
 
 `nine_deck_campaign_v1.py` on `runpod` checks before every block attempt that
 the guard leaves 1.25x the longest block measured on runpod (else
@@ -431,8 +451,9 @@ next lease resumes there; a running block is never stopped for this. The driver
 atomically rewrites `<guard>/progress.json` every min(15 s,
 `work_idle_seconds`/3) and after each block: `last_productive_epoch` is the
 last block completion (else driver start), `last_activity_epoch` advances while
-native CPU time grows or the driver itself dispatches, archives or finishes a
-block, `queued_work` equals `native_alive`, and the final record is
+native CPU time grows, archive shard bytes advance, or the driver dispatches or finishes a
+block. After a native child exits, the observer discounts supervised CPU for any interval
+overlapping a dispatcher's own storage walk. `queued_work` equals `native_alive`, and the final record is
 `finished: true`, so the guard releases the pod after `recovery_seconds` (or
 after 90 s as `controller_lost` if the driver dies). Keep campaign state,
 checkpoints, cold and retained roots on the network volume.
