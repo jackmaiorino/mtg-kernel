@@ -462,7 +462,8 @@ Stages, one PR each (S1 is one PR per wave):
 S2 is `src/eternal_bo3_v1.rs`. `EternalRegisteredDeckV1` admits a deck's 75 for its format
 (`EternalFormatV1`: at least 60 mainboard cards, at most 15 sideboard cards, four copies of a
 nonbasic card across both zones, every card Full, a named companion in the sideboard with its
-condition met). Each game's configuration must hold the same 75 within the same bounds, and
+condition met). The mainboard also follows the custom-deck session's 10,000-card input limit.
+Each game's configuration must hold the same 75 within the same bounds, and
 game one uses the registered deck. The game builder gives the session the mainboard and the
 companion only while it is still in the sideboard and the mainboard meets its condition;
 otherwise it is an ordinary sideboard card that game. The rest of the sideboard is the game's

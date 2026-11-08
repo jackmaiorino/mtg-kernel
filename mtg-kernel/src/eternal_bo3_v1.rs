@@ -16,7 +16,7 @@ use crate::bo3_match::{
 };
 use crate::card_def::{card_id_by_name, Supertype, CARD_DEFS};
 use crate::ids::PlayerId;
-use crate::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
+use crate::limited_session_v1::{CustomCardCountV1, CustomDeckV1, MAX_CUSTOM_DECK_CARDS_V1};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
@@ -138,8 +138,8 @@ impl EternalRegisteredDeckV1 {
         if deck_id.is_empty() {
             return Err(EternalBo3ErrorV1::EmptyDeckId);
         }
+        check_bounds(format, mainboard.len(), sideboard.len())?;
         let registered = EternalConfigurationV1::new_v1(mainboard, sideboard);
-        check_bounds(format, &registered)?;
         for &id in registered.mainboard.iter().chain(&registered.sideboard) {
             let card = CARD_DEFS
                 .get(usize::from(id))
@@ -160,7 +160,11 @@ impl EternalRegisteredDeckV1 {
             }
         }
         if let Some(companion) = companion {
-            let name = CARD_DEFS[usize::from(companion)].name.to_owned();
+            let name = CARD_DEFS
+                .get(usize::from(companion))
+                .ok_or(EternalBo3ErrorV1::UnknownCardId { card_id: companion })?
+                .name
+                .to_owned();
             if !registered.sideboard.contains(&companion) {
                 return Err(EternalBo3ErrorV1::CompanionNotInSideboard { name });
             }
@@ -190,6 +194,7 @@ impl EternalRegisteredDeckV1 {
         sideboard: &[CustomCardCountV1],
         companion: Option<&str>,
     ) -> Result<Self, EternalBo3ErrorV1> {
+        check_bounds(format, row_count(mainboard), row_count(sideboard))?;
         let companion = companion
             .map(|name| {
                 card_id_by_name(name).ok_or_else(|| EternalBo3ErrorV1::UnknownCard {
@@ -235,7 +240,11 @@ impl EternalRegisteredDeckV1 {
                 deck_id: self.deck_id.clone(),
             });
         }
-        check_bounds(self.format, configuration)?;
+        check_bounds(
+            self.format,
+            configuration.mainboard.len(),
+            configuration.sideboard.len(),
+        )?;
         if game_index == 1 && configuration != &self.registered {
             return Err(EternalBo3ErrorV1::GameOneSideboarded {
                 deck_id: self.deck_id.clone(),
@@ -249,7 +258,12 @@ impl EternalRegisteredDeckV1 {
     /// mainboard meets its condition (702.139a). Otherwise the companion is
     /// an ordinary sideboard card for this game. The sideboard's other cards
     /// are outside the game.
-    pub fn game_deck_v1(&self, configuration: &EternalConfigurationV1) -> EternalGameDeckV1 {
+    pub fn game_deck_v1(
+        &self,
+        game_index: u8,
+        configuration: &EternalConfigurationV1,
+    ) -> Result<EternalGameDeckV1, EternalBo3ErrorV1> {
+        self.admit_configuration_v1(game_index, configuration)?;
         let companion = self.companion.filter(|&companion| {
             configuration.sideboard.contains(&companion)
                 && crate::eternal_lurrus_v1::companion_condition_met(
@@ -265,13 +279,13 @@ impl EternalRegisteredDeckV1 {
                 .expect("the companion is in the sideboard");
             outside_the_game.remove(position);
         }
-        EternalGameDeckV1 {
+        Ok(EternalGameDeckV1 {
             deck: CustomDeckV1 {
                 cards: rows_from_ids(&configuration.mainboard),
                 companion: companion.map(|id| CARD_DEFS[usize::from(id)].name.to_owned()),
             },
             outside_the_game,
-        }
+        })
     }
 }
 
@@ -364,11 +378,10 @@ impl EternalBestOfThreeMatchV1 {
     ) -> Result<EternalPreparedGameV1, EternalBo3ErrorV1> {
         let mut next = self.state.clone();
         let start = next.choose_play_draw_v1(chooser, choice)?;
-        for (deck, configuration) in self.decks.iter().zip(&configurations) {
-            deck.admit_configuration_v1(start.game_index, configuration)?;
-        }
-        let game_decks =
-            [0, 1].map(|player| self.decks[player].game_deck_v1(&configurations[player]));
+        let game_decks = [
+            self.decks[0].game_deck_v1(start.game_index, &configurations[0])?,
+            self.decks[1].game_deck_v1(start.game_index, &configurations[1])?,
+        ];
         self.state = next;
         Ok(EternalPreparedGameV1 {
             start,
@@ -442,6 +455,7 @@ pub enum EternalBo3ErrorV1 {
     ZeroCopies { name: String },
     UnsupportedCard { name: String },
     MainboardTooSmall { actual: usize, minimum: usize },
+    MainboardTooLarge { actual: usize, maximum: usize },
     SideboardTooLarge { actual: usize, maximum: usize },
     CopyLimitExceeded { name: String, count: usize },
     CompanionNotInSideboard { name: String },
@@ -471,6 +485,12 @@ impl fmt::Display for EternalBo3ErrorV1 {
             }
             Self::MainboardTooSmall { actual, minimum } => {
                 write!(f, "the mainboard has {actual} cards, fewer than {minimum}")
+            }
+            Self::MainboardTooLarge { actual, maximum } => {
+                write!(
+                    f,
+                    "the mainboard has {actual} cards, above the {maximum}-card session limit"
+                )
             }
             Self::SideboardTooLarge { actual, maximum } => {
                 write!(f, "the sideboard has {actual} cards, more than {maximum}")
@@ -505,21 +525,34 @@ impl Error for EternalBo3ErrorV1 {}
 
 fn check_bounds(
     format: EternalFormatV1,
-    configuration: &EternalConfigurationV1,
+    mainboard: usize,
+    sideboard: usize,
 ) -> Result<(), EternalBo3ErrorV1> {
-    if configuration.mainboard.len() < format.minimum_mainboard() {
+    if mainboard < format.minimum_mainboard() {
         return Err(EternalBo3ErrorV1::MainboardTooSmall {
-            actual: configuration.mainboard.len(),
+            actual: mainboard,
             minimum: format.minimum_mainboard(),
         });
     }
-    if configuration.sideboard.len() > format.maximum_sideboard() {
+    if mainboard > MAX_CUSTOM_DECK_CARDS_V1 {
+        return Err(EternalBo3ErrorV1::MainboardTooLarge {
+            actual: mainboard,
+            maximum: MAX_CUSTOM_DECK_CARDS_V1,
+        });
+    }
+    if sideboard > format.maximum_sideboard() {
         return Err(EternalBo3ErrorV1::SideboardTooLarge {
-            actual: configuration.sideboard.len(),
+            actual: sideboard,
             maximum: format.maximum_sideboard(),
         });
     }
     Ok(())
+}
+
+fn row_count(rows: &[CustomCardCountV1]) -> usize {
+    rows.iter().fold(0usize, |total, row| {
+        total.saturating_add(row.count as usize)
+    })
 }
 
 fn resolve_rows(rows: &[CustomCardCountV1]) -> Result<Vec<u16>, EternalBo3ErrorV1> {

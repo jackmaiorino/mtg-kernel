@@ -247,6 +247,16 @@ fn registration_enforces_format_bounds_copies_support_and_companion() {
         ),
         Err(EternalBo3ErrorV1::NotACompanion { .. })
     ));
+    assert_eq!(
+        EternalRegisteredDeckV1::new_v1(
+            EternalFormatV1::Vintage,
+            "bad companion id",
+            main.clone(),
+            side.clone(),
+            Some(u16::MAX),
+        ),
+        Err(EternalBo3ErrorV1::UnknownCardId { card_id: u16::MAX })
+    );
     let mut three_drop = main.clone();
     three_drop.retain(|&card| card != id("Daze"));
     three_drop.extend(ids(&[("Daze", 3), ("Brazen Borrower", 1)]));
@@ -292,6 +302,26 @@ fn registration_enforces_format_bounds_copies_support_and_companion() {
         ),
         Err(EternalBo3ErrorV1::UnknownCard { .. })
     ));
+    assert!(matches!(
+        EternalRegisteredDeckV1::from_rows_v1(
+            EternalFormatV1::Legacy,
+            "oversized mainboard",
+            &rows(&[("Island", u32::MAX)]),
+            &[],
+            None,
+        ),
+        Err(EternalBo3ErrorV1::MainboardTooLarge { .. })
+    ));
+    assert!(matches!(
+        EternalRegisteredDeckV1::from_rows_v1(
+            EternalFormatV1::Legacy,
+            "oversized sideboard",
+            &rows(&[("Island", 60)]),
+            &rows(&[("Island", u32::MAX)]),
+            None,
+        ),
+        Err(EternalBo3ErrorV1::SideboardTooLarge { .. })
+    ));
 }
 
 #[test]
@@ -309,7 +339,9 @@ fn game_builder_uses_the_companion_only_while_it_qualifies() {
 
     // Registered: Lurrus is the companion and the other 14 cards are
     // outside the game.
-    let game = deck.game_deck_v1(deck.registered_configuration());
+    let game = deck
+        .game_deck_v1(1, deck.registered_configuration())
+        .unwrap();
     assert_eq!(
         game.deck.companion.as_deref(),
         Some("Lurrus of the Dream-Den")
@@ -330,14 +362,14 @@ fn game_builder_uses_the_companion_only_while_it_qualifies() {
     };
     let murktide = swap("Daze", "Murktide Regent");
     deck.admit_configuration_v1(2, &murktide).unwrap();
-    let game = deck.game_deck_v1(&murktide);
+    let game = deck.game_deck_v1(2, &murktide).unwrap();
     assert_eq!(game.deck.companion, None);
     assert_eq!(game.outside_the_game.len(), 15);
     assert!(game.outside_the_game.contains(&lurrus));
 
     // A qualifying exchange keeps the companion.
     let pyroblast = swap("Daze", "Pyroblast");
-    let game = deck.game_deck_v1(&pyroblast);
+    let game = deck.game_deck_v1(2, &pyroblast).unwrap();
     assert_eq!(
         game.deck.companion.as_deref(),
         Some("Lurrus of the Dream-Den")
@@ -346,7 +378,12 @@ fn game_builder_uses_the_companion_only_while_it_qualifies() {
 
     // Lurrus brought into the mainboard is not a companion.
     let in_main = swap("Daze", "Lurrus of the Dream-Den");
-    let game = deck.game_deck_v1(&in_main);
+    let game = deck.game_deck_v1(2, &in_main).unwrap();
+    let invalid = EternalConfigurationV1::new_v1(vec![u16::MAX; 60], Vec::new());
+    assert!(matches!(
+        deck.game_deck_v1(2, &invalid),
+        Err(EternalBo3ErrorV1::RegisteredCardsChanged { .. })
+    ));
     assert_eq!(game.deck.companion, None);
     assert!(game
         .deck
