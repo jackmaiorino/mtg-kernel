@@ -396,6 +396,7 @@ pub(crate) enum LimitedAppendixV1 {
     Lathril,
     Electroduplicate,
     Curator,
+    Greatwurm,
 }
 
 impl LimitedAppendixV1 {

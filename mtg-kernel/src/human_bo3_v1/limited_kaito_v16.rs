@@ -83,6 +83,8 @@ pub(crate) fn project_limited_kaito_v16(
                 "mtg-kernel-limited-electroduplicate-decision/v1"
             } else if observation.curator.is_some() {
                 "mtg-kernel-limited-curator-decision/v1"
+            } else if observation.greatwurm.is_some() {
+                "mtg-kernel-limited-greatwurm-decision/v1"
             } else {
                 "mtg-kernel-limited-kaito-decision/v16"
             }

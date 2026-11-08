@@ -67,7 +67,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     electroduplicate: Option<super::electroduplicate_consumer_v1::HumanFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    curator: Option<super::curator_consumer_v1::HumanFactsV1>
+    curator: Option<super::curator_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    greatwurm: Option<super::greatwurm_consumer_v1::HumanFactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -119,7 +121,9 @@ record!(HumanKaitoCandidateV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     electroduplicate_action: Option<crate::electroduplicate_consumer_v1::ActionV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    curator_action: Option<crate::curator_consumer_v1::ActionV1>
+    curator_action: Option<crate::curator_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    greatwurm_action: Option<crate::greatwurm_consumer_v1::ActionV1>
 });
 record!(HumanArtistFactsV1 {
     meaning: crate::rules_meaning_artist_v64::MeaningV64,
@@ -341,6 +345,9 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
+    if let Some(label) = super::greatwurm_consumer_v1::label(obs.greatwurm.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
     if let Some(label) = super::curator_consumer_v1::label(obs.curator.as_ref(), a, h)? {
         return Ok(Some(label));
     }
@@ -852,6 +859,9 @@ pub(super) fn project_with_handles(
     let curator = obs.curator.as_ref()
         .map(|facts| super::curator_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
+    let greatwurm = obs.greatwurm.as_ref()
+        .map(|facts| super::greatwurm_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
@@ -875,6 +885,7 @@ pub(super) fn project_with_handles(
                 lathril_action: r.lathril_action,
                 electroduplicate_action: r.electroduplicate_action,
                 curator_action: r.curator_action,
+                greatwurm_action: r.greatwurm_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -1149,6 +1160,8 @@ pub(super) fn project_with_handles(
                 "mtg-kernel-human-electroduplicate-decision/v1"
             } else if curator.is_some() {
                 "mtg-kernel-human-curator-decision/v1"
+            } else if greatwurm.is_some() {
+                "mtg-kernel-human-greatwurm-decision/v1"
             } else {
                 "mtg-kernel-human-kaito-decision/v75"
             }
@@ -1184,6 +1197,7 @@ pub(super) fn project_with_handles(
                 lathril,
                 electroduplicate,
                 curator,
+                greatwurm,
             },
             actions,
             action_meanings,

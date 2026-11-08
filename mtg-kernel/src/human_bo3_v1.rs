@@ -479,6 +479,7 @@ pub use limited_kaito_v16::LimitedKaitoDecisionV16;
 mod aberration_consumer_v1;
 mod electroduplicate_consumer_v1;
 mod curator_consumer_v1;
+mod greatwurm_consumer_v1;
 mod drakuseth_consumer_v1;
 mod embercleave_consumer_v1;
 mod leyline_axe_consumer_v1;

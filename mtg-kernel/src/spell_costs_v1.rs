@@ -1598,7 +1598,7 @@ impl PreparedSpellPaymentV1 {
         self.additional.apply(state, player, source);
         self.commit_optional(state);
         if let Some(plan) = self.greatwurm {
-            plan.apply(state);
+            plan.apply_committed(state);
         }
         spent
     }

@@ -61,6 +61,8 @@ pub struct CandidateMeaningV75 {
     pub electroduplicate_action: Option<crate::electroduplicate_consumer_v1::ActionV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub curator_action: Option<crate::curator_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub greatwurm_action: Option<crate::greatwurm_consumer_v1::ActionV1>,
     #[serde(deserialize_with = "required_optional")]
     pub drake_activation: Option<crate::next_five_observation_v59::NextFiveActivationV59>,
     /// Complete current programs at this genuine decision, in native stage and
@@ -187,6 +189,10 @@ pub fn producer_sha256() -> String {
             include_str!("curator_public_v1.rs"),
             include_str!("curator_receipts_v1.rs"),
             include_str!("human_bo3_v1/curator_consumer_v1.rs"),
+            include_str!("greatwurm_consumer_v1.rs"),
+            include_str!("greatwurm_public_v1.rs"),
+            include_str!("greatwurm_receipts_v1.rs"),
+            include_str!("human_bo3_v1/greatwurm_consumer_v1.rs"),
             include_str!("drakuseth_consumer_v1.rs"),
             include_str!("drakuseth_consumer_v1/damage.rs"),
             include_str!("human_bo3_v1/drakuseth_consumer_v1.rs"),
@@ -809,6 +815,8 @@ fn project_authenticated_parts_v75(
                 .map_err(error)?,
                 curator_action: crate::curator_consumer_v1::action(observation.curator.as_ref(), &action)
                     .map_err(error)?,
+                greatwurm_action: crate::greatwurm_consumer_v1::action(observation.greatwurm.as_ref(), &action)
+                    .map_err(error)?,
                 drakuseth_target: crate::drakuseth_consumer_v1::target_action(
                     observation.drakuseth.as_ref(),
                     &action,
@@ -985,6 +993,8 @@ fn schemas(observation: &KaitoObservationV75) -> (&'static str, &'static str) {
         )
     } else if observation.curator.is_some() {
         (crate::curator_consumer_v1::CANDIDATES_SCHEMA, crate::curator_consumer_v1::ACTION_SCHEMA)
+    } else if observation.greatwurm.is_some() {
+        (crate::greatwurm_consumer_v1::CANDIDATES_SCHEMA, crate::greatwurm_consumer_v1::ACTION_SCHEMA)
     } else {
         (SCHEMA, ANNOTATION_SCHEMA)
     }
@@ -1007,6 +1017,11 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
     let authorized = authorized_references(&value.observation)?;
     if let Some(facts) = &value.observation.curator {
         crate::curator_consumer_v1::validate_candidate_order(
+            facts, value.candidates.iter().map(|row| &row.action),
+        ).map_err(error)?;
+    }
+    if let Some(facts) = &value.observation.greatwurm {
+        crate::greatwurm_consumer_v1::validate_candidate_order(
             facts, value.candidates.iter().map(|row| &row.action),
         ).map_err(error)?;
     }
@@ -1153,6 +1168,9 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                 .map_err(error)?
             || row.curator_action
                 != crate::curator_consumer_v1::action(value.observation.curator.as_ref(), &row.action)
+                    .map_err(error)?
+            || row.greatwurm_action
+                != crate::greatwurm_consumer_v1::action(value.observation.greatwurm.as_ref(), &row.action)
                     .map_err(error)?
             || row.chosen_type_answer
                 != chosen_type::answer(value.observation.chosen_type.as_ref(), &row.action)

@@ -18,7 +18,7 @@ pub struct PaidV1 {
     pub units: [UnitV1; 6],
     pub original_counts: [u32; 6],
 }
-pub(super) fn allowed(state: &GameState, id: ObjectId, player: PlayerId) -> bool {
+pub(crate) fn allowed(state: &GameState, id: ObjectId, player: PlayerId) -> bool {
     state.objects.try_get(id).is_some_and(|o| {
         o.zone == Zone::Graveyard
             && o.owner == player
@@ -184,6 +184,27 @@ impl PaymentV1 {
             native::remove_unit(state, unit);
         }
     }
+
+    pub(super) fn apply_committed(&self, state: &mut GameState) {
+        if !state.greatwurm_commit_receipts_v1 {
+            self.apply(state);
+            return;
+        }
+        let spell = state.stack.last().expect("prepared Greatwurm source placeholder");
+        let id = spell.v4.stack_item_id;
+        let units = self.units.map(|unit| {
+            let object = unit.permanent.object;
+            let live = state.objects.get(object);
+            let owner = live.owner;
+            let controller = live.controller;
+            let public_printing = crate::rl::projected_card_def(state, object, live.zone_change_count);
+            let before = native::count(state, object, unit.kind).expect("prepared counter debit");
+            native::remove_unit(state, unit);
+            let after = native::count(state, object, unit.kind).expect("actual counter debit");
+            crate::greatwurm_receipts_v1::DebitV1 { unit, owner, controller, public_printing, before, after }
+        });
+        crate::greatwurm_receipts_v1::record_debit(state, id, units);
+    }
 }
 pub(super) fn prepare(state: &GameState, p: &PendingCast) -> Option<PaymentV1> {
     let c = p.greatwurm_v1.as_ref()?;
@@ -312,6 +333,30 @@ pub(crate) fn bait_cost_balance(
     {
         return Ok(None);
     }
+    let paid = authenticated_paid(state, at)?;
+    let mut before = None;
+    let mut removed = 0_i32;
+    for (n, unit) in paid.units.iter().enumerate() {
+        if unit.kind == native::CounterKindV1::Bait
+            && unit.permanent.object == object
+            && unit.permanent.expected_zone_change_count == generation
+        {
+            before = Some(i32::try_from(paid.original_counts[n]).map_err(|_| "bait input width")?);
+            removed += 1;
+        }
+    }
+    before
+        .map(|before| {
+            let after = before
+                .checked_sub(removed)
+                .filter(|after| *after >= 0)
+                .ok_or("bait cost overspent original count")?;
+            Ok((before, after))
+        })
+        .transpose()
+}
+
+pub(crate) fn authenticated_paid(state: &GameState, at: usize) -> Result<&PaidV1, String> {
     let paid = validated_paid(state, at, None)?;
     let origin = paid
         .source
@@ -389,26 +434,7 @@ pub(crate) fn bait_cost_balance(
     {
         return Err("bait cost differs from actual finalized cast identity".into());
     }
-    let mut before = None;
-    let mut removed = 0_i32;
-    for (n, unit) in paid.units.iter().enumerate() {
-        if unit.kind == native::CounterKindV1::Bait
-            && unit.permanent.object == object
-            && unit.permanent.expected_zone_change_count == generation
-        {
-            before = Some(i32::try_from(paid.original_counts[n]).map_err(|_| "bait input width")?);
-            removed += 1;
-        }
-    }
-    before
-        .map(|before| {
-            let after = before
-                .checked_sub(removed)
-                .filter(|after| *after >= 0)
-                .ok_or("bait cost overspent original count")?;
-            Ok((before, after))
-        })
-        .transpose()
+    Ok(paid)
 }
 
 pub(super) fn validate_finalized(

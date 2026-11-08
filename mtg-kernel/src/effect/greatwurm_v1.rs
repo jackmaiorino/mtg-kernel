@@ -331,7 +331,7 @@ pub(crate) fn bind_wave(state: &mut GameState, log_start: usize) -> Result<(), S
     }
     Ok(())
 }
-fn capture(state: &GameState, index: u64) -> Result<&CaptureV1, String> {
+pub(crate) fn capture(state: &GameState, index: u64) -> Result<&CaptureV1, String> {
     let i = usize::try_from(index).map_err(|_| "capture width")?;
     let Some(event::CommittedEvent::GreatwurmCombatCaptureV1 { capture }) =
         state.engine.event_history.get(i)
@@ -488,6 +488,9 @@ pub(crate) fn waiting(state: &GameState, ctx: &ExecCtx) -> bool {
     })
 }
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
+    validate_item_lifetime(state, item, true)
+}
+fn validate_item_lifetime(state: &GameState, item: &StackItem, require_live: bool) -> Result<(), String> {
     let op = item.inline_effect.as_ref().ok_or("combat root erased")?;
     validate_root(state, op, item.v4.ability_source_contract)?;
     let source = item
@@ -500,7 +503,7 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
         || item.v4.target_spec.is_some() || !item.targets.is_empty() || !item.v4.target_contracts.is_empty()
         || !item.discarded.is_empty() || !item.v4.paid_cost_refs.is_empty() || item.v4.optional_additional_cost_paid.is_some()
         || item.v4.hidden_ability_source.is_some() || item.v4.cauldron_grant.0.is_some()
-        || state.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::GreatwurmFinishedV1{stack_item_id}if *stack_item_id==item.v4.stack_item_id)){return Err("combat row/controller/recipe changed or consumed".into());}
+        || require_live && state.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::GreatwurmFinishedV1{stack_item_id}if *stack_item_id==item.v4.stack_item_id)){return Err("combat row/controller/recipe changed or consumed".into());}
     Ok(())
 }
 pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), String> {
@@ -525,6 +528,16 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
 }
 pub(crate) fn validate_published(state: &GameState, item: &StackItem) -> Result<(), String> {
     validate_item(state, item)?;
+    validate_publication_row(state, item)
+}
+pub(crate) fn validate_archived(state: &GameState, item: &StackItem) -> Result<(), String> {
+    if item.v4.stack_item_id == StackItemId::default() {
+        return Err("Greatwurm archived trigger lacks an occurrence".into());
+    }
+    validate_item_lifetime(state, item, false)?;
+    validate_publication_row(state, item)
+}
+fn validate_publication_row(state: &GameState, item: &StackItem) -> Result<(), String> {
     let rows = state
         .engine
         .event_history
@@ -565,11 +578,14 @@ pub(super) fn execute(
     };
     let c = capture(state, *capture_history_index)?;
     let (creature, amount) = (c.creature, c.amount);
-    if state.objects.try_get(creature.source).is_some_and(|o| {
+    let result = if state.objects.try_get(creature.source).is_some_and(|o| {
         o.zone == Zone::Battlefield && o.zone_change_count == creature.zone_change_count
     }) {
-        let controller = state.objects.get(creature.source).controller;
+        let original = state.objects.get(creature.source);
+        let controller = original.controller;
+        let before = original.counters.plus1_plus1;
         let mut staged = state.clone();
+        let start = staged.engine.event_history.len();
         let mut counters = crate::standard_creatures_v1::CounterTransferV1::default();
         counters.counters.plus1_plus1 = amount;
         crate::standard_creatures_v1::place_counters_checked_v1(
@@ -580,7 +596,20 @@ pub(super) fn execute(
         )
         .ok_or("combat counter placement overflow")?;
         crate::engine::validate_battlefield_pt(&staged).map_err(|_| "combat PT envelope")?;
+        let result = if state.greatwurm_commit_receipts_v1 {
+            Some(crate::greatwurm_receipts_v1::capture_placement(
+                &staged, creature, controller, start, before,
+            )?)
+        } else {
+            None
+        };
         *state = staged;
+        result
+    } else {
+        Some(crate::greatwurm_receipts_v1::EndV1::OriginalCreatureGone)
+    };
+    if let Some(result) = result {
+        crate::greatwurm_receipts_v1::record_end(state, proof.owner.item.v4.stack_item_id, result);
     }
     state
         .engine
@@ -785,4 +814,4 @@ pub(crate) fn definition(id: u16) -> bool {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "greatwurm_v1_tests.rs"]
-mod tests;
+pub(crate) mod tests;

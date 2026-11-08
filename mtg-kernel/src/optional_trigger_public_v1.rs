@@ -316,6 +316,7 @@ pub(crate) enum ConsumerV1 {
     KaitoAberrationV1,
     KaitoLathrilV1,
     KaitoCuratorV1,
+    KaitoGreatwurmV1,
 }
 impl ConsumerV1 {
     pub(crate) fn for_kaito(appendix: crate::policy_surface_v5::LimitedAppendixV1) -> Self {
@@ -329,6 +330,7 @@ impl ConsumerV1 {
             LimitedAppendixV1::Aberration => Self::KaitoAberrationV1,
             LimitedAppendixV1::Lathril => Self::KaitoLathrilV1,
             LimitedAppendixV1::Curator => Self::KaitoCuratorV1,
+            LimitedAppendixV1::Greatwurm => Self::KaitoGreatwurmV1,
             _ => Self::KaitoV75,
         }
     }
@@ -344,6 +346,7 @@ impl ConsumerV1 {
             | Self::KaitoProgenitusV1
             | Self::KaitoAberrationV1
             | Self::KaitoCuratorV1
+            | Self::KaitoGreatwurmV1
             | Self::KaitoLathrilV1 => {
                 crate::effect::require_no_copied_token_abilities_kaito_v75(state, false)
             }
@@ -377,7 +380,9 @@ pub(crate) fn validate_state_for_consumer(
     } else {
         crate::progenitus_v1::refuse_legacy(state)?;
     }
-    crate::effect::greatwurm_v1::refuse_legacy(state)?;
+    if !matches!(consumer, ConsumerV1::KaitoGreatwurmV1) {
+        crate::effect::greatwurm_v1::refuse_legacy(state)?;
+    }
     crate::effect::kykar_v1::refuse_legacy(state)?;
     crate::effect::loot_v1::refuse_legacy(state)?;
     consumer.validate_copy_prefix(state)?;
