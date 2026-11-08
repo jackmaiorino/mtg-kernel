@@ -38,4 +38,6 @@ checkpoint, seed, statistical rule or campaign is modified. Speed measurements
 on this host do not establish speed on the Linux nodes or playing strength.
 
 Thirty native checks passed, including full gradient bits, warmed Adam state,
-real-game training and resume. Timing qualification is pending.
+real-game training and resume. The matched qualification passed with 1.337x
+native throughput and identical full Adam states. See the
+[result and scope](../results/s_transformer_parallel_20261108.md).
