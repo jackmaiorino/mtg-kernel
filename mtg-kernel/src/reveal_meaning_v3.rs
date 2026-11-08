@@ -4,6 +4,9 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
 use serde_json::{json, Value};
 
+mod reducer;
+pub use reducer::RevealReducerV3;
+
 #[derive(Clone, Copy)]
 pub(crate) enum RevealV3 {
     Present,
