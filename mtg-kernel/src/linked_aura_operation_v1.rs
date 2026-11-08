@@ -924,7 +924,7 @@ fn replay_general_input_v1(
     restore_original: Option<&dyn Fn() -> Result<GameState, String>>,
 ) -> Result<(GameState, Option<Decision>), String> {
     let original: &GameState = match &input {
-        ReplayInputV1::Borrowed(original) => *original,
+        ReplayInputV1::Borrowed(original) => original,
         ReplayInputV1::DrakeValidation(original) => original,
     };
     if has_pending(original) || locally_owned(original) {
