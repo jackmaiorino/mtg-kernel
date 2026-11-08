@@ -384,3 +384,8 @@ required-features = ["limited-fdn-fixtures"]
 name = "kernel_limited_kykar_env_v1"
 path = "src/bin/kernel_limited_kykar_env_v1.rs"
 required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_fiend_artisan_env_v1"
+path = "src/bin/kernel_limited_fiend_artisan_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
