@@ -459,7 +459,22 @@ double references. `8ff554f6` fixes that call with an explicit closure; its
 guarded library/test-code and Mixed/Moon binary check passed (exit 0,
 524.917 seconds, children drained). Receipt SHA-256
 `5b5d525361102c78d5060663422f6e2e9fa3dd9b1f17191b14317499ea658041`.
-That source is now building its focused native fixtures. The successor also
+That source linked its native test binary in 2410.73 seconds, SHA-256
+`405bef3fcd4a06e955f3b950d72d34fe2790bf35360eea965f96bcb29eed71b4`.
+Mixed (2), Moon (2), native Tutelage (11), both paid native Progenitus cases
+(2), and the declared forty-card Tutelage consumer case passed. The other
+Tutelage consumer case failed on unsupported Elvish Mystic (26); `c7532767b`
+changes only that fixture to the admitted, distinct green Giant Growth,
+preserving the three repeat outcomes. Its rerun remains pending. Four Return
+cases passed before its paid three-printing case reached the 300-second group
+bound without a test result. Later filters were not run by that job. Receipt
+SHA-256 `dbf0e4f01bc4e0137427c9eb7f9ed30563c74a707dd69a671602bf000cb3f7bf`
+preserves the failure and timeout; the executable is retained for continuation.
+The twenty-eight-printing source passed pinned Rust 1.94.1 formatting on all
+48 staged Rust files; all 38 changed outputs were hash-verified and applied in
+`d22f63e8a`. Formatter receipt SHA-256
+`8533798fb3617568b94fdd9abda11819de164948b51a5c6db0bfb73fbb64ed98`.
+The successor also
 fixes reported Human type visibility
 and unused wrapper warnings and boxes Eternal printed programs without
 changing their serialized payload.
