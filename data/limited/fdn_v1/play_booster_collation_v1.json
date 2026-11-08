@@ -1,0 +1,361 @@
+{
+  "schema": "kernel_fdn_play_booster_collation/v1",
+  "product_source": "https://magic.wizards.com/en/news/feature/collecting-foundations",
+  "printing_source": "https://api.scryfall.com/cards/search?q=set%3Afdn+cn%3E%3D292+cn%3C%3D361&unique=prints&order=set",
+  "printing_source_sha256": "e24193274ed8fc0e9399eb919349fb99e880f5a63d5af489f5478f09da70f77c",
+  "identity": "card names and printing annotations; no tokens or art cards",
+  "foil_rarity_model": "same weighted categories as nonfoil wildcard; foil rarity odds are not published",
+  "sheet_model": "uniform within category, distinct regular commons and uncommons; no physical sheet correlations",
+  "borderless": [
+    {
+      "name": "Sire of Seven Deaths",
+      "collector_number": "292",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Ajani's Pridemate",
+      "collector_number": "293",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Arahbo, the First Fang",
+      "collector_number": "294",
+      "rarity": "rare"
+    },
+    {
+      "name": "Celestial Armor",
+      "collector_number": "295",
+      "rarity": "rare"
+    },
+    {
+      "name": "Crystal Barricade",
+      "collector_number": "296",
+      "rarity": "rare"
+    },
+    {
+      "name": "Exemplar of Light",
+      "collector_number": "297",
+      "rarity": "rare"
+    },
+    {
+      "name": "Giada, Font of Hope",
+      "collector_number": "298",
+      "rarity": "rare"
+    },
+    {
+      "name": "Herald of Eternal Dawn",
+      "collector_number": "299",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Raise the Past",
+      "collector_number": "300",
+      "rarity": "rare"
+    },
+    {
+      "name": "Skyknight Squire",
+      "collector_number": "301",
+      "rarity": "rare"
+    },
+    {
+      "name": "Valkyrie's Call",
+      "collector_number": "302",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Youthful Valkyrie",
+      "collector_number": "303",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Archmage of Runes",
+      "collector_number": "304",
+      "rarity": "rare"
+    },
+    {
+      "name": "Curator of Destinies",
+      "collector_number": "305",
+      "rarity": "rare"
+    },
+    {
+      "name": "Drake Hatcher",
+      "collector_number": "306",
+      "rarity": "rare"
+    },
+    {
+      "name": "High Fae Trickster",
+      "collector_number": "307",
+      "rarity": "rare"
+    },
+    {
+      "name": "Homunculus Horde",
+      "collector_number": "308",
+      "rarity": "rare"
+    },
+    {
+      "name": "Kiora, the Rising Tide",
+      "collector_number": "309",
+      "rarity": "rare"
+    },
+    {
+      "name": "Lunar Insight",
+      "collector_number": "310",
+      "rarity": "rare"
+    },
+    {
+      "name": "An Offer You Can't Refuse",
+      "collector_number": "311",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Omniscience",
+      "collector_number": "312",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Refute",
+      "collector_number": "313",
+      "rarity": "common"
+    },
+    {
+      "name": "Sphinx of Forgotten Lore",
+      "collector_number": "314",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Think Twice",
+      "collector_number": "315",
+      "rarity": "common"
+    },
+    {
+      "name": "Abyssal Harvester",
+      "collector_number": "316",
+      "rarity": "rare"
+    },
+    {
+      "name": "Blasphemous Edict",
+      "collector_number": "317",
+      "rarity": "rare"
+    },
+    {
+      "name": "Bloodthirsty Conqueror",
+      "collector_number": "318",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Hero's Downfall",
+      "collector_number": "319",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "High-Society Hunter",
+      "collector_number": "320",
+      "rarity": "rare"
+    },
+    {
+      "name": "Nine-Lives Familiar",
+      "collector_number": "321",
+      "rarity": "rare"
+    },
+    {
+      "name": "Phyrexian Arena",
+      "collector_number": "322",
+      "rarity": "rare"
+    },
+    {
+      "name": "Rise of the Dark Realms",
+      "collector_number": "323",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Tinybones, Bauble Burglar",
+      "collector_number": "324",
+      "rarity": "rare"
+    },
+    {
+      "name": "Vengeful Bloodwitch",
+      "collector_number": "325",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Zul Ashur, Lich Lord",
+      "collector_number": "326",
+      "rarity": "rare"
+    },
+    {
+      "name": "Abrade",
+      "collector_number": "327",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Electroduplicate",
+      "collector_number": "328",
+      "rarity": "rare"
+    },
+    {
+      "name": "Etali, Primal Storm",
+      "collector_number": "329",
+      "rarity": "rare"
+    },
+    {
+      "name": "Kellan, Planar Trailblazer",
+      "collector_number": "330",
+      "rarity": "rare"
+    },
+    {
+      "name": "Rite of the Dragoncaller",
+      "collector_number": "331",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Searslicer Goblin",
+      "collector_number": "332",
+      "rarity": "rare"
+    },
+    {
+      "name": "Twinflame Tyrant",
+      "collector_number": "333",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Genesis Wave",
+      "collector_number": "334",
+      "rarity": "rare"
+    },
+    {
+      "name": "Ghalta, Primal Hunger",
+      "collector_number": "335",
+      "rarity": "rare"
+    },
+    {
+      "name": "Loot, Exuberant Explorer",
+      "collector_number": "336",
+      "rarity": "rare"
+    },
+    {
+      "name": "Mossborn Hydra",
+      "collector_number": "337",
+      "rarity": "rare"
+    },
+    {
+      "name": "Preposterous Proportions",
+      "collector_number": "338",
+      "rarity": "rare"
+    },
+    {
+      "name": "Quilled Greatwurm",
+      "collector_number": "339",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Reclamation Sage",
+      "collector_number": "340",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Spinner of Souls",
+      "collector_number": "341",
+      "rarity": "rare"
+    },
+    {
+      "name": "Sylvan Scavenging",
+      "collector_number": "342",
+      "rarity": "rare"
+    },
+    {
+      "name": "Alesha, Who Laughs at Fate",
+      "collector_number": "343",
+      "rarity": "rare"
+    },
+    {
+      "name": "Anthem of Champions",
+      "collector_number": "344",
+      "rarity": "rare"
+    },
+    {
+      "name": "Ashroot Animist",
+      "collector_number": "345",
+      "rarity": "rare"
+    },
+    {
+      "name": "Elenda, Saint of Dusk",
+      "collector_number": "346",
+      "rarity": "rare"
+    },
+    {
+      "name": "Koma, World-Eater",
+      "collector_number": "347",
+      "rarity": "rare"
+    },
+    {
+      "name": "Kykar, Zephyr Awakener",
+      "collector_number": "348",
+      "rarity": "rare"
+    },
+    {
+      "name": "Lathril, Blade of the Elves",
+      "collector_number": "349",
+      "rarity": "rare"
+    },
+    {
+      "name": "Niv-Mizzet, Visionary",
+      "collector_number": "350",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Zimone, Paradox Sculptor",
+      "collector_number": "351",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Banner of Kinship",
+      "collector_number": "352",
+      "rarity": "rare"
+    },
+    {
+      "name": "Leyline Axe",
+      "collector_number": "353",
+      "rarity": "rare"
+    },
+    {
+      "name": "Scrawling Crawler",
+      "collector_number": "354",
+      "rarity": "rare"
+    },
+    {
+      "name": "Swiftfoot Boots",
+      "collector_number": "355",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Soulstone Sanctuary",
+      "collector_number": "356",
+      "rarity": "rare"
+    },
+    {
+      "name": "Ajani, Caller of the Pride",
+      "collector_number": "357",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Kaito, Cunning Infiltrator",
+      "collector_number": "358",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Liliana, Dreadhorde General",
+      "collector_number": "359",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Chandra, Flameshaper",
+      "collector_number": "360",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Vivien Reid",
+      "collector_number": "361",
+      "rarity": "mythic"
+    }
+  ]
+}
