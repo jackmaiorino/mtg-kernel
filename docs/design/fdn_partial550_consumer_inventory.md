@@ -469,11 +469,37 @@ preserving the three repeat outcomes. Its rerun remains pending. Four Return
 cases passed before its paid three-printing case reached the 300-second group
 bound without a test result. Later filters were not run by that job. Receipt
 SHA-256 `dbf0e4f01bc4e0137427c9eb7f9ed30563c74a707dd69a671602bf000cb3f7bf`
-preserves the failure and timeout; the executable is retained for continuation.
+preserves the failure and timeout; the executable remains retained.
 The twenty-eight-printing source passed pinned Rust 1.94.1 formatting on all
 48 staged Rust files; all 38 changed outputs were hash-verified and applied in
 `d22f63e8a`. Formatter receipt SHA-256
 `8533798fb3617568b94fdd9abda11819de164948b51a5c6db0bfb73fbb64ed98`.
+The retained `8ff554f6` executable completed its next bounded continuation in
+1842.65 seconds with children drained. Receipt SHA-256
+`6f7b701fef929382e01adfa8aa9f8c2dec1589fc27bcacfb9668f9f9bc39f549`.
+The remaining three Return tests passed, completing seven of seven across
+the two runs. Also passed: #552 (3), #454 (6), Artist (2), Drakuseth (5),
+Embercleave (2), Niv's paid native-index fixture, chosen-type's staged fixture,
+and Omniscience's declared-deck fixture. The V68/V75 all-eight paid/reset case
+reached its 300-second group bound without a result and remains incomplete.
+Niv's declared deck exhausted its 550-decision bound; `ca309bf2a` changes its
+seed to an opening with the required printed cards and lands. Chosen-type's
+declared fixture placed its claimed opening cards at the bottom of the real
+shuffle; `12e4ac749` corrects only those positions. Zimone's private fixture
+used unsupported Viridian Longbow; `f6b848ac2` uses two distinct, admitted
+Fishing Pole objects while preserving the chosen target and counters.
+The same commit adds a second hand card to Omniscience's paid-route fixture,
+so its discard remains an actual choice instead of being automatically paid.
+The original Forest is still discarded and the extra Island must stay in hand.
+Zimone's declared-deck paid-activation failure remains under diagnosis.
+None of these fixture repairs has a native rerun result yet.
+
+The combined thirty-printing source `67e26cf31` passed pinned Rust 1.94.1
+formatting on all 36 changed Rust inputs; all 22 changed outputs were
+hash-verified before application in `a211e3456`. Formatter receipt SHA-256
+`72c313839c2035ced26c95fbb42099f7db73280eb16a9eec157e0bc689e406a6`.
+The next bounded type check is pinned to `12e4ac749`, before the two later
+fixture-only repairs. Formatting does not establish type or runtime validity.
 The successor also
 fixes reported Human type visibility
 and unused wrapper warnings and boxes Eternal printed programs without
