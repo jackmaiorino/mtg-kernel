@@ -1,7 +1,6 @@
 //! Human projection of chosen-type facts with observer-local card handles.
 use super::{
-    call_v62::HumanCallRootV62,
-    muldrotha_v71::{href, root},
+    muldrotha_v71::{href, root, HumanCallRootV62},
     visible::Handles,
     HumanCardRefV1, HumanDecisionErrorV1,
 };
