@@ -931,7 +931,7 @@ pub(crate) mod nonland_copy_v1;
 mod standard_discard;
 use standard_discard::DiscardDrawChoice;
 mod scavenging_ooze_v1;
-mod standard_exile;
+pub(crate) mod standard_exile;
 pub(crate) mod temporary_control_v1;
 use standard_exile::{ExileBatchChoice, ExilePlayChoice, HideawayChoice};
 
@@ -28934,6 +28934,7 @@ pub(crate) enum KaitoCopyScopeV1 {
     Base,
     LeylineAxe,
     Harvester,
+    Etali,
 }
 
 pub(crate) fn require_no_copied_token_abilities_kaito_v75(
@@ -28961,7 +28962,13 @@ fn require_unrepresented_copy_sources_v1(
     state: &GameState,
     scope: KaitoCopyScopeV1,
 ) -> Result<(), String> {
-    standard_exile::refuse_top_batch_legacy(state)?;
+    if scope == KaitoCopyScopeV1::Etali {
+        if !state.etali_commit_receipts_v1 {
+            return Err("Etali owning copy scope lacks its native receipt mode".into());
+        }
+    } else {
+        standard_exile::refuse_top_batch_legacy(state)?;
+    }
     if scope == KaitoCopyScopeV1::LeylineAxe {
         crate::leyline_axe_v1::validate(state)?;
     } else {

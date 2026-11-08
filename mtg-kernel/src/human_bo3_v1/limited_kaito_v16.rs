@@ -87,6 +87,8 @@ pub(crate) fn project_limited_kaito_v16(
                 "mtg-kernel-limited-kykar-decision/v1"
             } else if observation.harvester.is_some() {
                 "mtg-kernel-limited-harvester-decision/v1"
+            } else if observation.etali.is_some() {
+                "mtg-kernel-limited-etali-primal-storm-decision/v1"
             } else if observation.loot.is_some() {
                 "mtg-kernel-limited-loot-decision/v1"
             } else if observation.edict.is_some() {

@@ -324,6 +324,8 @@ pub struct ZoneChangeProposed {
     pub(crate) harvester_owner: Option<crate::ids::StackItemId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) fiend_search_owner: Option<crate::ids::StackItemId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) etali_parent: Option<crate::ids::StackItemId>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -457,6 +459,7 @@ impl ProposedEvent {
             curator_move_owner: None,
             harvester_owner: None,
             fiend_search_owner: None,
+            etali_parent: None,
             touched_by: Vec::new(),
         })
     }
@@ -480,6 +483,7 @@ impl ProposedEvent {
             curator_move_owner: None,
             harvester_owner: None,
             fiend_search_owner: None,
+            etali_parent: None,
             touched_by: Vec::new(),
         })
     }
@@ -503,6 +507,7 @@ impl ProposedEvent {
             curator_move_owner: None,
             harvester_owner: None,
             fiend_search_owner: None,
+            etali_parent: None,
             touched_by: Vec::new(),
         })
     }
@@ -529,6 +534,7 @@ impl ProposedEvent {
             curator_move_owner: None,
             harvester_owner: None,
             fiend_search_owner: None,
+            etali_parent: None,
             touched_by: Vec::new(),
         })
     }
@@ -565,6 +571,7 @@ impl ProposedEvent {
             curator_move_owner: None,
             harvester_owner: None,
             fiend_search_owner: None,
+            etali_parent: None,
             touched_by: Vec::new(),
         })
     }
@@ -604,6 +611,7 @@ impl ProposedEvent {
             curator_move_owner: None,
             harvester_owner: None,
             fiend_search_owner: None,
+            etali_parent: None,
             touched_by: Vec::new(),
         })
     }
@@ -2161,6 +2169,9 @@ pub enum CommittedEvent {
     },
     FiendArtisanConsumerReceiptV1 {
         journal: Box<crate::fiend_artisan_receipts_v1::JournalV1>,
+    },
+    EtaliPrimalStormReceiptV1 {
+        journal: Box<crate::etali_primal_storm_receipts_v1::JournalV1>,
     },
 }
 
@@ -4581,6 +4592,12 @@ fn commit_with_entry_batch_and_source_color(
         }),
         _ => None,
     };
+    let etali_move = match &event {
+        ProposedEvent::ZoneChange(change) => change.etali_parent.map(|id| {
+            (id, crate::state::AbilitySourceContractV4::capture(state, change.object))
+        }),
+        _ => None,
+    };
     let curator_move = match &event {
         ProposedEvent::ZoneChange(change) => change.curator_move_owner.map(|cause| {
             let live = state.objects.get(change.object);
@@ -4731,6 +4748,14 @@ fn commit_with_entry_batch_and_source_color(
             state, id, original, entry_history_index,
         );
         crate::fiend_artisan_receipts_v1::record_move(state, id, original, entry_history_index);
+    }
+    if let Some((parent, original)) = etali_move {
+        crate::etali_primal_storm_receipts_v1::observe_exile_visibility(
+            state, parent, original.source, entry_history_index,
+        );
+        crate::etali_primal_storm_receipts_v1::record_exiled(
+            state, parent, original, entry_history_index,
+        );
     }
     if let Some((cause, original)) = curator_move {
         if crate::curator_receipts_v1::record_move(state, cause, original, entry_history_index)
