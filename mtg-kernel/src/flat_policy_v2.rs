@@ -6492,6 +6492,7 @@ mod tests {
             claimed_model_objects: Vec::new(),
             scorer_actions: vec![FlatScorerActionCoreV2::default()],
             scorer_action_refs: Vec::new(),
+            ..FlatDecisionEncoderV2::default()
         }
     }
 
