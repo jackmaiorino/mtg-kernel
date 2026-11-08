@@ -192,7 +192,9 @@ fn reveal_v4_real_aborted_cast_refills_by_public_name_in_paired_worlds() {
         ));
         state.players[owner.index()].mana_pool.fill(0);
         engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        let _ = engine::advance_until_decision(&mut state);
         assert_eq!(state.objects.get(spell).zone, Zone::Hand);
+        assert!(state.engine.pending_cast.is_none());
         state
     };
     let a = world([spell_def, island, spell_def, forest]);
