@@ -35,7 +35,7 @@ use std::ops::{Bound, Deref, DerefMut, Index, IndexMut, RangeBounds};
 use std::sync::{Arc, Mutex};
 
 mod shared_sequence_v2;
-use shared_sequence_v2::SharedSequence;
+pub(crate) use shared_sequence_v2::SharedSequence;
 
 /// One value per `CommittedEvent` variant, in declaration order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

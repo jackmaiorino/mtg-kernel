@@ -14,10 +14,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     hash::{Hash, Hasher},
     sync::{Arc, Mutex, Weak},
 };
+
+#[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LedgerV1 {
@@ -129,9 +132,10 @@ thread_local! {
 }
 
 // Across requests, retain data only for a round-trip-eligible typed prefix.
-// Equality is checked against every current event before reusing its SHA state
-// or key. These cloned event values may contain saved worlds, but provide no
-// executable authority and never replace custody/world/replay validation.
+// Exact typed equality is established before reusing SHA states or keys;
+// immutable shared subtrees prove their entire prefix without rewalking it.
+// Retained events may contain saved worlds, but provide no executable
+// authority and never replace custody/world/replay validation.
 // Limits bound event count and canonical JSON volume, not resident heap bytes:
 // typed allocations, spare capacity, and SHA bookkeeping have different sizes.
 // A retained row shares its saved worlds with the history (they are behind
@@ -142,26 +146,53 @@ thread_local! {
 pub(super) const REPLAY_PREFIX_EVENTS: usize = 1 << 16;
 pub(super) const REPLAY_PREFIX_CANONICAL_BYTES: usize = 1 << 31;
 struct ReplayPrefixRow {
-    event: CommittedEvent,
-    canonical_bytes: usize,
+    cumulative_bytes: usize,
     after: Sha256,
-    key: Option<ReplayKey>,
+}
+
+/// Keys are generated in increasing event order. Persistent ordered storage
+/// makes observation-frame clones and a growing prefix independent of the
+/// number of earlier enclosing operations.
+#[derive(Clone)]
+struct ReplayKeys {
+    entries: crate::event_history_v1::SharedSequence<(u64, ReplayKey), 0>,
+}
+impl Default for ReplayKeys {
+    fn default() -> Self {
+        Self { entries: crate::event_history_v1::SharedSequence::new(|_| 0) }
+    }
+}
+impl ReplayKeys {
+    fn get(&self, position: &u64) -> Option<&ReplayKey> {
+        let at = self.entries.partition_point(|(index, _)| index < position);
+        self.entries.get(at).filter(|(index, _)| index == position).map(|(_, key)| key)
+    }
+    fn insert(&mut self, position: u64, key: ReplayKey) {
+        debug_assert!(self.entries.iter().next_back().is_none_or(|(last, _)| *last < position));
+        self.entries.push((position, key));
+    }
+    fn prefix(&self, covered: usize) -> Self {
+        let covered = u64::try_from(covered).expect("bounded replay prefix length");
+        let count = self.entries.partition_point(|(position, _)| *position < covered);
+        Self { entries: self.entries.prefix(count) }
+    }
 }
 #[derive(Default)]
 struct ReplayPrefix {
     rows: Vec<ReplayPrefixRow>,
     canonical_bytes: usize,
+    history: Option<crate::event_history_v1::EventHistoryV1>,
+    keys: ReplayKeys,
 }
 impl ReplayPrefix {
     fn truncate(&mut self, length: usize) {
         self.rows.truncate(length);
-        self.canonical_bytes = self.rows.iter().map(|row| row.canonical_bytes).sum();
+        self.canonical_bytes = self.rows.last().map_or(0, |row| row.cumulative_bytes);
+        self.keys = self.keys.prefix(length);
     }
 }
 thread_local! {
-    static REPLAY_PREFIX: RefCell<ReplayPrefix> = const {
-        RefCell::new(ReplayPrefix { rows: Vec::new(), canonical_bytes: 0 })
-    };
+    static REPLAY_PREFIX: RefCell<ReplayPrefix> = RefCell::new(ReplayPrefix::default());
 }
 
 #[cfg(all(
@@ -178,7 +209,7 @@ thread_local! {
 struct ObservationReplayKeys {
     history: *const crate::event_history_v1::EventHistoryV1,
     length: usize,
-    keys: Option<BTreeMap<u64, ReplayKey>>,
+    keys: Option<ReplayKeys>,
     // The frame's own borrowed state, and whether `world` already succeeded
     // on it. The borrow keeps that whole state immutable for the frame, so a
     // repeated `world` check on the same address has the same outcome.
@@ -293,7 +324,7 @@ pub(crate) fn replay_key_frame_stats_for_test() -> (u64, u64) {
 /// are committed. Round-trip equality makes serde injective on eligible typed
 /// inputs, including every nested serde-skipped runtime field. Ineligibility
 /// affects performance only and must never become a validation rejection.
-fn replay_keys(history: &crate::event_history_v1::EventHistoryV1) -> BTreeMap<u64, ReplayKey> {
+fn replay_keys(history: &crate::event_history_v1::EventHistoryV1) -> ReplayKeys {
     #[cfg(test)]
     let _timing = crate::rl_session::test_timing_v1::span(
         crate::rl_session::test_timing_v1::Phase::DrakeReplayKeys,
@@ -329,12 +360,9 @@ fn replay_keys(history: &crate::event_history_v1::EventHistoryV1) -> BTreeMap<u6
     // Move the data out before any equality, serde, cloning, or other work.
     // A reentrant request sees an empty cache; panic merely loses acceleration.
     let mut retained = REPLAY_PREFIX.with(|cache| cache.take());
-    let matching = retained
-        .rows
-        .iter()
-        .zip(history)
-        .take_while(|(row, current)| row.event == **current)
-        .count();
+    let matching = retained.history.as_ref()
+        .map_or(0, |previous| previous.common_prefix_len_v2(history))
+        .min(retained.rows.len());
     // A shorter input or the first typed mismatch invalidates every later row.
     retained.truncate(matching);
     #[cfg(all(
@@ -343,15 +371,7 @@ fn replay_keys(history: &crate::event_history_v1::EventHistoryV1) -> BTreeMap<u6
         not(feature = "standard-magezero-fixtures")
     ))]
     REPLAY_PREFIX_REUSED.with(|reused| reused.set(matching));
-    let mut keys = BTreeMap::new();
-    for (position, row) in retained.rows.iter().enumerate() {
-        if let Some(key) = row.key {
-            keys.insert(
-                u64::try_from(position).expect("bounded prefix position"),
-                key,
-            );
-        }
-    }
+    let mut keys = retained.keys.clone();
     let mut prefix = retained.rows.last().map_or_else(
         || {
             let mut prefix = Sha256::new();
@@ -376,20 +396,16 @@ fn replay_keys(history: &crate::event_history_v1::EventHistoryV1) -> BTreeMap<u6
         if !serde_json::from_slice::<CommittedEvent>(&bytes).is_ok_and(|typed| typed == *event) {
             break;
         }
-        let key =
-            if journal(event).is_some_and(|row| matches!(row.value, JournalV1::Enclosing { .. })) {
-                let mut key = Sha256::new();
-                key.update(b"drake-enclosing-replay-predicate/v1");
-                key.update(prefix.clone().finalize());
-                key.update(position.to_le_bytes());
-                key.update(length.to_le_bytes());
-                key.update(&bytes);
-                let key = key.finalize().into();
-                keys.insert(position, key);
-                Some(key)
-            } else {
-                None
-            };
+        if journal(event).is_some_and(|row| matches!(row.value, JournalV1::Enclosing { .. })) {
+            let mut key = Sha256::new();
+            key.update(b"drake-enclosing-replay-predicate/v1");
+            key.update(prefix.clone().finalize());
+            key.update(position.to_le_bytes());
+            key.update(length.to_le_bytes());
+            key.update(&bytes);
+            let key = key.finalize().into();
+            keys.insert(position, key);
+        }
         prefix.update(position.to_le_bytes());
         prefix.update(length.to_le_bytes());
         prefix.update(&bytes);
@@ -399,10 +415,8 @@ fn replay_keys(history: &crate::event_history_v1::EventHistoryV1) -> BTreeMap<u6
                 && volume.is_some_and(|volume| volume <= REPLAY_PREFIX_CANONICAL_BYTES)
             {
                 retained.rows.push(ReplayPrefixRow {
-                    event: event.clone(),
-                    canonical_bytes: bytes.len(),
+                    cumulative_bytes: volume.expect("checked canonical volume"),
                     after: prefix.clone(),
-                    key,
                 });
                 retained.canonical_bytes = volume.expect("checked canonical volume");
             } else {
@@ -410,6 +424,8 @@ fn replay_keys(history: &crate::event_history_v1::EventHistoryV1) -> BTreeMap<u6
             }
         }
     }
+    retained.history = Some(history.prefix_v1(retained.rows.len()));
+    retained.keys = keys.prefix(retained.rows.len());
     // Drop a reentrant request's replacement outside the TLS borrow as well.
     let replaced = REPLAY_PREFIX.with(|cache| cache.replace(retained));
     drop(replaced);
@@ -479,7 +495,7 @@ pub(super) fn replay_prefix_probe_for_test(
         (cache.rows.len(), cache.canonical_bytes)
     });
     let reused = REPLAY_PREFIX_REUSED.with(Cell::get);
-    (keys, events, bytes, reused)
+    (keys.entries.iter().copied().collect(), events, bytes, reused)
 }
 
 #[cfg(all(
@@ -1926,7 +1942,7 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
     // checked prefix replays them without the replay memo: keys are computed
     // (and the replay memo fed) only when nothing is checked yet.
     let keys = if verifying || checked > 0 || !rows.iter().any(|row| row.enclosing.is_some()) {
-        BTreeMap::new()
+        ReplayKeys::default()
     } else {
         replay_keys(history)
     };
@@ -2059,7 +2075,7 @@ fn check_row(
     row: &RecordV1,
     compact: &RowV1,
     verifying: bool,
-    keys: &BTreeMap<u64, ReplayKey>,
+    keys: &ReplayKeys,
     verified_keys: &mut Vec<ReplayKey>,
 ) -> Result<(), String> {
     #[cfg(all(
