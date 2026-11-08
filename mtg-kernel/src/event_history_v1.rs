@@ -1,9 +1,12 @@
 //! The engine's permanent event record, with a count of each event kind.
 //!
-//! [`EventHistoryV1`] holds exactly the `Vec<CommittedEvent>` that
-//! `EngineState::event_history` always held, and serializes, deserializes,
-//! hashes, compares and prints exactly as that `Vec` does, so no state byte,
-//! digest or receipt changes. Beside it, it counts the events of each kind,
+//! [`EventHistoryV1`] keeps events in a persistent chunk tree, and serializes,
+//! deserializes, hashes, compares and prints exactly as the original
+//! `Vec<CommittedEvent>` did, so no state byte, digest or receipt changes.
+//! Clones and prefix cuts share immutable nodes; appending copies only a
+//! bounded leaf and its spine. Explicit Vec/slice compatibility and arbitrary
+//! mutation still materialize a contiguous copy. Hot readers use logical
+//! iteration and [`EventHistoryV1::range_v2`]. It counts events of each kind,
 //! so a check that acts only on some kinds can skip its scan of the whole
 //! history when none of them occurred ([`EventHistoryV1::has_any`]).
 //!
@@ -28,8 +31,11 @@ use std::any::Any;
 use std::cell::Cell;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::ops::{Deref, DerefMut};
+use std::ops::{Bound, Deref, DerefMut, Index, IndexMut, RangeBounds};
 use std::sync::{Arc, Mutex};
+
+mod shared_sequence_v2;
+use shared_sequence_v2::SharedSequence;
 
 /// One value per `CommittedEvent` variant, in declaration order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -777,7 +783,19 @@ impl CommittedEvent {
 /// record. Earlier prefixes let a copy of a prefix (a Drake enclosing replay
 /// input) resume its chain instead of rehashing every event.
 #[derive(Default)]
-struct ChainV2(Mutex<Arc<Vec<(usize, Sha256)>>>);
+struct ChainV2(Mutex<ChainPrefixesV2>);
+
+#[derive(Clone)]
+struct ChainPrefixesV2 {
+    strides: SharedSequence<(usize, Sha256), 0>,
+    recent: Vec<(usize, Sha256)>,
+}
+
+impl Default for ChainPrefixesV2 {
+    fn default() -> Self {
+        Self { strides: SharedSequence::new(|_| 0), recent: Vec::new() }
+    }
+}
 
 /// The most recent prefix states one history keeps; the oldest are dropped
 /// first.
@@ -787,20 +805,23 @@ const CHAIN_V2_PREFIXES: usize = 16;
 const CHAIN_V2_STRIDE: usize = 64;
 
 impl ChainV2 {
-    fn get(&self) -> Arc<Vec<(usize, Sha256)>> {
+    fn get(&self) -> ChainPrefixesV2 {
         self.0
             .lock()
-            .map(|chain| Arc::clone(&chain))
+            .map(|chain| chain.clone())
             .unwrap_or_default()
     }
 
     /// The longest chained prefix of at most `len` events.
     fn longest(&self, len: usize) -> Option<(usize, Sha256)> {
-        self.get()
-            .iter()
-            .rev()
-            .find(|(covered, _)| *covered <= len)
-            .cloned()
+        let prefixes = self.get();
+        let end = prefixes.strides.partition_point(|(covered, _)| *covered <= len);
+        let stride = end.checked_sub(1).and_then(|i| prefixes.strides.get(i)).cloned();
+        let recent = prefixes.recent.iter().rev().find(|(covered, _)| *covered <= len).cloned();
+        match (stride, recent) {
+            (Some(a), Some(b)) => Some(if a.0 >= b.0 { a } else { b }),
+            (a, b) => a.or(b),
+        }
     }
 
     /// Records `chains`, shortest first, past every kept prefix they extend.
@@ -809,20 +830,18 @@ impl ChainV2 {
             return;
         };
         if let Ok(mut slot) = self.0.lock() {
-            let prefixes = Arc::make_mut(&mut slot);
-            prefixes.retain(|(covered, _)| *covered < shortest);
-            prefixes.extend(chains);
-            let recent = |covered: usize| !covered.is_multiple_of(CHAIN_V2_STRIDE);
-            let mut excess = prefixes
-                .iter()
-                .filter(|(covered, _)| recent(*covered))
-                .count()
-                .saturating_sub(CHAIN_V2_PREFIXES);
-            prefixes.retain(|(covered, _)| {
-                let drop = excess > 0 && recent(*covered);
-                excess -= usize::from(drop);
-                !drop
-            });
+            let before = slot.strides.partition_point(|(covered, _)| *covered < shortest);
+            slot.strides.truncate(before);
+            slot.recent.retain(|(covered, _)| *covered < shortest);
+            for checkpoint in chains {
+                if checkpoint.0.is_multiple_of(CHAIN_V2_STRIDE) {
+                    slot.strides.push(checkpoint);
+                } else {
+                    slot.recent.push(checkpoint);
+                }
+            }
+            let excess = slot.recent.len().saturating_sub(CHAIN_V2_PREFIXES);
+            slot.recent.drain(..excess);
         }
     }
 
@@ -832,16 +851,16 @@ impl ChainV2 {
             .0
             .get_mut()
             .unwrap_or_else(|poison| poison.into_inner());
-        if slot.iter().any(|(covered, _)| *covered > len) {
-            Arc::make_mut(slot).retain(|(covered, _)| *covered <= len);
-        }
+        let keep = slot.strides.partition_point(|(covered, _)| *covered <= len);
+        slot.strides.truncate(keep);
+        slot.recent.retain(|(covered, _)| *covered <= len);
     }
 
     fn forget(&mut self) {
         *self
             .0
             .get_mut()
-            .unwrap_or_else(|poison| poison.into_inner()) = Arc::default();
+            .unwrap_or_else(|poison| poison.into_inner()) = ChainPrefixesV2::default();
     }
 }
 
@@ -903,7 +922,7 @@ thread_local! {
 /// of events of each kind.
 #[derive(Clone)]
 pub struct EventHistoryV1 {
-    events: Vec<CommittedEvent>,
+    events: SharedSequence<CommittedEvent, EVENT_KIND_COUNT_V1>,
     counts: [u32; EVENT_KIND_COUNT_V1],
     /// Set by a mutable access outside the counting methods.
     stale: bool,
@@ -911,15 +930,171 @@ pub struct EventHistoryV1 {
     prefix: PrefixSlotV1,
 }
 
+fn event_kind_index_v2(event: &CommittedEvent) -> usize {
+    event.kind_v1() as usize
+}
+
+/// Logical iteration without creating a contiguous copy of the history.
+#[derive(Clone)]
+pub struct EventHistoryIterV2<'a> {
+    inner: shared_sequence_v2::Iter<'a, CommittedEvent, EVENT_KIND_COUNT_V1>,
+}
+
+impl<'a> Iterator for EventHistoryIterV2<'a> {
+    type Item = &'a CommittedEvent;
+
+    fn next(&mut self) -> Option<Self::Item> { self.inner.next() }
+    fn size_hint(&self) -> (usize, Option<usize>) { self.inner.size_hint() }
+    fn nth(&mut self, n: usize) -> Option<Self::Item> { self.inner.nth(n) }
+}
+
+impl DoubleEndedIterator for EventHistoryIterV2<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> { self.inner.next_back() }
+    fn nth_back(&mut self, n: usize) -> Option<Self::Item> { self.inner.nth_back(n) }
+}
+
+impl ExactSizeIterator for EventHistoryIterV2<'_> {}
+impl std::iter::FusedIterator for EventHistoryIterV2<'_> {}
+
+/// A borrowed logical range. Only explicitly requesting Vec/slice compatibility
+/// materializes storage; iterating this range never copies its prefix.
+#[derive(Clone, Copy)]
+pub struct EventHistoryRangeV2<'a> {
+    history: &'a EventHistoryV1,
+    start: usize,
+    end: usize,
+}
+
+impl<'a> EventHistoryRangeV2<'a> {
+    pub fn len(&self) -> usize { self.end - self.start }
+    pub fn is_empty(&self) -> bool { self.start == self.end }
+    pub fn iter(&self) -> EventHistoryIterV2<'a> {
+        EventHistoryIterV2 { inner: self.history.events.range(self.start..self.end) }
+    }
+    pub fn to_vec(&self) -> Vec<CommittedEvent> { self.iter().cloned().collect() }
+}
+
+impl<'a> IntoIterator for EventHistoryRangeV2<'a> {
+    type Item = &'a CommittedEvent;
+    type IntoIter = EventHistoryIterV2<'a>;
+    fn into_iter(self) -> Self::IntoIter { self.iter() }
+}
+
+impl<'a> IntoIterator for &EventHistoryRangeV2<'a> {
+    type Item = &'a CommittedEvent;
+    type IntoIter = EventHistoryIterV2<'a>;
+    fn into_iter(self) -> Self::IntoIter { self.iter() }
+}
+
+impl PartialEq for EventHistoryRangeV2<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().eq(other.iter())
+    }
+}
+
+impl Eq for EventHistoryRangeV2<'_> {}
+
+impl fmt::Debug for EventHistoryRangeV2<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl Serialize for EventHistoryRangeV2<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.iter())
+    }
+}
+
+/// Concrete usize and standard range indices retain their original results.
+/// Generic indices now require this trait rather than only `SliceIndex`.
+/// Single-event reads use the shared tree; contiguous slice requests and
+/// arbitrary mutation are cold compatibility paths. Hot range readers use
+/// `range_v2` instead.
+pub trait EventHistoryIndexV2 {
+    type Output: ?Sized;
+    fn get(self, history: &EventHistoryV1) -> Option<&Self::Output>;
+    fn get_mut(self, history: &mut EventHistoryV1) -> Option<&mut Self::Output>;
+}
+
+impl EventHistoryIndexV2 for usize {
+    type Output = CommittedEvent;
+    fn get(self, history: &EventHistoryV1) -> Option<&Self::Output> { history.events.get(self) }
+    fn get_mut(self, history: &mut EventHistoryV1) -> Option<&mut Self::Output> {
+        history.deref_mut().get_mut(self)
+    }
+}
+
+macro_rules! contiguous_history_index_v2 {
+    ($($index:ty),* $(,)?) => {$(
+        impl EventHistoryIndexV2 for $index {
+            type Output = [CommittedEvent];
+            fn get(self, history: &EventHistoryV1) -> Option<&Self::Output> {
+                history.events.as_vec().get(self)
+            }
+            fn get_mut(self, history: &mut EventHistoryV1) -> Option<&mut Self::Output> {
+                history.deref_mut().get_mut(self)
+            }
+        }
+    )*};
+}
+
+contiguous_history_index_v2!(
+    std::ops::Range<usize>, std::ops::RangeFrom<usize>, std::ops::RangeTo<usize>,
+    std::ops::RangeFull, std::ops::RangeInclusive<usize>, std::ops::RangeToInclusive<usize>,
+    (Bound<usize>, Bound<usize>),
+);
+
+impl<I: EventHistoryIndexV2> Index<I> for EventHistoryV1 {
+    type Output = I::Output;
+    fn index(&self, index: I) -> &Self::Output { index.get(self).expect("history index out of bounds") }
+}
+
+impl<I: EventHistoryIndexV2> IndexMut<I> for EventHistoryV1 {
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
+        index.get_mut(self).expect("history index out of bounds")
+    }
+}
+
 impl EventHistoryV1 {
     pub fn new() -> Self {
         Self {
-            events: Vec::new(),
+            events: SharedSequence::new(event_kind_index_v2),
             counts: [0; EVENT_KIND_COUNT_V1],
             stale: false,
             chain: ChainV2::default(),
             prefix: PrefixSlotV1::default(),
         }
+    }
+
+    pub fn len(&self) -> usize { self.events.len() }
+    pub fn is_empty(&self) -> bool { self.events.is_empty() }
+    pub fn iter(&self) -> EventHistoryIterV2<'_> {
+        EventHistoryIterV2 { inner: self.events.iter() }
+    }
+    pub fn get<I: EventHistoryIndexV2>(&self, index: I) -> Option<&I::Output> { index.get(self) }
+    pub fn get_mut<I: EventHistoryIndexV2>(&mut self, index: I) -> Option<&mut I::Output> {
+        index.get_mut(self)
+    }
+    pub fn first(&self) -> Option<&CommittedEvent> { self.events.get(0) }
+    pub fn last(&self) -> Option<&CommittedEvent> {
+        self.len().checked_sub(1).and_then(|index| self.events.get(index))
+    }
+    pub fn get_range_v2(&self, range: impl RangeBounds<usize>) -> Option<EventHistoryRangeV2<'_>> {
+        let start = match range.start_bound() {
+            Bound::Unbounded => 0,
+            Bound::Included(&start) => start,
+            Bound::Excluded(&start) => start.checked_add(1)?,
+        };
+        let end = match range.end_bound() {
+            Bound::Unbounded => self.len(),
+            Bound::Excluded(&end) => end,
+            Bound::Included(&end) => end.checked_add(1)?,
+        };
+        (start <= end && end <= self.len()).then_some(EventHistoryRangeV2 { history: self, start, end })
+    }
+    pub fn range_v2(&self, range: impl RangeBounds<usize>) -> EventHistoryRangeV2<'_> {
+        self.get_range_v2(range).expect("history range out of bounds")
     }
 
     /// Whether an event of one of `kinds` may be in the history: false only
@@ -937,14 +1112,14 @@ impl EventHistoryV1 {
     /// of one of `kinds` may occur, none when none does. A scan that acts
     /// only on events of `kinds` gives the same result over either.
     #[cfg_attr(test, track_caller)]
-    pub fn scan_for_v1(&self, kinds: &[EventKindV1]) -> &[CommittedEvent] {
+    pub fn scan_for_v1(&self, kinds: &[EventKindV1]) -> EventHistoryRangeV2<'_> {
         let any = self.has_any(kinds);
         #[cfg(test)]
         guard_tests_v1::note_scan(std::panic::Location::caller(), !any);
         if any {
-            &self.events
+            self.range_v2(..)
         } else {
-            &[]
+            self.range_v2(..0)
         }
     }
 
@@ -963,7 +1138,8 @@ impl EventHistoryV1 {
         self.chain.keep(index);
         self.prefix.keep(index);
         let kind = event.kind_v1();
-        self.events.insert(index, event);
+        self.events.as_mut_vec().insert(index, event);
+        self.events.repack();
         self.counts[kind as usize] += 1;
     }
 
@@ -971,14 +1147,17 @@ impl EventHistoryV1 {
         self.settle();
         self.chain.keep(index);
         self.prefix.keep(index);
-        let event = self.events.remove(index);
+        let event = self.events.as_mut_vec().remove(index);
+        self.events.repack();
         self.counts[event.kind_v1() as usize] -= 1;
         event
     }
 
     pub fn pop(&mut self) -> Option<CommittedEvent> {
         self.settle();
-        let event = self.events.pop()?;
+        let len = self.events.len().checked_sub(1)?;
+        let event = self.events.get(len)?.clone();
+        self.events.truncate(len);
         self.chain.keep(self.events.len());
         self.prefix.keep(self.events.len());
         self.counts[event.kind_v1() as usize] -= 1;
@@ -990,33 +1169,34 @@ impl EventHistoryV1 {
         self.chain.forget();
         self.prefix.forget();
         let Self { events, counts, .. } = self;
-        events.retain(|event| {
+        events.as_mut_vec().retain(|event| {
             let kept = keep(event);
             if !kept {
                 counts[event.kind_v1() as usize] -= 1;
             }
             kept
         });
+        events.repack();
     }
 
     pub fn truncate(&mut self, len: usize) {
         self.settle();
         self.chain.keep(len);
         self.prefix.keep(len);
-        for event in self.events.get(len..).unwrap_or_default() {
-            self.counts[event.kind_v1() as usize] -= 1;
-        }
         self.events.truncate(len);
+        self.counts = self.events.counts();
     }
 
     /// A copy of the first `len` events (all of them if `len` is longer),
     /// keeping the chained prefixes and the prefix memo it contains.
     pub(crate) fn prefix_v1(&self, len: usize) -> Self {
         let len = len.min(self.events.len());
-        let mut prefix = Self::from(self.events[..len].to_vec());
-        prefix.chain = self.chain.clone();
+        let events = self.events.prefix(len);
+        let mut prefix = Self {
+            counts: events.counts(), events, stale: false,
+            chain: self.chain.clone(), prefix: self.prefix.clone(),
+        };
         prefix.chain.keep(len);
-        prefix.prefix = self.prefix.clone();
         prefix.prefix.keep(len);
         prefix
     }
@@ -1042,7 +1222,7 @@ impl EventHistoryV1 {
     }
 
     pub fn clear(&mut self) {
-        self.events.clear();
+        self.events = SharedSequence::new(event_kind_index_v2);
         self.counts = [0; EVENT_KIND_COUNT_V1];
         self.stale = false;
         self.chain.forget();
@@ -1091,10 +1271,8 @@ impl EventHistoryV1 {
 
     fn settle(&mut self) {
         if self.stale {
-            self.counts = [0; EVENT_KIND_COUNT_V1];
-            for event in &self.events {
-                self.counts[event.kind_v1() as usize] += 1;
-            }
+            self.events.repack();
+            self.counts = self.events.counts();
             self.stale = false;
         }
     }
@@ -1110,15 +1288,14 @@ impl From<Vec<CommittedEvent>> for EventHistoryV1 {
     fn from(events: Vec<CommittedEvent>) -> Self {
         #[cfg(any(test, feature = "event-sample-harvest-v1"))]
         events.iter().for_each(sample_harvest_v1::note);
-        let mut history = Self {
+        let events = SharedSequence::from_vec(events, event_kind_index_v2);
+        Self {
+            counts: events.counts(),
             events,
-            counts: [0; EVENT_KIND_COUNT_V1],
-            stale: true,
+            stale: false,
             chain: ChainV2::default(),
             prefix: PrefixSlotV1::default(),
-        };
-        history.settle();
-        history
+        }
     }
 }
 
@@ -1134,7 +1311,7 @@ impl Deref for EventHistoryV1 {
     type Target = Vec<CommittedEvent>;
 
     fn deref(&self) -> &Vec<CommittedEvent> {
-        &self.events
+        self.events.as_vec()
     }
 }
 
@@ -1145,16 +1322,16 @@ impl DerefMut for EventHistoryV1 {
         self.stale = true;
         self.chain.forget();
         self.prefix.forget();
-        &mut self.events
+        self.events.as_mut_vec()
     }
 }
 
 impl<'a> IntoIterator for &'a EventHistoryV1 {
     type Item = &'a CommittedEvent;
-    type IntoIter = std::slice::Iter<'a, CommittedEvent>;
+    type IntoIter = EventHistoryIterV2<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.events.iter()
+        self.iter()
     }
 }
 
@@ -1171,7 +1348,7 @@ impl<'a> IntoIterator for &'a mut EventHistoryV1 {
 // the events, so they never enter a comparison, hash, print or record.
 impl PartialEq for EventHistoryV1 {
     fn eq(&self, other: &Self) -> bool {
-        self.events == other.events
+        self.len() == other.len() && self.iter().eq(other.iter())
     }
 }
 
@@ -1179,37 +1356,40 @@ impl Eq for EventHistoryV1 {}
 
 impl PartialEq<[CommittedEvent]> for EventHistoryV1 {
     fn eq(&self, other: &[CommittedEvent]) -> bool {
-        self.events[..] == *other
+        self.len() == other.len() && self.iter().eq(other.iter())
     }
 }
 
 impl PartialEq<EventHistoryV1> for [CommittedEvent] {
     fn eq(&self, other: &EventHistoryV1) -> bool {
-        *self == other.events[..]
+        other == self
     }
 }
 
 impl PartialEq<Vec<CommittedEvent>> for EventHistoryV1 {
     fn eq(&self, other: &Vec<CommittedEvent>) -> bool {
-        self.events == *other
+        self == other.as_slice()
     }
 }
 
 impl PartialEq<EventHistoryV1> for Vec<CommittedEvent> {
     fn eq(&self, other: &EventHistoryV1) -> bool {
-        *self == other.events
+        other == self.as_slice()
     }
 }
 
 impl Hash for EventHistoryV1 {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.events.hash(state);
+        self.len().hash(state);
+        for event in self.iter() {
+            event.hash(state);
+        }
     }
 }
 
 impl fmt::Debug for EventHistoryV1 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self.events, f)
+        f.debug_list().entries(self.iter()).finish()
     }
 }
 
@@ -1218,7 +1398,7 @@ impl Serialize for EventHistoryV1 {
         if OMITTED_V2.with(Cell::get) == self as *const Self as usize {
             return serializer.collect_seq(std::iter::empty::<&CommittedEvent>());
         }
-        self.events.serialize(serializer)
+        serializer.collect_seq(self.iter())
     }
 }
 

@@ -1601,7 +1601,7 @@ fn private_v2_support_with_history(game: &mut SpellbenchBridgeGameV1) -> Value {
     let mut support = private_v2_support(game);
     let state = game.session.game_state();
     let (events_from, notes_from, objects_from) = game.history_cursor;
-    let events = &state.engine.event_history[events_from.min(state.engine.event_history.len())..];
+let events = state.engine.event_history.range_v2(events_from.min(state.engine.event_history.len())..);
     let notes = state.observation_journal.notes();
     let notes = &notes[notes_from.min(notes.len())..];
     let objects: Vec<Value> = state

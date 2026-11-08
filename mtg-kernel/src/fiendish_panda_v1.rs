@@ -267,11 +267,11 @@ fn root_at(
         return Err("Panda source or occurrence ordering changed".into());
     }
     crate::engine::validate_historical_ability_source_contract(state, source)?;
-    if state.engine.event_history[..index].iter().any(|prior| matches!((prior, event),
+    if state.engine.event_history.range_v2(..index).iter().any(|prior| matches!((prior, event),
         (CommittedEvent::FiendishPandaWideGainCaptureV59 { source: a, gain_history_index: x, .. }, CommittedEvent::FiendishPandaWideGainCaptureV59 { source: b, gain_history_index: y, .. }) if a == b && x == y)) {
         return Err("Panda wide occurrence captured twice".into());
     }
-    if state.engine.event_history[..index]
+    if state.engine.event_history.range_v2(..index)
         .iter()
         .any(|prior| match (prior, event) {
             (
@@ -525,7 +525,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     return Err("Panda collection precedes original capture".into());
                 }
                 root_at(state, original)?;
-                if state.engine.event_history[..index].iter().any(|e| matches!(e, CommittedEvent::FiendishPandaCaptureCollectedV1 { capture_history_index: old } if old == capture_history_index)) {
+                if state.engine.event_history.range_v2(..index).iter().any(|e| matches!(e, CommittedEvent::FiendishPandaCaptureCollectedV1 { capture_history_index: old } if old == capture_history_index)) {
                     return Err("Panda occurrence collected twice".into());
                 }
             }

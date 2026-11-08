@@ -207,8 +207,8 @@ impl ObserverInputV59 {
         if !original.engine.event_history.is_empty() || !observed.engine.event_history.is_empty() {
             return Err("Conqueror recursive original input history".into());
         }
-        original.engine.event_history = state.engine.event_history[..start].to_vec().into();
-        observed.engine.event_history = state.engine.event_history[..end].to_vec().into();
+original.engine.event_history = state.engine.event_history.prefix_v1(start);
+observed.engine.event_history = state.engine.event_history.prefix_v1(end);
         if original.turn_key_v1() != observed.turn_key_v1()
             || original.active_player != observed.active_player
             || original.step != observed.step
@@ -216,7 +216,7 @@ impl ObserverInputV59 {
             return Err("Conqueror observer input crossed an engine step".into());
         }
         let mut life = [original.players[0].life, original.players[1].life];
-        for event in &state.engine.event_history[start..end] {
+for event in state.engine.event_history.range_v2(start..end) {
             match event {
                 CommittedEvent::LifeLossWideV59 { player, amount } => {
                     life[player.index()] = checked_life(life[player.index()], *amount, false)?;

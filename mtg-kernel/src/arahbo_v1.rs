@@ -541,11 +541,11 @@ pub(crate) fn resolve_removed(
         ctx.controller,
         1,
     )?;
-    let actual = state.engine.event_history[start..].iter().filter(|event|matches!(event,CommittedEvent::CreateToken {controller,token_def:created,..} if *controller==ctx.controller && *created==token_def)).count();
+    let actual = state.engine.event_history.range_v2(start..).iter().filter(|event|matches!(event,CommittedEvent::CreateToken {controller,token_def:created,..} if *controller==ctx.controller && *created==token_def)).count();
     if actual != expected {
         return Err("Arahbo did not create its full replacement-expanded roster".into());
     }
-    let token = Some(state.engine.event_history[start..].iter().position(|event|
+    let token = Some(state.engine.event_history.range_v2(start..).iter().position(|event|
         matches!(event, CommittedEvent::CreateToken { controller, token_def: created_def, .. } if *controller == ctx.controller && *created_def == token_def)
     ).map(|offset| start+offset).ok_or("Arahbo token produced no actual creation occurrence")? as u64);
     state
@@ -796,7 +796,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             } else {
                 0
             };
-            let actual=state.engine.event_history[*removed+1..*completed].iter().filter(|event|matches!(event,CommittedEvent::CreateToken {controller,token_def,..} if *controller==capture.source.controller && *token_def==definition)).count();
+            let actual=state.engine.event_history.range_v2(*removed+1..*completed).iter().filter(|event|matches!(event,CommittedEvent::CreateToken {controller,token_def,..} if *controller==capture.source.controller && *token_def==definition)).count();
             if actual != expected {
                 return Err("Arahbo closure lost complete actual expanded token roster".into());
             }

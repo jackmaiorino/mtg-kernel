@@ -721,7 +721,7 @@ pub(crate) fn resolve_removed(
         let start = state.engine.event_history.len();
         crate::event::propose_and_commit(state, ProposedEvent::draw(ctx.controller));
         Some(
-            state.engine.event_history[start..]
+            state.engine.event_history.range_v2(start..)
                 .iter()
                 .position(|event| {
                     matches!(event,

@@ -382,7 +382,7 @@ pub struct CleanupBoundaryV1 {
 }
 
 fn boundary_before(state: &GameState, before: usize) -> Result<Option<CleanupBoundaryV1>, String> {
-    for (at, event) in state.engine.event_history[..before]
+    for (at, event) in state.engine.event_history.range_v2(..before)
         .iter()
         .enumerate()
         .rev()

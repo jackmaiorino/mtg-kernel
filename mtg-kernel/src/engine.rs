@@ -2856,7 +2856,7 @@ fn validate_historical_permanent_copy_source(
         || origin.parent.0 >= contract.source.0
         || state.objects.try_get(origin.parent).is_none_or(|parent| parent.owner != origin.parent_owner)
         || state.stack.iter().any(|item| item.kind == StackItemKind::Spell && item.source == contract.source)
-        || state.engine.event_history[..original].iter().any(|event|
+        || state.engine.event_history.range_v2(..original).iter().any(|event|
             matches!(event, CommittedEvent::ZoneChange { object, .. } if *object == contract.source))
         || state.engine.event_history.iter().filter(|event|
             matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Battlefield, .. }
@@ -30487,7 +30487,7 @@ mod tests {
                     &components,
                     &chosen
                 ));
-                let existing_order = state.engine.event_history[history_start..]
+                let existing_order = state.engine.event_history.range_v2(history_start..)
                     .iter()
                     .filter_map(|event| match event {
                         CommittedEvent::Sacrificed { object, .. } => Some((0, *object)),
@@ -35280,7 +35280,7 @@ mod tests {
         assert_eq!(state.objects.get(copy).zone, Zone::Stack);
         assert!(!state.players[1].graveyard.contains(&copy));
         assert!(
-            !state.engine.event_history[event_count..]
+            !state.engine.event_history.range_v2(event_count..)
                 .iter()
                 .any(|event| matches!(event, CommittedEvent::ZoneChange { object, .. } if *object == copy)),
             "a fizzled copy ceases without a zone-change event"

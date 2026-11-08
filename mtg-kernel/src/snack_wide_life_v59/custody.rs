@@ -336,7 +336,7 @@ pub(crate) fn resolve_owned(
         state,
         crate::event::ProposedEvent::life_gain_wide_v59(source.controller, amount),
     );
-    let gains = state.engine.event_history[start..].iter().enumerate().filter_map(|(offset, event)|
+    let gains = state.engine.event_history.range_v2(start..).iter().enumerate().filter_map(|(offset, event)|
         matches!(event, CommittedEvent::LifeGainWideV59 { player, amount: actual } if *player == source.controller && *actual == amount).then_some((start + offset) as u64)).collect::<Vec<_>>();
     let [gain_history_index] = gains.as_slice() else {
         return Err("Conqueror actual saved-amount gain did not commit exactly once".into());
@@ -440,7 +440,7 @@ fn validate_gain(state: &GameState, at: u64) -> Result<u64, String> {
             Ok(())
         },
     )?;
-    if replay.engine.event_history[start..] != state.engine.event_history[start..at as usize] {
+if replay.engine.event_history.range_v2(start..) != state.engine.event_history.range_v2(start..at as usize) {
         return Err("Conqueror gain and its actual downstream captures changed".into());
     }
     Ok(*removal)

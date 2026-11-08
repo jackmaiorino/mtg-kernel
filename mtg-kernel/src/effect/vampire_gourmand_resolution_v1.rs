@@ -318,7 +318,7 @@ fn validate_cost_operations(
             return Err("Gourmand operation changed source owner".into());
         }
         let events =
-            &state.engine.event_history[operation.boundary_history_index as usize + 1..index];
+state.engine.event_history.range_v2(operation.boundary_history_index as usize + 1..index);
         match operation.result.selected {
             None => {
                 if operation.result.sacrifice_history_index.is_some()
@@ -391,13 +391,13 @@ fn validate_cost_operations(
                         && operation.result.source_before.zone_change_count
                             == source.zone_change_count;
                     if !original_alive {
-                        let declaration = state.engine.event_history[..operation.boundary_history_index as usize]
+                        let declaration = state.engine.event_history.range_v2(..operation.boundary_history_index as usize)
                             .iter().rposition(|e| matches!(e,
                                 CommittedEvent::DeclaredAttacker { source: id, source_zone_change_count, controller }
                                     if *id == source.source && *source_zone_change_count == source.zone_change_count
                                         && *controller == source.controller))
                             .ok_or("Gourmand result lost original attack occurrence")?;
-                        if !state.engine.event_history[declaration + 1..index].iter().any(|e| matches!(e,
+                        if !state.engine.event_history.range_v2(declaration + 1..index).iter().any(|e| matches!(e,
                             CommittedEvent::ZoneChange { object, from:Zone::Battlefield, .. } if *object == source.source)) {
                             return Err("Gourmand absent-source result lacks actual departure".into());
                         }

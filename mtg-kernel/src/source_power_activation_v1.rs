@@ -321,7 +321,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             CommittedEvent::SourcePowerActivationFinishedV1 {stack_item_id} if *stack_item_id==id)
             })
             .count();
-        if state.engine.event_history[..receipt_index]
+        if state.engine.event_history.range_v2(..receipt_index)
             .iter()
             .any(|event| {
                 matches!(event,
@@ -413,7 +413,7 @@ pub(crate) fn damage_source(
     let [(capture_index, captured)] = captures.as_slice() else {
         return Err("historical damage departure authority changed".into());
     };
-    if *captured!=facts || *capture_index>=receipt_index || !state.engine.event_history[*capture_index+1..receipt_index].iter().any(|event|matches!(event,
+    if *captured!=facts || *capture_index>=receipt_index || !state.engine.event_history.range_v2(*capture_index+1..receipt_index).iter().any(|event|matches!(event,
         CommittedEvent::ZoneChange {object,from:Zone::Battlefield,controller_before,..} if *object==source && *controller_before==facts.source.controller)) {
         return Err("historical damage lost committed departure ordering".into());
     }

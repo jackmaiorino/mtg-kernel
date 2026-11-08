@@ -252,7 +252,7 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
     {
         return Err("fixed damage payment changed departure identity or cost".into());
     }
-    let between = &state.engine.event_history[p.departure as usize + 1..index];
+let between = state.engine.event_history.range_v2(p.departure as usize + 1..index);
     let sacrifice = between
         .iter()
         .position(|e| {
@@ -260,7 +260,7 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
         if *object==s.source && *controller_before==s.controller)
         })
         .ok_or("fixed damage lost actual sacrifice")?;
-    if !between[sacrifice + 1..].iter().any(|e| {
+if !between.iter().skip(sacrifice + 1).any(|e| {
         matches!(e,CommittedEvent::ZoneChange {object,from:Zone::Battlefield,controller_before,..}
         if *object==s.source && *controller_before==s.controller)
     }) {
@@ -476,7 +476,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     (0,[],true)=>{},
                     (0,[r],false) if r.history_index>p.history_index && (r.history_index as usize)<state.engine.event_history.len()=>{
                         if r.outcome==OutcomeV3::Resolved {
-                            if completed_item(state,p)?!=*r.item || state.engine.event_history[r.history_index as usize..].iter().any(|e|
+                            if completed_item(state,p)?!=*r.item || state.engine.event_history.range_v2(r.history_index as usize..).iter().any(|e|
                                 matches!(e,CommittedEvent::CrystalPreventionBoundaryV1{boundary}
                                     if boundary.item.v4.stack_item_id==p.item.v4.stack_item_id)) {
                                 return Err("fixed resolved closure changed or preceded execution".into());

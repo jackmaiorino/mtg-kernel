@@ -387,7 +387,7 @@ pub(crate) fn record_paid(
     }
     let pole = pole.ok_or("Fishing selected grant absent")?;
     let tap = |object| {
-        state.engine.event_history[start..]
+        state.engine.event_history.range_v2(start..)
             .iter()
             .enumerate()
             .filter_map(|(i, e)| {
@@ -780,7 +780,7 @@ pub(crate) fn complete(
                         state,
                         vec![ProposedEvent::create_token(fish, owner.item.controller)],
                     );
-                    token=state.engine.event_history[start..].iter().enumerate().find_map(|(i,e)|
+                    token=state.engine.event_history.range_v2(start..).iter().enumerate().find_map(|(i,e)|
                         matches!(e,CommittedEvent::CreateToken {token_def,controller,..} if *token_def==fish && *controller==owner.item.controller).then_some((start+i) as u64));
                     if token.is_none() {
                         return Err("Fishing actual Fish creation absent".into());
@@ -1140,7 +1140,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         1,
                     )?;
                     let actual = state.engine.event_history
-                        [change.unwrap() as usize + 1..*closed as usize]
+                        .range_v2(change.unwrap() as usize + 1..*closed as usize)
                         .iter()
                         .filter_map(|event| match event {
                             CommittedEvent::CreateToken {

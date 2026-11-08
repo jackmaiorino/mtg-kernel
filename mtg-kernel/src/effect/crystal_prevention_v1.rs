@@ -1529,7 +1529,7 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
         if usize::try_from(b.history_index).ok() != Some(index) {
             return Err("Crystal boundary moved in history".into());
         }
-        let previous = state.engine.event_history[..index]
+        let previous = state.engine.event_history.range_v2(..index)
             .iter()
             .rev()
             .find_map(|e| match e {
@@ -1625,7 +1625,7 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                 }
                 PreventionV1::Replacement(r) => {
                     if matches!(r.kind, ReplacementEffectKind::PreventNextDamage { .. }) {
-                        let operations = state.engine.event_history[usize::try_from(previous.history_index).map_err(|_| "Crystal history index")? + 1..index].iter()
+                        let operations = state.engine.event_history.range_v2(usize::try_from(previous.history_index).map_err(|_| "Crystal history index")? + 1..index).iter()
                             .filter(|e| matches!(e, CommittedEvent::CrystalShieldOperationV1 { operation }
                                 if operation.before == *r && operation.damage_amount == expected.remaining_amount)).count();
                         if operations != 1 {
@@ -2017,7 +2017,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                     state.engine.pending_effect = Some(pending);
                     return Err("Crystal owned damage execution halted".into());
                 }
-                for (offset, event) in state.engine.event_history[start..].iter().enumerate() {
+                for (offset, event) in state.engine.event_history.range_v2(start..).iter().enumerate() {
                     if matches!(event, CommittedEvent::Damage { .. }) {
                         step.damage_history.push(
                             u32::try_from(start + offset)
@@ -2085,7 +2085,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                         state.engine.pending_effect = Some(pending);
                         return Err("Crystal chosen-creature damage halted".into());
                     }
-                    for (offset, event) in state.engine.event_history[start..].iter().enumerate() {
+                    for (offset, event) in state.engine.event_history.range_v2(start..).iter().enumerate() {
                         if matches!(event, CommittedEvent::Damage { .. }) {
                             step.damage_history.push(
                                 u32::try_from(start + offset)
@@ -2122,7 +2122,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                     state.engine.pending_effect = Some(pending);
                     return Err("Crystal complete batch commit halted".into());
                 }
-                for (offset, event) in state.engine.event_history[start..].iter().enumerate() {
+                for (offset, event) in state.engine.event_history.range_v2(start..).iter().enumerate() {
                     if matches!(event, CommittedEvent::Damage { .. }) {
                         step.damage_history.push(
                             u32::try_from(start + offset)
@@ -2144,7 +2144,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                     state.engine.pending_effect = Some(pending);
                     return Err("Crystal owned following life gain halted".into());
                 }
-                for (offset, event) in state.engine.event_history[start..].iter().enumerate() {
+                for (offset, event) in state.engine.event_history.range_v2(start..).iter().enumerate() {
                     if matches!(event, CommittedEvent::LifeGain { .. }) {
                         step.nondamage_history.push(
                             u32::try_from(start + offset)
@@ -3103,7 +3103,7 @@ fn validate_discard_commit(
     {
         return Err("Crystal discard operation skipped owning remainder".into());
     }
-    let interval = &state.engine.event_history[previous_index + 1..index];
+let interval = state.engine.event_history.range_v2(previous_index + 1..index);
     let cost_occurrences = interval
         .iter()
         .enumerate()
@@ -3203,7 +3203,7 @@ pub(crate) fn answer_discard(state: &mut GameState, target: Option<Target>) -> R
         if state.engine.halted.is_some() {
             return Err("Crystal accepted discard halted".into());
         }
-        let mut occurrences = state.engine.event_history[start..].iter().enumerate().filter_map(|(offset,e)|
+        let mut occurrences = state.engine.event_history.range_v2(start..).iter().enumerate().filter_map(|(offset,e)|
             matches!(e,CommittedEvent::ZoneChange { object,from: Zone::Hand,to: Zone::Graveyard | Zone::Exile,.. }
                 if *object == selected.object).then_some(start+offset));
         let discarded = occurrences
@@ -3221,7 +3221,7 @@ pub(crate) fn answer_discard(state: &mut GameState, target: Option<Target>) -> R
         if state.engine.halted.is_some() {
             return Err("Crystal following draw halted".into());
         }
-        let mut draws = state.engine.event_history[draw_start..]
+        let mut draws = state.engine.event_history.range_v2(draw_start..)
             .iter()
             .enumerate()
             .filter_map(|(offset, e)| {
@@ -3395,7 +3395,7 @@ fn capture_creature_power(
             i32::from(*plus1_plus1),
         )?;
     }
-    capture.counter_history = state.engine.event_history[start..]
+    capture.counter_history = state.engine.event_history.range_v2(start..)
         .iter()
         .enumerate()
         .filter_map(|(offset, e)| {
@@ -5316,7 +5316,7 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
             if state.engine.halted.is_some() {
                 return Err("Crystal answered simultaneous batch halted".into());
             }
-            let damage_history = state.engine.event_history[start..]
+            let damage_history = state.engine.event_history.range_v2(start..)
                 .iter()
                 .enumerate()
                 .filter_map(|(offset, event)| {

@@ -151,7 +151,7 @@ pub(crate) fn record_resolved(
         .v4
         .ability_source_contract
         .ok_or("Librarian source lost")?;
-    let rows = &state.engine.event_history[start..];
+let rows = state.engine.event_history.range_v2(start..);
     let draws: Vec<_> = rows
         .iter()
         .enumerate()
@@ -432,7 +432,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                                 && *player == source.controller && crate::doubling_season_v48::expected_plus_at(state,counter as u64,*object,*player,2).ok()==Some(*count)) {
                             return Err("Librarian completion lost its actual source counter placement".into());
                         }
-                    } else if !state.engine.event_history[index+1..draw].iter().any(|event|
+                    } else if !state.engine.event_history.range_v2(index+1..draw).iter().any(|event|
                         matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, .. }
                             if *object == source.source)) {
                         return Err("Librarian source-free completion lost its actual departure".into());

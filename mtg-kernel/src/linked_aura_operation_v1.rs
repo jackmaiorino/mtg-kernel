@@ -924,7 +924,7 @@ fn replay_general_input_v1(
     restore_original: Option<&dyn Fn() -> Result<GameState, String>>,
 ) -> Result<(GameState, Option<Decision>), String> {
     let original: &GameState = match &input {
-        ReplayInputV1::Borrowed(original) => *original,
+        ReplayInputV1::Borrowed(original) => original,
         ReplayInputV1::DrakeValidation(original) => original,
     };
     if has_pending(original) || locally_owned(original) {
@@ -1172,7 +1172,7 @@ fn record_answer(
     host: EffectObjectBinding,
     start: usize,
 ) -> Result<(), String> {
-    let returned = state.engine.event_history[start..]
+    let returned = state.engine.event_history.range_v2(start..)
         .iter()
         .position(|event| {
             matches!(event,
@@ -1243,7 +1243,7 @@ fn choose(
                 .stack
                 .iter()
                 .any(|item| item.v4.stack_item_id == original.v4.stack_item_id);
-            let departed=snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|
+            let departed=snapshot.engine.event_history.range_v2(runner.original_history_len..).iter().any(|event|
                 matches!(event,CommittedEvent::ZoneChange {object,from:crate::state::Zone::Stack,..} if *object==original.source));
             if absent && !departed {
                 snapshot.stack.insert(
@@ -1974,7 +1974,7 @@ fn answer_color_plan(state: &mut GameState, index: usize) -> Result<bool, String
                 .stack
                 .iter()
                 .any(|i| i.v4.stack_item_id == original.v4.stack_item_id);
-            let departed = snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|
+            let departed = snapshot.engine.event_history.range_v2(runner.original_history_len..).iter().any(|event|
                 matches!(event, CommittedEvent::ZoneChange { object, from: crate::state::Zone::Stack, .. } if *object == original.source));
             if absent && !departed {
                 snapshot.stack.insert(
@@ -2228,7 +2228,7 @@ fn answer_kinship_plan(state: &mut GameState, index: usize) -> Result<bool, Stri
                 .stack
                 .iter()
                 .any(|i| i.v4.stack_item_id == original.v4.stack_item_id);
-            let departed=snapshot.engine.event_history[r.original_history_len..].iter().any(|e|matches!(e,CommittedEvent::ZoneChange{object,from:Zone::Stack,..}if *object==original.source));
+            let departed=snapshot.engine.event_history.range_v2(r.original_history_len..).iter().any(|e|matches!(e,CommittedEvent::ZoneChange{object,from:Zone::Stack,..}if *object==original.source));
             if absent && !departed {
                 snapshot.stack.insert(
                     r.original_stack
@@ -2622,7 +2622,7 @@ pub(crate) fn choose_created_token_v48(
                     .stack
                     .iter()
                     .any(|row| row.v4.stack_item_id == original.v4.stack_item_id);
-                let departed = snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|matches!(event,CommittedEvent::ZoneChange {object,from:Zone::Stack,..} if *object==original.source));
+                let departed = snapshot.engine.event_history.range_v2(runner.original_history_len..).iter().any(|event|matches!(event,CommittedEvent::ZoneChange {object,from:Zone::Stack,..} if *object==original.source));
                 if absent && !departed {
                     snapshot.stack.insert(
                         runner

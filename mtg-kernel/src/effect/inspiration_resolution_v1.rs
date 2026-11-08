@@ -197,7 +197,7 @@ fn validate_operation(
     {
         return Err("Inspiration operation redirected original boundary or remainder".into());
     }
-    let events = &state.engine.event_history[input.index as usize + 1..operation.index as usize];
+let events = state.engine.event_history.range_v2(input.index as usize + 1..operation.index as usize);
     let actual = |from, to| {
         events
             .iter()
@@ -265,7 +265,7 @@ fn validate_operation(
                         .copied()
                         .filter(|binding| {
                             !state.engine.event_history
-                                [input.index as usize + 1..operation.index as usize]
+                                .range_v2(input.index as usize + 1..operation.index as usize)
                                 .iter()
                                 .any(|entry| {
                                     let CommittedEvent::ProgenitusShuffledV1 {

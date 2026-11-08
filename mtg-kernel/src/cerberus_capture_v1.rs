@@ -872,7 +872,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         } = event
         {
             let (index, _) = publication(state, *capture_history_index)?;
-            if index != completion_index || state.engine.event_history[..index].iter().filter(|event|
+            if index != completion_index || state.engine.event_history.range_v2(..index).iter().filter(|event|
                 matches!(event, CommittedEvent::CerberusCollectedV1 { capture_history_index: capture }
                     if capture == capture_history_index)).count() != 1 {
                 return Err("Cerberus end-step publication lost its prior collection".into());

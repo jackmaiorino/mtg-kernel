@@ -176,7 +176,7 @@ thread_local! {
 // Only the pure history-to-key computation is reused, within one immutable
 // observation borrow. Full custody validation and replay remain independent.
 struct ObservationReplayKeys {
-    history: *const CommittedEvent,
+    history: *const crate::event_history_v1::EventHistoryV1,
     length: usize,
     keys: Option<BTreeMap<u64, ReplayKey>>,
     // The frame's own borrowed state, and whether `world` already succeeded
@@ -186,8 +186,8 @@ struct ObservationReplayKeys {
     world_checked: bool,
 }
 impl ObservationReplayKeys {
-    fn matches(&self, history: &[CommittedEvent]) -> bool {
-        self.history == history.as_ptr() && self.length == history.len()
+    fn matches(&self, history: &crate::event_history_v1::EventHistoryV1) -> bool {
+        self.history == std::ptr::from_ref(history) && self.length == history.len()
     }
 }
 thread_local! {
@@ -199,7 +199,7 @@ impl Drop for ObservationReplayKeysGuard {
         OBSERVATION_REPLAY_KEYS.with(|frame| *frame.borrow_mut() = self.0.take());
     }
 }
-/// The shared borrow keeps the actual history allocation and all typed fields
+/// The shared borrow keeps this exact history value and all typed fields
 /// immutable until the frame is removed, including on unwind. No pointer is
 /// dereferenced, and neither the frame nor its contents escape this call.
 pub(crate) fn with_observation_replay_keys<T>(
@@ -209,7 +209,7 @@ pub(crate) fn with_observation_replay_keys<T>(
     let history = &state.engine.event_history;
     let previous = OBSERVATION_REPLAY_KEYS.with(|frame| {
         frame.replace(Some(ObservationReplayKeys {
-            history: history.as_ptr(),
+            history: std::ptr::from_ref(history),
             length: history.len(),
             keys: None,
             state: std::ptr::from_ref(state),
@@ -293,7 +293,7 @@ pub(crate) fn replay_key_frame_stats_for_test() -> (u64, u64) {
 /// are committed. Round-trip equality makes serde injective on eligible typed
 /// inputs, including every nested serde-skipped runtime field. Ineligibility
 /// affects performance only and must never become a validation rejection.
-fn replay_keys(history: &[CommittedEvent]) -> BTreeMap<u64, ReplayKey> {
+fn replay_keys(history: &crate::event_history_v1::EventHistoryV1) -> BTreeMap<u64, ReplayKey> {
     #[cfg(test)]
     let _timing = crate::rl_session::test_timing_v1::span(
         crate::rl_session::test_timing_v1::Phase::DrakeReplayKeys,
@@ -473,7 +473,7 @@ pub(super) fn original_replay_keys_for_test(
 pub(super) fn replay_prefix_probe_for_test(
     history: &[CommittedEvent],
 ) -> (BTreeMap<u64, ReplayKey>, usize, usize, usize) {
-    let keys = replay_keys(history);
+    let keys = replay_keys(&crate::event_history_v1::EventHistoryV1::from(history.to_vec()));
     let (events, bytes) = REPLAY_PREFIX.with(|cache| {
         let cache = cache.borrow();
         (cache.rows.len(), cache.canonical_bytes)
@@ -1068,7 +1068,7 @@ pub(crate) fn finish_combat(state: &mut GameState) -> Result<(), String> {
     };
     let original = original.clone();
     let start = usize::try_from(input).map_err(|_| "Drake batch index overflow")? + 1;
-    let damages = state.engine.event_history[start..]
+    let damages = state.engine.event_history.range_v2(start..)
         .iter()
         .enumerate()
         .filter_map(|(offset, e)| {
@@ -1084,7 +1084,7 @@ pub(crate) fn finish_combat(state: &mut GameState) -> Result<(), String> {
             }
         })
         .collect::<Vec<_>>();
-    let markers = state.engine.event_history[start..]
+    let markers = state.engine.event_history.range_v2(start..)
         .iter()
         .enumerate()
         .filter_map(|(offset, e)| {
@@ -1297,7 +1297,7 @@ pub(crate) fn record_paid(
     if item != activation_item(owner.source, id) {
         return Err("Drake paid row changed controller/source/entire program".into());
     }
-    let debits = state.engine.event_history[owner.start..]
+    let debits = state.engine.event_history.range_v2(owner.start..)
         .iter()
         .filter_map(journal)
         .filter(|r| matches!(r.value, JournalV1::Debit { .. }))
@@ -1745,7 +1745,8 @@ fn checked_prefix(
             .and_then(|next| next.upgrade())
             .filter(|longer| {
                 longer.covered == memo.covered + longer.added.len()
-                    && history.get(memo.covered..longer.covered) == Some(longer.added.as_slice())
+                    && history.get_range_v2(memo.covered..longer.covered)
+                        .is_some_and(|range| range.iter().eq(longer.added.iter()))
             });
         match longer {
             Some(longer) => {
@@ -1862,11 +1863,11 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
         history: &crate::event_history_v1::EventHistoryV1,
         checked: usize,
         kind: crate::event_history_v1::EventKindV1,
-    ) -> &[CommittedEvent] {
+    ) -> crate::event_history_v1::EventHistoryRangeV2<'_> {
         if history.has_any(&[kind]) {
-            history.get(checked..).unwrap_or_default()
+            history.get_range_v2(checked..).unwrap_or_else(|| history.range_v2(..0))
         } else {
-            &[]
+            history.range_v2(..0)
         }
     }
     for (offset, event) in events_after(
@@ -2025,7 +2026,7 @@ fn leave_prefix(
         rows,
         added: shorter
             .as_ref()
-            .map_or_else(Vec::new, |shorter| history[shorter.covered..].to_vec()),
+            .map_or_else(Vec::new, |shorter| history.range_v2(shorter.covered..).to_vec()),
         next: Mutex::new(Weak::new()),
     });
     if let Some(shorter) = shorter {
@@ -2236,7 +2237,7 @@ fn check_row(
             {
                 return Err("Drake whole operation input/output prefix changed".into());
             }
-            if state.engine.event_history.get(..*start as usize).is_none() {
+            if state.engine.event_history.get_range_v2(..*start as usize).is_none() {
                 return Err("Drake operation original prefix absent".into());
             }
             // The rows are every journal event in history order, so the
@@ -2282,11 +2283,11 @@ fn check_row(
                                     &restore,
                                 )?
                             };
-                            if replay.engine.event_history.get(*start as usize..)
+                            if replay.engine.event_history.get_range_v2(*start as usize..)
                                 != state
                                     .engine
                                     .event_history
-                                    .get(*start as usize..row.index as usize)
+                                    .get_range_v2(*start as usize..row.index as usize)
                                 || world(&replay)? != **output
                             {
                                 return Err("Drake complete enclosing original operation/history replay differs".into());

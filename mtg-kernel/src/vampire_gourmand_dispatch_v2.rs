@@ -49,7 +49,7 @@ fn capture_at(state: &GameState, at: u32) -> Result<AbilitySourceContractV4, Str
     {
         return Err("Gourmand capture lost genuine original declaration".into());
     }
-    if state.engine.event_history[..at as usize].iter().any(|e| {
+    if state.engine.event_history.range_v2(..at as usize).iter().any(|e| {
         matches!(e,
         CommittedEvent::VampireGourmandAttackCaptureV2 { declaration_history_index:previous, .. }
             if previous == declaration_history_index)

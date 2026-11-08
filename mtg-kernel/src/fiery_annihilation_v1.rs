@@ -360,7 +360,7 @@ mod tests {
                 assert_eq!(current.objects.get(ordinary).zone, Zone::Graveyard);
                 for (id, destination) in [(shielded, Zone::Exile), (ordinary, Zone::Graveyard)] {
                     assert_eq!(
-                        current.engine.event_history[before..]
+                        current.engine.event_history.range_v2(before..)
                             .iter()
                             .filter(|event| matches!(event, event::CommittedEvent::ZoneChange {
                             object, from: Zone::Battlefield, to, ..
@@ -369,7 +369,7 @@ mod tests {
                         1
                     );
                 }
-                assert!(!current.engine.event_history[before..].iter().any(|event|
+                assert!(!current.engine.event_history.range_v2(before..).iter().any(|event|
                     matches!(event, event::CommittedEvent::ControlledCreatureDeathCaptureV1 {
                         died, ..
                     } if died.object == shielded)));

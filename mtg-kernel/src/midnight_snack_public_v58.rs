@@ -107,7 +107,7 @@ fn turn_inputs(state: &GameState) -> Result<([bool; 2], [GainTotalV58; 2]), Stri
         .rposition(|e| matches!(e, crate::event::CommittedEvent::LifeLossTurnBeganV1 { .. }))
         .ok_or("Snack original turn boundary absent")?;
     let mut attacked = [false; 2];
-    for e in &state.engine.event_history[boundary + 1..] {
+for e in state.engine.event_history.range_v2(boundary + 1..) {
         if let crate::event::CommittedEvent::DeclaredAttacker { controller, .. } = e {
             attacked[controller.index()] = true;
         }

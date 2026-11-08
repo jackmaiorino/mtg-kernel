@@ -247,7 +247,7 @@ pub(crate) fn finish(
         };
         crate::event::commit_goblin_excess_tokens_owned(state, permit)?;
     }
-    let created = state.engine.event_history[token_start as usize..]
+    let created = state.engine.event_history.range_v2(token_start as usize..)
         .iter()
         .filter_map(|event| match event {
             CommittedEvent::CreateToken { object, .. } => Some(*object),

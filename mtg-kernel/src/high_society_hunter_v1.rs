@@ -92,7 +92,7 @@ fn capture_at(state: &GameState, index: usize) -> Result<AbilitySourceContractV4
     if declaration>=index || !owns_definition(source.card_def) || source.zone!=Zone::Battlefield
         || !matches!(state.engine.event_history.get(declaration),Some(CommittedEvent::DeclaredAttacker{source:id,source_zone_change_count,controller}) if *id==source.source && *source_zone_change_count==source.zone_change_count && *controller==source.controller)
         || source.controller!=*active_player
-        || state.engine.event_history[..index].iter().any(|e|matches!(e,CommittedEvent::HighSocietyHunterAttackCaptureV1{declaration_history_index:old,..} if old==declaration_history_index))
+        || state.engine.event_history.range_v2(..index).iter().any(|e|matches!(e,CommittedEvent::HighSocietyHunterAttackCaptureV1{declaration_history_index:old,..} if old==declaration_history_index))
     {return Err("Hunter original attack authority changed".into())}
     crate::engine::validate_historical_ability_source_contract(state, *source)?;
     // Closed historical captures remain valid; only fresh collection needs the turn.
