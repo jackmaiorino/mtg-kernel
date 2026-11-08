@@ -4699,6 +4699,9 @@ fn commit_with_entry_batch_and_source_color(
     }
     state.engine.event_history.push(committed);
     if let Some((id, original)) = fiend_move {
+        crate::fiend_artisan_receipts_v1::observe_arrival_visibility(
+            state, id, original, entry_history_index,
+        );
         crate::fiend_artisan_receipts_v1::record_move(state, id, original, entry_history_index);
     }
     if let Some((cause, original)) = curator_move {
@@ -7043,6 +7046,10 @@ pub fn log_targeted(
 /// change. Sacrifice triggers consume this marker instead of guessing from
 /// an ordinary battlefield-to-graveyard move.
 pub fn log_sacrifice(state: &mut GameState, object: ObjectId) {
+    log_sacrifice_owned(state, object, None);
+}
+
+pub(crate) fn log_sacrifice_owned(state: &mut GameState, object: ObjectId, fiend_input: Option<u32>) {
     let live = state.objects.get(object);
     let committed = CommittedEvent::Sacrificed {
         object,
@@ -7051,6 +7058,9 @@ pub fn log_sacrifice(state: &mut GameState, object: ObjectId) {
     };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
+    if let Some(input) = fiend_input {
+        crate::fiend_artisan_receipts_v1::observe_sacrifice_face(state, input, object);
+    }
 }
 
 /// Records that one exact permanent incarnation dealt combat damage to a

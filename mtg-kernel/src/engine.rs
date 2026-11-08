@@ -7615,7 +7615,7 @@ fn commit_sacrifice_owned(state: &mut GameState, chosen: &[ObjectId], fiend_paym
         return;
     }
     for &id in chosen {
-        event::log_sacrifice(state, id);
+        event::log_sacrifice_owned(state, id, fiend_payment);
         if let Some(input) = fiend_payment {
             crate::fiend_artisan_receipts_v1::record_sacrifice(state, input, id);
         }

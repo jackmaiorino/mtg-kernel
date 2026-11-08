@@ -4,7 +4,7 @@ use crate::{
     current_mixed_policy_v1::KaitoDecision,
     current_tree_learner_v1::ModelV1,
     engine::{self, fiend_artisan_v1_tests as native},
-    event::CommittedEvent as E,
+    event::{self, CommittedEvent as E, ProposedEvent},
     fiend_artisan_receipts_v1::{self as receipts, JournalV1},
     human_bo3_v1::{project_limited_kaito_v16, HumanActionRequestV1, HumanKaitoProjectorV75},
     ids::{ObjectId, PlayerId},
@@ -12,7 +12,7 @@ use crate::{
     policy_observation_v6::tests::put,
     policy_surface_v5::{LimitedAppendixV1, PolicyDecisionV5},
     rl_session::{FastActorResponseV1, KaitoSessionV75},
-    state::{GameState, Target},
+    state::{FaceDownV1, GameState, Target},
     surface_v2::SurfaceDecision,
 };
 
@@ -247,6 +247,36 @@ fn paid_native_fiend_token_copy_uses_same_graveyard_bonus_and_form_both_seats() 
 }
 
 #[test]
+fn paid_concealed_sacrifice_retains_original_public_face_on_restore_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, _, _) = ready(actor, "Island", "Forest");
+        // Support operand for the actual payable face-down creature. The
+        // activation and sacrifice below use the real owning native actions.
+        let concealed = put(&mut state, actor, "Meteor Golem", Zone::Battlefield);
+        state.objects.get_mut(concealed).v4.face_down_v1 = Some(FaceDownV1 {
+            disguised: true, lookers: 1 << actor.index(), hidden_by: None, hidden_by_source: None,
+        });
+        let mut paid: GameState = serde_json::from_slice(
+            &serde_json::to_vec(&paid(&state, actor, source, concealed)).unwrap(),
+        ).unwrap();
+        let original = receipts::activations(&paid).unwrap()[0].sacrifice;
+        assert_eq!(original.identity, IdentityV1::FaceDown { disguised: true });
+        let mut edited = false;
+        for event in paid.engine.event_history.iter_mut() {
+            if let E::FiendArtisanConsumerReceiptV1 { journal } = event {
+                if let JournalV1::Sacrificed { original, source, face_down, .. } = journal.as_mut() {
+                    *face_down = None;
+                    original.identity = IdentityV1::Known { card_id: source.card_def };
+                    edited = true;
+                }
+            }
+        }
+        assert!(edited);
+        assert!(receipts::activations(&paid).is_err());
+    }
+}
+
+#[test]
 fn real_paid_x_sacrifice_search_private_worlds_index_and_source_departure_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (state, source, sacrifice, find) = ready(actor, "Island", "Llanowar Elves");
@@ -326,9 +356,25 @@ fn real_paid_x_sacrifice_search_private_worlds_index_and_source_departure_both_s
         assert!(row.shuffled && !row.countered);
         assert_eq!(row.arrival.unwrap().object, find.0);
         assert_eq!(row.arrival.unwrap().zone, Zone::Battlefield);
+        // Historical birth identity remains exact after a later private
+        // incarnation. It must agree with the committed visibility witness.
+        event::propose_and_commit(&mut found, ProposedEvent::zone_change(find, Zone::Hand));
         let mut restored: GameState = serde_json::from_slice(&serde_json::to_vec(&found).unwrap()).unwrap();
         assert_eq!(restored.state_hash(), found.state_hash());
-        assert!(receipts::activations(&restored).is_ok());
+        let historical = receipts::activations(&restored).unwrap().pop().unwrap();
+        assert_eq!(historical.arrival.unwrap().identity, IdentityV1::Known { card_id: id("Axgard Cavalry") });
+        let mut wrong_name = restored.clone();
+        let mut edited = false;
+        for event in wrong_name.engine.event_history.iter_mut() {
+            if let E::FiendArtisanConsumerReceiptV1 { journal } = event {
+                if let JournalV1::Moved { arrival: Some(card), .. } = journal.as_mut() {
+                    card.identity = IdentityV1::Known { card_id: id("Llanowar Elves") };
+                    edited = true;
+                }
+            }
+        }
+        assert!(edited);
+        assert!(receipts::activations(&wrong_name).is_err());
         restored.engine.event_history.retain(|event| !matches!(event,
             E::FiendArtisanConsumerReceiptV1 { journal } if matches!(journal.as_ref(), JournalV1::Moved { .. })));
         assert!(receipts::activations(&restored).is_err());

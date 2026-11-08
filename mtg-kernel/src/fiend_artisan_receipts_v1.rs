@@ -14,6 +14,15 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum JournalV1 {
+    SacrificeFace {
+        input: u32,
+        observed: ReferenceV1,
+    },
+    ArrivalVisibility {
+        id: StackItemId,
+        object: ObjectId,
+        observed: Option<ReferenceV1>,
+    },
     Sacrificed {
         input: u32,
         original: ReferenceV1,
@@ -70,6 +79,12 @@ pub(crate) fn payment_owner(
     (input.source.source == source).then_some(u32::try_from(at).ok()?)
 }
 
+pub(crate) fn observe_sacrifice_face(state: &mut GameState, input: u32, object: ObjectId) {
+    if let Some(observed) = public::reference(state, object, None) {
+        push(state, JournalV1::SacrificeFace { input, observed });
+    }
+}
+
 pub(crate) fn record_sacrifice(state: &mut GameState, input: u32, object: ObjectId) {
     if let Some(original) = public::reference(state, object, None) {
         let source = AbilitySourceContractV4::capture(state, object);
@@ -90,6 +105,25 @@ pub(crate) fn owned_move(
 
 fn public_destination(zone: Zone) -> bool {
     matches!(zone, Zone::Battlefield | Zone::Graveyard | Zone::Exile | Zone::Stack | Zone::Command)
+}
+
+pub(crate) fn observe_arrival_visibility(
+    state: &mut GameState,
+    id: StackItemId,
+    source: AbilitySourceContractV4,
+    event_at: usize,
+) {
+    let Some(E::ZoneChange { object, from: Zone::Library, to, .. }) =
+        state.engine.event_history.get(event_at)
+    else { return };
+    if *object != source.source || source.zone != Zone::Library {
+        return;
+    }
+    let object = *object;
+    let observed = public_destination(*to)
+        .then(|| public::reference(state, object, None))
+        .flatten();
+    push(state, JournalV1::ArrivalVisibility { id, object, observed });
 }
 
 pub(crate) fn record_move(
@@ -129,6 +163,7 @@ struct Row<'a> {
     paid: Option<(usize, u32, &'a StackItem)>,
     started: Option<(usize, &'a [EffectObjectBinding])>,
     moved: Option<Movement<'a>>,
+    arrival_visibility: Option<(usize, ObjectId, Option<&'a ReferenceV1>)>,
     finished: Option<usize>,
     countered: Option<usize>,
 }
@@ -164,6 +199,7 @@ pub(crate) fn activations(state: &GameState) -> Result<Vec<Activation<'_>>, Stri
     let history = &state.engine.event_history;
     let mut rows = BTreeMap::<StackItemId, Row<'_>>::new();
     let mut sacrifices = BTreeMap::new();
+    let mut sacrifice_faces = BTreeMap::new();
     for (at, event) in history.iter().enumerate() {
         let duplicate = match event {
             E::FiendArtisanPaidV1 { input_index, item } =>
@@ -175,6 +211,11 @@ pub(crate) fn activations(state: &GameState) -> Result<Vec<Activation<'_>>, Stri
             E::FiendArtisanSearchFinishedV1 { stack_item_id } =>
                 rows.entry(*stack_item_id).or_default().finished.replace(at).is_some(),
             E::FiendArtisanConsumerReceiptV1 { journal } => match journal.as_ref() {
+                JournalV1::SacrificeFace { input, observed } =>
+                    sacrifice_faces.insert(*input, (at, observed)).is_some(),
+                JournalV1::ArrivalVisibility { id, object, observed } =>
+                    rows.entry(*id).or_default().arrival_visibility
+                        .replace((at, *object, observed.as_ref())).is_some(),
                 JournalV1::Sacrificed { input, original, source, face_down } =>
                     sacrifices.insert(*input, (at, original, *source, *face_down)).is_some(),
                 JournalV1::Moved { id, original, destination, arrival, arrival_face_down } =>
@@ -197,6 +238,8 @@ pub(crate) fn activations(state: &GameState) -> Result<Vec<Activation<'_>>, Stri
         let x = native::authenticated_paid_x(state, item)?;
         let (sacrifice_at, sacrifice, paid_source, face_down) = sacrifices.remove(&input_index)
             .ok_or("Fiend Artisan actual sacrifice receipt absent")?;
+        let (face_at, observed) = sacrifice_faces.remove(&input_index)
+            .ok_or("Fiend Artisan committed sacrifice visibility absent")?;
         let Some(E::FiendArtisanInputV1 { input }) = history.get(input_index as usize)
         else { return Err("Fiend Artisan original payment absent".into()) };
         let [binding] = input.pending.object_cost_chosen.as_slice()
@@ -206,7 +249,9 @@ pub(crate) fn activations(state: &GameState) -> Result<Vec<Activation<'_>>, Stri
             IdentityV1::Known { card_id: paid_source.card_def },
             |disguised| IdentityV1::FaceDown { disguised },
         );
-        if !(input_index as usize + 1 < sacrifice_at && sacrifice_at < paid_at)
+        if !(input_index as usize + 1 < face_at && face_at < sacrifice_at && sacrifice_at < paid_at)
+            || face_at + 1 != sacrifice_at
+            || observed != sacrifice
             || paid_source.source != binding.object
             || paid_source.zone != Zone::Battlefield
             || paid_source.zone_change_count != binding.expected_zone_change_count
@@ -216,7 +261,7 @@ pub(crate) fn activations(state: &GameState) -> Result<Vec<Activation<'_>>, Stri
             || sacrifice.generation != binding.expected_zone_change_count
             || sacrifice.zone != Zone::Battlefield
             || sacrifice.controller != item.controller.into()
-            || !matches!(history.get(sacrifice_at - 1),
+            || !matches!(history.get(face_at - 1),
                 Some(E::Sacrificed { object, controller_before, .. })
                 if *object == binding.object && *controller_before == item.controller)
             || state.objects.try_get(binding.object).map(|o| crate::rl::PlayerSeatV1::from(o.owner))
@@ -234,6 +279,9 @@ pub(crate) fn activations(state: &GameState) -> Result<Vec<Activation<'_>>, Stri
         };
         let pending = state.engine.pending_effect.as_ref()
             .is_some_and(|pending| pending.resolving_item.v4.stack_item_id == id);
+        if row.moved.is_none() != row.arrival_visibility.is_none() {
+            return Err("Fiend Artisan native search move visibility incomplete".into());
+        }
         let arrival = match (row.started, row.finished, row.countered) {
             (None, None, None) if stack_position.is_some() && !pending && row.moved.is_none() => None,
             (None, None, Some(at)) if stack_position.is_none() && paid_at < at
@@ -254,9 +302,12 @@ pub(crate) fn activations(state: &GameState) -> Result<Vec<Activation<'_>>, Stri
                     ([], None) => None,
                     ([(event_at, E::ZoneChange { object, to, .. })],
                         Some(Movement { at, original: original_binding, destination, arrival, face_down }))
-                        if *event_at + 1 == at && at < end && *object == original_binding.object
+                        if *event_at + 2 == at && at < end && *object == original_binding.object
                             && original.contains(&original_binding) && *to == destination =>
                     {
+                        if row.arrival_visibility != Some((*event_at + 1, *object, arrival)) {
+                            return Err("Fiend Artisan arrival disagrees with committed visibility".into());
+                        }
                         if let Some(card) = arrival {
                             let live = state.objects.try_get(*object);
                             let identity_matches_face = match (&card.identity, face_down) {
@@ -294,7 +345,7 @@ pub(crate) fn activations(state: &GameState) -> Result<Vec<Activation<'_>>, Stri
             shuffled: row.finished.is_some(), countered: row.countered.is_some(), arrival,
         });
     }
-    if !sacrifices.is_empty() || state.stack.iter().any(|item|
+    if !sacrifices.is_empty() || !sacrifice_faces.is_empty() || state.stack.iter().any(|item|
         native::selected(state, item) && !result.iter().any(|row| row.item == item))
     {
         return Err("Fiend Artisan original native payment custody incomplete".into());
