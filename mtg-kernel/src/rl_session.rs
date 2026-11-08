@@ -1705,6 +1705,7 @@ where
         | ActionSemanticV1::ChooseLondonBottom { .. }
         | ActionSemanticV1::ChooseAttackTarget { .. }
         | ActionSemanticV1::ChooseEntryColorV36 { .. }
+        | ActionSemanticV1::ChooseEntryCreatureTypeV60 { .. }
         | ActionSemanticV1::ChooseDivineKickerV44 { .. }
         | ActionSemanticV1::ChooseDivineTargetV44 { .. }
         | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
@@ -3527,6 +3528,7 @@ fn flat_validate_semantic_policy_pair_v1(
             | ActionSemanticV1::ChooseLondonBottom { .. }
             | ActionSemanticV1::ChooseAttackTarget { .. }
             | ActionSemanticV1::ChooseEntryColorV36 { .. }
+            | ActionSemanticV1::ChooseEntryCreatureTypeV60 { .. }
             | ActionSemanticV1::ChooseDivineKickerV44 { .. }
             | ActionSemanticV1::ChooseDivineTargetV44 { .. }
             | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
@@ -8486,6 +8488,7 @@ impl FastActorSessionV1 {
         use crate::kernel_native_search_opponent_v1::{
             pending_selection_hidden_objects_v1, redeterminize_hidden_zones_pinned_v1,
         };
+        self.refuse_sampled_kinship_checkpoint_v1()?;
         let actor = self.current.as_ref().ok_or("no current decision")?.actor;
         let pinned = pending_selection_hidden_objects_v1(&self.state, actor);
         let slots: Vec<_> = [PlayerId::P0, PlayerId::P1]
@@ -8521,6 +8524,7 @@ impl FastActorSessionV1 {
         {
             return Err("closedlist-v2 requires rules-only play with name-level hand facts".into());
         }
+        self.refuse_sampled_kinship_checkpoint_v1()?;
         let actor = self.current.as_ref().ok_or("no current decision")?.actor;
         let pinned = pending_selection_hidden_objects_v1(&self.state, actor);
         if pinned.iter().any(|id| {
@@ -8570,6 +8574,11 @@ impl FastActorSessionV1 {
             return Err("closedlist-v3 requires a rules-only session".into());
         }
         let actor = self.current.as_ref().ok_or("no current decision")?.actor;
+        // Answering an already-open operation replays its original GameState.
+        // A checkpoint opened inside a sampled rollout has a sampled origin.
+        if crate::linked_aura_operation_v1::has_pending(&self.state) {
+            return Err("linked operation checkpoint requires sampled replay".into());
+        }
         let opponent = actor.opponent();
         let transcript = self
             .state

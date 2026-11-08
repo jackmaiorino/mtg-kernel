@@ -30,6 +30,53 @@ fn rules_only_origin_candidates_v1(
     state: &crate::state::GameState,
     surface: &PolicySurfaceV5,
 ) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
+    use crate::{
+        creature_types_v60::CreatureTypeV60, engine::Action,
+        linked_aura_operation_v1::GeneralChoiceV36, surface::SurfaceAction,
+    };
+
+    if let PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+        Decision::ChooseEntryCreatureTypeV1 {
+            player,
+            entry_ordinal,
+            types,
+        },
+    )) = origin
+    {
+        let pending = state
+            .engine
+            .linked_aura_operation_v1
+            .pending_kinship_v1
+            .as_ref();
+        let Some(GeneralChoiceV36::KinshipV1 { choice, .. }) = pending.map(|p| &p.choice) else {
+            return Err(RlContractError(
+                "chosen creature type lost its entry owner".into(),
+            ));
+        };
+        if choice.controller != *player
+            || choice.ordinal != *entry_ordinal
+            || !crate::banner_of_kinship_v1::entry::owns_entry_definition(choice.card_def)
+            || types.as_slice() != CreatureTypeV60::ALL
+        {
+            return Err(RlContractError(
+                "chosen creature type entry menu changed".into(),
+            ));
+        }
+        return Ok(types
+            .iter()
+            .copied()
+            .map(|creature_type| CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::ChooseEntryCreatureTypeV60 {
+                    actor: (*player).into(),
+                    entry_ordinal: *entry_ordinal,
+                    creature_type,
+                },
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(
+                    Action::ChooseEffectOption(creature_type.choice_index()),
+                )),
+            })
+            .collect());
+    }
     if let Some((player, pending, prefix)) = surface
         .hunter_order_parts_v45(state)
         .map_err(RlContractError)?
@@ -114,6 +161,20 @@ fn rules_only_deck_pair_state_v1(
 }
 
 impl FastActorSessionV1 {
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn refuse_sampled_kinship_checkpoint_v1(&self) -> Result<(), String> {
+        if self
+            .state
+            .engine
+            .linked_aura_operation_v1
+            .pending_kinship_v1
+            .is_some()
+        {
+            return Err("linked operation checkpoint requires sampled replay".into());
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) fn install_rules_only_test_state_v1(&mut self, state: crate::state::GameState) {
         assert_eq!(

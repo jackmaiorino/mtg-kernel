@@ -395,6 +395,83 @@ fn closed_list_v3_rebuilds_legal_partial_cast_and_land_actions() {
     check_partial_cast_and_land_actions(WorldModeV1::ClosedListV3);
 }
 
+#[test]
+fn closed_list_v3_courtyard_answers_in_sampled_world_without_restoring_hidden_cards() {
+    use crate::creature_types_v60::CreatureTypeV60;
+    use crate::rl::ActionSemanticV1;
+
+    let courtyard = card_id_by_name("Secluded Courtyard").unwrap();
+    let forest = card_id_by_name("Forest").unwrap();
+    let island = card_id_by_name("Island").unwrap();
+    let mountain = card_id_by_name("Mountain").unwrap();
+    let belief = LimitedBeliefV1::new([vec![island; 40]]);
+    let mode = WorldModeV1::ClosedListV3;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut decks = [vec![mountain; 40], vec![mountain; 40]];
+        decks[actor.index()] = vec![forest; 40];
+        decks[actor.index()][0] = courtyard;
+        let mut state = GameState::new_from_libraries_with_starting_player_v1(
+            &decks[0],
+            &decks[1],
+            crate::rl::card_name,
+            552,
+            actor,
+        );
+        state.step = crate::state::Step::Main1;
+        state.reveal_meaning_v3.enable();
+        let player = &mut state.players[actor.index()];
+        let object = player.library.remove(0);
+        assert_eq!(state.objects.get(object).card_def, courtyard);
+        state.objects.get_mut(object).zone = Zone::Hand;
+        player.hand.push(object);
+        let mut live = rules_only_closed_list_game(decks, actor);
+        live.install_rules_only_test_state_v1(state);
+        let play = live.diagnostic_current_action_semantics().unwrap().iter().position(
+            |action| matches!(action, ActionSemanticV1::PlayLand { source, .. } if source.arena_id == object.0),
+        ).unwrap() as u32;
+
+        let mut sampled = sample_world_v1(&live, mode, Some(&belief), 552).unwrap();
+        step_index(&mut live, play, false).unwrap();
+        step_index(&mut sampled, play, false).unwrap();
+        let expected: Vec<_> = CreatureTypeV60::ALL
+            .iter()
+            .map(
+                |&creature_type| ActionSemanticV1::ChooseEntryCreatureTypeV60 {
+                    actor: actor.into(),
+                    entry_ordinal: 0,
+                    creature_type,
+                },
+            )
+            .collect();
+        assert_eq!(
+            live.diagnostic_current_action_semantics().unwrap(),
+            expected
+        );
+        assert_eq!(
+            sampled.diagnostic_current_action_semantics().unwrap(),
+            expected
+        );
+        assert_eq!(
+            sample_world_v1(&live, mode, Some(&belief), 552)
+                .err()
+                .as_deref(),
+            Some("linked operation checkpoint requires sampled replay"),
+        );
+
+        let chosen = CreatureTypeV60::Goblin;
+        step_index(&mut sampled, u32::from(chosen.choice_index()), true).unwrap();
+        let state = sampled.game_state();
+        let entered = state.objects.get(object);
+        assert_eq!(entered.zone, Zone::Battlefield);
+        assert_eq!(entered.v4.kinship_type_v1, Some(chosen));
+        let opponent_library = &state.players[actor.opponent().index()].library;
+        assert_eq!(opponent_library.len(), 40);
+        assert!(opponent_library
+            .iter()
+            .all(|&id| state.objects.get(id).card_def == island));
+    }
+}
+
 fn check_partial_cast_and_land_actions(mode: WorldModeV1) {
     use crate::rl::ActionSemanticV1;
     use crate::state::Step;

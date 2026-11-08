@@ -2423,6 +2423,7 @@ fn neutral_semantic_v1(
         | ActionSemanticV1::ChooseDivineKickerV44 { .. }
         | ActionSemanticV1::ChooseDivineTargetV44 { .. }
         | ActionSemanticV1::ChooseEntryColorV36 { .. }
+        | ActionSemanticV1::ChooseEntryCreatureTypeV60 { .. }
         | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
         | ActionSemanticV1::ChooseLegendPermanent { .. }
         | ActionSemanticV1::ChooseLondonBottom { .. }

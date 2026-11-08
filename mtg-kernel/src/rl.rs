@@ -1396,6 +1396,12 @@ pub enum ActionSemanticV1 {
         source: CardStableRefV1,
         x_value: u16,
     },
+    /// Rules-only Limited entry choice over the complete pinned type domain.
+    ChooseEntryCreatureTypeV60 {
+        actor: PlayerSeatV1,
+        entry_ordinal: u32,
+        creature_type: crate::creature_types_v60::CreatureTypeV60,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -6807,6 +6813,14 @@ pub(crate) fn core_policy_action_candidates_next_five_scoped_v59(
 
 fn validate_policy_action_semantic_v5(semantic: &ActionSemanticV1) -> Result<()> {
     refuse_divine_semantic_in_frozen_transport(semantic)?;
+    if matches!(
+        semantic,
+        ActionSemanticV1::ChooseEntryCreatureTypeV60 { .. }
+    ) {
+        return Err(RlContractError(
+            "chosen creature type requires its rules-only Limited owner".into(),
+        ));
+    }
     if let ActionSemanticV1::Ambiguous { reason } = semantic {
         return Err(RlContractError(format!(
             "ambiguous legal action representation refused: {reason}"

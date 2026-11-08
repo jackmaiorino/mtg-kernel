@@ -549,6 +549,7 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
         | A::ChooseAttackTarget { actor, .. }
         | A::ChooseLegendPermanent { actor, .. }
         | A::ChooseEntryColorV36 { actor, .. }
+        | A::ChooseEntryCreatureTypeV60 { actor, .. }
         | A::ChooseDivineKickerV44 { actor, .. }
         | A::ChooseDivineTargetV44 { actor, .. }
         | A::FinishDivineTargetsV44 { actor, .. } => Some(*actor),
@@ -2218,6 +2219,7 @@ fn label_common(
         | A::ChooseAttackTarget { .. }
         | A::Ambiguous { .. }
         | A::ChooseEntryColorV36 { .. }
+        | A::ChooseEntryCreatureTypeV60 { .. }
         | A::ChooseDivineKickerV44 { .. }
         | A::ChooseDivineTargetV44 { .. }
         | A::ChooseFullRangeCastXValueV59 { .. }
