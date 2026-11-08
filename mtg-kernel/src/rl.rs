@@ -2393,8 +2393,11 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         .transpose()
         .map_err(RlContractError)?;
     crate::continuous_characteristics_v1::require_land_override_scope(
-        state, acting_player, allowed_moon,
-    ).map_err(RlContractError)?;
+        state,
+        acting_player,
+        allowed_moon,
+    )
+    .map_err(RlContractError)?;
     if !chosen_type {
         refuse_chosen_type_mana_v60(state)?;
     }
@@ -5520,7 +5523,9 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         accept_fake,
         conqueror_proof,
         if text_mode == ObservationTextModeV2::KaitoV75Artifact
-            && surface.limited_appendix_v1().includes(LimitedAppendixV1::Omniscience)
+            && surface
+                .limited_appendix_v1()
+                .includes(LimitedAppendixV1::Omniscience)
         {
             surface.limited_appendix_v1()
         } else {
@@ -5627,7 +5632,9 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
                 state,
                 text_mode,
                 text_mode == ObservationTextModeV2::KaitoV75Artifact
-                    && surface.limited_appendix_v1().includes(crate::policy_surface_v5::LimitedAppendixV1::ChosenType),
+                    && surface
+                        .limited_appendix_v1()
+                        .includes(crate::policy_surface_v5::LimitedAppendixV1::ChosenType),
             )?,
             surface: base.projection,
             policy_surface_context,

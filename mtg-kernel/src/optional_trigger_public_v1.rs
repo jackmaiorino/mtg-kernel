@@ -327,7 +327,10 @@ impl ConsumerV1 {
         match self {
             Self::Legacy => crate::effect::require_no_copied_token_abilities_v1(state),
             Self::ChandraV74 => crate::effect::require_no_copied_token_abilities_chandra_v74(state),
-            Self::KaitoV75 | Self::KaitoOmniscienceV1 | Self::KaitoTutelageV1 | Self::KaitoMixedV1 => {
+            Self::KaitoV75
+            | Self::KaitoOmniscienceV1
+            | Self::KaitoTutelageV1
+            | Self::KaitoMixedV1 => {
                 crate::effect::require_no_copied_token_abilities_kaito_v75(state)
             }
         }
@@ -344,7 +347,10 @@ pub(crate) fn validate_state_for_consumer(
     crate::effect::thousand_year_storm_v1::refuse_legacy(state)?;
     crate::effect::curator_v1::refuse_legacy(state)?;
     crate::effect::sphinx_lore_v1::refuse_legacy(state)?;
-    if !matches!(consumer, ConsumerV1::KaitoOmniscienceV1 | ConsumerV1::KaitoMixedV1) {
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoOmniscienceV1 | ConsumerV1::KaitoMixedV1
+    ) {
         crate::engine::omniscience_cast_v1::refuse_legacy(state)?;
     }
     crate::progenitus_v1::refuse_legacy(state)?;
@@ -403,18 +409,19 @@ pub(crate) fn validate_state_for_consumer(
         return Err("Aberration CDA and mill require a distinct complete consumer".into());
     }
 
-    if !matches!(consumer, ConsumerV1::KaitoTutelageV1 | ConsumerV1::KaitoMixedV1)
-        && (state.objects.iter().any(|(_, object)| {
-            matches!(object.zone, Zone::Battlefield | Zone::Stack)
-                && object.v4.face_down_v1.is_none()
-                && crate::event::is_sphinxs_tutelage_v1(object.card_def)
-        }) || state.engine.event_history.iter().any(|event| {
-            matches!(
-                event,
-                crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
-            )
-        }))
-    {
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoTutelageV1 | ConsumerV1::KaitoMixedV1
+    ) && (state.objects.iter().any(|(_, object)| {
+        matches!(object.zone, Zone::Battlefield | Zone::Stack)
+            && object.v4.face_down_v1.is_none()
+            && crate::event::is_sphinxs_tutelage_v1(object.card_def)
+    }) || state.engine.event_history.iter().any(|event| {
+        matches!(
+            event,
+            crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
+        )
+    })) {
         return Err("Tutelage native history requires a distinct complete consumer".into());
     }
 

@@ -750,9 +750,8 @@ fn project_authenticated_parts_v75(
                     &action,
                 )
                 .map_err(error)?,
-                moon_action: crate::moon_consumer_v1::action(
-                    observation.moon.as_ref(), &action,
-                ).map_err(error)?,
+                moon_action: crate::moon_consumer_v1::action(observation.moon.as_ref(), &action)
+                    .map_err(error)?,
                 drakuseth_target: crate::drakuseth_consumer_v1::target_action(
                     observation.drakuseth.as_ref(),
                     &action,
