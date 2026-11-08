@@ -499,7 +499,11 @@ fn reveal_v4_detaches_an_unread_payment_after_a_repeated_reveal() {
             serde_json::json!([]),
             "{answer}"
         );
-        assert!(answer["result"]["edges"].is_array(), "{answer}");
+        // This short continuation spends its transition budget before a
+        // natural terminal backup. Successful import/dispatch is not a pick.
+        assert_eq!(answer["result"]["transitions"], 8, "{answer}");
+        assert_eq!(answer["result"]["cap_reached"], true, "{answer}");
+        assert!(answer["result"]["edges"].is_null(), "{answer}");
         (state.reveal_meaning_v3.transcript(viewer), v4.bytes)
     };
     assert_eq!(run(paid, twin), run(twin, paid));

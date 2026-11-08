@@ -7161,7 +7161,8 @@ fn materialize_zone_change_v1(
     });
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
-    let source_face_down = state.objects.get(id).v4.face_down_v1.is_some();
+    let source_face = state.objects.get(id).v4.face_down_v1;
+    let source_face_down = source_face.is_some();
     let nine_lives_cast_entry = to_zone == Zone::Battlefield
         && from_zone == Zone::Stack
         && crate::card_def::CARD_DEFS[usize::from(state.objects.get(id).card_def)].name
@@ -7534,6 +7535,16 @@ fn materialize_zone_change_v1(
         };
         // spellbench-public-reveal: hand card revealed by the card rules.
         for observer in [PlayerId::P0, PlayerId::P1] {
+            // Unlike battlefield/stack exits, concealed exile does not reveal
+            // its name. Capture look permission before reset_for_zone_change
+            // clears the face-down marker. Omit only suppresses the V3 journal;
+            // it does not suppress the legacy known-hand row below.
+            if from_zone == Zone::Exile
+                && observer != owner
+                && source_face.is_some_and(|face| face.lookers & (1 << observer.index()) == 0)
+            {
+                continue;
+            }
             state
                 .reveal_distinct_hand_card_with_meaning_v3(observer, owner, id, meaning)
                 .expect("just moved this live public object into its owner's hand");
