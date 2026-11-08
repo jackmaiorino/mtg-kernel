@@ -60,7 +60,7 @@ export refusal instead of directly clearing `root_ids`.
 
 `python/tools/qualify_reveal_v4_process.py` provides the separate process
 check. It imports the unchanged companion at
-`622e3b705d8e0c91284e2ebbf02ed2f58a4f9030`, starts the native reveal bridge and
+`7e3df807e8361e987a88e75804caea320b3d6e6f`, starts the native reveal bridge and
 the real reveal pool/worker, and uses the companion adapter, neutral host
 validator and entrant for both starting-seat mappings. It rejects zero-work
 or incomplete search responses and binds payload hashes, picks and receipts.
@@ -131,7 +131,7 @@ The source follow-up from `b4cd794` makes incomplete pool replies diagnostic
 results. They retain path, transition charges, exclusions and per-tree results,
 but never count as successful searches. A successful pool reply alone also
 cannot qualify a buffered commit. The harness records real point responses
-from the unchanged companion's pool requests and observes the real adapter's
+from the companion's pool requests and observes the real adapter's
 `commit_buffer` and `native_step` calls through `super`; it does not replace
 the peer, worker, selection algorithm or any of the live commit checks.
 
@@ -159,7 +159,7 @@ or launched. A new invocation must use the newly qualified default-feature
 `spellbench_kernel_catalog` output. The existing approved input remains
 `D:/decision-census-20261010/sources/a48-source.json`, SHA-256
 `5d97f7c63857f9165db3d47c6c4a3b4b0dde01dfb13c4ed960da2171b2bda6de`, with
-unchanged companion `622e3b705d8e0c91284e2ebbf02ed2f58a4f9030`. Use explicit
+current companion `7e3df807e8361e987a88e75804caea320b3d6e6f`. Use explicit
 `--budget 256 --max-steps 512 --require-buffered`, a new output path, and the
 lead's bounded host-slot wrapper after native prerequisite checks pass.
 The harness defaults remain 32/128; this source change does not silently
@@ -173,3 +173,45 @@ identity, original-completion disagreement, incomplete replies and accounting.
 These pure unit cases are not native evidence. They and Python execution are
 deferred while all desktop cores are reserved; only source review and
 `git diff --check` were performed for this follow-up.
+
+## Observed process qualification (2026-11-08)
+
+The actual process check passes for both starting seats using companion
+`7e3df807e8361e987a88e75804caea320b3d6e6f`, helper source
+`96478e56318b3ee220180589ba89dcf249b34ea1`, and the three same-source native
+binaries built from `476f60ac02c15572f2189e15847a3ed1aa992d88`. The original
+a48 input closure and explicit 256-transition/512-step bounds were retained.
+Seat 0 reached the verified buffered commit in 71 steps with 29 successful
+searches; seat 1 in 16 steps with 11 successful searches. Both committed paths
+and full point-key arrays matched the actual live decisions.
+
+Report SHA-256:
+`408aee9c57ac8fc4b6391b32ddc1f45aa6cd2bc6e895842d57ba297c5e385e83`.
+Process receipt:
+`a4fba62d0a04927c511695d8f594a5f913db69d6f322412eda118f6fbf95ce8b`.
+Build receipt:
+`cee335799cafd5b05a69b53d537615779dcf5b4c5e502f9d1d6c8073c809bd77`.
+The binaries and reports are retained in
+`D:/codex-reveal543-process-476f60ac-20261108/` under `build-001` and
+`process-003`. Rust 1.94.1 and MSVC 14.50.35717 were pinned; guarded desktop
+cores 0-3 at BelowNormal preserved SD1 on cores 4-23, a 60 GiB free-space floor
+and a 12 GiB owned-growth cap.
+
+The first process attempt exposed the adapter's wrong canonical-key width:
+native row keys have 16 hexadecimal characters, while payload/state digests
+have 64. Companion 7e3 repairs only the row-key validation and its fixtures;
+all 63 tests in the four directly affected Python suites passed. The failed
+attempt remains in `process-001`, report hash
+`0c9ed4168a7bec1111a31a5c61efcff3085533d8e54c8cfa050a4b2b038d25d0`.
+A later prelaunch refusal found the helper's obsolete companion pin; 964
+repairs that pin before the passing attempt. Twelve helper receipt-binding
+unit tests passed before this pin-only edit.
+
+The earlier b4cd794 native executable passed all 21 V4/V3/privacy cases.
+A fresh 28-case run adds the seven recovery cases with the real paid-spell
+fixture repair. Its result is pending. Integration source
+`2ac295ddd485595c44407dd33660270ea7b20da9` merges main 87d5 cleanly and keeps
+all reveal/recovery/process source files identical to 964; the only overlap
+with imported main files adds its existing Eternal BO3 module declaration.
+These engineering checks do not modify the frozen W1 entrant or establish
+playing strength.
