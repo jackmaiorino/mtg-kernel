@@ -105,48 +105,77 @@ fn closed_list_v3_source_guard_ignores_a_hidden_alias_after_a_visible_departure(
         let owner = viewer.opponent();
         let mut decks = [vec![island], vec![island]];
         decks[owner.index()] = vec![lembas, lembas];
-        let mut state = GameState::new_from_libraries(&decks[0], &decks[1], crate::rl::card_name, 552);
+        let mut state =
+            GameState::new_from_libraries(&decks[0], &decks[1], crate::rl::card_name, 552);
         state.reveal_meaning_v3.enable();
         let source = state.players[owner.index()].library[0];
-        propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Graveyard));
+        propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(source, Zone::Graveyard),
+        );
         let contract = AbilitySourceContractV4::capture(&state, source);
         let keep_source = |state: &mut GameState| {
-            state.engine.pending_triggers.push(crate::trigger::PendingTrigger {
-                controller: owner,
-                source,
-                effect: crate::effect::EffectOp::Sequence(Vec::new()),
-                is_madness_offer: false,
-                kicked: false,
-                target_spec: crate::card_def::TargetSpec::None,
-                targets: Vec::new(),
-                target_contracts: Vec::new(),
-                placement_ordered: false,
-                source_contract: Some(contract),
-                granted_by: None,
-                optional_additional_cost_paid: None,
-                paid_cost_refs: Vec::new(),
-            });
+            state
+                .engine
+                .pending_triggers
+                .push(crate::trigger::PendingTrigger {
+                    controller: owner,
+                    source,
+                    effect: crate::effect::EffectOp::Sequence(Vec::new()),
+                    is_madness_offer: false,
+                    kicked: false,
+                    target_spec: crate::card_def::TargetSpec::None,
+                    targets: Vec::new(),
+                    target_contracts: Vec::new(),
+                    placement_ordered: false,
+                    source_contract: Some(contract),
+                    granted_by: None,
+                    optional_additional_cost_paid: None,
+                    paid_cost_refs: Vec::new(),
+                });
         };
         let mut continuous = state.clone();
         keep_source(&mut continuous);
-        assert_eq!(limited_public_source_pins_v3(&continuous, viewer).unwrap(), vec![source]);
+        assert_eq!(
+            limited_public_source_pins_v3(&continuous, viewer).unwrap(),
+            vec![source]
+        );
         propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
         propose_and_commit(&mut state, ProposedEvent::draw(owner));
-        let twin = state.players[owner.index()].hand.iter().copied().find(|&id| id != source).unwrap();
+        let twin = state.players[owner.index()]
+            .hand
+            .iter()
+            .copied()
+            .find(|&id| id != source)
+            .unwrap();
         let variant = |departing| {
             let mut sample = state.clone();
-            propose_and_commit(&mut sample, ProposedEvent::zone_change(departing, Zone::Graveyard));
+            propose_and_commit(
+                &mut sample,
+                ProposedEvent::zone_change(departing, Zone::Graveyard),
+            );
             keep_source(&mut sample);
             sample
         };
         let a = variant(source);
         let b = variant(twin);
-        assert_eq!(a.reveal_meaning_v3.transcript(viewer), b.reveal_meaning_v3.transcript(viewer));
-        assert!(!census_hidden_source_conflicts_v1(&a, &a.players[owner.index()].hand));
-        assert!(census_hidden_source_conflicts_v1(&b, &b.players[owner.index()].hand));
+        assert_eq!(
+            a.reveal_meaning_v3.transcript(viewer),
+            b.reveal_meaning_v3.transcript(viewer)
+        );
+        assert!(!census_hidden_source_conflicts_v1(
+            &a,
+            &a.players[owner.index()].hand
+        ));
+        assert!(census_hidden_source_conflicts_v1(
+            &b,
+            &b.players[owner.index()].hand
+        ));
         for world in [&a, &b] {
-            assert_eq!(limited_public_source_pins_v3(world, viewer),
-                       Err("source lacks continuous public provenance".into()));
+            assert_eq!(
+                limited_public_source_pins_v3(world, viewer),
+                Err("source lacks continuous public provenance".into())
+            );
         }
     }
 }

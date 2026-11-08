@@ -13,15 +13,26 @@ fn main() -> io::Result<()> {
     let mut output = io::stdout().lock();
     loop {
         let mut line = Vec::new();
-        let count = input.by_ref().take((MAX_LIMITED_LINE_BYTES_V1 + 1) as u64)
+        let count = input
+            .by_ref()
+            .take((MAX_LIMITED_LINE_BYTES_V1 + 1) as u64)
             .read_until(b'\n', &mut line)?;
-        if count == 0 { break; }
+        if count == 0 {
+            break;
+        }
         if line.len() > MAX_LIMITED_LINE_BYTES_V1 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "request exceeds line-size limit"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "request exceeds line-size limit",
+            ));
         }
         let text = std::str::from_utf8(&line)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "request is not UTF-8"))?;
-        writeln!(output, "{}", server.handle_line(text.trim_end_matches(['\r', '\n'])))?;
+        writeln!(
+            output,
+            "{}",
+            server.handle_line(text.trim_end_matches(['\r', '\n']))
+        )?;
         output.flush()?;
     }
     Ok(())

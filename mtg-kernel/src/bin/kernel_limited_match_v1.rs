@@ -259,11 +259,19 @@ fn play(flags: &Flags) -> Result<(), String> {
         full_validation: flags.switches.contains("full-validation"),
         session: session_kind(flags)?,
     };
-    let uses_closed_list = policies.iter().any(PolicySpecV1::uses_versioned_closed_list);
+    let uses_closed_list = policies
+        .iter()
+        .any(PolicySpecV1::uses_versioned_closed_list);
     let uses_closed_list_v3 = policies.iter().any(PolicySpecV1::uses_closed_list_v3);
     if uses_closed_list && !matches!(limits.session, SessionKindV1::RulesOnly(_)) {
-        let version = if uses_closed_list_v3 { "closedlist-v3" } else { "closedlist-v2" };
-        return Err(format!("{version} requires -session rules-only or rules-only-all"));
+        let version = if uses_closed_list_v3 {
+            "closedlist-v3"
+        } else {
+            "closedlist-v2"
+        };
+        return Err(format!(
+            "{version} requires -session rules-only or rules-only-all"
+        ));
     }
     let out = PathBuf::from(flags.get("out")?);
     let legs: u64 = if spec_a == spec_b || flags.switches.contains("single") {

@@ -22,15 +22,22 @@ pub fn producer_sha256_v1() -> String {
     static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     HASH.get_or_init(|| {
         let mut hash = Sha256::new();
-        for source in [PROFILE_V1, include_str!("limited_return_consumer_v1.rs"),
-            include_str!("rl_session/limited_return_v1.rs"), include_str!("rl_session/kaito_v75.rs"),
-            include_str!("rl.rs"), include_str!("bin/kernel_limited_return_env_v1.rs")] {
-            hash.update([0]); hash.update(source.as_bytes());
+        for source in [
+            PROFILE_V1,
+            include_str!("limited_return_consumer_v1.rs"),
+            include_str!("rl_session/limited_return_v1.rs"),
+            include_str!("rl_session/kaito_v75.rs"),
+            include_str!("rl.rs"),
+            include_str!("bin/kernel_limited_return_env_v1.rs"),
+        ] {
+            hash.update([0]);
+            hash.update(source.as_bytes());
         }
         hash.update(crate::limited_kaito_session_v16::producer_sha256_v16());
         hash.update(crate::current_mixed_policy_v1::feature_identity());
         format!("{:x}", hash.finalize())
-    }).clone()
+    })
+    .clone()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,14 +54,20 @@ pub struct ResetV1 {
 }
 
 pub(crate) fn preflight(config: &ResetV1) -> Result<(), String> {
-    if !cfg!(all(feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures"))) {
+    if !cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) {
         return Err("return profile requires the Foundations catalog".into());
     }
     if config.expected_card_db_hash != KERNEL_CARDDB_HASH {
         return Err("catalog mismatch".into());
     }
-    if config.max_physical_decisions == 0 || config.max_policy_steps == 0
-        || config.mainboards.iter().any(|deck| !(40..=crate::limited_session_v1::MAX_CUSTOM_DECK_CARDS_V1).contains(&deck.len()))
+    if config.max_physical_decisions == 0
+        || config.max_policy_steps == 0
+        || config.mainboards.iter().any(|deck| {
+            !(40..=crate::limited_session_v1::MAX_CUSTOM_DECK_CARDS_V1).contains(&deck.len())
+        })
     {
         return Err("invalid return profile reset".into());
     }
@@ -71,12 +84,19 @@ pub(crate) fn preflight(config: &ResetV1) -> Result<(), String> {
     }
     for deck in &config.mainboards {
         for &id in deck {
-            let def = CARD_DEFS.get(usize::from(id)).ok_or("unknown declared card")?;
-            if def.is_token || !(def.has_full_support() || (exact.contains(&id) && def.is_executable())) {
+            let def = CARD_DEFS
+                .get(usize::from(id))
+                .ok_or("unknown declared card")?;
+            if def.is_token
+                || !(def.has_full_support() || (exact.contains(&id) && def.is_executable()))
+            {
                 return Err(format!("card {id} is outside the return consumer profile"));
             }
         }
-        crate::rl::require_declared_cards_for_scope(crate::rl::CommonProjectionScopeV42::KaitoV75, deck)?;
+        crate::rl::require_declared_cards_for_scope(
+            crate::rl::CommonProjectionScopeV42::KaitoV75,
+            deck,
+        )?;
     }
     Ok(())
 }
@@ -100,8 +120,12 @@ pub fn reset_numeric_reveal_facts_v3(config: &ResetV1) -> Result<KaitoSession, S
 }
 
 /// A fixed-seat Human owner over the same exact profile and native decisions.
-pub fn reset_human_v1(config: &ResetV1, human_seat: PlayerSeatV1) -> Result<HumanKaitoSessionV75, String> {
-    HumanKaitoSessionV75::from_session(native(config)?, human_seat).map_err(|error| error.to_string())
+pub fn reset_human_v1(
+    config: &ResetV1,
+    human_seat: PlayerSeatV1,
+) -> Result<HumanKaitoSessionV75, String> {
+    HumanKaitoSessionV75::from_session(native(config)?, human_seat)
+        .map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,7 +139,9 @@ pub struct RequestV1 {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CommandV1 {
-    Reset { config: ResetV1 },
+    Reset {
+        config: ResetV1,
+    },
     Current,
     Step {
         episode_id: u64,
@@ -125,7 +151,9 @@ pub enum CommandV1 {
         action_index: u32,
     },
     Snapshot,
-    Restore { snapshot_id: u64 },
+    Restore {
+        snapshot_id: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -142,8 +170,12 @@ pub struct ReplyV1 {
 pub enum ReplyBodyV1 {
     /// V16 is the payload vocabulary only. Its Full-only Reset is not exposed
     /// inside this profile's request grammar or advertised as this admission.
-    State { payload: Box<LimitedKaitoReplyV16> },
-    Error { code: String },
+    State {
+        payload: Box<LimitedKaitoReplyV16>,
+    },
+    Error {
+        code: String,
+    },
 }
 
 #[derive(Default)]
@@ -153,10 +185,17 @@ pub struct JsonlServerV1 {
 }
 
 impl JsonlServerV1 {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     fn error(id: Option<String>, code: &str) -> ReplyV1 {
-        ReplyV1 { profile: PROFILE_V1.into(), producer_sha256: producer_sha256_v1(), request_id: id, body: ReplyBodyV1::Error { code: code.into() } }
+        ReplyV1 {
+            profile: PROFILE_V1.into(),
+            producer_sha256: producer_sha256_v1(),
+            request_id: id,
+            body: ReplyBodyV1::Error { code: code.into() },
+        }
     }
 
     pub fn handle_line(&mut self, line: &str) -> String {
@@ -172,45 +211,92 @@ impl JsonlServerV1 {
     }
 
     pub fn handle_request(&mut self, request: RequestV1) -> ReplyV1 {
-        if request.profile != PROFILE_V1 || request.request_id.is_empty() || request.request_id.len() > 256 {
+        if request.profile != PROFILE_V1
+            || request.request_id.is_empty()
+            || request.request_id.len() > 256
+        {
             return Self::error(Some(request.request_id), "invalid_header");
         }
         if let Some((previous, reply)) = &self.last_exchange {
             if previous.request_id == request.request_id {
-                return if previous == &request { reply.clone() }
-                    else { Self::error(Some(request.request_id), "conflicting_retry") };
+                return if previous == &request {
+                    reply.clone()
+                } else {
+                    Self::error(Some(request.request_id), "conflicting_retry")
+                };
             }
         }
         let id = request.request_id.clone();
         let result = self.apply(&request.command, id.clone());
         let reply = match result {
-            Ok(payload) => ReplyV1 { profile: PROFILE_V1.into(), producer_sha256: producer_sha256_v1(), request_id: Some(id), body: ReplyBodyV1::State { payload: Box::new(payload) } },
+            Ok(payload) => ReplyV1 {
+                profile: PROFILE_V1.into(),
+                producer_sha256: producer_sha256_v1(),
+                request_id: Some(id),
+                body: ReplyBodyV1::State {
+                    payload: Box::new(payload),
+                },
+            },
             Err(code) => Self::error(Some(id), code),
         };
         self.last_exchange = Some((request, reply.clone()));
         reply
     }
 
-    fn apply(&mut self, command: &CommandV1, request_id: String) -> Result<LimitedKaitoReplyV16, &'static str> {
+    fn apply(
+        &mut self,
+        command: &CommandV1,
+        request_id: String,
+    ) -> Result<LimitedKaitoReplyV16, &'static str> {
         let schema_version = crate::limited_kaito_session_v16::SCHEMA_VERSION;
         let delegated = match command {
             CommandV1::Reset { config } => {
-                let core = KaitoSessionV75::from_session(native(config).map_err(|_| "unsupported_reset")?)
-                    .map_err(|_| "unsupported_projection")?;
+                let core =
+                    KaitoSessionV75::from_session(native(config).map_err(|_| "unsupported_reset")?)
+                        .map_err(|_| "unsupported_projection")?;
                 // Failed construction leaves the previous owner untouched.
                 self.inner.install_profile_core(core)?;
-                LimitedKaitoRequestV16::Current { schema_version, request_id }
+                LimitedKaitoRequestV16::Current {
+                    schema_version,
+                    request_id,
+                }
             }
-            CommandV1::Current => LimitedKaitoRequestV16::Current { schema_version, request_id },
-            CommandV1::Step { episode_id, authority_generation, actor, prompt_seq, action_index } =>
-                LimitedKaitoRequestV16::Step { schema_version, request_id, episode_id: *episode_id,
-                    authority_generation: *authority_generation, actor: *actor, prompt_seq: *prompt_seq, action_index: *action_index },
-            CommandV1::Snapshot => LimitedKaitoRequestV16::Snapshot { schema_version, request_id },
-            CommandV1::Restore { snapshot_id } => LimitedKaitoRequestV16::Restore { schema_version, request_id, snapshot_id: *snapshot_id },
+            CommandV1::Current => LimitedKaitoRequestV16::Current {
+                schema_version,
+                request_id,
+            },
+            CommandV1::Step {
+                episode_id,
+                authority_generation,
+                actor,
+                prompt_seq,
+                action_index,
+            } => LimitedKaitoRequestV16::Step {
+                schema_version,
+                request_id,
+                episode_id: *episode_id,
+                authority_generation: *authority_generation,
+                actor: *actor,
+                prompt_seq: *prompt_seq,
+                action_index: *action_index,
+            },
+            CommandV1::Snapshot => LimitedKaitoRequestV16::Snapshot {
+                schema_version,
+                request_id,
+            },
+            CommandV1::Restore { snapshot_id } => LimitedKaitoRequestV16::Restore {
+                schema_version,
+                request_id,
+                snapshot_id: *snapshot_id,
+            },
         };
         Ok(self.inner.handle_request(delegated))
     }
 }
 
-#[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 mod tests;

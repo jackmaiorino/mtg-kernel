@@ -33,7 +33,11 @@ impl KaitoDecision {
     pub fn packet(&self) -> &Packet {
         &self.packet
     }
-    #[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn fixture_backend_v75(&self) -> &KaitoDecisionV75 {
         &self.backend
     }
@@ -51,9 +55,13 @@ fn opponent_hand_binding(value: &Value, opponent: &Value) -> bool {
             (fields.contains_key("arena_id")
                 && fields.get("zone").is_some_and(|zone| zone == "Hand")
                 && fields.get("owner") == Some(opponent))
-                || fields.values().any(|value| opponent_hand_binding(value, opponent))
+                || fields
+                    .values()
+                    .any(|value| opponent_hand_binding(value, opponent))
         }
-        Value::Array(rows) => rows.iter().any(|value| opponent_hand_binding(value, opponent)),
+        Value::Array(rows) => rows
+            .iter()
+            .any(|value| opponent_hand_binding(value, opponent)),
         _ => false,
     }
 }

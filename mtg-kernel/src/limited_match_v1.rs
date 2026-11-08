@@ -525,7 +525,9 @@ impl PolicySpecV1 {
         matches!(
             self,
             Self::Pimc {
-                world: WorldModeV1::ClosedList | WorldModeV1::ClosedListV2 | WorldModeV1::ClosedListV3,
+                world: WorldModeV1::ClosedList
+                    | WorldModeV1::ClosedListV2
+                    | WorldModeV1::ClosedListV3,
                 ..
             }
         )
@@ -933,8 +935,10 @@ pub(crate) fn play_game_observed_v1(
                         if result.first_rollout_error.is_none() {
                             result.first_rollout_error = stats.first_rollout_error;
                         }
-                        if matches!(*world, WorldModeV1::ClosedListV2 | WorldModeV1::ClosedListV3)
-                            && decision.legal_action_count > 1
+                        if matches!(
+                            *world,
+                            WorldModeV1::ClosedListV2 | WorldModeV1::ClosedListV3
+                        ) && decision.legal_action_count > 1
                         {
                             result.searched_decisions += 1;
                             result.search_fallbacks += u64::from(stats.rejected == *sims);

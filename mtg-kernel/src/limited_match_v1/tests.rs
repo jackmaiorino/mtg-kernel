@@ -251,8 +251,12 @@ fn closed_list_v3_uses_present_minima_instead_of_distinct_physical_rows() {
         let variant = |other_copy, future_seed| {
             session.census_edited_clone_v1(|state| {
                 let hand = state.players[opponent.index()].hand.clone();
-                state.reveal_distinct_hand_card(actor, opponent, hand[0]).unwrap();
-                state.reveal_distinct_hand_card(actor, opponent, hand[other_copy]).unwrap();
+                state
+                    .reveal_distinct_hand_card(actor, opponent, hand[0])
+                    .unwrap();
+                state
+                    .reveal_distinct_hand_card(actor, opponent, hand[other_copy])
+                    .unwrap();
                 if other_copy != 0 {
                     let hidden = state.objects.get_mut(hand[2]);
                     hidden.card_def = island;
@@ -264,16 +268,34 @@ fn closed_list_v3_uses_present_minima_instead_of_distinct_physical_rows() {
         };
         let same_copy = variant(0, 13);
         let two_copies = variant(1, 29);
-        assert_eq!(same_copy.game_state().known_hand_cards(actor, opponent).len(), 1);
-        assert_eq!(two_copies.game_state().known_hand_cards(actor, opponent).len(), 2);
+        assert_eq!(
+            same_copy
+                .game_state()
+                .known_hand_cards(actor, opponent)
+                .len(),
+            1
+        );
+        assert_eq!(
+            two_copies
+                .game_state()
+                .known_hand_cards(actor, opponent)
+                .len(),
+            2
+        );
         let mode = WorldModeV1::ClosedListV3;
         for seed in 0..4 {
             let a = sample_world_v1(&same_copy, mode, Some(&belief), seed).unwrap();
             let b = sample_world_v1(&two_copies, mode, Some(&belief), seed).unwrap();
             assert_eq!(a.game_state(), b.game_state());
             assert_eq!(a.game_state().known_hand_cards(actor, opponent).len(), 1);
-            assert_eq!(a.diagnostic_current_action_semantics(), session.diagnostic_current_action_semantics());
-            assert_eq!(b.diagnostic_current_action_semantics(), a.diagnostic_current_action_semantics());
+            assert_eq!(
+                a.diagnostic_current_action_semantics(),
+                session.diagnostic_current_action_semantics()
+            );
+            assert_eq!(
+                b.diagnostic_current_action_semantics(),
+                a.diagnostic_current_action_semantics()
+            );
         }
         let a = pimc_choose_v1(&same_copy, 4, 2, mode, Some(&belief), 552).unwrap();
         let b = pimc_choose_v1(&two_copies, 4, 2, mode, Some(&belief), 552).unwrap();
@@ -444,15 +466,8 @@ fn check_partial_cast_and_land_actions(mode: WorldModeV1) {
             failures.push(format!("{name}: no cast or play action in {actions:?}"));
             continue;
         };
-        let (_, stats) = pimc_choose_v1(
-            &session,
-            actions.len() as u32,
-            0,
-            mode,
-            Some(&belief),
-            552,
-        )
-        .unwrap();
+        let (_, stats) =
+            pimc_choose_v1(&session, actions.len() as u32, 0, mode, Some(&belief), 552).unwrap();
         if stats.visits[index] != 1 || stats.rollout_errors != 0 {
             failures.push(format!("{name}: {stats:?}"));
         }

@@ -8595,7 +8595,10 @@ impl FastActorSessionV1 {
             return Err("unknown face-down identity".into());
         }
         let mut pinned = pending_selection_hidden_objects_v1(&self.state, actor);
-        pinned.extend(flat_action_v4::limited_public_source_pins_v3(&self.state, actor)?);
+        pinned.extend(flat_action_v4::limited_public_source_pins_v3(
+            &self.state,
+            actor,
+        )?);
         if pinned
             .iter()
             .any(|id| self.state.players[opponent.index()].hand.contains(id))
@@ -8658,7 +8661,10 @@ impl FastActorSessionV1 {
         }
         let mut by_semantic = std::collections::HashMap::with_capacity(rebuilt.candidates.len());
         for candidate in std::mem::take(&mut rebuilt.candidates) {
-            if by_semantic.insert(candidate.semantic.clone(), candidate).is_some() {
+            if by_semantic
+                .insert(candidate.semantic.clone(), candidate)
+                .is_some()
+            {
                 return Err("sampled root action is ambiguous".into());
             }
         }
@@ -21248,9 +21254,9 @@ pub use liliana_v73::{LilianaDecisionV73, LilianaSessionV73, LilianaSnapshotV73}
 pub(crate) mod chandra_v74;
 pub use chandra_v74::{ChandraDecisionV74, ChandraSessionV74, ChandraSnapshotV74};
 
+mod eternal_actor_v1;
 pub(crate) mod kaito_v75;
 mod limited_return_v1;
-mod eternal_actor_v1;
 pub use eternal_actor_v1::{EternalActorDecisionV1, EternalActorSessionV1, EternalActorSnapshotV1};
 #[cfg(feature = "limited-fdn-fixtures")]
 mod rules_only_v1;

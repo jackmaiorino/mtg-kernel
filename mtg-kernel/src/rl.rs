@@ -1825,7 +1825,10 @@ pub fn build_deck_pair_state_environment_v2_with_starting_player_v1(
     preflight_fully_supported_deck(p0_deck).map_err(DeckPairBuildErrorV2::DeckPreflight)?;
     preflight_fully_supported_deck(p1_deck).map_err(DeckPairBuildErrorV2::DeckPreflight)?;
     build_preflighted_deck_pair_environment_v2(
-        pair_environment_seed, p0_deck, p1_deck, starting_player,
+        pair_environment_seed,
+        p0_deck,
+        p1_deck,
+        starting_player,
     )
 }
 
