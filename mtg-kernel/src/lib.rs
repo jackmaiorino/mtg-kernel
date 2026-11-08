@@ -941,6 +941,7 @@ pub mod current_tree_learner_v1;
 pub mod eternal_actor_choice_v1;
 pub mod eternal_actor_printed_v1;
 pub mod eternal_actor_public_v1;
+pub mod eternal_actor_stack_v1;
 pub mod fake_observation_v50;
 
 #[cfg(all(
