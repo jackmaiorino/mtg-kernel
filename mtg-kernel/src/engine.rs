@@ -2520,9 +2520,11 @@ fn validate_physical_spell_cast_origin(
                 && source.owner == caster
                 && holder == caster
                 && permission_zone_change_count == origin.origin_zone_change_count
-                && (matches!(cast_method, CastMethodV4::Normal | CastMethodV4::Alternative)
-                    || (cast_method == CastMethodV4::Omen
-                        && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)))
+                && (matches!(
+                    cast_method,
+                    CastMethodV4::Normal | CastMethodV4::Alternative
+                ) || (cast_method == CastMethodV4::Omen
+                    && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)))
                 && crate::standard_cards_v1::graveyard_cast_granted(
                     state,
                     item.source,
@@ -10512,8 +10514,7 @@ fn is_castable_now(
                             state, id, player,
                         )
                         || (crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
-                            && graveyard_permission_zone_change_count(player, id, state).is_some()
-                        ))
+                            && graveyard_permission_zone_change_count(player, id, state).is_some()))
                         && cast_form_timing_ok(adventure.types, Keywords::NONE, player, state)
                         && target_prefix_can_complete_for_controller_and_source(
                             adventure.target_spec,
