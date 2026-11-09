@@ -10535,13 +10535,13 @@ pub(crate) fn core_policy_action_candidates_kaito_scoped_v75(
         CommonProjectionScopeV42::KaitoV75,
     )?;
     if appendix == LimitedAppendixV1::FullPool {
+        use crate::limited_full_pool_consumer_v1::trigger_programs::{self, ProgramV1};
         if let PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseTriggerMode {
             player,
             source,
             ..
         })) = decision
         {
-            use crate::limited_full_pool_consumer_v1::trigger_programs::{self, ProgramV1};
             if let Some(pending) = state.engine.pending_triggers.first().filter(|row| {
                 row.source == *source
                     && row.controller == *player
@@ -10561,6 +10561,44 @@ pub(crate) fn core_policy_action_candidates_kaito_scoped_v75(
                         {
                             *source = reference.clone();
                         }
+                    }
+                }
+            }
+        }
+        if let PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+            Decision::ChooseEffectOption { player, source, .. },
+        )) = decision
+        {
+            let resolving = state
+                .engine
+                .pending_effect
+                .as_ref()
+                .map(|p| &p.resolving_item);
+            if let Some(item) = resolving.filter(|item| {
+                item.kind == StackItemKind::TriggeredAbility
+                    && item.source == *source
+                    && item.controller == *player
+                    && item.v4.granted_by.is_none()
+                    && item
+                        .v4
+                        .ability_source_contract
+                        .zip(item.inline_effect.as_ref())
+                        .is_some_and(|(contract, effect)| {
+                            trigger_programs::printed_program(contract, effect)
+                                == Some(ProgramV1::KioraThreshold)
+                        })
+            }) {
+                crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
+                crate::engine::validated_stack_item_target_spec(item, state)
+                    .map_err(RlContractError)?;
+                // Match the frozen public source before the sampler compares
+                // original candidates. Its later library printing is private.
+                let reference = frozen_stack_source_ref(state, item)?;
+                for candidate in &mut candidates {
+                    if let ActionSemanticV1::ChooseEffectOption { source, .. } =
+                        &mut candidate.semantic
+                    {
+                        *source = reference.clone();
                     }
                 }
             }

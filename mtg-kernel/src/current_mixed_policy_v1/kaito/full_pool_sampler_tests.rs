@@ -10,6 +10,7 @@ use crate::{
 };
 
 mod burn_draw;
+mod kiora_threshold;
 mod sacrifice_morbid;
 
 fn card(name: &str) -> u16 {
