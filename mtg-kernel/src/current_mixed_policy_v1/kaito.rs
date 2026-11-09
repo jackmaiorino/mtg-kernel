@@ -320,7 +320,10 @@ impl KaitoSession {
         not(feature = "standard-magezero-fixtures")
     ))]
     pub(crate) fn fixture_projection_error(&self) -> Option<String> {
-        self.inner.decision_v75().err().map(|error| error.to_string())
+        self.inner
+            .decision_v75()
+            .err()
+            .map(|error| error.to_string())
     }
     #[cfg(all(
         test,
