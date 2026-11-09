@@ -15396,7 +15396,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             free_cast_projection_quote(def, &paying, kicked, state)
         };
         let free = !overload
-            && pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, kicked, 0, state).is_some();
+            && pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, kicked, 0, state)
+                .is_some();
         let choice = match (pay, free) {
             (true, true) => {
                 return Some(Decision::ChooseEffectOption {

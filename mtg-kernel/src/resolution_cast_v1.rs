@@ -201,7 +201,8 @@ pub(super) fn form_allowed_for(
         && (free
             || crate::eternal_e5a_v1::permissions::citadel_cast(state, source, controller)
             || state.engine.pending_cast.as_ref().is_some_and(|pending| {
-                pending.spell == source && pending.controller == controller
+                pending.spell == source
+                    && pending.controller == controller
                     && pending.hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost)
             }))
     {
