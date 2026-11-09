@@ -7,8 +7,10 @@ use crate::effect::{
 use crate::eternal_cards_v1::e3::{self, E3ChoiceKindV1, E3ChoiceV1};
 use crate::event::{self, ProposedEvent};
 use crate::ids::PlayerId;
+use crate::rl::PlayerSeatV1;
 use crate::standard_cards_v1::StandardTargetV1;
 use crate::state::{GameState, StackItemKind, Target, Zone};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 struct SearchV1 {
@@ -18,11 +20,12 @@ struct SearchV1 {
 
 /// Names the caster may inspect while searching the owner's hidden zones.
 /// A library search confers no position knowledge after the shuffle.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SurgicalSearchLookV1 {
-    pub owner: PlayerId,
-    pub hand_printings: Vec<u16>,
-    pub library_printings: Vec<u16>,
+    pub owner: PlayerSeatV1,
+    pub hand_printings: Vec<String>,
+    pub library_printings: Vec<String>,
 }
 
 fn active_choice(state: &GameState) -> Option<(&EffectContinuation, &E3ChoiceV1)> {
@@ -64,13 +67,13 @@ pub fn surgical_search_look_v1(
     let printings = |cards: &[crate::ids::ObjectId]| {
         let mut result: Vec<_> = cards
             .iter()
-            .map(|&card| state.objects.get(card).card_def)
+            .map(|&card| CARD_DEFS[usize::from(state.objects.get(card).card_def)].name.to_string())
             .collect();
         result.sort_unstable();
         result
     };
     Ok(Some(SurgicalSearchLookV1 {
-        owner,
+        owner: owner.into(),
         hand_printings: printings(&seat.hand),
         library_printings: printings(&seat.library),
     }))
@@ -171,13 +174,21 @@ fn prompt(
 }
 
 pub(crate) fn drive(
-    state: &GameState,
+    state: &mut GameState,
     continuation: &mut EffectContinuation,
     path: Vec<u16>,
 ) -> Result<bool, String> {
-    let Some((_, choice)) = prompt(state, continuation, path)? else {
+    let Some((owner, choice)) = prompt(state, continuation, path)? else {
         return Ok(false);
     };
+    if choice.player != owner {
+        // The search shows the whole hand to the caster only. Keep the
+        // surviving named copies through native hand-knowledge custody.
+        for card in state.players[owner.index()].hand.clone() {
+            // spellbench-reviewed-look: Surgical searches the target owner's hand.
+            state.reveal_distinct_hand_card(choice.player, owner, card)?;
+        }
+    }
     e3::offer(continuation, choice);
     Ok(true)
 }

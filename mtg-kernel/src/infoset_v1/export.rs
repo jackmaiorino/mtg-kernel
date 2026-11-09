@@ -916,13 +916,6 @@ fn export_versioned(
     let opp = v.opponent();
     let mutant = options.mutant;
     let is = |m: MutantV1| mutant == Some(m);
-    if crate::eternal_sideboard_s1a_v1::surgical::search_active(state) {
-        return Err(refuse(
-            RefusalCodeV1::R3,
-            "Surgical Extraction's private search is unavailable",
-        ));
-    }
-
     // The canonical allocator does not model hidden sideboards. Refuse from
     // the explicit public profile before any projection or name-sensitive
     // validation, including when both private lists are empty or depleted.
@@ -930,6 +923,12 @@ fn export_versioned(
         return Err(refuse(
             RefusalCodeV1::R2,
             "outside-game profile is not representable in infoset export",
+        ));
+    }
+    if crate::eternal_sideboard_s1a_v1::surgical::search_active(state) {
+        return Err(refuse(
+            RefusalCodeV1::R3,
+            "Surgical Extraction's private search is unavailable",
         ));
     }
 

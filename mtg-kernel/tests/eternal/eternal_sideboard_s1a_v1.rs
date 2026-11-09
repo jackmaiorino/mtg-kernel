@@ -1275,7 +1275,7 @@ fn surgical_extraction_can_be_paid_with_life_and_never_targets_a_basic_land() {
 #[test]
 fn surgical_extraction_can_finish_at_zero_or_exile_a_private_subset_in_either_seat() {
     use mtg_kernel::eternal_sideboard_s1a_v1::surgical_search_look_v1;
-    use mtg_kernel::rl::{legal_action_candidates_v1, ActionSemanticV1};
+    use mtg_kernel::rl::{legal_action_candidates_v1, ActionSemanticV1, PlayerSeatV1};
     use mtg_kernel::state::ObservationNoteKindV1;
     use mtg_kernel::surface::{SurfaceAction, SurfaceDecision};
 
@@ -1284,9 +1284,11 @@ fn surgical_extraction_can_finish_at_zero_or_exile_a_private_subset_in_either_se
         let mut state = game(&["Llanowar Elves", "Island", "Llanowar Elves"]);
         state.active_player = actor;
         state.priority_player = actor;
+        state.enable_hand_knowledge_by_name_v2();
         let target = put(&mut state, owner, "Llanowar Elves", Zone::Graveyard);
         let in_hand = put(&mut state, owner, "Llanowar Elves", Zone::Hand);
         let other = put(&mut state, owner, "Snap", Zone::Hand);
+        let duplicate = put(&mut state, owner, "Snap", Zone::Hand);
         let extraction = put(&mut state, actor, "Surgical Extraction", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::B], 0);
         cast(&mut state, extraction, &[Target::Object(target)]);
@@ -1317,11 +1319,20 @@ fn surgical_extraction_can_finish_at_zero_or_exile_a_private_subset_in_either_se
             ]
         );
         let look = surgical_search_look_v1(&state, actor).unwrap().unwrap();
-        assert_eq!(look.owner, owner);
-        assert_eq!(look.hand_printings.len(), 2);
-        assert!(look.hand_printings.contains(&id("Snap")));
-        assert!(look.library_printings.contains(&id("Island")));
+        assert_eq!(look.owner, PlayerSeatV1::from(owner));
+        assert_eq!(look.hand_printings, ["Llanowar Elves", "Snap", "Snap"]);
+        assert_eq!(look.library_printings, ["Island", "Llanowar Elves", "Llanowar Elves"]);
         assert!(surgical_search_look_v1(&state, owner).unwrap().is_none());
+        let known_names = |state: &GameState| {
+            let mut names = state
+                .known_hand_cards(actor, owner)
+                .iter()
+                .map(|entry| name_of(state, entry.object))
+                .collect::<Vec<_>>();
+            names.sort_unstable();
+            names
+        };
+        assert_eq!(known_names(&state), ["Llanowar Elves", "Snap", "Snap"]);
 
         let rows = legal_action_candidates_v1(&SurfaceDecision::Decision(prompt), &state).unwrap();
         assert_eq!(rows.len(), 5);
@@ -1345,6 +1356,8 @@ fn surgical_extraction_can_finish_at_zero_or_exile_a_private_subset_in_either_se
         assert_eq!(zone(&zero, target), Zone::Graveyard);
         assert_eq!(zone(&zero, in_hand), Zone::Hand);
         assert_eq!(zone(&zero, library[0]), Zone::Library);
+        assert_eq!(known_names(&zero), ["Llanowar Elves", "Snap", "Snap"]);
+        assert!(zero.known_hand_cards(owner, actor).is_empty());
         assert!(zero.observation_journal.notes().iter().any(|note| matches!(note.kind, ObservationNoteKindV1::LibraryRandomized { owner: shuffled } if shuffled == owner)));
 
         act(
@@ -1383,7 +1396,10 @@ fn surgical_extraction_can_finish_at_zero_or_exile_a_private_subset_in_either_se
             assert_eq!(zone(continued, library[2]), Zone::Exile);
             assert_eq!(zone(continued, target), Zone::Graveyard);
             assert_eq!(zone(continued, other), Zone::Hand);
+            assert_eq!(zone(continued, duplicate), Zone::Hand);
             assert_eq!(zone(continued, library[0]), Zone::Library);
+            assert_eq!(known_names(continued), ["Snap", "Snap"]);
+            assert!(continued.known_hand_cards(owner, actor).is_empty());
             assert!(surgical_search_look_v1(continued, actor).unwrap().is_none());
         }
         assert_eq!(state.state_hash(), restored.state_hash());
