@@ -552,7 +552,10 @@ pub(crate) fn drive(
             Ok(false)
         }
         S1bOpV1::ExtirpateV1 => crate::eternal_sideboard_s1a_v1::surgical::drive(
-            state, continuation, path, crate::eternal_sideboard_s1a_v1::surgical::ExtractionV1::Extirpate,
+            state,
+            continuation,
+            path,
+            crate::eternal_sideboard_s1a_v1::surgical::ExtractionV1::Extirpate,
         ),
         other => {
             execute(other, &continuation.ctx, state);

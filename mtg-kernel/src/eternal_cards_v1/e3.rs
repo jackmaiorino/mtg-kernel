@@ -326,7 +326,10 @@ pub struct E3ChoiceV1 {
 
 impl E3ChoiceV1 {
     pub(crate) fn is_extraction_search(&self) -> bool {
-        matches!(self.kind, E3ChoiceKindV1::SurgicalExtractionV1 | E3ChoiceKindV1::ExtirpateV1)
+        matches!(
+            self.kind,
+            E3ChoiceKindV1::SurgicalExtractionV1 | E3ChoiceKindV1::ExtirpateV1
+        )
     }
 
     /// Whether the candidates are hidden from the other player (hand or
@@ -397,8 +400,9 @@ impl E3ChoiceV1 {
     /// (a search).
     pub(crate) fn library_search(&self) -> bool {
         match &self.kind {
-            E3ChoiceKindV1::DoomsdayV1 | E3ChoiceKindV1::SurgicalExtractionV1
-                | E3ChoiceKindV1::ExtirpateV1 => true,
+            E3ChoiceKindV1::DoomsdayV1
+            | E3ChoiceKindV1::SurgicalExtractionV1
+            | E3ChoiceKindV1::ExtirpateV1 => true,
             E3ChoiceKindV1::E5aV1(kind) => kind.library_search(),
             E3ChoiceKindV1::E7aV1(kind) => kind.library_search(),
             E3ChoiceKindV1::E8aV1(kind) => kind.library_search(),
@@ -1121,7 +1125,10 @@ pub(crate) fn drive(
         }
         EternalOpV1::S1aV1(crate::eternal_sideboard_s1a_v1::S1aOpV1::SurgicalExtractionV1) => {
             crate::eternal_sideboard_s1a_v1::surgical::drive(
-                state, continuation, path, crate::eternal_sideboard_s1a_v1::surgical::ExtractionV1::Surgical,
+                state,
+                continuation,
+                path,
+                crate::eternal_sideboard_s1a_v1::surgical::ExtractionV1::Surgical,
             )
         }
         EternalOpV1::S1bV1(op) => {

@@ -1075,7 +1075,10 @@ fn extirpate_requires_graveyard_matches_and_allows_any_hidden_subset() {
         state.priority_player = actor;
         let legal = cast_targets(&state, spell);
         assert!(legal.contains(&Target::Object(target)));
-        assert!(!legal.contains(&Target::Object(other_graveyard)), "basic land");
+        assert!(
+            !legal.contains(&Target::Object(other_graveyard)),
+            "basic land"
+        );
         cast(&mut state, spell, &[Target::Object(target)]);
         assert!(matches!(
             next(&mut state),
@@ -1084,11 +1087,14 @@ fn extirpate_requires_graveyard_matches_and_allows_any_hidden_subset() {
         assert_eq!(zone(&state, spell), Zone::Stack);
         assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
         act(&mut state, Action::Pass);
-        assert!(matches!(
-            next(&mut state),
-            Decision::CastSpellOrPass { player, castable_spells, .. }
-                if player == owner && !castable_spells.contains(&hand)
-        ), "split second");
+        assert!(
+            matches!(
+                next(&mut state),
+                Decision::CastSpellOrPass { player, castable_spells, .. }
+                    if player == owner && !castable_spells.contains(&hand)
+            ),
+            "split second"
+        );
 
         let prompt = settle(&mut state).expect("native Extirpate search");
         assert!(matches!(
@@ -1146,7 +1152,10 @@ fn extirpate_requires_graveyard_matches_and_allows_any_hidden_subset() {
         let mut zero = state.clone();
         act(&mut zero, Action::FinishEffectSelection);
         check_outcome(&mut zero, Zone::Hand, Zone::Library);
-        assert!(zero.known_hand_cards(actor, owner).iter().any(|entry| entry.object == other_hand));
+        assert!(zero
+            .known_hand_cards(actor, owner)
+            .iter()
+            .any(|entry| entry.object == other_hand));
         assert!(zero.known_hand_cards(owner, actor).is_empty());
 
         choose_target(&mut state, Target::Object(hand));

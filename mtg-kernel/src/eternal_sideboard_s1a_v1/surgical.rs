@@ -204,7 +204,8 @@ fn prompt(
         .filter(|card| !extraction.mandatory(card))
         .map(|card| Target::Object(card.object))
         .collect();
-    let max = u16::try_from(candidates.len()).map_err(|_| "extraction search exceeds choice width")?;
+    let max =
+        u16::try_from(candidates.len()).map_err(|_| "extraction search exceeds choice width")?;
     state
         .preflight_library_shuffle(owner)
         .map_err(|e| e.to_string())?;
@@ -250,7 +251,9 @@ pub(crate) fn validate_continuation(
     pending: &EffectContinuation,
 ) -> Result<(), String> {
     let item = &pending.resolving_item;
-    let extraction = item.v4.source_contract
+    let extraction = item
+        .v4
+        .source_contract
         .filter(|_| item.kind == StackItemKind::Spell)
         .and_then(|contract| CARD_DEFS.get(usize::from(contract.card_def)))
         .and_then(|def| match def.name {
@@ -321,8 +324,8 @@ pub(crate) fn finish(
     picked: &[EffectObjectBinding],
     extraction: ExtractionV1,
 ) -> Result<bool, String> {
-    let (owner, original) =
-        prompt(state, continuation, extraction, Vec::new())?.ok_or("extraction search lost its legal target")?;
+    let (owner, original) = prompt(state, continuation, extraction, Vec::new())?
+        .ok_or("extraction search lost its legal target")?;
     if original != *choice {
         return Err("extraction search answer is outside its original roster".into());
     }
