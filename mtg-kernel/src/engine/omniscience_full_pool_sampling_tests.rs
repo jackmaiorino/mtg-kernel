@@ -232,3 +232,89 @@ fn paid_electroduplicate_keeps_original_stale_target_after_sampled_bounce_both_s
         assert_eq!(live.fixture_state(), &untouched);
     }
 }
+
+#[test]
+fn paid_equipment_ability_keeps_its_stale_target_and_fizzles_after_hidden_sampling() {
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        for equipment in ["Embercleave", "Leyline Axe"] {
+            let viewer = caster.opponent();
+            let mut state = setup(caster);
+            let creature = native::cast(&mut state, caster, "Llanowar Elves", &[], 1);
+            native::finish(&mut state);
+            let source = native::cast(&mut state, caster, equipment, &[], if equipment == "Embercleave" { 6 } else { 4 });
+            if equipment == "Leyline Axe" {
+                native::finish(&mut state);
+                priority(&mut state, caster);
+                let lands = state.players[caster.index()].battlefield.iter().copied().filter(|&id| {
+                    let object = state.objects.get(id);
+                    !object.tapped && object.card_def == card_id_by_name("Forest").unwrap()
+                }).take(3).collect::<Vec<_>>();
+                assert_eq!(lands.len(), 3);
+                for land in lands { native::action(&mut state, Action::ActivateManaAbility(land)); }
+                native::action(&mut state, Action::ActivateAbility(source, 0));
+            }
+            let mut chose = false;
+            for _ in 0..12 {
+                match native::next(&mut state) {
+                    Decision::ChooseTargets { spell, legal_targets, .. } if spell == source => {
+                        assert!(legal_targets.contains(&Target::Object(creature)));
+                        native::action(&mut state, Action::ChooseTarget(Target::Object(creature)));
+                        chose = true;
+                        break;
+                    }
+                    Decision::CastSpellOrPass { .. } => native::action(&mut state, Action::Pass),
+                    other => panic!("equipment target was not offered: {other:?}"),
+                }
+            }
+            assert!(chose);
+            assert!(matches!(native::next(&mut state), Decision::CastSpellOrPass { .. }));
+            let original = state.stack.iter().find(|row| row.source == source
+                && row.kind != crate::state::StackItemKind::Spell).unwrap().clone();
+            let companion = put(&mut state, viewer, "Llanowar Elves", Zone::Battlefield);
+            let bounce = native::cast(&mut state, viewer, "Run Away Together",
+                &[Target::Object(creature), Target::Object(companion)], 2);
+            for _ in 0..8 {
+                if state.objects.get(bounce).zone == Zone::Graveyard { break; }
+                assert!(matches!(native::next(&mut state), Decision::CastSpellOrPass { .. }));
+                native::action(&mut state, Action::Pass);
+            }
+            assert_eq!(state.objects.get(creature).zone, Zone::Hand);
+            assert!(state.stack.contains(&original));
+            let hidden = put(&mut state, caster, "Island", Zone::Hand);
+            put(&mut state, caster, "Forest", Zone::Hand);
+            priority(&mut state, viewer);
+            let live = owner(&state);
+            let paired = owner(&alternate_hidden(&state, hidden));
+            let root = decision(&live);
+            let other_root = decision(&paired);
+            assert_eq!(root.packet(), other_root.packet());
+            let mut rebound = false;
+            for seed in [552_462, 552_463, 552_464, 552_465] {
+                let mut sampled = live.sampled_full_pool_closed_list_v1(&root, seed, &corpus()).unwrap();
+                let other = paired.sampled_full_pool_closed_list_v1(&other_root, seed, &corpus()).unwrap();
+                let fresh = decision(&sampled);
+                assert_eq!(fresh.packet(), root.packet());
+                assert_eq!(fresh.packet(), decision(&other).packet());
+                let contract = original.v4.target_contracts[0];
+                assert!(!crate::engine::target_contract_matches_live(sampled.fixture_state(), Target::Object(creature), contract));
+                if sampled.fixture_state().objects.get(creature).card_def != card_id_by_name("Llanowar Elves").unwrap() {
+                    rebound = true;
+                    let mut missing = sampled.fixture_state().clone();
+                    missing.sampled_history_v1 = Default::default();
+                    assert!(crate::engine::validated_stack_item_target_spec(&original, &missing).is_err());
+                    let mut changed = original.clone();
+                    changed.v4.stack_item_id.0 += 1;
+                    assert!(crate::sampled_history_v1::object_target_face(sampled.fixture_state(), &changed, 0, contract).is_none());
+                }
+                let saved = sampled.snapshot();
+                pass_with_native_parity(&mut sampled, &fresh);
+                assert!(!sampled.fixture_state().stack.iter().any(|row| row.v4.stack_item_id == original.v4.stack_item_id));
+                assert!(sampled.fixture_state().objects.get(source).v4.attached_to.is_none());
+                sampled.restore(&saved).unwrap();
+                assert_eq!(decision(&sampled).packet(), root.packet());
+            }
+            assert!(rebound, "sampled target never changed for {equipment}");
+            assert_eq!(live.fixture_state(), &state);
+        }
+    }
+}
