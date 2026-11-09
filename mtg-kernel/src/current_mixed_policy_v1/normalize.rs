@@ -563,6 +563,16 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         }
         covered.insert(meaning.card_id);
         covered.insert(meaning.token_id);
+        // This exact typed operand is a public token printing, not an arena
+        // identity. Keep the public wire spelling and classify only the sealed
+        // numeric input after validating the complete printed meaning above.
+        let fields = state["observation"]["lathril"]["meaning"]
+            .as_object_mut()
+            .ok_or_else(|| Error::Projection("Lathril meaning is not an object".into()))?;
+        let token = fields
+            .remove("token_id")
+            .ok_or_else(|| Error::Projection("Lathril token printing is absent".into()))?;
+        fields.insert("token_card_id".into(), token);
     }
     if source == Source::KaitoV75
         && (full_pool || state["schema"] == crate::leyline_axe_consumer_v1::CANDIDATES_SCHEMA)
@@ -1297,5 +1307,13 @@ mod tests {
         );
         let tree = NumericTree::encode(&json!(u64::MAX)).unwrap();
         assert!(tree.tensors().iter().flatten().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn unclassified_token_identity_is_still_refused() {
+        assert!(matches!(
+            rewrite(&json!({"token_id": 44}), &mut References::default(), ""),
+            Err(Error::UnsupportedOperand(field)) if field == "token_id"
+        ));
     }
 }
