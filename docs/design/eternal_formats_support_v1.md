@@ -808,6 +808,6 @@ choices and preserves the two paid bits on the original spell. The red trigger d
 to any target, and the white trigger destroys an artifact. The mainboard also uses Genesis
 and Wall of Blossoms from wave P2a.
 
-Echo is owed after a change of control. Glory's protection applies to the creatures its
-controller controls as it resolves. Madness Threshold's Blastoderm and Vintara Snapper have
+Echo ignores a change of control between entering and the upkeep. Glory's protection applies
+to the creatures its controller controls as it resolves. Madness Threshold's Blastoderm and Vintara Snapper have
 shroud, so its games need the public shroud representation of Limited schema 5.
