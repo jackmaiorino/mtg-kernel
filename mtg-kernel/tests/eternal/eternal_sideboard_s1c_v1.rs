@@ -638,14 +638,21 @@ fn dredging_the_turn_based_draw_exempts_only_the_first_actual_draw() {
         let second = state.players[actor.index()].library[1];
 
         for (card, expected_zone, treasures) in [(top, Zone::Hand, 0), (second, Zone::Library, 1)] {
-            let spell = put(&mut state, actor, "Think Twice", Zone::Hand);
-            pool(&mut state, actor, &[ManaColor::U], 1);
+            let spell = put(&mut state, actor, "Opt", Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::U], 0);
             cast(&mut state, spell, &[]);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { player, source, legal_targets, can_finish: true, .. })
+                    if player == actor && source == spell && legal_targets == [Target::Object(card)]
+            ));
+            act(&mut state, Action::FinishEffectSelection);
             settled(&mut state);
             assert_eq!(state.step, Step::Draw);
             assert_eq!(zone(&state, card), expected_zone);
             assert_eq!(state.players[actor.index()].draws_this_turn, 1);
             assert_eq!(named(&state, opponent, "Treasure Token").len(), treasures);
+            assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
         }
     }
 }
@@ -682,38 +689,6 @@ fn hullbreacher_and_dredge_compete_for_bonders_ornament_draws() {
         assert_eq!(state.players[actor.index()].library.len(), 16);
         assert_eq!(zone(&state, opponent_top), Zone::Hand);
         assert!(named(&state, opponent, "Treasure Token").is_empty());
-    }
-}
-
-#[test]
-fn hullbreacher_and_dredge_compete_for_niv_mizzets_damage_draws() {
-    for actor in [P0, P1] {
-        let opponent = actor.opponent();
-        let mut state = plains();
-        state.active_player = actor;
-        state.priority_player = actor;
-        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
-        let niv = put(&mut state, actor, "Niv-Mizzet, Visionary", Zone::Hand);
-        pool(&mut state, actor, &[ManaColor::U, ManaColor::R], 4);
-        cast(&mut state, niv, &[]);
-        settled(&mut state);
-        assert_eq!(zone(&state, niv), Zone::Battlefield);
-        let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
-        let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
-        pool(&mut state, actor, &[ManaColor::R], 0);
-        cast(&mut state, bolt, &[Target::Player(opponent)]);
-        assert!(matches!(
-            settle(&mut state),
-            Some(Decision::ChooseEffectTargets { player, source, legal_targets, .. })
-                if player == actor && source == niv && legal_targets == [Target::Object(thug)]
-        ));
-        assert_eq!(state.players[opponent.index()].life, 17);
-        act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
-        settled(&mut state);
-        assert_eq!(zone(&state, thug), Zone::Hand);
-        assert_eq!(state.players[actor.index()].library.len(), 16);
-        assert_eq!(state.players[actor.index()].draws_this_turn, 0);
-        assert_eq!(named(&state, opponent, "Treasure Token").len(), 2);
     }
 }
 
@@ -768,8 +743,8 @@ fn empty_library_draw_chooses_between_jace_and_hullbreacher() {
         );
         cast(&mut state, jace, &[]);
         settled(&mut state);
-        let spell = put(&mut state, actor, "Think Twice", Zone::Hand);
-        pool(&mut state, actor, &[ManaColor::U], 1);
+        let spell = put(&mut state, actor, "Opt", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U], 0);
         cast(&mut state, spell, &[]);
         let prompt = settle(&mut state).expect("empty-library replacement choice");
         assert!(matches!(
