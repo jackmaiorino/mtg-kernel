@@ -402,7 +402,8 @@ fn departure_segment(
             || source.controller != controller
             || source.owner != current.owner
             || current.zone_change_count <= source.zone_change_count
-            || !crate::engine::source_card_def_matches(state, *source, current.card_def)
+            || (!crate::engine::source_card_def_matches(state, *source, current.card_def)
+                && !crate::sampled_history_v1::allows_rebound_source(state, at, *source))
         {
             return None;
         }

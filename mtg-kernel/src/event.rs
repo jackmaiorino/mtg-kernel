@@ -2439,10 +2439,12 @@ fn niv_mizzet_visionary_damage_amount_v1(
             definition.is_executable() && definition.name == "Niv-Mizzet, Visionary"
         });
     if !observer_is_niv
-        || observer_object.card_def != observer.card_def
+        || (observer_object.card_def != observer.card_def
+            && !crate::sampled_history_v1::allows_rebound_source(state, marker_index, observer))
         || observer_object.owner != observer.owner
         || observer_object.zone_change_count < observer.zone_change_count
-        || source_object.card_def != damage_source.card_def
+        || (source_object.card_def != damage_source.card_def
+            && !crate::sampled_history_v1::allows_rebound_source(state, marker_index, damage_source))
         || source_object.owner != damage_source.owner
         || source_object.zone_change_count < damage_source.zone_change_count
     {

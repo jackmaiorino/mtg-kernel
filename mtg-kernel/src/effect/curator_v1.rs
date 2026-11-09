@@ -250,7 +250,7 @@ pub(crate) fn entry_source(
     {
         return Err("Curator entry/source position changed".into());
     }
-    crate::engine::validate_historical_ability_source_contract(state, *source)?;
+    crate::sampled_history_v1::validate_source(state, *position, *source)?;
     match state.engine.event_history.get(entry as usize) {
         Some(event::CommittedEvent::ZoneChange {
             object,

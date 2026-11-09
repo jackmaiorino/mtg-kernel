@@ -461,6 +461,107 @@ fn genuine_paid_combat_native_final_wave_captures_departing_source_and_rejects_b
 }
 
 #[test]
+fn full_pool_archived_combat_survives_paid_bounce_without_authorizing_new_receipts() {
+    use crate::{
+        current_mixed_policy_v1::KaitoSession,
+        limited_match_v1::LimitedBeliefV1,
+        policy_surface_v5::LimitedAppendixV1,
+        rl_session::{FastActorResponseV1, FastActorSessionV1},
+    };
+
+    let card = |name| crate::card_def::card_id_by_name(name).unwrap();
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(p);
+        FastActorSessionV1::enable_limited_native_modes_v1(&mut state, LimitedAppendixV1::FullPool);
+        state.reveal_knowledge_v4 = Some(Default::default());
+        let kaito = walker(&mut state, p);
+        let attacker = cast(&mut state, p, "Axgard Cavalry", &[], 2);
+        finish(&mut state);
+        next_own_main(&mut state, p);
+        let trigger = combat_trigger(&mut state, p, attacker);
+        let Some(EffectOp::KaitoCunningV75 { kind: 3, origin: Some(index) }) = trigger.inline_effect
+        else {
+            panic!("missing paid game's native combat capture");
+        };
+        let at = usize::try_from(index).unwrap();
+        let original = combat(&state, index).unwrap().source;
+        assert_eq!(original.source, kaito);
+        finish(&mut state);
+
+        let pup = cast(&mut state, p, "Mischievous Pup", &[], 3);
+        let mut chosen = false;
+        for _ in 0..32 {
+            match next(&mut state) {
+                Decision::ChooseTargets { spell, legal_targets, .. } if spell == pup => {
+                    assert!(legal_targets.contains(&Target::Object(kaito)));
+                    engine::step(&mut state, Action::ChooseTarget(Target::Object(kaito))).unwrap();
+                    chosen = true;
+                    break;
+                }
+                decision => pass(&mut state, decision),
+            }
+        }
+        assert!(chosen);
+        finish(&mut state);
+        assert_eq!(state.objects.get(kaito).zone, Zone::Hand);
+        assert!(state.objects.get(kaito).zone_change_count > original.zone_change_count);
+        put(&mut state, p, "Forest", Zone::Hand);
+        let viewer = p.opponent();
+        priority(&mut state, viewer);
+        let knowledge = &state.reveal_knowledge_v4.as_ref().unwrap()[viewer.index()];
+        assert!(knowledge.hand(p).any(|(name, count)| name == original.card_def && count == 1));
+        let native = FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
+            state.clone(), LimitedAppendixV1::FullPool,
+        );
+        let owner = KaitoSession::from_session(native).unwrap();
+        let FastActorResponseV1::Decision(expected) = owner.current_response() else {
+            panic!("missing viewer priority after paid bounce");
+        };
+        assert_eq!(expected.acting_player, viewer.into());
+        let live = owner.encode(expected).unwrap();
+        let live_state = owner.fixture_state().clone();
+        let mut deck = vec![card("Forest"); 72];
+        for land in ["Forest", "Island", "Mountain", "Plains", "Swamp"] {
+            deck.extend(std::iter::repeat_n(card(land), 16));
+        }
+        deck.extend([card(NAME), card("Axgard Cavalry"), card("Mischievous Pup")]);
+        let belief = LimitedBeliefV1::new([deck]);
+        let mut detached = false;
+        for seed in 552_500..552_508 {
+            let sampled = owner.sampled_full_pool_closed_list_v1(&live, seed, &belief).unwrap();
+            let fresh = sampled.encode(expected).unwrap();
+            assert_eq!(fresh.packet(), live.packet());
+            let world = sampled.fixture_state();
+            assert_eq!(combat(world, index).unwrap().source, original);
+            if world.objects.get(kaito).card_def == original.card_def {
+                continue;
+            }
+            detached = true;
+            assert!(crate::engine::validate_historical_ability_source_contract(world, original).is_err());
+            assert!(crate::sampled_history_v1::allows_rebound_source(world, at, original));
+
+            let mut later = world.clone();
+            let new_index = later.engine.event_history.len();
+            let copied_receipt = later.engine.event_history[at].clone();
+            later.engine.event_history.push(copied_receipt);
+            assert!(crate::sampled_history_v1::validate_source(&later, new_index, original).is_err());
+
+            let mut changed = world.clone();
+            let E::KaitoCunningV75 { journal } = &mut changed.engine.event_history[at] else {
+                panic!("missing original combat journal");
+            };
+            let JournalV75::Combat { capture } = journal.as_mut() else {
+                panic!("missing original combat capture");
+            };
+            capture.amount += 1;
+            assert!(crate::sampled_history_v1::validate_source(&changed, at, original).is_err());
+        }
+        assert!(detached);
+        assert_eq!(owner.fixture_state(), &live_state);
+    }
+}
+
+#[test]
 fn genuine_paid_ultimate_source_sba_any_player_cast_countered_spell_and_virtual_copy_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(p);
