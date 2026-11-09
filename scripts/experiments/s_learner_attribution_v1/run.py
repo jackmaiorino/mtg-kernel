@@ -16,9 +16,9 @@ diagnostic, not training qualification:
   times.
 - `summarize`: Markdown tables of a manifest (timings and attribution).
 
-Standard library only; Linux or native Windows. `--cpus` takes a taskset-style
-list (`8-11`, `0,2`): Linux pins each child with `taskset`, Windows pins this
-process and its children inherit it. Example (binaries built beforehand; add
+Standard library only; Linux, native Windows or macOS. `--cpus` takes a
+taskset-style list (`8-11`, `0,2`): Linux pins each child with `taskset`,
+Windows pins this process and its children inherit it; macOS has no affinity. Example (binaries built beforehand; add
 `.exe` on Windows):
 
     python scripts/experiments/s_learner_attribution_v1/run.py run \\
@@ -142,7 +142,8 @@ def attempt(binary, arguments, cpus):
             usage = {
                 "user_seconds": rusage.ru_utime,
                 "system_seconds": rusage.ru_stime,
-                "max_rss_kib": rusage.ru_maxrss,
+                # Linux reports KiB, macOS bytes.
+                "max_rss_kib": rusage.ru_maxrss // (1024 if sys.platform == "darwin" else 1),
                 "page_faults": rusage.ru_minflt + rusage.ru_majflt,
                 "involuntary_switches": rusage.ru_nivcsw,
             }
@@ -614,6 +615,8 @@ def main():
     summary.add_argument("manifest")
     summary.set_defaults(func=command_summarize)
     args = parser.parse_args()
+    if getattr(args, "cpus", None) and sys.platform == "darwin":
+        parser.error("macOS has no CPU affinity; run without --cpus")
     if getattr(args, "cpus", None) and os.name == "nt":
         pin_windows(args.cpus)
     args.func(args)
