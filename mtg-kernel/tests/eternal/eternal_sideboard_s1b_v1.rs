@@ -978,6 +978,88 @@ fn choose_mage_name(state: &mut GameState, player: PlayerId, name: &str) {
     act(state, Action::ChooseEffectOption(index as u16));
 }
 
+fn paid_meddling_against(actor: PlayerId, name: &str, library: &[&str]) -> GameState {
+    let mut state = game(library);
+    let opponent = actor.opponent();
+    state.active_player = opponent;
+    state.priority_player = opponent;
+    let mage = put(&mut state, opponent, "Meddling Mage", Zone::Hand);
+    pool(&mut state, opponent, &[ManaColor::W, ManaColor::U], 0);
+    cast(&mut state, mage, &[]);
+    assert!(settle(&mut state).is_some());
+    choose_mage_name(&mut state, opponent, name);
+    settled(&mut state);
+    state.active_player = actor;
+    state.priority_player = actor;
+    state.engine.priority_passes = [false; 2];
+    state
+}
+
+#[test]
+fn meddling_mage_filters_cascade_before_the_free_cast_offer_both_seats() {
+    for actor in [P0, P1] {
+        for prohibited in [true, false] {
+            let mut state = paid_meddling_against(
+                actor,
+                if prohibited { "Lightning Bolt" } else { "Lava Dart" },
+                &["Island", "Lightning Bolt", "Plains", "Plains"],
+            );
+            let bolt = state.players[actor.index()].library[1];
+            let party = put(&mut state, actor, "Boarding Party", Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::R], 5);
+            cast(&mut state, party, &[]);
+            let mut offers = 0;
+            settle_with(&mut state, |_, decision| match decision {
+                Decision::ChooseEffectOption { option_count: 2, .. } => {
+                    offers += 1;
+                    Action::ChooseEffectOption(0)
+                }
+                Decision::ChooseEffectTargets { legal_targets, .. }
+                    if legal_targets == [Target::Object(bolt)] =>
+                {
+                    Action::ChooseEffectTarget(Target::Object(bolt))
+                }
+                Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Player(actor.opponent())),
+                other => first_answer(other),
+            });
+            assert_eq!(offers, usize::from(!prohibited));
+            assert_eq!(zone(&state, party), Zone::Battlefield);
+            assert_eq!(zone(&state, bolt), if prohibited { Zone::Library } else { Zone::Graveyard });
+            assert_eq!(life(&state, actor.opponent()), if prohibited { 20 } else { 17 });
+        }
+    }
+}
+
+#[test]
+fn meddling_mage_filters_paid_bilbo_resolution_cast_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = paid_meddling_against(actor, "Brotherhood's End", &["Island"; 20]);
+        let bilbo = put(&mut state, actor, "Bilbo, Thief in the Night", Zone::Battlefield);
+        let ring = put(&mut state, actor, "Ichor Wellspring", Zone::Graveyard);
+        let forbidden = put(&mut state, actor, "Brotherhood's End", Zone::Graveyard);
+        pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+        act(&mut state, Action::DeclareAttackers(vec![bilbo]));
+        pool(&mut state, actor, &[ManaColor::R, ManaColor::R], 1);
+        let prompt = settle(&mut state).expect("Bilbo's paid graveyard cast selection");
+        assert!(matches!(
+            &prompt,
+            Decision::ChooseEffectTargets { legal_targets, can_finish: true, .. }
+                if legal_targets == &[Target::Object(ring)]
+        ));
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(prompt, next(&mut restored));
+        for continued in [&mut state, &mut restored] {
+            assert!(engine::step(continued, Action::ChooseEffectTarget(Target::Object(forbidden))).is_err());
+            act(continued, Action::ChooseEffectTarget(Target::Object(ring)));
+            settled(continued);
+            assert_eq!(zone(continued, forbidden), Zone::Graveyard);
+            assert_eq!(zone(continued, ring), Zone::Battlefield);
+            assert_eq!(continued.players[actor.index()].mana_pool.iter().sum::<u8>(), 2);
+        }
+    }
+}
+
 #[test]
 fn meddling_mage_reanimation_pauses_before_entry_and_life_loss_both_seats() {
     for actor in [P0, P1] {

@@ -632,6 +632,10 @@ pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId, card: ObjectI
     {
         return true;
     }
+    mage_prohibits(state, def)
+}
+
+pub(crate) fn mage_prohibits(state: &GameState, def: &CardDef) -> bool {
     read_state(state).is_some_and(|s1b| {
         s1b.mage_names.iter().any(|(mage, named)| {
             state.objects.try_get(mage.object).is_some_and(|live| {

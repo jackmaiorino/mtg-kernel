@@ -470,8 +470,15 @@ New, each built once in the first wave that needs it:
   check reads it. New target filters: four-point divided damage among creatures (Pyrokinesis)
   and a creature or Vehicle you control (Perilous Snare); Stern Dismissal and Extirpate use
   S1c's and S1a's filters. Meddling Mage, Extirpate and Leyline of Sanctity are Partial.
-  Mage cannot name on other entry paths. Leyline has the same opening timing gap as
-  Leyline of the Void. Extirpate uses the shared extraction continuation to require all
+  The Meddling Mage candidate asks for a name before committing the actual entry.
+  A resumed entry checks the original operation, confirmed catalog choice, controller,
+  and native entry occurrence. The named-spell restriction uses the same quote and
+  payment gates for ordinary casts and resolution casts. The catalog name menu and
+  legacy observation paths still need a consumer successor. A save with a legacy
+  staged Mage choice or completed name tuple requires the historical engine because
+  the save lacks the choice evidence required by the new entry owner. Leyline has
+  the same opening timing gap as Leyline of the Void.
+  Extirpate uses the shared extraction continuation to require all
   public graveyard matches, offer any subset of the hidden matches, and provide the caster
   a private look at the full searched hand and library. Native qualification of this
   repair is pending. Rule 701.23 allows fail-to-find in the hidden zones.

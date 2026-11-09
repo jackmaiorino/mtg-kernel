@@ -247,10 +247,9 @@ pub(crate) fn islands_controlled_by(state: &GameState, player: PlayerId) -> u8 {
     u8::try_from(count).unwrap_or(u8::MAX)
 }
 
-/// Lavinia, Azorius Renegade: "Each opponent can't cast noncreature spells
-/// with mana value greater than the number of lands that player controls."
-/// Whether `player` may not cast the selected spell form with announced X.
-/// Alternative costs and additional payments do not change mana value.
+/// Shared quote and payment restriction for Lavinia and Meddling Mage.
+/// Lavinia checks the selected form and announced X. Alternative costs and
+/// additional payments do not change mana value.
 pub(crate) fn cast_prohibited(
     state: &GameState,
     player: PlayerId,
@@ -258,9 +257,6 @@ pub(crate) fn cast_prohibited(
     method: CastMethodV4,
     x: u16,
 ) -> bool {
-    if active_controlled_by(state, LAVINIA, player.opponent()).is_empty() {
-        return false;
-    }
     let Some(def) = state
         .objects
         .try_get(card)
@@ -268,6 +264,12 @@ pub(crate) fn cast_prohibited(
     else {
         return false;
     };
+    if crate::eternal_sideboard_s1b_v1::mage_prohibits(state, def) {
+        return true;
+    }
+    if active_controlled_by(state, LAVINIA, player.opponent()).is_empty() {
+        return false;
+    }
     let Ok(types) = crate::source_type_hexproof_v1::spell_types(def, method) else {
         return true;
     };
