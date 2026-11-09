@@ -302,12 +302,13 @@ fn visible(
     public::reference(state, id, Some(viewer)).ok_or_else(|| "Lathril visible card missing".into())
 }
 
-fn root(
+fn archived_root(
     state: &GameState,
+    at: usize,
     viewer: PlayerId,
     source: AbilitySourceContractV4,
 ) -> Result<public::RootV1, String> {
-    let mut root = public::root(state, source, Some(viewer))?;
+    let mut root = public::archived_root(state, at, source, Some(viewer))?;
     root.original_source.identity = public::IdentityV1::Known { card_id: PRINTING };
     Ok(root)
 }
@@ -428,7 +429,7 @@ fn combat(state: &GameState, viewer: PlayerId, token_id: u16) -> Result<Vec<Comb
             }
         };
         combat.push(CombatV1 {
-            source: root(state, viewer, source)?,
+            source: archived_root(state, index, viewer, source)?,
             damaged_player: (*player).into(),
             final_damage,
             stage,
@@ -567,9 +568,10 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
     receipts::validate_combat_links(state)?;
     let drains = receipts::drains(state)?
         .into_iter()
-        .map(|(item, stage)| {
-            let source = root(
+        .map(|(at, item, stage)| {
+            let source = archived_root(
                 state,
+                at,
                 viewer,
                 item.v4
                     .ability_source_contract

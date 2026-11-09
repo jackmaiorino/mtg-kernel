@@ -279,7 +279,7 @@ pub(crate) fn capture_scoped(
             occurrence: ordinal(completed_entries.len())?,
             batch_entry_ordinal: choice.ordinal,
             family,
-            source: public::root(state, entered.source, Some(viewer))?,
+            source: public::archived_root(state, at, entered.source, Some(viewer))?,
             chosen: entered.chosen,
             created_by_token_event: choice.original.is_none(),
             fellowship: if family == FamilyV66::BannerOfKinship {
@@ -295,7 +295,9 @@ pub(crate) fn capture_scoped(
                         .replacement
                         .seasons
                         .iter()
-                        .map(|s| public::root(state, *s, Some(viewer)))
+                        .map(|source| {
+                            public::archived_root(state, entered.capture as usize, *source, Some(viewer))
+                        })
                         .collect::<Result<Vec<_>, _>>()?,
                 })
             } else {

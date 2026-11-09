@@ -571,6 +571,7 @@ fn verify_paid(
     item: &StackItem,
     input: &PaymentInputV1,
     end: usize,
+    archived_at: Option<usize>,
 ) -> Result<(), String> {
     let source = item
         .v4
@@ -595,7 +596,11 @@ fn verify_paid(
     {
         return Err("Lathril exact paid activation changed from original prepayment".into());
     }
-    crate::engine::validate_historical_ability_source_contract(state, source)?;
+    if let Some(at) = archived_at {
+        crate::sampled_history_v1::validate_source(state, at, source)?;
+    } else {
+        crate::engine::validate_historical_ability_source_contract(state, source)?;
+    }
     for (index, paid) in item.v4.paid_cost_refs.iter().enumerate() {
         if paid.object == source.source
             || paid.zone != Zone::Battlefield
@@ -666,7 +671,7 @@ pub(crate) fn record_paid(
         (None, None) => return Ok(()),
         _ => return Err("Lathril paid publication lost original prepayment".into()),
     };
-    verify_paid(state, item, &input, state.engine.event_history.len())?;
+    verify_paid(state, item, &input, state.engine.event_history.len(), None)?;
     let public_printings = item
         .v4
         .paid_cost_refs
@@ -726,7 +731,7 @@ fn payment_input<'a>(
     if *id != item.v4.stack_item_id {
         return Err("Lathril native prepayment names a different activation".into());
     }
-    verify_paid(state, item, input, input_at)?;
+    verify_paid(state, item, input, input_at, Some(at))?;
     Ok(input)
 }
 
@@ -906,7 +911,7 @@ pub(crate) enum DrainOutcomeV1 {
     },
 }
 
-pub(crate) fn drains(state: &GameState) -> Result<Vec<(&StackItem, DrainOutcomeV1)>, String> {
+pub(crate) fn drains(state: &GameState) -> Result<Vec<(usize, &StackItem, DrainOutcomeV1)>, String> {
     for (at, receipt) in records(state) {
         match receipt {
             JournalV1::DrainBegin { id } | JournalV1::DrainEnded { id, .. } => {
@@ -996,7 +1001,7 @@ pub(crate) fn drains(state: &GameState) -> Result<Vec<(&StackItem, DrainOutcomeV
             }
             _ => return Err("Lathril drain lifecycle lost its exact start or terminal".into()),
         };
-        rows.push((item.as_ref(), outcome));
+        rows.push((at, item.as_ref(), outcome));
     }
     Ok(rows)
 }
