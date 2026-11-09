@@ -28,13 +28,16 @@ use crate::agent_bridge_flat_v4_encode::{
     encode_flat_v4_tensor_v1, flat_v4_extension_value_v1, FlatV4EncodeScratchV1,
     SPELLBENCH_EXTENSION_KERNEL_FLAT_V4,
 };
-pub use crate::agent_bridge_infoset_v1::SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1;
 use crate::agent_bridge_infoset_v1::{
     infoset_extension_v1, preview_row_keys_v1, write_receipt_v1, InfosetBridgeV1,
     SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1,
 };
+pub use crate::agent_bridge_infoset_v1::{
+    SPELLBENCH_FLAG_X_KERNEL_INFOSET_REVEAL_V4, SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1,
+};
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::engine::{CastMode, CostKind, OptionalCostChoice};
+use crate::infoset_v1::INFOSET_SCHEMA_REVEAL_V4;
 use crate::mana::ManaColor;
 use crate::rl::{
     parse_strict_json_value, ActionSemanticV1, CardStableRefV1, ObservationV5,
@@ -80,6 +83,7 @@ pub const SPELLBENCH_OBJECT_ID_DERIVATION_V1: &str = "kernel-arena-id-zone-chang
 /// Command-line flag enabling `x_kernel_flat_v4`.
 pub const SPELLBENCH_FLAG_X_KERNEL_FLAT_V4: &str = "--x-kernel-flat-v4";
 pub const SPELLBENCH_FLAG_V2_SUPPORT: &str = "--private-v2-support";
+pub const SPELLBENCH_FLAG_REVEAL_MEANING_V3: &str = "--reveal-meaning-v3";
 
 /// Opt-in behaviors of one bridge process.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -93,6 +97,8 @@ pub struct SpellbenchBridgeOptionsV1 {
     /// Private wrapper metadata. Never forwarded to an agent as an extension.
     /// It observes stack instance IDs without changing the frozen RL schema.
     pub private_v2_support: bool,
+    /// Attach viewer-local event-time reveal transcripts to private support.
+    pub reveal_meaning_v3: bool,
 }
 
 fn fnv1a64_utf8_v1(text: &str) -> u64 {
@@ -277,6 +283,7 @@ struct SpellbenchBridgeGameV1 {
     /// arena already sent in private support; the next production decision
     /// sends what follows.
     history_cursor: (usize, usize, usize),
+    reveal_cursor: [usize; 2],
     /// The producer's per-game state, when `x_kernel_infoset_v1` is on.
     infoset: Option<InfosetBridgeV1>,
     /// Amendment 43.9 (a): every `x_kernel_flat_v4` of this game carries
@@ -297,6 +304,7 @@ struct SpellbenchBridgeGameV1 {
 pub struct SpellbenchBridgeServerV1 {
     identity: SpellbenchEngineIdentityV1,
     options: SpellbenchBridgeOptionsV1,
+    reveal_search_v4: bool,
     game: Option<SpellbenchBridgeGameV1>,
     used_game_ids: HashSet<String>,
     last_exchange: Option<CachedSpellbenchExchangeV1>,
@@ -333,16 +341,32 @@ impl SpellbenchBridgeServerV1 {
     /// binary passes the production identity and its command-line flags).
     pub fn with_options(
         identity: SpellbenchEngineIdentityV1,
-        options: SpellbenchBridgeOptionsV1,
+        mut options: SpellbenchBridgeOptionsV1,
     ) -> Self {
+        options.private_v2_support |= options.reveal_meaning_v3;
         SpellbenchBridgeServerV1 {
             identity,
             options,
+            reveal_search_v4: false,
             game: None,
             used_game_ids: HashSet::new(),
             last_exchange: None,
             private_preview: None,
         }
+    }
+
+    /// Prospective fair-search profile using the neutral reveal stream.
+    pub fn with_reveal_search_v4(identity: SpellbenchEngineIdentityV1) -> Self {
+        let mut server = Self::with_options(
+            identity,
+            SpellbenchBridgeOptionsV1 {
+                x_kernel_flat_v4: true,
+                reveal_meaning_v3: true,
+                ..Default::default()
+            },
+        );
+        server.reveal_search_v4 = true;
+        server
     }
 
     fn identity(&self) -> &SpellbenchEngineIdentityV1 {
@@ -482,6 +506,9 @@ impl SpellbenchBridgeServerV1 {
                 if self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1 {
                     extensions.push(SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1);
                 }
+                if self.reveal_search_v4 {
+                    extensions.push(INFOSET_SCHEMA_REVEAL_V4);
+                }
                 json!({
                     "response_type": "hello_ok",
                     "protocol": SPELLBENCH_PROTOCOL_V1,
@@ -599,6 +626,7 @@ impl SpellbenchBridgeServerV1 {
                 flat_v4_scratch: FlatV4EncodeScratchV1::default(),
                 private_block_root_step: game.private_block_root_step,
                 history_cursor: game.history_cursor,
+                reveal_cursor: game.reveal_cursor,
                 // A private preview carries no payload, but presents the
                 // same flat-v4 extension as the committed point.
                 infoset: None,
@@ -707,6 +735,7 @@ impl SpellbenchBridgeServerV1 {
         ) {
             (Some(infoset), Some(lockstep)) => {
                 preview_row_keys_v1(infoset, expected_step, lockstep.fast_session())
+                    .map(|value| (infoset.extension(), value))
             }
             _ => None,
         };
@@ -719,8 +748,8 @@ impl SpellbenchBridgeServerV1 {
             Some(support),
         ) {
             WireResponseV1::Decision(mut view) => {
-                if let Some(keys) = keys {
-                    view["extensions"][SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1] = keys;
+                if let Some((extension, keys)) = keys {
+                    view["extensions"][extension] = keys;
                 }
                 json!({"response_type": "private_preview", "protocol": SPELLBENCH_PROTOCOL_V1,
                 "request_id": request_id, "view": view})
@@ -846,6 +875,9 @@ impl SpellbenchBridgeServerV1 {
                 copy.enable_spellbench_neutral_choices();
             }
         }
+        if self.options.reveal_meaning_v3 {
+            session.enable_reveal_meaning_v3();
+        }
         let counts = (
             session.policy_step_count(),
             session.physical_decision_count(),
@@ -861,8 +893,13 @@ impl SpellbenchBridgeServerV1 {
             flat_v4_scratch: FlatV4EncodeScratchV1::default(),
             private_block_root_step: None,
             history_cursor: (0, 0, 0),
-            infoset: (self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1)
-                .then(InfosetBridgeV1::default),
+            reveal_cursor: [0; 2],
+            infoset: if self.reveal_search_v4 {
+                Some(InfosetBridgeV1::reveal_v4())
+            } else {
+                (self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1)
+                    .then(InfosetBridgeV1::default)
+            },
             masked_observation: self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1,
             #[cfg(test)]
             force_flat_v4_encode_error: false,
@@ -888,6 +925,7 @@ impl SpellbenchBridgeServerV1 {
             ),
         };
         finish_infoset_v1(&mut game, &mut wire);
+        attach_reveal_meaning_v3(&mut game, wire_value_mut(&mut wire));
         game.terminal_sent = matches!(wire, WireResponseV1::Terminal(_));
         self.used_game_ids.insert(game_id.to_string());
         self.private_preview = None;
@@ -1032,6 +1070,7 @@ impl SpellbenchBridgeServerV1 {
                 );
                 let game = self.game.as_mut().expect("active game");
                 finish_infoset_v1(game, &mut wire);
+                attach_reveal_meaning_v3(game, wire_value_mut(&mut wire));
                 if matches!(wire, WireResponseV1::Terminal(_)) {
                     game.terminal_sent = true;
                 }
@@ -1101,8 +1140,9 @@ impl SpellbenchBridgeServerV1 {
             .expect("halted failure needs a game")
             .game_id
             .clone();
-        let value = self.halted_terminal_value(request_id, &game_id, counts, reason);
+        let mut value = self.halted_terminal_value(request_id, &game_id, counts, reason);
         if let Some(game) = self.game.as_mut() {
+            attach_reveal_meaning_v3(game, &mut value);
             game.terminal_sent = true;
             if let Some(infoset) = game.infoset.as_mut() {
                 write_receipt_v1(&game_id, infoset);
@@ -1138,6 +1178,23 @@ impl SpellbenchBridgeServerV1 {
 enum WireResponseV1 {
     Decision(Value),
     Terminal(Value),
+}
+
+fn wire_value_mut(wire: &mut WireResponseV1) -> &mut Value {
+    match wire {
+        WireResponseV1::Decision(value) | WireResponseV1::Terminal(value) => value,
+    }
+}
+
+fn attach_reveal_meaning_v3(game: &mut SpellbenchBridgeGameV1, response: &mut Value) {
+    if let Some(delta) = game
+        .session
+        .game_state()
+        .reveal_meaning_v3
+        .take_delta(&mut game.reveal_cursor)
+    {
+        response["extensions"]["x_kernel_v2_support"]["reveal_meaning_v3"] = delta;
+    }
 }
 
 /// AC1 strict view (lead rulings 4 and 5, test only): the bridge's own wire
@@ -1283,6 +1340,7 @@ impl BridgeMirrorV1 {
             flat_v4_scratch: FlatV4EncodeScratchV1::default(),
             private_block_root_step: self.private_block_root_step,
             history_cursor: self.history_cursor,
+            reveal_cursor: [0; 2],
             infoset: None,
             masked_observation: false,
             force_flat_v4_encode_error: false,
@@ -1308,7 +1366,7 @@ fn finish_infoset_v1(game: &mut SpellbenchBridgeGameV1, wire: &mut WireResponseV
     match wire {
         WireResponseV1::Decision(value) => {
             if let Some(extension) = infoset.pending.take() {
-                value["extensions"][SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1] = extension;
+                value["extensions"][infoset.extension()] = extension;
             }
         }
         WireResponseV1::Terminal(_) => write_receipt_v1(&game.game_id, infoset),
@@ -1398,7 +1456,12 @@ fn flat_v4_extension_v1(
     }
     *flat_v4_rows = rows;
     if let Some(infoset) = infoset.as_mut() {
-        infoset_extension_v1(lockstep.fast_session(), decision, infoset)?;
+        infoset_extension_v1(
+            lockstep.fast_session(),
+            decision,
+            infoset,
+            &session.game_state().reveal_meaning_v3,
+        )?;
     }
     Ok(Some(value))
 }
@@ -1599,6 +1662,21 @@ type ObjectKeyV1 = (u32, u32);
 /// never advance the cursor.
 fn private_v2_support_with_history(game: &mut SpellbenchBridgeGameV1) -> Value {
     let mut support = private_v2_support(game);
+    let reveal_infoset = game
+        .infoset
+        .as_mut()
+        .filter(|infoset| infoset.extension() == INFOSET_SCHEMA_REVEAL_V4);
+    if let (Some(infoset), Some(lockstep)) = (reveal_infoset, game.flat_v4.as_ref()) {
+        if let RlSessionResponseV1::Decision(decision) = game.session.current_response() {
+            if let Some(rows) = infoset.live_group_rows_v4(
+                decision.acting_player,
+                &support,
+                lockstep.fast_session(),
+            ) {
+                support["reveal_v4_group_rows"] = rows;
+            }
+        }
+    }
     let state = game.session.game_state();
     let (events_from, notes_from, objects_from) = game.history_cursor;
     let events = &state.engine.event_history[events_from.min(state.engine.event_history.len())..];
@@ -2681,6 +2759,7 @@ mod tests {
                 x_kernel_flat_v4: true,
                 private_v2_support: true,
                 x_kernel_infoset_v1: false,
+                reveal_meaning_v3: false,
             },
         );
         let reset = reset_line("reset", "g-private", 7);
@@ -2716,6 +2795,7 @@ mod tests {
                 x_kernel_flat_v4: true,
                 private_v2_support: true,
                 x_kernel_infoset_v1: false,
+                reveal_meaning_v3: false,
             },
         );
         let mut decision = parse_line(&server.handle_line(&reset_line("reset", "g-history", 7)));
@@ -2780,6 +2860,69 @@ mod tests {
     }
 
     #[test]
+    fn reveal_meaning_v3_wire_is_opt_in_and_preserves_terminal_and_retry() {
+        let identity = SpellbenchEngineIdentityV1::with_source_revision(None);
+        let options = SpellbenchBridgeOptionsV1 {
+            private_v2_support: true,
+            ..Default::default()
+        };
+        let mut frozen = SpellbenchBridgeServerV1::with_options(identity.clone(), options);
+        let mut enabled = SpellbenchBridgeServerV1::with_options(
+            identity,
+            SpellbenchBridgeOptionsV1 {
+                reveal_meaning_v3: true,
+                ..options
+            },
+        );
+        let mut request = reset_line("reset", "reveal-v3", 7);
+        let mut next = [0; 2];
+        let mut complete = false;
+        for step in 0..100 {
+            let expected = parse_line(&frozen.handle_line(&request));
+            let response = enabled.handle_line(&request);
+            assert_eq!(response, enabled.handle_line(&request));
+            let mut actual = parse_line(&response);
+            let terminal = actual["response_type"] == "terminal";
+            let payload = actual["extensions"]["x_kernel_v2_support"]
+                .as_object_mut()
+                .unwrap()
+                .remove("reveal_meaning_v3")
+                .unwrap();
+            assert_eq!(payload["schema"], "kernel-reveal-support/v3");
+            for (viewer, sequence) in next.iter_mut().enumerate() {
+                let view = &payload["viewers"][viewer];
+                assert_eq!(view["viewer"], viewer);
+                assert_eq!(view["transcript"]["schema"], "x_reveal_meaning_v3");
+                for operation in view["transcript"]["operations"].as_array().unwrap() {
+                    assert_eq!(operation["sequence"], *sequence);
+                    *sequence += 1;
+                }
+            }
+            if terminal {
+                assert!(actual["extensions"]["x_kernel_v2_support"]
+                    .as_object()
+                    .unwrap()
+                    .is_empty());
+                actual.as_object_mut().unwrap().remove("extensions");
+            }
+            assert_eq!(actual, expected);
+            if terminal {
+                complete = true;
+                break;
+            }
+            let selected = actual["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .position(|row| row["semantic"]["kind"] == "play_land")
+                .unwrap_or(0);
+            request = step_line_for(&format!("step-{step}"), &actual, selected);
+        }
+        assert!(complete);
+        assert!(next.into_iter().all(|count| count > 0));
+    }
+
+    #[test]
     fn private_preview_refuses_priority_and_does_not_advance_the_game() {
         let mut server = SpellbenchBridgeServerV1::with_options(
             SpellbenchEngineIdentityV1::with_source_revision(None),
@@ -2787,6 +2930,7 @@ mod tests {
                 x_kernel_flat_v4: true,
                 private_v2_support: true,
                 x_kernel_infoset_v1: false,
+                reveal_meaning_v3: false,
             },
         );
         let first = parse_line(&server.handle_line(&reset_line("reset", "g-private", 7)));
@@ -3562,6 +3706,101 @@ mod tests {
         )
     }
 
+    #[test]
+    fn reveal_v4_bridge_exports_the_same_acting_viewer_stream_as_the_adapter() {
+        use crate::infoset_v1::PayloadV1;
+        use crate::reveal_meaning_v3::RevealReducerV3;
+
+        let mut server = SpellbenchBridgeServerV1::with_reveal_search_v4(
+            SpellbenchEngineIdentityV1::with_source_revision(None),
+        );
+        let hello = json!({"request_type": "hello", "protocol": SPELLBENCH_PROTOCOL_V1,
+                           "request_id": "reveal-v4-hello"});
+        let advertised = parse_line(&server.handle_line(&hello.to_string()));
+        assert_eq!(
+            advertised["extensions"],
+            json!(["x_kernel_v5", "x_kernel_flat_v4", INFOSET_SCHEMA_REVEAL_V4])
+        );
+
+        let mut reducers = [RevealReducerV3::default(), RevealReducerV3::default()];
+        let mut request = reset_line("reset", "reveal-v4", 7);
+        for step in 0..40 {
+            let raw = parse_line(&server.handle_line(&request));
+            assert_eq!(raw["response_type"], "decision", "{raw}");
+            let extensions = &raw["extensions"];
+            assert!(extensions
+                .get(SPELLBENCH_EXTENSION_KERNEL_INFOSET_V1)
+                .is_none());
+            let support = &extensions["x_kernel_v2_support"]["reveal_meaning_v3"];
+            for (viewer, reducer) in reducers.iter_mut().enumerate() {
+                reducer
+                    .absorb(&support["viewers"][viewer]["transcript"])
+                    .unwrap();
+            }
+            if let Some(text) = extensions[INFOSET_SCHEMA_REVEAL_V4]["payload_json"].as_str() {
+                let payload = PayloadV1::from_bytes(text.as_bytes()).unwrap();
+                let imported = payload.import().unwrap();
+                let viewer = crate::ids::PlayerId(payload.viewer);
+                let knowledge =
+                    &imported.game_state().reveal_knowledge_v4.as_ref().unwrap()[viewer.index()];
+                assert_eq!(
+                    knowledge
+                        .hand(viewer.opponent())
+                        .collect::<std::collections::BTreeMap<_, _>>(),
+                    reducers[viewer.index()].hand(viewer.opponent())
+                );
+
+                // A live buffered continuation still keys its rows with
+                // the published root map after a fresh export refuses.
+                let game = server.game.as_mut().unwrap();
+                let fast = game.flat_v4.as_ref().unwrap().fast_session();
+                let infoset = game.infoset.as_mut().unwrap();
+                let support = json!({"block_declaration_instance": "fixture-block"});
+                let root = infoset
+                    .live_group_rows_v4(viewer.into(), &support, fast)
+                    .unwrap();
+                assert_eq!(root["root_step"], raw["step"]);
+                assert!(root["row_keys"].is_array());
+                assert_eq!(
+                    root["row_keys"],
+                    extensions[INFOSET_SCHEMA_REVEAL_V4]["row_keys"]
+                );
+                // Serialized snapshots intentionally lose the private journal.
+                // Run the actual exporter again and require its R8 refusal,
+                // rather than simulating refusal by clearing root_ids ourselves.
+                let restored: crate::state::GameState = serde_json::from_value(
+                    serde_json::to_value(game.session.game_state()).unwrap(),
+                )
+                .unwrap();
+                let RlSessionResponseV1::Decision(current) = game.session.current_response() else {
+                    panic!("expected a live decision");
+                };
+                infoset_extension_v1(fast, &current, infoset, &restored.reveal_meaning_v3).unwrap();
+                assert_eq!(infoset.pending.as_ref().unwrap()["refusal"], "R8");
+                assert!(infoset.root_ids.is_none());
+                assert_eq!(
+                    infoset.live_group_rows_v4(viewer.into(), &support, fast),
+                    Some(root)
+                );
+                assert!(infoset
+                    .live_group_rows_v4(viewer.into(), &json!({}), fast)
+                    .is_none());
+                assert!(infoset
+                    .live_group_rows_v4(viewer.into(), &support, fast)
+                    .is_none());
+                return;
+            }
+            let selected = raw["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .position(|row| row["semantic"]["kind"] == "play_land")
+                .unwrap_or(0);
+            request = step_line_for(&format!("step-{step}"), &raw, selected);
+        }
+        panic!("no eligible reveal-v4 payload exported");
+    }
+
     /// Design 7's composition keys: at a buffered group's root with a
     /// payload, each private preview's `row_keys` (lockstep rows, keyed with
     /// the root export's map) equal the keys of the entrant's local state,
@@ -3586,6 +3825,7 @@ mod tests {
                     x_kernel_flat_v4: true,
                     private_v2_support: true,
                     x_kernel_infoset_v1: true,
+                    reveal_meaning_v3: false,
                 },
             );
             let mut line =
@@ -3713,6 +3953,7 @@ mod tests {
                     x_kernel_flat_v4: true,
                     private_v2_support: true,
                     x_kernel_infoset_v1: true,
+                    reveal_meaning_v3: false,
                 },
             );
             let mut line =
@@ -4296,6 +4537,7 @@ imported {:#?}",
             flat_v4_scratch: FlatV4EncodeScratchV1::default(),
             private_block_root_step: None,
             history_cursor: (0, 0, 0),
+            reveal_cursor: [0; 2],
             infoset: None,
             masked_observation: false,
             force_flat_v4_encode_error: false,
@@ -4445,6 +4687,7 @@ imported {:#?}",
                         x_kernel_flat_v4: true,
                         private_v2_support: true,
                         x_kernel_infoset_v1: false,
+                        reveal_meaning_v3: false,
                     },
                 );
                 let game_id = format!("v4-audit-{deck}-{game}");

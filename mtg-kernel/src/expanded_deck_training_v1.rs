@@ -75,6 +75,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 const TRAJECTORY_SCHEMA: &str = "mtg-kernel-expanded-deck-trajectory/v1";
 const POPULATION_TRAJECTORY_SCHEMA: &str = "mtg-kernel-expanded-deck-trajectory/v2";
@@ -110,6 +111,9 @@ fn default_max_prepared_tensor_mebibytes() -> usize {
 fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
     *value == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES
 }
+/// The opt-in checkpoint codec benchmark (mtg-kernel#596): measurement only.
+#[cfg(feature = "checkpoint-codec-bench-v1")]
+pub mod checkpoint_codec_bench_v1;
 pub(crate) mod checkpoint_container_v1;
 mod fresh_initialization_source;
 mod fresh_registry_transfer_source;
@@ -117,6 +121,7 @@ mod line_b_root_selection_v1;
 mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
 mod loaded_source_cache_v1;
+pub mod portable_chain_v1;
 pub mod record_envelope_v1;
 mod trajectory_parse_ahead_v1;
 pub mod v8_inclusion_conversion_v1;
@@ -234,16 +239,30 @@ impl ExpandedUpdateBackendV1 {
         }
     }
 
-    pub(crate) fn validate_update_execution_v1(&self, document: &Value) -> Result<(), String> {
+    pub(crate) fn validate_update_execution_v1(
+        &self,
+        document: &Value,
+        s_parallel_workers: Option<usize>,
+    ) -> Result<(), String> {
         self.validate_v1()?;
         let mut expected = json!({
             "schema":"mtg-kernel-expanded-deck-update/v1",
             "numerical_backend":"native-cpu-sequential"
         });
         self.record_update_execution_v1(&mut expected);
+        // Older prepared S updates used serial learner math. Their original
+        // receipt is still valid and its preparation telemetry is checked by
+        // the run driver. A parallel learner receipt binds its requested count.
+        if let Some(workers) = s_parallel_workers.filter(|_| {
+            self.is_cpu()
+                && document["numerical_backend"] == s_learner_v1::S_PARALLEL_UPDATE_BACKEND_V1
+        }) {
+            s_learner_v1::record_parallel_update_execution_v1(&mut expected, workers);
+        }
         for key in [
             "schema",
             "numerical_backend",
+            "s_learner_workers_requested",
             "update_backend",
             "device",
             "gpu_ordinal",
@@ -793,6 +812,10 @@ impl OpponentCacheV1 {
 /// Revalidate every external byte pin once at a collection boundary before
 /// reusing a process-cached model. Schema-specific semantic validation remains
 /// the cache miss loader's responsibility; changed bytes cannot hit that cache.
+///
+/// The import and checkpoint are read as shared bytes: with resident reads on
+/// (`verified_bytes_cache_v1`) each read checks the file's metadata and
+/// borrows the held verified bytes, without copying a 20 MB checkpoint.
 fn verify_collection_opponent_sources_v1(
     episodes: &[ExpandedEpisodeV1],
 ) -> Result<Vec<ExpandedModelSourceV1>, String> {
@@ -810,18 +833,19 @@ fn verify_collection_opponent_sources_v1(
         if source.s_learner.is_some() {
             continue;
         }
-        let bytes = read_pinned_bytes(&source.play_import)?;
+        let bytes = read_pinned_shared_v1(&source.play_import)?;
         let checkpoint_bytes = source
             .checkpoint
             .as_ref()
-            .map(read_pinned_bytes)
+            .map(read_pinned_shared_v1)
             .transpose()?;
+        let checkpoint_bytes = checkpoint_bytes.as_deref().map(Vec::as_slice);
         let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
         let schema = probe.get("schema").and_then(Value::as_str);
         // A converted source whose base trains verifies the conversion's
         // pins and the base's own, then is served like its base.
         let verified_pins = if schema == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
-            no_state_digest_v1::verify_source_pins_v1(source, &bytes, checkpoint_bytes.as_deref())?
+            no_state_digest_v1::verify_source_pins_v1(source, &bytes, checkpoint_bytes)?
         } else {
             let mut pins_ok = verify_import_pins_v1(&bytes)?;
             // A checkpoint that names a further file (a phase-1
@@ -830,7 +854,7 @@ fn verify_collection_opponent_sources_v1(
             // The process cache holds only sources whose checkpoint the same
             // probe found clean, and this pin was just verified, so a held
             // source needs no probe.
-            if let (true, Some(checkpoint)) = (pins_ok, checkpoint_bytes.as_deref()) {
+            if let (true, Some(checkpoint)) = (pins_ok, checkpoint_bytes) {
                 pins_ok = ordered_update_preparation::holds_source_v1(source)
                     || no_state_digest_v1::names_another_file_v1(checkpoint) == Ok(false);
             }
@@ -5506,10 +5530,10 @@ fn execute_update_inner_v1(
         }
         CheckpointRecordFormatV1::V2 => checkpoint_container_v1::encode_v1(&checkpoint)?,
     };
-    let checkpoint_pin = publish_json_bytes_v1(
+    let checkpoint_pin = publish_json_shared_v1(
         &output_directory,
         "checkpoint.json",
-        &record_envelope.seal_owned_v1(record)?,
+        &Arc::new(record_envelope.seal_owned_v1(record)?),
     )?;
     // Readback exercises the real same-format continuation loader.
     let resumed_source = ExpandedModelSourceV1 {
@@ -5725,14 +5749,14 @@ fn read_trajectory_batch_v1(
 /// typed reader of a checkpoint accepts either format with unchanged
 /// semantics; hot paths use [`read_checkpoint_v1`] instead.
 fn read_pinned<T: for<'de> Deserialize<'de>>(pin: &PinnedFileV1) -> Result<T, String> {
-    let bytes = read_pinned_bytes(pin)?;
+    let bytes = read_pinned_shared_v1(pin)?;
     serde_json::from_slice(&checkpoint_container_v1::json_document_v1(&bytes)?).map_err(err)
 }
 
 /// A pinned checkpoint, from either format, decoded directly (design 4.1,
 /// the direct-decode interface).
 fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String> {
-    checkpoint_container_v1::parse_checkpoint_v1(&read_pinned_bytes(pin)?)
+    checkpoint_container_v1::parse_checkpoint_v1(&read_pinned_shared_v1(pin)?)
 }
 
 /// Metadata fields of a pinned checkpoint, parsed from a v1 document or a
@@ -5740,12 +5764,65 @@ fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String
 fn read_checkpoint_metadata_v1<T: for<'de> Deserialize<'de>>(
     pin: &PinnedFileV1,
 ) -> Result<T, String> {
-    let bytes = read_pinned_bytes(pin)?;
+    let bytes = read_pinned_shared_v1(pin)?;
     serde_json::from_slice(&checkpoint_container_v1::metadata_view_v1(&bytes)?).map_err(err)
 }
 
 fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
     read_pinned_bytes_in_v1(verified_bytes_cache_v1::global_v1(), pin)
+}
+
+/// `read_pinned_bytes` returning shared bytes: with resident reads on and the
+/// pin's bytes held, the held allocation itself (no copy); otherwise exactly
+/// `read_pinned_bytes`'s bytes.
+fn read_pinned_shared_v1(pin: &PinnedFileV1) -> Result<Arc<Vec<u8>>, String> {
+    read_pinned_shared_in_v1(verified_bytes_cache_v1::global_v1(), pin)
+}
+
+/// `read_pinned_shared_v1` against the verified-bytes cache `cache`.
+fn read_pinned_shared_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    pin: &PinnedFileV1,
+) -> Result<Arc<Vec<u8>>, String> {
+    if cache.resident_v1() {
+        let metadata = fs::metadata(&pin.path).map_err(err)?;
+        ensure(
+            metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
+            "input is not a bounded regular file",
+        )?;
+        if let Some(held) = cache.resident_bytes_v1(&pin.path, &pin.sha256, metadata.len()) {
+            return Ok(held);
+        }
+    }
+    read_pinned_bytes_in_v1(cache, pin).map(Arc::new)
+}
+
+/// `read_pinned_bytes` for a caller that only needs the check: with resident
+/// reads on and the pin's bytes held, the metadata checks run and the held
+/// bytes are not copied; otherwise exactly `read_pinned_bytes`.
+fn check_pinned_v1(pin: &PinnedFileV1) -> Result<(), String> {
+    check_pinned_in_v1(verified_bytes_cache_v1::global_v1(), pin)
+}
+
+/// `check_pinned_v1` against the verified-bytes cache `cache`.
+fn check_pinned_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    pin: &PinnedFileV1,
+) -> Result<(), String> {
+    if cache.resident_v1() {
+        let metadata = fs::metadata(&pin.path).map_err(err)?;
+        ensure(
+            metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
+            "input is not a bounded regular file",
+        )?;
+        if cache
+            .resident_bytes_v1(&pin.path, &pin.sha256, metadata.len())
+            .is_some()
+        {
+            return Ok(());
+        }
+    }
+    read_pinned_bytes_in_v1(cache, pin).map(drop)
 }
 
 /// `read_pinned_bytes` against the verified-bytes cache `cache`.
@@ -5758,6 +5835,11 @@ fn read_pinned_bytes_in_v1(
         metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
         "input is not a bounded regular file",
     )?;
+    // Resident reads: bytes this process verified against this pin, of the
+    // file's exact length (`verified_bytes_cache_v1`).
+    if let Some(held) = cache.resident_bytes_v1(&pin.path, &pin.sha256, metadata.len()) {
+        return Ok(held.as_ref().clone());
+    }
     let bytes = fs::read(&pin.path).map_err(err)?;
     // Bytes equal to bytes this process already verified against this pin
     // have its digest (`verified_bytes_cache_v1`); anything else is hashed as
@@ -5909,22 +5991,61 @@ fn publish_json_bytes_in_v1(
     name: &str,
     bytes: &[u8],
 ) -> Result<PinnedFileV1, String> {
-    ensure(
-        bytes.len() as u64 <= MAX_FILE_BYTES,
-        "output exceeds file size limit",
-    )?;
-    let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
-    let receipt =
-        publish_new_bytes_v1(&parent, format!(".{name}.stage"), name, bytes).map_err(err)?;
-    let pin = PinnedFileV1 {
-        path: directory.join(name),
-        sha256: hex(&receipt.sha256()),
-    };
+    let pin = publish_json_unrecorded_v1(cache, directory, name, bytes)?;
     // The receipt's digest was computed from `bytes`, and the publication
     // recaptured the file byte for byte: this process's later reads of the
     // pin compare instead of hashing (`verified_bytes_cache_v1`).
     cache.record_verified_v1(&pin.path, &pin.sha256, bytes);
     Ok(pin)
+}
+
+/// `publish_json_bytes_v1` for bytes the caller shares: the verified-bytes
+/// cache holds the same allocation instead of a copy. Same publication.
+fn publish_json_shared_v1(
+    directory: &Path,
+    name: &str,
+    bytes: &Arc<Vec<u8>>,
+) -> Result<PinnedFileV1, String> {
+    publish_json_shared_in_v1(verified_bytes_cache_v1::global_v1(), directory, name, bytes)
+}
+
+/// `publish_json_shared_v1` recording into the verified-bytes cache `cache`.
+fn publish_json_shared_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    directory: &Path,
+    name: &str,
+    bytes: &Arc<Vec<u8>>,
+) -> Result<PinnedFileV1, String> {
+    let pin = publish_json_unrecorded_v1(cache, directory, name, bytes)?;
+    cache.record_verified_shared_v1(&pin.path, &pin.sha256, Arc::clone(bytes));
+    Ok(pin)
+}
+
+/// The publication both `publish_json_*` share; the caller records the bytes.
+fn publish_json_unrecorded_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    directory: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<PinnedFileV1, String> {
+    ensure(
+        bytes.len() as u64 <= MAX_FILE_BYTES,
+        "output exceeds file size limit",
+    )?;
+    let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
+    // Resident reads also skip the two non-bracketing readbacks
+    // (`publish_new_bytes_bracketed_v1`).
+    let stage = format!(".{name}.stage");
+    let receipt = if cache.resident_v1() {
+        crate::durable_publication_v1::publish_new_bytes_bracketed_v1(&parent, stage, name, bytes)
+    } else {
+        publish_new_bytes_v1(&parent, stage, name, bytes)
+    }
+    .map_err(err)?;
+    Ok(PinnedFileV1 {
+        path: directory.join(name),
+        sha256: hex(&receipt.sha256()),
+    })
 }
 
 #[cfg(test)]
@@ -6325,12 +6446,12 @@ pub(crate) mod tests {
         let mut legacy = base.clone();
         cpu.record_update_execution_v1(&mut legacy);
         assert_eq!(legacy, base);
-        cpu.validate_update_execution_v1(&legacy).unwrap();
-        assert!(cuda.validate_update_execution_v1(&legacy).is_err());
+        cpu.validate_update_execution_v1(&legacy, None).unwrap();
+        assert!(cuda.validate_update_execution_v1(&legacy, None).is_err());
         let mut device = base.clone();
         cuda.record_update_execution_v1(&mut device);
-        cuda.validate_update_execution_v1(&device).unwrap();
-        assert!(cpu.validate_update_execution_v1(&device).is_err());
+        cuda.validate_update_execution_v1(&device, None).unwrap();
+        assert!(cpu.validate_update_execution_v1(&device, None).is_err());
         assert_eq!(device["reported_loss_source"], "transported-cpu-outputs");
         for key in [
             "schema",
@@ -6345,18 +6466,43 @@ pub(crate) mod tests {
             let mut missing = device.clone();
             missing.as_object_mut().unwrap().remove(key);
             assert!(
-                cuda.validate_update_execution_v1(&missing).is_err(),
+                cuda.validate_update_execution_v1(&missing, None).is_err(),
                 "{key}"
             );
             let mut wrong = device.clone();
             wrong[key] = json!("incorrect");
-            assert!(cuda.validate_update_execution_v1(&wrong).is_err(), "{key}");
+            assert!(
+                cuda.validate_update_execution_v1(&wrong, None).is_err(),
+                "{key}"
+            );
         }
         let other = ExpandedUpdateBackendV1::Cuda { device_ordinal: 2 };
-        assert!(other.validate_update_execution_v1(&device).is_err());
+        assert!(other.validate_update_execution_v1(&device, None).is_err());
         let mut misleading_cpu = legacy;
         misleading_cpu["gpu_ordinal"] = json!(1);
-        assert!(cpu.validate_update_execution_v1(&misleading_cpu).is_err());
+        assert!(cpu
+            .validate_update_execution_v1(&misleading_cpu, None)
+            .is_err());
+    }
+
+    #[test]
+    fn s_parallel_update_receipt_binds_worker_count_and_accepts_legacy_receipts() {
+        let cpu = ExpandedUpdateBackendV1::Cpu;
+        let legacy = json!({"schema":"mtg-kernel-expanded-deck-update/v1",
+            "numerical_backend":"native-cpu-sequential"});
+        cpu.validate_update_execution_v1(&legacy, Some(4)).unwrap();
+        let mut parallel = legacy.clone();
+        s_learner_v1::record_parallel_update_execution_v1(&mut parallel, 4);
+        cpu.validate_update_execution_v1(&parallel, Some(4))
+            .unwrap();
+        assert!(cpu
+            .validate_update_execution_v1(&parallel, Some(2))
+            .is_err());
+        assert!(cpu.validate_update_execution_v1(&parallel, None).is_err());
+        parallel["numerical_backend"] = legacy["numerical_backend"].clone();
+        assert!(cpu
+            .validate_update_execution_v1(&parallel, Some(4))
+            .is_err());
     }
 
     #[test]
@@ -8714,6 +8860,7 @@ pub(crate) mod tests {
                         search_seeds: vec![0, 1],
                         rollouts: 4,
                         value_leaf: None,
+                        sd1: None,
                     }),
                 }),
             };
@@ -8782,6 +8929,173 @@ pub(crate) mod tests {
         assert!(reached > 0, "no slot reached its placed decision");
     }
 
+    /// SD1 capture (collab LANES/search-diagnostic-20261108/DESIGN.md v4 E2):
+    /// the learner plays its own draw throughout; every arm x seed is recorded
+    /// with its world receipt and both picks; coverage holds the arms'
+    /// supported actions and picks; both reference halves and V_p count every
+    /// rollout once; the capture replays exactly (CPU and wall aside); and the
+    /// panel-only pass reaches the same states with the same policy.
+    #[test]
+    fn sd1_capture_records_arms_and_split_references_without_touching_the_episode() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = fast_self_play_episode_v1("w5-capture", 2_026_110_202, 0);
+        let plain = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+        let arm = |label: &str, world: &str, budget: u64| ex1_collect_v1::Sd1ArmOptionsV1 {
+            label: label.into(),
+            world: world.into(),
+            search_seeds: vec![0],
+            budget,
+            value_leaf: None,
+        };
+        let options = |arms: Vec<ex1_collect_v1::Sd1ArmOptionsV1>, half_rollouts: u64| {
+            ex1_collect_v1::Ex1CollectOptionsV1 {
+                run: "sd1/panel".into(),
+                update: 0,
+                budget: 600,
+                w5: Some(ex1_collect_v1::W5CollectOptionsV1 {
+                    recipe: crate::w5_xact_v1::W5_XACT_VERSION_V1.into(),
+                    key_memo_mib: 64,
+                    capture_0b: Some(ex1_collect_v1::W5CaptureOptionsV1 {
+                        budgets: vec![],
+                        search_seeds: vec![],
+                        rollouts: 0,
+                        value_leaf: None,
+                        sd1: Some(ex1_collect_v1::Sd1CaptureOptionsV1 {
+                            version: ex1_collect_v1::SD1_CAPTURE_VERSION_V1.into(),
+                            arms,
+                            half_rollouts,
+                            coverage_max: 16,
+                        }),
+                    }),
+                }),
+            }
+        };
+        let mut vl = arm("VL8-h0", "fresh", 0);
+        vl.value_leaf = Some(ex1_collect_v1::Sd1ValueLeafArmV1 {
+            horizon: "h0".into(),
+            sims: 12,
+        });
+        let full = options(
+            vec![
+                arm("D", "fresh", 600),
+                arm("P", "pinned-v1", 600),
+                arm("T", "true-v1", 600),
+                vl,
+            ],
+            2,
+        );
+        full.validate_v1().unwrap();
+        let panel = options(vec![], 0);
+        panel.validate_v1().unwrap();
+        // A 0b field beside sd1 is refused.
+        let mut bad = full.clone();
+        bad.w5
+            .as_mut()
+            .unwrap()
+            .capture_0b
+            .as_mut()
+            .unwrap()
+            .rollouts = 4;
+        assert!(bad.validate_v1().is_err());
+        let strip = |mut v: Value| {
+            for a in v["arms"].as_array_mut().unwrap() {
+                a.as_object_mut().unwrap().remove("cpu_s");
+                a["search"].as_object_mut().unwrap().remove("wall");
+            }
+            v
+        };
+        let mut reached = 0;
+        for slot in 0..48_usize {
+            let run = |options: &ex1_collect_v1::Ex1CollectOptionsV1,
+                       policy: &mut FrozenPlayPolicyV1| {
+                let mut hook =
+                    ex1_collect_v1::Ex1EpisodeHookV1::new(options, policy, &episode, slot).unwrap();
+                let hooked =
+                    collect_episode_hooked_v1(policy, &learner, None, &episode, Some(&mut hook))
+                        .unwrap();
+                (hooked, hook.finish_v1(&episode, true))
+            };
+            let (hooked, record) = run(&full, &mut policy);
+            assert_eq!(
+                serde_json::to_vec(&plain).unwrap(),
+                serde_json::to_vec(&hooked).unwrap(),
+                "slot {slot}: capture changed the episode"
+            );
+            let capture = record["capture_0b"].clone();
+            if capture["reached"] != true {
+                continue;
+            }
+            reached += 1;
+            assert_eq!(capture["schema"], ex1_collect_v1::SD1_CAPTURE_VERSION_V1);
+            let arms = capture["arms"].as_array().unwrap();
+            assert_eq!(arms.len(), 4);
+            let width = capture["width"].as_u64().unwrap() as usize;
+            let actions: Vec<usize> =
+                serde_json::from_value(capture["references"]["actions"].clone()).unwrap();
+            for a in arms.iter().filter(|a| a["status"] == "ok") {
+                let n: Vec<u64> = serde_json::from_value(a["n"].clone()).unwrap();
+                assert_eq!(n.len(), width);
+                for (i, &count) in n.iter().enumerate() {
+                    if count >= 8 {
+                        assert!(actions.contains(&i));
+                    }
+                }
+                for pick in [&a["frozen_choice"], &a["pick_v2"]] {
+                    if let Some(i) = pick.as_u64() {
+                        assert!(actions.contains(&(i as usize)));
+                    }
+                }
+                let mut perm: Vec<u64> = serde_json::from_value(a["perm_live"].clone()).unwrap();
+                perm.sort_unstable();
+                assert_eq!(perm, (0..width as u64).collect::<Vec<_>>());
+                assert_eq!(a["search"]["world"], a["world"]);
+            }
+            assert_eq!(arms[2]["search"]["world_receipt"]["mode"], "true-v1");
+            if arms[1]["status"] == "ok" {
+                assert_eq!(arms[1]["search"]["world_receipt"]["mode"], "pinned-v1");
+            }
+            assert!(arms[0]["search"]["world_receipt"].is_null());
+            if width <= 16 {
+                assert_eq!(actions, (0..width).collect::<Vec<_>>());
+            }
+            let refs = &capture["references"];
+            for half in ["a", "b"] {
+                let q = &refs["q"][half];
+                for i in 0..actions.len() {
+                    let total = q["wins"][i].as_u64().unwrap()
+                        + q["draws"][i].as_u64().unwrap()
+                        + q["nonnatural"][i].as_u64().unwrap();
+                    assert!(total <= 2);
+                }
+                let vp = &refs["vp"][half];
+                let drawn: u64 = vp["drawn"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|x| x.as_u64().unwrap())
+                    .sum();
+                assert_eq!(drawn, 2);
+            }
+            // Exact replay, CPU and wall aside.
+            let (_, again) = run(&full, &mut policy);
+            assert_eq!(strip(capture.clone()), strip(again["capture_0b"].clone()));
+            // The panel-only pass: same state and policy, no arms, no references.
+            let (_, only) = run(&panel, &mut policy);
+            let only = &only["capture_0b"];
+            assert_eq!(only["reached"], true);
+            assert_eq!(only["step"], capture["step"]);
+            assert_eq!(only["policy"], capture["policy"]);
+            assert_eq!(only["features"], capture["features"]);
+            assert!(only["arms"].as_array().unwrap().is_empty());
+            assert!(only.get("references").is_none());
+            if reached >= 1 {
+                break;
+            }
+        }
+        assert!(reached > 0, "no slot reached its placed decision");
+    }
+
     /// W5 Stage 2a capture: adding the value-leaf searches leaves the episode,
     /// the Stage 0b candidates and every shared Q_ref value unchanged (parity),
     /// records every horizon x count x seed search with its primary hash, and
@@ -8805,6 +9119,7 @@ pub(crate) mod tests {
                         search_seeds: vec![0],
                         rollouts: 2,
                         value_leaf,
+                        sd1: None,
                     }),
                 }),
             }

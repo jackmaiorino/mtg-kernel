@@ -841,8 +841,10 @@ pub(crate) use flat_action_v3::{
     shuffle_trigger_source_into_library_v1,
 };
 pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3};
+pub(crate) use flat_action_v4::future_chance_seed_v3;
 #[cfg(test)]
 pub(crate) use flat_action_v4::search_library_fixture_v3;
+pub(crate) use flat_action_v4::SlotFilterV1;
 pub(crate) use flat_action_v4::V4BoundaryEncodingFailureV1;
 pub(crate) use flat_action_v4::V4SearchActionTokenV1;
 pub(crate) use flat_action_v4::V4SearchSampleMode;
@@ -5943,6 +5945,7 @@ impl RlEpisodeSessionV1 {
             deck_ids,
             card_ids,
             [None, None],
+            None,
             priority_mode,
             foundations_combat,
             london_mulligans,
@@ -5950,7 +5953,8 @@ impl RlEpisodeSessionV1 {
     }
 
     /// `reset_with_custom_decks_and_london_v1` with each seat's companion,
-    /// put face up in exile before the game begins.
+    /// put face up in exile before the game begins, and each seat's cards
+    /// outside the game (`eternal_outside_game_v1`).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn reset_with_custom_decks_companions_and_london_v1(
         episode_id: u64,
@@ -5960,6 +5964,7 @@ impl RlEpisodeSessionV1 {
         deck_ids: SessionDeckIdsV1,
         card_ids: [&[u16]; 2],
         companions: [Option<u16>; 2],
+        outside_the_game: Option<[Vec<u16>; 2]>,
         priority_mode: crate::surface_v2::PriorityModeV1,
         foundations_combat: bool,
         london_mulligans: bool,
@@ -5972,6 +5977,7 @@ impl RlEpisodeSessionV1 {
             deck_ids,
             card_ids,
             companions,
+            outside_the_game,
             priority_mode,
             foundations_combat,
             london_mulligans,
@@ -5991,6 +5997,7 @@ impl RlEpisodeSessionV1 {
         deck_ids: SessionDeckIdsV1,
         card_ids: [&[u16]; 2],
         companions: [Option<u16>; 2],
+        outside_the_game: Option<[Vec<u16>; 2]>,
         priority_mode: crate::surface_v2::PriorityModeV1,
         foundations_combat: bool,
         london_mulligans: bool,
@@ -6027,6 +6034,11 @@ impl RlEpisodeSessionV1 {
         // requires an empty exile.
         if companions.iter().any(Option::is_some) {
             crate::eternal_lurrus_v1::add_companions(&mut state, companions);
+        }
+        // None preserves legacy best-of-one snapshots and hashes. An explicit
+        // profile stays public even with empty or subsequently depleted lists.
+        if let Some(cards) = outside_the_game {
+            crate::eternal_outside_game_v1::set_outside_the_game(&mut state, cards);
         }
         let deck_hashes = card_ids
             .map(|cards| fnv1a64(&serde_json::to_vec(cards).expect("card-id arrays serialize")));
@@ -6341,6 +6353,13 @@ impl RlEpisodeSessionV1 {
         Ok(session)
     }
 
+    pub(crate) fn outside_game_options(
+        &self,
+        viewer: PlayerSeatV1,
+    ) -> Option<Vec<crate::eternal_outside_game_v1::OutsideGameOptionV1>> {
+        crate::eternal_outside_game_v1::decision_options(&self.state, viewer)
+    }
+
     pub fn current_response(&self) -> RlSessionResponseV1 {
         if let Some(terminal) = &self.terminal {
             return RlSessionResponseV1::Terminal(terminal.clone());
@@ -6395,6 +6414,11 @@ impl RlEpisodeSessionV1 {
             "neutral choices are a reset-only option"
         );
         self.state.engine.spellbench_neutral_v1.choices = true;
+    }
+
+    pub(crate) fn enable_reveal_meaning_v3(&mut self) {
+        assert_eq!(self.policy_step_count, 0, "reveal journal starts at reset");
+        self.state.reveal_meaning_v3.enable();
     }
 
     pub fn privileged_environment_hash(&self) -> u64 {

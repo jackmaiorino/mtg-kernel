@@ -141,8 +141,8 @@ New, each built once in the first wave that needs it:
   trigger and Mana Vault's draw-step trigger are queued by engine hooks; Vexing Bauble and
   Void Mirror read the mana each cast spent; Trinisphere raises a spell's total to three;
   Archon of Emeria's cast limit and tapped nonbasic lands; Clarion Conqueror and Karn's
-  "can't be activated" statics; Karn's wish finds nothing outside the game in
-  best-of-one mainboard sessions and so chooses only from exile; Urza's Saga gains its
+  "can't be activated" statics; Karn's wish reads S3's outside-the-game zone beside
+  exile (empty in best-of-one mainboard sessions); Urza's Saga gains its
   chapter abilities; Phyrexian Metamorph enters as a copy the way Assimilation Aegis
   copies; Witch Enchanter's land face reuses E3's modal land back (Sink into Stupor);
   Anointed Peacekeeper names any registry card by letter, then name; Chancellor of the
@@ -220,7 +220,7 @@ New, each built once in the first wave that needs it:
   Arena's {R}{R} goes to the restricted pool so a creature spell paid with it gains
   haste. Manifest dread puts a face-down 2/2 without ward. Improvise is the convoke
   payment over artifacts paying generic mana only. Blast Zone's X is one ability per X
-  from 0 to 7. Burning Wish finds nothing outside the game. Cabal Therapy names a card
+  from 0 to 7. Burning Wish reads S3's outside-the-game zone. Cabal Therapy names a card
   by first letter, then name. Resolution choices (Ghost Quarter, Gamble, Goblin
   Engineer, Archon of Cruelty, Phyrexian Dreadnought, manifest dread) use
   `E3ChoiceKindV1::E7aV1`.
@@ -245,8 +245,8 @@ New, each built once in the first wave that needs it:
   (Beseech the Mirror's search and free cast from the hand, Flash, Vampiric Tutor,
   Ugin's search). Oath of Druids and Forbidden Orchard are hook-queued triggers;
   Urza's Workshop's two colorless abilities are one with the larger yield.
-  Extrapolate the Impossible, like Karn's wish, finds nothing outside the game in a
-  best-of-one mainboard game. Kozilek's Command is an Eldrazi instant; the Kindred card
+  Extrapolate the Impossible, like Karn's wish, reads S3's outside-the-game zone (empty
+  in a best-of-one mainboard game). Kozilek's Command is an Eldrazi instant; the Kindred card
   type is not modeled.
 - E8b, built in `src/eternal_pauper_e8b_v1.rs` and `build_eternal_e8b_v1.rs`: splice
   onto Arcane is announced like replicate's count (the spliced Desperate Rituals in hand,
@@ -270,7 +270,7 @@ New, each built once in the first wave that needs it:
   Twinned Vision's discard belongs to its flashback only and it reads the cast origin;
   Geothermal Crevice's sacrifice ability is an additional fixed-bundle mana ability.
   Crypt Rats' X is one ability per X from 1 to 10, each costing X black mana. Learn
-  finds no Lesson outside the game, so it is "you may discard a card to draw a card".
+  reads S3's outside-the-game zone for a Lesson, or discards a card to draw a card.
 - E6b, built in `src/eternal_pauper_e6b_v1.rs` and `build_eternal_e6b_v1.rs`: creature
   Auras reuse `AuraCreatureStatic`, and an engine hook multiplies Ancestral Mask's and
   Ethereal Armor's bonus by their enchantment counts. Auras that enchant a land or a
@@ -459,6 +459,51 @@ Stages, one PR each (S1 is one PR per wave):
 - S3: an owner-private outside-the-game zone for wish effects (Burning Wish, Karn, the
   Great Creator's -2, Learn, Extrapolate the Impossible), replacing the best-of-one stubs.
 
+S2 is `src/eternal_bo3_v1.rs`. `EternalRegisteredDeckV1` admits a deck's 75 for its format
+(`EternalFormatV1`: at least 60 mainboard cards, at most 15 sideboard cards, four copies of a
+nonbasic card across both zones, every card Full, a named companion in the sideboard with its
+condition met). The mainboard also follows the custom-deck session's 10,000-card input limit.
+Each game's configuration must hold the same 75 within the same bounds, and
+game one uses the registered deck. The game builder gives the session the mainboard and the
+companion only while it is still in the sideboard and the mainboard meets its condition;
+otherwise it is an ordinary sideboard card that game. The rest of the sideboard is the game's
+outside-the-game cards (S3). Match state is `bo3_match`'s. The custom-deck session seats its
+first deck as the starting player, so a prepared game lists the starting player's deck first.
+`RandomSideboardPolicyV1` exchanges up to N random sideboard cards (never the companion) for
+mainboard cards before games two and three, from the registered configuration each time.
+`tests/eternal/eternal_bo3_v1.rs` tracks the decks whose full 75 is Full (`PLAYABLE_75`) and
+plays each against the next deck of its format in a seeded match with random actions, checking
+natural terminals, replay and that sided-in cards are cast.
+
+S3 is `src/eternal_outside_game_v1.rs`. Each player's cards outside the game (a best-of-three
+game's sideboard without a companion in use) are a sorted list in the eternal module state,
+set at reset from the custom-deck session's optional `outside_the_game` rows in the eternal
+build with the London schema. The list is excluded from public deck identities and zone
+projections. Burning Wish, Karn, the Great Creator's -2,
+learn (First Day of Class) and Extrapolate the Impossible offer their eligible cards as
+effect options in card id order, the decline first where the effect is optional (Karn's
+exile choice is its first option and may choose nothing; learn adds "discard a card, then
+draw a card" while its controller has a card in hand). Karn's exile card and learn's discard
+are this module's typed resolution choices (`OutsideGameChoiceV1`), because the engine's
+generic object selection and nonterminal discard must sit at a fixed position of the card's
+own program, while these options are built as the effect resolves. Learn uses the normal
+discard path for madness and runs the draw in the interpreter so dredge can replace it. The chosen card leaves the list and enters its
+owner's hand as a new object that the opponent knows. Extrapolate's controller
+picks two different names one at a time and the opponent picks between them by index. The
+Limited reply includes `outside_game_options` for the chooser in effect-option order. The
+opponent's Extrapolate menu lists the two revealed card definitions, and the other sideboard
+cards remain private.
+
+An explicit `outside_the_game` reset field enables the public
+`outside_game_rules: "outside-the-game/v1"` capability, including when both
+lists are empty. The capability persists after cards leave the lists and
+through snapshot restore. Omitting the reset field preserves legacy
+best-of-one snapshots and hashes. Identities and counts never appear in the
+capability. Infoset exporters refuse this profile with one fixed R2 detail
+before projection: their canonical allocator does not yet represent hidden
+sideboards. This refusal depends on the public capability, not the remaining
+private cards. An empty, absent module extension contributes no hash bytes.
+
 ## Execution
 
 Family workers implement bounded card groups in their own worktrees; one integrator owns
@@ -491,6 +536,7 @@ reporting as E1 to E9:
 | P2a | The Rock, Mono-Black Control, BW Control, Stasis, Other Control | 31 | Premodern 70% to 79% by the census |
 | P2d | White Weenie, Mono-Red Control (Beloved Chaplain, Devoted Caretaker, Glowrider, Mother of Runes, Nova Cleric, Shared Triumph, Soltari Monk, Soltari Priest, Avalanche Riders, Earthquake, Firebolt, Ghitu Encampment, Pillage, Stone Rain, Veteran Brawlers) | 15 | two decks, 2% of the field |
 | P2b | Survival, Madness Threshold, and the cards Elves shares with them (17 of 19; Birchlore Rangers and Thornscape Battlemage stay out) | 17 | Survival and Madness Threshold playable (4%); Elves needs Birchlore Rangers, Thornscape Battlemage and wave P2a's Genesis and Wall of Blossoms |
+| P2c | Reanimator, Full English Breakfast (20 of 21 cards; Volrath's Shapeshifter stays out) | 20 | Reanimator playable; Full English Breakfast needs Volrath's Shapeshifter (see below) |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -545,6 +591,58 @@ Known gaps:
 - An Opalescence or Sterling Grove entering by a path that skips the entry-counter hook is
   recorded at the next trigger collection instead.
 
+P2c is built in `src/eternal_premodern_p2c_v1.rs` (with `statics` and `targets` submodules) and
+`build_eternal_p2c_v1.rs`, which `build.rs` asks before `build_eternal_v1` and whose runtime
+tables head the `eternal_cards_v1` chains (subtype ids from 280: Saproling, Centaur). Its state
+(`P2cStateV1`) is created only when one of its cards needs it. New primitives:
+
+- Undiscovered Paradise records each tap for mana and returns to hand as its controller's untap
+  step begins (a hook in the untap loop, skipped while Stasis skips the whole step, so the land
+  returns in the next untap step that happens); Reflecting Pool has one ability per mana type,
+  each gated by `ManaAbilityConditionDef::ControllerOtherLandCouldProduceV1` (another land, not a
+  Reflecting Pool, whose current mana abilities could add the type: printed colors, restricted
+  colors and gated abilities with their conditions and costs ignored, plus abilities granted by
+  land type changes, moons and the like, tapped or not), plus a planner hook like the Tainted
+  lands'.
+- Exhume is a Show-and-Tell shaped choice (active player first, a lone creature card is taken
+  without a decision, then both enter at once); Death reanimates and loses life equal to the
+  card's mana value; Life animates every land its controller controls through a type override
+  and a 7b base of 1/1 until the turn ends (`split_card` covers Life // Death).
+- Avatar of Woe: fear as a blocker restriction, `DynamicCountDef::TenCreatureCardsInAllGraveyardsV1`
+  as the {6} cost reduction, destruction that cannot be regenerated (Pillage's mechanism).
+- Petradon exiles two target lands (`StandardTargetV1::TwoLandsV1`) and remembers them by its
+  battlefield incarnation; its leaves trigger returns those still exiled under their owners'
+  control, so an exile that resolves after Petradon left is permanent.
+- Phantom Nishoba: seven entry counters (none while its abilities are removed, 614.12), damage to
+  it is prevented and removes a counter (a hook after the protection check in `event.rs`; one
+  counter per batch of simultaneous damage, tracked by `begin_damage_batch`/`end_damage_batch`
+  around the batch replacement, and damage that can't be prevented is dealt while the counter
+  still comes off), and a queued life-gain trigger for the damage it dealt (wave P1a's queue),
+  neither of which applies while its abilities are removed. Palinchron's bounce
+  (`P2cOpV1::ReturnSourceV1`) acts only on the live incarnation that activated it.
+- Putrid Imp: threshold boost and "can't block" hooks, flying until end of turn through the
+  engine's keyword effect. Hermit Druid reveals to the first basic land (library knowledge is
+  public), the land to hand, the rest to the graveyard.
+- Phyrexian Devourer: `CostComponent::ExileTopCardOfLibraryV1` freezes the exiled card in the
+  ability's paid-cost provenance and the counters read its mana value; "power 7 or greater" is
+  a state trigger queued once until that instance leaves the stack (resolved or countered, 603.8)
+  and queued again while the power is still 7 or more.
+- Battlefield Scrounger: `CostComponent::PutOtherCardsFromOwnGraveyardOnLibraryBottomV1` (the
+  exile-from-graveyard cost's choice machinery, moving to the library bottom), a threshold
+  activation gate and the once-per-turn limit.
+- Krosan Reclamation: `StandardTargetV1::PlayerThenUpToTwoOfTheirGraveyardCardsV1` over wave
+  P2a's shuffle; flashback {1}{G}. Karmic Guide: echo generalizes wave P2d's (`echo_cost`),
+  flying, protection from black and the reanimation trigger.
+
+Known gaps (P2c): Volrath's Shapeshifter stays out. It has the full text of the top creature
+card of its controller's graveyard, which needs a permanent whose definition, abilities, triggers
+and activated abilities follow another card while the top card changes; the engine reads all of
+these from the object's own card definition and has no copiable-values layer for permanents
+(only token copies at creation), so Full English Breakfast is not playable. Reanimator is
+playable. Phantom Nishoba's life gain reads the creature when its trigger is collected, so a
+Nishoba that has lost its abilities (Dress Down) and dies from the same damage it deals still
+gains that life.
+
 Ruling notes: Premodern plays current Oracle text, so old cards follow today's wording
 (mana burn and damage on the stack do not exist). The snapshot names only legal cards,
 so the catalog needs no format legality check.
@@ -585,10 +683,12 @@ it, because only legal actions are offered. Representing granted protection and 
 public facts is a protocol change outside P2d.
 
 Known gaps (P2d):
-- Echo is owed only by the controller who first controlled the creature: a creature that
-  changes control owes no echo to its new controller. Its cost is paid by the automatic mana
-  planner without a choice of sources.
-- Shared Triumph offers only creature types of cards in the game when it enters.
+- Echo is recorded for a new controller when `standard_cards_v1::gain_control` moves the
+  creature; other control changes (the temporary control effects) do not record it. Its cost is
+  paid by the automatic mana planner without a choice of sources.
+- Shared Triumph offers the creature types of the creature cards its controller owns, as Cavern
+  of Souls does, so the option count reveals nothing hidden; a type no card of theirs has cannot
+  be named.
 - Protection from instant and sorcery spells counts a card in hand, graveyard, exile or
   library being cast as a spell, so an instant's activated ability from those zones (none in
   the catalog) would be treated as one.

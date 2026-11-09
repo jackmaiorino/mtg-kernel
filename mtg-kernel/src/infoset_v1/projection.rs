@@ -121,6 +121,7 @@ struct ObjectTrackV1 {
     last_obs_gen: u32,
     last_obs_zone: Option<Zone>,
     spans: Vec<SpanV1>,
+    hidden_v2: bool,
 }
 
 /// The projection's output.
@@ -330,6 +331,7 @@ struct PutBackV1 {
 
 struct WalkV1<'a> {
     state: &'a GameState,
+    visibility_v2: bool,
     viewer: PlayerId,
     objs: Vec<ObjectTrackV1>,
     library: [BTreeMap<u32, ObjectId>; 2],
@@ -393,6 +395,24 @@ pub(crate) fn project_v1(
     journal: &[ObservationNoteV1],
     viewer: PlayerId,
 ) -> ProjectionV1 {
+    project_versioned(state, journal, viewer, false)
+}
+
+/// Event-time identity visibility; never inferred from a later incarnation.
+pub(crate) fn project_v2(
+    state: &GameState,
+    journal: &[ObservationNoteV1],
+    viewer: PlayerId,
+) -> ProjectionV1 {
+    project_versioned(state, journal, viewer, true)
+}
+
+fn project_versioned(
+    state: &GameState,
+    journal: &[ObservationNoteV1],
+    viewer: PlayerId,
+    visibility_v2: bool,
+) -> ProjectionV1 {
     let n = state.objects.len();
     let mut objs = vec![ObjectTrackV1::default(); n];
     for (id, object) in state.objects.iter() {
@@ -407,6 +427,7 @@ pub(crate) fn project_v1(
     }
     let mut w = WalkV1 {
         state,
+        visibility_v2,
         viewer,
         objs,
         library: [BTreeMap::new(), BTreeMap::new()],
@@ -504,8 +525,17 @@ pub(crate) fn project_v1(
             let owner = w.owner(id);
             let from = w.objs[id.0 as usize].zone.unwrap_or(Zone::Hand);
             w.moved(id, true_zone);
-            w.hand_move(id, owner, from, true_zone, true);
-            w.settle(&[id]);
+            let visible = !visibility_v2
+                || state
+                    .objects
+                    .get(id)
+                    .v4
+                    .face_down_v1
+                    .is_none_or(|f| f.lookers & (1 << viewer.index()) != 0);
+            w.objs[id.0 as usize].hidden_v2 = !visible;
+            w.hand_move(id, owner, from, true_zone, visible);
+            let observed = [id];
+            w.settle(if visible { &observed } else { &[] });
         }
     }
     w.open = false;
@@ -631,7 +661,7 @@ impl WalkV1<'_> {
 
     fn is_tracked_now(&self, id: ObjectId) -> bool {
         let o = &self.objs[id.0 as usize];
-        if !o.exists {
+        if !o.exists || (o.hidden_v2 && o.zone.is_some_and(is_public)) {
             return false;
         }
         match o.zone {
@@ -834,7 +864,25 @@ impl WalkV1<'_> {
     }
 
     fn event(&mut self, event: &CommittedEvent, index: usize, positions: &[&ObservationNoteV1]) {
-        let _ = index;
+        if self.visibility_v2 {
+            match event {
+                CommittedEvent::ZoneChange { object, .. }
+                | CommittedEvent::SpellCast { spell: object, .. } => {
+                    let visible = self
+                        .state
+                        .observation_journal
+                        .visibility_v2(index, *object)
+                        .is_some_and(|mask| mask & (1 << self.viewer.index()) != 0);
+                    self.objs[object.0 as usize].hidden_v2 = !visible;
+                }
+                CommittedEvent::TurnedFaceUp { object, .. } => {
+                    self.objs[object.0 as usize].hidden_v2 = false;
+                    self.settle(&[*object]);
+                    return;
+                }
+                _ => {}
+            }
+        }
         // Amendment 43.8: the search mark follows the wire events V receives
         // (kernel_history_v2.py `_event`): set by a `zone_move` from library
         // to hand, cleared by every other event the adapter emits, untouched
@@ -922,7 +970,7 @@ impl WalkV1<'_> {
                     && (!self.hand.is_empty() || !self.survivors.is_empty() || self.r8_latch);
                 self.moved(id, *to);
                 let public = is_public(*from) || is_public(*to);
-                let named = public || owner == self.viewer;
+                let named = (public || owner == self.viewer) && !self.objs[id.0 as usize].hidden_v2;
                 if !token_or_copy {
                     self.hand_move(id, owner, *from, *to, named);
                 }
@@ -985,22 +1033,28 @@ impl WalkV1<'_> {
                     // A spell copy is created on the stack at generation 0.
                     o.exists = true;
                     o.zone = Some(Zone::Stack);
-                    self.settle(&[id]);
+                    let observed = [id];
+                    let named = !o.hidden_v2;
+                    self.settle(if named { &observed } else { &[] });
                     return;
                 }
                 let source = o.zone;
                 if source == Some(Zone::Stack) {
-                    self.settle(&[id]);
+                    let observed = [id];
+                    let named = !o.hidden_v2;
+                    self.settle(if named { &observed } else { &[] });
                     return;
                 }
                 let was = o.tracked;
                 let owner = self.owner(id);
                 self.moved(id, Zone::Stack);
+                let named = !self.objs[id.0 as usize].hidden_v2;
                 if let Some(source) = source {
-                    self.hand_move(id, owner, source, Zone::Stack, true);
+                    self.hand_move(id, owner, source, Zone::Stack, named);
                 }
                 let _ = was;
-                self.settle(&[id]);
+                let observed = [id];
+                self.settle(if named { &observed } else { &[] });
             }
             CommittedEvent::CreateToken { object, .. } => {
                 // A token is created on the battlefield at generation 0.
@@ -1138,6 +1192,23 @@ impl WalkV1<'_> {
                 owner,
                 object,
             } => {
+                // The historical native move-to-hand helper emits a reveal
+                // even from concealed exile. Its event-anchored note is not
+                // evidence of a public identity in v2. A genuinely subsequent
+                // reveal has a later history_len and is still read normally.
+                if self.visibility_v2
+                    && matches!(self.state.engine.event_history.get(note.history_len),
+                        Some(CommittedEvent::ZoneChange { object: moved, to: Zone::Hand, .. })
+                        if moved == object)
+                    && self
+                        .state
+                        .observation_journal
+                        .visibility_v2(note.history_len, *object)
+                        .is_some_and(|mask| mask & (1 << viewer.index()) == 0)
+                {
+                    self.settle(&[]);
+                    return;
+                }
                 if *observer != viewer {
                     self.settle(&[]);
                     return;
@@ -1330,7 +1401,7 @@ impl WalkV1<'_> {
         }
         let card_def = self.card_def(id);
         if to == Zone::Hand && from != Zone::Hand {
-            if is_public(from) {
+            if is_public(from) && (!self.visibility_v2 || named) {
                 self.hand.push(HandFactV1 {
                     card_def,
                     how: FactHowV1::FromPublicZone,
@@ -1346,7 +1417,7 @@ impl WalkV1<'_> {
         if from != Zone::Hand || to == Zone::Hand {
             return;
         }
-        if is_public(to) || named {
+        if (!self.visibility_v2 && is_public(to)) || named {
             // Amendment 43.8: an identified departure names a card, never a
             // copy. A departing known X and a departing unknown X look alike
             // on the wire: a known fact of the name ends first, and the

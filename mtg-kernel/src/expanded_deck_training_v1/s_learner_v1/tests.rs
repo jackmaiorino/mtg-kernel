@@ -422,6 +422,12 @@ fn s_learner_end_to_end_v1() {
     let parallel = run_config(&s, &net8, 2, root.join("run-parallel"));
     let first = run_native_expanded_training_v1(&parallel, Some(1)).unwrap();
     assert_eq!(first["completed_iterations"], 1);
+    let iteration: PinnedFileV1 = serde_json::from_value(first["iterations"][0].clone()).unwrap();
+    let iteration: Value = read_pinned(&iteration).unwrap();
+    let update: PinnedFileV1 = serde_json::from_value(iteration["update"].clone()).unwrap();
+    let update: Value = read_pinned(&update).unwrap();
+    assert_eq!(update["numerical_backend"], "native-cpu-exact-parallel-s");
+    assert_eq!(update["s_learner_workers_requested"], 2);
     let finished = run_native_expanded_training_v1(&parallel, None).unwrap();
     assert_eq!(finished["complete"], true);
     assert_eq!(finished["actual_identity"]["adam_step"], 2);
@@ -484,6 +490,7 @@ fn run_config(
         ],
         record_format: Default::default(),
         record_envelope: Default::default(),
+        verified_reads: Default::default(),
         learning_rate: 1.0e-3,
         value_coefficient: 0.5,
         update_backend: ExpandedUpdateBackendV1::Cpu,

@@ -223,6 +223,7 @@ pub mod phoenix_public_v56;
 pub mod planeswalker_v1;
 pub(crate) mod progenitus_v1;
 pub(crate) mod retained_world_parse_v1;
+pub mod reveal_meaning_v3;
 pub mod rules_meaning_elenda_v52;
 pub mod rules_meaning_embercleave_v65;
 pub mod rules_meaning_fake_your_own_death_v50;
@@ -268,6 +269,9 @@ pub mod effect;
 pub mod employment_public_v1;
 pub mod engine;
 mod equipment_damage_source_v4;
+/// Eternal best-of-three: format-aware 75-card registrations, a
+/// companion-aware game builder and a seeded random sideboarding policy.
+pub mod eternal_bo3_v1;
 /// Pauper, Legacy and Vintage catalog card programs (`eternal-fixtures`).
 pub mod eternal_cards_v1;
 /// Wave E5a card programs of the eternal catalog (Vintage Raker Shops, Oath
@@ -291,6 +295,9 @@ pub mod eternal_legacy_e9a_v1;
 /// Vintage Lurrus card programs and companions of the eternal catalog (wave
 /// E4b).
 pub mod eternal_lurrus_v1;
+/// The eternal catalog's outside-the-game zone: each player's sideboard cards,
+/// private to their owner, and the wish and learn effects that read them.
+pub mod eternal_outside_game_v1;
 /// Pauper Affinity, Tron and Ephemerate card programs of the eternal
 /// catalog (wave E6a).
 pub mod eternal_pauper_e6a_v1;
@@ -311,6 +318,9 @@ pub mod eternal_premodern_p2a_v1;
 /// Premodern Survival and Madness Threshold card programs of the eternal
 /// catalog (wave P2b).
 pub mod eternal_premodern_p2b_v1;
+/// Premodern Reanimator and Full English Breakfast card programs of the
+/// eternal catalog (wave P2c).
+pub mod eternal_premodern_p2c_v1;
 /// Premodern White Weenie and Mono-Red Control card programs of the eternal
 /// catalog (wave P2d).
 pub mod eternal_premodern_p2d_v1;
@@ -375,7 +385,7 @@ pub mod flat_policy_v5;
 pub mod heartfire_history_v1;
 pub mod heartfire_public_v1;
 pub mod ids;
-pub(crate) mod infoset_v1;
+pub mod infoset_v1;
 pub mod line_b_teacher_target_v1;
 pub mod ooze_public_v1;
 pub mod phase1_agent_v1;

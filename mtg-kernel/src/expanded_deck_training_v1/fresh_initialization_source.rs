@@ -8,7 +8,7 @@
 use super::{FrozenPlayObservationTransferV3, FrozenPlayPolicyV1, PinnedFileV1};
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::fast_sampler::WIDE_CATEGORICAL_SAMPLER_VERSION_V1;
-#[cfg(test)]
+#[cfg(any(test, feature = "checkpoint-codec-bench-v1"))]
 use crate::native_policy_train_step_v1::native_train_state_parameter_layout_v1;
 use crate::native_policy_value_net_v1::{
     NativePolicyValueModelConfigV1, NativePolicyValueNetV1, CARD_EMBEDDING_DIM_V1,
@@ -383,6 +383,10 @@ pub(super) fn read_actual_in_v1(
         metadata.is_file() && metadata.len() <= cap as u64,
         "fresh input is not a bounded regular file",
     )?;
+    // Resident reads (`verified_bytes_cache_v1`).
+    if let Some(held) = cache.resident_bytes_v1(&pin.path, &pin.sha256, metadata.len()) {
+        return Ok(held.as_ref().clone());
+    }
     let mut bytes = Vec::new();
     file.take(cap as u64 + 1)
         .read_to_end(&mut bytes)
@@ -679,8 +683,10 @@ pub(super) fn write_synthetic_fresh_source_v1(
 /// `compact_board_policy`/`compact_board_policy_v4`
 /// (`phase1_bo3_collection_v1/tests.rs`) use to make a real game terminate
 /// quickly by mutual decking), keeping the model, the payload bytes and
-/// every computed hash mutually consistent.
-#[cfg(test)]
+/// every computed hash mutually consistent. Also built for the opt-in
+/// checkpoint codec benchmark (`checkpoint_codec_bench_v1`), whose generated
+/// fixture starts from this source.
+#[cfg(any(test, feature = "checkpoint-codec-bench-v1"))]
 pub(crate) fn write_synthetic_fresh_source_with_parameters_v1(
     dir: &std::path::Path,
     feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,

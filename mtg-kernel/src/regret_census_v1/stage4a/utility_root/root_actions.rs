@@ -827,6 +827,7 @@ mod tests {
                         per_decision: Some((8_000, 4_000)),
                         node_stats: true,
                         rollout: None,
+                        ..Default::default()
                     },
                 )
                 .unwrap();

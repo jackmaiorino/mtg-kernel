@@ -8,7 +8,9 @@
 use super::{InfosetV1, INFOSET_SCHEMA_V1};
 use crate::ids::PlayerId;
 use crate::rl_session::FastActorSessionV1;
+use crate::state::{GameState, Zone};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -29,6 +31,80 @@ pub struct PayloadV1 {
     /// live combat scan's record).
     pub surface: crate::policy_surface_v5::SurfaceContextV1,
     pub state: serde_json::Value,
+    /// The selected viewer's opponent-hand minima in public name terms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reveal_hand: Option<Vec<RevealHandMinimumV4>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RevealHandMinimumV4 {
+    card_name: String,
+    minimum: usize,
+}
+
+fn reveal_hand_v4(state: &GameState, viewer: PlayerId) -> Option<Vec<RevealHandMinimumV4>> {
+    let knowledge = &state.reveal_knowledge_v4.as_ref()?[viewer.index()];
+    let mut facts = knowledge
+        .hand(viewer.opponent())
+        .map(|(def, minimum)| {
+            Some(RevealHandMinimumV4 {
+                card_name: crate::card_def::CARD_DEFS
+                    .get(usize::from(def))?
+                    .name
+                    .into(),
+                minimum,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    facts.sort_unstable_by(|a, b| a.card_name.cmp(&b.card_name));
+    Some(facts)
+}
+
+pub(super) fn validate_reveal_knowledge_v4(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<(), String> {
+    let knowledge = state
+        .reveal_knowledge_v4
+        .as_ref()
+        .ok_or("missing reveal-v4 knowledge")?;
+    if state.hand_knowledge_by_name_v2 || state.hand_departures_by_name_v1 {
+        return Err("reveal-v4 payload carries a legacy hand mode".into());
+    }
+    for observer in [PlayerId::P0, PlayerId::P1] {
+        for owner in [PlayerId::P0, PlayerId::P1] {
+            let mut expected = knowledge[observer.index()].hand(owner).peekable();
+            let rows = state.known_hand_cards(observer, owner);
+            if observer != viewer || owner == viewer {
+                if expected.peek().is_some() || !rows.is_empty() {
+                    return Err("reveal-v4 payload carries out-of-view hand facts".into());
+                }
+                continue;
+            }
+            let mut names = BTreeMap::<u16, usize>::new();
+            let mut seen = BTreeSet::new();
+            for row in rows {
+                let live = state.objects.try_get(row.object).filter(|card| {
+                    card.owner == owner
+                        && card.zone == Zone::Hand
+                        && !card.v4.is_token
+                        && card.spell_copy_origin.is_none()
+                        && card.zone_change_count == row.zone_change_count
+                        && state.players[owner.index()].hand.contains(&row.object)
+                });
+                let card = live.ok_or("reveal-v4 payload carries a stale hand representative")?;
+                if !seen.insert(row.object) {
+                    return Err("reveal-v4 payload repeats a hand representative".into());
+                }
+                *names.entry(card.card_def).or_default() += 1;
+            }
+            if !expected.eq(names) {
+                return Err("reveal-v4 payload hand rows differ from its public minima".into());
+            }
+        }
+    }
+    Ok(())
 }
 
 impl PayloadV1 {
@@ -36,7 +112,7 @@ impl PayloadV1 {
     /// (a Hunter trigger order, a discard or optional-cost reshape, or a
     /// combat object without a canonical index): the caller refuses (R2). A
     /// combat scan travels as the context's combat record (amendment 43.1).
-    pub(crate) fn new(
+    pub fn new(
         export: &InfosetV1,
         live: &FastActorSessionV1,
         viewer: PlayerId,
@@ -59,7 +135,7 @@ impl PayloadV1 {
             return None;
         }
         let mut payload = Self {
-            schema: INFOSET_SCHEMA_V1.into(),
+            schema: export.schema.into(),
             sha256: String::new(),
             state_sha256: export.sha256.clone(),
             deck_ids: live.deck_ids_v1().clone(),
@@ -70,6 +146,11 @@ impl PayloadV1 {
             handles: export.handles.iter().map(super::HandleV1::label).collect(),
             surface,
             state: serde_json::to_value(&export.state).expect("state serializes"),
+            reveal_hand: if export.schema == super::INFOSET_SCHEMA_REVEAL_V4 {
+                Some(reveal_hand_v4(&export.state, viewer)?)
+            } else {
+                None
+            },
         };
         payload.sha256 = payload.envelope_digest();
         Some(payload)
@@ -89,7 +170,13 @@ impl PayloadV1 {
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         let p: Self = serde_json::from_slice(bytes).map_err(|e| format!("payload: {e}"))?;
-        if p.schema != INFOSET_SCHEMA_V1 {
+        if !matches!(
+            p.schema.as_str(),
+            INFOSET_SCHEMA_V1
+                | super::INFOSET_SCHEMA_V2
+                | super::INFOSET_SCHEMA_V3
+                | super::INFOSET_SCHEMA_REVEAL_V4
+        ) {
             return Err(format!("payload schema {}", p.schema));
         }
         Ok(p)
@@ -97,8 +184,14 @@ impl PayloadV1 {
 
     /// The imported session. Fails closed on any malformed field, and on a
     /// digest that does not match the canonical bytes it imports.
-    pub(crate) fn import(&self) -> Result<FastActorSessionV1, String> {
-        if self.schema != INFOSET_SCHEMA_V1 {
+    pub fn import(&self) -> Result<FastActorSessionV1, String> {
+        if !matches!(
+            self.schema.as_str(),
+            INFOSET_SCHEMA_V1
+                | super::INFOSET_SCHEMA_V2
+                | super::INFOSET_SCHEMA_V3
+                | super::INFOSET_SCHEMA_REVEAL_V4
+        ) {
             return Err(format!("payload schema {}", self.schema));
         }
         if self.viewer > 1 {
@@ -106,6 +199,16 @@ impl PayloadV1 {
         }
         let state: crate::state::GameState = serde_json::from_value(self.state.clone())
             .map_err(|e| format!("payload state: {e}"))?;
+        if self.schema == super::INFOSET_SCHEMA_REVEAL_V4 {
+            let viewer = PlayerId(self.viewer);
+            validate_reveal_knowledge_v4(&state, viewer)?;
+            let expected = reveal_hand_v4(&state, viewer).ok_or("invalid reveal-v4 name ledger")?;
+            if self.reveal_hand.as_ref() != Some(&expected) {
+                return Err("reveal-v4 public name minima differ from its reducer state".into());
+            }
+        } else if state.reveal_knowledge_v4.is_some() || self.reveal_hand.is_some() {
+            return Err("legacy infoset carries reveal-v4 knowledge".into());
+        }
         if state.objects.len() != self.handles.len() {
             return Err("payload handles do not cover the arena".into());
         }
@@ -139,7 +242,8 @@ impl PayloadV1 {
                 &self.handles,
             )?;
         }
-        let digest = super::export::canonical_digest_v1(&state, &self.handles);
+        let digest =
+            super::export::canonical_digest_with_schema(&state, &self.handles, &self.schema);
         if digest != self.state_sha256 {
             return Err("payload state digest differs from its canonical bytes".into());
         }

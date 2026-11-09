@@ -773,6 +773,8 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::CreatureManaValueAtMostV1(_) => creature(),
         S::OpponentArtifactV1 => typed(CardType::Artifact),
         S::ArtifactOrLandV1 | S::ControlledPermanentV1 => ObjF::Permanent,
+        S::PlayerThenUpToTwoOfTheirGraveyardCardsV1 => ObjF::AnyCard,
+        S::TwoLandsV1 => typed(CardType::Land),
     }
 }
 
@@ -789,7 +791,8 @@ pub(super) fn standard_target_origin(
         S::CardInAGraveyard
         | S::CreatureCardPutIntoGraveyardThisTurnV1
         | S::PlayerThenGraveyardCardsV1
-        | S::PlayerThenUpToThreeOfTheirGraveyardCardsV1 => (Some(ZoneF::Graveyard), None),
+        | S::PlayerThenUpToThreeOfTheirGraveyardCardsV1
+        | S::PlayerThenUpToTwoOfTheirGraveyardCardsV1 => (Some(ZoneF::Graveyard), None),
         S::UpToOnePermanentCardDiedThisTurnV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
         S::ControlledArtifact
         | S::AnotherNonlegendaryControlledCreature
@@ -834,6 +837,7 @@ pub(super) fn standard_target_origin(
         | S::CreaturePowerAtMostTreasureCountersV1
         | S::AssemblyWorkerCreatureV1
         | S::ArtifactOrLandV1
+        | S::TwoLandsV1
         | S::DividedTwoDamageAnyTargetsV1
         | S::CreatureManaValueAtMostV1(_)
         | S::CreatureLandOrPlaneswalkerV1
@@ -907,6 +911,12 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         S::ArtifactOrLandV1 | S::ControlledPermanentV1 => {
             object(out, standard_target_obj(filter), relation, zone);
             // Vocabulary gap: an artifact-or-land union has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::TwoLandsV1 => {
+            object(out, standard_target_obj(filter), relation, zone);
+            out.target(TargetAtom::MultipleTargets);
+            // Two distinct lands: the count has no facet.
             out.atoms.push(Atom::Opaque);
         }
         S::UpToOnePlayerV1 => {
@@ -1092,7 +1102,9 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             // Both target words may name one player.
             out.atoms.push(Atom::Opaque);
         }
-        S::PlayerThenGraveyardCardsV1 | S::PlayerThenUpToThreeOfTheirGraveyardCardsV1 => {
+        S::PlayerThenGraveyardCardsV1
+        | S::PlayerThenUpToThreeOfTheirGraveyardCardsV1
+        | S::PlayerThenUpToTwoOfTheirGraveyardCardsV1 => {
             out.target(TargetAtom::PlayerYou);
             out.target(TargetAtom::PlayerOpponent);
             object(out, ObjF::AnyCard, None, ZoneF::Graveyard);

@@ -36,6 +36,8 @@ pub(crate) struct RefV1 {
     /// The `object` of a paid-cost record (`paid_cost_refs`), amendment
     /// 43.5.
     pub paid_cost: bool,
+    /// Temporary V4 marker for this exact unread public receipt occurrence.
+    pub detached_paid_v4: Option<usize>,
     /// Amendment 43.7 (Sol round 8, finding 2): the epochs come from a
     /// `spell_cast_origin` record paired with the object it describes (the
     /// arena object's own field, or the source contract that names it): the
@@ -74,6 +76,8 @@ pub(crate) struct RefV1 {
     /// V's sight, to the graveyard).
     pub discarded: bool,
 }
+
+pub(super) const DETACHED_PAID_V4: &str = "__infoset_detached_paid_v4";
 
 /// What a reference becomes: the new id and the new epochs, in the order
 /// given. `None` leaves it unchanged (collect pass).
@@ -240,6 +244,7 @@ impl WalkerV1<'_> {
                             object,
                             generations: Vec::new(),
                             paid_cost: false,
+                            detached_paid_v4: None,
                             cast_receipt: false,
                             item_self_paid: self.item_self_paid,
                             container: self.container,
@@ -267,6 +272,7 @@ impl WalkerV1<'_> {
                     object,
                     generations: Vec::new(),
                     paid_cost: false,
+                    detached_paid_v4: None,
                     cast_receipt: false,
                     item_self_paid: self.item_self_paid,
                     container: self.container,
@@ -324,6 +330,12 @@ impl WalkerV1<'_> {
         class: ClassV1,
         parent: &str,
     ) -> Result<(), ExportErrorV1> {
+        let detached_paid_v4 = if parent == "paid_cost_refs" {
+            map.remove(DETACHED_PAID_V4)
+                .and_then(|value| value.as_u64().and_then(|id| usize::try_from(id).ok()))
+        } else {
+            None
+        };
         // Object-valued fields and their paired generations.
         let id_keys: Vec<String> = map
             .iter()
@@ -388,12 +400,14 @@ impl WalkerV1<'_> {
                         .ok_or_else(|| r2(format!("generation `{g}` is not a u32")))
                 })
                 .collect::<Result<Vec<u32>, _>>()?;
+            let paid_cost = parent == "paid_cost_refs" && k.as_deref() == Some("object");
             let r = RefV1 {
                 class,
                 slot: self.next_slot(),
                 object,
                 generations,
-                paid_cost: parent == "paid_cost_refs" && k.as_deref() == Some("object"),
+                paid_cost,
+                detached_paid_v4: if paid_cost { detached_paid_v4 } else { None },
                 cast_receipt: parent == "spell_cast_origin" && k.is_none(),
                 item_self_paid: self.item_self_paid,
                 container: self.container,
@@ -426,6 +440,7 @@ impl WalkerV1<'_> {
                 object,
                 generations: Vec::new(),
                 paid_cost: false,
+                detached_paid_v4: None,
                 cast_receipt: false,
                 item_self_paid: self.item_self_paid,
                 container: self.container,

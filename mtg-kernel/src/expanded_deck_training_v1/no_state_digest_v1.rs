@@ -30,7 +30,7 @@
 //! ([`InputContractRecordV1`]), absent from every unconverted record.
 
 use super::{
-    ensure, err, hex, identity_valid, initialize_from_source_bytes_v1,
+    check_pinned_v1, ensure, err, hex, identity_valid, initialize_from_source_bytes_v1,
     load_expanded_inference_any_math_v1, ordinary_checkpoint_schema_v1, publish_json_bytes_v1,
     read_ordinary_checkpoint_v1, read_pinned, read_pinned_bytes, restore_checkpoint_state_v1, sha,
     CheckpointInputExpectationV1, DecisionRecordV1, ExpandedCheckpointV1,
@@ -556,7 +556,7 @@ pub(super) fn reverify_converted_v1(
         let descriptor = super::fresh_initialization_source::parse_source_v1(&base_bytes)?;
         super::fresh_initialization_source::reverify_input_files_v1(&descriptor)?;
         if let Some(pin) = &conversion.base_checkpoint {
-            read_pinned_bytes(pin)?;
+            check_pinned_v1(pin)?;
         }
     }
     if source.checkpoint == conversion.base_checkpoint {
@@ -565,7 +565,7 @@ pub(super) fn reverify_converted_v1(
                 .as_ref()
                 .is_some_and(|base| base.artifact_unchanged_v1(pin))
             {
-                read_pinned_bytes(pin)?;
+                check_pinned_v1(pin)?;
             }
         }
     } else {
@@ -621,7 +621,7 @@ pub(super) fn verify_source_pins_v1(
                 .as_ref()
                 .is_some_and(|base| base.artifact_unchanged_v1(pin))
             {
-                read_pinned_bytes(pin)?;
+                check_pinned_v1(pin)?;
             }
         }
     } else if let Some(checkpoint) = checkpoint_bytes {
@@ -1355,6 +1355,8 @@ pub fn convert_no_state_digest_v1(
 }
 
 mod base_cache_v1;
+#[cfg(test)]
+pub(super) use base_cache_v1::holds_bytes_in_v1;
 pub(super) use base_cache_v1::holds_bytes_v1;
 
 #[cfg(test)]

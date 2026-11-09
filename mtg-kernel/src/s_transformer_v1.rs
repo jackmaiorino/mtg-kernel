@@ -44,6 +44,7 @@
 mod auxiliary;
 mod checkpoint;
 mod kernels;
+mod parallel;
 #[cfg(test)]
 mod policy_tests;
 #[cfg(test)]
@@ -53,6 +54,7 @@ pub mod tools;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::training_math_v1::TrainingMathV1;
 use kernels::{gemm_v1, InitV1};
+use parallel::SGradientSinkV1;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -1114,7 +1116,7 @@ impl SModelV1 {
         rows: usize,
         x: &[f32],
         dy: &[f32],
-        grad: &mut [f32],
+        grad: &mut SGradientSinkV1<'_>,
         dx: Option<&mut [f32]>,
     ) {
         if rows == 0 {
@@ -1123,19 +1125,7 @@ impl SModelV1 {
             }
             return;
         }
-        // dW[o, i] += sum_r dy[r, o] x[r, i]
-        gemm_v1(
-            idx.out_dim,
-            idx.in_dim,
-            rows,
-            dy,
-            1,
-            idx.out_dim,
-            x,
-            InitV1::Existing,
-            &mut grad[idx.w..idx.w + idx.out_dim * idx.in_dim],
-        );
-        kernels::bias_grad_v1(rows, idx.out_dim, dy, &mut grad[idx.b..idx.b + idx.out_dim]);
+        grad.linear_v1(idx, rows, x, dy);
         if let Some(dx) = dx {
             gemm_v1(
                 rows,
@@ -1163,12 +1153,31 @@ impl SModelV1 {
         grad: &mut [f32],
         ws: &mut SBackScratchV1,
     ) -> Result<(), String> {
+        self.backward_into_v1(
+            input,
+            tape,
+            dlogits,
+            dvalue,
+            &mut SGradientSinkV1::Direct(grad),
+            ws,
+        )
+    }
+
+    fn backward_into_v1(
+        &self,
+        input: SInputV1<'_>,
+        tape: &STapeV1,
+        dlogits: &[f32],
+        dvalue: f32,
+        grad: &mut SGradientSinkV1<'_>,
+        ws: &mut SBackScratchV1,
+    ) -> Result<(), String> {
         let config = self.layout.config;
         let counts = tape.counts.ok_or("S backward without a forward")?;
         if counts != input.validate_v1(&config)? || dlogits.len() != counts.actions {
             return Err("S backward input differs from its forward".into());
         }
-        if grad.len() != self.layout.total {
+        if matches!(grad, SGradientSinkV1::Direct(values) if values.len() != self.layout.total) {
             return Err("S gradient buffer has the wrong length".into());
         }
         let lay = &self.layout;
@@ -1238,19 +1247,16 @@ impl SModelV1 {
         // Final LayerNorm.
         ws.dx.fill(0.0);
         {
-            let (gains, rest) = grad.split_at_mut(lay.ln_b);
-            let dgain = &mut gains[lay.ln_g..lay.ln_g + d];
-            let dbias = &mut rest[..d];
             for slot in 0..=a {
                 let t = if slot == 0 { 0 } else { n + slot };
-                kernels::layer_norm_row_backward_v1(
+                grad.layer_norm_v1(
+                    lay.ln_g,
+                    lay.ln_b,
                     &tape.x_out[t * d..(t + 1) * d],
                     tape.fin_stats[2 * slot],
                     tape.fin_stats[2 * slot + 1],
                     &self.values[lay.ln_g..lay.ln_g + d],
                     &ws.dfin[slot * d..(slot + 1) * d],
-                    dgain,
-                    dbias,
                     &mut ws.dx[t * d..(t + 1) * d],
                     &mut ws.ln_scratch,
                 );
@@ -1275,19 +1281,16 @@ impl SModelV1 {
             );
             // LN2: dx_mid = dx_out + LN2'(dln2).
             {
-                let (gains, rest) = grad.split_at_mut(block.ln2_b);
-                let dgain = &mut gains[block.ln2_g..block.ln2_g + d];
-                let dbias = &mut rest[..d];
                 let mut dmid = vec![0.0f32; d];
                 for t in 0..l {
-                    kernels::layer_norm_row_backward_v1(
+                    grad.layer_norm_v1(
+                        block.ln2_g,
+                        block.ln2_b,
                         &lt.x_mid[t * d..(t + 1) * d],
                         lt.ln2_stats[2 * t],
                         lt.ln2_stats[2 * t + 1],
                         &self.values[block.ln2_g..block.ln2_g + d],
                         &ws.dx2[t * d..(t + 1) * d],
-                        dgain,
-                        dbias,
                         &mut dmid,
                         &mut ws.ln_scratch,
                     );
@@ -1396,19 +1399,16 @@ impl SModelV1 {
             self.linear_bwd(block.qkv, l, &lt.ln1, &ws.dqkv, grad, Some(&mut ws.dx2[..]));
             // LN1: dx_in = dx_mid + LN1'(dln1).
             {
-                let (gains, rest) = grad.split_at_mut(block.ln1_b);
-                let dgain = &mut gains[block.ln1_g..block.ln1_g + d];
-                let dbias = &mut rest[..d];
                 let mut din = vec![0.0f32; d];
                 for t in 0..l {
-                    kernels::layer_norm_row_backward_v1(
+                    grad.layer_norm_v1(
+                        block.ln1_g,
+                        block.ln1_b,
                         &lt.x_in[t * d..(t + 1) * d],
                         lt.ln1_stats[2 * t],
                         lt.ln1_stats[2 * t + 1],
                         &self.values[block.ln1_g..block.ln1_g + d],
                         &ws.dx2[t * d..(t + 1) * d],
-                        dgain,
-                        dbias,
                         &mut din,
                         &mut ws.ln_scratch,
                     );
@@ -1446,9 +1446,7 @@ impl SModelV1 {
             let dobj = ws.dx[d..(1 + n) * d].to_vec();
             for i in 0..n {
                 let g = input.object_groups[i] as usize;
-                for c in 0..d {
-                    grad[lay.group + g * d + c] += dobj[i * d + c];
-                }
+                grad.add_v1(lay.group + g * d, &dobj[i * d..(i + 1) * d]);
             }
             let dact = &mut ws.dsmall[..n * d];
             self.linear_bwd(lay.obj2, n, &tape.obj_act, &dobj, grad, Some(&mut *dact));
@@ -1460,10 +1458,8 @@ impl SModelV1 {
             for i in 0..n {
                 let card = input.object_card_ids[i] as usize;
                 if card != 0 {
-                    for c in 0..cd {
-                        grad[lay.card + card * cd + c] +=
-                            ws.dsmall2[i * obj_in + OBJECT_FEATURE_DIM_V1 + c];
-                    }
+                    let first = i * obj_in + OBJECT_FEATURE_DIM_V1;
+                    grad.add_v1(lay.card + card * cd, &ws.dsmall2[first..first + cd]);
                 }
             }
         }
@@ -1491,10 +1487,8 @@ impl SModelV1 {
                 for k in 0..r {
                     let card = input.ref_card_ids[k] as usize;
                     if card != 0 {
-                        for c in 0..cd {
-                            grad[lay.card + card * cd + c] +=
-                                ws.dsmall2[k * ref_in + REF_FEATURE_DIM_V1 + c];
-                        }
+                        let first = k * ref_in + REF_FEATURE_DIM_V1;
+                        grad.add_v1(lay.card + card * cd, &ws.dsmall2[first..first + cd]);
                     }
                 }
             }
@@ -1516,14 +1510,20 @@ impl SModelV1 {
             let ai = 1 + n + input.ref_action[k] as usize;
             let oi = 1 + input.ref_node[k] as usize;
             for head in 0..h {
-                grad[lay.ref_bias + head] += ws.dbias[(head * l + ai) * l + oi];
+                grad.add_v1(
+                    lay.ref_bias + head,
+                    &ws.dbias[(head * l + ai) * l + oi..][..1],
+                );
             }
         }
         for k in 0..r {
             let ai = 1 + n + input.ref_action[k] as usize;
             let oi = 1 + input.ref_node[k] as usize;
             for head in 0..h {
-                grad[lay.ref_bias + h + head] += ws.dbias[(head * l + oi) * l + ai];
+                grad.add_v1(
+                    lay.ref_bias + h + head,
+                    &ws.dbias[(head * l + oi) * l + ai..][..1],
+                );
             }
         }
         Ok(())
@@ -1576,6 +1576,37 @@ fn log_softmax_v1(logits: &[f32]) -> Vec<f32> {
         .iter()
         .map(|logit| (*logit - maximum) - log_sum)
         .collect()
+}
+
+fn gae_policy_row_v1(
+    logits: &[f32],
+    selected_action: usize,
+    d_joint: f32,
+    index: usize,
+    sub: usize,
+) -> Result<(f32, Vec<f32>), String> {
+    if selected_action >= logits.len() {
+        return Err(format!(
+            "S group {index} substep {sub}: selected {selected_action} of {} actions",
+            logits.len()
+        ));
+    }
+    let log_probabilities = log_softmax_v1(logits);
+    let selected = log_probabilities[selected_action];
+    if !selected.is_finite() {
+        return Err(format!("S group {index}: non-finite log-probability"));
+    }
+    let math = TrainingMathV1::PortableV1;
+    let dlogits = log_probabilities
+        .iter()
+        .enumerate()
+        .map(|(action, lp)| {
+            let p = math.exp_f32_v1(*lp);
+            let indicator = if action == selected_action { 1.0 } else { 0.0 };
+            d_joint * (indicator - p)
+        })
+        .collect();
+    Ok((selected, dlogits))
 }
 
 /// Reusable workspaces of one learner thread.
@@ -1655,33 +1686,12 @@ impl SModelV1 {
                 let is_masked = masked.is_some_and(|m| m[sub]);
                 let d_joint = if is_masked { 0.0 } else { d_unmasked };
                 self.forward_into_v1(substep.input, &mut work.tape)?;
-                let logits = work.tape.logits.clone();
-                if substep.selected >= logits.len() {
-                    return Err(format!(
-                        "S group {index} substep {sub}: selected {} of {} actions",
-                        substep.selected,
-                        logits.len()
-                    ));
-                }
-                let log_probabilities = log_softmax_v1(&logits);
-                let selected = log_probabilities[substep.selected];
-                if !selected.is_finite() {
-                    return Err(format!("S group {index}: non-finite log-probability"));
-                }
+                let (selected, dlogits) =
+                    gae_policy_row_v1(&work.tape.logits, substep.selected, d_joint, index, sub)?;
                 joint = if sub == 0 { selected } else { joint + selected };
                 if !is_masked {
                     policy_joint = Some(policy_joint.map_or(selected, |j| j + selected));
                 }
-                let math = TrainingMathV1::PortableV1;
-                let dlogits = log_probabilities
-                    .iter()
-                    .enumerate()
-                    .map(|(action, lp)| {
-                        let p = math.exp_f32_v1(*lp);
-                        let indicator = if action == substep.selected { 1.0 } else { 0.0 };
-                        d_joint * (indicator - p)
-                    })
-                    .collect::<Vec<_>>();
                 let dvalue = if sub == 0 {
                     value_error = work.tape.value - group.value_target;
                     (value_coefficient / group_count) * (2.0 * value_error)
@@ -1829,10 +1839,33 @@ impl STrainStateV1 {
         learning_rate: f32,
         work: &mut SWorkV1,
     ) -> Result<SStepV1, String> {
+        self.train_step_gae_with_workers_v1(groups, value_coefficient, learning_rate, work, 1)
+    }
+
+    /// An ordinary GAE step with up to `workers` CPU workers. Contributions
+    /// reach each parameter in the same order as in the serial step.
+    pub fn train_step_gae_with_workers_v1(
+        &mut self,
+        groups: &[SGroupV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        work: &mut SWorkV1,
+        workers: usize,
+    ) -> Result<SStepV1, String> {
+        crate::expanded_deck_training_v1::validate_preparation_workers_v1(workers)?;
         let mut grad = vec![0.0f32; self.model.layout.total];
-        let loss = self
-            .model
-            .gae_loss_gradient_v1(groups, value_coefficient, &mut grad, work)?;
+        let loss = if workers == 1 {
+            self.model
+                .gae_loss_gradient_v1(groups, value_coefficient, &mut grad, work)?
+        } else {
+            self.model.gae_loss_gradient_parallel_v1(
+                groups,
+                value_coefficient,
+                &mut grad,
+                workers,
+                work,
+            )?
+        };
         self.adam_step_with_gradient_v1(&grad, learning_rate)?;
         Ok(SStepV1 {
             loss,
