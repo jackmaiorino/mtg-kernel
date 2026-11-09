@@ -355,6 +355,8 @@ pub enum E7bChoiceV1 {
     MinscSacrificeV1,
     /// Empower Jace: the Jace token that gets the counters.
     JaceTokenV1 { amount: u8 },
+    /// Select Jace's empty-library replacement, or finish to use Hullbreacher.
+    JaceOrHullbreacherV1,
 }
 
 impl E7bChoiceV1 {
@@ -2091,6 +2093,10 @@ pub(crate) fn finish_selection(
     match kind {
         E7bChoiceV1::DredgeV1 => {
             dredge::finish(state, player, chosen);
+            Ok(false)
+        }
+        E7bChoiceV1::JaceOrHullbreacherV1 => {
+            dredge::finish_jace_or_hullbreacher(state, continuation, choice, chosen)?;
             Ok(false)
         }
         E7bChoiceV1::ChainSacrificeV1 => {

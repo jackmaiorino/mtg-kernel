@@ -64,7 +64,7 @@ mod nonland_sacrifice_payment_v1 {
             .collect()
     }
 
-    fn remaining(root: &EffectOp, path: &[u16]) -> Result<Vec<EffectFrame>, String> {
+    pub(super) fn remaining(root: &EffectOp, path: &[u16]) -> Result<Vec<EffectFrame>, String> {
         let mut op = root;
         let mut prefix = Vec::new();
         let mut frames = Vec::new();
@@ -8061,6 +8061,66 @@ pub(crate) fn effect_op_at_structural_path<'a>(
     }
 }
 
+pub(crate) fn jace_draw_replacement_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    drawer: PlayerId,
+    path: &[u16],
+    remaining: &[EffectFrame],
+) -> bool {
+    let root = match pending.resolving_item.inline_effect.as_ref() {
+        Some(EffectOp::ResolveMonarchTrigger { binding }) => {
+            return path.is_empty()
+                && remaining.is_empty()
+                && drawer == binding.player
+                && validate_monarch_trigger_binding(state, *binding).is_ok();
+        }
+        Some(EffectOp::NivMizzetVisionaryDrawV1 { damage_history_index }) => {
+            return path.is_empty()
+                && drawer == pending.ctx.controller
+                && event::resolve_niv_mizzet_visionary_draw_count_v1(
+                    state, &pending.ctx, *damage_history_index,
+                ).is_ok_and(|count| count > 0 && draw_remainder_matches(
+                    remaining, &[], path, PlayerRef::Controller, count as u32,
+                ));
+        }
+        _ => match validated_definition_owned_root_effect(state, pending) {
+            Ok(root) => root,
+            Err(_) => return false,
+        },
+    };
+    let Some(EffectOp::DrawCards { player, count }) = path.iter().try_fold(
+        root.as_ref(),
+        |op, ordinal| match op {
+            EffectOp::Sequence(steps) => steps.get(usize::from(*ordinal)),
+            _ => None,
+        },
+    )
+    else {
+        return false;
+    };
+    if *count == 0 || pending.ctx.resolve_player(*player, state) != drawer {
+        return false;
+    }
+    nonland_sacrifice_payment_v1::remaining(&root, path).is_ok_and(|siblings| {
+        draw_remainder_matches(remaining, &siblings, path, *player, *count)
+    })
+}
+
+fn draw_remainder_matches(
+    remaining: &[EffectFrame],
+    siblings: &[EffectFrame],
+    path: &[u16],
+    player: PlayerRef,
+    total: u32,
+) -> bool {
+    remaining == siblings || matches!(
+        remaining.split_last(),
+        Some((EffectFrame::Program { op: EffectOp::DrawCards { player: found, count }, path: tail_path }, prefix))
+            if *found == player && *count > 0 && *count < total && tail_path.as_slice() == path && prefix == siblings
+    )
+}
+
 fn validate_exile_chosen_graveyard_frame(
     state: &GameState,
     pending: &EffectContinuation,
@@ -10619,6 +10679,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_sideboard_s1a_v1::surgical::validate_continuation(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_e7b_v1::dredge::validate_jace_or_hullbreacher(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
     if let Some(EffectOp::ResolveMonarchTrigger { binding }) =
         pending.resolving_item.inline_effect.as_ref()
@@ -16955,7 +17017,7 @@ fn drive_resumable_inner_with_native_row_v1(
             // Dredge (wave E7b): each card drawn may be dredged instead.
             EffectOp::ResolveMonarchTrigger { binding }
                 if cfg!(feature = "eternal-fixtures")
-                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_dredge(
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
                         state,
                         &continuation,
                         PlayerRef::Controller,
@@ -16975,7 +17037,7 @@ fn drive_resumable_inner_with_native_row_v1(
             }
             EffectOp::NivMizzetVisionaryDrawV1 { damage_history_index }
                 if cfg!(feature = "eternal-fixtures")
-                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_dredge(
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
                         state,
                         &continuation,
                         PlayerRef::Controller,
@@ -17023,7 +17085,7 @@ fn drive_resumable_inner_with_native_row_v1(
             }
             EffectOp::DrawCards { player, count }
                 if cfg!(feature = "eternal-fixtures")
-                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_dredge(
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
                         state,
                         &continuation,
                         player,
@@ -17042,7 +17104,7 @@ fn drive_resumable_inner_with_native_row_v1(
             }
             EffectOp::DrawCardsDynamic { player, count }
                 if cfg!(feature = "eternal-fixtures")
-                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_dredge(
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
                         state,
                         &continuation,
                         player,

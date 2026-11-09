@@ -506,9 +506,12 @@ New, each built once in the first wave that needs it:
   Shoal (X tied to an exiled card), Darksteel Angel (cannot lose the game) and Portal to
   Phyrexia (subtype grant on reanimation).
   Partial: the drawing player can choose dredge or let Hullbreacher replace the draw (616.1) on
-  resumable draw programs, including the monarch's draw. Specialized synchronous draws
-  such as Bonder's Ornament and the competing empty-library Jace replacement still need
-  coverage. Native qualification of the monarch and draw-step fixes is pending.
+  resumable draw programs, including the monarch's draw, Bonder's Ornament,
+  Niv-Mizzet, Visionary's damage draws, and both selected-discard draw paths. An affected
+  player can also choose between Jace's empty-library win and Hullbreacher on verified
+  fixed-count draw instructions, the monarch's draw, and Niv-Mizzet's damage draws.
+  Some specialized synchronous draws and unbound generated or dynamic draw instructions
+  still lack a replacement choice. Native qualification of the repairs is pending.
 - S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
   S1c, S1a, S1b and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload

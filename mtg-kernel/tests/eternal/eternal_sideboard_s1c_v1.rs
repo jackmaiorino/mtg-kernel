@@ -746,6 +746,74 @@ fn discard_draw_can_dredge_the_card_it_just_discarded() {
 }
 
 #[test]
+fn empty_library_draw_chooses_between_jace_and_hullbreacher() {
+    use mtg_kernel::effect::{EffectTargetSelectionPurpose, PendingEffectChoice};
+
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(&[]);
+        state.active_player = actor;
+        state.priority_player = actor;
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let jace = put(&mut state, actor, "Jace, Wielder of Mysteries", Zone::Hand);
+        pool(
+            &mut state,
+            actor,
+            &[ManaColor::U, ManaColor::U, ManaColor::U],
+            1,
+        );
+        cast(&mut state, jace, &[]);
+        settled(&mut state);
+        let spell = put(&mut state, actor, "Think Twice", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U], 1);
+        cast(&mut state, spell, &[]);
+        let prompt = settle(&mut state).expect("empty-library replacement choice");
+        assert!(matches!(
+            &prompt,
+            Decision::ChooseEffectTargets {
+                player, source, legal_targets, min_targets: 0, max_targets: 1, can_finish: true, ..
+            } if *player == actor && *source == spell && legal_targets.as_slice() == [Target::Object(jace)]
+        ));
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        assert!(named(&state, opponent, "Treasure Token").is_empty());
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(prompt, next(&mut restored));
+
+        let mut forged = restored.clone();
+        let Some(PendingEffectChoice::SelectTargets {
+            path,
+            purpose: EffectTargetSelectionPurpose::EternalV1 { choice },
+            ..
+        }) = forged
+            .engine
+            .pending_effect
+            .as_mut()
+            .and_then(|pending| pending.choice.as_mut())
+        else {
+            panic!("missing restored replacement choice");
+        };
+        path.push(0);
+        choice.path = path.clone();
+        assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err());
+
+        let mut treasure = state.clone();
+        act(&mut treasure, Action::FinishEffectSelection);
+        settled(&mut treasure);
+        assert_eq!(named(&treasure, opponent, "Treasure Token").len(), 1);
+        assert!(treasure.players.iter().all(|player| !player.has_lost && !player.drew_from_empty));
+
+        for branch in [&mut state, &mut restored] {
+            act(branch, Action::ChooseEffectTarget(Target::Object(jace)));
+            assert!(matches!(next(branch), Decision::GameOver { winner: Some(player) } if player == actor));
+            assert!(!branch.players[actor.index()].drew_from_empty);
+            assert!(named(branch, opponent, "Treasure Token").is_empty());
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
+    }
+}
+
+#[test]
 fn wurmcoil_engine_leaves_two_wurms() {
     let mut state = plains();
     let engine_card = put(&mut state, P1, "Wurmcoil Engine", Zone::Battlefield);
