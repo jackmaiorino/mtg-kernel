@@ -8882,6 +8882,13 @@ pub(crate) fn validate_monarch_trigger_binding(
     Ok(())
 }
 
+fn controls_definition(state: &GameState, player: PlayerId, card_def: u16) -> bool {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .any(|&id| state.objects.get(id).card_def == card_def)
+}
+
 /// Draws one card for the monarch trigger's binding player (726.2). The
 /// resumable interpreter owns this draw when that player has a dredge choice.
 fn resolve_monarch_trigger(
@@ -13070,7 +13077,7 @@ fn drive_resumable_inner_with_native_row_v1(
                     discard_payment_v1::finish(state, &mut continuation, &choice, &selected)?;
                 }
                 EffectFrame::DiscardDraw { choice, selected } => {
-                    standard_discard::finish(state, &continuation, &choice, &selected)?
+                    standard_discard::finish(state, &mut continuation, &choice, &selected)?
                 }
                 EffectFrame::ExileBatchSelect { choice, selected } => {
                     standard_exile::finish_batch_selection(
@@ -14958,7 +14965,20 @@ fn drive_resumable_inner_with_native_row_v1(
                     return Err("discard choice changed".to_string());
                 }
                 continuation.answered_choice_guard = None;
-                crate::standard_cards_v1::discard_chosen_then_draw(state, player, &cards);
+                let count = crate::standard_cards_v1::discard_chosen(state, player, &cards);
+                if count != 0 {
+                    continuation.frames.push(EffectFrame::Program {
+                        op: EffectOp::DrawCards {
+                            player: if player == continuation.ctx.controller {
+                                PlayerRef::Controller
+                            } else {
+                                PlayerRef::Opponent
+                            },
+                            count,
+                        },
+                        path,
+                    });
+                }
             }
             EffectOp::StandardV1(
                 crate::standard_cards_v1::StandardOpV1::PutCreatureOrPlaneswalkerFromEachGraveyard,
@@ -16951,6 +16971,54 @@ fn drive_resumable_inner_with_native_row_v1(
                 )? {
                     state.engine.pending_effect = Some(continuation);
                     return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::NivMizzetVisionaryDrawV1 { damage_history_index }
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_dredge(
+                        state,
+                        &continuation,
+                        PlayerRef::Controller,
+                    ) =>
+            {
+                let count = event::resolve_niv_mizzet_visionary_draw_count_v1(
+                    state,
+                    &continuation.ctx,
+                    damage_history_index,
+                )?;
+                continuation.frames.push(EffectFrame::Program {
+                    op: EffectOp::DrawCards {
+                        player: PlayerRef::Controller,
+                        count: u32::try_from(count.max(0)).unwrap_or(0),
+                    },
+                    path,
+                });
+            }
+            EffectOp::EachPlayerControllingDefinitionDrawsCard { card_def }
+                if cfg!(feature = "eternal-fixtures")
+                    && [PlayerId::P0, PlayerId::P1].into_iter().any(|drawer| {
+                        controls_definition(state, drawer, card_def)
+                            && !crate::eternal_vintage_e7b_v1::dredge::dredge_cards(state, drawer)
+                                .is_empty()
+                    }) =>
+            {
+                // Push in reverse APNAP order so the active player draws first.
+                for (drawer, ordinal) in [(state.active_player.opponent(), 1), (state.active_player, 0)] {
+                    if controls_definition(state, drawer, card_def) {
+                        let mut draw_path = path.clone();
+                        draw_path.push(ordinal);
+                        continuation.frames.push(EffectFrame::Program {
+                            op: EffectOp::DrawCards {
+                                player: if drawer == continuation.ctx.controller {
+                                    PlayerRef::Controller
+                                } else {
+                                    PlayerRef::Opponent
+                                },
+                                count: 1,
+                            },
+                            path: draw_path,
+                        });
+                    }
                 }
             }
             EffectOp::DrawCards { player, count }
@@ -20982,11 +21050,7 @@ fn execute_with_native_row_v1(
             // deterministic outcome here (each player's draw depends only on
             // their own battlefield), so a fixed iteration order is safe.
             for player in [PlayerId::P0, PlayerId::P1] {
-                let controls_named = state.players[player.index()]
-                    .battlefield
-                    .iter()
-                    .any(|&id| state.objects.get(id).card_def == *card_def);
-                if controls_named {
+                if controls_definition(state, player, *card_def) {
                     event::propose_and_commit(state, event::ProposedEvent::draw(player));
                 }
             }

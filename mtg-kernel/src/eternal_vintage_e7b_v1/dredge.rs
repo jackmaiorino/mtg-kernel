@@ -63,7 +63,9 @@ fn draws(op: &EffectOp) -> bool {
     match op {
         EffectOp::DrawCards { .. }
         | EffectOp::DrawCardsDynamic { .. }
-        | EffectOp::ResolveMonarchTrigger { .. } => true,
+        | EffectOp::ResolveMonarchTrigger { .. }
+        | EffectOp::NivMizzetVisionaryDrawV1 { .. }
+        | EffectOp::EachPlayerControllingDefinitionDrawsCard { .. } => true,
         EffectOp::Sequence(ops) => ops.iter().any(draws),
         EffectOp::Conditional { then, else_, .. } => draws(then) || draws(else_),
         EffectOp::Choice { options, .. } => options.iter().any(draws),

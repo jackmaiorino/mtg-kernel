@@ -4492,26 +4492,23 @@ pub(crate) fn hand_candidates(state: &GameState, player: PlayerId) -> Vec<Effect
         .collect()
 }
 
-/// `player` discards the chosen cards still in their hand together, then
-/// draws that many.
-pub(crate) fn discard_chosen_then_draw(
+/// `player` discards the chosen cards still in their hand together. The
+/// returned count feeds the subsequent draw instructions.
+pub(crate) fn discard_chosen(
     state: &mut GameState,
     player: PlayerId,
     cards: &[EffectObjectBinding],
-) {
+) -> u32 {
     let present = hand_candidates(state, player)
         .into_iter()
         .filter(|binding| cards.contains(binding))
         .map(|binding| ProposedEvent::zone_change(binding.object, Zone::Graveyard))
         .collect::<Vec<_>>();
-    let count = present.len();
-    if count == 0 {
-        return;
+    let count = present.len() as u32;
+    if count != 0 {
+        event::propose_and_commit_batch(state, present);
     }
-    event::propose_and_commit_batch(state, present);
-    for _ in 0..count {
-        event::propose_and_commit(state, ProposedEvent::draw(player));
-    }
+    count
 }
 
 /// Whether `object` is a token copy that has haste from its copy effect.

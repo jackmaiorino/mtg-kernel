@@ -651,6 +651,101 @@ fn dredging_the_turn_based_draw_exempts_only_the_first_actual_draw() {
 }
 
 #[test]
+fn hullbreacher_and_dredge_compete_for_bonders_ornament_draws() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let ornament = put(&mut state, actor, "Bonder's Ornament", Zone::Battlefield);
+        put(&mut state, opponent, "Bonder's Ornament", Zone::Battlefield);
+        let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
+        let opponent_top = state.players[opponent.index()].library[0];
+        pool(&mut state, actor, &[], 4);
+        activate(&mut state, ornament, 0, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { player, source, legal_targets, .. })
+                if player == actor && source == ornament && legal_targets == [Target::Object(thug)]
+        ));
+        assert!(state.objects.get(ornament).tapped);
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        assert_eq!(zone(&state, opponent_top), Zone::Library, "active player chooses first");
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+        settled(&mut state);
+        assert_eq!(zone(&state, thug), Zone::Hand);
+        assert_eq!(state.players[actor.index()].library.len(), 16);
+        assert_eq!(zone(&state, opponent_top), Zone::Hand);
+        assert!(named(&state, opponent, "Treasure Token").is_empty());
+    }
+}
+
+#[test]
+fn hullbreacher_and_dredge_compete_for_niv_mizzets_damage_draws() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let niv = put(&mut state, actor, "Niv-Mizzet, Visionary", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U, ManaColor::R], 4);
+        cast(&mut state, niv, &[]);
+        settled(&mut state);
+        assert_eq!(zone(&state, niv), Zone::Battlefield);
+        let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
+        let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R], 0);
+        cast(&mut state, bolt, &[Target::Player(opponent)]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { player, source, legal_targets, .. })
+                if player == actor && source == niv && legal_targets == [Target::Object(thug)]
+        ));
+        assert_eq!(state.players[opponent.index()].life, 17);
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+        settled(&mut state);
+        assert_eq!(zone(&state, thug), Zone::Hand);
+        assert_eq!(state.players[actor.index()].library.len(), 16);
+        assert_eq!(state.players[actor.index()].draws_this_turn, 0);
+        assert_eq!(named(&state, opponent, "Treasure Token").len(), 2);
+    }
+}
+
+#[test]
+fn discard_draw_can_dredge_the_card_it_just_discarded() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let thug = put(&mut state, actor, "Golgari Thug", Zone::Hand);
+        let tersa = put(&mut state, actor, "Tersa Lightshatter", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R], 2);
+        cast(&mut state, tersa, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { player, source, legal_targets, .. })
+                if player == actor && source == tersa && legal_targets == [Target::Object(thug)]
+        ));
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { player, source, legal_targets, .. })
+                if player == actor && source == tersa && legal_targets == [Target::Object(thug)]
+        ));
+        assert_eq!(zone(&state, thug), Zone::Graveyard);
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+        settled(&mut state);
+        assert_eq!(zone(&state, thug), Zone::Hand);
+        assert_eq!(state.players[actor.index()].library.len(), 16);
+        assert!(named(&state, opponent, "Treasure Token").is_empty());
+    }
+}
+
+#[test]
 fn wurmcoil_engine_leaves_two_wurms() {
     let mut state = plains();
     let engine_card = put(&mut state, P1, "Wurmcoil Engine", Zone::Battlefield);
