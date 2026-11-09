@@ -2534,6 +2534,9 @@ pub struct GameState {
     /// Historical games and hands without this printing retain absence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub leyline_opening_v1: Option<crate::leyline_axe_v1::OpeningV1>,
+    /// Native opening answers retired before the disposable belief rewrite.
+    #[serde(skip)]
+    pub(crate) leyline_sampled_history_v1: Option<crate::leyline_axe_v1::sampling::SampledHistoryV1>,
     /// Opt-in (issue #531): the other player reads a card leaving a hand by
     /// name, never by copy (see [`GameState::forget_departing_hand_object`]).
     /// Off in every historical session, whose rows, snapshot bytes and hashes
@@ -2841,6 +2844,10 @@ impl Hash for GameState {
             "leyline-opening/v1".hash(state);
             opening.hash(state);
         }
+        if let Some(history) = &self.leyline_sampled_history_v1 {
+            "leyline-sampled-opening/v1".hash(state);
+            history.hash(state);
+        }
         if self.hand_departures_by_name_v1 {
             "hand-departures-by-name/v1".hash(state);
         }
@@ -3085,6 +3092,7 @@ impl GameState {
             eternal_v1: None,
             nine_lives_delayed_v1: None,
             leyline_opening_v1: None,
+            leyline_sampled_history_v1: None,
             hand_departures_by_name_v1: false,
             hand_knowledge_by_name_v2: false,
             public_shroud_v1: false,
