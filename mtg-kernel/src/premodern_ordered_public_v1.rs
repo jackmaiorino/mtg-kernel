@@ -18,8 +18,8 @@ use serde::Serialize;
 
 mod decision;
 pub use decision::{
-    advance_numeric, NumericBoundaryV1, NumericDecisionV1, NumericDecisionViewV1, NumericMenuV1,
-    NumericNativeActionV1,
+    advance_numeric, HumanDecisionViewV1, HumanFullTextActionV1, NumericBoundaryV1,
+    NumericDecisionV1, NumericDecisionViewV1, NumericMenuV1, NumericNativeActionV1,
 };
 
 pub const SCHEMA_V1: &str = "mtg-kernel-premodern-ordered-public/v1";
@@ -570,6 +570,16 @@ mod tests {
                     Some(NumericMenuV1::GraveyardOrder)
                 );
                 assert!(native.view(owner.opponent()).unwrap().menu.is_none());
+                assert_eq!(
+                    native.human_view(owner).unwrap().observation.order_choice,
+                    Some(prompt.clone())
+                );
+                assert!(native
+                    .human_view(owner.opponent())
+                    .unwrap()
+                    .observation
+                    .order_choice
+                    .is_none());
                 assert!(native.choose_order(owner.opponent(), 17, 1).is_err());
                 assert!(native.choose_order(owner, 16, 1).is_err());
                 assert!(native.choose_order(owner, 17, 2).is_err());
@@ -612,6 +622,7 @@ mod tests {
                     .unwrap();
                 assert!(native.choose_native(owner, 17, index, &action.action.stable_id).is_err());
                 assert!(native.choose_native(owner, 18, index, "wrong-id").is_err());
+                assert!(native.choose_human_full_text(owner, 18, index).is_err());
                 native.choose_native(owner, 18, index, &action.action.stable_id).unwrap();
                 assert!(native.view(owner).is_err());
             }

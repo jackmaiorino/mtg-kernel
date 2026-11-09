@@ -1,4 +1,7 @@
-use super::{choose_order, FullTextProgramV1, NumericObservationV1, OrderChoiceV1};
+use super::{
+    choose_order, observe_human, public_name, DonatedActivationV1, FullTextProgramV1,
+    HumanObservationV1, NumericObservationV1, OrderChoiceV1,
+};
 use crate::{
     engine::Decision,
     full_text_v1::{self, FullTextAbilityV1},
@@ -29,6 +32,22 @@ pub enum NumericMenuV1 {
 pub struct NumericDecisionViewV1 {
     pub observation: NumericObservationV1,
     pub menu: Option<NumericMenuV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanFullTextActionV1 {
+    pub native_ordinal: usize,
+    pub physical_name: &'static str,
+    pub label: &'static str,
+}
+
+/// Human rendering of the ordered and full-text parts of the current
+/// decision. Ordinary action rendering remains with its existing consumer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanDecisionViewV1 {
+    pub observation: HumanObservationV1,
+    pub step_index: u64,
+    pub full_text_actions: Vec<HumanFullTextActionV1>,
 }
 
 pub enum NumericBoundaryV1<'a> {
@@ -129,13 +148,39 @@ impl NumericDecisionV1<'_> {
                 actions: candidates
                     .iter()
                     .map(|candidate| NumericNativeActionV1 {
-                        full_text: activation_program(self.state, &candidate.record.semantic),
+                        full_text: activation_program(self.state, &candidate.record.semantic)
+                            .map(|(_, program)| program),
                         action: candidate.record.clone(),
                     })
                     .collect(),
             },
         });
         Ok(NumericDecisionViewV1 { observation, menu })
+    }
+
+    pub fn human_view(&self, viewer: PlayerId) -> Result<HumanDecisionViewV1, String> {
+        let bound = self.menu.as_ref().ok_or("Premodern decision was used")?;
+        let mut full_text_actions = Vec::new();
+        if viewer == self.actor {
+            if let BoundMenu::Native(actions) = bound {
+                for (native_ordinal, candidate) in actions.iter().enumerate() {
+                    if let Some((source, program)) =
+                        activation_program(self.state, &candidate.record.semantic)
+                    {
+                        full_text_actions.push(HumanFullTextActionV1 {
+                            native_ordinal,
+                            physical_name: public_name(source)?,
+                            label: activation_label(program)?,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(HumanDecisionViewV1 {
+            observation: observe_human(self.state, viewer)?,
+            step_index: self.step_index,
+            full_text_actions,
+        })
     }
 
     pub fn choose_order(
@@ -175,6 +220,26 @@ impl NumericDecisionV1<'_> {
         Ok(())
     }
 
+    pub fn choose_human_full_text(
+        &mut self,
+        viewer: PlayerId,
+        expected_step: u64,
+        native_ordinal: usize,
+    ) -> Result<(), String> {
+        self.require_actor(viewer, expected_step)?;
+        let Some(BoundMenu::Native(actions)) = self.menu.as_ref() else {
+            return Err("no current Premodern native action menu".into());
+        };
+        let candidate = actions
+            .get(native_ordinal)
+            .filter(|candidate| {
+                activation_program(self.state, &candidate.record.semantic).is_some()
+            })
+            .ok_or("ordinal is not a current full-text activation")?;
+        let action_id = candidate.record.stable_id.clone();
+        self.choose_native(viewer, expected_step, native_ordinal, &action_id)
+    }
+
     fn require_actor(&self, viewer: PlayerId, expected_step: u64) -> Result<(), String> {
         if viewer != self.actor || expected_step != self.step_index || self.menu.is_none() {
             return Err("Premodern decision is stale or belongs to another viewer".into());
@@ -183,7 +248,10 @@ impl NumericDecisionV1<'_> {
     }
 }
 
-fn activation_program(state: &GameState, action: &ActionSemanticV1) -> Option<FullTextProgramV1> {
+fn activation_program<'a>(
+    state: &GameState,
+    action: &'a ActionSemanticV1,
+) -> Option<(&'a crate::rl::CardStableRefV1, FullTextProgramV1)> {
     let ActionSemanticV1::ActivateAbility {
         source,
         ability_index,
@@ -193,6 +261,31 @@ fn activation_program(state: &GameState, action: &ActionSemanticV1) -> Option<Fu
         return None;
     };
     let text = full_text_v1::active_text(state, crate::ids::ObjectId(source.arena_id))?;
-    FullTextAbilityV1::from_action_index(*ability_index, text.first_donated_slot(state))?
-        .public_program(text.definition())
+    let program = FullTextAbilityV1::from_action_index(*ability_index, text.first_donated_slot(state))?
+        .public_program(text.definition())?;
+    Some((source, program))
+}
+
+fn activation_label(program: FullTextProgramV1) -> Result<&'static str, String> {
+    use DonatedActivationV1::*;
+
+    Ok(match program {
+        FullTextProgramV1::RetainedDiscard => "Pay {2} to discard a card",
+        FullTextProgramV1::DonatedActivation { effect, .. } => match effect {
+            PalinchronReturnHost => "Pay {2}{U}{U} to return this creature to its owner's hand",
+            DevourerExileTopForCounters => {
+                "Exile your library's top card to put its mana value in +1/+1 counters here"
+            }
+            TriskelionRemoveCounterForDamage => "Remove a +1/+1 counter here to deal 1 damage to any target",
+            ScroungerThresholdPump => {
+                "At threshold, put three graveyard cards on your library's bottom for +3/+3 this turn. Once per turn"
+            }
+            HermitDruidRevealThroughBasic => {
+                "Pay {G} and tap this creature to reveal through a basic land, take it, and put the other revealed cards into your graveyard"
+            }
+            PsychatogDiscardPump => "Discard a card to give this creature +1/+1 this turn",
+            PsychatogExilePump => "Exile two graveyard cards to give this creature +1/+1 this turn",
+        },
+        _ => return Err("full-text activation has a trigger-only program".into()),
+    })
 }
