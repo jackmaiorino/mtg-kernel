@@ -414,7 +414,7 @@ class ScratchBenchSupervisor(unittest.TestCase):
 
 
 class ScratchStagePinRecovery(unittest.TestCase):
-    """Check real stage creation and restart with only the bind mount and directory fsync simulated."""
+    """Check real stage creation and restart with the bind mount and stage fsync simulated."""
 
     def interrupted_swap(self, base, with_updates=True):
         root = base / 'root'
@@ -435,15 +435,9 @@ class ScratchStagePinRecovery(unittest.TestCase):
         if with_updates:
             iteration(target, 0, s_state=True)
             write(target / 'completion.json', b'{}')
-        real_fsync = chains.fsync_path
-
-        def sync_file(path):
-            if Path(path).is_file():
-                real_fsync(path)
-
         with mock.patch.object(chains, 'mounted', return_value=True), \
                 mock.patch.object(chains, 'unmount', side_effect=KeyboardInterrupt('before swap')), \
-                mock.patch.object(chains, 'fsync_path', side_effect=sync_file):
+                mock.patch.object(chains, 'fsync_path'):
             with self.assertRaises(KeyboardInterrupt):
                 chains.persist(arm, native, cdir)
         stage = cdir / f'.{native.name}.persist'
