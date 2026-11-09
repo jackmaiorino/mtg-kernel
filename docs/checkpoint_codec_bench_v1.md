@@ -114,7 +114,12 @@ rotate between repetitions.
 | `readback_load` | `initialize_any_math_v1` on the new pin: the continuation loader |
 | `readback_digest` | `restored.state_sha256_v1()` and the math check |
 | `readback_v2_equality` | v2 only: `restored.snapshot_v1()` and the item-for-item comparison |
-| `total` | the whole sequence (its heap peak is the highest of the stages') |
+| `total` | the whole sequence |
+
+The total's time and allocation counts include sample bookkeeping and work
+between stages, such as constructing the readback source. Its heap peak
+takes the highest measured stage peak. It can miss a peak that occurs
+between stages.
 
 Before each repetition the process digest memo (`state_digest_memo_v1`) is
 emptied by hashing streams it does not hold, untimed, so `digest` misses as it
