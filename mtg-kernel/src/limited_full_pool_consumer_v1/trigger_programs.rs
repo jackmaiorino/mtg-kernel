@@ -1,4 +1,4 @@
-//! Public, position-bound program labels for FullPool life-gain triggers.
+//! Public, position-bound program labels for exact FullPool triggers.
 use crate::{
     card_def::CARD_DEFS,
     effect::{EffectOp, PlayerRef},
@@ -10,6 +10,12 @@ use serde::{Deserialize, Serialize};
 pub(crate) const EXEMPLAR: u16 = 218;
 pub(crate) const VANGUARD: u16 = 332;
 pub(crate) const COLLECTOR: u16 = 333;
+pub(crate) const KIORA: u16 = 227;
+pub(crate) const SYLVAN: u16 = 232;
+pub(crate) const WARDENS: u16 = 361;
+
+#[path = "modal_programs.rs"]
+pub(crate) mod modal_programs;
 
 pub(crate) fn is_printing(id: u16) -> bool {
     CARD_DEFS.get(usize::from(id)).is_some_and(|def| {
@@ -18,6 +24,9 @@ pub(crate) fn is_printing(id: u16) -> bool {
             (EXEMPLAR, "Exemplar of Light")
                 | (VANGUARD, "Vanguard Seraph")
                 | (COLLECTOR, "Cat Collector")
+                | (KIORA, "Kiora, the Rising Tide")
+                | (SYLVAN, "Sylvan Scavenging")
+                | (WARDENS, "Wardens of the Cycle")
         )
     })
 }
@@ -30,6 +39,14 @@ pub enum ProgramV1 {
     VanguardSurveil,
     CollectorFood,
     CollectorCat,
+    KioraDrawDiscard,
+    KioraThreshold,
+    SylvanChooseMode,
+    SylvanCounter,
+    SylvanRaccoon,
+    WardensChooseMode,
+    WardensGainLife,
+    WardensDrawLoseLife,
     Granted,
 }
 
@@ -50,6 +67,7 @@ impl ProgramV1 {
                 controller: PlayerRef::Controller,
             },
             Self::Granted => return None,
+            program => return modal_programs::template(program),
         })
     }
 
@@ -67,6 +85,11 @@ impl ProgramV1 {
             Self::VanguardSurveil => id == VANGUARD,
             Self::CollectorFood | Self::CollectorCat => id == COLLECTOR,
             Self::Granted => is_printing(id),
+            Self::KioraDrawDiscard | Self::KioraThreshold => id == KIORA,
+            Self::SylvanChooseMode | Self::SylvanCounter | Self::SylvanRaccoon => id == SYLVAN,
+            Self::WardensChooseMode | Self::WardensGainLife | Self::WardensDrawLoseLife => {
+                id == WARDENS
+            }
         }
     }
 }
@@ -90,6 +113,14 @@ pub(crate) fn printed_program(
         ProgramV1::VanguardSurveil,
         ProgramV1::CollectorFood,
         ProgramV1::CollectorCat,
+        ProgramV1::KioraDrawDiscard,
+        ProgramV1::KioraThreshold,
+        ProgramV1::SylvanChooseMode,
+        ProgramV1::SylvanCounter,
+        ProgramV1::SylvanRaccoon,
+        ProgramV1::WardensChooseMode,
+        ProgramV1::WardensGainLife,
+        ProgramV1::WardensDrawLoseLife,
     ]
     .into_iter()
     .find(|program| {

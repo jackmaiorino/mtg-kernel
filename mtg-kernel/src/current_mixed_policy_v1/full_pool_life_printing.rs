@@ -3,7 +3,7 @@ use super::{Error, Result};
 use crate::{
     card_def::{CardDef, CardType, Keywords, Subtype, TargetSpec},
     effect::{EffectOp, ObjectRef},
-    limited_full_pool_consumer_v1::life_triggers::{
+    limited_full_pool_consumer_v1::trigger_programs::{
         is_printing, ProgramV1, COLLECTOR, EXEMPLAR, VANGUARD,
     },
     mana::{Cost, ManaColor, Pip},
@@ -166,7 +166,7 @@ pub(super) fn printing(id: u16, def: &CardDef) -> Result<Option<Value>> {
                 json!({"operation":"CreateToken","count":1,"controller":"CapturedController",
                     "token_definition":printing,"normal_token_replacements_and_entry_triggers_apply":true})
             }
-            Granted => return Err(Error::UnsupportedPrintedRoot(id)),
+            _ => return Err(Error::UnsupportedPrintedRoot(id)),
         };
         meanings.push(json!({"ordinal":ordinal,"program":program,"event":event,
             "source_zone":"Battlefield","source_face":0,"requires_active_printed_ability_at_capture":true,
