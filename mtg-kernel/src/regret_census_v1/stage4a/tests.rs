@@ -2403,3 +2403,108 @@ fn sd1_world_switch_is_budget_only() {
         world::WorldMode::Fresh
     );
 }
+
+/// SD1 E5: the TH probe keeps every hand object and card (the opponent's
+/// real hand and deck, no prior) and only reorders unknown library slots
+/// within owner; the TL probe keeps the actor's own library in its realized
+/// order and samples the opponent. Both repeat exactly per seed.
+#[test]
+fn sd1_partial_probes_keep_what_they_reveal() {
+    use crate::rl_session::SlotFilterV1;
+    let (session, prior) = value_leaf_root();
+    let actor = play::acting(&play::decision(&session).unwrap());
+    let opp = actor.opponent();
+    let root = session.game_state();
+    let defs = |g: &crate::state::GameState, ids: &[crate::ids::ObjectId]| {
+        ids.iter()
+            .map(|&id| g.objects.get(id).card_def)
+            .collect::<Vec<_>>()
+    };
+    let sorted = |mut v: Vec<u16>| {
+        v.sort_unstable();
+        v
+    };
+    let mut th_reordered = false;
+    let mut tl_opponent_changed = false;
+    for seed in 0..24u64 {
+        let mut f = None;
+        if let Ok(th) = world::sample_partial_recorded(
+            &session,
+            seed,
+            &prior,
+            SlotFilterV1::LibrariesOnly,
+            false,
+            &mut f,
+        ) {
+            let g = th.game_state();
+            for p in [actor, opp] {
+                let i = p.index();
+                assert_eq!(g.players[i].hand, root.players[i].hand);
+                assert_eq!(
+                    defs(g, &g.players[i].hand),
+                    defs(root, &root.players[i].hand)
+                );
+                assert_eq!(
+                    sorted(defs(g, &g.players[i].library)),
+                    sorted(defs(root, &root.players[i].library))
+                );
+                th_reordered |=
+                    defs(g, &g.players[i].library) != defs(root, &root.players[i].library);
+            }
+            let again = world::sample_partial_recorded(
+                &session,
+                seed,
+                &prior,
+                SlotFilterV1::LibrariesOnly,
+                false,
+                &mut None,
+            )
+            .unwrap();
+            assert_eq!(
+                serde_json::to_string(again.game_state()).unwrap(),
+                serde_json::to_string(g).unwrap()
+            );
+        }
+        if let Ok(tl) = world::sample_partial_recorded(
+            &session,
+            seed,
+            &prior,
+            SlotFilterV1::OpponentOnly,
+            true,
+            &mut None,
+        ) {
+            let g = tl.game_state();
+            let a = actor.index();
+            assert_eq!(g.players[a].library, root.players[a].library);
+            assert_eq!(
+                defs(g, &g.players[a].library),
+                defs(root, &root.players[a].library)
+            );
+            let o = opp.index();
+            tl_opponent_changed |= defs(g, &g.players[o].library)
+                != defs(root, &root.players[o].library)
+                || defs(g, &g.players[o].hand) != defs(root, &root.players[o].hand);
+        }
+    }
+    assert!(th_reordered, "TH never reordered a library in 24 seeds");
+    assert!(
+        tl_opponent_changed,
+        "TL never resampled the opponent in 24 seeds"
+    );
+    for mode in [
+        world::WorldMode::TrueHandV1,
+        world::WorldMode::TrueOwnLibraryV1,
+    ] {
+        let (x, tx) = world_search(&session, &prior, Some(mode), 16);
+        let (y, ty) = world_search(&session, &prior, Some(mode), 16);
+        assert!(
+            x.faults.is_empty() && !x.incomplete,
+            "{mode:?}: {:?}",
+            x.faults
+        );
+        assert_eq!(world_primary(&x, &tx), world_primary(&y, &ty), "{mode:?}");
+        assert_eq!(x.extra["world"]["mode"], mode.label());
+        assert_eq!(x.sampler.ok + x.sampler.rejected, x.attempted);
+        assert_eq!(world::WorldMode::parse(mode.label()), Ok(mode));
+    }
+}
