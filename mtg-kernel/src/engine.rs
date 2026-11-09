@@ -24978,10 +24978,7 @@ pub(crate) fn step_without_linked_aura_v1(
             } else if state.engine.pending_activation.is_some() {
                 match pending_activation_action_stage(state,state.engine.pending_activation.as_ref().unwrap())? {
                     PendingActivationActionStage::Crew => finish_crew(state),
-                    PendingActivationActionStage::MartyrReveal => {
-                        finalize_activation(state);
-                        Ok(())
-                    }
+                    PendingActivationActionStage::MartyrReveal => finish_martyr_reveal_v1(state),
                     _ => finish_optional_activation_targets(state),
                 }
             } else if state.engine.pending_effect.is_none() && !state.engine.pending_triggers.is_empty()
@@ -28820,6 +28817,26 @@ fn materialize_aborted_cast_v1(
     }
 }
 
+/// Commit the private reveal, mana, sacrifice and publication together. A
+/// restored provisional announcement may still fail during publication.
+fn finish_martyr_reveal_v1(state: &mut GameState) -> Result<(), String> {
+    let source = state.engine.pending_activation.as_ref().ok_or("Martyr activation absent")?.source;
+    let mut transaction = state.clone();
+    finalize_activation(&mut transaction);
+    let item = transaction.stack.last().filter(|item| {
+        item.source == source && item.kind == StackItemKind::ActivatedAbility
+    });
+    if transaction.engine.halted.is_some() || transaction.engine.pending_activation.is_some() {
+        return Err("Martyr reveal payment did not commit".into());
+    }
+    let item = item.ok_or("Martyr reveal payment did not publish its ability")?;
+    if crate::eternal_sideboard_s1d_v1::martyr::paid_count(&transaction, item)? != item.v4.x_value {
+        return Err("Martyr paid reveal count changed at publication".into());
+    }
+    *state = transaction;
+    Ok(())
+}
+
 /// Pays and pushes an activated ability after every target and object-cost
 /// choice is complete. Interactive `DiscardCards` activations instead pay and
 /// call `push_paid_activation` synchronously from `apply_discard`, so no
@@ -28983,15 +29000,14 @@ fn finalize_activation(state: &mut GameState) {
         })
         .flatten();
     let paid = if crate::eternal_sideboard_s1d_v1::martyr::ability(ability) {
-        let mut transaction = state.clone();
-        match crate::eternal_sideboard_s1d_v1::martyr::reveal(&mut transaction, &pending) {
+        // Martyr enters here only through its transaction-owned Finish.
+        match crate::eternal_sideboard_s1d_v1::martyr::reveal(state, &pending) {
             Ok(revealed)
                 if pay_cost_components_with_x(
-                    &mut transaction, pending.controller, pending.source, ability.cost, &[], x_value,
-                ) && transaction.engine.halted.is_none() =>
+                    state, pending.controller, pending.source, ability.cost, &[], x_value,
+                ) && state.engine.halted.is_none() =>
             {
                 frozen.martyr_revealed = Some(revealed);
-                *state = transaction;
                 true
             }
             _ => false,

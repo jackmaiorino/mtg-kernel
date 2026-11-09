@@ -250,10 +250,6 @@ fn definition(state: &GameState, object: ObjectId) -> Option<&'static CardDef> {
     CARD_DEFS.get(live.card_def as usize)
 }
 
-fn definition_name(state: &GameState, object: ObjectId) -> Option<&'static str> {
-    definition(state, object).map(|def| def.name)
-}
-
 /// Whether `object` is a battlefield permanent named `name` showing its
 /// front face, whose printed abilities apply.
 fn active_named(state: &GameState, object: ObjectId, name: &str) -> bool {

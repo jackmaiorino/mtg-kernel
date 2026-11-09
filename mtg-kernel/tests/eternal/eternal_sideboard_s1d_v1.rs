@@ -1264,15 +1264,16 @@ fn martyr_of_sands_pays_zero_exact_subset_and_more_than_ten_both_seats() {
     for actor in [P0, P1] {
         let other = actor.opponent();
         for (white_count, picks) in [
+            (4, vec![1, 3]),
             (0, vec![]),
             (3, vec![]),
-            (4, vec![1, 3]),
             (12, (1..12).collect()),
         ] {
             let mut state = GameState::new_from_libraries_with_starting_player_v1(
                 &library, &library, |id| CARD_DEFS[usize::from(id)].object_name.into(), 566, actor,
             );
             state.step = Step::Main1;
+            state.engine.spellbench_neutral_v1.choices = white_count == 4;
             state.enable_hand_knowledge_by_name_v2();
             let martyr = put(&mut state, other, "Martyr of Sands", Zone::Battlefield);
             state.players[other.index()].battlefield.retain(|&object| object != martyr);
@@ -1323,6 +1324,16 @@ fn martyr_of_sands_pays_zero_exact_subset_and_more_than_ten_both_seats() {
                 let before = stale.state_hash();
                 assert!(engine::step(&mut stale, Action::FinishEffectSelection).is_err());
                 assert_eq!(stale.state_hash(), before);
+            }
+            if state.engine.spellbench_neutral_v1.choices {
+                let mut unpublishable = restored.clone();
+                assert!(unpublishable.engine.spellbench_neutral_v1.pending_activation.take().is_some());
+                let before = unpublishable.state_hash();
+                assert!(engine::step(&mut unpublishable, Action::FinishEffectSelection).is_err());
+                assert_eq!(unpublishable.state_hash(), before);
+                assert!(unpublishable.known_hand_cards(other, actor).is_empty());
+                assert!(!unpublishable.objects.get(land).tapped);
+                assert_eq!(zone(&unpublishable, martyr), Zone::Battlefield);
             }
             act(&mut restored, Action::FinishEffectSelection);
             let ability = restored.stack.last().expect("actual paid Martyr ability");
