@@ -1253,6 +1253,209 @@ fn flagbearers_force_the_opponent_to_target_them() {
     }
 }
 
+#[test]
+fn flagbearers_constrain_positive_optional_target_counts_both_seats() {
+    for actor in [P0, P1] {
+        for name in ["Standard Bearer", "Coalition Honor Guard"] {
+            let mut state = plains();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let opponent = actor.opponent();
+            let bearer = Target::Object(put(&mut state, opponent, name, Zone::Battlefield));
+            let other = Target::Object(put(
+                &mut state,
+                opponent,
+                "Llanowar Elves",
+                Zone::Battlefield,
+            ));
+            put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let spell = put(&mut state, actor, "Cast into the Fire", Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::R], 1);
+            cast_mode(&mut state, spell, 0, &[]);
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseTargets { player, remaining: 2, can_finish: true, legal_targets, .. }
+                    if player == actor && legal_targets.contains(&bearer) && legal_targets.contains(&other)
+            ));
+
+            let assert_paid = |state: &mut GameState, targets: &[Target]| {
+                assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+                assert_eq!(state.stack.last().unwrap().targets.as_slice(), targets);
+                assert!(state.players[actor.index()]
+                    .mana_pool
+                    .iter()
+                    .all(|&mana| mana == 0));
+                settled(state);
+                assert_eq!(zone(state, spell), Zone::Graveyard);
+            };
+            let mut zero = state.clone();
+            act(&mut zero, Action::FinishEffectSelection);
+            assert_paid(&mut zero, &[]);
+
+            let mut one = state.clone();
+            choose_target(&mut one, bearer);
+            assert!(matches!(
+                next(&mut one),
+                Decision::ChooseTargets { remaining: 1, can_finish: true, legal_targets, .. }
+                    if legal_targets.contains(&other)
+            ));
+            act(&mut one, Action::FinishEffectSelection);
+            assert_paid(&mut one, &[bearer]);
+
+            choose_target(&mut state, other);
+            let snapshot = serde_json::to_vec(&state).unwrap();
+            let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
+            for pending in [&mut state, &mut restored] {
+                assert!(matches!(
+                    next(pending),
+                    Decision::ChooseTargets { remaining: 1, can_finish: false, legal_targets, .. }
+                        if legal_targets == [bearer]
+                ));
+                let hash = pending.state_hash();
+                assert!(engine::step(pending, Action::FinishEffectSelection).is_err());
+                assert_eq!(pending.state_hash(), hash);
+            }
+            let mut forged: GameState = serde_json::from_slice(&snapshot).unwrap();
+            forged
+                .engine
+                .pending_cast
+                .as_mut()
+                .unwrap()
+                .target_selection_finished = true;
+            assert!(matches!(
+                engine::advance_until_decision(&mut forged),
+                Decision::Halted { .. }
+            ));
+            for pending in [&mut state, &mut restored] {
+                act(pending, Action::ChooseTarget(bearer));
+                assert_paid(pending, &[other, bearer]);
+                let Target::Object(other) = other else {
+                    unreachable!()
+                };
+                assert_eq!(zone(pending, other), Zone::Graveyard);
+            }
+        }
+    }
+}
+
+#[test]
+fn flagbearers_do_not_require_an_illegal_optional_target_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let opponent = actor.opponent();
+        let bearer = put(&mut state, opponent, "Standard Bearer", Zone::Battlefield);
+        state.engine.until_end_of_turn.push(
+            engine::UntilEndOfTurnEffect::ResolvedObjectKeywordEffect {
+                object_id: bearer,
+                object_zone_change_count: state.objects.get(bearer).zone_change_count,
+                layer: engine::Layers::ABILITY_ADDING,
+                timestamp: 1,
+                duration: engine::EffectDuration::EndOfTurn,
+                keywords: Keywords::HEXPROOF,
+            },
+        );
+        let other = put(&mut state, opponent, "Llanowar Elves", Zone::Battlefield);
+        let spell = put(&mut state, actor, "Cast into the Fire", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R], 1);
+        cast_mode(&mut state, spell, 0, &[]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseTargets { can_finish: true, legal_targets, .. }
+                if legal_targets == [Target::Object(other)]
+        ));
+        choose_target(&mut state, Target::Object(other));
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseTargets { can_finish: true, legal_targets, .. }
+                if legal_targets.is_empty()
+        ));
+        act(&mut state, Action::FinishEffectSelection);
+        settled(&mut state);
+        assert_eq!(zone(&state, other), Zone::Graveyard);
+        assert_eq!(zone(&state, bearer), Zone::Battlefield);
+    }
+}
+
+#[test]
+fn flagbearers_constrain_optional_activation_without_requiring_a_target_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let opponent = actor.opponent();
+        let bearer = put(
+            &mut state,
+            opponent,
+            "Coalition Honor Guard",
+            Zone::Battlefield,
+        );
+        let other = put(&mut state, opponent, "Llanowar Elves", Zone::Battlefield);
+        state.objects.get_mut(bearer).tapped = true;
+        state.objects.get_mut(other).tapped = true;
+        let relic = put(&mut state, actor, "Cryogen Relic", Zone::Battlefield);
+        pool(&mut state, actor, &[ManaColor::U], 1);
+        activate(&mut state, relic, 0, &[]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectTargets { player, can_finish: true, legal_targets, .. }
+                if player == actor && legal_targets == [Target::Object(bearer)]
+        ));
+        assert!(engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(other))
+        )
+        .is_err());
+        let mut zero = state.clone();
+        act(&mut zero, Action::FinishEffectSelection);
+        settle_first(&mut zero);
+        assert_eq!(zone(&zero, relic), Zone::Graveyard);
+        assert_eq!(zero.objects.get(bearer).counters.stun, 0);
+
+        choose_target(&mut state, Target::Object(bearer));
+        settle_first(&mut state);
+        assert_eq!(zone(&state, relic), Zone::Graveyard);
+        assert_eq!(state.objects.get(bearer).counters.stun, 1);
+        assert_eq!(state.objects.get(other).counters.stun, 0);
+        assert!(state.players[actor.index()]
+            .mana_pool
+            .iter()
+            .all(|&mana| mana == 0));
+    }
+}
+
+#[test]
+fn flagbearers_constrain_a_wide_independent_target_roster() {
+    let mut state = plains();
+    put(&mut state, P1, "Standard Bearer", Zone::Battlefield);
+    let bearer = put(&mut state, P0, "Coalition Honor Guard", Zone::Battlefield);
+    let ordinary = (0..24)
+        .map(|_| put(&mut state, P0, "Llanowar Elves", Zone::Battlefield))
+        .collect::<Vec<_>>();
+    let spell = put(&mut state, P0, "Paradoxical Outcome", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    cast(&mut state, spell, &[Target::Object(ordinary[0])]);
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseTargets { can_finish: false, legal_targets, .. }
+            if legal_targets.len() == 24 && legal_targets.contains(&Target::Object(bearer))
+    ));
+    choose_target(&mut state, Target::Object(bearer));
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseTargets {
+            can_finish: true,
+            ..
+        }
+    ));
+    act(&mut state, Action::FinishEffectSelection);
+    settled(&mut state);
+    assert_eq!(zone(&state, bearer), Zone::Hand);
+    assert_eq!(zone(&state, ordinary[0]), Zone::Hand);
+    assert_eq!(zone(&state, ordinary[1]), Zone::Battlefield);
+}
+
 // ---- Martyr of Sands -------------------------------------------------------------
 
 #[test]
