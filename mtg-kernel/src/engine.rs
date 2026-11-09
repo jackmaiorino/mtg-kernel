@@ -24394,7 +24394,7 @@ fn pending_activation_action_stage(
         return Ok(PendingActivationActionStage::Discard);
     }
     let staged_ability =
-        resolved_pending_activated_ability(state, &pending).ok_or("missing activation")?;
+        resolved_pending_activated_ability(state, pending).ok_or("missing activation")?;
     if effect::fiend_artisan_v1::ability(&staged_ability) && pending.mana_x_v1.is_none() {
         return Ok(PendingActivationActionStage::ChooseManaX);
     }
@@ -24412,7 +24412,7 @@ fn pending_activation_action_stage(
         }
         return Ok(PendingActivationActionStage::ChooseTarget);
     }
-    let ability = resolved_pending_activated_ability(state, &pending)
+    let ability = resolved_pending_activated_ability(state, pending)
         .expect("validate_pending_activation already confirmed this ability index resolves");
     let ability = &ability;
     let return_cost_incomplete =
@@ -29875,7 +29875,7 @@ fn finish_crew(state: &mut GameState) -> Result<(), String> {
         .ok_or("missing crew activation")?;
     validate_pending_activation(state, pending)?;
     let ability =
-        resolved_pending_activated_ability(state, &pending).ok_or("missing crew ability")?;
+        resolved_pending_activated_ability(state, pending).ok_or("missing crew ability")?;
     let required = crew_requirement(ability.cost).ok_or("ability has no crew cost")?;
     if pending
         .object_cost_chosen
