@@ -461,7 +461,9 @@ fn closed_list_v3_courtyard_answers_in_sampled_world_without_restoring_hidden_ca
         let before = live.game_state().clone();
         let mut sampled_at_entry = sample_world_v1(&live, mode, Some(&belief), 552).unwrap();
         assert_eq!(
-            sampled_at_entry.diagnostic_current_action_semantics().unwrap(),
+            sampled_at_entry
+                .diagnostic_current_action_semantics()
+                .unwrap(),
             expected
         );
 

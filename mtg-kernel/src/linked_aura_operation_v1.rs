@@ -573,8 +573,10 @@ impl<'a> CourtyardSampleV1<'a> {
             .pending_kinship_v1
             .as_deref()
             .ok_or(REFUSAL)?;
-        let (OperationV1::Step(Action::PlayLand(object)), GeneralChoiceV36::KinshipV1 { choice, .. }) =
-            (&pending.operation, &pending.choice)
+        let (
+            OperationV1::Step(Action::PlayLand(object)),
+            GeneralChoiceV36::KinshipV1 { choice, .. },
+        ) = (&pending.operation, &pending.choice)
         else {
             return Err(REFUSAL.into());
         };
@@ -584,9 +586,15 @@ impl<'a> CourtyardSampleV1<'a> {
             || !crate::banner_of_kinship_v1::entry::owns_courtyard(choice.card_def)
             || !matches!(&choice.proposal, ProposedEvent::ZoneChange(change)
                 if change.object == *object && change.to_zone == Zone::Battlefield)
-            || !pending.original.objects.try_get(*object).is_some_and(|source| {
-                source.zone == Zone::Hand && source.owner == actor && source.card_def == choice.card_def
-            })
+            || !pending
+                .original
+                .objects
+                .try_get(*object)
+                .is_some_and(|source| {
+                    source.zone == Zone::Hand
+                        && source.owner == actor
+                        && source.card_def == choice.card_def
+                })
         {
             return Err(REFUSAL.into());
         }

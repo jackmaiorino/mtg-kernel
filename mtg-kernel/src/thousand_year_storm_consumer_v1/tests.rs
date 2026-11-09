@@ -67,7 +67,9 @@ fn sampled_printings(state: &GameState, replacements: &[(ObjectId, u16)]) -> Gam
         }
         let live = sampled.objects.get_mut(object);
         live.card_def = card_def;
-        live.name = crate::card_def::CARD_DEFS[usize::from(card_def)].name.into();
+        live.name = crate::card_def::CARD_DEFS[usize::from(card_def)]
+            .name
+            .into();
         live.v4 = crate::state::ObjectStateV4::from_card_def(card_def);
     }
     assert!(crate::controlled_creature_grants_v1::validate_color_history(&sampled).is_err());
@@ -340,17 +342,21 @@ fn departed_observer_and_countered_original_keep_copy_after_hidden_resampling_bo
             &mut state,
             ProposedEvent::zone_change(source, Zone::Library),
         );
-        let mut other =
-            sampled_printings(&state, &[(original, id("Forest")), (source, id("Mountain"))]);
+        let mut other = sampled_printings(
+            &state,
+            &[(original, id("Forest")), (source, id("Mountain"))],
+        );
         assert_ne!(state.state_hash(), other.state_hash());
         let mut forged = other.clone();
         let index = forged
             .engine
             .event_history
             .iter()
-            .position(|event| matches!(event,
+            .position(|event| {
+                matches!(event,
                 CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. }
-                    if snapshot.source.source == source))
+                    if snapshot.source.source == source)
+            })
             .unwrap();
         let mut event = serde_json::to_value(&forged.engine.event_history[index]).unwrap();
         let mask = &mut event["ProtectionSourceColorDepartureV1"]["snapshot"]["color_mask"];

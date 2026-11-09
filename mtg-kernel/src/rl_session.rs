@@ -8583,7 +8583,9 @@ impl FastActorSessionV1 {
     }
 
     #[cfg(feature = "limited-fdn-fixtures")]
-    pub(crate) fn limited_closed_list_root_v3(&self) -> Result<LimitedClosedListRootV3<'_>, String> {
+    pub(crate) fn limited_closed_list_root_v3(
+        &self,
+    ) -> Result<LimitedClosedListRootV3<'_>, String> {
         use crate::kernel_native_search_opponent_v1::pending_selection_hidden_objects_v1;
         use crate::limited_match_v1::closed_list_v2;
         use crate::reveal_meaning_v3::RevealReducerV3;
