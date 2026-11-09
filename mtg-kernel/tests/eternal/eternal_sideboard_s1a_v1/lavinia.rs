@@ -190,7 +190,7 @@ fn lavinia_refuses_madness_before_target_announcement_both_seats() {
             Decision::Discard { count, choices, .. } => {
                 assert!(choices.contains(&temper));
                 let mut chosen = vec![temper];
-                chosen.extend(choices.into_iter().filter(|card| *card != temper).take(usize::from(count) - 1));
+                chosen.extend(choices.into_iter().filter(|card| *card != temper).take(count as usize - 1));
                 Action::Discard(chosen)
             }
             Decision::ChooseMadnessCast { card, .. } => {

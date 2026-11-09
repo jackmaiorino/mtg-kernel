@@ -431,7 +431,7 @@ New, each built once in the first wave that needs it:
   its native choice, restore, disclosure and transport checks are pending. Frozen infoset
   and search consumers refuse its active search. Lavinia's source repair checks selected X and spell
   characteristics in the shared payment quote, including casts made during resolution. Its paid
-  both-seat X, Bestow, split, overload, Room, cascade and graveyard-cast checks remain unqualified;
+  both-seat X, Bestow, split, overload, Room, cascade, Madness and graveyard-cast checks remain unqualified;
   Lavinia stays Partial. Mana value ignores alternative payments and includes announced X, as stated
   in the [Ravnica Remastered rulings](https://media.wizards.com/2023/downloads/RVR_Release_Notes_XrN0zlJaFn/EN_MTGRVR_ReleaseNotes_20231120.pdf).
   Leyline of the Void's opening action goes on the stack during the
