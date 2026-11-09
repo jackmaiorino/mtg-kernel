@@ -402,6 +402,16 @@ pub(crate) enum WorldMode {
     Fresh,
     TrueV1,
     PinnedV1,
+    /// `true-hand-v1` (SD1's TH probe, E5; diagnostic only): per simulation,
+    /// the opponent's realized hand and deck (no deck prior, no hand
+    /// redeterminization), each owner's unknown library slots reshuffled
+    /// within owner, fresh future randomness.
+    TrueHandV1,
+    /// `true-own-library-v1` (SD1's TL probe, E5; diagnostic only): per
+    /// simulation, the opponent sampled as in `Fresh` (whole-object shuffle of
+    /// its unknown slots and the deck prior), the actor's own library left in
+    /// its realized order, fresh future randomness.
+    TrueOwnLibraryV1,
 }
 
 /// The environment switch of the s4a-budget runner (SD1's game harness);
@@ -414,8 +424,11 @@ impl WorldMode {
             "fresh" => Ok(Self::Fresh),
             "true-v1" => Ok(Self::TrueV1),
             "pinned-v1" => Ok(Self::PinnedV1),
+            "true-hand-v1" => Ok(Self::TrueHandV1),
+            "true-own-library-v1" => Ok(Self::TrueOwnLibraryV1),
             other => Err(format!(
-                "{WORLD_ENV}: unknown world mode {other:?} (fresh, true-v1, pinned-v1)"
+                "{WORLD_ENV}: unknown world mode {other:?} (fresh, true-v1, pinned-v1, \
+                 true-hand-v1, true-own-library-v1)"
             )),
         }
     }
@@ -425,6 +438,8 @@ impl WorldMode {
             Self::Fresh => "fresh",
             Self::TrueV1 => "true-v1",
             Self::PinnedV1 => "pinned-v1",
+            Self::TrueHandV1 => "true-hand-v1",
+            Self::TrueOwnLibraryV1 => "true-own-library-v1",
         }
     }
 
@@ -443,6 +458,44 @@ impl WorldMode {
 /// the future randomness `FutureChanceV3` would derive from `seed`.
 pub(crate) fn fresh_future_world(base: &FastActorSessionV1, seed: u64) -> FastActorSessionV1 {
     base.kernel_clone_with_future_randomness_v1(crate::rl_session::future_chance_seed_v3(seed))
+}
+
+/// One partial-information sample (SD1's TH and TL probes): `FutureChanceV3`
+/// with the whole-object shuffle restricted by `filter`, the deck prior
+/// applied only when `prior_on` (TL), and the same rejection rules (a
+/// rejection is declared and never retried). `TH` keeps the opponent's real
+/// cards, so it never reads the prior.
+pub(crate) fn sample_partial_recorded(
+    session: &FastActorSessionV1,
+    seed: u64,
+    prior: &DeckPrior,
+    filter: crate::rl_session::SlotFilterV1,
+    prior_on: bool,
+    encoding_failure: &mut Option<V4BoundaryEncodingFailureV1>,
+) -> Result<FastActorSessionV1, String> {
+    let mut hook_error = None;
+    session
+        .kernel_search_partial_clone_hooked_v1(
+            seed,
+            filter,
+            |state, actor| {
+                if !prior_on {
+                    return Ok(());
+                }
+                match apply_deck_prior(state, actor, prior, seed) {
+                    Ok(_) => Ok(()),
+                    Err(e) => {
+                        hook_error = Some(e);
+                        Err(V4SearchStateErrorV1::SampleHookRejected)
+                    }
+                }
+            },
+            encoding_failure,
+        )
+        .map_err(|e| match &hook_error {
+            Some(h) => format!("{e:?}: {h}"),
+            None => format!("{e:?}"),
+        })
 }
 
 #[cfg(test)]
