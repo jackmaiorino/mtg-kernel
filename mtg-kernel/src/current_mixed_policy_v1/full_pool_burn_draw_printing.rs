@@ -250,31 +250,51 @@ fn has_trigger(id: u16, condition: TriggerCondition, target: TargetSpec, effect:
 fn enters_as_creature(d: &CardDef) -> bool {
     d.types == [CardType::Creature]
         && d.mode2.is_none()
-        && (d.spell_effect)() == Some(EffectOp::MoveObject {
-            object: ObjectRef::ThisSource,
-            to_zone: Zone::Battlefield,
-        })
+        && (d.spell_effect)()
+            == Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
 }
 
 fn arbiter(id: u16, d: &CardDef) -> Result<Value> {
     let effect = EffectOp::Sequence(vec![
-        EffectOp::DiscardCards { player: PlayerRef::Opponent, count: 1 },
-        EffectOp::LoseLife { player: PlayerRef::Opponent, amount: 2 },
-        EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 },
-        EffectOp::GainLife { player: PlayerRef::Controller, amount: 2 },
+        EffectOp::DiscardCards {
+            player: PlayerRef::Opponent,
+            count: 1,
+        },
+        EffectOp::LoseLife {
+            player: PlayerRef::Opponent,
+            amount: 2,
+        },
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+        EffectOp::GainLife {
+            player: PlayerRef::Controller,
+            amount: 2,
+        },
     ]);
-    if d.cost != (Cost {
-        generic: 4, pips: &[Pip::Colored(ManaColor::B), Pip::Colored(ManaColor::B)], x_count: 0,
-    })
+    if d.cost
+        != (Cost {
+            generic: 4,
+            pips: &[Pip::Colored(ManaColor::B), Pip::Colored(ManaColor::B)],
+            x_count: 0,
+        })
         || d.mana_value != 6
         || d.subtypes != [Subtype::Demon]
         || d.colors != [ManaColor::B]
         || d.power != Some(5)
         || d.toughness != Some(4)
         || d.keywords != Keywords::FLYING
-        || !matches!(d.additional_cost, Some([CostComponent::SacrificeControlled {
-            count: 1, filter: PermanentFilter::Creature
-        }]))
+        || !matches!(
+            d.additional_cost,
+            Some([CostComponent::SacrificeControlled {
+                count: 1,
+                filter: PermanentFilter::Creature
+            }])
+        )
         || !enters_as_creature(d)
         || !has_trigger(id, TriggerCondition::Etb, TargetSpec::None, effect)
     {
@@ -304,12 +324,18 @@ fn arbiter(id: u16, d: &CardDef) -> Result<Value> {
 fn needletooth(id: u16, d: &CardDef) -> Result<Value> {
     let effect = EffectOp::Conditional {
         cond: EffectCond::CreatureDiedThisTurn,
-        then: Box::new(EffectOp::AddPlusOnePlusOneCounters { object: ObjectRef::Target(0), count: 2 }),
+        then: Box::new(EffectOp::AddPlusOnePlusOneCounters {
+            object: ObjectRef::Target(0),
+            count: 2,
+        }),
         else_: Box::new(EffectOp::Sequence(vec![])),
     };
-    if d.cost != (Cost {
-        generic: 3, pips: &[Pip::Colored(ManaColor::G), Pip::Colored(ManaColor::G)], x_count: 0,
-    })
+    if d.cost
+        != (Cost {
+            generic: 3,
+            pips: &[Pip::Colored(ManaColor::G), Pip::Colored(ManaColor::G)],
+            x_count: 0,
+        })
         || d.mana_value != 5
         || d.subtypes != [Subtype::Dinosaur]
         || d.colors != [ManaColor::G]
@@ -318,7 +344,12 @@ fn needletooth(id: u16, d: &CardDef) -> Result<Value> {
         || d.keywords != Keywords::NONE
         || d.additional_cost.is_some()
         || !enters_as_creature(d)
-        || !has_trigger(id, TriggerCondition::BeginningControllerEndStepIfCreatureDied, TargetSpec::ControlledCreature, effect)
+        || !has_trigger(
+            id,
+            TriggerCondition::BeginningControllerEndStepIfCreatureDied,
+            TargetSpec::ControlledCreature,
+            effect,
+        )
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
