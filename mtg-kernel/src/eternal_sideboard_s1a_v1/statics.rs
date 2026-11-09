@@ -286,7 +286,10 @@ pub(crate) fn cast_prohibited(
         };
         (usize::from(cost.generic) + cost.pips.len(), cost.x_count)
     } else if crate::eternal_premodern_p1a_v1::statics::split_card(def.name) {
-        (usize::from(def.cost.generic) + def.cost.pips.len(), def.cost.x_count)
+        (
+            usize::from(def.cost.generic) + def.cost.pips.len(),
+            def.cost.x_count,
+        )
     } else {
         (usize::from(def.mana_value), def.cost.x_count)
     };

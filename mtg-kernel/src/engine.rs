@@ -27038,7 +27038,11 @@ fn apply_choose_madness_cast(state: &mut GameState, cast_it: bool) -> Result<(),
     let cast_it = cast_it
         && !crate::eternal_vintage_v1::cast_prohibited(state, owner)
         && !crate::eternal_sideboard_s1a_v1::statics::cast_prohibited(
-            state, owner, card, CastMethodV4::Madness, 0,
+            state,
+            owner,
+            card,
+            CastMethodV4::Madness,
+            0,
         );
     let item = state
         .stack
