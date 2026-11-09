@@ -33,7 +33,12 @@ fn decision(owner: &KaitoSession) -> KaitoDecision {
     let FastActorResponseV1::Decision(expected) = owner.current_response() else {
         panic!("full-pool decision absent: {:?}", owner.current_response());
     };
-    owner.encode(expected).unwrap()
+    owner.encode(expected).unwrap_or_else(|error| {
+        panic!(
+            "full-pool encode {expected:?}: {error:?}; native projection: {:?}",
+            owner.fixture_projection_error()
+        )
+    })
 }
 
 fn raw(state: &GameState) -> FastActorSessionV1 {

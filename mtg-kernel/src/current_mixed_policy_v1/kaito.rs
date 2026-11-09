@@ -319,6 +319,14 @@ impl KaitoSession {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
+    pub(crate) fn fixture_projection_error(&self) -> Option<String> {
+        self.inner.decision_v75().err().map(|error| error.to_string())
+    }
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn fixture_counts(&self) -> (u64, u64) {
         self.inner.fixture_counts_v75()
     }
