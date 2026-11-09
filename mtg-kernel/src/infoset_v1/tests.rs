@@ -122,6 +122,123 @@ fn seat(p: PlayerSeatV1) -> PlayerId {
     }
 }
 
+#[test]
+fn paid_ninjutsu_keeps_the_waiting_hand_source_pristine_for_opponent_infoset() {
+    use crate::card_def::{card_id_by_name, CARD_DEFS};
+    use crate::engine::{advance_until_decision, step, Action, CostKind, Decision};
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::mana::ManaColor;
+    use crate::state::{GameState, Step, Zone};
+
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for (ninja_name, blue_mana) in [("Ninja of the Deep Hours", 2), ("Moon-Circuit Hacker", 1)] {
+            let viewer = actor.opponent();
+            let actor_cards = [ninja_name, "Faerie Miscreant", "Spellstutter Sprite"]
+                .map(|name| card_id_by_name(name).unwrap());
+            let viewer_cards = [card_id_by_name("Snap").unwrap()];
+            let lists = [PlayerId::P0, PlayerId::P1].map(|player| {
+                if player == actor {
+                    actor_cards.as_slice()
+                } else {
+                    viewer_cards.as_slice()
+                }
+            });
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                lists[0],
+                lists[1],
+                |id| CARD_DEFS[usize::from(id)].name.to_string(),
+                1,
+                actor,
+            );
+            state.engine.spellbench_neutral_v1.choices = true;
+            let ninja = state.players[actor.index()].library[0];
+            let attacker = state.players[actor.index()].library[1];
+            let other_attacker = state.players[actor.index()].library[2];
+            let snap = state.players[viewer.index()].library[0];
+            propose_and_commit(&mut state, ProposedEvent::draw(actor));
+            propose_and_commit(&mut state, ProposedEvent::draw(viewer));
+            for attacking in [attacker, other_attacker] {
+                propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change_to_battlefield_tapped(attacking),
+                );
+            }
+            state.step = Step::DeclareBlockers;
+            state.engine.combat.attackers_declared = true;
+            state.engine.combat.blockers_declared = true;
+            state.engine.combat.attackers = vec![attacker, other_attacker];
+            state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = blue_mana;
+            state.players[viewer.index()].mana_pool[ManaColor::U.pool_index()] = 2;
+
+            step(&mut state, Action::ActivateAbility(ninja, 0)).unwrap();
+            assert!(matches!(
+                advance_until_decision(&mut state),
+                Decision::ChooseCostTargets {
+                    player,
+                    source,
+                    cost_kind: CostKind::ReturnPermanentsToHand,
+                    remaining: 1,
+                    candidates,
+                } if player == actor && source == ninja && candidates.contains(&attacker)
+            ));
+            step(&mut state, Action::ChooseCostTarget(attacker)).unwrap();
+            assert!(matches!(
+                advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, .. } if player == actor
+            ));
+            assert_eq!(state.objects.get(attacker).zone, Zone::Hand);
+            assert_eq!(state.objects.get(ninja).zone, Zone::Hand);
+            assert_eq!(
+                state.players[actor.index()].mana_pool[ManaColor::U.pool_index()],
+                0
+            );
+            let source = state
+                .stack
+                .last()
+                .unwrap()
+                .v4
+                .ability_source_contract
+                .unwrap();
+            assert_eq!(source.source, ninja);
+            assert_eq!(source.zone, Zone::Hand);
+            assert_eq!(source.card_def, actor_cards[0]);
+
+            step(&mut state, Action::Pass).unwrap();
+            assert!(matches!(
+                advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, castable_spells, .. }
+                    if player == viewer && castable_spells.contains(&snap)
+            ));
+            let result = export_v1(
+                &ExportInputV1 {
+                    state: &state,
+                    journal: state.observation_journal.notes(),
+                    viewer,
+                    decklists: lists,
+                    marks: None,
+                },
+                ExportOptionsV1::default(),
+            );
+            // The hidden-hand reference can still safely refuse. It must not
+            // turn this real response decision into a fatal engine fault.
+            if let Err(ExportErrorV1::Fault { code, detail }) = result {
+                panic!("{ninja_name} in seat {actor:?}: {code:?} {detail}");
+            }
+            assert!(state.objects.get(ninja).v4.ability_uses_this_turn.is_empty());
+
+            step(&mut state, Action::Pass).unwrap();
+            assert!(matches!(
+                advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, .. } if player == actor
+            ));
+            assert!(state.stack.is_empty());
+            assert_eq!(state.objects.get(ninja).zone, Zone::Battlefield);
+            assert!(state.objects.get(ninja).tapped);
+            assert!(state.engine.combat.attackers.contains(&ninja));
+        }
+    }
+}
+
 /// Plays a seeded uniform-random game and calls `at` at every decision with
 /// at least two candidates.
 pub(crate) fn play(
