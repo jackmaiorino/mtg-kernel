@@ -1,7 +1,8 @@
 use super::*;
 use crate::{
     effect::thousand_year_storm_v1_tests as paid, policy_observation_v6::tests::put,
-    policy_surface_v5::LimitedAppendixV1, rl::ActionSemanticV1, state::Target,
+    policy_surface_v5::LimitedAppendixV1, rl::ActionSemanticV1,
+    state::{GameState, Step, Target},
 };
 
 fn limits(max_decisions: u64) -> GameLimitsV1 {
@@ -14,7 +15,28 @@ fn limits(max_decisions: u64) -> GameLimitsV1 {
 }
 
 fn scene(actor: PlayerId, hidden: &str) -> (KaitoSession, LimitedBeliefV1) {
-    let mut state = paid::ready(actor, hidden);
+    let own_library = [card_id_by_name("Forest").unwrap(); 40];
+    let other_library = [card_id_by_name(hidden).unwrap(); 40];
+    let libraries = if actor == PlayerId::P0 {
+        [&own_library, &other_library]
+    } else {
+        [&other_library, &own_library]
+    };
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
+        libraries[0],
+        libraries[1],
+        crate::rl::card_name,
+        552_286,
+        actor,
+    );
+    state.step = Step::Main1;
+    // Supply the real spell costs and one spare red mana action. The Storm
+    // stress fixture's 160 lands add irrelevant branches to this search test.
+    for _ in 0..4 {
+        put(&mut state, actor, "Mountain", Zone::Battlefield);
+    }
+    put(&mut state, actor, "Swamp", Zone::Battlefield);
+    put(&mut state, actor.opponent(), "Forest", Zone::Battlefield);
     state.curator_unordered_reveal_v1 = true;
     state.greatwurm_commit_receipts_v1 = true;
     state.harvester_commit_receipts_v1 = true;
