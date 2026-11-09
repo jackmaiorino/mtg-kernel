@@ -549,7 +549,9 @@ New, each built once in the first wave that needs it:
   target paths still need qualification and repairs. Vandalblast and Electrickery omit overload on the normal
   graveyard permission path. The shared free-resolution path can offer the overload
   form at zero cost, although free casting excludes other alternative costs.
-  Circle of Protection: Blue offers
+  Circle of Protection: Blue now rechecks blue at damage time and matches genuine
+  historical damage to the chosen source incarnation. Paid Firebrand/Painter and
+  blink/restore qualification is pending. Its choice menu still offers
   unrelated graveyard and exile cards as sources, excludes contextual sources outside
   its public-zone list and does not preserve a chosen permanent spell's shield when
   it enters. Policy observation v5 omits the shields.

@@ -1002,7 +1002,7 @@ pub(crate) mod statics {
         let Target::Player(player) = damage.target else {
             return false;
         };
-        if damage.amount <= 0 || damage.historical_source.is_some() {
+        if damage.amount <= 0 {
             return false;
         }
         let Some(s1d) = read_state(state) else {
@@ -1011,15 +1011,41 @@ pub(crate) mod statics {
         if s1d.cop_shields.is_empty() {
             return false;
         }
+        let (source, color_mask) = if let Some(item) = damage.historical_source {
+            let Ok(facts) =
+                crate::source_power_activation_v1::damage_source(state, damage.source, item)
+            else {
+                return false;
+            };
+            (
+                ObjectLinkV4 {
+                    object: facts.source.source,
+                    zone_change_count: facts.source.zone_change_count,
+                },
+                facts.color_mask,
+            )
+        } else {
+            let Some(live) = state.objects.try_get(damage.source) else {
+                return false;
+            };
+            (
+                ObjectLinkV4 {
+                    object: damage.source,
+                    zone_change_count: live.zone_change_count,
+                },
+                crate::engine::object_color_mask(state, damage.source),
+            )
+        };
+        // CR 609.7b: losing blue does not spend the shield. Historical damage
+        // uses the exact published source incarnation and its damage-time LKI.
+        if color_mask & blue_mask() == 0 {
+            return false;
+        }
         let now = TurnV1::now(state);
         let position = s1d.cop_shields.iter().position(|shield| {
             shield.turn == now
                 && shield.player == player
-                && shield.source.object == damage.source
-                && state
-                    .objects
-                    .try_get(damage.source)
-                    .is_some_and(|live| live.zone_change_count == shield.source.zone_change_count)
+                && shield.source == source
         });
         let Some(position) = position else {
             return false;

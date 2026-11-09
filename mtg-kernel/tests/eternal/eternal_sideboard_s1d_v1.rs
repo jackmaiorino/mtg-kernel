@@ -777,6 +777,76 @@ fn circle_of_protection_blue_prevents_the_next_damage_from_a_chosen_blue_source(
     assert_eq!(life(&state, P0), 14);
 }
 
+#[test]
+fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
+    use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_sideboard_s1d_v1::S1dOpV1;
+    use mtg_kernel::standard_cards_v1::StandardOpV1;
+
+    for actor in [P0, P1] {
+        for scenario in 0..3 {
+            let opponent = actor.opponent();
+            let mut state = plains();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let firebrand = put(&mut state, opponent, "Fanatical Firebrand", Zone::Battlefield);
+            let painter = put(&mut state, actor, "Painter's Servant", Zone::Hand);
+            pool(&mut state, actor, &[], 2);
+            cast(&mut state, painter, &[]);
+            settle_option(&mut state, 1);
+            assert_eq!(state.objects.get(painter).v4.chosen_color, Some(ManaColor::U));
+            let circle = put(&mut state, actor, "Circle of Protection: Blue", Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::W], 1);
+            cast(&mut state, circle, &[]);
+            settled(&mut state);
+            pool(&mut state, actor, &[], 1);
+            activate(&mut state, circle, 0, &[]);
+            assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { .. })));
+            let Some(PendingEffectChoice::ChooseOption { options, .. }) = state
+                .engine.pending_effect.as_ref().and_then(|pending| pending.choice.as_ref())
+            else { panic!("Circle source choice missing"); };
+            let option = options.iter().position(|op| matches!(op,
+                EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(S1dOpV1::CopShieldV1 { source })))
+                    if source.object == firebrand
+            )).unwrap();
+            act(&mut state, Action::ChooseEffectOption(u16::try_from(option).unwrap()));
+            settled(&mut state);
+            let original = state.objects.get(firebrand).zone_change_count;
+            if scenario == 1 {
+                // Removing Painter makes the paid damage source red again.
+                // The still-unused shield must survive that damage.
+                let removal = put(&mut state, actor, "Cast Down", Zone::Hand);
+                pool(&mut state, actor, &[ManaColor::B], 1);
+                cast(&mut state, removal, &[Target::Object(painter)]);
+                settled(&mut state);
+                assert_eq!(zone(&state, painter), Zone::Graveyard);
+            } else if scenario == 2 {
+                // A blinked card is a different source even though
+                // its arena id and its blue color remain the same.
+                if state.priority_player != opponent { act(&mut state, Action::Pass); }
+                let blink = put(&mut state, opponent, "Ephemerate", Zone::Hand);
+                pool(&mut state, opponent, &[ManaColor::W], 0);
+                cast(&mut state, blink, &[Target::Object(firebrand)]);
+                settled(&mut state);
+                assert_eq!(zone(&state, firebrand), Zone::Battlefield);
+                assert!(state.objects.get(firebrand).zone_change_count > original);
+            }
+            if state.priority_player != opponent { act(&mut state, Action::Pass); }
+            let mut restored: GameState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                activate(branch, firebrand, 0, &[Target::Player(actor)]);
+                assert_eq!(zone(branch, firebrand), Zone::Graveyard);
+                settled(branch);
+                assert_eq!(life(branch, actor), if scenario == 0 { 20 } else { 19 });
+                let shields = &branch.eternal_v1.as_ref().unwrap().s1d.cop_shields;
+                assert_eq!(shields.len(), if scenario == 0 { 0 } else { 1 });
+            }
+            assert_eq!(state.state_hash(), restored.state_hash());
+        }
+    }
+}
+
 // ---- Creatures with triggers -----------------------------------------------------
 
 #[test]
