@@ -19,8 +19,8 @@ can never decide and three rounds (6 + 6, about 0.002) are the minimum at
 the default. Anything else is inconclusive. A same-binary (A/A) run measures
 the run-to-run variation and how many rows a null comparison calls.
 
-Standard library only, Python >= 3.11; `docs/checkpoint_codec_bench_v1.md`
-has the commands.
+Standard library only, Python >= 3.9 (macOS's own python3 is 3.9);
+`docs/checkpoint_codec_bench_v1.md` has the commands.
 """
 from __future__ import annotations
 
@@ -53,8 +53,11 @@ def require(condition, message):
 
 
 def sha256_file(path):
+    digest = hashlib.sha256()
     with open(path, "rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def pin(path):
@@ -84,7 +87,8 @@ def toolchain():
         "rustc": command_output(["rustc", "-vV"]),
         "cargo": command_output(["cargo", "-V"]),
         "cc": command_output(["cc", "--version"]),
-        "ld": command_output(["ld", "--version"]),
+        # Apple's linker has no --version.
+        "ld": command_output(["ld", "-v"] if sys.platform == "darwin" else ["ld", "--version"]),
     }
 
 
@@ -100,6 +104,10 @@ def machine():
             line = None
         if line is not None:
             record[key.replace(" ", "_").lower()] = line.split(":", 1)[1].strip()
+    if sys.platform == "darwin":
+        record["sysctl"] = {name: command_output(["sysctl", "-n", name])
+                            for name in ("machdep.cpu.brand_string", "hw.memsize", "hw.perflevel0.physicalcpu",
+                                         "hw.perflevel1.physicalcpu")}
     return record
 
 

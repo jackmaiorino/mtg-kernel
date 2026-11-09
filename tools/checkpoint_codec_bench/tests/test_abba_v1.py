@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
@@ -138,6 +139,24 @@ class ComparisonTests(unittest.TestCase):
     def test_both_roles_are_required(self):
         with self.assertRaisesRegex(ValueError, "baseline and candidate"):
             abba.compare([("baseline", receipt(1), "only")])
+
+
+class MachineTests(unittest.TestCase):
+    def test_macos_records_its_cpu_memory_and_linker(self):
+        calls = []
+
+        def output(command):
+            calls.append(command)
+            return " ".join(command)
+
+        with mock.patch.object(abba.sys, "platform", "darwin"), \
+                mock.patch.object(abba, "command_output", output):
+            record = abba.machine()
+            tools = abba.toolchain()
+        self.assertEqual(record["sysctl"]["machdep.cpu.brand_string"], "sysctl -n machdep.cpu.brand_string")
+        self.assertEqual(record["sysctl"]["hw.memsize"], "sysctl -n hw.memsize")
+        self.assertEqual(tools["ld"], "ld -v")
+        self.assertIn(["ld", "-v"], calls)
 
 
 class RunTests(unittest.TestCase):

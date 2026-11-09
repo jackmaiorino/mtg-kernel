@@ -10,7 +10,7 @@ streamed validation) are measured against.
   and the binary `mtg-kernel/examples/checkpoint_codec_bench_v1.rs`, built only
   with the `checkpoint-codec-bench-v1` feature. Default builds carry neither.
 - A-B-B-A runner: `tools/checkpoint_codec_bench/abba_v1.py` (standard library,
-  Python 3.11 or later), tested by `tools/checkpoint_codec_bench/tests`.
+  Python 3.9 or later), tested by `tools/checkpoint_codec_bench/tests`.
 
 Its numbers are stage costs on a generated fixture. They are not an
 updates-per-hour, full-node or fleet claim: a faster codec stage does not by
@@ -268,8 +268,10 @@ run-to-run variation on the machine and how many rows it calls.
   `allocations`, `peak_heap_bytes`, `retained_heap_bytes`; a receipt's own
   timers in `updates` carry wall time only)
   and their median, quartiles, minimum and maximum. CPU time is the whole
-  process's, so it includes other threads.
+  process's, so it includes other threads (Linux and macOS
+  `CLOCK_PROCESS_CPUTIME_ID`, Windows `GetProcessTimes`).
 - `published`: the SHA-256 and length every (state, cell) published.
 - `checks`: the identity checks above, all `passed`.
 - `section_seconds`, `peak_rss_bytes` at section boundaries (Linux `VmHWM`,
-  Windows peak working set) and `process_peak_rss_bytes` at the end.
+  Windows peak working set, macOS `ru_maxrss`) and `process_peak_rss_bytes`
+  at the end.

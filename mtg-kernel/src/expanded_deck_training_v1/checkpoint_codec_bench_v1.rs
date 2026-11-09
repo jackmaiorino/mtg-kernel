@@ -309,13 +309,20 @@ fn duration_ns_v1(duration: Duration) -> u64 {
 }
 
 fn process_cpu_ns_v1() -> Option<u64> {
-    crate::regret_census_v1::stage4a::process_cpu::seconds()
-        .ok()
-        .map(|seconds| (seconds * 1e9).round() as u64)
+    #[cfg(target_os = "macos")]
+    {
+        macos_v1::process_cpu_ns_v1()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        crate::regret_census_v1::stage4a::process_cpu::seconds()
+            .ok()
+            .map(|seconds| (seconds * 1e9).round() as u64)
+    }
 }
 
 /// The process's peak resident set (Linux `VmHWM`, Windows peak working
-/// set), when the platform reports one.
+/// set, macOS `ru_maxrss`), when the platform reports one.
 pub fn peak_rss_bytes_v1() -> Option<u64> {
     #[cfg(target_os = "linux")]
     {
@@ -328,7 +335,11 @@ pub fn peak_rss_bytes_v1() -> Option<u64> {
     {
         crate::kernel_native_search_calibration_runner_v1::peak_working_set_bytes_v1()
     }
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(target_os = "macos")]
+    {
+        macos_v1::peak_rss_bytes_v1()
+    }
+    #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
     {
         None
     }
@@ -341,9 +352,79 @@ fn cpu_model_v1() -> Option<String> {
         let line = info.lines().find(|line| line.starts_with("model name"))?;
         Some(line.split_once(':')?.1.trim().to_owned())
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("sysctl")
+            .args(["-n", "machdep.cpu.brand_string"])
+            .output()
+            .ok()?;
+        let model = String::from_utf8(output.stdout).ok()?;
+        let model = model.trim();
+        (output.status.success() && !model.is_empty()).then(|| model.to_owned())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         std::env::var("PROCESSOR_IDENTIFIER").ok()
+    }
+}
+
+/// The process CPU clock and peak resident set on macOS, where the crate's
+/// Linux and Windows readers report nothing.
+#[cfg(target_os = "macos")]
+mod macos_v1 {
+    use std::ffi::{c_int, c_long};
+
+    #[repr(C)]
+    struct TimespecV1 {
+        seconds: i64,
+        nanoseconds: c_long,
+    }
+
+    /// `struct rusage` on 64-bit Darwin: two 16-byte `struct timeval`s,
+    /// then fourteen `long`s, the first of which is `ru_maxrss`.
+    #[repr(C)]
+    struct RusageV1 {
+        user_time: [i64; 2],
+        system_time: [i64; 2],
+        longs: [c_long; 14],
+    }
+
+    const CLOCK_PROCESS_CPUTIME_ID_V1: c_int = 12;
+    const RUSAGE_SELF_V1: c_int = 0;
+
+    unsafe extern "C" {
+        fn clock_gettime(clock: c_int, out: *mut TimespecV1) -> c_int;
+        fn getrusage(who: c_int, usage: *mut RusageV1) -> c_int;
+    }
+
+    pub(super) fn process_cpu_ns_v1() -> Option<u64> {
+        let mut out = TimespecV1 {
+            seconds: 0,
+            nanoseconds: 0,
+        };
+        // SAFETY: CLOCK_PROCESS_CPUTIME_ID is 12 on Darwin and `out` is a
+        // writable `struct timespec`.
+        if unsafe { clock_gettime(CLOCK_PROCESS_CPUTIME_ID_V1, &mut out) } != 0 {
+            return None;
+        }
+        let seconds = u64::try_from(out.seconds).ok()?;
+        let nanoseconds = u64::try_from(out.nanoseconds).ok()?;
+        seconds.checked_mul(1_000_000_000)?.checked_add(nanoseconds)
+    }
+
+    pub(super) fn peak_rss_bytes_v1() -> Option<u64> {
+        let mut usage = RusageV1 {
+            user_time: [0; 2],
+            system_time: [0; 2],
+            longs: [0; 14],
+        };
+        // SAFETY: RUSAGE_SELF is 0 and `usage` has the size and alignment of
+        // Darwin's `struct rusage`.
+        if unsafe { getrusage(RUSAGE_SELF_V1, &mut usage) } != 0 {
+            return None;
+        }
+        // Darwin reports `ru_maxrss` in bytes (Linux in KiB).
+        u64::try_from(usage.longs[0]).ok()
     }
 }
 
