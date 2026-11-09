@@ -116,6 +116,69 @@ fn paid_v76_source_facts_eighteen_counters_real_publication_positional_illegalit
 }
 
 #[test]
+fn sampled_paid_attack_preserves_archived_target_and_departure_without_hidden_printing() {
+    use crate::{fdn_family_source_v76 as public76, optional_trigger_public_v1::ConsumerV1};
+    let scope = ConsumerV1::KaitoFullPoolV1;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut live, source) = paid(actor);
+        let victim = put(&mut live, actor.opponent(), "Aegis Turtle", Zone::Battlefield);
+        attack(&mut live, source, actor);
+        choose(
+            &mut live,
+            source,
+            &[Target::Object(victim), Target::Player(actor.opponent())],
+        );
+        crate::event::propose_and_commit(
+            &mut live,
+            crate::event::ProposedEvent::zone_change(victim, Zone::Library),
+        );
+        assert_eq!(live.objects.get(victim).zone, Zone::Library);
+
+        let mut sampled = live.clone();
+        sampled.sampled_history_v1 = crate::sampled_history_v1::capture(&live).unwrap();
+        let hidden = sampled.objects.get_mut(victim);
+        hidden.card_def = card_id_by_name("Island").unwrap();
+        hidden.name = "Island".into();
+        for viewer in [actor, actor.opponent()] {
+            assert_eq!(
+                public76::capture_scoped(&live, viewer, scope).unwrap(),
+                public76::capture_scoped(&sampled, viewer, scope).unwrap()
+            );
+        }
+        let start = live.engine.event_history.len();
+        settle(&mut live);
+        settle(&mut sampled);
+        let damage = vec![(Target::Player(actor.opponent()), 3)];
+        assert_eq!(damage_since(&live, start, source), damage);
+        assert_eq!(damage_since(&sampled, start, source), damage);
+
+        for state in [&mut live, &mut sampled] {
+            crate::event::propose_and_commit(
+                state,
+                crate::event::ProposedEvent::zone_change(source, Zone::Library),
+            );
+            assert_eq!(state.objects.get(source).zone, Zone::Library);
+        }
+        sampled.sampled_history_v1 = crate::sampled_history_v1::capture(&sampled).unwrap();
+        let hidden = sampled.objects.get_mut(source);
+        hidden.card_def = card_id_by_name("Forest").unwrap();
+        hidden.name = "Forest".into();
+
+        for viewer in [actor, actor.opponent()] {
+            let actual = public76::capture_scoped(&sampled, viewer, scope).unwrap();
+            assert_eq!(actual, public76::capture_scoped(&live, viewer, scope).unwrap());
+            let public76::LaterFamilyV76::Drakuseth(family) = &actual.families[0];
+            assert_eq!(family.publications.len(), 1);
+            assert_eq!(family.publications[0].original_target_slots[0].printed_damage, 4);
+            assert!(family.triggers.is_empty());
+        }
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&sampled).unwrap()).unwrap();
+        assert!(public76::capture_scoped(&restored, actor.opponent(), scope).is_err());
+    }
+}
+
+#[test]
 fn independently_initialized_hidden_worlds_after_actual_paid_attack_have_equal_v76_source_facts_both_seats(
 ) {
     for actor in [PlayerId::P0, PlayerId::P1] {
