@@ -58,7 +58,8 @@ fn closed_list_v3_frozen_286_opening_roots_ignore_hidden_composition_both_seats(
             let mut corpus = vec![forest; 40];
             corpus[..4].fill(id);
             let belief = LimitedBeliefV1::new([corpus]);
-            let session = rules_only_closed_list_game(decks, actor);
+            let mut session = rules_only_closed_list_game(decks, actor);
+            session.enable_limited_reveals_v3().unwrap();
             assert!(session.game_state().players[actor.index()].hand.iter().all(|&object| session.game_state().objects.get(object).card_def == id));
             assert!(!session.game_state().players[actor.index()].hand.is_empty());
             let FastActorResponseV1::Decision(decision) = session.current_response() else { panic!("{name}: no opening decision") };
