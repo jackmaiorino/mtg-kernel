@@ -8,7 +8,7 @@ use crate::{
     state::Step,
 };
 
-fn owner(state: GameState) -> KaitoSession {
+pub(super) fn owner(state: GameState) -> KaitoSession {
     KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
         state,
         LimitedAppendixV1::FullPool,
@@ -16,7 +16,7 @@ fn owner(state: GameState) -> KaitoSession {
     .unwrap()
 }
 
-fn act(owner: &mut KaitoSession, choose: impl Fn(&A) -> bool) {
+pub(super) fn act(owner: &mut KaitoSession, choose: impl Fn(&A) -> bool) {
     let d = decision(owner);
     let backend = d.fixture_backend_v75();
     let index = backend.actions().iter().position(choose).unwrap();
@@ -32,11 +32,11 @@ fn act(owner: &mut KaitoSession, choose: impl Fn(&A) -> bool) {
     assert_eq!(owner.fixture_state(), native.kaito_fixture_state());
 }
 
-fn pass(owner: &mut KaitoSession) {
+pub(super) fn pass(owner: &mut KaitoSession) {
     act(owner, |action| matches!(action, A::Pass { .. }));
 }
 
-fn settle(owner: &mut KaitoSession) {
+pub(super) fn settle(owner: &mut KaitoSession) {
     for _ in 0..8 {
         if owner.fixture_state().stack.is_empty() {
             return;
@@ -46,7 +46,7 @@ fn settle(owner: &mut KaitoSession) {
     panic!("native spell or trigger did not settle");
 }
 
-fn tap_count(state: &GameState, actor: PlayerId) -> usize {
+pub(super) fn tap_count(state: &GameState, actor: PlayerId) -> usize {
     state.players[actor.index()]
         .battlefield
         .iter()

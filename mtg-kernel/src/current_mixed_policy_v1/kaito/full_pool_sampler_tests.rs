@@ -10,6 +10,7 @@ use crate::{
 };
 
 mod burn_draw;
+mod sacrifice_morbid;
 
 fn card(name: &str) -> u16 {
     crate::card_def::card_id_by_name(name).unwrap()
