@@ -1181,16 +1181,38 @@ pub(crate) mod statics {
         }
     }
 
+    pub(crate) fn uses_flagbearer_count_completion(spec: TargetSpec) -> bool {
+        use crate::standard_cards_v1::StandardTargetV1 as S;
+        if spec == TargetSpec::KickerControlledCreatures {
+            return true;
+        }
+        let max = crate::engine::target_count(spec);
+        // Larger generic menus either have a known simple roster, cannot
+        // select a battlefield object, or use a separate damage allocation.
+        crate::engine::target_min_count(spec) < max
+            && (max <= 2
+                || matches!(
+                    spec,
+                    TargetSpec::StandardV1(
+                        S::OneToThreeDistinctAnyTargetsV1
+                            | S::AnyNumberControlledNonlandNontokenPermanentsV1
+                            | S::CreatureThenGraveyardCardsV1
+                    )
+                ))
+    }
+
     /// The engine interleaves picking a target count and picking the targets.
     /// Rule 601.2c fixes the count first. For each possible count, only a
     /// complete assignment of that count can establish an obligation.
     pub(crate) fn optional_flagbearer_targets(
         state: &GameState,
+        spec: TargetSpec,
         chosen: &[Target],
         min: usize,
         max: usize,
         candidates: impl Fn(&[Target]) -> Vec<Target>,
     ) -> (Vec<Target>, bool) {
+        use crate::standard_cards_v1::StandardTargetV1 as S;
         let selected_flagbearer = chosen.iter().any(|target| is_flagbearer(state, target));
         let mut next = if chosen.len() < max {
             candidates(chosen)
@@ -1200,6 +1222,39 @@ pub(crate) mod statics {
         if selected_flagbearer {
             return (next, chosen.len() >= min);
         }
+        match spec {
+            TargetSpec::StandardV1(
+                S::OneToThreeDistinctAnyTargetsV1 | S::AnyNumberControlledNonlandNontokenPermanentsV1,
+            ) => {
+                // Distinct targets come from one independent roster. A
+                // non-Flagbearer pick cannot consume an eligible Flagbearer.
+                let available = if chosen.len() == max {
+                    candidates(&[]).iter().any(|target| is_flagbearer(state, target))
+                } else {
+                    next.iter().any(|target| is_flagbearer(state, target))
+                };
+                if available && chosen.len() + 1 == max {
+                    next.retain(|target| is_flagbearer(state, target));
+                }
+                return (next, chosen.len() >= min && (chosen.is_empty() || !available));
+            }
+            TargetSpec::StandardV1(S::CreatureThenGraveyardCardsV1) => {
+                // Only the first slot can target a permanent. The later
+                // graveyard roster is independent of the first choice.
+                if chosen.is_empty() {
+                    if next.iter().any(|target| is_flagbearer(state, target)) {
+                        next.retain(|target| is_flagbearer(state, target));
+                    }
+                    return (next, false);
+                }
+                if candidates(&[]).iter().any(|target| is_flagbearer(state, target)) {
+                    return (Vec::new(), false);
+                }
+                return (next, true);
+            }
+            _ => {}
+        }
+        debug_assert!(max <= 2);
         let obligations: Vec<_> = (min.max(chosen.len())..=max)
             .map(|count| {
                 (

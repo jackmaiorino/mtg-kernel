@@ -3897,8 +3897,7 @@ fn legal_targets_for_controller_from_source_unframed(
     let mut legal = legal_targets_unrestricted_v1(spec, targets_chosen, controller, source, state);
     // Standard Bearer and Coalition Honor Guard: Flagbearers must be chosen.
     #[cfg(feature = "eternal-fixtures")]
-    if spec != TargetSpec::KickerControlledCreatures && target_min_count(spec) == target_count(spec)
-    {
+    if !crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(spec) {
         crate::eternal_sideboard_s1d_v1::statics::restrict_to_flagbearers(
             state,
             controller,
@@ -5416,11 +5415,12 @@ fn activation_target_choices(
     {
         use crate::eternal_sideboard_s1d_v1::statics;
         let max = usize::from(target_count(ability.target_spec));
-        if min < max
+        if statics::uses_flagbearer_count_completion(ability.target_spec)
             && statics::flagbearer_requirement_applies(state, state.objects.get(source).controller)
         {
             return statics::optional_flagbearer_targets(
                 state,
+                ability.target_spec,
                 targets_chosen,
                 min,
                 max,
@@ -9386,7 +9386,7 @@ fn cast_target_choices(
     let candidates =
         |prefix: &[Target]| ordinary_next_cast_targets(def, pending, spec, prefix, state);
     #[cfg(feature = "eternal-fixtures")]
-    if (spec == TargetSpec::KickerControlledCreatures || max.is_some_and(|max| min < max))
+    if crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(spec)
         && crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
             state,
             pending.controller,
@@ -9394,7 +9394,7 @@ fn cast_target_choices(
     {
         use crate::eternal_sideboard_s1d_v1::statics;
         if let Some(max) = max {
-            return statics::optional_flagbearer_targets(state, chosen, min, max, candidates);
+            return statics::optional_flagbearer_targets(state, spec, chosen, min, max, candidates);
         }
         // KickerControlledCreatures has an unbounded set of distinct targets
         // from the same independent legal roster. A non-Flagbearer pick
@@ -14695,8 +14695,7 @@ pub(crate) fn validate_pending_cast(
         }
         #[cfg(feature = "eternal-fixtures")]
         if pending.kicked.is_some()
-            && (spec == TargetSpec::KickerControlledCreatures
-                || required_targets.is_some_and(|max| min_targets < max))
+            && crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(spec)
             && crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
                 state,
                 pending.controller,

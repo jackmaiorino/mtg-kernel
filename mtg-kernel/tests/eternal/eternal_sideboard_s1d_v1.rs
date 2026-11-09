@@ -1425,6 +1425,31 @@ fn flagbearers_constrain_optional_activation_without_requiring_a_target_both_sea
     }
 }
 
+#[test]
+fn flagbearers_constrain_a_wide_independent_target_roster() {
+    let mut state = plains();
+    put(&mut state, P1, "Standard Bearer", Zone::Battlefield);
+    let bearer = put(&mut state, P0, "Coalition Honor Guard", Zone::Battlefield);
+    let ordinary = (0..24)
+        .map(|_| put(&mut state, P0, "Llanowar Elves", Zone::Battlefield))
+        .collect::<Vec<_>>();
+    let spell = put(&mut state, P0, "Paradoxical Outcome", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    cast(&mut state, spell, &[Target::Object(ordinary[0])]);
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseTargets { can_finish: false, legal_targets, .. }
+            if legal_targets.len() == 24 && legal_targets.contains(&Target::Object(bearer))
+    ));
+    choose_target(&mut state, Target::Object(bearer));
+    assert!(matches!(next(&mut state), Decision::ChooseTargets { can_finish: true, .. }));
+    act(&mut state, Action::FinishEffectSelection);
+    settled(&mut state);
+    assert_eq!(zone(&state, bearer), Zone::Hand);
+    assert_eq!(zone(&state, ordinary[0]), Zone::Hand);
+    assert_eq!(zone(&state, ordinary[1]), Zone::Battlefield);
+}
+
 // ---- Martyr of Sands -------------------------------------------------------------
 
 #[test]
