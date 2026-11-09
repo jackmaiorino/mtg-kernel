@@ -119,6 +119,8 @@ pub struct KaitoObservationV75 {
     pub etali: Option<crate::etali_primal_storm_public_v1::FactsV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thousand_year_storm: Option<crate::thousand_year_storm_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scrawling_crawler: Option<crate::scrawling_crawler_public_v1::FactsV1>,
     pub complete_ordinary_observation: bool,
     pub owning_consumer_admitted: bool,
     pub projection_sha256: String,
@@ -166,6 +168,7 @@ pub fn producer_sha256() -> String {
             include_str!("kaito_observation_v75.rs"),
             include_str!("limited_mixed_consumer_v1.rs"),
             include_str!("limited_full_pool_consumer_v1.rs"),
+            include_str!("scrawling_crawler_public_v1.rs"),
             crate::limited_full_pool_consumer_v1::FROZEN_POOL_JSON_V1,
             include_str!("leyline_axe_public_v1.rs"),
             include_str!("leyline_axe_v1.rs"),
@@ -934,6 +937,10 @@ pub(crate) fn observe_parts_v75(
         projection_sha256: String::new(),
     };
     common.projection_sha256 = crate::elenda_observation_v52::commitment(&common)?;
+    let scrawling_crawler = (appendix == LimitedAppendixV1::FullPool)
+        .then(|| crate::scrawling_crawler_public_v1::FactsV1::capture(state, &common.common.projection.surface))
+        .transpose()
+        .map_err(RlContractError)?;
     let mut value = KaitoObservationV75 {
         schema: match appendix {
             LimitedAppendixV1::Legacy => SCHEMA,
@@ -1173,6 +1180,7 @@ pub(crate) fn observe_parts_v75(
             .then(|| crate::thousand_year_storm_public_v1::capture(state, actor_and_origin.0))
             .transpose()
             .map_err(RlContractError)?,
+        scrawling_crawler,
         complete_ordinary_observation: true,
         owning_consumer_admitted: false,
         projection_sha256: String::new(),
@@ -1195,6 +1203,14 @@ pub(crate) fn observe_parts_v75(
 /// historical row or terminal. Neither function grants action or restore authority.
 pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractError> {
     let actor = value.common.common.acting_player;
+    match (
+        value.schema == crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA,
+        &value.scrawling_crawler,
+    ) {
+        (true, Some(facts)) => facts.validate(&value.common.common.projection.surface).map_err(RlContractError)?,
+        (false, None) => {}
+        _ => return Err(RlContractError("Crawler facts require the FullPool observation schema".into())),
+    }
     let schema = match (
         &value.artist,
         &value.niv,

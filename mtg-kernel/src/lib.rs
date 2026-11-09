@@ -1013,6 +1013,7 @@ mod flamewake_phoenix_v1;
 
 pub mod drake_public_v53;
 pub mod optional_trigger_public_v1;
+pub mod scrawling_crawler_public_v1;
 mod optional_trigger_source_v1;
 #[cfg(all(
     test,

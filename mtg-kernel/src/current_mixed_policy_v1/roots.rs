@@ -15,6 +15,8 @@ mod discard_cost_spell_printing;
 mod utility_activation_printing;
 #[path = "ward_discount_creature_printing.rs"]
 mod ward_discount_creature_printing;
+#[path = "full_pool_burn_draw_printing.rs"]
+mod full_pool_burn_draw_printing;
 
 #[path = "bloodwitch_printing.rs"]
 mod bloodwitch_printing;
@@ -435,6 +437,10 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
     baseline_recipe(id, d)
+}
+
+pub(super) fn full_pool_burn_draw_printing(id: u16) -> Result<Option<Value>> {
+    full_pool_burn_draw_printing::printing(id)
 }
 
 pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {

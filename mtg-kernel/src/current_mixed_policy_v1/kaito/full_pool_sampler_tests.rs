@@ -9,6 +9,8 @@ use crate::{
     state::{GameState, Zone},
 };
 
+mod burn_draw;
+
 fn card(name: &str) -> u16 {
     crate::card_def::card_id_by_name(name).unwrap()
 }
