@@ -105,7 +105,7 @@ Each diagnostics line holds this process's cumulative counters, so differences b
 - `verified_bytes`: the verified-bytes memo's budget, entries, comparisons, misses by reason, hashes, records, copied bytes and evictions, and with resident reads (#592) the reads it served;
 - `retained_files`: logical file payload bytes across both caches, and how much repeats equal bytes at the same path;
 - `io`: pinned file reads by the fresh-source reader and checkpoint decodes. Process-cache hit revalidation uses a separate reader.
-- `process`: peak and current resident memory and CPU seconds, on Linux (on Windows, the peak working set and CPU). On macOS these are null, and the driver's `wait4` figures cover each sample.
+- `process`: peak and current resident memory, on Linux only, and CPU seconds. Elsewhere the memory fields are null, and the driver's `wait4` figures cover each sample.
 
 Outputs in `--out` (absent or empty):
 

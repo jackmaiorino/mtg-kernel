@@ -509,16 +509,9 @@ fn resident_bytes_v1() -> (Option<u64>, Option<u64>) {
     (kib("VmHWM:"), kib("VmRSS:"))
 }
 
-/// Peak working set in bytes; the current one is not read.
-#[cfg(windows)]
-fn resident_bytes_v1() -> (Option<u64>, Option<u64>) {
-    (
-        crate::kernel_native_search_calibration_runner_v1::peak_working_set_bytes_v1(),
-        None,
-    )
-}
-
-#[cfg(not(any(windows, target_os = "linux")))]
+/// Not read off Linux: a benchmark driver records each process's peak
+/// resident memory itself (`wait4`).
+#[cfg(not(target_os = "linux"))]
 fn resident_bytes_v1() -> (Option<u64>, Option<u64>) {
     (None, None)
 }
