@@ -206,7 +206,7 @@ fn prompt(
         .collect();
     let max =
         u16::try_from(candidates.len()).map_err(|_| "extraction search exceeds choice width")?;
-    state
+    let _ = state
         .preflight_library_shuffle(owner)
         .map_err(|e| e.to_string())?;
     Ok(Some((
