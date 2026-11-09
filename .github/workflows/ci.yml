@@ -680,7 +680,9 @@ jobs:
         if: runner.environment == 'github-hosted'
         uses: actions/download-artifact@v4
         with:
-          pattern: limited-build-${{ matrix.os }}-*-${{ github.run_attempt }}
+          # A partial retry keeps successful producer artifacts from the prior
+          # attempt. Every match belongs to this run and its immutable head.
+          pattern: limited-build-${{ matrix.os }}-*
           merge-multiple: true
           path: limited-build
 
