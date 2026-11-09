@@ -104,7 +104,8 @@ pub struct AllocationCountersV1 {
     pub allocations: u64,
     /// Bytes currently allocated.
     pub live_bytes: u64,
-    /// The highest `live_bytes` since the last [`AllocationProbeV1::reset_peak_v1`].
+    /// The highest `live_bytes` since the last [`AllocationProbeV1::reset_peak_v1`],
+    /// counting both blocks of a reallocation that moved.
     pub peak_live_bytes: u64,
 }
 

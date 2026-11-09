@@ -75,9 +75,16 @@ unsafe impl GlobalAlloc for CountingAllocatorV1 {
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         let moved = unsafe { mtg_kernel::FastAllocatorV1.realloc(pointer, layout, new_size) };
         if !moved.is_null() {
-            // A reallocation counts as one allocation of its new size.
-            Self::shrank(layout.size());
-            Self::grew(new_size);
+            // A reallocation counts as one allocation of its new size. A
+            // block that moved was live twice during the copy, so the peak
+            // counts both before the old one is released.
+            if moved == pointer {
+                Self::shrank(layout.size());
+                Self::grew(new_size);
+            } else {
+                Self::grew(new_size);
+                Self::shrank(layout.size());
+            }
         }
         moved
     }

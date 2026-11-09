@@ -26,8 +26,9 @@ cargo build --release --locked -p mtg-kernel --features checkpoint-codec-bench-v
 cp target/release/examples/checkpoint_codec_bench_v1 /abs/bins/bench-<sha>
 ```
 
-That build needs a machine with about 32 GB of RAM (it was OOM-killed at
-15 GiB). On a smaller machine, correctness and smoke runs can use an override
+Plan on a machine with about 32 GB of RAM for the checked-in profile: with it,
+the library's test build was OOM-killed at 15 GiB, and this build compiles the
+same library. On a smaller machine, correctness and smoke runs can use an override
 such as `CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`
 (about 15.5 GiB with swap, `-j 4`), applied identically to every build being
 compared, and their timings must be labelled as coming from that profile.
