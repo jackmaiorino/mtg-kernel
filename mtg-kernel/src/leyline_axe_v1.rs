@@ -10,6 +10,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod sampling;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OpeningV1 {
@@ -135,22 +137,26 @@ fn kept_hands(state: &GameState) -> Result<Option<[Vec<ObjectLinkV4>; 2]>, Strin
         links(state, &state.players[1].hand)?,
     ]))
 }
+fn candidates_for(
+    state: &GameState,
+    hand: &[ObjectLinkV4],
+) -> Result<Vec<ObjectLinkV4>, String> {
+    let mut result = Vec::new();
+    for link in hand {
+        let object = state.objects.try_get(link.object).ok_or("opening candidate absent")?;
+        if definition(object.card_def) {
+            result.push(*link);
+        }
+    }
+    Ok(result)
+}
+
 fn candidates(
     state: &GameState,
     hands: &[Vec<ObjectLinkV4>; 2],
 ) -> Result<Vec<ObjectLinkV4>, String> {
-    let mut result = Vec::new();
-    for player in [state.starting_player, state.starting_player.opponent()] {
-        for link in &hands[player.index()] {
-            let object = state
-                .objects
-                .try_get(link.object)
-                .ok_or("opening candidate absent")?;
-            if definition(object.card_def) {
-                result.push(*link);
-            }
-        }
-    }
+    let mut result = candidates_for(state, &hands[state.starting_player.index()])?;
+    result.extend(candidates_for(state, &hands[state.starting_player.opponent().index()])?);
     Ok(result)
 }
 fn already_started(state: &GameState) -> bool {
@@ -254,6 +260,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         .collect::<Vec<_>>();
     if inputs.is_empty() {
         if state.leyline_opening_v1.is_some()
+            || state.leyline_sampled_history_v1.is_some()
             || state
                 .engine
                 .event_history
@@ -272,7 +279,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     validate_kept_input(state, at, original)?;
     if original.starting_player != state.starting_player
         || original.candidates.is_empty()
-        || original.candidates != candidates(state, &original.hands)?
+        || original.candidates != sampling::validated_candidates(state, at as u64, original)?
         || original.hands.iter().any(|h| h.len() > 7)
     {
         return Err("opening-hand original roster changed".into());

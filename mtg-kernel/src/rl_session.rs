@@ -8674,6 +8674,7 @@ impl FastActorSessionV1 {
         let mut sampled = self.clone();
         sampled.state.sampled_history_v1 = root.sampled_history.clone();
         if typed_full_pool {
+            let opening = crate::leyline_axe_v1::sampling::prepare(&mut sampled.state, root.actor)?;
             crate::limited_match_v1::curator_sampling_v1::rewrite(
                 &mut sampled.state,
                 root.actor,
@@ -8683,6 +8684,9 @@ impl FastActorSessionV1 {
                 root.known_names.clone(),
                 &root.library_minima,
             )?;
+            if let Some(future) = opening {
+                future.rebind(&mut sampled.state)?;
+            }
         } else {
             closed_list_v2::rewrite_names(
                 &mut sampled.state,
