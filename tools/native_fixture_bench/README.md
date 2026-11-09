@@ -85,7 +85,11 @@ For every sample, the driver records:
 - durable completed iterations, the state at each boundary and storage bytes;
 - the cache diagnostics file, from `MTG_KERNEL_CACHE_DIAGNOSTICS_V1`.
 
-The driver sets `MTG_KERNEL_CACHE_DIAGNOSTICS_V1` for every sample. A build without that variable ignores it. `--env KEY=VALUE` and `--arm-env ARM:KEY=VALUE` pass extra settings to the samples.
+The driver sets `MTG_KERNEL_CACHE_DIAGNOSTICS_V1` for every sample by default.
+Use `--no-cache-diagnostics` for a matched timing run that excludes diagnostic
+report creation. It also removes an inherited diagnostics path from the sample
+environment. A build without support for that variable ignores it.
+`--env KEY=VALUE` and `--arm-env ARM:KEY=VALUE` pass extra settings to the samples.
 
 Each diagnostics line holds this process's cumulative counters, so differences between lines give one iteration's. The sections are:
 

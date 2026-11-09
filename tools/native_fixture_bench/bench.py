@@ -257,18 +257,52 @@ def generate(args) -> int:
     return 0
 
 
-def validate_fixture(fixture: dict, root: Path) -> None:
-    if fixture.get("schema") != FIXTURE_SCHEMA:
+def matches_fixture_path(value, expected: Path) -> bool:
+    if not isinstance(value, str):
+        return False
+    path = Path(value)
+    return path.is_absolute() and path.resolve() == expected
+
+
+def validate_fixture(fixture: dict, root: Path) -> dict[str, dict]:
+    if not isinstance(fixture, dict) or fixture.get("schema") != FIXTURE_SCHEMA:
         raise BenchError(f"not a {FIXTURE_SCHEMA} manifest")
-    if Path(fixture["root"]) != root:
-        raise BenchError(f"fixture root {fixture['root']} is not {root}")
-    for case in fixture["cases"]:
-        config = Path(case["config"]["path"])
-        if sha256_file(config) != case["config"]["sha256"]:
-            raise BenchError(f"case {case['name']}: {config} changed since generation")
-        expected = root / "work" / case["name"] / "run"
-        if Path(case["output_directory"]) != expected:
-            raise BenchError(f"case {case['name']} does not write to {expected}")
+    if not matches_fixture_path(fixture.get("root"), root):
+        raise BenchError(f"fixture root {fixture.get('root')} is not {root}")
+    cases = fixture.get("cases")
+    if not isinstance(cases, list) or not cases:
+        raise BenchError("fixture must contain at least one case")
+    configs = {}
+    for case in cases:
+        name = case.get("name") if isinstance(case, dict) else None
+        if (not isinstance(name, str) or not name
+                or any(not (c.isascii() and (c.isalnum() or c in "-_")) for c in name)
+                or name in configs):
+            raise BenchError(f"invalid or duplicate fixture case {name!r}")
+        pin = case.get("config")
+        config_path = root / "cases" / name / "config.json"
+        if not isinstance(pin, dict) or not matches_fixture_path(pin.get("path"), config_path):
+            raise BenchError(f"case {name}: config does not name {config_path}")
+        try:
+            data = config_path.read_bytes()
+            if hashlib.sha256(data).hexdigest() != pin.get("sha256"):
+                raise BenchError(f"case {name}: {config_path} changed since generation")
+            config = json.loads(data)
+        except (OSError, ValueError) as error:
+            raise BenchError(f"case {name}: cannot read pinned config: {error}") from error
+        expected = root / "work" / name / "run"
+        if (not isinstance(config, dict)
+                or not matches_fixture_path(case.get("output_directory"), expected)
+                or not matches_fixture_path(config.get("output_directory"), expected)):
+            raise BenchError(f"case {name}: manifest and config must write to {expected}")
+        iterations = config.get("iterations")
+        if (not isinstance(iterations, list) or not iterations
+                or type(case.get("iterations")) is not int or len(iterations) != case["iterations"]):
+            raise BenchError(f"case {name}: manifest and config iteration counts differ")
+        if "initial_source" in case and config.get("initial_source") != case["initial_source"]:
+            raise BenchError(f"case {name}: manifest and config initial sources differ")
+        configs[name] = config
+    return configs
 
 
 # ---------------------------------------------------------------- processes
@@ -367,9 +401,13 @@ def tree_files(root: Path) -> dict[str, Path]:
 
 def map_pin(path, prefix: str) -> str | None:
     """A pin's absolute path inside the fixed run directory, as a tree path."""
-    if isinstance(path, str) and path.startswith(prefix + "/"):
-        return path[len(prefix) + 1:]
-    return None
+    if not isinstance(path, str):
+        return None
+    try:
+        relative = Path(path).relative_to(prefix)
+    except ValueError:
+        return None
+    return relative.as_posix() if relative.parts and ".." not in relative.parts else None
 
 
 def mapped_json(tree: Path, prefix: str, pin) -> dict | None:
@@ -780,7 +818,7 @@ def run(args) -> int:
         matches[0]["env"].update(parse_assignments([assignment], "--arm-env"))
     for env in [shared_env, *(arm["env"] for arm in arms.values())]:
         if DIAGNOSTICS_ENV in env:
-            raise BenchError(f"the driver sets {DIAGNOSTICS_ENV} for every sample")
+            raise BenchError(f"the driver controls {DIAGNOSTICS_ENV} for every sample")
     known = {case["name"]: case for case in fixture["cases"]}
     cases = args.cases.split(",") if args.cases else list(known)
     for case in cases:
@@ -825,6 +863,7 @@ def run(args) -> int:
                          "is compared with it",
             "max_wall_seconds": args.max_wall_seconds,
             "keep_runs": args.keep_runs,
+            "cache_diagnostics": not args.no_cache_diagnostics,
         },
         "plan": plan,
     }
@@ -835,7 +874,10 @@ def run(args) -> int:
     for entry in plan:
         arm = arms[entry["arm_letter"]]
         case = known[entry["case"]]
-        sample = run_sample(entry, arm, case, out, shared_env, args.max_wall_seconds)
+        sample = run_sample(
+            entry, arm, case, out, shared_env, args.max_wall_seconds,
+            cache_diagnostics=not args.no_cache_diagnostics,
+        )
         reference = references.get(entry["case"])
         if sample["ok"] and reference is None:
             references[entry["case"]] = sample
@@ -1046,18 +1088,47 @@ def receipt(args) -> int:
     return 0
 
 
+def require_completed_sample(result: dict, states: list[dict], tree: Path,
+                             prefix: str, expected: int) -> None:
+    if result.get("complete") is not True:
+        raise BenchError("the run did not report completion")
+    pins = result.get("iterations")
+    if (result.get("completed_iterations") != expected
+            or result.get("planned_iterations") != expected
+            or not isinstance(pins, list) or len(pins) != expected):
+        raise BenchError(f"the run did not report all {expected} planned iterations")
+    if ([row["iteration"] for row in states] != list(range(expected))
+            or any(not row["state_sha256"] or not row["checkpoint_sha256"] for row in states)):
+        raise BenchError(f"the run lacks {expected} durable iteration boundaries")
+    for index, pin in enumerate(pins):
+        relative = f"iterations/{index:06d}/complete.json"
+        if (not isinstance(pin, dict) or map_pin(pin.get("path"), prefix) != relative
+                or sha256_file(tree / relative) != pin.get("sha256")):
+            raise BenchError(f"iteration {index}: durable completion does not match its pin")
+    completion = tree / "completion.json"
+    if not completion.is_file() or read_json(completion) != result:
+        raise BenchError("the durable completion does not match the run result")
+
+
 def run_sample(entry: dict, arm: dict, case: dict, out: Path, shared_env: dict,
-               max_wall_seconds: float | None) -> dict:
+               max_wall_seconds: float | None, *, cache_diagnostics: bool = True) -> dict:
     name = f"{entry['ordinal']:03d}-{entry['kind']}-{entry['position']}-{arm['name']}"
     directory = out / "runs" / entry["case"] / name
+    if not directory.resolve().is_relative_to(out.resolve()):
+        raise BenchError("sample directory escapes the requested output directory")
     directory.mkdir(parents=True)
     work = Path(case["output_directory"])
+    expected_work = work.resolve()
     config = case["config"]["path"]
     env = dict(os.environ)
     env.update(shared_env)
     env.update(arm["env"])
-    env[DIAGNOSTICS_ENV] = str(directory / "diagnostics.jsonl")
+    if cache_diagnostics:
+        env[DIAGNOSTICS_ENV] = str(directory / "diagnostics.jsonl")
+    else:
+        env.pop(DIAGNOSTICS_ENV, None)
     sample = {"schema": SAMPLE_SCHEMA, **entry, "arm": arm["name"], "binary_sha256": arm["sha256"],
+              "cache_diagnostics": cache_diagnostics,
               "directory": str(directory.relative_to(out)),
               "run_directory": str((directory / "run").relative_to(out))}
     processes = []
@@ -1079,7 +1150,12 @@ def run_sample(entry: dict, arm: dict, case: dict, out: Path, shared_env: dict,
         sample["error"] = str(error)
     finally:
         if work.exists():
-            shutil.move(str(work), str(directory / "run"))
+            destination = directory / "run"
+            if (work.resolve() != expected_work
+                    or not destination.resolve().is_relative_to(out.resolve())):
+                sample["error"] = "run archive path changed while the sample was running"
+            else:
+                shutil.move(str(work), str(destination))
     final = processes[-1] if processes else None
     sample["processes"] = processes
     sample["process"] = final or {"wall_seconds": 0.0, "max_rss_mib": 0.0}
@@ -1106,8 +1182,11 @@ def run_sample(entry: dict, arm: dict, case: dict, out: Path, shared_env: dict,
     if (tree / "run.json").is_file():
         recorded = read_json(tree / "run.json")
         sample["run_provenance"] = {key: recorded.get(key) for key in sorted(PROVENANCE_KEYS)}
-    if "error" not in sample and result.get("complete") is not True:
-        sample["error"] = "the run did not report completion"
+    if "error" not in sample:
+        try:
+            require_completed_sample(result, sample["boundaries"], tree, prefix, case["iterations"])
+        except (BenchError, OSError, ValueError) as error:
+            sample["error"] = str(error)
     sample["ok"] = "error" not in sample
     sample["metrics"] = sample_metrics(sample) if sample["ok"] else {}
     return sample
@@ -1162,6 +1241,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="per arm and case: stop after one iteration, finish in a new process, compare")
     bench.add_argument("--env", action="append", help="KEY=VALUE for every sample")
     bench.add_argument("--arm-env", action="append", help="ARM:KEY=VALUE for one arm's samples")
+    bench.add_argument("--no-cache-diagnostics", action="store_true",
+                       help="disable diagnostic report creation for both timing arms")
     bench.add_argument("--max-wall-seconds", type=float, default=None, help="per process")
     bench.add_argument("--keep-runs", choices=("all", "reference"), default="all",
                        help="'reference' prunes only nonreference run trees that pass parity")

@@ -12,6 +12,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import bench  # noqa: E402
@@ -111,11 +112,13 @@ root = Path(os.environ["MTG_NATIVE_FIXTURE_ROOT"])
 root.mkdir(parents=True, exist_ok=True)
 config = root / "cases" / "fresh" / "config.json"
 config.parent.mkdir(parents=True)
-data = json.dumps({"seed": int(os.environ["MTG_NATIVE_FIXTURE_SEED"])}).encode()
+output = str(root.resolve() / "work/fresh/run")
+data = json.dumps({"output_directory": output, "iterations": [
+    {"seed": int(os.environ["MTG_NATIVE_FIXTURE_SEED"])}]}).encode()
 config.write_bytes(data)
 manifest = {"schema": "mtg-kernel-native-fixture/v1", "root": str(root.resolve()),
             "options": {"seed": int(os.environ["MTG_NATIVE_FIXTURE_SEED"])},
-            "cases": [{"name": "fresh", "output_directory": str(root.resolve() / "work/fresh/run"),
+            "cases": [{"name": "fresh", "output_directory": output, "iterations": 1,
                        "config": {"path": str(config), "sha256": hashlib.sha256(data).hexdigest()}}]}
 (root / "fixture.json").write_text(json.dumps(manifest, indent=2))
 print("NATIVE_FIXTURE_V1 " + json.dumps(manifest))
@@ -146,6 +149,65 @@ def make_fixture(root: Path, iterations: int = 2) -> None:
     fixture = {"schema": bench.FIXTURE_SCHEMA, "root": str(root), "cases": cases,
                "generator": {"git_commit": "test"}, "options": {}, "workload": {}}
     (root / "fixture.json").write_text(json.dumps(fixture))
+
+
+class FixtureValidationTest(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(dir=Path.cwd())
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name) / "fixture"
+        make_fixture(self.root)
+        self.fixture = bench.read_json(self.root / "fixture.json")
+        self.case = self.fixture["cases"][0]
+
+    def test_fixture_must_bind_case_count_and_config_output(self):
+        configs = bench.validate_fixture(self.fixture, self.root)
+        self.assertEqual(list(configs), ["fresh", "warm"])
+        with self.assertRaisesRegex(bench.BenchError, "at least one case"):
+            bench.validate_fixture({**self.fixture, "cases": []}, self.root)
+        self.case["iterations"] = 1
+        with self.assertRaisesRegex(bench.BenchError, "iteration counts differ"):
+            bench.validate_fixture(self.fixture, self.root)
+        self.case["iterations"] = 2
+        config_path = Path(self.case["config"]["path"])
+        config = {**configs["fresh"], "output_directory": str(self.root / "elsewhere")}
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        self.case["config"]["sha256"] = bench.sha256_file(config_path)
+        with self.assertRaisesRegex(bench.BenchError, "manifest and config must write"):
+            bench.validate_fixture(self.fixture, self.root)
+
+    def test_report_off_and_durable_result_check_use_the_actual_sample(self):
+        seen_environment = []
+
+        def run_fake(command, env, stdout, stderr, timeout):
+            seen_environment.append(env)
+            with (patch.object(sys, "argv", command), patch.dict(os.environ, env, clear=True),
+                  stdout.open("w", encoding="utf-8") as output, redirect_stdout(output)):
+                exec(FAKE_BINARY, {"__name__": "__main__"})
+            return {"timed_out": False, "exit_code": 0, "wall_seconds": 0.1,
+                    "max_rss_mib": 1.0, "user_seconds": 0.01, "sys_seconds": 0.01}
+
+        out = self.root.parent / "samples"
+        entry = {"ordinal": 0, "kind": "timed", "position": "A1", "case": "fresh"}
+        arm = {"name": "baseline", "binary": "fake", "sha256": "test", "env": {}}
+        with (patch.object(bench, "run_process", side_effect=run_fake),
+              patch.dict(os.environ, {bench.DIAGNOSTICS_ENV: "inherited.jsonl"})):
+            sample = bench.run_sample(entry, arm, self.case, out, {}, None, cache_diagnostics=False)
+        self.assertTrue(sample["ok"], sample.get("error"))
+        self.assertFalse(sample["cache_diagnostics"])
+        self.assertNotIn(bench.DIAGNOSTICS_ENV, seen_environment[0])
+        self.assertIsNone(sample["diagnostics"])
+        tree = out / sample["run_directory"]
+        result = bench.read_json(tree / "completion.json")
+        prefix = self.case["output_directory"]
+        with self.assertRaisesRegex(bench.BenchError, "planned iterations"):
+            bench.require_completed_sample(result, sample["boundaries"], tree, prefix, 3)
+        with self.assertRaisesRegex(bench.BenchError, "durable iteration boundaries"):
+            bench.require_completed_sample(result, sample["boundaries"][:1], tree, prefix, 2)
+        boundary = tree / "iterations/000001/complete.json"
+        boundary.write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(bench.BenchError, "durable completion does not match"):
+            bench.require_completed_sample(result, sample["boundaries"], tree, prefix, 2)
 
 
 class PlanAndRuleTest(unittest.TestCase):
