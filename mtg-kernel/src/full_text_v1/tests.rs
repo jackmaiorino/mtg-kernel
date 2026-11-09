@@ -887,9 +887,11 @@ fn donated_hermit_druid_pays_the_host_and_uses_the_selected_graveyard_top() {
             state.stack.last().unwrap().v4.ability_source_contract,
             Some(host)
         );
+        let surface = crate::surface_v2::HarnessSurfaceV2::new();
         for viewer in [player, player.opponent()] {
-            let view = public::observe(&state, viewer).unwrap();
-            let [producer] = view.producers.as_slice() else {
+            let numeric = crate::rl::observe_premodern_ordered_v1(&state, &surface, viewer, 0)
+                .unwrap();
+            let [producer] = numeric.ordered.producers.as_slice() else {
                 panic!("expected the actual donated activation");
             };
             assert_eq!(producer.stage, ProducerStageV1::Stack { position: 0 });
@@ -905,6 +907,17 @@ fn donated_hermit_druid_pays_the_host_and_uses_the_selected_graveyard_top() {
             assert_eq!(
                 producer.native_ability_index,
                 state.stack[0].v4.activated_ability_index
+            );
+            let stable = numeric.stable.unwrap();
+            let [stack_item] = stable.projection.stack.as_slice() else {
+                panic!("expected one native stack item in the numeric scene");
+            };
+            assert_eq!(stack_item.stack_index, 0);
+            assert_eq!(stack_item.source, producer.physical);
+            assert_eq!(stack_item.controller, player.into());
+            assert_eq!(
+                stack_item.stack_item_kind,
+                crate::rl::StackItemKindV2::ActivatedAbility
             );
             let human = public::observe_human(&state, viewer).unwrap();
             let [human_producer] = human.producers.as_slice() else {

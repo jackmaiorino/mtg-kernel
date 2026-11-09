@@ -8,12 +8,16 @@ use crate::{
     card_def::{CardType, Keywords, CARD_DEFS, KERNEL_CARDDB_HASH},
     continuous_characteristics_v1, engine, full_text_v1, graveyard_order_v1,
     ids::{ObjectId, PlayerId},
-    rl::{self, CardStableRefV1, PlayerSeatV1},
+    rl::{
+        self, CardPrivateV1, CardStableRefV1, FaceDownCardKnowledgeV1, KnownLibraryCardV4,
+        PlayerSeatV1, PublicObservationProjectionV2,
+    },
     state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Target, Zone},
 };
 use serde::Serialize;
 
 pub const SCHEMA_V1: &str = "mtg-kernel-premodern-ordered-public/v1";
+pub const NUMERIC_SCHEMA_V1: &str = "mtg-kernel-numeric-premodern-ordered/v1";
 pub const HUMAN_SCHEMA_V1: &str = "mtg-kernel-human-premodern-ordered-public/v1";
 pub const HUMAN_ORDER_SCHEMA_V1: &str = "mtg-kernel-human-premodern-graveyard-order/v1";
 
@@ -133,6 +137,26 @@ pub struct ObservationV1 {
     /// During ordering there is no stable post-batch battlefield text yet.
     pub full_text: Option<Vec<FullTextFormV1>>,
     pub producers: Vec<FullTextProducerV1>,
+}
+
+/// Common gameplay facts, with the same fixed-viewer privacy as the V2
+/// projection. The outer contract supplies the schema and ordered facts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NumericStableSceneV1 {
+    pub projection: PublicObservationProjectionV2,
+    pub own_hand: Vec<CardPrivateV1>,
+    pub known_library_cards: [Vec<KnownLibraryCardV4>; 2],
+    pub known_hand_cards: [Vec<CardPrivateV1>; 2],
+    pub known_face_down_cards: Vec<FaceDownCardKnowledgeV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NumericObservationV1 {
+    pub schema: &'static str,
+    pub step_index: u64,
+    pub ordered: ObservationV1,
+    /// Suspended batches have no stable gameplay scene until order commits.
+    pub stable: Option<NumericStableSceneV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -458,6 +482,7 @@ mod tests {
 
     #[test]
     fn paired_hidden_worlds_preserve_public_order_and_both_native_presentations() {
+        let surface = crate::surface_v2::HarnessSurfaceV2::new();
         for owner in [PlayerId::P0, PlayerId::P1] {
             let build = |hidden: &str| {
                 let mut state = GameState::new_from_libraries_with_graveyard_order_v1(
@@ -469,6 +494,8 @@ mod tests {
                 );
                 state.step = Step::Main1;
                 put(&mut state, owner.opponent(), hidden, Zone::Library);
+                put(&mut state, owner.opponent(), hidden, Zone::Hand);
+                put(&mut state, owner, "Forest", Zone::Hand);
                 let first = put(&mut state, owner, "Palinchron", Zone::Library);
                 let second = put(&mut state, owner, "Triskelion", Zone::Library);
                 event::propose_and_commit_batch(
@@ -493,6 +520,13 @@ mod tests {
                     observe_human(&a, viewer).unwrap(),
                     observe_human(&b, viewer).unwrap()
                 );
+                let numeric = rl::observe_premodern_ordered_v1(&a, &surface, viewer, 17).unwrap();
+                assert_eq!(
+                    numeric,
+                    rl::observe_premodern_ordered_v1(&b, &surface, viewer, 17).unwrap()
+                );
+                assert!(numeric.stable.is_none());
+                assert_eq!(numeric.ordered.order_choice.is_some(), viewer == owner);
             }
             assert!(observe_human(&a, owner.opponent())
                 .unwrap()
@@ -523,6 +557,19 @@ mod tests {
                 observe(&a, owner.opponent()).unwrap(),
                 observe(&b, owner.opponent()).unwrap()
             );
+            let numeric = rl::observe_premodern_ordered_v1(&a, &surface, owner, 18).unwrap();
+            assert_eq!(
+                numeric,
+                rl::observe_premodern_ordered_v1(&b, &surface, owner, 18).unwrap()
+            );
+            let scene = numeric.stable.unwrap();
+            assert_eq!(scene.own_hand[0].card_name, "Forest");
+            assert_eq!(scene.projection.hand_counts, [1, 1]);
+            assert!(scene.known_hand_cards[owner.opponent().index()].is_empty());
+            let opponent =
+                rl::observe_premodern_ordered_v1(&a, &surface, owner.opponent(), 18).unwrap();
+            assert_eq!(opponent.stable.unwrap().own_hand[0].card_name, "Island");
+            assert!(rl::observe_v2(&a, &surface, owner, 18).is_err());
         }
     }
 }
