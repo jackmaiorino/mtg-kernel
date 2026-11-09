@@ -281,13 +281,13 @@ fn write_v1(path: &Path, bytes: &[u8]) -> Result<String, String> {
 
 /// One synthetic RT1 batch: groups of 1 to 3 substeps, advantages in
 /// [-2, 2] and value targets in [-1, 1].
-struct SyntheticGroupV1 {
+pub(crate) struct SyntheticGroupV1 {
     records: Vec<(NativeFlatDecisionTensorV2, usize)>,
     advantage: f32,
     value_target: f32,
 }
 
-fn synthetic_batch_v1(
+pub(crate) fn synthetic_batch_v1(
     rng: &mut SplitMixV1,
     groups: usize,
     shape: ShapeV1,
@@ -312,7 +312,7 @@ fn synthetic_batch_v1(
         .collect()
 }
 
-fn groups_of_v1(batch: &[SyntheticGroupV1]) -> Vec<SGroupV1<'_>> {
+pub(crate) fn groups_of_v1(batch: &[SyntheticGroupV1]) -> Vec<SGroupV1<'_>> {
     batch
         .iter()
         .map(|group| SGroupV1 {

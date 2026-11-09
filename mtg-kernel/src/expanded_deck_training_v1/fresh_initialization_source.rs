@@ -682,8 +682,10 @@ pub(super) fn write_synthetic_fresh_source_v1(
 /// `compact_board_policy`/`compact_board_policy_v4`
 /// (`phase1_bo3_collection_v1/tests.rs`) use to make a real game terminate
 /// quickly by mutual decking), keeping the model, the payload bytes and
-/// every computed hash mutually consistent.
-#[cfg(test)]
+/// every computed hash mutually consistent. Also built for the opt-in
+/// checkpoint codec benchmark (`checkpoint_codec_bench_v1`), whose generated
+/// fixture starts from this source.
+#[cfg(any(test, feature = "checkpoint-codec-bench-v1"))]
 pub(crate) fn write_synthetic_fresh_source_with_parameters_v1(
     dir: &std::path::Path,
     feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,

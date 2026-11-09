@@ -840,6 +840,15 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             // from their graveyard to exile.
             move_cost(out, ZoneF::Graveyard, ZoneF::Exile, ObjF::AnyCard, n);
         }
+        CostComponent::ExileTopCardOfLibraryV1 => {
+            // The top card of the payer's library moves to exile.
+            move_cost(out, ZoneF::Library, ZoneF::Exile, ObjF::AnyCard, 1);
+        }
+        CostComponent::PutOtherCardsFromOwnGraveyardOnLibraryBottomV1(n) => {
+            // `n` cards the payer owns, other than the source, move from
+            // their graveyard to the bottom of their library.
+            move_cost(out, ZoneF::Graveyard, ZoneF::Library, ObjF::AnyCard, n);
+        }
         CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
             // One permanent the payer controls matching the filter moves to
             // its owner's hand (and leaves combat).

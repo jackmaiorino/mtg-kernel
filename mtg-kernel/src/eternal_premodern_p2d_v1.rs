@@ -34,7 +34,7 @@ use crate::eternal_cards_v1::EternalOpV1;
 use crate::eternal_legacy_e9a_v1::{battlefield, definition_name, live_link, TurnV1};
 use crate::eternal_premodern_p1a_v1::{
     destroy, destroy_batch, forbid_regeneration, halt, has_type, legal_object_target,
-    live_ability_source, queue_trigger, QueuedTriggerV1,
+    live_ability_source, queue_trigger,
 };
 use crate::event::{self, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
@@ -52,6 +52,17 @@ pub(crate) const SOLTARI_MONK: &str = "Soltari Monk";
 pub(crate) const SOLTARI_PRIEST: &str = "Soltari Priest";
 pub(crate) const VETERAN_BRAWLERS: &str = "Veteran Brawlers";
 
+/// The echo cost of a creature with echo: its colored mana and generic
+/// mana. Avalanche Riders {3}{R}; Karmic Guide {3}{W}{W} (Premodern wave
+/// P2c).
+pub(crate) fn echo_cost(name: &str) -> Option<(&'static [ManaColor], u8)> {
+    match name {
+        AVALANCHE_RIDERS => Some((&[ManaColor::R], 3)),
+        crate::eternal_premodern_p2c_v1::KARMIC_GUIDE => Some((&[ManaColor::W, ManaColor::W], 3)),
+        _ => None,
+    }
+}
+
 // ---- State ------------------------------------------------------------------------
 
 /// Per-game state for this module's cards, kept inside
@@ -60,9 +71,6 @@ pub(crate) const VETERAN_BRAWLERS: &str = "Veteran Brawlers";
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct P2dStateV1 {
-    /// Triggers detected by hooks, waiting for the next trigger collection.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub queued_triggers: Vec<QueuedTriggerV1>,
     /// Avalanche Riders that came under a player's control since that
     /// player's last upkeep.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -106,7 +114,7 @@ pub enum P2dOpV1 {
     CaretakerV1,
     /// Avalanche Riders: destroy target land 0.
     RidersDestroyV1,
-    /// Echo: pay {3}{R}, or sacrifice the source.
+    /// Echo: pay the source's echo cost, or sacrifice the source.
     EchoPayV1,
     /// Echo: sacrifice the source (the unpaid option).
     EchoSacrificeV1,
@@ -213,7 +221,7 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
 
 /// Queued triggers owned by this module's cards.
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
-    name == AVALANCHE_RIDERS && *effect == echo_trigger()
+    echo_cost(name).is_some() && *effect == echo_trigger()
 }
 
 // ---- Effect leaves ------------------------------------------------------------------
@@ -283,7 +291,13 @@ pub(crate) fn execute(op: &P2dOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         P2dOpV1::EchoPayV1 => {
-            if !crate::engine::pay_effect_mana(ctx.controller, &[ManaColor::R], 3, state) {
+            let cost = live_ability_source(ctx, state)
+                .and_then(|source| definition_name(state, source))
+                .and_then(echo_cost);
+            let paid = cost.is_some_and(|(colors, generic)| {
+                crate::engine::pay_effect_mana(ctx.controller, colors, generic, state)
+            });
+            if !paid {
                 echo_sacrifice(ctx, state);
             }
         }
@@ -311,11 +325,27 @@ pub(crate) fn apply_entry(state: &mut GameState, object: ObjectId) {
     let live = state.objects.get(object);
     if live.zone != Zone::Battlefield
         || live.v4.face_index != 0
-        || definition_name(state, object) != Some(AVALANCHE_RIDERS)
+        || definition_name(state, object).is_none_or(|name| echo_cost(name).is_none())
     {
         return;
     }
     let (link, controller) = (live_link(state, object), live.controller);
+    let due = &mut p2d_state(state).echo_due;
+    due.retain(|(entry, _)| entry.object != object);
+    due.push((link, controller));
+}
+
+/// Called as `object` came under `controller`'s control: a creature with echo
+/// owes it at that player's next upkeep (702.30a).
+pub(crate) fn control_changed(state: &mut GameState, object: ObjectId, controller: PlayerId) {
+    let live = state.objects.get(object);
+    if live.zone != Zone::Battlefield
+        || live.v4.face_index != 0
+        || definition_name(state, object).is_none_or(|name| echo_cost(name).is_none())
+    {
+        return;
+    }
+    let link = live_link(state, object);
     let due = &mut p2d_state(state).echo_due;
     due.retain(|(entry, _)| entry.object != object);
     due.push((link, controller));
@@ -359,26 +389,7 @@ pub(crate) fn delayed_triggers(
         }
     }
     prune(state);
-    let Some(eternal) = state.eternal_v1.as_mut() else {
-        return Vec::new();
-    };
-    if eternal.p2d.queued_triggers.is_empty() {
-        return Vec::new();
-    }
-    std::mem::take(&mut eternal.p2d.queued_triggers)
-        .into_iter()
-        .map(|queued| {
-            let mut pending = crate::eternal_cards_v1::delayed_trigger(
-                queued.source,
-                queued.controller,
-                queued.effect,
-            );
-            if let Some(spec) = queued.target_spec {
-                pending.target_spec = spec;
-            }
-            pending
-        })
-        .collect()
+    Vec::new()
 }
 
 /// The beginning of a turn ends the last turn's records.

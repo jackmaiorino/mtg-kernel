@@ -89,6 +89,11 @@ event-sample-harvest-v1 = []
 # Non-Windows builds retain parser/stub support but never emit a production
 # build-capture tuple.
 native-training-store-v2-production = []
+# Measurement only (mtg-kernel#596): the opt-in checkpoint codec benchmark
+# (examples/checkpoint_codec_bench_v1.rs) and the synthetic fresh source
+# builder its fixture needs outside tests. Off by default; default builds
+# carry neither.
+checkpoint-codec-bench-v1 = []
 
 [[bin]]
 name = "kernel_limited_common_env"
@@ -185,6 +190,10 @@ required-features = ["flat-action-diagnostic"]
 [[example]]
 name = "native_flat_tensorizer_diagnostic"
 required-features = ["native-flat-tensorizer-diagnostic"]
+
+[[example]]
+name = "checkpoint_codec_bench_v1"
+required-features = ["checkpoint-codec-bench-v1"]
 
 [[bin]]
 name = "saved_input_scalar_diagnostic"

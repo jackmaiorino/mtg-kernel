@@ -158,31 +158,13 @@ pub(crate) fn blocker_allowed(state: &GameState, blocker: ObjectId) -> bool {
 
 // ---- Shared Triumph's as-enters choice ---------------------------------------------------
 
-/// The creature types a Shared Triumph may name: those of every creature
-/// object in the game, in stable subtype order. Naming any other type is
-/// equivalent, so these are the distinct choices.
-pub fn triumph_type_options(state: &GameState) -> Vec<Subtype> {
-    let mut types: Vec<Subtype> = Vec::new();
-    for (_, object) in state.objects.iter() {
-        let Some(def) = CARD_DEFS.get(usize::from(object.card_def)) else {
-            continue;
-        };
-        if !def.has_type(CardType::Creature) {
-            continue;
-        }
-        for &subtype in def.subtypes {
-            if subtype.is_creature_type()
-                && !types.iter().any(|known| known.same_subtype_as(subtype))
-            {
-                types.push(subtype);
-            }
-        }
-    }
-    types.sort_by_key(|subtype| subtype.stable_id());
-    if types.is_empty() {
-        types.push(Subtype::CREATURE_TYPES[0]);
-    }
-    types
+/// The creature types a Shared Triumph entering under `player` may name:
+/// those of the creature cards `player` owns (not tokens or copies), as for
+/// Cavern of Souls, so the number of options reveals nothing hidden in the
+/// opponent's hand or library. Naming any other type is equivalent, so these
+/// are the distinct choices.
+pub fn triumph_type_options(state: &GameState, player: PlayerId) -> Vec<Subtype> {
+    crate::eternal_cards_v1::e3::cavern_type_options(state, player)
 }
 
 /// The Shared Triumph that just entered and has not chosen a type.
@@ -205,7 +187,10 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     Some(crate::engine::Decision::ChooseEffectOption {
         player: state.objects.get(triumph).controller,
         source: triumph,
-        option_count: u16::try_from(triumph_type_options(state).len()).unwrap_or(u16::MAX),
+        option_count: u16::try_from(
+            triumph_type_options(state, state.objects.get(triumph).controller).len(),
+        )
+        .unwrap_or(u16::MAX),
     })
 }
 
@@ -215,7 +200,7 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
     let Some(triumph) = triumph_needing_type(state) else {
         return Ok(false);
     };
-    let subtype = *triumph_type_options(state)
+    let subtype = *triumph_type_options(state, state.objects.get(triumph).controller)
         .get(usize::from(option))
         .ok_or("creature type option is out of range")?;
     let link = live_link(state, triumph);

@@ -425,7 +425,7 @@ pub(crate) fn land_type_setter(
 /// Split cards (708): Fire // Ice. The second half is cast as the card's
 /// Adventure form, and goes to the graveyard as it resolves.
 pub(crate) fn split_card(name: &str) -> bool {
-    name == FIRE_ICE
+    name == FIRE_ICE || name == crate::eternal_premodern_p2c_v1::LIFE_DEATH
 }
 
 /// The split card spell `item`'s half: `true` for the second.

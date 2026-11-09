@@ -295,6 +295,9 @@ pub mod eternal_legacy_e9a_v1;
 /// Vintage Lurrus card programs and companions of the eternal catalog (wave
 /// E4b).
 pub mod eternal_lurrus_v1;
+/// The eternal catalog's outside-the-game zone: each player's sideboard cards,
+/// private to their owner, and the wish and learn effects that read them.
+pub mod eternal_outside_game_v1;
 /// Pauper Affinity, Tron and Ephemerate card programs of the eternal
 /// catalog (wave E6a).
 pub mod eternal_pauper_e6a_v1;
@@ -315,6 +318,9 @@ pub mod eternal_premodern_p2a_v1;
 /// Premodern Survival and Madness Threshold card programs of the eternal
 /// catalog (wave P2b).
 pub mod eternal_premodern_p2b_v1;
+/// Premodern Reanimator and Full English Breakfast card programs of the
+/// eternal catalog (wave P2c).
+pub mod eternal_premodern_p2c_v1;
 /// Premodern White Weenie and Mono-Red Control card programs of the eternal
 /// catalog (wave P2d).
 pub mod eternal_premodern_p2d_v1;
