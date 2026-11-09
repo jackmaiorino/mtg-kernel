@@ -1969,7 +1969,9 @@ pub fn observe_v1(
     step_index: u64,
 ) -> Result<ObservationV1> {
     if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state) {
-        return Err(RlContractError("Meddling Mage named entry requires its consumer successor".into()));
+        return Err(RlContractError(
+            "Meddling Mage named entry requires its consumer successor".into(),
+        ));
     }
     crate::continuous_characteristics_v1::refuse_land_override_consumer(state, acting_player)
         .map_err(RlContractError)?;
@@ -2341,7 +2343,9 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<ObservationV2> {
     if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state) {
-        return Err(RlContractError("Meddling Mage named entry requires its consumer successor".into()));
+        return Err(RlContractError(
+            "Meddling Mage named entry requires its consumer successor".into(),
+        ));
     }
     if !matches!(
         text_mode,

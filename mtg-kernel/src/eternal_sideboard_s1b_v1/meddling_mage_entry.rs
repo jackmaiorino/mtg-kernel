@@ -17,7 +17,10 @@ pub(crate) fn owns_definition(id: u16) -> bool {
 
 pub(crate) fn potentially_enters(state: &GameState) -> bool {
     cfg!(feature = "eternal-fixtures")
-        && state.objects.iter().any(|(_, object)| owns_definition(object.card_def))
+        && state
+            .objects
+            .iter()
+            .any(|(_, object)| owns_definition(object.card_def))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,11 +55,14 @@ pub(crate) fn choice(
             if final_change.to_zone != Zone::Battlefield {
                 return None;
             }
-            let controller = change.battlefield_controller.unwrap_or(if object.zone == Zone::Stack {
-                object.controller
-            } else {
-                object.owner
-            });
+            let controller =
+                change
+                    .battlefield_controller
+                    .unwrap_or(if object.zone == Zone::Stack {
+                        object.controller
+                    } else {
+                        object.owner
+                    });
             (
                 controller,
                 object.card_def,
@@ -78,8 +84,10 @@ pub(crate) fn choice(
         card_def,
         original,
         suppressed: crate::eternal_legacy_e7a_v1::active_dress_down_timestamp(
-            state, original.map(|source| source.source),
-        ).is_some(),
+            state,
+            original.map(|source| source.source),
+        )
+        .is_some(),
     })
 }
 
@@ -123,19 +131,32 @@ pub(crate) fn record(state: &mut GameState, journal: JournalV1) {
     state
         .engine
         .event_history
-        .push(CommittedEvent::MeddlingMageEntryV1 { journal: Box::new(journal) });
+        .push(CommittedEvent::MeddlingMageEntryV1 {
+            journal: Box::new(journal),
+        });
 }
 
 pub(crate) fn decision(choice: &ChoiceV1, group: Option<u16>) -> Result<Decision, String> {
     let groups = nameable_nonland();
     let options = if let Some(group) = group {
-        groups.get(usize::from(group)).ok_or("Meddling Mage name group absent")?
-            .iter().map(|&id| CARD_DEFS[usize::from(id)].object_name.to_owned()).collect()
+        groups
+            .get(usize::from(group))
+            .ok_or("Meddling Mage name group absent")?
+            .iter()
+            .map(|&id| CARD_DEFS[usize::from(id)].object_name.to_owned())
+            .collect()
     } else {
-        groups.iter().map(|ids| {
-            CARD_DEFS[usize::from(ids[0])].object_name.chars().next()
-                .expect("nonempty catalog name").to_string()
-        }).collect()
+        groups
+            .iter()
+            .map(|ids| {
+                CARD_DEFS[usize::from(ids[0])]
+                    .object_name
+                    .chars()
+                    .next()
+                    .expect("nonempty catalog name")
+                    .to_string()
+            })
+            .collect()
     };
     Ok(Decision::ChooseMeddlingMageNameV1 {
         player: choice.controller,
@@ -156,16 +177,23 @@ pub(crate) fn valid_index(group: Option<u16>, index: u16) -> bool {
 }
 
 pub(crate) fn name(group: u16, index: u16) -> Option<u16> {
-    nameable_nonland().get(usize::from(group))?.get(usize::from(index)).copied()
+    nameable_nonland()
+        .get(usize::from(group))?
+        .get(usize::from(index))
+        .copied()
 }
 
 fn is_nameable(named: u16) -> bool {
-    CARD_DEFS.get(usize::from(named)).is_some_and(|def|
-        def.is_executable() && !def.is_token && !def.types.contains(&CardType::Land))
+    CARD_DEFS.get(usize::from(named)).is_some_and(|def| {
+        def.is_executable() && !def.is_token && !def.types.contains(&CardType::Land)
+    })
 }
 
 pub(crate) fn requires_successor(state: &GameState) -> bool {
-    state.engine.event_history.has_any(&[crate::event_history_v1::EventKindV1::MeddlingMageEntryV1])
+    state
+        .engine
+        .event_history
+        .has_any(&[crate::event_history_v1::EventKindV1::MeddlingMageEntryV1])
 }
 
 pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
@@ -173,12 +201,14 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
     if owner::locally_owned(state) {
         return Ok(());
     }
-    if state.engine.pending_effect.as_ref().is_some_and(|pending|
+    if state.engine.pending_effect.as_ref().is_some_and(|pending| {
         pending.resolving_item.kind == crate::state::StackItemKind::Spell
             && pending.choice.is_some()
-            && state.objects.try_get(pending.resolving_item.source)
-                .is_some_and(|source| owns_definition(source.card_def)))
-    {
+            && state
+                .objects
+                .try_get(pending.resolving_item.source)
+                .is_some_and(|source| owns_definition(source.card_def))
+    }) {
         return Err("a legacy Meddling Mage choice cannot resume under the pre-entry owner".into());
     }
     if !requires_successor(state) {
@@ -193,23 +223,47 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
         };
         let index = u32::try_from(index).map_err(|_| "Meddling Mage event index overflow")?;
         match journal.as_ref() {
-            JournalV1::Started { .. } => { operations.insert(index, false); }
-            JournalV1::Named { operation, entry_history_index, source, named } => {
-                let actual = state.engine.event_history.get(*entry_history_index as usize);
+            JournalV1::Started { .. } => {
+                operations.insert(index, false);
+            }
+            JournalV1::Named {
+                operation,
+                entry_history_index,
+                source,
+                named,
+            } => {
+                let actual = state
+                    .engine
+                    .event_history
+                    .get(*entry_history_index as usize);
                 let entrant = match actual {
-                    Some(CommittedEvent::ZoneChange { object, to: Zone::Battlefield, .. })
+                    Some(CommittedEvent::ZoneChange {
+                        object,
+                        to: Zone::Battlefield,
+                        ..
+                    })
                     | Some(CommittedEvent::CreateToken { object, .. }) => *object,
                     _ => return Err("Meddling Mage name lost its actual entry".into()),
                 };
-                let link = ObjectLinkV4 { object: source.source, zone_change_count: source.zone_change_count };
+                let link = ObjectLinkV4 {
+                    object: source.source,
+                    zone_change_count: source.zone_change_count,
+                };
                 let Some(has_name) = operations.get_mut(operation) else {
                     return Err("Meddling Mage name has no open operation".into());
                 };
-                if *entry_history_index <= *operation || *entry_history_index >= index
-                    || entrant != source.source || source.zone != Zone::Battlefield
-                    || !owns_definition(source.card_def) || !is_nameable(*named)
+                if *entry_history_index <= *operation
+                    || *entry_history_index >= index
+                    || entrant != source.source
+                    || source.zone != Zone::Battlefield
+                    || !owns_definition(source.card_def)
+                    || !is_nameable(*named)
                     || !entrants.insert(link)
-                    || !names.iter().copied().filter(|(saved, _)| *saved == link).eq([(link, *named)])
+                    || !names
+                        .iter()
+                        .copied()
+                        .filter(|(saved, _)| *saved == link)
+                        .eq([(link, *named)])
                 {
                     return Err("Meddling Mage name or entry incarnation changed".into());
                 }
@@ -217,7 +271,9 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
             }
             JournalV1::Completed { operation } => {
                 if operations.remove(operation) != Some(true) {
-                    return Err("Meddling Mage operation ended without an actual named entry".into());
+                    return Err(
+                        "Meddling Mage operation ended without an actual named entry".into(),
+                    );
                 }
             }
         }
@@ -226,12 +282,16 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
         let Some((original, operation)) = owner::pending_original_operation(state) else {
             return Err("Meddling Mage entry has no live operation owner".into());
         };
-        if operations.len() != 1 || !operations.keys().all(|&index| matches!(
-            journal(state, index),
-            Some(JournalV1::Started { operation: recorded, original_sha256 })
-                if recorded.as_ref() == operation
-                    && owner::origin_digest_matches(original_sha256, original)
-        )) {
+        if operations.len() != 1
+            || !operations.keys().all(|&index| {
+                matches!(
+                    journal(state, index),
+                    Some(JournalV1::Started { operation: recorded, original_sha256 })
+                        if recorded.as_ref() == operation
+                            && owner::origin_digest_matches(original_sha256, original)
+                )
+            })
+        {
             return Err("Meddling Mage entry does not match its current operation".into());
         }
     }
@@ -249,27 +309,52 @@ pub(crate) fn commit(
     let source = AbilitySourceContractV4::capture(state, object);
     let actual = state.engine.event_history.get(entry);
     let matches_entry = match (choice.original, actual) {
-        (Some(original), Some(CommittedEvent::ZoneChange { object: entrant, from, to, .. })) =>
-            *entrant == object && original.source == object && original.zone == *from
-                && *to == Zone::Battlefield && original.owner == source.owner
-                && original.zone_change_count.checked_add(1) == Some(source.zone_change_count),
-        (None, Some(CommittedEvent::CreateToken { object: entrant, .. })) =>
-            *entrant == object && state.objects.get(object).v4.is_token,
+        (
+            Some(original),
+            Some(CommittedEvent::ZoneChange {
+                object: entrant,
+                from,
+                to,
+                ..
+            }),
+        ) => {
+            *entrant == object
+                && original.source == object
+                && original.zone == *from
+                && *to == Zone::Battlefield
+                && original.owner == source.owner
+                && original.zone_change_count.checked_add(1) == Some(source.zone_change_count)
+        }
+        (
+            None,
+            Some(CommittedEvent::CreateToken {
+                object: entrant, ..
+            }),
+        ) => *entrant == object && state.objects.get(object).v4.is_token,
         _ => false,
     };
-    if !matches_entry || source.zone != Zone::Battlefield
-        || source.controller != choice.controller || source.card_def != choice.card_def
+    if !matches_entry
+        || source.zone != Zone::Battlefield
+        || source.controller != choice.controller
+        || source.card_def != choice.card_def
         || !is_nameable(named)
     {
         return Err("Meddling Mage name has no matching actual entry".into());
     }
-    let link = ObjectLinkV4 { object, zone_change_count: source.zone_change_count };
+    let link = ObjectLinkV4 {
+        object,
+        zone_change_count: source.zone_change_count,
+    };
     s1b_state(state).mage_names.push((link, named));
-    record(state, JournalV1::Named {
-        operation,
-        entry_history_index: u32::try_from(entry).map_err(|_| "Meddling Mage entry index overflow")?,
-        source,
-        named,
-    });
+    record(
+        state,
+        JournalV1::Named {
+            operation,
+            entry_history_index: u32::try_from(entry)
+                .map_err(|_| "Meddling Mage entry index overflow")?,
+            source,
+            named,
+        },
+    );
     Ok(())
 }

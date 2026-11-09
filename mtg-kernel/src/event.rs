@@ -4827,9 +4827,14 @@ fn commit_with_entry_batch_and_source_color(
                 entry_history_index,
             )
         })
-        .and_then(|_| crate::linked_aura_operation_v1::commit_mage_entry(
-            state, &entry_color_proposal, object, entry_history_index,
-        ))
+        .and_then(|_| {
+            crate::linked_aura_operation_v1::commit_mage_entry(
+                state,
+                &entry_color_proposal,
+                object,
+                entry_history_index,
+            )
+        })
         .is_err()
         {
             state.engine.halted = Some((
@@ -5197,9 +5202,14 @@ impl FinalZonePtPlanV1 {
                         entry_index,
                     )
                 })
-                .and_then(|_| crate::linked_aura_operation_v1::commit_mage_entry(
-                    &mut scene, event, object, entry_index,
-                ))
+                .and_then(|_| {
+                    crate::linked_aura_operation_v1::commit_mage_entry(
+                        &mut scene,
+                        event,
+                        object,
+                        entry_index,
+                    )
+                })
                 .map_err(|_| object)?;
                 if !season {
                     crate::standard_cards_v1::initialize_entry_counters(
@@ -7419,11 +7429,12 @@ fn materialize_zone_change_v1(
         if to_zone == Zone::Battlefield {
             if let Some(face_down) = entering_face_down {
                 obj.v4.face_down_v1 = Some(face_down);
-                obj.v4.ward_generic = if entering_characteristics.is_some_and(|entry| entry.manifested_v1) {
-                    0
-                } else {
-                    2
-                };
+                obj.v4.ward_generic =
+                    if entering_characteristics.is_some_and(|entry| entry.manifested_v1) {
+                        0
+                    } else {
+                        2
+                    };
             }
         }
         obj.name = crate::card_def::CARD_DEFS[obj.card_def as usize]

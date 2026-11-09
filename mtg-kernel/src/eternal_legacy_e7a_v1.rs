@@ -2776,7 +2776,8 @@ pub(crate) fn active_dress_down_timestamp(
     state: &GameState,
     except: Option<ObjectId>,
 ) -> Option<u64> {
-    read_state(state)?.dress_downs
+    read_state(state)?
+        .dress_downs
         .iter()
         .filter(|(link, _)| {
             Some(link.object) != except

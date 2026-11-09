@@ -931,9 +931,14 @@ fn meddling_mage_names_a_card_that_then_cannot_be_cast() {
         .position(|&named| named == bolt_id)
         .unwrap();
     cast(&mut state, mage, &[]);
-    assert!(matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 {
-        player: P0, group: None, ..
-    })));
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseMeddlingMageNameV1 {
+            player: P0,
+            group: None,
+            ..
+        })
+    ));
     assert_eq!(zone(&state, mage), Zone::Stack);
     act(&mut state, Action::ChooseEffectOption(letter as u16));
     act(&mut state, Action::ChooseEffectOption(name as u16));
@@ -950,13 +955,23 @@ fn meddling_mage_names_a_card_that_then_cannot_be_cast() {
 fn choose_mage_name(state: &mut GameState, player: PlayerId, name: &str) {
     let groups = mtg_kernel::eternal_sideboard_s1b_v1::nameable_nonland();
     let named = id(name);
-    let group = groups.iter().position(|entries| entries.contains(&named)).unwrap() as u16;
+    let group = groups
+        .iter()
+        .position(|entries| entries.contains(&named))
+        .unwrap() as u16;
     assert!(matches!(next(state), Decision::ChooseMeddlingMageNameV1 {
         player: chooser, group: None, ..
     } if chooser == player));
     act(state, Action::ChooseEffectOption(group));
-    let Decision::ChooseMeddlingMageNameV1 { player: chooser, group: Some(actual), options, .. } =
-        next(state) else { panic!("expected the catalog names from the selected group") };
+    let Decision::ChooseMeddlingMageNameV1 {
+        player: chooser,
+        group: Some(actual),
+        options,
+        ..
+    } = next(state)
+    else {
+        panic!("expected the catalog names from the selected group")
+    };
     assert_eq!(chooser, player);
     assert_eq!(actual, group);
     let index = options.iter().position(|option| option == name).unwrap();
@@ -974,9 +989,11 @@ fn meddling_mage_reanimation_pauses_before_entry_and_life_loss_both_seats() {
         let reanimate = put(&mut state, actor, "Reanimate", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::B], 0);
         cast(&mut state, reanimate, &[Target::Object(mage)]);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 {
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 {
             player, group: None, ..
-        }) if player == actor));
+        }) if player == actor)
+        );
         assert_eq!(zone(&state, mage), Zone::Graveyard);
         assert_eq!(zone(&state, reanimate), Zone::Stack);
         assert_eq!(life(&state, actor), 20);
@@ -998,9 +1015,11 @@ fn meddling_mage_reanimation_pauses_before_entry_and_life_loss_both_seats() {
         pool(&mut state, actor, &[ManaColor::W], 0);
         let before_blink = state.objects.get(mage).zone_change_count;
         cast(&mut state, blink, &[Target::Object(mage)]);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 {
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 {
             player, group: None, ..
-        }) if player == owner));
+        }) if player == owner)
+        );
         assert_eq!(zone(&state, mage), Zone::Exile);
         choose_mage_name(&mut state, owner, "Lava Dart");
         settled(&mut state);
@@ -1010,8 +1029,14 @@ fn meddling_mage_reanimation_pauses_before_entry_and_life_loss_both_seats() {
         let dart = put(&mut state, actor, "Lava Dart", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::R], 0);
         state.priority_player = actor;
-        assert!(castable(&mut state, bolt), "the earlier incarnation's name expired");
-        assert!(!castable(&mut state, dart), "the new incarnation chose a new name");
+        assert!(
+            castable(&mut state, bolt),
+            "the earlier incarnation's name expired"
+        );
+        assert!(
+            !castable(&mut state, dart),
+            "the new incarnation chose a new name"
+        );
     }
 }
 
@@ -1047,15 +1072,19 @@ fn meddling_mage_simultaneous_exhume_names_follow_apnap_before_either_entry() {
         let spell = put(&mut state, actor, "Exhume", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::B], 1);
         cast(&mut state, spell, &[]);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 {
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 {
             player, entry_ordinal: 0, ..
-        }) if player == actor));
+        }) if player == actor)
+        );
         choose_mage_name(&mut state, actor, "Lightning Bolt");
         assert_eq!(zone(&state, first), Zone::Graveyard);
         assert_eq!(zone(&state, second), Zone::Graveyard);
-        assert!(matches!(next(&mut state), Decision::ChooseMeddlingMageNameV1 {
+        assert!(
+            matches!(next(&mut state), Decision::ChooseMeddlingMageNameV1 {
             player, entry_ordinal: 1, ..
-        } if player == other));
+        } if player == other)
+        );
         choose_mage_name(&mut state, other, "Lava Dart");
         settled(&mut state);
         assert_eq!(zone(&state, first), Zone::Battlefield);
@@ -1072,20 +1101,30 @@ fn meddling_mage_token_copy_names_independently_before_allocation() {
     assert!(settle(&mut state).is_some());
     choose_mage_name(&mut state, P0, "Lightning Bolt");
     settled(&mut state);
-    let reflection = put(&mut state, P0, "Fable of the Mirror-Breaker", Zone::Battlefield);
+    let reflection = put(
+        &mut state,
+        P0,
+        "Fable of the Mirror-Breaker",
+        Zone::Battlefield,
+    );
     mtg_kernel::event::propose_and_commit(
         &mut state,
         mtg_kernel::event::ProposedEvent::transform_in_place(reflection, 1),
     );
     pool(&mut state, P0, &[], 1);
     activate(&mut state, reflection, 0, &[Target::Object(mage)]);
-    assert!(matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 { player: P0, .. })));
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseMeddlingMageNameV1 { player: P0, .. })
+    ));
     assert_eq!(named(&state, P0, "Meddling Mage"), [mage]);
     choose_mage_name(&mut state, P0, "Lava Dart");
     settled(&mut state);
     let copies = named(&state, P0, "Meddling Mage");
     assert_eq!(copies.len(), 2);
-    assert!(copies.iter().any(|&object| state.objects.get(object).v4.is_token));
+    assert!(copies
+        .iter()
+        .any(|&object| state.objects.get(object).v4.is_token));
     let dart = put(&mut state, P1, "Lava Dart", Zone::Hand);
     pool(&mut state, P1, &[ManaColor::R], 0);
     state.priority_player = P1;
@@ -1097,7 +1136,12 @@ fn meddling_mage_entering_under_dress_down_never_chose_a_name() {
     let mut state = islands();
     let dress = put(&mut state, P0, "Dress Down", Zone::Hand);
     let mage = put(&mut state, P0, "Meddling Mage", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::W, ManaColor::U, ManaColor::U], 1);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::W, ManaColor::U, ManaColor::U],
+        1,
+    );
     cast(&mut state, dress, &[]);
     settled(&mut state);
     assert_eq!(zone(&state, dress), Zone::Battlefield);
@@ -1146,13 +1190,16 @@ fn meddling_mage_manifest_does_not_expose_hidden_printing_as_a_name_choice() {
                 &mut state,
                 |state| state.active_player == actor.opponent() && state.step == Step::Main1,
                 |_, decision| match decision {
-                    Decision::ChooseEffectTargets { player, legal_targets, .. }
-                        if *player == actor && legal_targets.contains(&Target::Object(chosen)) =>
-                    {
+                    Decision::ChooseEffectTargets {
+                        player,
+                        legal_targets,
+                        ..
+                    } if *player == actor && legal_targets.contains(&Target::Object(chosen)) => {
                         Some(Action::ChooseEffectTarget(Target::Object(chosen)))
                     }
-                    Decision::ChooseMeddlingMageNameV1 { .. } =>
-                        panic!("the face-down entry cannot expose a printed name ability"),
+                    Decision::ChooseMeddlingMageNameV1 { .. } => {
+                        panic!("the face-down entry cannot expose a printed name ability")
+                    }
                     _ => None,
                 },
             );

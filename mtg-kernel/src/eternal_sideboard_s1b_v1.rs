@@ -25,8 +25,8 @@ use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
-pub(crate) mod targets;
 pub(crate) mod meddling_mage_entry;
+pub(crate) mod targets;
 pub use crate::eternal_sideboard_s1a_v1::surgical::{
     extirpate_search_look_v1, SurgicalSearchLookV1 as ExtirpateSearchLookV1,
 };
@@ -637,7 +637,8 @@ pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId, card: ObjectI
             state.objects.try_get(mage.object).is_some_and(|live| {
                 live.zone_change_count == mage.zone_change_count
                     && active_named(state, mage.object, MEDDLING_MAGE)
-            }) && CARD_DEFS.get(usize::from(*named))
+            }) && CARD_DEFS
+                .get(usize::from(*named))
                 .is_some_and(|named_def| named_def.object_name == def.object_name)
         })
     })
