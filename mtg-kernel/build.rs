@@ -36,6 +36,7 @@ mod build_eternal_p1a_v1;
 mod build_eternal_p1b_v1;
 mod build_eternal_p2a_v1;
 mod build_eternal_p2b_v1;
+mod build_eternal_p2c_v1;
 mod build_eternal_p2d_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
@@ -3187,6 +3188,12 @@ enum AbilityCostRecipe {
     /// "Remove a +1/+1 counter from this creature"
     /// (`CostComponent::RemovePlusOneCounterFromSelfV1`).
     RemovePlusOneCounterFromSelf,
+    /// "Exile the top card of your library"
+    /// (`CostComponent::ExileTopCardOfLibraryV1`).
+    ExileTopCardOfLibrary,
+    /// "Put N cards from your graveyard on the bottom of your library"
+    /// (`CostComponent::PutOtherCardsFromOwnGraveyardOnLibraryBottomV1`).
+    PutGraveyardCardsOnLibraryBottom(u8),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3581,7 +3588,7 @@ fn special_for(name: &str) -> Special {
         _ => fdn_program_for(name)
             .or_else(|| standard_program_for(name))
             .or_else(|| build_standard_v1::special_for(name))
-            .or_else(|| build_eternal_v1::special_for(name))
+            .or_else(|| build_eternal_p2c_v1::special_for(name))
             .unwrap_or(Special::None),
     }
 }
@@ -4550,7 +4557,7 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::TOXIC_1");
     }
     keywords.extend(build_standard_v1::keywords_for(&card.name));
-    keywords.extend(build_eternal_v1::keywords_for(&card.name));
+    keywords.extend(build_eternal_p2c_v1::keywords_for(&card.name));
     if keywords.is_empty() {
         "Keywords::NONE".to_string()
     } else if keywords.len() == 1 {
@@ -5093,7 +5100,7 @@ fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => build_eternal_e6a_v1::flashback_for(name),
+        _ => build_eternal_p2c_v1::flashback_for(name),
     }
 }
 
@@ -6413,7 +6420,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             max_activations_per_turn: None,
         }],
         _ => match build_standard_v1::activated_ability_recipes_for(name) {
-            [] => build_eternal_v1::activated_ability_recipes_for(name),
+            [] => build_eternal_p2c_v1::activated_ability_recipes_for(name),
             recipes => recipes,
         },
     }
@@ -6492,6 +6499,12 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::RemovePlusOneCounterFromSelf => {
             "CostComponent::RemovePlusOneCounterFromSelfV1".to_string()
         }
+        AbilityCostRecipe::ExileTopCardOfLibrary => {
+            "CostComponent::ExileTopCardOfLibraryV1".to_string()
+        }
+        AbilityCostRecipe::PutGraveyardCardsOnLibraryBottom(count) => {
+            format!("CostComponent::PutOtherCardsFromOwnGraveyardOnLibraryBottomV1({count})")
+        }
     }
 }
 
@@ -6552,6 +6565,10 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::ExileGraveyardCards(count) => format!("exile_graveyard_cards:{count}"),
         AbilityCostRecipe::RemovePlusOneCounterFromSelf => {
             "remove_plus_one_from_self:1".to_string()
+        }
+        AbilityCostRecipe::ExileTopCardOfLibrary => "exile_top_card_of_library".to_string(),
+        AbilityCostRecipe::PutGraveyardCardsOnLibraryBottom(count) => {
+            format!("put_graveyard_cards_on_library_bottom:{count}")
         }
     }
 }
@@ -7196,7 +7213,7 @@ fn adventure_for(name: &str) -> String {
         "Fang Dragon" => {
             "Some(AdventureDef { name: \"Forktail Sweep\", cost: Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 1, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: ability_effect_damage_all_creatures_opponent_controlled_1 })".to_string()
         }
-        _ => build_eternal_v1::adventure_for(name).to_string(),
+        _ => build_eternal_p2c_v1::adventure_for(name),
     }
 }
 
@@ -7219,7 +7236,7 @@ fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
             amount: 1,
             filter: CreatureEffectFilterRecipe::OpponentControlled,
         }),
-        _ => build_eternal_v1::adventure_effect_recipe_for(name),
+        _ => build_eternal_p2c_v1::adventure_effect_recipe_for(name),
     }
 }
 
@@ -7233,7 +7250,7 @@ fn adventure_face_name_for(name: &str) -> Option<&'static str> {
         "Imodane's Recruiter" => Some("Train Troops"),
         "Virtue of Loyalty" => Some("Ardenvale Fealty"),
         "Fang Dragon" => Some("Forktail Sweep"),
-        _ => build_eternal_v1::adventure_face_name_for(name),
+        _ => build_eternal_p2c_v1::adventure_face_name_for(name),
     }
 }
 
@@ -7299,7 +7316,7 @@ fn generic_cost_reduction_for(name: &str) -> &'static str {
         "Of One Mind" => {
             "Some(GenericCostReductionDef { generic_per_count: 2, count: DynamicCountDef::ControllerHasCreatureWithAndWithoutSubtype(Subtype::Human) })"
         }
-        _ => build_eternal_e6b_v1::generic_cost_reduction_for(name),
+        _ => build_eternal_p2c_v1::generic_cost_reduction_for(name),
     }
 }
 
@@ -7688,7 +7705,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
             "cast_spell:mode_before_targets:spell_you_dont_control_to_owners_hand|nonland_permanent_to_owners_hand|no_mode"
         }
         _ => match build_standard_v1::trigger_recipe_for(name) {
-            "none" => build_eternal_v1::trigger_recipe_for(name),
+            "none" => build_eternal_p2c_v1::trigger_recipe_for(name),
             recipe => recipe,
         },
     }
@@ -10447,6 +10464,7 @@ fn codegen(cards: &[CardJson]) -> String {
                 && !has_mana_program
                 && activated_ability_recipes_for(activated_recipe_key(c)).is_empty()
                 && !build_eternal_e7a_v1::static_only_land(&c.name)
+                && !build_eternal_p2c_v1::static_only_land(&c.name)
             {
                 panic!(
                     "cards_v1.json: executable land {:?} has no generated mana program",
@@ -11522,6 +11540,8 @@ fn subtype_variant(t: &str) -> &'static str {
         "Mystic" => "Subtype::Mystic",
         "Soltari" => "Subtype::Soltari",
         "Masticore" => "Subtype::Masticore",
+        "Saproling" => "Subtype::Saproling",
+        "Centaur" => "Subtype::Centaur",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",

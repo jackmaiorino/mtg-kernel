@@ -34,6 +34,8 @@ mod eternal_premodern_p1b_v1;
 mod eternal_premodern_p2a_v1;
 #[path = "eternal/eternal_premodern_p2b_v1.rs"]
 mod eternal_premodern_p2b_v1;
+#[path = "eternal/eternal_premodern_p2c_v1.rs"]
+mod eternal_premodern_p2c_v1;
 #[path = "eternal/eternal_premodern_p2d_v1.rs"]
 mod eternal_premodern_p2d_v1;
 #[path = "eternal/eternal_public_shroud_v1.rs"]

@@ -382,6 +382,12 @@ fn mana_ability_condition_facts(
             );
         }
         crate::card_def::ManaAbilityConditionDef::ControlledLegendaryPermanentHasColor(_) => out.read(RelF::You,Some(ZoneF::Battlefield),Some(ObjF::Permanent),AggF::Count),
+        crate::card_def::ManaAbilityConditionDef::ControllerOtherLandCouldProduceV1(_) => out.read(
+            RelF::You,
+            Some(ZoneF::Battlefield),
+            Some(ObjF::Typed(CardTypeF::Land)),
+            AggF::Any,
+        ),
         crate::card_def::ManaAbilityConditionDef::SourceEnteredThisTurn => out.read(
             RelF::You,
             Some(ZoneF::Battlefield),
