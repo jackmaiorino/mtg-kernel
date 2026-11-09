@@ -218,8 +218,11 @@ fn entry_matches(
     actual: Option<&CommittedEvent>,
     source: AbilitySourceContractV4,
 ) -> bool {
-    if choice.suppressed || source.zone != Zone::Battlefield || !owns_definition(source.card_def)
-        || source.card_def != choice.card_def || source.controller != choice.controller
+    if choice.suppressed
+        || source.zone != Zone::Battlefield
+        || !owns_definition(source.card_def)
+        || source.card_def != choice.card_def
+        || source.controller != choice.controller
     {
         return false;
     }
@@ -227,24 +230,41 @@ fn entry_matches(
         (
             Some(original),
             ProposedEvent::ZoneChange(proposed),
-            Some(CommittedEvent::ZoneChange { object, from, to: Zone::Battlefield, controller_before }),
+            Some(CommittedEvent::ZoneChange {
+                object,
+                from,
+                to: Zone::Battlefield,
+                controller_before,
+            }),
         ) => {
-            *object == source.source && proposed.object == source.source
-                && proposed.to_zone == Zone::Battlefield && !proposed.battlefield_manifested_v1
-                && original.source == source.source && original.zone == *from
-                && original.card_def == source.card_def && original.owner == source.owner
+            *object == source.source
+                && proposed.object == source.source
+                && proposed.to_zone == Zone::Battlefield
+                && !proposed.battlefield_manifested_v1
+                && original.source == source.source
+                && original.zone == *from
+                && original.card_def == source.card_def
+                && original.owner == source.owner
                 && original.controller == *controller_before
                 && original.zone_change_count.checked_add(1) == Some(source.zone_change_count)
         }
         (
             None,
             ProposedEvent::CreateToken(proposed),
-            Some(CommittedEvent::CreateToken { object, token_def, controller, .. }),
+            Some(CommittedEvent::CreateToken {
+                object,
+                token_def,
+                controller,
+                ..
+            }),
         ) => {
-            *object == source.source && *token_def == source.card_def
-                && *controller == source.controller && source.owner == source.controller
+            *object == source.source
+                && *token_def == source.card_def
+                && *controller == source.controller
+                && source.owner == source.controller
                 && source.zone_change_count == 0
-                && proposed.token_def == *token_def && proposed.controller == *controller
+                && proposed.token_def == *token_def
+                && proposed.controller == *controller
         }
         _ => false,
     }
@@ -282,11 +302,20 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
             JournalV1::Started { .. } => {
                 operations.insert(index, false);
             }
-            JournalV1::Chosen { operation, choice, group, index: name_index } => {
-                if !operations.contains_key(operation) || choice.suppressed
-                    || !owns_definition(choice.card_def) || !valid_index(Some(*group), *name_index)
+            JournalV1::Chosen {
+                operation,
+                choice,
+                group,
+                index: name_index,
+            } => {
+                if !operations.contains_key(operation)
+                    || choice.suppressed
+                    || !owns_definition(choice.card_def)
+                    || !valid_index(Some(*group), *name_index)
                 {
-                    return Err("Meddling Mage choice has no open operation or valid name index".into());
+                    return Err(
+                        "Meddling Mage choice has no open operation or valid name index".into(),
+                    );
                 }
                 choices.insert(index, *operation);
             }
@@ -301,7 +330,13 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
                     .engine
                     .event_history
                     .get(*entry_history_index as usize);
-                let Some(JournalV1::Chosen { choice, group, index: name_index, .. }) = journal(state, *chosen) else {
+                let Some(JournalV1::Chosen {
+                    choice,
+                    group,
+                    index: name_index,
+                    ..
+                }) = journal(state, *chosen)
+                else {
                     return Err("Meddling Mage name lost its actual choice".into());
                 };
                 let link = ObjectLinkV4 {
@@ -340,7 +375,9 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
         }
     }
     if names.len() != entrants.len() {
-        return Err("Meddling Mage state carries a name without actual chosen-entry evidence".into());
+        return Err(
+            "Meddling Mage state carries a name without actual chosen-entry evidence".into(),
+        );
     }
     if !operations.is_empty() {
         let Some((original, operation)) = owner::pending_original_operation(state) else {
@@ -373,7 +410,8 @@ pub(crate) fn commit(
 ) -> Result<(), String> {
     let source = AbilitySourceContractV4::capture(state, object);
     let actual = state.engine.event_history.get(entry);
-    if !entry_matches(choice, actual, source) || !is_nameable(named)
+    if !entry_matches(choice, actual, source)
+        || !is_nameable(named)
         || (choice.original.is_none() && !state.objects.get(object).v4.is_token)
     {
         return Err("Meddling Mage name has no matching actual entry".into());

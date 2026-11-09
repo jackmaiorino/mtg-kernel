@@ -1001,7 +1001,11 @@ fn meddling_mage_filters_cascade_before_the_free_cast_offer_both_seats() {
         for prohibited in [true, false] {
             let mut state = paid_meddling_against(
                 actor,
-                if prohibited { "Lightning Bolt" } else { "Lava Dart" },
+                if prohibited {
+                    "Lightning Bolt"
+                } else {
+                    "Lava Dart"
+                },
                 &["Island", "Lightning Bolt", "Plains", "Plains"],
             );
             let bolt = state.players[actor.index()].library[1];
@@ -1010,7 +1014,9 @@ fn meddling_mage_filters_cascade_before_the_free_cast_offer_both_seats() {
             cast(&mut state, party, &[]);
             let mut offers = 0;
             settle_with(&mut state, |_, decision| match decision {
-                Decision::ChooseEffectOption { option_count: 2, .. } => {
+                Decision::ChooseEffectOption {
+                    option_count: 2, ..
+                } => {
                     offers += 1;
                     Action::ChooseEffectOption(0)
                 }
@@ -1019,13 +1025,25 @@ fn meddling_mage_filters_cascade_before_the_free_cast_offer_both_seats() {
                 {
                     Action::ChooseEffectTarget(Target::Object(bolt))
                 }
-                Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Player(actor.opponent())),
+                Decision::ChooseTargets { .. } => {
+                    Action::ChooseTarget(Target::Player(actor.opponent()))
+                }
                 other => first_answer(other),
             });
             assert_eq!(offers, usize::from(!prohibited));
             assert_eq!(zone(&state, party), Zone::Battlefield);
-            assert_eq!(zone(&state, bolt), if prohibited { Zone::Library } else { Zone::Graveyard });
-            assert_eq!(life(&state, actor.opponent()), if prohibited { 20 } else { 17 });
+            assert_eq!(
+                zone(&state, bolt),
+                if prohibited {
+                    Zone::Library
+                } else {
+                    Zone::Graveyard
+                }
+            );
+            assert_eq!(
+                life(&state, actor.opponent()),
+                if prohibited { 20 } else { 17 }
+            );
         }
     }
 }
@@ -1034,7 +1052,12 @@ fn meddling_mage_filters_cascade_before_the_free_cast_offer_both_seats() {
 fn meddling_mage_filters_paid_bilbo_resolution_cast_both_seats() {
     for actor in [P0, P1] {
         let mut state = paid_meddling_against(actor, "Brotherhood's End", &["Island"; 20]);
-        let bilbo = put(&mut state, actor, "Bilbo, Thief in the Night", Zone::Battlefield);
+        let bilbo = put(
+            &mut state,
+            actor,
+            "Bilbo, Thief in the Night",
+            Zone::Battlefield,
+        );
         let ring = put(&mut state, actor, "Ichor Wellspring", Zone::Graveyard);
         let forbidden = put(&mut state, actor, "Brotherhood's End", Zone::Graveyard);
         pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
@@ -1050,12 +1073,22 @@ fn meddling_mage_filters_paid_bilbo_resolution_cast_both_seats() {
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         assert_eq!(prompt, next(&mut restored));
         for continued in [&mut state, &mut restored] {
-            assert!(engine::step(continued, Action::ChooseEffectTarget(Target::Object(forbidden))).is_err());
+            assert!(engine::step(
+                continued,
+                Action::ChooseEffectTarget(Target::Object(forbidden))
+            )
+            .is_err());
             act(continued, Action::ChooseEffectTarget(Target::Object(ring)));
             settled(continued);
             assert_eq!(zone(continued, forbidden), Zone::Graveyard);
             assert_eq!(zone(continued, ring), Zone::Battlefield);
-            assert_eq!(continued.players[actor.index()].mana_pool.iter().sum::<u8>(), 2);
+            assert_eq!(
+                continued.players[actor.index()]
+                    .mana_pool
+                    .iter()
+                    .sum::<u8>(),
+                2
+            );
         }
     }
 }
@@ -1074,7 +1107,12 @@ fn meddling_mage_named_front_leaves_adventure_castable_both_seats() {
         assert!(!castable(&mut state, dragon));
 
         let mut state = paid_meddling_against(actor, "Fang Dragon", &["Island"; 20]);
-        let bilbo = put(&mut state, actor, "Bilbo, Thief in the Night", Zone::Battlefield);
+        let bilbo = put(
+            &mut state,
+            actor,
+            "Bilbo, Thief in the Night",
+            Zone::Battlefield,
+        );
         let dragon = put(&mut state, actor, "Fang Dragon", Zone::Graveyard);
         pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
         act(&mut state, Action::DeclareAttackers(vec![bilbo]));
@@ -1084,11 +1122,17 @@ fn meddling_mage_named_front_leaves_adventure_castable_both_seats() {
             Some(Decision::ChooseEffectTargets { legal_targets, .. })
                 if legal_targets == [Target::Object(dragon)]
         ));
-        act(&mut state, Action::ChooseEffectTarget(Target::Object(dragon)));
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(dragon)),
+        );
         settled(&mut state);
         assert_eq!(zone(&state, dragon), Zone::Exile);
         assert!(state.objects.get(dragon).v4.on_adventure);
-        assert!(state.players[actor.index()].mana_pool.iter().all(|&count| count == 0));
+        assert!(state.players[actor.index()]
+            .mana_pool
+            .iter()
+            .all(|&count| count == 0));
     }
 }
 
@@ -1125,9 +1169,15 @@ fn meddling_mage_reanimation_pauses_before_entry_and_life_loss_both_seats() {
         assert_eq!(state.objects.get(mage).controller, actor);
         assert_eq!(life(&state, actor), 18);
         let mut altered = serde_json::to_value(&state).unwrap();
-        let named = altered["engine"]["event_history"].as_array_mut().unwrap().iter_mut()
-            .find_map(|row| row.get_mut("MeddlingMageEntryV1")?
-                .get_mut("journal")?.get_mut("Named"))
+        let named = altered["engine"]["event_history"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find_map(|row| {
+                row.get_mut("MeddlingMageEntryV1")?
+                    .get_mut("journal")?
+                    .get_mut("Named")
+            })
             .unwrap();
         let dart_id = serde_json::json!(id("Lava Dart"));
         named["named"] = dart_id.clone();
@@ -1264,7 +1314,13 @@ fn meddling_mage_entering_under_dress_down_never_chose_a_name() {
     pool(
         &mut state,
         P0,
-        &[ManaColor::W, ManaColor::W, ManaColor::U, ManaColor::U, ManaColor::U],
+        &[
+            ManaColor::W,
+            ManaColor::W,
+            ManaColor::U,
+            ManaColor::U,
+            ManaColor::U,
+        ],
         1,
     );
     cast(&mut state, first, &[]);
@@ -1292,7 +1348,8 @@ fn meddling_mage_entering_under_dress_down_never_chose_a_name() {
         },
         id("Lightning Bolt"),
     ));
-    let mut restored: GameState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    let mut restored: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
     assert!(engine::step(&mut restored, Action::Pass).is_err());
 }
 
@@ -1322,7 +1379,12 @@ fn meddling_mage_manifest_does_not_expose_hidden_printing_as_a_name_choice() {
             state.active_player = actor;
             state.priority_player = actor;
             if priest {
-                put(&mut state, actor.opponent(), "Containment Priest", Zone::Battlefield);
+                put(
+                    &mut state,
+                    actor.opponent(),
+                    "Containment Priest",
+                    Zone::Battlefield,
+                );
             }
             let oculus = put(&mut state, actor, "Abhorrent Oculus", Zone::Hand);
             for _ in 0..6 {

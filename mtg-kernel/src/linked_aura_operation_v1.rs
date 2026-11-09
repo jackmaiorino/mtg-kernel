@@ -2215,13 +2215,24 @@ fn answer_mage_plan(state: &mut GameState, index: usize) -> Result<bool, String>
         return Ok(false);
     };
     let named = mage_entry::name(group, name_index).ok_or("Meddling Mage name index absent")?;
-    let operation = state.engine.linked_aura_operation_v1.runtime.as_ref()
-        .and_then(|runner| runner.mage_start).ok_or("Meddling Mage choice operation absent")?;
+    let operation = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .and_then(|runner| runner.mage_start)
+        .ok_or("Meddling Mage choice operation absent")?;
     let chosen = u32::try_from(state.engine.event_history.len())
         .map_err(|_| "Meddling Mage choice index overflow")?;
-    mage_entry::record(state, mage_entry::JournalV1::Chosen {
-        operation, choice: Box::new(choice), group, index: name_index,
-    });
+    mage_entry::record(
+        state,
+        mage_entry::JournalV1::Chosen {
+            operation,
+            choice: Box::new(choice),
+            group,
+            index: name_index,
+        },
+    );
     state
         .engine
         .linked_aura_operation_v1

@@ -19,7 +19,8 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
 use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{
-    AbilitySourceContractV4, CastMethodV4, GameState, LinkedExileRecordV4, ObjectLinkV4, Target, Zone,
+    AbilitySourceContractV4, CastMethodV4, GameState, LinkedExileRecordV4, ObjectLinkV4, Target,
+    Zone,
 };
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
@@ -652,7 +653,9 @@ pub(crate) fn mage_prohibits(state: &GameState, def: &CardDef, method: CastMetho
 
 fn selected_spell_name(def: &CardDef, method: CastMethodV4) -> Option<&'static str> {
     if method == CastMethodV4::Alternative
-        && def.alt_cost.is_some_and(|alt| alt.condition == crate::card_def::AltCostCondition::DisguiseFromHand)
+        && def
+            .alt_cost
+            .is_some_and(|alt| alt.condition == crate::card_def::AltCostCondition::DisguiseFromHand)
     {
         return None;
     }
@@ -666,7 +669,11 @@ fn selected_spell_name(def: &CardDef, method: CastMethodV4) -> Option<&'static s
     }
     if let Some((left, right)) = def.name.split_once(" // ") {
         if crate::standard_cards_v1::room_cast_mana_value(def, method).is_some() {
-            return Some(if method == CastMethodV4::Alternative { right } else { left });
+            return Some(if method == CastMethodV4::Alternative {
+                right
+            } else {
+                left
+            });
         }
         if crate::eternal_premodern_p1a_v1::statics::split_card(def.name) {
             return Some(left);
