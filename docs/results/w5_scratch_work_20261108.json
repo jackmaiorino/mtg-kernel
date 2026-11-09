@@ -1,0 +1,340 @@
+{
+ "schema": "w5-scratch-work-result/v1",
+ "date": "2026-11-08",
+ "issue": "jackmaiorino/mtg-kernel#601 (T7, umbrella #594), milestone 1",
+ "measurement": "Measurement only: tools/w5/chains.py runs unchanged. Exact call counts and separate timing runs of reap, persist, compress_config and scratch_settle on temporary-directory scratch segments with the bind mount simulated.",
+ "bench": {
+  "path": "tools/w5/tests/scratch_bench.py",
+  "commit": "a820e75f10a54e84a955e23dedf66c17589e99bb",
+  "sha256": "46478509dfae1e786142c66644f677d4ea6aece39d5d11dae3d560f28d053985",
+  "dirty_paths": []
+ },
+ "variants": {
+  "A": {
+   "tree": "main",
+   "commit": "c6329d868ad32467b22a411018894a6eae65205c",
+   "files": {"chains.py": "afdf32796df049be532d58d5eeb22b3d9d32f44eb8cd72df7fdac0b4d5715f15", "retention.py": "446f231d05b862488262d497dc18031587908e291539e475a44cd960230a7bb4"},
+   "dirty_paths": [],
+   "note": "main has since moved to c1796ead354dce1a7f84b6084e512d6587e1fa0a (#592 and #602 merged); its reap, persist, compress_config and helpers are syntax-tree identical to A and its scratch_settle to B"
+  },
+  "B": {
+   "tree": "#602 head (T6)",
+   "commit": "87ae0de6a1593f2a24d06300940d7e172c3d3623",
+   "files": {"chains.py": "955f27c24e479d8fa54f62ea6205767dac2ededcd25ae8f830131714ceb7d347", "retention.py": "446f231d05b862488262d497dc18031587908e291539e475a44cd960230a7bb4"},
+   "dirty_paths": [],
+   "note": "reap, persist, compress_config and their helpers are syntax-tree identical to A; scratch_settle adds the parent fsync and the commit/housekeeping lines"
+  }
+ },
+ "toolchain": {"python": "3.13.18 (main, Oct 26 2026, 14:08:19) [Clang 23.1.3 ]", "rust": "not used"},
+ "machine": {"cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz", "cpus": 4, "affinity": 4, "mem_total_kb": 16472400, "platform": "Linux-6.18.44-fc-v310-x86_64-with-glibc2.39"},
+ "dirs": {
+  "scratch": {"fstype": "tmpfs", "mount": "/dev/shm", "options": "rw,relatime,size=16472400k", "source": "tmpfs"},
+  "work": {"fstype": "ext4", "mount": "/", "options": "rw,relatime,discard,no_prefetch_block_bitmaps,resv_strict,resuid=65534,resgid=65534", "source": "/dev/vda"}
+ },
+ "seed": 601,
+ "profiles": {
+  "small": {
+   "checkpoint_bytes": 65536,
+   "complete_bytes": 3072,
+   "completion_bytes": 1024,
+   "config_bytes_per_update": 4096,
+   "episodes": 10,
+   "name": "small",
+   "records": {"attempt-000000/collect-command.json": 8192, "attempt-000000/collect/collection.json": 3072, "attempt-000000/update-command.json": 2048, "attempt-000000/update-input.json": 3072, "attempt-000000/update/update.json": 2048},
+   "run_bytes": 32768,
+   "trajectory_bytes": 4096
+  },
+  "c-plain": {
+   "checkpoint_bytes": 21000000,
+   "complete_bytes": 3072,
+   "completion_bytes": 1024,
+   "config_bytes_per_update": 4096,
+   "episodes": 10,
+   "name": "c-plain",
+   "records": {"attempt-000000/collect-command.json": 8192, "attempt-000000/collect/collection.json": 3072, "attempt-000000/update-command.json": 2048, "attempt-000000/update-input.json": 3072, "attempt-000000/update/update.json": 2048},
+   "run_bytes": 32768,
+   "trajectory_bytes": 3200000
+  }
+ },
+ "cache_policy": "warm: each sample is a fresh worker process that builds its fixture untimed; tmpfs scratch has no cold-read state; persist fsyncs its own writes; no sample dropped or treated as warm-up",
+ "order": "balanced rounds (odd rounds reversed): A-B-B-A for each segment length; every sample kept",
+ "receipts": [
+  {
+   "path": "docs/results/w5_scratch_work_20261108/main_ab.json",
+   "sha256": "aefb1246cf162f8cfe813bc5e85545954ecaacc847e80fa11c37eb7e9b4f6db2",
+   "complete": true,
+   "wall_seconds": 173.455,
+   "sizes": [64, 256],
+   "rounds": 4,
+   "profile": "small",
+   "variants": ["A", "B"],
+   "argv": ["--out", "/tmp/claude-0/receipts/main_ab.json", "--sizes", "64,256", "--rounds", "4", "--settle", "--src", "/tmp/claude-0/main-c6329d8/tools/w5", "--candidate-src", "/tmp/claude-0/t6/tools/w5", "--scratch-dir", "/dev/shm", "--work-dir", "/tmp/claude-0/sb-work", "--max-wall-seconds", "2400"]
+  },
+  {
+   "path": "docs/results/w5_scratch_work_20261108/scale_1024.json",
+   "sha256": "70844a666a91a2342925d49ac295889e48849bc1926d5b8416169412be7a0ae5",
+   "complete": true,
+   "wall_seconds": 244.551,
+   "sizes": [1024],
+   "rounds": 2,
+   "profile": "small",
+   "variants": ["A"],
+   "argv": ["--out", "/tmp/claude-0/receipts/scale_1024.json", "--sizes", "1024", "--rounds", "2", "--no-counts", "--src", "/tmp/claude-0/main-c6329d8/tools/w5", "--scratch-dir", "/dev/shm", "--work-dir", "/tmp/claude-0/sb-work", "--max-wall-seconds", "2400"]
+  },
+  {
+   "path": "docs/results/w5_scratch_work_20261108/cplain_256.json",
+   "sha256": "30c8a59db50956f14e4338ef24d82f4c4f107ed26289c799172cd15a26cbb705",
+   "complete": true,
+   "wall_seconds": 124.524,
+   "sizes": [256],
+   "rounds": 4,
+   "profile": "c-plain",
+   "variants": ["A"],
+   "argv": ["--out", "/tmp/claude-0/receipts/cplain_256.json", "--profile", "c-plain", "--sizes", "256", "--rounds", "4", "--no-counts", "--src", "/tmp/claude-0/main-c6329d8/tools/w5", "--scratch-dir", "/dev/shm", "--work-dir", "/tmp/claude-0/sb-work", "--max-wall-seconds", "2400"]
+  }
+ ],
+ "reaper": {
+  "small/64": {
+   "measured_ticks": {"productive": 64, "idle": 64},
+   "idle_ticks_total_s": {"mean": 0.2236, "min": 0.2136, "max": 0.24, "n": 4},
+   "productive_ticks_total_s": {"mean": 0.2314, "min": 0.2263, "max": 0.2372, "n": 4},
+   "idle_ticks_cpu_s": {"mean": 0.2171, "min": 0.2132, "max": 0.2194, "n": 4},
+   "mean_idle_tick_ms": {"mean": 3.494, "min": 3.338, "max": 3.75, "n": 4},
+   "last_idle_tick_ms": {"mean": 6.474, "min": 5.989, "max": 7.053, "n": 4},
+   "fitted_us_per_reaped_iteration_per_idle_tick": {"mean": 111.98, "min": 102.13, "max": 130.8},
+   "core_share_at_reap_every_0p5s": {"mean": 0.0069, "min": 0.0066, "max": 0.0074, "n": 4},
+   "counts": {
+    "deterministic": true,
+    "calls_per_segment": 176912,
+    "calls_on_reaped_history_or_listing": 171240,
+    "share_on_reaped_history": 0.9679,
+    "calls_on_new_bulk": 5418,
+    "files_deleted": 693,
+    "last_idle_tick_calls": 2713,
+    "idle_tick_calls_fit": {"a": 6.0596, "b": 42.9971, "max_abs_residual": 1.8779},
+    "per_reaped_iteration_per_tick": {"scandir": 8, "entry": 18, "stat": 10, "lstat": 6, "listing_entry": 1}
+   }
+  },
+  "small/256": {
+   "measured_ticks": {"productive": 256, "idle": 256},
+   "idle_ticks_total_s": {"mean": 3.4359, "min": 3.2697, "max": 3.5969, "n": 4},
+   "productive_ticks_total_s": {"mean": 3.4934, "min": 3.3132, "max": 3.6553, "n": 4},
+   "idle_ticks_cpu_s": {"mean": 3.3974, "min": 3.2322, "max": 3.5512, "n": 4},
+   "mean_idle_tick_ms": {"mean": 13.422, "min": 12.772, "max": 14.05, "n": 4},
+   "last_idle_tick_ms": {"mean": 26.101, "min": 23.727, "max": 28.208, "n": 4},
+   "fitted_us_per_reaped_iteration_per_idle_tick": {"mean": 105.11, "min": 103.39, "max": 108.14},
+   "core_share_at_reap_every_0p5s": {"mean": 0.0261, "min": 0.0249, "max": 0.0273, "n": 4},
+   "counts": {
+    "deterministic": true,
+    "calls_per_segment": 2821328,
+    "calls_on_reaped_history_or_listing": 2798376,
+    "share_on_reaped_history": 0.9919,
+    "calls_on_new_bulk": 21930,
+    "files_deleted": 2805,
+    "last_idle_tick_calls": 10969,
+    "idle_tick_calls_fit": {"a": 6.0154, "b": 42.9998, "max_abs_residual": 1.9689},
+    "per_reaped_iteration_per_tick": {"scandir": 8, "entry": 18, "stat": 10, "lstat": 6, "listing_entry": 1}
+   }
+  },
+  "small/1024": {
+   "measured_ticks": {"productive": 1024, "idle": 1024},
+   "idle_ticks_total_s": {"mean": 57.0672, "min": 56.211, "max": 57.9233, "n": 2},
+   "productive_ticks_total_s": {"mean": 57.3091, "min": 56.4836, "max": 58.1346, "n": 2},
+   "idle_ticks_cpu_s": {"mean": 56.4969, "min": 55.6582, "max": 57.3356, "n": 2},
+   "mean_idle_tick_ms": {"mean": 55.73, "min": 54.894, "max": 56.566, "n": 2},
+   "last_idle_tick_ms": {"mean": 105.737, "min": 100.492, "max": 110.982, "n": 2},
+   "fitted_us_per_reaped_iteration_per_idle_tick": {"mean": 111.73, "min": 108.52, "max": 114.95},
+   "core_share_at_reap_every_0p5s": {"mean": 0.1003, "min": 0.0989, "max": 0.1016, "n": 2}
+  },
+  "c-plain/256": {
+   "measured_ticks": {"productive": 256, "idle": 256},
+   "idle_ticks_total_s": {"mean": 3.585, "min": 3.4691, "max": 3.7815, "n": 4},
+   "productive_ticks_total_s": {"mean": 4.3759, "min": 4.2558, "max": 4.5298, "n": 4},
+   "idle_ticks_cpu_s": {"mean": 3.5353, "min": 3.4336, "max": 3.7034, "n": 4},
+   "mean_idle_tick_ms": {"mean": 14.004, "min": 13.551, "max": 14.772, "n": 4},
+   "last_idle_tick_ms": {"mean": 26.765, "min": 23.97, "max": 30.103, "n": 4},
+   "fitted_us_per_reaped_iteration_per_idle_tick": {"mean": 109.87, "min": 106.9, "max": 116.87},
+   "core_share_at_reap_every_0p5s": {"mean": 0.0272, "min": 0.0264, "max": 0.0287, "n": 4}
+  }
+ },
+ "persist": {
+  "small/64": {
+   "members": 387,
+   "fsyncs": 648,
+   "physical_bytes": 910879,
+   "logical_bytes": 1504707,
+   "identical_to_fixture_all_samples": true,
+   "logical_digests": ["73ca4356fc89270066beb3e983228f89f0ff2ca3316c44a7b24bc4b15aff1306"],
+   "wall_s": {"mean": 0.5748, "min": 0.4645, "max": 0.6507, "n": 4},
+   "cpu_s": {"mean": 0.4004, "min": 0.2849, "max": 0.4706, "n": 4},
+   "fsync_s": {"mean": 0.2109, "min": 0.1898, "max": 0.2238, "n": 4},
+   "us_per_fsync": {"mean": 325.5, "min": 292.9, "max": 345.3, "n": 4},
+   "copy2_ms": {"mean": 87.25, "min": 52.39, "max": 108.43, "n": 4},
+   "gzip_ms": {"mean": 2.65, "min": 2.32, "max": 2.97, "n": 4},
+   "rmtree_ms": {"mean": 4.25, "min": 3.36, "max": 5.64, "n": 4},
+   "lock_hold_ms": {"mean": 0.632, "min": 0.474, "max": 1.042, "n": 4},
+   "lock_wait_us": {"mean": 4.46, "min": 4.19, "max": 4.69, "n": 4},
+   "device_write_bytes": {"mean": 1871872, "min": 1658880, "max": 2064384, "n": 4},
+   "ms_per_update": {"mean": 8.982, "min": 7.258, "max": 10.167, "n": 4},
+   "compress_config_ms": {"mean": 2.56, "min": 2.14, "max": 2.87, "n": 4},
+   "worker_maxrss_kb": {"mean": 24717, "min": 24592, "max": 24776, "n": 4},
+   "counts": {
+    "fsyncs": {"dir": 260, "file": 388},
+    "by_call": {"copy2": 194, "entry": 4512, "flock": 1, "fsync_dir": 260, "fsync_file": 388, "funlock": 1, "lstat": 777, "meta": 388, "mkdir": 646, "open": 1685, "rename": 1, "rmdir": 258, "rmtree": 2, "scandir": 1796, "stat": 4191, "unlink": 397, "xattr": 194},
+    "gzip_in_bytes": 896411,
+    "sendfile_bytes": 608296,
+    "python_traced_peak_bytes": 1281463
+   }
+  },
+  "small/256": {
+   "members": 1539,
+   "fsyncs": 2568,
+   "physical_bytes": 3416895,
+   "logical_bytes": 5740781,
+   "identical_to_fixture_all_samples": true,
+   "logical_digests": ["6bde257b39dac1874d719ec4d8e9639aee39bc7b437f70ddd830577c3eae3b28"],
+   "wall_s": {"mean": 2.134, "min": 1.7276, "max": 2.2989, "n": 4},
+   "cpu_s": {"mean": 1.4469, "min": 1.0941, "max": 1.5842, "n": 4},
+   "fsync_s": {"mean": 0.8406, "min": 0.7873, "max": 0.8879, "n": 4},
+   "us_per_fsync": {"mean": 327.4, "min": 306.6, "max": 345.8, "n": 4},
+   "copy2_ms": {"mean": 301.44, "min": 200.18, "max": 341.55, "n": 4},
+   "gzip_ms": {"mean": 9.14, "min": 8.37, "max": 9.54, "n": 4},
+   "rmtree_ms": {"mean": 15.18, "min": 14.45, "max": 15.94, "n": 4},
+   "lock_hold_ms": {"mean": 0.779, "min": 0.398, "max": 1.112, "n": 4},
+   "lock_wait_us": {"mean": 5.21, "min": 4.7, "max": 5.88, "n": 4},
+   "device_write_bytes": {"mean": 8741888, "min": 7376896, "max": 11472896, "n": 4},
+   "ms_per_update": {"mean": 8.336, "min": 6.748, "max": 8.98, "n": 4},
+   "compress_config_ms": {"mean": 9.16, "min": 8.63, "max": 9.77, "n": 4},
+   "worker_maxrss_kb": {"mean": 29390, "min": 29252, "max": 29684, "n": 4},
+   "counts": {
+    "fsyncs": {"dir": 1028, "file": 1540},
+    "by_call": {"copy2": 770, "entry": 17952, "flock": 1, "fsync_dir": 1028, "fsync_file": 1540, "funlock": 1, "lstat": 3081, "meta": 1540, "mkdir": 2566, "open": 6677, "rename": 1, "rmdir": 1026, "rmtree": 2, "scandir": 7172, "stat": 16671, "unlink": 1549, "xattr": 770},
+    "gzip_in_bytes": 3499705,
+    "sendfile_bytes": 2241076,
+    "python_traced_peak_bytes": 3490549
+   }
+  },
+  "small/1024": {
+   "members": 6147,
+   "fsyncs": 10248,
+   "physical_bytes": 13448355,
+   "logical_bytes": 22703098,
+   "identical_to_fixture_all_samples": true,
+   "logical_digests": ["73014d6bae546eced6577166fafa7d50abcc527f3996dc4f362c117f1b712241"],
+   "wall_s": {"mean": 4.8387, "min": 4.6818, "max": 4.9957, "n": 2},
+   "cpu_s": {"mean": 2.5843, "min": 2.513, "max": 2.6557, "n": 2},
+   "fsync_s": {"mean": 2.8091, "min": 2.7082, "max": 2.9101, "n": 2},
+   "us_per_fsync": {"mean": 274.1, "min": 264.3, "max": 284.0, "n": 2},
+   "copy2_ms": {"mean": 263.02, "min": 247.26, "max": 278.79, "n": 2},
+   "gzip_ms": {"mean": 29.88, "min": 29.75, "max": 30.01, "n": 2},
+   "rmtree_ms": {"mean": 59.88, "min": 57.51, "max": 62.25, "n": 2},
+   "lock_hold_ms": {"mean": 0.498, "min": 0.488, "max": 0.508, "n": 2},
+   "lock_wait_us": {"mean": 4.49, "min": 4.32, "max": 4.66, "n": 2},
+   "device_write_bytes": {"mean": 45637632, "min": 45277184, "max": 45998080, "n": 2},
+   "ms_per_update": {"mean": 4.725, "min": 4.572, "max": 4.879, "n": 2},
+   "compress_config_ms": {"mean": 38.6, "min": 35.01, "max": 42.19, "n": 2},
+   "worker_maxrss_kb": {"mean": 42782, "min": 42776, "max": 42788, "n": 2}
+  },
+  "c-plain/256": {
+   "members": 1539,
+   "fsyncs": 2568,
+   "physical_bytes": 24351359,
+   "logical_bytes": 26675245,
+   "identical_to_fixture_all_samples": true,
+   "logical_digests": ["f8470764aea93d971422a42ef3992f868d46fc3ceacf65c23599ed8afbc9427c"],
+   "wall_s": {"mean": 1.4382, "min": 1.3775, "max": 1.5519, "n": 4},
+   "cpu_s": {"mean": 0.7913, "min": 0.7199, "max": 0.8672, "n": 4},
+   "fsync_s": {"mean": 0.7979, "min": 0.7601, "max": 0.8396, "n": 4},
+   "us_per_fsync": {"mean": 310.7, "min": 296.0, "max": 326.9, "n": 4},
+   "copy2_ms": {"mean": 108.43, "min": 93.19, "max": 126.82, "n": 4},
+   "gzip_ms": {"mean": 7.6, "min": 6.97, "max": 7.96, "n": 4},
+   "rmtree_ms": {"mean": 21.38, "min": 15.29, "max": 28.04, "n": 4},
+   "lock_hold_ms": {"mean": 0.587, "min": 0.449, "max": 0.816, "n": 4},
+   "lock_wait_us": {"mean": 5.74, "min": 4.79, "max": 6.88, "n": 4},
+   "device_write_bytes": {"mean": 32989184, "min": 32772096, "max": 33189888, "n": 4},
+   "ms_per_update": {"mean": 5.618, "min": 5.381, "max": 6.062, "n": 4},
+   "compress_config_ms": {"mean": 9.73, "min": 9.38, "max": 10.18, "n": 4},
+   "worker_maxrss_kb": {"mean": 90624, "min": 90540, "max": 90712, "n": 4}
+  }
+ },
+ "scratch_settle": {
+  "A": {
+   "steady": {
+    "outcome": {"mounted": false, "scratch_left": false, "segment_persisted": true},
+    "calls": 5,
+    "fsyncs": 0,
+    "wall_ms": 0.101
+   },
+   "swap_finish": {
+    "outcome": {"mounted": false, "scratch_left": false, "segment_persisted": true},
+    "calls": 15,
+    "fsyncs": 0,
+    "wall_ms": 0.72
+   },
+   "late_persist": {
+    "outcome": {"mounted": false, "scratch_left": false, "segment_persisted": true},
+    "calls": 62362,
+    "fsyncs": 2568,
+    "wall_ms": 2235.038
+   },
+   "reset": {
+    "outcome": {"mounted": false, "scratch_left": false, "segment_persisted": false},
+    "calls": 7717,
+    "fsyncs": 0,
+    "wall_ms": 17.809
+   }
+  },
+  "B": {
+   "steady": {
+    "outcome": {"mounted": false, "scratch_left": false, "segment_persisted": true},
+    "calls": 5,
+    "fsyncs": 0,
+    "wall_ms": 0.093
+   },
+   "swap_finish": {
+    "outcome": {"mounted": false, "scratch_left": false, "segment_persisted": true},
+    "calls": 28,
+    "fsyncs": 2,
+    "wall_ms": 1.486
+   },
+   "late_persist": {
+    "outcome": {"mounted": false, "scratch_left": false, "segment_persisted": true},
+    "calls": 62886,
+    "fsyncs": 2570,
+    "wall_ms": 2374.854
+   },
+   "reset": {
+    "outcome": {"mounted": false, "scratch_left": false, "segment_persisted": false},
+    "calls": 7717,
+    "fsyncs": 0,
+    "wall_ms": 17.719
+   }
+  }
+ },
+ "a_a_paired": {
+  "256": {
+   "persist_ns": {"ratio_of_means_b_over_a": 0.8509, "difference_of_means_ms": -318.2, "larger_arm_range_ms": 939.9, "verdict": "inconclusive"},
+   "reap_ns": {"ratio_of_means_b_over_a": 0.9939, "difference_of_means_ms": -42.6, "larger_arm_range_ms": 669.3, "verdict": "inconclusive"}
+  },
+  "64": {
+   "persist_ns": {"ratio_of_means_b_over_a": 0.9595, "difference_of_means_ms": -23.3, "larger_arm_range_ms": 222.9, "verdict": "inconclusive"},
+   "reap_ns": {"ratio_of_means_b_over_a": 0.9926, "difference_of_means_ms": -3.4, "larger_arm_range_ms": 81.3, "verdict": "inconclusive"}
+  }
+ },
+ "parity": {
+  "main_ab": {
+   "A/64": ["73ca4356fc89270066beb3e983228f89f0ff2ca3316c44a7b24bc4b15aff1306"],
+   "A/256": ["6bde257b39dac1874d719ec4d8e9639aee39bc7b437f70ddd830577c3eae3b28"],
+   "B/64": ["73ca4356fc89270066beb3e983228f89f0ff2ca3316c44a7b24bc4b15aff1306"],
+   "B/256": ["6bde257b39dac1874d719ec4d8e9639aee39bc7b437f70ddd830577c3eae3b28"]
+  },
+  "scale_1024": {
+   "A/1024": ["73014d6bae546eced6577166fafa7d50abcc527f3996dc4f362c117f1b712241"]
+  },
+  "cplain_256": {
+   "A/256": ["f8470764aea93d971422a42ef3992f868d46fc3ceacf65c23599ed8afbc9427c"]
+  }
+ },
+ "decision": {"milestone_2_completion_cursor": "build: about 99% of reaper calls in a 256-update segment revisit reaped history; per-tick work grows linearly with it", "milestone_3_grouped_durability": "wait: about 10 fsyncs per update; needs the node root volume fsync latency (bench --work-dir on that volume)", "milestone_4_background_compression": "no case: gzip is about 9 ms per 256-update segment", "throughput_claims": "use T6's durable metric (#600, #602)"},
+ "not_covered": ["real bind mount, umount subprocess and os.path.ismount", "trainer concurrency with the reaper", "node storage (times are this VM)", "fault injection (no behavior change in this milestone)", "chains_acceptance.py (cgroup v1 host)"]
+}

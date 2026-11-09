@@ -9,7 +9,8 @@ segmented chain and one whole run reach the same states.
 Knobs (the config's `fake` block, which the test base carries, then FAKE_<NAME> in the environment): burn and
 burn_x (CPU seconds per update), sleep and sleep_x (seconds per update), cpu_step and cpu_step_x (usec added to
 the ledger source's cpu.stat file per update, for hosts without cgroups), fail_at (exit 1 before that global
-update).
+update), publish_delay and publish_delay_x (seconds between a run's last receipt and its completion.json: a slow
+final publication).
 """
 import hashlib
 import json
@@ -115,7 +116,8 @@ def main():
         u.write_text(json.dumps({'after_state_sha256': h(ck), 'checkpoint': {'path': ck.as_posix(),
                                                                              'sha256': h(ck)}}))
         record, stop = ledger(cfg, knob(cfg, 'cpu_step', x))
-        receipt = {'iteration': i, 'collection': {'path': c.as_posix()}, 'update': {'path': u.as_posix()},
+        receipt = {'iteration': i, 'collection': {'path': c.as_posix()},
+                   'update': {'path': u.as_posix(), 'sha256': h(u)},
                    'source': source, 'output_identity': {'checkpoint_sha256': h(ck)}}
         if record is not None:
             receipt['chain_ledger'] = record
@@ -126,6 +128,7 @@ def main():
         print(json.dumps({'completed_iteration': i}), flush=True)
         stopped = stop is not None and record['usec'] >= stop
     if len(list((root / 'iterations').glob('*/complete.json'))) == len(cfg['iterations']):
+        time.sleep(knob(cfg, 'publish_delay', x) or 0.0)
         (root / 'completion.json').write_text('{}')  # as native: a stop at the last update completes the run
     return 0
 

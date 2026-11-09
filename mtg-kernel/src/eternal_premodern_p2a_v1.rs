@@ -961,9 +961,20 @@ pub(crate) fn execute(op: &P2aOpV1, ctx: &ExecCtx, state: &mut GameState) {
 /// Gaea's Blessing: the target player (slot 0) shuffles the target cards
 /// (slots 1 to 3) still in their graveyard into their library.
 fn blessing_shuffle(ctx: &ExecCtx, state: &mut GameState) {
-    let spec = TargetSpec::StandardV1(
-        crate::standard_cards_v1::StandardTargetV1::PlayerThenUpToThreeOfTheirGraveyardCardsV1,
+    shuffle_target_cards(
+        ctx,
+        state,
+        TargetSpec::StandardV1(
+            crate::standard_cards_v1::StandardTargetV1::PlayerThenUpToThreeOfTheirGraveyardCardsV1,
+        ),
     );
+}
+
+/// The target player (slot 0) shuffles the target cards (the later slots)
+/// still in their graveyard into their library; `spec` is the spell's
+/// player-then-graveyard-cards target filter (Gaea's Blessing, and Premodern
+/// wave P2c's Krosan Reclamation).
+pub(crate) fn shuffle_target_cards(ctx: &ExecCtx, state: &mut GameState, spec: TargetSpec) {
     let Some(Target::Player(player)) = ctx.targets.first().copied() else {
         return;
     };

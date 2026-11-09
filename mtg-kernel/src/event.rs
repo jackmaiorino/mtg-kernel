@@ -2077,6 +2077,10 @@ pub enum CommittedEvent {
     DrakusethDamageSourceV76 {
         journal: Box<crate::drakuseth_damage_source_v76::JournalV76>,
     },
+    NishobaDamageSourceV1 {
+        source: crate::state::AbilitySourceContractV4,
+        damage_history_index: u64,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2877,6 +2881,16 @@ pub fn apply_replacements(
                 },
             )
         {
+            return None;
+        }
+        // Phantom Nishoba (Premodern wave P2c): damage that can't be
+        // prevented is dealt, but the counter still comes off.
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::eternal_premodern_p2c_v1::statics::prevent_damage(
+            state,
+            damage,
+            damage_cannot_be_prevented,
+        ) {
             return None;
         }
     }
@@ -4436,6 +4450,13 @@ fn commit_with_entry_batch_and_source_color(
         }
         _ => None,
     };
+    #[cfg(feature = "eternal-fixtures")]
+    let nishoba_source = match &event {
+        ProposedEvent::Damage(damage) => {
+            crate::eternal_premodern_p2c_v1::nishoba_damage_source(state, damage.source)
+        }
+        _ => None,
+    };
     // A Damage endpoint is attributable to its indexed public object before
     // damage hooks can move it. Nominal zone markers and anonymous hidden
     // sources do not suffice. A face-down battlefield permanent still has a
@@ -4598,6 +4619,19 @@ fn commit_with_entry_batch_and_source_color(
             .record_visibility_v2(entry_history_index, *object, mask);
     }
     state.engine.event_history.push(committed);
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(source) = nishoba_source.filter(|source| {
+        matches!(state.engine.event_history.get(entry_history_index),
+            Some(CommittedEvent::Damage { source: object, amount, .. })
+                if *object == source.source && *amount > 0)
+    }) {
+        let receipt = CommittedEvent::NishobaDamageSourceV1 {
+            source,
+            damage_history_index: entry_history_index as u64,
+        };
+        state.engine.event_log.push(receipt.clone());
+        state.engine.event_history.push(receipt);
+    }
     record_copied_token_entry_v1(state, entry_history_index);
     crate::effect::curator_v1::record_entry(state, entry_history_index);
     if !tutelage_observers.is_empty()
@@ -6171,10 +6205,15 @@ fn batch_with_aura_token_hosts_v1(
     let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     if needs_final_zone_pt_plan_v1(state, &events) {
         let mut replaced = state.clone();
+        #[cfg(feature = "eternal-fixtures")]
+        let nishoba_batch =
+            crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(&mut replaced, &events);
         let survivors = events
             .into_iter()
             .filter_map(|event| apply_replacements(&mut replaced, event))
             .collect::<Vec<_>>();
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_premodern_p2c_v1::statics::end_damage_batch(&mut replaced, nishoba_batch);
         if let Some((_, source)) = replaced.engine.halted {
             halt_zone_pt_v1(state, source);
             return;
@@ -6227,10 +6266,15 @@ fn batch_with_aura_token_hosts_v1(
         );
         return;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    let nishoba_batch =
+        crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(state, &events);
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
         .filter_map(|e| apply_replacements(state, e))
         .collect();
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, nishoba_batch);
     commit_batch_survivors(
         state,
         survivors,

@@ -482,6 +482,15 @@ pub(crate) fn dynamic_count(count: DynamicCountDef, out: &mut Collector) -> AmtF
             );
             AmtF::Dynamic
         }
+        DynamicCountDef::TenCreatureCardsInAllGraveyardsV1 => {
+            out.read(
+                RelF::EachPlayer,
+                Some(ZoneF::Graveyard),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::Count,
+            );
+            AmtF::Dynamic
+        }
         DynamicCountDef::ControllerAttackingCreatures => {
             out.read(
                 RelF::You,
