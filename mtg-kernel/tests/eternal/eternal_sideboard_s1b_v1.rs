@@ -1092,6 +1092,28 @@ fn meddling_mage_token_copy_names_independently_before_allocation() {
     assert!(!castable(&mut state, dart));
 }
 
+#[test]
+fn meddling_mage_entering_under_dress_down_never_chose_a_name() {
+    let mut state = islands();
+    let dress = put(&mut state, P0, "Dress Down", Zone::Hand);
+    let mage = put(&mut state, P0, "Meddling Mage", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W, ManaColor::U, ManaColor::U], 1);
+    cast(&mut state, dress, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, dress), Zone::Battlefield);
+    cast(&mut state, mage, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, mage), Zone::Battlefield);
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(dress, Zone::Graveyard),
+    );
+    let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::R], 0);
+    state.priority_player = P1;
+    assert!(castable(&mut state, bolt));
+}
+
 fn def_is_land(named: u16) -> bool {
     CARD_DEFS[named as usize].types.contains(&CardType::Land)
 }

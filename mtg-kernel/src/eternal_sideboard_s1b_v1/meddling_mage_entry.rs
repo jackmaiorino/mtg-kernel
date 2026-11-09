@@ -203,7 +203,7 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
                     || entrant != source.source || source.zone != Zone::Battlefield
                     || !owns_definition(source.card_def) || !is_nameable(*named)
                     || !entrants.insert(link)
-                    || !names.iter().filter(|(saved, _)| *saved == link).eq([&(link, *named)])
+                    || !names.iter().copied().filter(|(saved, _)| *saved == link).eq([(link, *named)])
                 {
                     return Err("Meddling Mage name or entry incarnation changed".into());
                 }
