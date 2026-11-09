@@ -50,14 +50,17 @@ pub(crate) fn prepare(
     let Some(at) = state
         .engine
         .event_history
-        .scan_for_v1(&[crate::event_history_v1::EventKindV1::LeylineOpeningV1]).iter().position(|event| {
-        matches!(
-            event,
-            CommittedEvent::LeylineOpeningV1 {
-                record: RecordV1::Input(_)
-            },
-        )
-    }) else {
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::LeylineOpeningV1])
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                CommittedEvent::LeylineOpeningV1 {
+                    record: RecordV1::Input(_)
+                },
+            )
+        })
+    else {
         return Ok(None);
     };
     validate(state)?;

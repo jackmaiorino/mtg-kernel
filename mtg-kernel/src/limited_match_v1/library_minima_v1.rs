@@ -51,13 +51,20 @@ fn public_departure_name(state: &GameState, at: usize, object: ObjectId) -> Opti
 /// the same previously seen copy, so it establishes presence, not arrival.
 /// A shuffled-away physical alias never participates in the count.
 pub(crate) fn minimum_names(state: &GameState, owner: PlayerId) -> Vec<u16> {
-
     let mut copies = 0usize;
     let mut tokens = BTreeSet::new();
     for (at, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::ProgenitusShuffledV1, EventKindV1::CreateToken, EventKindV1::Draw, EventKindV1::ZoneChange]).iter().enumerate() {
+        .scan_for_v1(&[
+            EventKindV1::ProgenitusShuffledV1,
+            EventKindV1::CreateToken,
+            EventKindV1::Draw,
+            EventKindV1::ZoneChange,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             E::CreateToken { object, .. } => {
                 tokens.insert(*object);

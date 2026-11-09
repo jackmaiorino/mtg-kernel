@@ -182,16 +182,21 @@ fn validate_debit_face(state: &GameState, at: usize, debit: &DebitV1) -> Result<
 }
 
 pub(crate) fn debits(state: &GameState) -> Result<Vec<(&PaidV1, &[DebitV1; 6])>, String> {
-
     let mut debited = BTreeMap::new();
     let mut input = BTreeSet::new();
     let mut paid = BTreeSet::new();
     let mut output = Vec::new();
-    for (at, event) in state.engine.event_history.scan_for_v1(&[
-        EventKindV1::GreatwurmCounterInputV1,
-        EventKindV1::GreatwurmCounterPaymentV1,
-        EventKindV1::GreatwurmCommitReceiptV1,
-    ]).iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::GreatwurmCounterInputV1,
+            EventKindV1::GreatwurmCounterPaymentV1,
+            EventKindV1::GreatwurmCommitReceiptV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             E::GreatwurmCounterInputV1 { input: original } => {
                 if !input.insert(original.stack_item_id) {
@@ -267,7 +272,6 @@ pub(crate) fn end(
     finished_at: usize,
     creature: AbilitySourceContractV4,
 ) -> Result<EndV1, String> {
-
     let mut endings = state
         .engine
         .event_history

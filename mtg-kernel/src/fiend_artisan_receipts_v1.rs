@@ -53,13 +53,21 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
     // The index only skips work. Refusal depends on an actual Fiend event,
     // even when validation forces every history scan open.
     if state.fiend_artisan_receipts_v1
-        || state.engine.event_history.scan_for_v1(KINDS).iter().any(|event| {
-            matches!(event, E::FiendArtisanInputV1 { .. }
-                | E::FiendArtisanPaidV1 { .. }
-                | E::FiendArtisanSearchStartedV1 { .. }
-                | E::FiendArtisanSearchFinishedV1 { .. }
-                | E::FiendArtisanConsumerReceiptV1 { .. })
-        })
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(KINDS)
+            .iter()
+            .any(|event| {
+                matches!(
+                    event,
+                    E::FiendArtisanInputV1 { .. }
+                        | E::FiendArtisanPaidV1 { .. }
+                        | E::FiendArtisanSearchStartedV1 { .. }
+                        | E::FiendArtisanSearchFinishedV1 { .. }
+                        | E::FiendArtisanConsumerReceiptV1 { .. }
+                )
+            })
         || state.stack.iter().any(|item| native::selected(state, item))
         || state.objects.iter().any(|(_, live)| {
             public_destination(live.zone)

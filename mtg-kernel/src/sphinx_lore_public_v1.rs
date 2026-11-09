@@ -397,7 +397,10 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
     for (index, entry) in state
         .engine
         .event_history
-        .scan_for_v1(&[crate::event_history_v1::EventKindV1::SphinxLoreV1]).iter().enumerate() {
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::SphinxLoreV1])
+        .iter()
+        .enumerate()
+    {
         if let E::SphinxLoreV1 {
             journal: lore::JournalV1::Attack { turn, .. },
         } = entry
@@ -439,7 +442,10 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
     for (index, entry) in state
         .engine
         .event_history
-        .scan_for_v1(&[crate::event_history_v1::EventKindV1::SphinxLoreV1]).iter().enumerate() {
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::SphinxLoreV1])
+        .iter()
+        .enumerate()
+    {
         if let E::SphinxLoreV1 {
             journal: lore::JournalV1::Installed { attack, target, .. },
         } = entry
@@ -475,7 +481,8 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
     for entry in state
         .engine
         .event_history
-        .scan_for_v1(&[crate::event_history_v1::EventKindV1::SphinxLoreV1]) {
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::SphinxLoreV1])
+    {
         if let E::SphinxLoreV1 {
             journal: lore::JournalV1::Published { attack, item },
         } = entry

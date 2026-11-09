@@ -428,7 +428,15 @@ pub(crate) fn validate_combat_links(state: &GameState) -> Result<(), String> {
         .iter()
         .enumerate()
     {
-        let (E::LathrilCombatCollectedV1 { .. } | E::LathrilCombatPublishedV1 { .. } | E::LathrilCombatResolvedV1 { .. } | E::LathrilCombatCounteredV1 { .. } | E::LathrilCombatObservedV1 { .. } | E::LathrilReceiptV1 { .. }) = row else { continue; };
+        let (E::LathrilCombatCollectedV1 { .. }
+        | E::LathrilCombatPublishedV1 { .. }
+        | E::LathrilCombatResolvedV1 { .. }
+        | E::LathrilCombatCounteredV1 { .. }
+        | E::LathrilCombatObservedV1 { .. }
+        | E::LathrilReceiptV1 { .. }) = row
+        else {
+            continue;
+        };
         let capture = match row {
             E::LathrilCombatCollectedV1 {
                 capture_history_index,
