@@ -8,6 +8,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
@@ -126,6 +127,13 @@ print("NATIVE_FIXTURE_V1 " + json.dumps(manifest))
 
 
 def executable(directory: Path, name: str, source: str) -> Path:
+    if os.name == "nt":
+        # Windows runs no shebang script, so a batch file starts the interpreter.
+        script = directory / f"{name}.py"
+        script.write_text(source, encoding="utf-8")
+        path = directory / f"{name}.cmd"
+        path.write_text(f'@"{sys.executable}" "{script}" %*\n@exit /b %ERRORLEVEL%\n')
+        return path
     path = directory / name
     path.write_text(f"#!{sys.executable}\n{source}")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
@@ -248,6 +256,71 @@ class PlanAndRuleTest(unittest.TestCase):
         self.assertEqual(bench.max_rss_mib(2048, "linux"), 2.0)
         self.assertEqual(bench.max_rss_mib(2 << 20, "darwin"), 2.0)
 
+    def test_a_windows_verbatim_path_compares_as_its_ordinary_form(self):
+        # Rust's canonicalize returns \\?\C:\... on Windows; the driver builds C:\....
+        self.assertEqual(bench.plain_path("\\\\?\\C:\\f\\work", windows=True), "C:\\f\\work")
+        self.assertEqual(bench.plain_path("\\\\?\\UNC\\host\\share\\f", windows=True),
+                         "\\\\host\\share\\f")
+        self.assertEqual(bench.plain_path("\\\\?\\C:\\f", windows=False), "\\\\?\\C:\\f")
+        self.assertEqual(bench.plain_path("/tmp/f", windows=True), "/tmp/f")
+        if os.name == "nt":
+            root = Path(tempfile.gettempdir()).resolve()
+            verbatim = "\\\\?\\" + str(root)
+            self.assertTrue(bench.matches_fixture_path(verbatim + "\\work", root / "work"))
+            self.assertEqual(bench.map_pin(verbatim + "\\run\\a.json", str(root / "run")), "a.json")
+
+
+class RunProcessTest(unittest.TestCase):
+    """The process timer: wait4 on Linux and macOS, a job object on Windows."""
+
+    def setUp(self):
+        self.temp = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.temp, ignore_errors=True)
+
+    def run_python(self, source: str, timeout=None) -> dict:
+        # A virtual environment's python.exe on Windows is a launcher that runs the
+        # base interpreter as its child, and the peak working set is the started
+        # process's own, so start the base interpreter itself there.
+        python = getattr(sys, "_base_executable", None) if os.name == "nt" else None
+        return bench.run_process([python or sys.executable, "-c", source], dict(os.environ),
+                                 self.temp / "stdout.txt", self.temp / "stderr.txt", timeout)
+
+    def test_a_run_reports_its_exit_code_cpu_time_and_peak_memory(self):
+        result = self.run_python(
+            "import sys, time\n"
+            "data = b'x' * (96 << 20)\n"
+            "end = time.process_time() + 0.3\n"
+            "while time.process_time() < end:\n"
+            "    pass\n"
+            "sys.stdout.write('done')\n"
+            "sys.exit(7)")
+        self.assertEqual(result["exit_code"], 7)
+        self.assertFalse(result["timed_out"])
+        self.assertGreater(result["user_seconds"] + result["sys_seconds"], 0.2)
+        self.assertGreater(result["wall_seconds"], 0.2)
+        self.assertGreater(result["max_rss_mib"], 90, result)
+        if os.name == "nt":
+            self.assertGreaterEqual(result["peak_commit_mib"], 90, result)
+            self.assertGreaterEqual(result["job_processes"], 1, result)
+        self.assertEqual((self.temp / "stdout.txt").read_text(), "done")
+
+    def test_a_timeout_ends_the_whole_process_tree(self):
+        started, survived = self.temp / "started", self.temp / "survived"
+        child = (f"import pathlib, time; pathlib.Path({str(started)!r}).touch(); "
+                 f"time.sleep(3); pathlib.Path({str(survived)!r}).touch()")
+        result = self.run_python(
+            "import pathlib, subprocess, sys, time\n"
+            f"subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+            f"while not pathlib.Path({str(started)!r}).exists():\n"
+            "    time.sleep(0.05)\n"
+            "time.sleep(60)", timeout=2.0)
+        self.assertTrue(result["timed_out"])
+        self.assertNotEqual(result["exit_code"], 0)
+        self.assertLess(result["wall_seconds"], 30)
+        self.assertTrue(started.exists(), "the child started before the timeout")
+        time.sleep(3.5)
+        self.assertFalse(survived.exists(), "the timeout also ended the child")
+
 
 class TreeComparisonTest(unittest.TestCase):
     def compare_timing_prefix(self, left_semantic, right_semantic):
@@ -277,7 +350,7 @@ class TreeComparisonTest(unittest.TestCase):
         self.assertEqual(summary["status"], "equal_up_to_accounted_fields")
 
 
-@unittest.skipUnless(sys.platform.startswith(("linux", "darwin")), "the driver uses os.wait4 and process groups")
+@unittest.skipUnless(hasattr(os, "wait4") or os.name == "nt", "the driver times runs with wait4 or a job object")
 class DriverTest(unittest.TestCase):
     def setUp(self):
         self.temp = Path(tempfile.mkdtemp()).resolve()

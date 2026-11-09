@@ -15,11 +15,13 @@ compare byte for byte; every difference is either accounted for (a timing
 field, a build-provenance field across builds, or the pin of a file that
 differs only that way) or reported as a mismatch.
 
-Standard library only; Linux or macOS (os.wait4). See README.md for the commands.
+Standard library only. On Linux and macOS each process is timed with os.wait4;
+on Windows, in its own job object. See README.md for the commands.
 """
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -32,6 +34,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 from datetime import datetime, timezone
 from itertools import islice
 from pathlib import Path
@@ -116,7 +119,7 @@ def read_json(path: Path):
 
 def write_json(path: Path, value) -> None:
     staged = path.with_name(f".{path.name}.stage")
-    with open(staged, "w", encoding="utf-8") as handle:
+    with open(staged, "w", encoding="utf-8", newline="\n") as handle:
         json.dump(value, handle, indent=2, sort_keys=True)
         handle.write("\n")
         handle.flush()
@@ -125,7 +128,7 @@ def write_json(path: Path, value) -> None:
 
 
 def append_jsonl(path: Path, value) -> None:
-    with open(path, "a", encoding="utf-8") as handle:
+    with open(path, "a", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, sort_keys=True) + "\n")
         handle.flush()
         os.fsync(handle.fileno())
@@ -151,7 +154,7 @@ def max_rss_mib(ru_maxrss: int, system: str = sys.platform) -> float:
     return ru_maxrss / (1 << 20) if system == "darwin" else ru_maxrss / 1024
 
 
-def host_record() -> dict:
+def posix_cpu_and_memory() -> tuple[str | None, int | None]:
     cpu = None
     try:
         for line in Path("/proc/cpuinfo").read_text().splitlines():
@@ -170,6 +173,15 @@ def host_record() -> dict:
             memory_kib = int(command_output(["sysctl", "-n", "hw.memsize"]) or "") // 1024
         except ValueError:
             pass
+    return cpu, memory_kib
+
+
+def host_record() -> dict:
+    if os.name == "nt":
+        cpu, memory_kib, affinity = windows_host()
+    else:
+        cpu, memory_kib = posix_cpu_and_memory()
+        affinity = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
     first_line = lambda text: text.splitlines()[0] if text else None  # noqa: E731
     return {
         "hostname": platform.node(),
@@ -178,7 +190,7 @@ def host_record() -> dict:
         "machine": platform.machine(),
         "cpu_model": cpu,
         "logical_cpus": os.cpu_count(),
-        "affinity_cpus": len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
+        "affinity_cpus": affinity,
         "memory_total_mib": round(memory_kib / 1024, 1) if memory_kib else None,
         "python": platform.python_version(),
         # The host's toolchain, which is not necessarily the one that built the arms.
@@ -221,7 +233,8 @@ def generate(args) -> int:
                    GENERATOR_TEST, "--", *selector]
         cwd = args.repo
     started = time.monotonic()
-    done = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, check=False)
+    done = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", check=False)
     wall = time.monotonic() - started
     if done.returncode != 0:
         sys.stderr.write(done.stdout[-4000:] + done.stderr[-4000:])
@@ -236,8 +249,8 @@ def generate(args) -> int:
         raise BenchError("the generator's printed manifest differs from fixture.json")
     log_directory = root / "generate"
     log_directory.mkdir()
-    (log_directory / "stdout.txt").write_text(done.stdout)
-    (log_directory / "stderr.txt").write_text(done.stderr)
+    (log_directory / "stdout.txt").write_text(done.stdout, encoding="utf-8")
+    (log_directory / "stderr.txt").write_text(done.stderr, encoding="utf-8")
     record = {
         "schema": GENERATE_SCHEMA,
         "created_utc": utc_now(),
@@ -256,11 +269,24 @@ def generate(args) -> int:
     return 0
 
 
+def plain_path(value: str, windows: bool = os.name == "nt") -> str:
+    """A Windows verbatim path (`\\\\?\\C:\\...`, the form Rust's canonicalize
+    returns there) in its ordinary form, so it compares with the paths the
+    driver builds. Other paths are returned unchanged."""
+    if windows and value.startswith("\\\\?\\"):
+        rest = value[4:]
+        if rest[:4].upper() == "UNC\\":
+            return "\\\\" + rest[4:]
+        if rest[1:2] == ":":
+            return rest
+    return value
+
+
 def matches_fixture_path(value, expected: Path) -> bool:
     if not isinstance(value, str):
         return False
-    path = Path(value)
-    return path.is_absolute() and path.resolve() == expected
+    path = Path(plain_path(value))
+    return path.is_absolute() and path.resolve() == Path(plain_path(str(expected))).resolve()
 
 
 def validate_fixture(fixture: dict, root: Path) -> dict[str, dict]:
@@ -304,13 +330,193 @@ def validate_fixture(fixture: dict, root: Path) -> dict[str, dict]:
     return configs
 
 
+# ---------------------------------------------------------------- Windows
+
+# Windows has no wait4. Each sample runs in its own job object instead: the job
+# accounts the CPU time of every process in the tree, a timeout ends the whole
+# tree as killpg does, and closing the job ends anything the run left behind.
+# The peak memory is the started process's own peak working set, the
+# counterpart of the peak resident set that wait4 reports; the job also counts
+# its processes and keeps the largest peak commit of any of them.
+JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
+JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+CREATE_SUSPENDED = 0x4
+# Terminate and set quota (to join a job), suspend/resume, and query and VM
+# read (GetProcessMemoryInfo).
+PROCESS_RIGHTS = 0x0001 | 0x0100 | 0x0800 | 0x0400 | 0x0010
+
+
+@functools.lru_cache(maxsize=None)
+def windows_api():
+    """The kernel32 and ntdll calls the driver uses, typed for 64-bit handles,
+    and the structures they fill."""
+    import ctypes
+    from ctypes import wintypes
+
+    size, u64, i64, dword = ctypes.c_size_t, ctypes.c_uint64, ctypes.c_int64, wintypes.DWORD
+
+    def structure(name, fields):
+        return type(name, (ctypes.Structure,), {"_fields_": fields})
+
+    basic_limits = structure("BasicLimits", [
+        ("PerProcessUserTimeLimit", i64), ("PerJobUserTimeLimit", i64), ("LimitFlags", dword),
+        ("MinimumWorkingSetSize", size), ("MaximumWorkingSetSize", size),
+        ("ActiveProcessLimit", dword), ("Affinity", size), ("PriorityClass", dword),
+        ("SchedulingClass", dword)])
+    io_counters = structure("IoCounters", [(name, u64) for name in (
+        "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+        "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")])
+    extended_limits = structure("ExtendedLimits", [
+        ("BasicLimitInformation", basic_limits), ("IoInfo", io_counters),
+        ("ProcessMemoryLimit", size), ("JobMemoryLimit", size),
+        ("PeakProcessMemoryUsed", size), ("PeakJobMemoryUsed", size)])
+    accounting = structure("BasicAccounting", [
+        ("TotalUserTime", i64), ("TotalKernelTime", i64),
+        ("ThisPeriodTotalUserTime", i64), ("ThisPeriodTotalKernelTime", i64),
+        ("TotalPageFaultCount", dword), ("TotalProcesses", dword),
+        ("ActiveProcesses", dword), ("TotalTerminatedProcesses", dword)])
+    memory_counters = structure("MemoryCounters", [
+        ("cb", dword), ("PageFaultCount", dword), *((name, size) for name in (
+            "PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage",
+            "QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage", "QuotaNonPagedPoolUsage",
+            "PagefileUsage", "PeakPagefileUsage"))])
+    memory_status = structure("MemoryStatus", [
+        ("dwLength", dword), ("dwMemoryLoad", dword), *((name, u64) for name in (
+            "ullTotalPhys", "ullAvailPhys", "ullTotalPageFile", "ullAvailPageFile",
+            "ullTotalVirtual", "ullAvailVirtual", "ullAvailExtendedVirtual"))])
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    ntdll = ctypes.WinDLL("ntdll")
+    handle, boolean, pointer = wintypes.HANDLE, wintypes.BOOL, ctypes.c_void_p
+    for name, result, arguments in (
+            ("CreateJobObjectW", handle, (pointer, wintypes.LPCWSTR)),
+            ("SetInformationJobObject", boolean, (handle, ctypes.c_int, pointer, dword)),
+            ("QueryInformationJobObject", boolean, (handle, ctypes.c_int, pointer, dword, pointer)),
+            ("AssignProcessToJobObject", boolean, (handle, handle)),
+            ("TerminateJobObject", boolean, (handle, ctypes.c_uint)),
+            ("OpenProcess", handle, (dword, boolean, dword)),
+            ("CloseHandle", boolean, (handle,)),
+            ("K32GetProcessMemoryInfo", boolean, (handle, pointer, dword)),
+            ("GlobalMemoryStatusEx", boolean, (pointer,)),
+            ("GetCurrentProcess", handle, ()),
+            ("GetProcessAffinityMask", boolean, (handle, pointer, pointer))):
+        function = getattr(kernel32, name)
+        function.restype, function.argtypes = result, arguments
+    ntdll.NtResumeProcess.restype, ntdll.NtResumeProcess.argtypes = ctypes.c_long, (handle,)
+    return types.SimpleNamespace(
+        ctypes=ctypes, kernel32=kernel32, ntdll=ntdll, ExtendedLimits=extended_limits,
+        BasicAccounting=accounting, MemoryCounters=memory_counters, MemoryStatus=memory_status)
+
+
+def windows_host() -> tuple[str | None, int | None, int | None]:
+    """The CPU model, physical memory in KiB and the CPUs this process may use."""
+    import winreg
+
+    api = windows_api()
+    ctypes = api.ctypes
+    cpu = memory_kib = affinity = None
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as key:
+            cpu = str(winreg.QueryValueEx(key, "ProcessorNameString")[0]).strip() or None
+    except OSError:
+        pass
+    status = api.MemoryStatus(dwLength=ctypes.sizeof(api.MemoryStatus))
+    if api.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        memory_kib = status.ullTotalPhys // 1024
+    mask, system = ctypes.c_size_t(), ctypes.c_size_t()
+    if api.kernel32.GetProcessAffinityMask(api.kernel32.GetCurrentProcess(),
+                                           ctypes.byref(mask), ctypes.byref(system)):
+        affinity = bin(mask.value).count("1")
+    return cpu, memory_kib, affinity
+
+
+def run_process_windows(command: list[str], env: dict, out, err, timeout: float | None) -> dict:
+    api = windows_api()
+    ctypes, kernel32 = api.ctypes, api.kernel32
+
+    def check(ok) -> None:
+        if not ok:
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    job = kernel32.CreateJobObjectW(None, None)
+    check(job)
+    try:
+        limits = api.ExtendedLimits()
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        check(kernel32.SetInformationJobObject(job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+                                               ctypes.byref(limits), ctypes.sizeof(limits)))
+        started_utc = utc_now()
+        # QueryPerformanceCounter: before Python 3.13, monotonic() ticks every 15.6 ms here.
+        started = time.perf_counter()
+        # The process starts suspended and runs only once it is in the job, so
+        # every process it starts is in the job too.
+        process = subprocess.Popen(command, stdout=out, stderr=err, env=env,
+                                   creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED)
+        handle = kernel32.OpenProcess(PROCESS_RIGHTS, False, process.pid)
+        try:
+            check(handle)
+            check(kernel32.AssignProcessToJobObject(job, handle))
+            status = api.ntdll.NtResumeProcess(handle)
+            if status != 0:
+                raise OSError(f"NtResumeProcess failed with status {status & 0xFFFFFFFF:#010x}")
+            timed_out = False
+            try:
+                process.wait(timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                kernel32.TerminateJobObject(job, 1)
+                process.wait()
+            wall = time.perf_counter() - started
+            accounting = api.BasicAccounting()
+            check(kernel32.QueryInformationJobObject(
+                job, JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION, ctypes.byref(accounting),
+                ctypes.sizeof(accounting), None))
+            check(kernel32.QueryInformationJobObject(
+                job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(limits),
+                ctypes.sizeof(limits), None))
+            memory = api.MemoryCounters(cb=ctypes.sizeof(api.MemoryCounters))
+            check(kernel32.K32GetProcessMemoryInfo(handle, ctypes.byref(memory), memory.cb))
+        except BaseException:
+            if process.returncode is None:
+                process.kill()
+                process.wait()
+            raise
+        finally:
+            if handle:
+                kernel32.CloseHandle(handle)
+    finally:
+        kernel32.CloseHandle(job)
+    return {
+        "command": command,
+        "started_utc": started_utc,
+        "exit_code": process.returncode,
+        "timed_out": timed_out,
+        "wall_seconds": wall,
+        "user_seconds": accounting.TotalUserTime / 1e7,
+        "sys_seconds": accounting.TotalKernelTime / 1e7,
+        "max_rss_mib": memory.PeakWorkingSetSize / (1 << 20),
+        # Windows counts soft and hard page faults together and keeps no
+        # per-process context switch counts.
+        "major_page_faults": None,
+        "voluntary_context_switches": None,
+        "involuntary_context_switches": None,
+        "page_faults": accounting.TotalPageFaultCount,
+        "job_processes": accounting.TotalProcesses,
+        "peak_commit_mib": limits.PeakProcessMemoryUsed / (1 << 20),
+    }
+
+
 # ---------------------------------------------------------------- processes
 
 
 def run_process(command: list[str], env: dict, stdout_path: Path, stderr_path: Path,
                 timeout: float | None) -> dict:
-    """Runs one process to exit; its wall time, CPU and peak RSS (wait4)."""
+    """Runs one process to exit; its wall time, CPU and peak RSS (wait4, or a
+    job object on Windows)."""
     with open(stdout_path, "wb") as out, open(stderr_path, "wb") as err:
+        if os.name == "nt":
+            return run_process_windows(command, env, out, err, timeout)
         started_utc = utc_now()
         started = time.monotonic()
         process = subprocess.Popen(command, stdout=out, stderr=err, env=env,
@@ -351,7 +557,7 @@ def run_process(command: list[str], env: dict, stdout_path: Path, stderr_path: P
 
 def parse_stdout(path: Path) -> dict:
     iterations, result, other = [], None, 0
-    for line in path.read_text(errors="replace").splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             value = json.loads(line)
         except json.JSONDecodeError:
@@ -369,7 +575,7 @@ def parse_stdout(path: Path) -> dict:
 def read_diagnostics(path: Path) -> dict | None:
     if not path.exists():
         return None
-    lines = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     if not lines:
         return None
     for line in lines:
@@ -403,7 +609,7 @@ def map_pin(path, prefix: str) -> str | None:
     if not isinstance(path, str):
         return None
     try:
-        relative = Path(path).relative_to(prefix)
+        relative = Path(plain_path(path)).relative_to(plain_path(prefix))
     except ValueError:
         return None
     return relative.as_posix() if relative.parts and ".." not in relative.parts else None
@@ -940,7 +1146,8 @@ def compare(args) -> int:
         raise BenchError(f"{out} holds no complete {BENCH_SCHEMA} run")
     if manifest.get("outputs", {}).get("samples.jsonl") != sha256_file(out / "samples.jsonl"):
         raise BenchError("samples.jsonl changed since the run")
-    samples = [json.loads(line) for line in (out / "samples.jsonl").read_text().splitlines()]
+    samples = [json.loads(line)
+               for line in (out / "samples.jsonl").read_text(encoding="utf-8").splitlines()]
     if "binaries_unchanged" not in manifest and (out / "comparison.json").is_file():
         # A run from before the manifest recorded it.
         manifest["binaries_unchanged"] = read_json(out / "comparison.json").get("binaries_unchanged")
@@ -967,7 +1174,8 @@ def receipt_run(out: Path) -> dict:
         if sha256_file(out / name) != pin:
             raise BenchError(f"{out / name} changed since the run")
     comparison = read_json(out / "comparison.json")
-    samples = [json.loads(line) for line in (out / "samples.jsonl").read_text().splitlines()]
+    samples = [json.loads(line)
+               for line in (out / "samples.jsonl").read_text(encoding="utf-8").splitlines()]
     metrics = sorted({name for sample in samples for name in sample.get("metrics", {})})
     rows = []
     for sample in samples:
@@ -1082,9 +1290,26 @@ def receipt(args) -> int:
     text = re.sub(r'"@@row(\d+)@@"', lambda match: rows[int(match.group(1))],
                   json.dumps(fold(document), indent=1, sort_keys=True))
     target = Path(args.write)
-    target.write_text(text + "\n")
+    with open(target, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text + "\n")
     print(f"{target}: {len(text) + 1} bytes")
     return 0
+
+
+def move_run(work: Path, destination: Path) -> None:
+    """Moves a sample's run tree out of the case's fixed path. Windows refuses to
+    rename a directory while any file in it is open, and an on-access scanner may
+    briefly hold files the run just wrote, so there the rename is retried first."""
+    if os.name == "nt":
+        for delay in (0.1, 0.25, 0.5, 1.0, 2.0, 4.0):
+            try:
+                os.rename(work, destination)
+                return
+            except PermissionError:
+                time.sleep(delay)
+            except OSError:
+                break
+    shutil.move(str(work), str(destination))
 
 
 def require_completed_sample(result: dict, states: list[dict], tree: Path,
@@ -1154,7 +1379,7 @@ def run_sample(entry: dict, arm: dict, case: dict, out: Path, shared_env: dict,
                     or not destination.resolve().is_relative_to(out.resolve())):
                 sample["error"] = "run archive path changed while the sample was running"
             else:
-                shutil.move(str(work), str(destination))
+                move_run(work, destination)
     final = processes[-1] if processes else None
     sample["processes"] = processes
     sample["process"] = final or {"wall_seconds": 0.0, "max_rss_mib": 0.0}

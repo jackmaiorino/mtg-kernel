@@ -3,7 +3,8 @@
 An opt-in local benchmark of `native_expanded_training_run_v1` on a small
 deterministic workload. It follows the common benchmark contract in #594 and
 needs no private checkpoint, plan or fleet access. Standard-library Python 3.11+
-on Linux or macOS (the driver uses `os.wait4`).
+on Linux, macOS or Windows. Linux and macOS time each run with `os.wait4`, and
+Windows runs each in its own job object (see [Windows](#windows)).
 
 The workload is the source-generated net-8 fixture that the run's own tests use:
 
@@ -24,6 +25,8 @@ Build the baseline (for example `origin/main`) and the candidate in separate wor
 ```bash
 cargo build --release --locked -j 1 -p mtg-kernel --bin native_expanded_training_run_v1
 ```
+
+On Windows the binary is `native_expanded_training_run_v1.exe`, built with the MSVC toolchain. On a shared project machine, run every build and timed run through its installed reservation and build guard (#594): builds as `python/tools/host_slots_v1.py run --wait` claims, and the timed comparison inside a `python/tools/host_reservation_v1.py` reservation with `host_slots_v1.py timed --cores` ([docs/host_slots_v1.md](../../docs/host_slots_v1.md)).
 
 The checked-in release profile (thin LTO, `codegen-units = 1`) needs well over 15 GiB of RAM to build the crate's lib tests. On a smaller machine you can apply the same override to both arms and record it with `--build-profile`. Timings from such a build are not checked-in-profile results.
 
@@ -72,7 +75,7 @@ Every sample is a new process. The page cache is not dropped. `--plan-only` prin
 
 For every sample, the driver records:
 
-- wall time, user and system CPU and peak RSS, from `wait4`;
+- wall time, user and system CPU and peak RSS, from `wait4` (on Windows, from the sample's job object);
 - the run's own per-iteration `scheduler_timing` lines;
 - the receipts' phase timings: collection, input read, replay and preparation, learner update and checkpoint I/O;
 - durable completed iterations, the state at each boundary and storage bytes;
@@ -93,6 +96,17 @@ Outputs in `--out` (absent or empty):
   - the SHA-256 of the outputs.
 - `samples.jsonl` holds one raw record per sample, failed ones included. The sample directories keep the stdout, stderr and diagnostics files.
 - `comparison.json` holds each case's comparison. Its metrics give the per-arm median, range and spread, the candidate/baseline ratio, the per-block ratios and the verdict. It also includes the parity results, the counters and the cold-resume results.
+
+### Windows
+
+Windows has no `wait4`. The driver starts each sample suspended, puts it in a new job object and only then lets it run, so every process the run starts is in the job:
+
+- `user_seconds` and `sys_seconds` are the job's total user and kernel time, over every process in it;
+- `max_rss_mib` is the started process's own peak working set, the counterpart of the peak resident set. The native binary runs as one process. A wrapper that starts the real work as a child, such as a virtual environment's `python.exe`, would report only its own;
+- `wall_seconds` comes from `time.perf_counter`, because `time.monotonic` ticks only every 15.6 ms there before Python 3.13;
+- the sample also records `page_faults` (soft and hard together), `job_processes` (every process that ran in the job) and `peak_commit_mib` (the largest peak commit of any of them). Major page faults and context switches are not available there and are recorded as null.
+
+A timeout ends the job's whole tree, as `killpg` does elsewhere, and closing the job ends anything the run left behind. Rust's `canonicalize` returns verbatim paths (`\\?\C:\...`) on Windows; the driver compares them in their ordinary form. Windows also refuses to rename a directory while a file in it is open, so moving a run tree out of the fixed path is retried for about 8 seconds, in case an on-access scanner briefly holds the files the run just wrote.
 
 ### Parity
 
