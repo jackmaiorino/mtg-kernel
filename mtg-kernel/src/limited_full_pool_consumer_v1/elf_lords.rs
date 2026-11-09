@@ -16,7 +16,10 @@ fn board(decision: &KaitoDecision) -> &PublicObservationProjectionV2 {
         .surface
 }
 
-pub(super) fn action_index(decision: &KaitoDecision, choose: impl Fn(&Action) -> bool) -> Option<u32> {
+pub(super) fn action_index(
+    decision: &KaitoDecision,
+    choose: impl Fn(&Action) -> bool,
+) -> Option<u32> {
     decision
         .fixture_backend_v75()
         .actions()
@@ -25,7 +28,12 @@ pub(super) fn action_index(decision: &KaitoDecision, choose: impl Fn(&Action) ->
         .map(|i| u32::try_from(i).unwrap())
 }
 
-pub(super) fn apply(owner: &mut KaitoSession, native: &mut FastActorSessionV1, d: &KaitoDecision, i: u32) {
+pub(super) fn apply(
+    owner: &mut KaitoSession,
+    native: &mut FastActorSessionV1,
+    d: &KaitoDecision,
+    i: u32,
+) {
     let backend = d.fixture_backend_v75();
     let expected = backend.expected();
     let original = backend.fixture_original_index_v75(i).unwrap();

@@ -12,7 +12,10 @@ use crate::{
 use serde_json::{json, Value};
 
 pub(super) fn handles(name: &str) -> bool {
-    matches!(name, "Swiftfoot Boots" | "Quick-Draw Katana" | "Celestial Armor" | "Adventuring Gear")
+    matches!(
+        name,
+        "Swiftfoot Boots" | "Quick-Draw Katana" | "Celestial Armor" | "Adventuring Gear"
+    )
 }
 
 /// The caller applies the shared exclusion guard to every unrelated field.
@@ -23,7 +26,11 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let katana = d.name == "Quick-Draw Katana";
     let armor = d.name == "Celestial Armor";
     let gear = d.name == "Adventuring Gear";
-    let pips = if armor { &[Pip::Colored(ManaColor::W)][..] } else { &[] };
+    let pips = if armor {
+        &[Pip::Colored(ManaColor::W)][..]
+    } else {
+        &[]
+    };
     let colors = if armor { &[ManaColor::W][..] } else { &[] };
     let cost = Cost {
         generic: if gear { 1 } else { 2 },
@@ -31,7 +38,13 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         x_count: 0,
     };
     let equip_cost = Cost {
-        generic: if armor { 3 } else if katana { 2 } else { 1 },
+        generic: if armor {
+            3
+        } else if katana {
+            2
+        } else {
+            1
+        },
         pips,
         x_count: 0,
     };
@@ -56,18 +69,27 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     };
     let triggers = crate::trigger::triggers_for(id);
     let expected_trigger = if armor {
-        Some((TriggerCondition::Etb, EffectOp::Sequence(vec![
-            equip_program.clone(),
-            EffectOp::GrantKeywordTargetUntilEndOfTurn {
-                object: ObjectRef::Target(0),
-                keyword: Keywords::HEXPROOF | Keywords::INDESTRUCTIBLE,
-            },
-        ])))
+        Some((
+            TriggerCondition::Etb,
+            EffectOp::Sequence(vec![
+                equip_program.clone(),
+                EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                    object: ObjectRef::Target(0),
+                    keyword: Keywords::HEXPROOF | Keywords::INDESTRUCTIBLE,
+                },
+            ]),
+        ))
     } else if gear {
-        Some((TriggerCondition::ControlledLandEnters, EffectOp::BoostAttachedCreatureUntilEndOfTurn {
-            power: 2, toughness: 2,
-        }))
-    } else { None };
+        Some((
+            TriggerCondition::ControlledLandEnters,
+            EffectOp::BoostAttachedCreatureUntilEndOfTurn {
+                power: 2,
+                toughness: 2,
+            },
+        ))
+    } else {
+        None
+    };
     let exact_triggers = match expected_trigger {
         Some((condition, effect)) => matches!(triggers, [trigger]
             if trigger.condition == condition && trigger.home_zone == Zone::Battlefield
@@ -80,14 +102,26 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || (armor && id != 234)
         || (gear && id != 274)
         || d.cost != cost
-        || d.mana_value != if armor { 3 } else if gear { 1 } else { 2 }
+        || d.mana_value
+            != if armor {
+                3
+            } else if gear {
+                1
+            } else {
+                2
+            }
         || d.types != [CardType::Artifact]
         || d.subtypes != [Subtype::Equipment]
         || !d.supertypes.is_empty()
         || d.colors != colors
         || d.power.is_some()
         || d.toughness.is_some()
-        || d.keywords != if armor { Keywords::FLASH } else { Keywords::NONE }
+        || d.keywords
+            != if armor {
+                Keywords::FLASH
+            } else {
+                Keywords::NONE
+            }
         || d.is_land
         || d.is_token
         || d.enters_battlefield_tapped
