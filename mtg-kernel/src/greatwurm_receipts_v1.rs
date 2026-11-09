@@ -321,25 +321,24 @@ pub(crate) fn end(
         DispatchV1::Resolve {
             recipient: Some((controller, before)),
         } => {
-            let mut placements =
-                state.engine.event_history[dispatched + 1..at]
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(offset, event)| match event {
-                        E::PlusOneCountersAdded {
-                            object,
-                            zone_change_count,
-                            player,
-                            count,
-                            ..
-                        } if *object == creature.source
-                            && *zone_change_count == creature.zone_change_count
-                            && *player == controller =>
-                        {
-                            Some((dispatched + 1 + offset, *count))
-                        }
-                        _ => None,
-                    });
+            let mut placements = state.engine.event_history[dispatched + 1..at]
+                .iter()
+                .enumerate()
+                .filter_map(|(offset, event)| match event {
+                    E::PlusOneCountersAdded {
+                        object,
+                        zone_change_count,
+                        player,
+                        count,
+                        ..
+                    } if *object == creature.source
+                        && *zone_change_count == creature.zone_change_count
+                        && *player == controller =>
+                    {
+                        Some((dispatched + 1 + offset, *count))
+                    }
+                    _ => None,
+                });
             let (after, placement_history_index) = match (placements.next(), placements.next()) {
                 (None, None) => (before, None),
                 (Some((index, amount)), None) if amount > 0 => (
