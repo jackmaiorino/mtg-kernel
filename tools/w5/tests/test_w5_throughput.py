@@ -132,6 +132,30 @@ class ThroughputTests(unittest.TestCase):
                 self.assertTrue((self.node.root / 'state' / name / 'control' / 'kill.request').exists() or
                                 phase['exits'][name] == chains.EXIT_STOP)
                 self.assertFalse(list(cdir.glob('seg-*')))
+        # Each phase's durable block: N per chain committed over one window from before the launch hold to the last
+        # chain's commit of boundary N, which holds every box's own wall, so its rate is at most the box rate sum.
+        for phase in record['phases']:
+            d = phase['durable']
+            self.assertEqual((d['schema'], d['complete'], d['failures']), (chains.DURABLE_SCHEMA, True, []))
+            self.assertEqual((d['chains'], d['updates']), (phase['concurrent_boxes'], 8 * phase['concurrent_boxes']))
+            self.assertEqual(d['end_unix'], max(c['durable_unix'] for c in d['per_chain'].values()))
+            self.assertAlmostEqual(d['updates_per_hour'], d['updates'] / d['elapsed_seconds'] * 3600)
+            box_sum = sum(b['updates_per_wall_second'] for b in phase['boxes']) * 3600
+            self.assertLessEqual(d['updates_per_hour'], box_sum)
+            self.assertGreaterEqual(d['teardown_seconds'], 0)
+            self.assertGreaterEqual(d['pre_launch_seconds'], 0)
+            self.assertEqual(d['observation']['poll_seconds'], 0.02)
+            for b in phase['boxes']:
+                c = d['per_chain'][b['chain']]
+                self.assertEqual((c['complete'], c['how'], c['instances'], c['target_updates']),
+                                 (True, 'native', [0], 8))
+                self.assertLessEqual(d['start_unix'], b['start_unix'])  # the common start precedes every launch
+                self.assertGreaterEqual(c['durable_unix'], b['end_unix'])  # a commit follows its native receipt
+                self.assertGreaterEqual(c['elapsed_seconds'], b['seconds'])
+                self.assertGreaterEqual(c['overshoot_updates'], 0)
+                self.assertEqual(c['committed_through'], 8 + c['overshoot_updates'])
+        self.assertEqual([s['concurrent_boxes'] for s in record['summary']['durable']], [1, 4])
+        self.assertTrue(all(0 < s['durable_over_box_rate_sum'] <= 1 for s in record['summary']['durable']))
         # The plan, planned again with the record, binds it: w5box's guard rule accepts it.
         inputs = json.loads(Path(plan['inputs']['path']).read_text())
         inputs['arms']['C']['throughput'] = str(out)
@@ -141,6 +165,12 @@ class ThroughputTests(unittest.TestCase):
         binding = w5box.throughput_binding(box, box['chains']['c1'])
         guard = w5box.require_throughput(json.loads(out.read_text()), binding)
         self.assertEqual(len(guard['in_box_cpu_per_wall']), 4)
+        # The durable blocks are additive: without them the record reads as before, with the same guard result.
+        old = json.loads(out.read_text())
+        for phase in old['phases']:
+            del phase['durable']
+        del old['summary']['durable']
+        self.assertEqual(w5box.require_throughput(old, binding), guard)
         # ... and not another arm's launch plan.
         xbox = json.loads(Path(plan2['arms']['X8']['w5box_plan']['path']).read_text())
         with self.assertRaises(w5box.Refusal):
@@ -193,6 +223,25 @@ class ThroughputTests(unittest.TestCase):
         self.assertTrue(Path(f'{out}.failed.json').exists())
         later = json.loads((self.node.root / 'chains' / 'tn-c-p4-s0' / 'chain.json').read_text())
         self.assertEqual(later['segments'], [])  # no later phase ran
+        # The failed record keeps the phase's durable block: segment 0 committed, update 4 durable in an unfinished
+        # segment (never a commit), so no rate.
+        d = record['failed_phase_durable']
+        self.assertEqual((d['complete'], d['updates'], d['updates_per_hour']), (False, None, None))
+        self.assertEqual(d['failures'], [{'chain': 'tn-c-p1-s0', 'reason': 'committed through boundary 4 of 8'}])
+        self.assertEqual(d['per_chain']['tn-c-p1-s0']['committed_through'], 4)
+
+    def test_a_slow_final_publication_is_inside_the_durable_window(self):
+        # Each run's completion.json comes 0.3 s after its last receipt (the stand-in's publish delay). The box wall
+        # ends at the native receipt of boundary N; the durable window ends only at that segment's commit.
+        path, _ = self.target()
+        with mock.patch.dict(os.environ, {'FAKE_PUBLISH_DELAY': '0.3'}):
+            passed, record, _ = self.run_throughput(path, 'C', 'tp', 8, keep_trees=True)
+        self.assertTrue(passed, record.get('why'))
+        for phase in record['phases']:
+            for b in phase['boxes']:
+                c = phase['durable']['per_chain'][b['chain']]
+                self.assertGreater(c['publication_lag_seconds'], 0.25)
+                self.assertGreater(c['elapsed_seconds'] - b['seconds'], 0.25)
 
     def test_an_exit_after_n_while_a_peer_is_short_ends_the_phase(self):
         # A box that exits past its own N while another is still short would leave a handoff outage freezing it.

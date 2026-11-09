@@ -106,6 +106,21 @@ pub(in crate::expanded_deck_training_v1) fn holds_bytes_v1(
     path: &std::path::Path,
     expected: &[u8],
 ) -> bool {
+    holds_bytes_in_v1(
+        path,
+        expected,
+        crate::expanded_deck_training_v1::verified_bytes_cache_v1::global_v1().resident_v1(),
+    )
+}
+
+/// `holds_bytes_v1` under an explicit resident-reads setting. With resident
+/// reads on (`verified_bytes_cache_v1`), `expected` are bytes this process
+/// verified, and the metadata checks alone decide: the file is not read.
+pub(in crate::expanded_deck_training_v1) fn holds_bytes_in_v1(
+    path: &std::path::Path,
+    expected: &[u8],
+    resident: bool,
+) -> bool {
     use std::io::Read;
     let regular = |metadata: std::io::Result<std::fs::Metadata>| {
         metadata.is_ok_and(|metadata| metadata.is_file() && metadata.len() == expected.len() as u64)
@@ -120,6 +135,9 @@ pub(in crate::expanded_deck_training_v1) fn holds_bytes_v1(
     };
     if !regular(file.metadata()) {
         return false;
+    }
+    if resident {
+        return true;
     }
     let mut read = Vec::with_capacity(expected.len() + 1);
     if file

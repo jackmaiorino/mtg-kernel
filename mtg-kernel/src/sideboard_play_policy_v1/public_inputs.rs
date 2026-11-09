@@ -94,8 +94,8 @@ impl PublicInputPlayPolicyV1 {
             base.fresh_successor.is_some() && base.successor.is_none(),
             "public inputs require the exact V4 actor encoder",
         )?;
-        let model =
-            NativePublicInputNetV1::new(base.model.clone(), weights).map_err(|e| e.to_string())?;
+        let model = NativePublicInputNetV1::new((*base.model).clone(), weights)
+            .map_err(|e| e.to_string())?;
         Ok(Self {
             base,
             model,
@@ -116,7 +116,7 @@ impl PublicInputPlayPolicyV1 {
         parameters: &[NativeNamedParameterV1],
         weights: PublicInputWeightsV1,
     ) -> Result<(), String> {
-        let mut candidate = self.base.model.clone();
+        let mut candidate = (*self.base.model).clone();
         candidate
             .replace_parameter_snapshot_v1(parameters)
             .map_err(|e| e.to_string())?;

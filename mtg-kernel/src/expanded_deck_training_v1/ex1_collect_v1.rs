@@ -47,6 +47,8 @@ use crate::w5_xact_v1::{
 use sha2::Digest;
 use std::collections::BTreeMap;
 
+mod sd1_capture_v1;
+
 pub const EX1_COLLECT_SCHEMA_V1: &str = "ex1-collect-episode/v1";
 /// The frozen per-search budget B, in raw selection transitions.
 pub const EX1_BUDGET_V1: u64 = 64_000;
@@ -97,6 +99,103 @@ pub struct W5CaptureOptionsV1 {
     /// Omitted: the Stage 0b record is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_leaf: Option<W5ValueLeafCaptureV1>,
+    /// SD1's capture (collab LANES/search-diagnostic-20261108/DESIGN.md v4
+    /// sections 3.1, 3.2 and 6 E2): named search arms under explicit world
+    /// lifecycles and the split true-state references. With it set the 0b
+    /// fields must be empty (no budgets or search seeds, rollouts 0, no value
+    /// leaf). Omitted: the Stage 0b record is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sd1: Option<Sd1CaptureOptionsV1>,
+}
+
+/// The SD1 capture schema of the per-episode record.
+pub const SD1_CAPTURE_VERSION_V1: &str = "sd1-capture-v1";
+
+/// SD1's capture at the placed decision: every arm x search seed, then, when
+/// `half_rollouts` > 0, the references: Q_a and Q_b per covered action and
+/// V_p's two halves, `half_rollouts` true-state SELF continuations each.
+/// An empty arm list with `half_rollouts` 0 records the panel only (reached,
+/// step, policy, actor-visible features), so the panel is hashed before any
+/// arm runs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sd1CaptureOptionsV1 {
+    pub version: String,
+    pub arms: Vec<Sd1ArmOptionsV1>,
+    pub half_rollouts: u64,
+    /// Every legal action is covered when the menu has at most this many;
+    /// otherwise the union of the arms' supported actions and picks plus the
+    /// top `coverage_max` by p.
+    pub coverage_max: u64,
+}
+
+/// One SD1 arm: a rollout search at `budget` raw selection transitions, or
+/// with `value_leaf` an `s4a-vl-v1` search of `sims` attempted simulations at
+/// `horizon` (budget 0); `world` is `fresh`, `true-v1` or `pinned-v1`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sd1ArmOptionsV1 {
+    pub label: String,
+    pub world: String,
+    pub search_seeds: Vec<u64>,
+    #[serde(default)]
+    pub budget: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_leaf: Option<Sd1ValueLeafArmV1>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sd1ValueLeafArmV1 {
+    pub horizon: String,
+    pub sims: u64,
+}
+
+impl Sd1CaptureOptionsV1 {
+    pub fn validate_v1(&self) -> Result<(), String> {
+        ensure(
+            self.version == SD1_CAPTURE_VERSION_V1,
+            "sd1 capture: unknown version",
+        )?;
+        ensure(
+            self.arms.len() <= 32
+                && self.half_rollouts <= 4096
+                && (1..=64).contains(&self.coverage_max),
+            "sd1 capture: at most 32 arms, 0 to 4096 rollouts per half, coverage 1 to 64",
+        )?;
+        let mut labels = std::collections::BTreeSet::new();
+        for arm in &self.arms {
+            ensure(
+                !arm.label.is_empty()
+                    && arm.label.len() <= 32
+                    && arm
+                        .label
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                    && labels.insert(arm.label.clone()),
+                "sd1 capture: arm labels must be distinct, 1 to 32 of [A-Za-z0-9_-]",
+            )?;
+            crate::regret_census_v1::stage4a::world::WorldMode::parse(&arm.world)?;
+            ensure(
+                !arm.search_seeds.is_empty() && arm.search_seeds.len() <= 8,
+                "sd1 capture: 1 to 8 search seeds per arm",
+            )?;
+            match &arm.value_leaf {
+                None => ensure(
+                    arm.budget > 0 && arm.budget <= W5_BUDGET_MAX_V1,
+                    "sd1 capture: rollout arm budget outside 1..=2^20",
+                )?,
+                Some(vl) => {
+                    crate::regret_census_v1::stage4a::value_leaf::Horizon::parse(&vl.horizon)?;
+                    ensure(
+                        arm.budget == 0 && vl.sims > 0 && vl.sims <= 65_536,
+                        "sd1 capture: value-leaf arm with budget 0 and 1..=65536 simulations",
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Stage 2a's value-leaf candidates: every horizon x simulation count x
@@ -129,7 +228,20 @@ impl Ex1CollectOptionsV1 {
                     w5.key_memo_mib <= W5_KEY_MEMO_MIB_MAX_V1,
                     "w5 key memo limit above 4096 MiB",
                 )?;
-                if let Some(capture) = &w5.capture_0b {
+                if let Some((capture, sd1)) = w5
+                    .capture_0b
+                    .as_ref()
+                    .and_then(|c| c.sd1.as_ref().map(|s| (c, s)))
+                {
+                    ensure(
+                        capture.budgets.is_empty()
+                            && capture.search_seeds.is_empty()
+                            && capture.rollouts == 0
+                            && capture.value_leaf.is_none(),
+                        "sd1 capture: the 0b budgets, seeds, rollouts and value leaf must be empty",
+                    )?;
+                    sd1.validate_v1()?;
+                } else if let Some(capture) = &w5.capture_0b {
                     ensure(
                         !capture.budgets.is_empty()
                             && capture.budgets.len() <= 8
@@ -637,6 +749,9 @@ impl Ex1EpisodeHookV1 {
         logit_bits: &[u32],
         hash: u64,
     ) -> Result<Value, String> {
+        if self.capture.as_ref().is_some_and(|(c, _)| c.sd1.is_some()) {
+            return self.capture_sd1_v1(session, d, logit_bits, hash);
+        }
         let (capture, rollout_policy) = self.capture.as_mut().expect("capture mode");
         let slot = self.w5.as_ref().map_or(0, |w5| w5.slot);
         let mut candidates = Vec::new();

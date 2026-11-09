@@ -26,7 +26,9 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
   from), `workers`, `memory_max_bytes`, `bytes_per_update`, optional `segment_updates`, `base` and `throughput`
   (a `w5-box-throughput/v1` record), for C-recipe arms optional `record_envelope` (`zstd1`: the trainer seals every
   trajectory and checkpoint in one zstd frame of its exact bytes, mtg-kernel `record_envelope_v1`; same states, about
-  a fifth of the bytes), for X arms `budget`, `coefficient`, `dose`, and for a CG arm (P-grow, independent
+  a fifth of the bytes) and optional `verified_reads` (`resident`: the trainer reuses bytes its process already
+  verified against a pin instead of rereading them, mtg-kernel `verified_bytes_cache_v1`; same states and bytes,
+  less memory traffic per update), for X arms `budget`, `coefficient`, `dose`, and for a CG arm (P-grow, independent
   Stage 0 plans) `ladder` (`stride`, `roster_max`, `replaces`, `test_stride`, and for a fork `history`: pgrow.py;
   the base's fixed-parent share plays a per-segment roster drawn from the chain's own checkpoint ladder, each state
   verified before use);
@@ -133,6 +135,26 @@ CPU rate x 7 days), each X arm's projected days to R_nom, and where the worst X 
 response (launch; cap ceil(1.2 x days); 3-core boxes; stop). Choices (not design constants): N is whole segments,
 at least two (so per-segment startup is in the window); a projection uses the arm's mean full-node box rate (the
 slowest box is reported beside it); a single-arm full node stands in for Stage 1's mixed node.
+
+**Durable throughput** (mtg-kernel#600; a companion to the box rates, which no guard reads). The in-box driver appends
+a commit line (`w5-segment-commit/v1`, fsynced) to `chains/<name>/durable.jsonl` only once a segment's records are
+durable on the root volume: a native segment once its trainer has exited with `completion.json` (the trainer
+publishes every receipt durably), a scratch segment once `persist` has renamed its copy in and synced the parent
+directory (also when `scratch_settle` finishes an interrupted swap or persists late), and a wall-cut or stopped
+segment with its short boundary. A line names the segment, its offset, its boundary and that boundary's after-state
+hash, the w5box instance and how it was committed; the config gzip after a scratch commit is a separate
+`housekeeping` line (configuration housekeeping, outside the durable contract). A driver start commits a durable
+segment that the previous driver left without its line as `recovered`, at its own later time. A phase ends once
+every chain's commit log covers boundary N; a file test (`complete.json` exists, not mounted) can see an unmounted
+scratch segment before its copy is renamed in. Each phase carries a `durable` block (`w5-durable-window/v1`): the
+phase's target updates (N per chain) over one common wall from before the launch hold to the last chain's commit of
+boundary N, so launch skew, segment startups, final publication and any recovery fall inside it. Per chain and per
+arm it reports the committed counts and times, the lag from the native receipt of boundary N to its commit,
+overshoot past N (never counted), launch and completion skew, and repeated or torn lines. Node-frozen seconds inside
+the window and teardown after it are reported, not subtracted, along with the clock and poll resolution. A chain
+short of N leaves the block incomplete, with no rate; a commit log that contradicts itself or the index stops. The
+record summary sets each phase's durable rate beside its box rate sum, and a failed record keeps the failing
+phase's block.
 """
 import argparse
 import copy
@@ -164,6 +186,8 @@ ARM_SCHEMA = 'w5-arm/v1'
 END_SCHEMA = 'w5-chain-end/v1'
 PAIR_SCHEMA = 'w5-pair/v1'
 SEGCHECK_SCHEMA = 'w5-segcheck/v1'
+COMMIT_SCHEMA = 'w5-segment-commit/v1'
+COMMIT_LOG = 'durable.jsonl'  # chains/<name>/durable.jsonl: the driver's committed boundaries (module docstring)
 ARMS = {'C': ('C', 'C'), 'X8': ('X', 'X'), 'XS': ('X', 'X'), 'F': ('C', None),
         'CS': ('C', 'C'), 'CP': ('C', 'C'), 'CG': ('C', 'C')}  # recipe, retention arm
 # CS, CP and CG: further C-recipe arms of an independent Stage 0 plan (own parent and base; e.g. an S parent, a pool
@@ -189,8 +213,9 @@ REPLAY_START_GRACE = 120.0
 EXIT_STOP, EXIT_ROOM, EXIT_FAILED = 5, 7, 8
 FAILED_ENDS = ('chain-failure', 'operator')  # END reasons whose recorded last valid boundary is the endpoint
 PAIR_ONLY_KEYS = {'ex1', 'preparation_workers', 'output_directory', 'chain_ledger', 'collection_workers',
-                  'record_envelope'}
+                  'record_envelope', 'verified_reads'}
 RECORD_ENVELOPES = ('zstd1',)  # mtg-kernel record_envelope_v1; C-recipe arms only (the trainer refuses EX1)
+VERIFIED_READS = ('resident',)  # mtg-kernel verified_bytes_cache_v1 resident reads; C-recipe arms only
 TOOL_FILES = {'chains.py': HERE / 'chains.py', 'retention.py': HERE / 'retention.py', 'xact.py': HERE / 'xact.py',
               'replay_sample.py': HERE / 'replay_sample.py', 'pgrow.py': HERE / 'pgrow.py',
               'w5box.py': HERE / 'w5box.py', 'qual.py': HERE.parent / 'ex1' / 'qual.py',
@@ -367,6 +392,8 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
         cfg['initial_source'] = source
     if arm.get('record_envelope'):
         cfg['record_envelope'] = arm['record_envelope']
+    if arm.get('verified_reads'):
+        cfg['verified_reads'] = arm['verified_reads']
     if arm.get('ladder'):
         try:
             states = ladder if ladder is not None else \
@@ -437,6 +464,8 @@ def recipe_identity(arm):
                                     'c_wall_seconds')} | {'trainer_sha256': arm['trainer']['sha256']}
     if arm.get('record_envelope'):
         identity['record_envelope'] = arm['record_envelope']
+    if arm.get('verified_reads'):
+        identity['verified_reads'] = arm['verified_reads']
     if arm.get('ladder'):
         identity['ladder'] = arm['ladder']  # absent otherwise: existing manifests unchanged
     return identity
@@ -547,6 +576,9 @@ def make_plan(inputs_path):
         envelope = spec.get('record_envelope')
         require(envelope is None or (envelope in RECORD_ENVELOPES and recipe == 'C'),
                 f'{a}: record_envelope is one of {RECORD_ENVELOPES}, for C-recipe arms only')
+        verified_reads = spec.get('verified_reads')
+        require(verified_reads is None or (verified_reads in VERIFIED_READS and recipe == 'C'),
+                f'{a}: verified_reads is one of {VERIFIED_READS}, for C-recipe arms only')
         doc = {'schema': ARM_SCHEMA, 'arm': a, 'recipe': recipe, 'retention_arm': ret, 'root': root.as_posix(),
                'trainer': common['trainer'], 'base': base, 'parent': pin(spec['parent']), 'frozen': frozen_pin,
                'x': x, 'workers': int(spec['workers']), 'segment_updates': length, 'bytes_per_update': bpu,
@@ -565,6 +597,8 @@ def make_plan(inputs_path):
             doc['ladder'] = ladder  # CG only: other arm files unchanged
         if envelope is not None:  # absent otherwise, so every existing arm file keeps its bytes and pin
             doc['record_envelope'] = envelope
+        if verified_reads is not None:  # absent otherwise, as record_envelope
+            doc['verified_reads'] = verified_reads
         text = json.dumps(doc, indent=1, sort_keys=True) + '\n'
         digest = w5box.sha256_bytes(text.encode('utf-8'))
         path = root / 'plan' / 'arms' / f'{a}-{digest[:12]}.json'
@@ -1023,24 +1057,33 @@ def run_reaped(arm, config_path, deadline, logs, native):
     return code, killed, count[0]
 
 
-def scratch_settle(arm, root, cdir, man):
+def scratch_settle(arm, root, cdir, man, instance=None):
     """First in each driver cycle: finish an interrupted swap (only a staging copy whose marker was written),
     persist an ended scratch segment, and reset an unfinished one (unmounted, its scratch directory removed, so the
-    trainer starts it fresh on a new mount). Only the last two segments can be in these states."""
-    for seg in man['segments'][-2:]:
+    trainer starts it fresh on a new mount). Only the last two segments can be in these states. A finished swap or a
+    late persist is a promotion, so it gets the segment's commit line (module docstring, "Durable throughput")."""
+    segs = man['segments']
+    for s in range(max(0, len(segs) - 2), len(segs)):
+        seg = segs[s]
         native = Path(seg['root'])
         tmp = cdir / f'.{native.name}.persist'
         if tmp.exists() and not mounted(native) and (not native.exists() or not any(native.iterdir())):
             if (tmp / PERSIST_MARKER).exists():
                 with retention.index_lock(cdir / 'chain.json'):
                     os.rename(tmp, native)  # the driver stopped between the unmount and the rename
+                    fsync_path(native.parent)  # as persist: the rename is durable before the commit names it
+                record_commit(cdir, man, s, 'scratch-swap', instance)
                 log(root, chain=cdir.name, event='scratch-swap-finished', segment=native.name)
             else:
                 shutil.rmtree(tmp)  # a copy cut before its marker: the segment reruns
                 log(root, chain=cdir.name, event='scratch-staging-discarded', segment=native.name)
         if mounted(native) and (native / 'completion.json').exists():
+            t = time.time()
             n = persist(arm, native, cdir)
+            record_commit(cdir, man, s, 'scratch-late', instance, persist_seconds=time.time() - t, persist_bytes=n)
+            t = time.time()
             z = compress_config(seg['config']) if seg.get('config') else 0
+            record_housekeeping(cdir, s, time.time() - t, config_gz_bytes=z)
             log(root, chain=cdir.name, event='scratch-persist', segment=native.name, bytes=n, late=True,
                 config_gz_bytes=z)
     if man['segments']:
@@ -1085,6 +1128,133 @@ def scratch_link(arm, cdir, native):
     require(mounted(native), f'{native}: the scratch bind mount did not take')
 
 
+# ---------------------------------------------------------------- committed boundaries (durable throughput)
+
+def commit_log(cdir):
+    return Path(cdir) / COMMIT_LOG
+
+
+def append_synced(path, row):
+    """One JSON line appended and fsynced. A torn last line (an append cut before its newline) first gets its
+    newline, so it stays one unreadable line and never joins the new one."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'ab') as f:
+        retention.terminate(f)
+        f.write((json.dumps(row, sort_keys=True) + '\n').encode('utf-8'))
+        f.flush()
+        os.fsync(f.fileno())
+    return row
+
+
+def ledger_instance(ledger_source):
+    """The w5box instance this driver runs in (its ledger source), or None without one."""
+    try:
+        return read(ledger_source).get('instance')
+    except (OSError, TypeError, ValueError, AttributeError):
+        return None
+
+
+def record_commit(cdir, man, s, how, instance=None, **detail):
+    """Segment s's commit line, appended only after its records are durable on the root volume (module docstring,
+    "Durable throughput"). The time is taken first, when the promotion has just finished. The boundary is the
+    segment's last completed iteration (short for a cut or stopped segment), with that boundary's after-state hash
+    from its persisted update receipt. A segment with no completed iteration commits nothing (returns None)."""
+    unix = time.time()
+    seg = man['segments'][s]
+    n = completed(seg['root'])
+    if not n:
+        return None
+    it = Path(seg['root']) / 'iterations' / f'{n - 1:06d}'
+    update = read(attempt_dir(it, read(it / 'complete.json')) / 'update' / 'update.json')
+    return append_synced(commit_log(cdir), dict(
+        detail, schema=COMMIT_SCHEMA, event='commit', segment=s, offset=seg['offset'], updates=seg['updates'],
+        boundary=seg['offset'] + n, state=update.get('after_state_sha256'), cut=n < seg['updates'], how=how,
+        instance=instance, unix=unix))
+
+
+def record_housekeeping(cdir, s, seconds, **detail):
+    """Configuration housekeeping after segment s's commit (its config gzip): reported, not part of the commit."""
+    return append_synced(commit_log(cdir), dict(detail, schema=COMMIT_SCHEMA, event='housekeeping', segment=s,
+                                                seconds=seconds, unix=time.time()))
+
+
+def read_commits(cdir):
+    """(rows, unreadable): the chain's commit-log lines in file order. An unreadable line is an append that a kill or
+    a crash cut before its fsync, or one still being written; it is counted and skipped, never read as a commit."""
+    path = commit_log(cdir)
+    if not path.exists():
+        return [], 0
+    rows, bad = [], 0
+    for raw in path.read_bytes().splitlines():
+        try:
+            row = json.loads(raw)
+        except ValueError:
+            bad += 1
+            continue
+        if isinstance(row, dict) and row.get('schema') == COMMIT_SCHEMA:
+            rows.append(row)
+        else:
+            bad += 1
+    return rows, bad
+
+
+COMMIT_KEYS = ('offset', 'updates', 'boundary', 'state')  # what repeated observations of a segment must agree on
+
+
+def commit_index(rows, chain='chain'):
+    """({segment: its earliest commit}, repeated observations). Two commits of one segment that disagree on its
+    offset, length, boundary or after-state stop: the log contradicts itself."""
+    out, repeats = {}, 0
+    for r in rows:
+        if r.get('event') != 'commit':
+            continue
+        old = out.get(r['segment'])
+        if old is None:
+            out[r['segment']] = r
+            continue
+        repeats += 1
+        diff = [k for k in COMMIT_KEYS if old.get(k) != r.get(k)]
+        require(not diff, f'{chain}: two commits of segment {r["segment"]} differ in {diff}')
+        if r['unix'] < old['unix']:
+            out[r['segment']] = r
+    return out, repeats
+
+
+def committed_prefix(by_segment):
+    """The commits of segments 0, 1, ... while each starts at the previous one's boundary: the boundaries that are
+    durable with every boundary before them (a missing segment, or a cut one's short boundary, ends it)."""
+    prefix, boundary, s = [], 0, 0
+    while s in by_segment and by_segment[s]['offset'] == boundary:
+        prefix.append(by_segment[s])
+        boundary = by_segment[s]['boundary']
+        s += 1
+    return prefix
+
+
+def committed_through(cdir):
+    """The chain's last boundary durable with all before it, by its commit log (0 without one)."""
+    rows, _ = read_commits(cdir)
+    prefix = committed_prefix(commit_index(rows, Path(cdir).name)[0])
+    return prefix[-1]['boundary'] if prefix else 0
+
+
+def commit_recovered(cdir, man, instance=None):
+    """A driver start's safety net: a durable segment among the manifest's last two (a native segment with
+    completion.json, or a persisted scratch copy) without a commit line, left by a driver that stopped between the
+    promotion and its line, is committed now as `recovered`. Its time is this driver's, later than the real one, so
+    the recovery counts against a measured window, never for it."""
+    rows, _ = read_commits(cdir)
+    have = {r['segment'] for r in rows if r.get('event') == 'commit'}
+    segs = man['segments']
+    for s in range(max(0, len(segs) - 2), len(segs)):
+        root = Path(segs[s]['root'])
+        if s in have or mounted(root):
+            continue
+        if (root / 'completion.json').exists() or (root / PERSIST_MARKER).exists():
+            record_commit(cdir, man, s, 'recovered', instance)
+
+
 def drive(a):
     arm = load_arm(a.arm_file)
     root = Path(arm['root'])
@@ -1115,13 +1285,17 @@ def drive_locked(a, arm, root, cdir, man_path):
     deadline = man['launched_unix'] + arm['c_wall_seconds'] if arm['recipe'] == 'C' else None
     waiting = None
     scratch = bool(arm.get('scratch_root'))
+    instance, recovered = ledger_instance(a.ledger_source), False
     while True:
         if (cdir / 'END.json').exists():
             return 0
         if scratch:  # before the wall, STOP and guard checks: an END or a boundary only names persisted state
-            scratch_settle(arm, root, cdir, man)
+            scratch_settle(arm, root, cdir, man, instance)
             if (cdir / 'END.json').exists():
                 return 0
+        if not recovered:  # once per driver start, after any settle: a previous driver's missing commit line
+            commit_recovered(cdir, man, instance)
+            recovered = True
         if stopped(root, cdir):
             log(root, chain=a.chain, event='stop')
             return EXIT_STOP
@@ -1154,21 +1328,32 @@ def drive_locked(a, arm, root, cdir, man_path):
             code, killed = run_trainer(arm, path, deadline, cdir)
         if (native / 'completion.json').exists():
             if scratch:
+                t = time.time()
                 n = persist(arm, native, cdir)
+                record_commit(cdir, man, s, 'scratch', instance, persist_seconds=time.time() - t, persist_bytes=n)
+                t = time.time()
                 z = compress_config(path)
+                record_housekeeping(cdir, s, time.time() - t, config_gz_bytes=z)
                 log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped,
                     config_gz_bytes=z)
+            else:
+                record_commit(cdir, man, s, 'native', instance)  # the trainer published every receipt durably
             log(root, chain=a.chain, event='segment-done', segment=s)
             continue
         if scratch and killed:  # the C wall: the cut segment's records and newest checkpoint are kept
+            t = time.time()
             n = persist(arm, native, cdir)
+            record_commit(cdir, man, s, 'scratch-cut', instance, persist_seconds=time.time() - t, persist_bytes=n)
             log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped, cut=True)
+        elif killed:
+            record_commit(cdir, man, s, 'native-cut', instance)
         boundary, receipt = latest(man)
         if killed:
             write_once(cdir / 'END.json', end_doc(a.chain, arm['arm'], 'c-wall', boundary, receipt, 'driver'))
             log(root, chain=a.chain, event='end', reason='c-wall', boundary=boundary)
             return 0
         if code == 0 and reached_stop(man, a.ledger_source):
+            record_commit(cdir, man, s, 'native-stop', instance)
             return end_at_stop(a, arm, root, cdir, man)
         write(cdir / 'FAILURE.json', {'segment': s, 'exit': code, 'boundary': boundary, 'unix': time.time()})
         log(root, chain=a.chain, event='segment-failed', segment=s, exit=code, boundary=boundary)
@@ -2287,6 +2472,7 @@ THROUGHPUT_QUALIFICATION = 'w5-box-throughput'
 THROUGHPUT_POLL = 0.5
 THROUGHPUT_CYCLE = 10.0
 THROUGHPUT_STOP_GRACE = 600.0
+DURABLE_SCHEMA = 'w5-durable-window/v1'
 STAGE0_EXIT_SCHEMA = 'w5-stage0-exit/v1'
 X_CAP_DAYS = retention.X_CAP_SECONDS / retention.DAY  # 10.5: section 6's launch bound and default cap
 RESPONSE_CAP_DAYS = 14.0  # section 6: the cap response applies up to 14 projected days
@@ -2407,6 +2593,149 @@ def box_measurement(plan, name, updates, threads, memory_peak=None):
             'identity': {f'b{r["boundary"]:09d}': r['after_state_sha256'] for r in recs}}
 
 
+def overlap_seconds(intervals, a, b):
+    return sum(max(0.0, min(b, y) - max(a, x)) for x, y in intervals)
+
+
+def durable_window(start, chains_in, holds=(), ended=None, pre_launch=None, observation=None):
+    """The companion durable metric of one window (module docstring, "Durable throughput"). It is a pure function
+    of recorded observations, so fixtures can drive it with a fake clock:
+    - start: the common start (unix), taken before the launch hold and every spawn;
+    - chains_in: chain -> {'arm', 'target' (updates), 'commits' (its commit-log rows), 'unreadable' (skipped
+      lines), 'starts' ([instance, unix] of each instance start in its ledger), and optionally 'receipt_unix' (the
+      native receipt time of the target boundary) and 'state' (the index's after-state hash at the target)};
+    - holds: node-frozen (a, b) intervals; ended: when the window's last chain had ended (teardown follows the
+      window); pre_launch: seconds spent before `start` (the phase's guard verdict); observation: clock facts.
+    A chain counts exactly its target once its commits cover boundaries 1 to the target. Its durable time is the
+    latest commit among the segments that hold those boundaries; committed work past the target is overshoot,
+    reported and never counted. A chain short of its target, or with a commit before `start`, is a failure: the
+    window is then incomplete and has no aggregate rate. A commit whose after-state differs from the index's at the
+    same boundary stops."""
+    per_chain, failures = {}, []
+    for name in sorted(chains_in):
+        c = chains_in[name]
+        target = c['target']
+        rows = c.get('commits') or []
+        by, repeats = commit_index(rows, name)
+        prefix = committed_prefix(by)
+        through = prefix[-1]['boundary'] if prefix else 0
+        held = []  # the committed segments that hold boundaries 1 to the target
+        for p in prefix:
+            held.append(p)
+            if p['boundary'] >= target:
+                break
+        starts = sorted((u, i) for i, u in c.get('starts') or [])
+        instances = sorted({i for _, i in starts} | {p['instance'] for p in by.values()
+                                                       if p.get('instance') is not None})
+        row = {'arm': c['arm'], 'target_updates': target, 'committed_through': through,
+               'segments_committed': len(prefix), 'repeated_observations': repeats,
+               'unreadable_lines': c.get('unreadable', 0), 'instances': instances,
+               'restarts': max(0, len(instances) - 1), 'start_unix': starts[0][0] if starts else None,
+               'launch_offset_seconds': starts[0][0] - start if starts else None, 'complete': False,
+               'durable_unix': None, 'elapsed_seconds': None, 'overshoot_updates': 0, 'how': None,
+               'publication_lag_seconds': None, 'housekeeping_seconds': None}
+        early = sorted(p['segment'] for p in by.values() if p['unix'] < start)
+        if early:
+            failures.append({'chain': name, 'reason': f'segments {early} committed before the window start'})
+        elif not held or held[-1]['boundary'] < target:
+            failures.append({'chain': name, 'reason': f'committed through boundary {through} of {target}'})
+        else:
+            last = held[-1]
+            unix = max(p['unix'] for p in held)
+            if last['boundary'] == target and c.get('state') is not None and last.get('state') is not None:
+                require(last['state'] == c['state'], f'{name}: the commit of boundary {target} names after-state '
+                                                     f'{last["state"]}, the index {c["state"]}')
+            keep = [r['seconds'] for r in rows if r.get('event') == 'housekeeping' and r['segment'] == last['segment']]
+            row.update(complete=True, durable_unix=unix, elapsed_seconds=unix - start,
+                       overshoot_updates=through - target, how=last.get('how'),
+                       publication_lag_seconds=(unix - c['receipt_unix'] if c.get('receipt_unix') is not None
+                                                else None),
+                       housekeeping_seconds=keep[0] if keep else None)
+        per_chain[name] = row
+    ends = [r['durable_unix'] for r in per_chain.values() if r['complete']]
+    complete = bool(per_chain) and not failures
+    end = max(ends) if complete else None
+    if complete and end <= start:
+        failures.append({'chain': None, 'reason': 'no wall time between the start and the last commit'})
+        complete, end = False, None
+    elapsed = end - start if complete else None
+    target_updates = sum(r['target_updates'] for r in per_chain.values())
+    per_arm = {}
+    for arm in sorted({r['arm'] for r in per_chain.values()}):
+        rows = [r for r in per_chain.values() if r['arm'] == arm]
+        done = all(r['complete'] for r in rows) and complete
+        arm_end = max(r['durable_unix'] for r in rows) if done else None
+        updates = sum(r['target_updates'] for r in rows)
+        per_arm[arm] = {'chains': len(rows), 'target_updates': updates, 'complete': done,
+                        'updates': updates if done else None, 'end_unix': arm_end,
+                        'elapsed_seconds': arm_end - start if done else None,
+                        'updates_per_hour': updates / (arm_end - start) * 3600 if done else None,
+                        'updates_per_hour_over_window': updates / elapsed * 3600 if done else None}
+    first = [r['start_unix'] for r in per_chain.values() if r['start_unix'] is not None]
+    window_end = end if complete else ended
+    keep = [r['housekeeping_seconds'] for r in per_chain.values() if r['housekeeping_seconds'] is not None]
+    return {'schema': DURABLE_SCHEMA, 'complete': complete, 'start_unix': start, 'end_unix': end,
+            'elapsed_seconds': elapsed, 'chains': len(per_chain), 'target_updates': target_updates,
+            'updates': target_updates if complete else None,
+            'updates_per_hour': target_updates / elapsed * 3600 if complete else None,
+            'completion_skew_seconds': max(ends) - min(ends) if complete else None,
+            'launch_skew_seconds': max(first) - min(first) if first else None,
+            'held_seconds': overlap_seconds(holds, start, window_end) if window_end is not None else None,
+            'teardown_seconds': ended - end if complete and ended is not None else None,
+            'pre_launch_seconds': pre_launch,
+            'final_housekeeping_seconds': sum(keep) if keep else None,
+            'repeated_observations': sum(r['repeated_observations'] for r in per_chain.values()),
+            'unreadable_lines': sum(r['unreadable_lines'] for r in per_chain.values()),
+            'observation': observation or {}, 'failures': failures, 'per_arm': per_arm, 'per_chain': per_chain}
+
+
+def phase_durable(plan, names, updates, start, boxes=None, ended=None, poll=None, pre_launch=None):
+    """durable_window over a phase's recorded observations: every chain's commit log and ledger starts, the node's
+    frozen intervals and, once the phase has box measurements, the native receipt time and the index's after-state
+    of boundary N."""
+    root = Path(plan['root'])
+    measured = {b['chain']: b for b in boxes or ()}
+    chains_in = {}
+    for n in names:
+        rows, bad = read_commits(chain_dir(root, n))
+        path = ledger_path(root, n)
+        led = w5box.Ledger(path).records() if path.exists() else []
+        b = measured.get(n)
+        chains_in[n] = {'arm': plan['chains'][n]['arm'], 'target': updates, 'commits': rows, 'unreadable': bad,
+                        'starts': [[r['instance'], r['unix']] for r in led if r['event'] == 'start'],
+                        'receipt_unix': b['end_unix'] if b else None,
+                        'state': b['identity'].get(f'b{updates:09d}') if b else None}
+    observation = {'clock': 'time.time (unix wall clock) on one host, every observer',
+                   'resolution_seconds': time.get_clock_info('time').resolution, 'poll_seconds': poll,
+                   'commit_log': f'chains/<name>/{COMMIT_LOG}'}
+    holds = frozen_intervals(root, ended if ended is not None else time.time())
+    return durable_window(start, chains_in, holds, ended, pre_launch, observation)
+
+
+def phase_failure(plan, message, names, updates, start, ended, poll, pre_launch):
+    """The phase's Stop, carrying its durable block as far as its chains got (the failed record keeps it)."""
+    exc = Stop(message)
+    try:
+        exc.durable = phase_durable(plan, names, updates, start, None, ended, poll, pre_launch)
+    except (Stop, OSError, KeyError, TypeError, ValueError) as why:
+        exc.durable = {'schema': DURABLE_SCHEMA, 'complete': False, 'error': str(why)}
+    return exc
+
+
+def durable_summary(phases):
+    """Each phase's durable rate beside the sum of its box rates (the guard's full-node rate for the last phase)."""
+    out = []
+    for p in phases:
+        d = p.get('durable') or {}
+        box = sum(b['updates_per_wall_second'] for b in p['boxes']) * 3600
+        rate = d.get('updates_per_hour')
+        out.append({'concurrent_boxes': p['concurrent_boxes'], 'complete': d.get('complete'),
+                    'updates': d.get('updates'), 'elapsed_seconds': d.get('elapsed_seconds'),
+                    'updates_per_hour': rate, 'box_rate_sum_updates_per_hour': box,
+                    'durable_over_box_rate_sum': rate / box if rate is not None and box else None})
+    return out
+
+
 def throughput_record(binding, phases, meta):
     """The `w5-box-throughput/v1` record, checked by w5box's own guard rule before it is returned."""
     record = {'schema': w5box.THROUGHPUT_SCHEMA, 'binding': binding, 'phases': phases, 'qualification': meta}
@@ -2419,7 +2748,8 @@ def throughput_record(binding, phases, meta):
     record['summary'] = dict(guard, serial_updates_per_second=serial,
                              full_node_speedup=guard['full_node_updates_per_second'] / serial,
                              per_box_rate_vs_serial=guard['full_node_updates_per_second'] / len(full) / serial,
-                             in_box_utilization=[b['in_box_utilization'] for b in full])
+                             in_box_utilization=[b['in_box_utilization'] for b in full],
+                             durable=durable_summary(phases))
     record['pass'] = True
     return record
 
@@ -2460,11 +2790,11 @@ def stop_chains(plan, names):
 
 
 def reached(plan, name, updates):
-    """The chain has completed update N - 1 (boundary N): its receipt exists (N is whole segments)."""
-    length = plan['arms'][plan['chains'][name]['arm']]['segment_updates']
-    seg = chain_dir(plan['root'], name) / f'seg-{updates // length - 1:05d}'
-    # a scratch segment counts once persisted (unmounted): the measurement reads the index, which skips mounts
-    return (seg / 'iterations' / f'{length - 1:06d}' / 'complete.json').exists() and not mounted(seg)
+    """The chain's boundary N is durable: its commit log covers boundaries 1 to N (module docstring, "Durable
+    throughput"). The driver writes a segment's line only after the segment is durable on the root volume. A file
+    test (`complete.json` exists and the segment is not mounted) can pass between a scratch segment's unmount and
+    the rename of its persisted copy, so it would end the phase on a boundary the index cannot yet read."""
+    return committed_through(chain_dir(plan['root'], name)) >= updates
 
 
 def end_phase(plan, procs, poll):
@@ -2491,7 +2821,9 @@ def run_phase(plan_path, plan, updates, max_wall, spawn=spawn_run, launcher=laun
     cycles run throughout without fills (a qualification box holds no filler). A chain that exits before every box
     is done fails the phase."""
     names = sorted(plan['chains'])
+    before = time.time()
     cycle(plan, plan_path, fills=False)  # a guard verdict and admission ceilings before any driver starts
+    start = time.time()  # the durable window's common start: before the launch hold and every spawn
     launcher(plan_path)
     procs, peaks, node, short, last = {}, {}, {}, None, time.monotonic()
     try:
@@ -2514,14 +2846,20 @@ def run_phase(plan_path, plan, updates, max_wall, spawn=spawn_run, launcher=laun
             time.sleep(poll)
     finally:
         running = end_phase(plan, procs, poll)
+    ended = time.time()
     exits = {n: p.returncode for n, p in procs.items()}
+    window = {'names': names, 'updates': updates, 'start': start, 'ended': ended, 'poll': poll,
+              'pre_launch': start - before}
     if short:
-        raise Stop(f'{sorted(short)} exited {short} before every box completed {updates} updates')
-    require(not running, f'{running} did not end within {THROUGHPUT_STOP_GRACE:g} s of the kill')
+        raise phase_failure(plan, f'{sorted(short)} exited {short} before every box completed {updates} updates',
+                            **window)
+    if running:
+        raise phase_failure(plan, f'{running} did not end within {THROUGHPUT_STOP_GRACE:g} s of the kill', **window)
     boxes = [box_measurement(plan, n, updates, box_threads(plan, plan['chains'][n]['slot']), peaks.get(n))
              for n in names]
+    durable = phase_durable(plan, names, updates, start, boxes, ended, poll, start - before)
     return {'concurrent_boxes': len(names), 'label': plan['label'], 'plan': pin(plan_path), 'exits': exits,
-            'node_memory': node, 'boxes': sorted(boxes, key=lambda b: b['slot'])}
+            'node_memory': node, 'boxes': sorted(boxes, key=lambda b: b['slot']), 'durable': durable}
 
 
 def drop_trees(plan):
@@ -2557,7 +2895,7 @@ def throughput_run(plan_path, arm, label, updates, out, counts=None, max_wall=w5
     require(not (root / 'STOP').exists(), 'a node STOP file is present')
     held = lock(root / 'SUPERVISE.lock')
     require(held is not None, 'another supervise holds this node')
-    phases, plans, started, failure = [], [], time.time(), None
+    phases, plans, started, failure, failed_durable = [], [], time.time(), None, None
     try:
         node_idle(root)
         target, binding, derived = throughput_plans(plan_path, arm, label, counts, seed_root)
@@ -2568,6 +2906,7 @@ def throughput_run(plan_path, arm, label, updates, out, counts=None, max_wall=w5
         if not plans:  # refused before any chain ran
             raise
         failure = f'phase {plans[-1]["label"]}: {exc}'
+        failed_durable = getattr(exc, 'durable', None)
     finally:
         for phase in plans:
             close_handoffs(phase, root)
@@ -2585,6 +2924,8 @@ def throughput_run(plan_path, arm, label, updates, out, counts=None, max_wall=w5
     except Stop as exc:
         record = {'schema': w5box.THROUGHPUT_SCHEMA, 'binding': binding, 'phases': phases, 'qualification': meta,
                   'pass': False, 'why': str(exc), 'identity_differences': identity_differences(phases)}
+        if failed_durable is not None:
+            record['failed_phase_durable'] = failed_durable
         passed = False
     if passed:
         record['qualification']['removed_tree_bytes'] = 0 if keep_trees else sum(drop_trees(p) for p in plans)

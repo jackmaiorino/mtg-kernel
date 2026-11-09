@@ -448,6 +448,11 @@ pub enum Subtype {
     /// Appended for the eternal catalog's Premodern wave P2b (Masticore). Wave
     /// P2b's creature type ids start at 260.
     Masticore = 260,
+    /// Appended for the eternal catalog's Premodern wave P2c (Verdant
+    /// Force's Saproling token). Ids from 280 are reserved for this wave.
+    Saproling = 280,
+    /// Appended for Premodern wave P2c (Battlefield Scrounger).
+    Centaur = 281,
 }
 
 impl Subtype {
@@ -826,6 +831,10 @@ impl Subtype {
         Subtype::Soltari,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Masticore,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Saproling,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Centaur,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1067,6 +1076,8 @@ impl Subtype {
             208 => Subtype::Mystic,
             240 => Subtype::Soltari,
             260 => Subtype::Masticore,
+            280 => Subtype::Saproling,
+            281 => Subtype::Centaur,
             _ => return None,
         })
     }
@@ -1287,6 +1298,8 @@ impl Subtype {
             Subtype::Mystic => true,
             Subtype::Soltari => true,
             Subtype::Masticore => true,
+            Subtype::Saproling => true,
+            Subtype::Centaur => true,
         }
     }
 
@@ -1392,6 +1405,8 @@ impl Subtype {
                     | Subtype::Mystic
                     | Subtype::Soltari
                     | Subtype::Masticore
+                    | Subtype::Saproling
+                    | Subtype::Centaur
             )
         {
             return true;
@@ -2202,6 +2217,15 @@ pub enum CostComponent {
     /// first an Island card, chosen privately through
     /// `Decision::ChooseCostTargets`. Appended for the eternal catalog.
     DiscardIslandAndAnotherCardV1,
+    /// "Exile the top card of your library" (Phyrexian Devourer). The exiled
+    /// card is frozen in the ability's cost provenance. Appended for the
+    /// eternal catalog (Premodern wave P2c).
+    ExileTopCardOfLibraryV1,
+    /// "Put three cards from your graveyard on the bottom of your library"
+    /// (Battlefield Scrounger): `n` cards chosen like
+    /// `ExileOtherCardsFromOwnGraveyard`'s, moved to the library bottom
+    /// instead. Appended for the eternal catalog (Premodern wave P2c).
+    PutOtherCardsFromOwnGraveyardOnLibraryBottomV1(u8),
 }
 
 impl CostComponent {
@@ -2631,6 +2655,10 @@ pub enum ManaAbilityConditionDef {
     /// turn."
     SourceEnteredThisTurn,
     ControlledLegendaryPermanentHasColor(ManaColor),
+    /// Reflecting Pool: "Activate only if a land you control other than a
+    /// Reflecting Pool could produce this type of mana." Appended for the
+    /// eternal catalog (Premodern wave P2c).
+    ControllerOtherLandCouldProduceV1(ManaColor),
 }
 
 /// What a restricted mana ability's mana may pay for.
@@ -2784,6 +2812,9 @@ pub enum DynamicCountDef {
     /// One iff a chosen spell target is a tapped battlefield permanent
     /// (Ride's End). Appended for the eternal catalog.
     SpellTargetsTappedPermanentV1,
+    /// One iff there are ten or more creature cards in all graveyards
+    /// together (Avatar of Woe). Appended for the eternal catalog.
+    TenCreatureCardsInAllGraveyardsV1,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
@@ -3877,7 +3908,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x8c08_92b1_b108_579e;
+        const EXPECTED_ETERNAL: u64 = 0xe5c1_5dfe_e14d_a799;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

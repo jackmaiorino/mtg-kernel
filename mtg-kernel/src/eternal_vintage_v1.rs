@@ -1181,6 +1181,12 @@ pub(crate) fn activation_allowed(
             name,
             ability_index,
         )
+        && crate::eternal_premodern_p2c_v1::statics::activation_allowed(
+            state,
+            source,
+            name,
+            ability_index,
+        )
 }
 
 /// Anointed Peacekeeper: definitions named by a Peacekeeper whose printed
