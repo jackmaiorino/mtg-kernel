@@ -323,10 +323,16 @@ fn hidden_partition_positions_and_names_leave_opponent_packet_human_wire_and_res
             .candidates
             .iter()
             .position(|row| {
-                row.curator_action == Some(ActionV1::ChoosePile { pile: PileV1::FaceUp })
+                row.curator_action
+                    == Some(ActionV1::ChoosePile {
+                        pile: PileV1::FaceUp,
+                    })
             })
             .unwrap() as u32;
-        let human_index = indices.iter().position(|&native| native == native_index).unwrap();
+        let human_index = indices
+            .iter()
+            .position(|&native| native == native_index)
+            .unwrap();
         let request = HumanActionRequestV1 {
             prompt_seq: human_prompt.prompt_seq,
             action_index: human_index as u32,
