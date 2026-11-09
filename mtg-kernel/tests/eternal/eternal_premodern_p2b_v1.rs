@@ -1,6 +1,5 @@
 //! Eternal wave P2b: native rules tests for the Premodern cards that
-//! complete Survival and Madness Threshold (and the cards Elves shares with
-//! them).
+//! complete Survival, Madness Threshold and the Elves mainboard.
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
@@ -984,6 +983,97 @@ fn thornscape_pays_each_kicker_separately_and_only_triggers_what_it_paid() {
             assert_eq!(mana(&state, P0, ManaColor::R), u8::from(!red));
             assert_eq!(mana(&state, P0, ManaColor::W), u8::from(!white));
         }
+    }
+}
+
+#[test]
+fn birchlore_funds_both_thornscape_kickers_through_original_bindings() {
+    let surface = PolicySurfaceV5::new();
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let ranger = put(&mut state, actor, "Birchlore Rangers", Zone::Battlefield);
+        let elves = [
+            ranger,
+            put(&mut state, actor, "Llanowar Elves", Zone::Battlefield),
+            put(&mut state, actor, "Fyndhorn Elves", Zone::Battlefield),
+            put(&mut state, actor, "Priest of Titania", Zone::Battlefield),
+        ];
+        for elf in elves {
+            state.objects.get_mut(elf).summoning_sick = true;
+        }
+        let forests = [0; 3].map(|_| put(&mut state, actor, "Forest", Zone::Battlefield));
+        let spell = put(&mut state, actor, "Thornscape Battlemage", Zone::Hand);
+        let opponent = actor.opponent();
+        let artifact = put(&mut state, opponent, "Mishra's Bauble", Zone::Battlefield);
+        for (color, pair) in [(ManaColor::R, [elves[0], elves[1]]), (ManaColor::W, [elves[2], elves[3]])] {
+            let decision = SurfaceDecision::Decision(next(&mut state));
+            let rows = legal_action_candidates_v1(&decision, &state).unwrap();
+            let row = rows.iter().find(|row| {
+                matches!(&row.record.semantic,
+                    ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 {
+                        actor: seat, source, mana_choice, cost_targets
+                    } if *seat == actor.into() && source.arena_id == ranger.0
+                        && *mana_choice == color
+                        && cost_targets.iter().map(|card| card.arena_id).eq(pair.map(|id| id.0))
+                )
+            }).expect("actual pair and mana color in the public action menu");
+            assert_eq!(
+                row.surface_action,
+                SurfaceAction::Action(Action::ActivateManaAbilityWithTwoCostTargetsV1(
+                    ranger, color, pair,
+                ))
+            );
+            let SurfaceAction::Action(action) = row.surface_action.clone() else {
+                unreachable!();
+            };
+            act(&mut state, action);
+            assert_eq!(mana(&state, actor, color), 1);
+        }
+        assert!(elves.iter().all(|id| state.objects.get(*id).tapped));
+
+        act(&mut state, Action::CastSpell(spell));
+        assert!(matches!(next(&mut state), Decision::ChooseKicker { player, spell: source }
+            if player == actor && source == spell));
+        act(&mut state, Action::ChooseKicker(true));
+        let white = next(&mut state);
+        assert!(matches!(white, Decision::ChooseEffectOption {player, source, option_count: 2}
+            if player == actor && source == spell));
+        let checkpoint = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&checkpoint).unwrap();
+        assert_eq!(next(&mut restored), white);
+        for branch in [&mut state, &mut restored] {
+            act(branch, Action::ChooseEffectOption(1));
+            assert!(matches!(next(branch), Decision::CastSpellOrPass { .. }));
+            let observation = observe_policy_v5(branch, &surface, opponent, 0, 0, 0, 1).unwrap();
+            let visible = observation.projection.surface.stack.iter().find(|row| {
+                row.source.arena_id == spell.0
+            }).unwrap();
+            assert_eq!(visible.thornscape_kickers_v1, Some(3));
+            assert!(forests.iter().all(|id| branch.objects.get(*id).tapped));
+            assert_eq!(mana(branch, actor, ManaColor::R), 0);
+            assert_eq!(mana(branch, actor, ManaColor::W), 0);
+            settle_with(branch, |_, decision| match decision {
+                Decision::ChooseTargets { legal_targets, .. }
+                    if legal_targets.contains(&Target::Player(opponent)) =>
+                {
+                    Action::ChooseTarget(Target::Player(opponent))
+                }
+                Decision::ChooseTargets { legal_targets, .. } => {
+                    assert!(legal_targets.contains(&Target::Object(artifact)));
+                    Action::ChooseTarget(Target::Object(artifact))
+                }
+                other => first_answer(other),
+            });
+            assert_eq!(zone(branch, spell), Zone::Battlefield);
+            assert_eq!(zone(branch, artifact), Zone::Graveyard);
+            assert_eq!(branch.players[opponent.index()].life, 18);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
     }
 }
 

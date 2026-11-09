@@ -508,6 +508,7 @@ reporting as E1 to E9:
 | P2d | White Weenie, Mono-Red Control (Beloved Chaplain, Devoted Caretaker, Glowrider, Mother of Runes, Nova Cleric, Shared Triumph, Soltari Monk, Soltari Priest, Avalanche Riders, Earthquake, Firebolt, Ghitu Encampment, Pillage, Stone Rain, Veteran Brawlers) | 15 | two decks, 2% of the field |
 | P2b | Survival, Madness Threshold, and the cards Elves shares with them (17 of 19; Birchlore Rangers and Thornscape Battlemage stay out) | 17 | Survival and Madness Threshold playable (4%); Elves needs Birchlore Rangers, Thornscape Battlemage and wave P2a's Genesis and Wall of Blossoms |
 | P2c | Reanimator, Full English Breakfast (20 of 21 cards; Volrath's Shapeshifter stays out) | 20 | Reanimator playable; Full English Breakfast needs Volrath's Shapeshifter (see below) |
+| Elves follow-up | Birchlore Rangers and Thornscape Battlemage | 2 | Completes the Elves mainboard source inventory; public-session qualification pending |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -799,12 +800,14 @@ Snapper and Yavimaya Hollow, plus the Bear token. New primitives:
   shroud are P1a-chain hooks (`controlled_boost`, `granted_keywords`). Masticore is the first
   Masticore creature type (stable id 260).
 
-Known gaps: Birchlore Rangers is left out: "Tap two untapped Elves you control" is a mana
-ability with two object costs, but a mana-ability action carries one cost target
-(`Action::ActivateManaAbilityWithCostTarget`, read by the flat policy encodings), so it cannot be
-announced faithfully. Thornscape Battlemage is left out: it has two independent kickers ({R}
-and/or {W}), and a card has one kicker cost and one kicked flag. Elves therefore stays out of
-`PLAYABLE` (it also needs Genesis and Wall of Blossoms from wave P2a). Echo ignores a change of
-control between entering and the upkeep. Glory's protection applies to the creatures its
+The Elves follow-up adds both remaining mainboard printings. Birchlore Rangers' mana action
+carries a color and two distinct untapped Elves controlled by the player. The pair is paid
+together and can include Elves with summoning sickness. Its morph costs {G}, and its face-down
+casting route grants no ward. Thornscape Battlemage offers independent {R} and {W} kicker
+choices and preserves the two paid bits on the original spell. The red trigger deals 2 damage
+to any target, and the white trigger destroys an artifact. The mainboard also uses Genesis
+and Wall of Blossoms from wave P2a.
+
+Echo is owed after a change of control. Glory's protection applies to the creatures its
 controller controls as it resolves. Madness Threshold's Blastoderm and Vintara Snapper have
 shroud, so its games need the public shroud representation of Limited schema 5.

@@ -1,7 +1,7 @@
 //! Card programs for the eternal catalog's Premodern wave P2b
 //! (`docs/design/eternal_formats_support_v1.md`): Survival, Madness
-//! Threshold and the cards Elves shares with them (Birchlore Rangers and
-//! Thornscape Battlemage stay out; the design document says why).
+//! Threshold, the cards Elves shares with them, and the Elves follow-up
+//! for Birchlore Rangers and Thornscape Battlemage.
 //!
 //! `eternal_cards_v1` forwards its effect leaves and state here, wave P1a's
 //! tables fall through to this module's, and the engine calls the hooks in
@@ -22,8 +22,9 @@
 //!   chosen), and "Return an Elf you control" as Wirewood Symbiote's cost;
 //! - a count of the nontoken creatures put into each graveyard from the
 //!   battlefield this turn (Caller of the Claw);
-//! - more morph cards (Nantuko Vigilante) and the trigger for turning one
-//!   face up;
+//! - more morph cards (Nantuko Vigilante and Birchlore Rangers) and the
+//!   trigger for turning Vigilante face up;
+//! - Birchlore's two-Elf mana payment and Battlemage's independent kickers;
 //! - Deranged Hermit's Squirrel lord, Vintara Snapper's conditional shroud
 //!   and Masticore's upkeep cost.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
