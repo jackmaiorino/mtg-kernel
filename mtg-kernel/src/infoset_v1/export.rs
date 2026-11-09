@@ -916,6 +916,12 @@ fn export_versioned(
     let opp = v.opponent();
     let mutant = options.mutant;
     let is = |m: MutantV1| mutant == Some(m);
+    if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state) {
+        return Err(refuse(
+            RefusalCodeV1::R3,
+            "Meddling Mage named entry is unavailable in this infoset export",
+        ));
+    }
     // The canonical allocator does not model hidden sideboards. Refuse from
     // the explicit public profile before any projection or name-sensitive
     // validation, including when both private lists are empty or depleted.

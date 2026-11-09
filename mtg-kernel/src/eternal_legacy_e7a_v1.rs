@@ -2760,10 +2760,6 @@ pub(crate) fn keyword_lost(state: &GameState, object: ObjectId, keyword: Keyword
 /// Dress Down: "Creatures lose all abilities." The timestamp of the latest
 /// Dress Down whose ability applies, for a creature.
 pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
-    let e7a = read_state(state)?;
-    if e7a.dress_downs.is_empty() {
-        return None;
-    }
     let live = state.objects.try_get(object)?;
     if live.zone != Zone::Battlefield
         || !CARD_DEFS.get(live.card_def as usize).is_some_and(|def| {
@@ -2773,10 +2769,19 @@ pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u
     {
         return None;
     }
-    e7a.dress_downs
+    active_dress_down_timestamp(state, Some(object))
+}
+
+/// Existing Dress Down effects also apply to a prospective creature entry
+/// when determining which as-enters abilities it has (614.12).
+pub(crate) fn active_dress_down_timestamp(
+    state: &GameState,
+    except: Option<ObjectId>,
+) -> Option<u64> {
+    read_state(state)?.dress_downs
         .iter()
         .filter(|(link, _)| {
-            link.object != object
+            Some(link.object) != except
                 && state.objects.try_get(link.object).is_some_and(|dress| {
                     dress.zone == Zone::Battlefield
                         && dress.zone_change_count == link.zone_change_count

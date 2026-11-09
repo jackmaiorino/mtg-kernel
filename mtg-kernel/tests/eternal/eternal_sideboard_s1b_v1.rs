@@ -931,14 +931,13 @@ fn meddling_mage_names_a_card_that_then_cannot_be_cast() {
         .position(|&named| named == bolt_id)
         .unwrap();
     cast(&mut state, mage, &[]);
-    let mut answers = vec![letter as u16, name as u16];
-    answers.reverse();
-    settle_with(&mut state, |_, decision| match decision {
-        Decision::ChooseEffectOption { .. } => {
-            Action::ChooseEffectOption(answers.pop().expect("two name choices"))
-        }
-        other => first_answer(other),
-    });
+    assert!(matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 {
+        player: P0, group: None, ..
+    })));
+    assert_eq!(zone(&state, mage), Zone::Stack);
+    act(&mut state, Action::ChooseEffectOption(letter as u16));
+    act(&mut state, Action::ChooseEffectOption(name as u16));
+    settled(&mut state);
     assert_eq!(zone(&state, mage), Zone::Battlefield);
     state.priority_player = P1;
     let theirs = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
@@ -946,6 +945,151 @@ fn meddling_mage_names_a_card_that_then_cannot_be_cast() {
     pool(&mut state, P1, &[ManaColor::R], 0);
     assert!(!castable(&mut state, theirs), "named");
     assert!(castable(&mut state, other), "another spell");
+}
+
+fn choose_mage_name(state: &mut GameState, player: PlayerId, name: &str) {
+    let groups = mtg_kernel::eternal_sideboard_s1b_v1::nameable_nonland();
+    let named = id(name);
+    let group = groups.iter().position(|entries| entries.contains(&named)).unwrap() as u16;
+    assert!(matches!(next(state), Decision::ChooseMeddlingMageNameV1 {
+        player: chooser, group: None, ..
+    } if chooser == player));
+    act(state, Action::ChooseEffectOption(group));
+    let Decision::ChooseMeddlingMageNameV1 { player: chooser, group: Some(actual), options, .. } =
+        next(state) else { panic!("expected the catalog names from the selected group") };
+    assert_eq!(chooser, player);
+    assert_eq!(actual, group);
+    let index = options.iter().position(|option| option == name).unwrap();
+    act(state, Action::ChooseEffectOption(index as u16));
+}
+
+#[test]
+fn meddling_mage_reanimation_pauses_before_entry_and_life_loss_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let owner = actor.opponent();
+        let mage = put(&mut state, owner, "Meddling Mage", Zone::Graveyard);
+        let reanimate = put(&mut state, actor, "Reanimate", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::B], 0);
+        cast(&mut state, reanimate, &[Target::Object(mage)]);
+        assert!(matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 {
+            player, group: None, ..
+        }) if player == actor));
+        assert_eq!(zone(&state, mage), Zone::Graveyard);
+        assert_eq!(zone(&state, reanimate), Zone::Stack);
+        assert_eq!(life(&state, actor), 20);
+        let snapshot = serde_json::to_vec(&state).unwrap();
+        let mut forged: serde_json::Value = serde_json::from_slice(&snapshot).unwrap();
+        forged["engine"]["linked_aura_operation_v1"]["pending_meddling_mage_v1"] =
+            serde_json::Value::Null;
+        let mut forged: GameState = serde_json::from_value(forged).unwrap();
+        assert!(engine::step(&mut forged, Action::ChooseEffectOption(0)).is_err());
+        state = serde_json::from_slice(&snapshot).unwrap();
+        choose_mage_name(&mut state, actor, "Lightning Bolt");
+        settled(&mut state);
+        assert_eq!(zone(&state, mage), Zone::Battlefield);
+        assert_eq!(state.objects.get(mage).owner, owner);
+        assert_eq!(state.objects.get(mage).controller, actor);
+        assert_eq!(life(&state, actor), 18);
+
+        let blink = put(&mut state, actor, "Ephemerate", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::W], 0);
+        let before_blink = state.objects.get(mage).zone_change_count;
+        cast(&mut state, blink, &[Target::Object(mage)]);
+        assert!(matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 {
+            player, group: None, ..
+        }) if player == owner));
+        assert_eq!(zone(&state, mage), Zone::Exile);
+        choose_mage_name(&mut state, owner, "Lava Dart");
+        settled(&mut state);
+        assert_eq!(state.objects.get(mage).controller, owner);
+        assert_eq!(state.objects.get(mage).zone_change_count, before_blink + 2);
+        let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        let dart = put(&mut state, actor, "Lava Dart", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R], 0);
+        state.priority_player = actor;
+        assert!(castable(&mut state, bolt), "the earlier incarnation's name expired");
+        assert!(!castable(&mut state, dart), "the new incarnation chose a new name");
+    }
+}
+
+#[test]
+fn meddling_mage_names_before_aether_vial_puts_it_onto_the_battlefield() {
+    let mut state = islands();
+    let vial = put(&mut state, P0, "Aether Vial", Zone::Battlefield);
+    state.objects.get_mut(vial).counters.charge = 2;
+    let mage = put(&mut state, P0, "Meddling Mage", Zone::Hand);
+    activate(&mut state, vial, 0, &[]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { player: P0, legal_targets, .. })
+            if legal_targets == [Target::Object(mage)]
+    ));
+    act(&mut state, Action::ChooseEffectTarget(Target::Object(mage)));
+    assert_eq!(zone(&state, mage), Zone::Hand);
+    choose_mage_name(&mut state, P0, "Lightning Bolt");
+    settled(&mut state);
+    assert_eq!(zone(&state, mage), Zone::Battlefield);
+    assert!(state.objects.get(vial).tapped);
+}
+
+#[test]
+fn meddling_mage_simultaneous_exhume_names_follow_apnap_before_either_entry() {
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let other = actor.opponent();
+        let first = put(&mut state, actor, "Meddling Mage", Zone::Graveyard);
+        let second = put(&mut state, other, "Meddling Mage", Zone::Graveyard);
+        let spell = put(&mut state, actor, "Exhume", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::B], 1);
+        cast(&mut state, spell, &[]);
+        assert!(matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 {
+            player, entry_ordinal: 0, ..
+        }) if player == actor));
+        choose_mage_name(&mut state, actor, "Lightning Bolt");
+        assert_eq!(zone(&state, first), Zone::Graveyard);
+        assert_eq!(zone(&state, second), Zone::Graveyard);
+        assert!(matches!(next(&mut state), Decision::ChooseMeddlingMageNameV1 {
+            player, entry_ordinal: 1, ..
+        } if player == other));
+        choose_mage_name(&mut state, other, "Lava Dart");
+        settled(&mut state);
+        assert_eq!(zone(&state, first), Zone::Battlefield);
+        assert_eq!(zone(&state, second), Zone::Battlefield);
+    }
+}
+
+#[test]
+fn meddling_mage_token_copy_names_independently_before_allocation() {
+    let mut state = islands();
+    let mage = put(&mut state, P0, "Meddling Mage", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W, ManaColor::U], 0);
+    cast(&mut state, mage, &[]);
+    assert!(settle(&mut state).is_some());
+    choose_mage_name(&mut state, P0, "Lightning Bolt");
+    settled(&mut state);
+    let reflection = put(&mut state, P0, "Fable of the Mirror-Breaker", Zone::Battlefield);
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::transform_in_place(reflection, 1),
+    );
+    pool(&mut state, P0, &[], 1);
+    activate(&mut state, reflection, 0, &[Target::Object(mage)]);
+    assert!(matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 { player: P0, .. })));
+    assert_eq!(named(&state, P0, "Meddling Mage"), [mage]);
+    choose_mage_name(&mut state, P0, "Lava Dart");
+    settled(&mut state);
+    let copies = named(&state, P0, "Meddling Mage");
+    assert_eq!(copies.len(), 2);
+    assert!(copies.iter().any(|&object| state.objects.get(object).v4.is_token));
+    let dart = put(&mut state, P1, "Lava Dart", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::R], 0);
+    state.priority_player = P1;
+    assert!(!castable(&mut state, dart));
 }
 
 fn def_is_land(named: u16) -> bool {

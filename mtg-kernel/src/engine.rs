@@ -1780,6 +1780,13 @@ pub enum Decision {
         player: PlayerId,
         spell: ObjectId,
     },
+    /// Named nonland entry choice. Indices address this actual catalog menu.
+    ChooseMeddlingMageNameV1 {
+        player: PlayerId,
+        entry_ordinal: u32,
+        group: Option<u16>,
+        options: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

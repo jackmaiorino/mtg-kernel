@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
 pub(crate) mod targets;
+pub(crate) mod meddling_mage_entry;
 pub use crate::eternal_sideboard_s1a_v1::surgical::{
     extirpate_search_look_v1, SurgicalSearchLookV1 as ExtirpateSearchLookV1,
 };
@@ -433,33 +434,7 @@ pub(crate) fn execute(op: &S1bOpV1, ctx: &ExecCtx, state: &mut GameState) {
         S1bOpV1::ExplosivesEnterV1 => run_explosives_enter(ctx, state),
         S1bOpV1::ExplosivesDestroyV1 => run_explosives_destroy(ctx, state),
         S1bOpV1::ArtifactUntilEndOfTurnV1 => run_artifact_until_eot(ctx, state),
-        S1bOpV1::MageNamesV1 { named } => {
-            if state
-                .objects
-                .try_get(ctx.source)
-                .is_some_and(|live| live.zone == Zone::Stack)
-            {
-                crate::effect::execute(
-                    &EffectOp::MoveObject {
-                        object: ObjectRef::ThisSource,
-                        to_zone: Zone::Battlefield,
-                    },
-                    ctx,
-                    state,
-                );
-            }
-            let Some(live) = state.objects.try_get(ctx.source) else {
-                return;
-            };
-            if live.zone != Zone::Battlefield {
-                return;
-            }
-            let link = ObjectLinkV4 {
-                object: ctx.source,
-                zone_change_count: live.zone_change_count,
-            };
-            s1b_state(state).mage_names.push((link, *named));
-        }
+        S1bOpV1::MageNamesV1 { .. } => halt(state, ctx.source),
     }
 }
 
@@ -593,21 +568,11 @@ pub fn nameable_nonland() -> &'static [Vec<u16>] {
 }
 
 /// Meddling Mage: "As this creature enters, choose a nonland card name."
-/// The resolving creature spell enters and records the name together, so
-/// no player acts between the two.
+/// The native battlefield entry owns the name choice for any entry route.
 pub fn meddling_mage() -> EffectOp {
-    EffectOp::Choice {
-        controller: PlayerRef::Controller,
-        options: nameable_nonland()
-            .iter()
-            .map(|ids| EffectOp::Choice {
-                controller: PlayerRef::Controller,
-                options: ids
-                    .iter()
-                    .map(|&named| s1b(S1bOpV1::MageNamesV1 { named }))
-                    .collect(),
-            })
-            .collect(),
+    EffectOp::MoveObject {
+        object: ObjectRef::ThisSource,
+        to_zone: Zone::Battlefield,
     }
 }
 
@@ -672,7 +637,8 @@ pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId, card: ObjectI
             state.objects.try_get(mage.object).is_some_and(|live| {
                 live.zone_change_count == mage.zone_change_count
                     && active_named(state, mage.object, MEDDLING_MAGE)
-            }) && CARD_DEFS[usize::from(*named)].object_name == def.object_name
+            }) && CARD_DEFS.get(usize::from(*named))
+                .is_some_and(|named_def| named_def.object_name == def.object_name)
         })
     })
 }

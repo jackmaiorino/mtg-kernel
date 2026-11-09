@@ -2086,6 +2086,9 @@ pub enum CommittedEvent {
         source: crate::state::AbilitySourceContractV4,
         revealed: Vec<u16>,
     },
+    MeddlingMageEntryV1 {
+        journal: Box<crate::eternal_sideboard_s1b_v1::meddling_mage_entry::JournalV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -4800,6 +4803,9 @@ fn commit_with_entry_batch_and_source_color(
                 entry_history_index,
             )
         })
+        .and_then(|_| crate::linked_aura_operation_v1::commit_mage_entry(
+            state, &entry_color_proposal, object, entry_history_index,
+        ))
         .is_err()
         {
             state.engine.halted = Some((
@@ -5167,6 +5173,9 @@ impl FinalZonePtPlanV1 {
                         entry_index,
                     )
                 })
+                .and_then(|_| crate::linked_aura_operation_v1::commit_mage_entry(
+                    &mut scene, event, object, entry_index,
+                ))
                 .map_err(|_| object)?;
                 if !season {
                     crate::standard_cards_v1::initialize_entry_counters(
