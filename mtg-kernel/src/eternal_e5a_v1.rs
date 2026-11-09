@@ -540,10 +540,11 @@ pub fn chalice_of_the_void() -> EffectOp {
 }
 
 /// Extrapolate the Impossible: "You may reveal exactly two cards you own
-/// with different names from outside the game." A best-of-one mainboard
-/// game has no cards outside the game, so the spell does nothing.
+/// with different names from outside the game. An opponent chooses one of
+/// them. You put that card into your hand." It reads the outside-the-game
+/// zone (`eternal_outside_game_v1`), empty in best-of-one games.
 pub fn extrapolate_the_impossible() -> EffectOp {
-    EffectOp::Sequence(Vec::new())
+    crate::eternal_outside_game_v1::extrapolate()
 }
 
 /// Flash: "You may put a creature card from your hand onto the

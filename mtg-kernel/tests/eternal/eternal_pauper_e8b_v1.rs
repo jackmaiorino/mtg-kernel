@@ -1298,15 +1298,17 @@ fn first_day_of_class_counters_and_hastes_creatures_entering_this_turn() {
     assert_eq!(power_toughness(&state, elemental), (3, 3));
     assert!(keyword(&state, elemental, Keywords::HASTE));
 
-    // Learn: discard a card to draw a card.
+    // Learn with nothing outside the game: decline (option 0) or discard a
+    // card to draw a card (option 1).
     let mut state = plains();
     let class = put(&mut state, P0, "First Day of Class", Zone::Hand);
     let discarded = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 1);
     cast(&mut state, class, &[]);
     settle_with(&mut state, |_, decision| match decision {
-        Decision::ChooseOptionalCost { .. } => {
-            Action::ChooseOptionalCost(OptionalCostChoice::Discard)
+        Decision::ChooseEffectOption { option_count, .. } => {
+            assert_eq!(option_count, 2, "decline, or discard to draw");
+            Action::ChooseEffectOption(1)
         }
         other => first_answer(other),
     });

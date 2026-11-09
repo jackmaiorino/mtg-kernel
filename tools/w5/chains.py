@@ -13,6 +13,8 @@ Stage 1b (XS, paired with Stage 1a's C chains, beside the frozen filler) all go 
   chains.py segcheck --plan PLAN.json --arm ARM --out RECEIPT.json
   chains.py clean-fillers --plan PLAN.json [--apply]
   chains.py throughput --plan PLAN.json --arm ARM --label L --updates N --out RECORD.json [--counts 1,6]
+  chains.py throughput-mix --plan PLAN.json --slots C,CP,CS,... --label L --updates N --out RECORD.json [--counts 3,6]
+  chains.py throughput-compare --baseline RECORD.json [...] --candidate RECORD.json [...] --out REPORT.json
   chains.py stage0-exit --record RECORD.json [--record ...] [--r-nom-usec R] --out REPORT.json
   internal: `_drive` and `_filler` (started by w5box inside a box), `_replay` (started by supervise)
 
@@ -155,6 +157,33 @@ the window and teardown after it are reported, not subtracted, along with the cl
 short of N leaves the block incomplete, with no rate; a commit log that contradicts itself or the index stops. The
 record summary sets each phase's durable rate beside its box rate sum, and a failed record keeps the failing
 phase's block.
+
+**Mixed occupancy** (`throughput-mix`, mtg-kernel#600; a companion record that no guard reads, so `throughput` and
+its record stay as they are). `--slots` names one measured arm of the plan per box slot of the layout, at least two
+arms (e.g. `C,CP,CS,C,CP,CS`). Each phase is a Stage 0 plan derived from the plan's own inputs, as for
+`throughput`, and is checked to bind the plan's own launch specification for every arm it runs. The phases: one
+serial phase per arm (`<label>-<arm>-solo`, the arm alone on slot 0), then each `--counts` k (`<label>-mix<k>`, the
+arms of slots 0 to k - 1; counts rise from 2 to every box, default every box only). Every chain runs on one seed
+root, so a chain's work depends only on its arm: every box of an arm, in every phase, must reproduce that arm's
+serial identity rows, and different arms are never compared. N is whole segments of every arm, at least two. The
+`w5-mixed-occupancy/v1` record keeps each phase's boxes, durable block and chain arms. Its summary gives the
+full-layout phase's fixed-mixture durable rate and, per arm, the durable rate, the box rates against the arm's
+serial box (interference) and CPU-seconds per update. A mismatch within an arm, or an incomplete durable window,
+fails the record (`<out>.failed.json`).
+
+**Comparisons** (`throughput-compare`): baseline and candidate records of one schema (box throughput or mixed) and
+one workload. The records must agree on the recorded host and kernel, run parameters, layout bindings, phase plans' inputs (except
+their label, chains, trainer and throughput records), the content pins of the files those name, and the arm files
+(except their trainer and tool pins); only the code (the trainer and the W5 tools) may differ, and the records of
+one side ran the same code. Each retained phase plan may occur in only one record, so copied records cannot supply
+extra independent samples. Otherwise it stops. Every chain's identity rows must equal the first baseline's at the
+same phase and slot; a candidate that differs fails the report and is not compared for speed. A passing report
+gives, for the full-layout phase, each record's total and per-arm durable updates/hour and CPU-seconds per update,
+the medians, the ranges and the candidate/baseline median ratio. It calls a metric higher or lower only when the
+two sides' ranges separate, their medians differ by more than the larger range, and finite, nonoverlapping run
+intervals form complete ABBA or BAAB blocks in start-time order. It reports the chance that noise alone separates
+them that completely (2 / C(n_b + n_c, n_b): one ABBA leaves 1/3) only for those schedules. Other schedules keep
+the descriptive statistics, with an inconclusive verdict or too few samples.
 """
 import argparse
 import copy
@@ -165,9 +194,11 @@ import os
 import re
 import shutil
 import signal
+import statistics
 import subprocess
 import sys
 import time
+from hashlib import sha256
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -792,7 +823,7 @@ def stopped(root, cdir):
     return (Path(root) / 'STOP').exists() or (Path(cdir) / 'STOP').exists()
 
 
-def latest(man, persisted=False):
+def latest(man, persisted=False, *, read_receipt=True):
     """(latest boundary, its receipt or None) from the manifest's segments; with `persisted`, an in-flight
     (mounted) scratch segment is skipped, so the boundary survives a reboot."""
     segs = man['segments']
@@ -801,7 +832,8 @@ def latest(man, persisted=False):
             continue
         n = completed(seg['root'])
         if n:
-            return seg['offset'] + n, read(Path(seg['root']) / 'iterations' / f'{n - 1:06d}' / 'complete.json')
+            receipt = read(Path(seg['root']) / 'iterations' / f'{n - 1:06d}' / 'complete.json') if read_receipt else None
+            return seg['offset'] + n, receipt
     return 0, None
 
 
@@ -940,25 +972,68 @@ def reap(native):
     return n
 
 
+def scratch_kept_pins(newest, path_at=Path):
+    """The newest complete receipt and its pinned update name the full retained state."""
+    if newest is None:
+        return {}
+    complete = read(path_at(newest / 'complete.json'))
+    update = attempt_dir(newest, complete) / 'update'
+    update_record = path_at(update / 'update.json')
+    digest = complete['update'].get('sha256')
+    require(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest),
+            f'{update_record} is missing a valid update SHA-256 pin')
+    data = update_record.read_bytes()
+    require(sha256(data).hexdigest() == digest, f'{update_record} differs from its pin')
+    doc = json.loads(data.decode('utf-8'))
+    keep = {update / 'checkpoint.json': complete['output_identity']['checkpoint_sha256']}
+    state = retention.state_pin(doc)
+    if state is not None:
+        name = Path(state['path']).name
+        require(name not in ('', '.', '..', 'checkpoint.json'), f'invalid S container name in {update}')
+        keep[update / name] = state['sha256']
+    return keep
+
+
+def validate_scratch_stage(stage):
+    """Authenticate retained state before promoting an interrupted copy."""
+    def staged(path):
+        rel = path.relative_to(stage)
+        require('..' not in rel.parts and not any(is_link(stage / p) for p in (rel, *rel.parents)),
+                f'{path} leaves the scratch stage or uses a link')
+        return path
+
+    try:
+        marker = read(staged(stage / PERSIST_MARKER))
+        its = staged(stage / 'iterations')
+        done = []
+        if its.exists():
+            for iteration in sorted(its.iterdir()):
+                complete = staged(iteration / 'complete.json')
+                if complete.exists():
+                    require(complete.is_file(), f'invalid completed receipt {complete}')
+                    done.append(iteration)
+        require([p.name for p in done] == [f'{i:06d}' for i in range(len(done))],
+                f'{stage} has a noncontiguous completed iteration prefix')
+        keep = scratch_kept_pins(done[-1] if done else None, staged)
+        expected = {staged(path).relative_to(stage).as_posix(): digest for path, digest in keep.items()}
+        require(isinstance(marker, dict) and marker.get('kept') == expected,
+                f'{stage} marker kept pins differ from its newest completed state')
+        for path, digest in keep.items():
+            require(path.is_file() and sha(path) == digest, f'{path} is missing or differs from its pin')
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError) as exc:
+        raise Stop(f'{stage} cannot be validated for scratch recovery: {exc}') from exc
+
+
 def persist(arm, native, cdir):
     """Copies a scratch segment's records and its newest checkpoint to the root's volume and swaps the copy in at
     the segment's path. Returns the bytes copied."""
     native = Path(native)
     require(mounted(native), f'{native} is not a mounted scratch segment')
     target = scratch_dir(arm, cdir, native)
-    reap(native)
     its = target / 'iterations'
     done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists()) if its.exists() else []
-    newest = done[-1] if done else None
-    keep = {}  # the newest full train state: relative path -> pinned sha256 (checkpoint, and an S container)
-    if newest is not None:
-        complete = read(newest / 'complete.json')
-        upd = attempt_dir(newest, complete) / 'update'
-        doc = read(upd / 'update.json')
-        keep[upd / 'checkpoint.json'] = complete['output_identity']['checkpoint_sha256']
-        state = retention.state_pin(doc)
-        if state is not None:
-            keep[upd / Path(state['path']).name] = state['sha256']
+    keep = scratch_kept_pins(done[-1] if done else None)
+    reap(native)
     tmp = Path(cdir) / f'.{native.name}.persist'
     shutil.rmtree(tmp, ignore_errors=True)
     copied, files = 0, []
@@ -1068,7 +1143,9 @@ def scratch_settle(arm, root, cdir, man, instance=None):
         native = Path(seg['root'])
         tmp = cdir / f'.{native.name}.persist'
         if tmp.exists() and not mounted(native) and (not native.exists() or not any(native.iterdir())):
-            if (tmp / PERSIST_MARKER).exists():
+            marker = tmp / PERSIST_MARKER
+            if marker.exists() or is_link(marker):
+                validate_scratch_stage(tmp)
                 with retention.index_lock(cdir / 'chain.json'):
                     os.rename(tmp, native)  # the driver stopped between the unmount and the rename
                     fsync_path(native.parent)  # as persist: the rename is durable before the commit names it
@@ -1087,10 +1164,13 @@ def scratch_settle(arm, root, cdir, man, instance=None):
             log(root, chain=cdir.name, event='scratch-persist', segment=native.name, bytes=n, late=True,
                 config_gz_bytes=z)
     if man['segments']:
-        native = Path(man['segments'][-1]['root'])
-        if not mounted(native) and (native / PERSIST_MARKER).exists() and \
+        s = len(man['segments']) - 1
+        native = Path(man['segments'][s]['root'])
+        marker = native / PERSIST_MARKER
+        if not mounted(native) and (marker.exists() or is_link(marker)) and \
                 not (native / 'completion.json').exists():
-            # a persisted wall cut whose END was not written (the driver stopped in between)
+            # A driver can stop after the rename but before its commit or END.
+            commit_recovered(cdir, man, instance, segment=s)
             boundary, receipt = latest(man, persisted=True)
             write_once(cdir / 'END.json', end_doc(cdir.name, arm['arm'], 'c-wall', boundary, receipt, 'driver',
                                                   recovered=True))
@@ -1239,7 +1319,23 @@ def committed_through(cdir):
     return prefix[-1]['boundary'] if prefix else 0
 
 
-def commit_recovered(cdir, man, instance=None):
+def verify_unlogged_scratch_boundary(cdir, man, boundary):
+    """Check only the selected persisted scratch segment before an external END."""
+    if not boundary:
+        return
+    s, seg = next((s, seg) for s, seg in reversed(list(enumerate(man['segments']))) if seg['offset'] < boundary)
+    root = Path(seg['root'])
+    marker = root / PERSIST_MARKER
+    if not (marker.exists() or is_link(marker)):
+        return
+    require(not mounted(root), f'{root} is still mounted, not a persisted boundary')
+    rows, _ = read_commits(cdir)
+    if not any(row['event'] == 'commit' and row['segment'] == s for row in rows):
+        validate_scratch_stage(root)
+        fsync_path(root.parent)
+
+
+def commit_recovered(cdir, man, instance=None, *, segment=None):
     """A driver start's safety net: a durable segment among the manifest's last two (a native segment with
     completion.json, or a persisted scratch copy) without a commit line, left by a driver that stopped between the
     promotion and its line, is committed now as `recovered`. Its time is this driver's, later than the real one, so
@@ -1247,12 +1343,18 @@ def commit_recovered(cdir, man, instance=None):
     rows, _ = read_commits(cdir)
     have = {r['segment'] for r in rows if r.get('event') == 'commit'}
     segs = man['segments']
-    for s in range(max(0, len(segs) - 2), len(segs)):
+    indexes = (segment,) if segment is not None else range(max(0, len(segs) - 2), len(segs))
+    for s in indexes:
         root = Path(segs[s]['root'])
         if s in have or mounted(root):
             continue
-        if (root / 'completion.json').exists() or (root / PERSIST_MARKER).exists():
-            record_commit(cdir, man, s, 'recovered', instance)
+        marker = root / PERSIST_MARKER
+        if marker.exists() or is_link(marker):
+            validate_scratch_stage(root)
+            fsync_path(root.parent)  # recovery may have interrupted the sync after rename
+        elif not (root / 'completion.json').exists():
+            continue
+        record_commit(cdir, man, s, 'recovered', instance)
 
 
 def drive(a):
@@ -1428,9 +1530,11 @@ def run(a):
         release_scratch(plan, a.chain, read(chain_dir(root, a.chain) / 'chain.json'))  # the box's driver is gone
         return 0
     if code == w5box.EXIT_OOM and c['arm'] in MEASURED:
-        man = read(chain_dir(root, a.chain) / 'chain.json')
+        cdir = chain_dir(root, a.chain)
+        man = read(cdir / 'chain.json')
         boundary, receipt = latest(man, persisted=True)
-        write_once(chain_dir(root, a.chain) / 'END.json',
+        verify_unlogged_scratch_boundary(cdir, man, boundary)
+        write_once(cdir / 'END.json',
                    end_doc(a.chain, c['arm'], 'chain-failure', boundary, receipt, 'run', cause='oom kill'))
         release_scratch(plan, a.chain, man)
     return code
@@ -1462,14 +1566,23 @@ def end_cmd(a):
     plan = load_plan(a.plan, check=False)
     require(a.chain in plan['chains'] and plan['chains'][a.chain]['arm'] in MEASURED, 'not a measured chain')
     root = Path(plan['root'])
-    man = read(chain_dir(root, a.chain) / 'chain.json')
-    top, _ = latest(man, persisted=True)  # receipts only (persisted ones for a scratch arm)
-    boundary = top if a.boundary is None else a.boundary
-    require(0 <= boundary <= top, f'boundary must be 0 to {top}')
-    receipt = receipt_at(man, boundary) if boundary else None
+    cdir = chain_dir(root, a.chain)
+    existing = read_end(root, a.chain)
+    if existing is not None:
+        print(json.dumps(existing, indent=1))
+        return 1
+    man = read(cdir / 'chain.json')
+    if a.boundary is None:
+        boundary, receipt = latest(man, persisted=True)
+    else:
+        top, _ = latest(man, persisted=True, read_receipt=False)
+        boundary = a.boundary
+        require(0 <= boundary <= top, f'boundary must be 0 to {top}')
+        receipt = receipt_at(man, boundary) if boundary else None
+    verify_unlogged_scratch_boundary(cdir, man, boundary)
     doc = end_doc(a.chain, plan['chains'][a.chain]['arm'], 'operator', boundary, receipt, 'operator',
                   note=a.reason)
-    if not write_once(chain_dir(root, a.chain) / 'END.json', doc):
+    if not write_once(cdir / 'END.json', doc):
         print(json.dumps(read_end(root, a.chain), indent=1))
         return 1
     if live(root, a.chain):
@@ -2040,9 +2153,11 @@ def end_oom_failures(plan, root):
     ended = []
     for n, c in sorted(plan['chains'].items()):
         if c['arm'] in MEASURED and read_end(root, n) is None and oom_closed(root, n):
-            man = read(chain_dir(root, n) / 'chain.json')
+            cdir = chain_dir(root, n)
+            man = read(cdir / 'chain.json')
             boundary, receipt = latest(man, persisted=True)
-            if write_once(chain_dir(root, n) / 'END.json',
+            verify_unlogged_scratch_boundary(cdir, man, boundary)
+            if write_once(cdir / 'END.json',
                           end_doc(n, c['arm'], 'chain-failure', boundary, receipt, 'supervise', cause='oom kill')):
                 log(root, chain=n, event='end', reason='chain-failure', cause='oom kill', boundary=boundary)
                 ended.append(n)
@@ -2946,6 +3061,404 @@ def throughput(a):
     return 0 if passed else 1
 
 
+# ---------------------------------------------------------------- mixed occupancy and comparisons (mtg-kernel#600)
+
+MIX_SCHEMA = 'w5-mixed-occupancy/v1'
+COMPARE_SCHEMA = 'w5-throughput-compare/v1'
+CODE_PINS = ('trainer', 'tools')  # what a code-only comparison lets differ (module docstring, "Comparisons")
+
+
+def mix_arms(slots):
+    """The distinct arms of a slot list, in order of first appearance."""
+    return list(dict.fromkeys(slots))
+
+
+def mix_inputs(plan, label, slots, count, seed_root, serial=None):
+    """A mixed run's phase inputs, as `throughput_inputs`: the plan's own inputs with, for a serial phase, one chain
+    of `serial` on slot 0, else the arms of slots 0 to count - 1 on those slots; every chain on one seed root, and no
+    throughput records."""
+    check_pin(plan['inputs'], 'the plan inputs')
+    doc = copy.deepcopy(read(plan['inputs']['path']))
+    doc['stage'] = '0'
+    doc['label'] = f'{label}-{serial.lower()}-solo' if serial else f'{label}-mix{count}'
+    arms = [serial] if serial else slots[:count]
+    require(NAME.fullmatch(f'{doc["label"]}-s{len(arms) - 1}') is not None,
+            f'label {label}: phase and chain names must be lowercase letters, digits and dashes (32 at most)')
+    for spec in doc['arms'].values():
+        spec.pop('throughput', None)
+    doc['chains'] = {f'{doc["label"]}-s{k}': {'arm': a, 'slot': k, 'seed_root': seed_root}
+                     for k, a in enumerate(arms)}
+    return doc
+
+
+def mix_plans(plan_path, slots, label, counts, seed_root=THROUGHPUT_SEED_ROOT):
+    """The mixed run's phase plans (a serial phase per arm, then each count), each checked to bind exactly what the
+    plan launches for every arm it runs, with fresh chains. Returns (plan, bindings per arm, [(path, phase, key)])."""
+    plan = load_plan(plan_path)
+    arms = mix_arms(slots)
+    require(len(arms) >= 2, f'a mixed layout names at least two arms (one arm is `throughput`): {slots}')
+    bindings = {}
+    for a in arms:
+        require(a in MEASURED, f'{a} is not a measured arm')
+        bindings[a] = arm_binding(plan, a)
+    boxes = bindings[arms[0]]['boxes']
+    require(len(slots) == boxes, f'--slots names {len(slots)} boxes; the layout has {boxes}')
+    require(counts and counts[0] >= 2 and counts[-1] == boxes and counts == sorted(set(counts)),
+            f'mixed phase box counts rise from 2 to every box ({boxes}): {counts}')
+    root = Path(plan['root'])
+    out = []
+    for serial, count in [(a, 1) for a in arms] + [(None, k) for k in counts]:
+        doc = mix_inputs(plan, label, slots, count, seed_root, serial)
+        for name in doc['chains']:
+            require(not chain_dir(root, name).exists(), f'{name} exists: a throughput label is used once')
+        inputs_path = root / 'plan' / doc['label'] / 'INPUTS.json'
+        write(inputs_path, doc)
+        path, phase = make_plan(inputs_path)
+        for a in sorted({c['arm'] for c in phase['chains'].values()}):
+            require(arm_binding(phase, a) == bindings[a],
+                    f'phase {doc["label"]} binds another {a} launch specification')
+        out.append((path, phase, {'kind': 'serial', 'arm': serial} if serial else {'kind': 'mix', 'count': count}))
+    return plan, bindings, out
+
+
+def mix_identity_differences(phases):
+    """Every box of an arm, in every phase, against that arm's serial box. Different arms are never compared."""
+    ref = {}
+    for p in phases:
+        if p['mix_phase']['kind'] == 'serial' and p['boxes']:
+            ref.setdefault(p['mix_phase']['arm'], p['boxes'][0]['identity'])
+    out = []
+    for p in phases:
+        for b in p['boxes']:
+            arm = p['arms'][b['chain']]
+            want = ref.get(arm)
+            if want is None:
+                out.append({'chain': b['chain'], 'arm': arm, 'first': None, 'count': None})  # no serial reference
+                continue
+            diff = sorted(k for k in set(want) | set(b['identity']) if want.get(k) != b['identity'].get(k))
+            if diff:
+                out.append({'chain': b['chain'], 'arm': arm, 'first': diff[0], 'count': len(diff)})
+    return out
+
+
+def cpu_per_update(boxes):
+    return sum(b['ledger_usec'] for b in boxes) / 1e6 / sum(b['updates'] for b in boxes)
+
+
+def mix_summary(phases, slots):
+    """The fixed-mixture numbers of the full-layout phase (the last): its total durable rate and, per arm, the
+    durable rate, the boxes' rates against the arm's serial box (interference) and CPU-seconds per update."""
+    serial = {p['mix_phase']['arm']: p for p in phases if p['mix_phase']['kind'] == 'serial'}
+    full = phases[-1]
+    per_arm = {}
+    for a in mix_arms(slots):
+        alone = serial[a]['boxes'][0]
+        boxes = [b for b in full['boxes'] if full['arms'][b['chain']] == a]
+        rates = [b['updates_per_wall_second'] for b in boxes]
+        d = full['durable']['per_arm'][a]
+        per_arm[a] = {'boxes': len(boxes), 'durable_updates_per_hour': d['updates_per_hour'],
+                      'durable_updates_per_hour_over_window': d['updates_per_hour_over_window'],
+                      'box_updates_per_wall_second': rates, 'box_rate_sum_updates_per_hour': sum(rates) * 3600,
+                      'serial_updates_per_wall_second': alone['updates_per_wall_second'],
+                      'mean_box_vs_serial': sum(rates) / len(rates) / alone['updates_per_wall_second'],
+                      'serial_durable_updates_per_hour': serial[a]['durable']['updates_per_hour'],
+                      'cpu_seconds_per_update': cpu_per_update(boxes),
+                      'serial_cpu_seconds_per_update': cpu_per_update([alone])}
+    return {'boxes': len(full['boxes']), 'durable_updates_per_hour': full['durable']['updates_per_hour'],
+            'durable_elapsed_seconds': full['durable']['elapsed_seconds'],
+            'completion_skew_seconds': full['durable']['completion_skew_seconds'],
+            'box_rate_sum_updates_per_hour': sum(b['updates_per_wall_second'] for b in full['boxes']) * 3600,
+            'cpu_seconds_per_update': cpu_per_update(full['boxes']), 'per_arm': per_arm,
+            'phases': [dict(row, mix_phase=p['mix_phase']) for row, p in zip(durable_summary(phases), phases)]}
+
+
+def mix_record(bindings, phases, meta):
+    """The `w5-mixed-occupancy/v1` record: outputs equal within each arm and every phase's durable window complete,
+    else a Stop."""
+    diffs = mix_identity_differences(phases)
+    require(not diffs, f'outputs differ within an arm: {diffs}')
+    for p in phases:
+        d = p['durable']
+        require(d.get('complete'), f'phase {p["label"]}: its durable window is incomplete: '
+                                   f'{d.get("failures") or d.get("error")}')
+    return {'schema': MIX_SCHEMA, 'bindings': bindings, 'phases': phases, 'qualification': meta,
+            'summary': mix_summary(phases, meta['slots']), 'pass': True}
+
+
+def mix_run(plan_path, slots, label, updates, out, counts=None, max_wall=w5box.UNQUALIFIED_MAX_WALL,
+            seed_root=THROUGHPUT_SEED_ROOT, spawn=spawn_run, launcher=launch_phase, poll=THROUGHPUT_POLL,
+            keep_trees=False):
+    """`chains.py throughput-mix` (module docstring, "Mixed occupancy"): phases, measurements, the record. Returns
+    (passed, record)."""
+    target = load_plan(plan_path)
+    slots = list(slots)
+    for a in mix_arms(slots):
+        require(a in target['arms'], f'the plan has no arm {a}')
+    boxes = len(read(target['layout']['path'])['boxes'])
+    counts = counts or [boxes]
+    lengths = {a: target['arms'][a]['segment_updates'] for a in mix_arms(slots)}
+    for a, length in lengths.items():
+        require(updates % length == 0 and updates >= 2 * length,
+                f'N must be whole {a} segments of {length} updates, at least two')
+    require(0 < max_wall <= w5box.UNQUALIFIED_MAX_WALL, 'a phase wall cap is at most the unqualified 6 hours')
+    root = Path(target['root'])
+    require(not (root / 'STOP').exists(), 'a node STOP file is present')
+    held = lock(root / 'SUPERVISE.lock')
+    require(held is not None, 'another supervise holds this node')
+    phases, plans, bindings, started, failure, failed_durable = [], [], {}, time.time(), None, None
+    try:
+        node_idle(root)
+        target, bindings, derived = mix_plans(plan_path, slots, label, counts, seed_root)
+        for path, phase, key in derived:
+            plans.append(phase)
+            measured = run_phase(path, phase, updates, max_wall, spawn, launcher, poll)
+            phases.append(dict(measured, mix_phase=key,
+                               arms={n: c['arm'] for n, c in sorted(phase['chains'].items())}))
+    except Stop as exc:
+        if not plans:  # refused before any chain ran
+            raise
+        failure = f'phase {plans[-1]["label"]}: {exc}'
+        failed_durable = getattr(exc, 'durable', None)
+    finally:
+        for phase in plans:
+            close_handoffs(phase, root)
+        unlock(held)
+    uname = os.uname() if hasattr(os, 'uname') else None
+    meta = {'plan': pin(plan_path), 'label': label, 'slots': slots, 'updates': updates, 'seed_root': seed_root,
+            'counts': counts, 'segment_updates': lengths, 'box_threads': box_threads(target, 0),
+            'host_class': target['host_class'], 'hostname': uname and uname.nodename,
+            'kernel': uname and uname.release, 'tools': tools_shas(), 'started_unix': started,
+            'finished_unix': time.time()}
+    try:
+        require(failure is None, failure)
+        record = mix_record(bindings, phases, meta)
+        passed = True
+    except Stop as exc:
+        record = {'schema': MIX_SCHEMA, 'bindings': bindings, 'phases': phases, 'qualification': meta,
+                  'pass': False, 'why': str(exc), 'identity_differences': mix_identity_differences(phases)}
+        if failed_durable is not None:
+            record['failed_phase_durable'] = failed_durable
+        passed = False
+    if passed:
+        record['qualification']['removed_tree_bytes'] = 0 if keep_trees else sum(drop_trees(p) for p in plans)
+        write(out, record)
+    else:
+        write(Path(f'{out}.failed.json'), record)
+    log(root, event='throughput-mix', slots=slots, label=label, passed=passed, out=str(out))
+    return passed, record
+
+
+def throughput_mix(a):
+    require(sys.platform.startswith('linux'), 'the mixed occupancy run uses the W5 launcher (Linux only)')
+    counts = [int(x) for x in a.counts.split(',')] if a.counts else None
+    passed, record = mix_run(a.plan, [s.strip() for s in a.slots.split(',')], a.label, a.updates, a.out, counts,
+                             a.max_wall_seconds, a.seed_root, keep_trees=a.keep_trees)
+    print(json.dumps({'pass': passed, 'summary': record.get('summary'), 'why': record.get('why'),
+                      'out': a.out if passed else f'{a.out}.failed.json'}, indent=1))
+    return 0 if passed else 1
+
+
+def record_arms(record):
+    q = record['qualification']
+    return mix_arms(q['slots']) if record['schema'] == MIX_SCHEMA else [q['arm']]
+
+
+def phase_key(record, phase):
+    """A phase's place in its run, the same in every record of one workload."""
+    if record['schema'] == MIX_SCHEMA:
+        k = phase['mix_phase']
+        return f'serial-{k["arm"]}' if k['kind'] == 'serial' else f'mix-{k["count"]}'
+    return f'p{phase["concurrent_boxes"]}'
+
+
+def record_workload(record):
+    """(workload, code) of a passing box-throughput or mixed record, read from its phase plans with every file
+    checked against its pin. The workload is what a code-only comparison holds fixed: the run parameters, the layout
+    bindings, the phase inputs without their label, chains, trainer and throughput records, the content pins of the
+    files those name, and the arm files without their trainer and tool pins. The code is what it lets differ."""
+    q = record['qualification']
+    bindings = record['bindings'] if record['schema'] == MIX_SCHEMA else {q['arm']: record['binding']}
+    work = {'schema': record['schema'],
+            'environment': {k: q.get(k) for k in ('hostname', 'kernel')},
+            'run': {k: q.get(k) for k in ('arm', 'slots', 'updates', 'seed_root', 'counts', 'segment_updates',
+                                          'box_threads', 'host_class')},
+            'layout': {a: {k: b.get(k) for k in ('host_class', 'positions_sha256', 'cores_per_box', 'boxes', 'arm',
+                                                 'binary_sha256')} for a, b in sorted(bindings.items())},
+            'inputs': None, 'pins': None, 'arms': {}}
+    code = None
+    for phase in record['phases']:
+        check_pin(phase['plan'], f'{q["label"]}: phase {phase["label"]} plan')
+        plan = load_plan(phase['plan']['path'], check=False)  # a rebuilt trainer is code: only its pin is read
+        check_pin(plan['inputs'], f'{q["label"]}: phase {phase["label"]} inputs')
+        inputs = {k: v for k, v in read(plan['inputs']['path']).items() if k not in ('label', 'chains', 'trainer')}
+        inputs['arms'] = {a: {k: v for k, v in s.items() if k != 'throughput'} for a, s in inputs['arms'].items()}
+        pins = {k: plan[k]['sha256'] for k in ('python', 'container_tool', 'base', 'layout')}
+        pins['frozen'] = plan['frozen']['sha256'] if plan['frozen'] else None
+        here = {'trainer': plan['trainer']['sha256'], 'tools': plan['tools']}
+        require(work['inputs'] in (None, inputs) and work['pins'] in (None, pins) and code in (None, here),
+                f'{q["label"]}: its phases were planned from different inputs or code')
+        work['inputs'], work['pins'], code = inputs, pins, here
+        for a, spec in sorted(plan['arms'].items()):
+            check_pin(spec['file'], f'{q["label"]}: phase {phase["label"]} arm file {a}')
+            doc = {k: v for k, v in read(spec['file']['path']).items() if k not in CODE_PINS}
+            require(work['arms'].setdefault(a, doc) == doc, f'{q["label"]}: its phases ran different {a} arm files')
+    return work, code
+
+
+def diff_paths(a, b, path=''):
+    """The dotted paths at which two JSON documents differ (lists compare whole)."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        out = []
+        for k in sorted(set(a) | set(b), key=str):
+            out += diff_paths(a.get(k), b.get(k), f'{path}.{k}' if path else str(k))
+        return out
+    return [] if a == b else [path or '.']
+
+
+def identity_map(record):
+    return {phase_key(record, p): {b['slot']: b['identity'] for b in p['boxes']} for p in record['phases']}
+
+
+def parity_differences(ref, other, who):
+    """Each chain's identity rows against the reference record's at the same phase and slot."""
+    out = []
+    for key in sorted(set(ref) | set(other)):
+        a, b = ref.get(key, {}), other.get(key, {})
+        for slot in sorted(set(a) | set(b)):
+            x, y = a.get(slot) or {}, b.get(slot) or {}
+            diff = sorted(k for k in set(x) | set(y) if x.get(k) != y.get(k))
+            if diff or not x or not y:
+                out.append({'record': who, 'phase': key, 'slot': slot, 'first': diff[0] if diff else None,
+                            'count': len(diff)})
+    return out
+
+
+def record_rates(record):
+    """The full-layout phase's durable rates, total and per arm, and its CPU-seconds per update."""
+    full = record['phases'][-1]
+    d = full.get('durable') or {}
+    require(d.get('complete'), f'{record["qualification"]["label"]}: the full-layout phase has no complete durable '
+                               f'window (records from before mtg-kernel#602 have none)')
+    arm_of = full.get('arms') or {b['chain']: record['qualification']['arm'] for b in full['boxes']}
+    out = {'durable_updates_per_hour': d['updates_per_hour'], 'cpu_seconds_per_update': cpu_per_update(full['boxes'])}
+    for a in record_arms(record):
+        boxes = [b for b in full['boxes'] if arm_of[b['chain']] == a]
+        out[f'{a}.durable_updates_per_hour'] = d['per_arm'][a]['updates_per_hour']
+        out[f'{a}.cpu_seconds_per_update'] = cpu_per_update(boxes)
+    return out
+
+
+def separated(base, cand):
+    return min(cand) > max(base) or max(cand) < min(base)
+
+
+def spread_verdict(base, cand):
+    """Higher or lower only when the ranges separate and the medians differ by more than the larger range (an effect
+    smaller than the run-to-run spread is inconclusive), with at least two records a side."""
+    if len(base) < 2 or len(cand) < 2:
+        return 'too few samples'
+    effect = statistics.median(cand) - statistics.median(base)
+    spread = max(max(base) - min(base), max(cand) - min(cand))
+    if separated(base, cand) and abs(effect) > spread:
+        return 'higher' if effect > 0 else 'lower'
+    return 'inconclusive'
+
+
+def compare_metric(base, cand, *, schedule_valid=True):
+    """One metric's samples, medians, ranges and verdict. `separation_p` is the chance that run-to-run noise alone
+    separates the two sides this completely (exchangeable records: 2 / C(n_b + n_c, n_b); 1/3 for one A-B-B-A)."""
+    bm, cm = statistics.median(base), statistics.median(cand)
+    verdict = spread_verdict(base, cand)
+    if not schedule_valid and verdict != 'too few samples':
+        verdict = 'inconclusive'
+    return {'baseline': base, 'candidate': cand, 'baseline_median': bm, 'candidate_median': cm,
+            'candidate_over_baseline': cm / bm if bm else None, 'baseline_range': [min(base), max(base)],
+            'candidate_range': [min(cand), max(cand)],
+            'separation_p': 2 / math.comb(len(base) + len(cand), len(base))
+            if schedule_valid and separated(base, cand) else None,
+            'verdict': verdict}
+
+
+def comparison_timestamp(value):
+    return value if type(value) is int or (type(value) is float and math.isfinite(value)) else None
+
+
+def comparison_schedule(records):
+    """Chronological order and whether the runs form complete counterbalanced blocks."""
+    if any(r['started_unix'] is None for r in records):
+        return None, False
+    ordered = sorted(records, key=lambda r: r['started_unix'])
+    order = ''.join('A' if r['side'] == 'baseline' else 'B' for r in ordered)
+    valid = (bool(order) and len(order) % 4 == 0
+             and all(order[i:i + 4] in ('ABBA', 'BAAB') for i in range(0, len(order), 4))
+             and all(r['finished_unix'] is not None and r['finished_unix'] >= r['started_unix'] for r in ordered)
+             and all(a['finished_unix'] <= b['started_unix'] for a, b in zip(ordered, ordered[1:])))
+    return order, valid
+
+
+def compare_records(baselines, candidates):
+    """`chains.py throughput-compare` (module docstring, "Comparisons"): (passed, report) for the baseline and
+    candidate record paths of one workload. A workload that differs, or a side whose records ran different code,
+    stops; outputs that differ fail the report, which then has no speed metrics."""
+    require(baselines and candidates, 'a comparison needs baseline and candidate records')
+    sides = [('baseline', p) for p in baselines] + [('candidate', p) for p in candidates]
+    recs = [read(p) for _, p in sides]
+    schemas = {r.get('schema') for r in recs}
+    require(len(schemas) == 1 and schemas <= {w5box.THROUGHPUT_SCHEMA, MIX_SCHEMA},
+            f'the records are not all of one throughput record schema: {sorted(map(str, schemas))}')
+    require(all(r.get('pass') is True for r in recs), 'only passing records are compared')
+    works = [record_workload(r) for r in recs]
+    for (_, path), (work, _) in zip(sides, works):
+        diff = diff_paths(works[0][0], work)
+        require(not diff, f'{path}: a code-only comparison holds the workload fixed; it differs in {diff}')
+    code = {}
+    for (side, path), (_, c) in zip(sides, works):
+        require(code.setdefault(side, c) == c, f'{path}: the {side} records ran different code')
+    seen_plans = {}
+    for (_, path), record in zip(sides, recs):
+        for phase in record['phases']:
+            digest = phase['plan']['sha256']
+            require(digest not in seen_plans,
+                    f'{path}: phase {phase["label"]} reuses a measured phase plan from {seen_plans.get(digest)}; '
+                    'independent samples require distinct runs')
+            seen_plans[digest] = str(path)
+    maps = [identity_map(r) for r in recs]
+    parity = []
+    for (_, path), m in zip(sides[1:], maps[1:]):
+        parity += parity_differences(maps[0], m, str(path))
+    records = [{'side': side, 'record': pin(path), 'label': r['qualification']['label'],
+                'started_unix': comparison_timestamp(r['qualification'].get('started_unix')),
+                'finished_unix': comparison_timestamp(r['qualification'].get('finished_unix'))}
+               for (side, path), r in zip(sides, recs)]
+    order, schedule_valid = comparison_schedule(records)
+    report = {'schema': COMPARE_SCHEMA,
+              'records': records, 'order': order, 'schedule_valid': schedule_valid,
+              'workload': {k: works[0][0][k] for k in ('schema', 'environment', 'run', 'layout')},
+              'code': dict(code, differs=diff_paths(code['baseline'], code['candidate'])),
+              'parity': {'pass': not parity, 'differences': parity}, 'metrics': None}
+    if parity:
+        report.update({'pass': False, 'why': 'outputs differ; a candidate that is not exact is not compared for speed'})
+        return False, report
+    rates = [record_rates(r) for r in recs]
+    report['metrics'] = {n: compare_metric([x[n] for (s, _), x in zip(sides, rates) if s == 'baseline'],
+                                           [x[n] for (s, _), x in zip(sides, rates) if s == 'candidate'],
+                                           schedule_valid=schedule_valid)
+                         for n in rates[0]}
+    report['pass'] = True
+    return True, report
+
+
+def throughput_compare(a):
+    passed, report = compare_records(a.baseline, a.candidate)
+    write(a.out, report)
+    print(json.dumps({'pass': passed, 'order': report['order'], 'schedule_valid': report['schedule_valid'],
+                      'code_differs': report['code']['differs'],
+                      'parity': report['parity']['pass'], 'why': report.get('why'),
+                      'verdicts': {n: m['verdict'] for n, m in (report['metrics'] or {}).items()}, 'out': a.out},
+                     indent=1))
+    return 0 if passed else 1
+
+
 def stage0_exit(records, r_nom_usec=None):
     """Section 6's Stage 0 exit numbers from box throughput records (reported, never decided here)."""
     arms, shapes = {}, set()
@@ -3059,6 +3572,20 @@ def main(argv=None):
     p.add_argument('--max-wall-seconds', type=float, default=w5box.UNQUALIFIED_MAX_WALL)
     p.add_argument('--seed-root', default=THROUGHPUT_SEED_ROOT)
     p.add_argument('--keep-trees', action='store_true')
+    p = sub.add_parser('throughput-mix')
+    p.add_argument('--plan', required=True)
+    p.add_argument('--slots', required=True)
+    p.add_argument('--label', required=True)
+    p.add_argument('--updates', type=int, required=True)
+    p.add_argument('--out', required=True)
+    p.add_argument('--counts')
+    p.add_argument('--max-wall-seconds', type=float, default=w5box.UNQUALIFIED_MAX_WALL)
+    p.add_argument('--seed-root', default=THROUGHPUT_SEED_ROOT)
+    p.add_argument('--keep-trees', action='store_true')
+    p = sub.add_parser('throughput-compare')
+    p.add_argument('--baseline', action='append', required=True)
+    p.add_argument('--candidate', action='append', required=True)
+    p.add_argument('--out', required=True)
     p = sub.add_parser('stage0-exit')
     p.add_argument('--record', action='append', required=True)
     p.add_argument('--r-nom-usec', type=int)
@@ -3083,6 +3610,7 @@ def main(argv=None):
             return 0
         return {'run': run, 'launch': launch, 'supervise': supervise, 'status': status, 'end': end_cmd,
                 'segcheck': segcheck, 'clean-fillers': clean_fillers, 'throughput': throughput,
+                'throughput-mix': throughput_mix, 'throughput-compare': throughput_compare,
                 'stage0-exit': stage0_exit_cmd, '_drive': drive, '_filler': filler,
                 '_replay': replay_cmd}[a.cmd](a)
     except Stop as exc:
