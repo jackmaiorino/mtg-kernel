@@ -2510,8 +2510,8 @@ fn sd1_partial_probes_keep_what_they_reveal() {
 }
 
 /// SD1 E5: TL applies the deck prior and TH never reads it. With a one-deck
-/// prior that the opponent's observed cards rule out, TL declares a
-/// rejection while TH still samples (its opponent is the real one).
+/// prior that the opponent's observed cards rule out, TL declares the prior's
+/// rejection; with an empty prior (any read would reject), TH still samples.
 #[test]
 fn sd1_partial_probes_apply_the_prior_only_for_tl() {
     use crate::rl_session::SlotFilterV1;
@@ -2520,35 +2520,35 @@ fn sd1_partial_probes_apply_the_prior_only_for_tl() {
     let mut seen = false;
     for &d in &cfg.decks {
         let prior = world::DeckPrior::new(&[d]);
-        let tl = world::sample_partial_recorded(
+        if let Err(e) = world::sample_partial_recorded(
             &session,
             3,
             &prior,
             SlotFilterV1::OpponentOnly,
             true,
             &mut None,
-        );
-        let th = world::sample_partial_recorded(
-            &session,
-            3,
-            &prior,
-            SlotFilterV1::LibrariesOnly,
-            false,
-            &mut None,
-        );
-        if let Err(e) = &tl {
-            if e.contains("consistent") {
-                seen = true;
-                assert!(
-                    th.as_ref().err().is_none_or(|e| !e.contains("consistent")),
-                    "TH must not read the prior: {:?}",
-                    th.err()
-                );
-            }
+        ) {
+            seen |= e.contains("consistent");
         }
     }
     assert!(
         seen,
         "no single-deck prior ruled out the opponent's observed cards"
     );
+    let empty = world::DeckPrior::new(&[]);
+    let mut sampled = 0;
+    for seed in 0..24u64 {
+        match world::sample_partial_recorded(
+            &session,
+            seed,
+            &empty,
+            SlotFilterV1::LibrariesOnly,
+            false,
+            &mut None,
+        ) {
+            Ok(_) => sampled += 1,
+            Err(e) => assert!(!e.contains("consistent"), "TH read the prior: {e}"),
+        }
+    }
+    assert!(sampled > 0, "TH never sampled in 24 seeds");
 }
