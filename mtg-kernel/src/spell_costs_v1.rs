@@ -1161,6 +1161,12 @@ fn selected_spell_quote_branch_grant_v1(
     forced_branch: Option<bool>,
     grant: Option<u64>,
 ) -> Option<SpellManaPaymentV1> {
+    // Every route, including resolution-time permissions and X menus, uses
+    // this quote. Evaluate cast restrictions with the selected form and X.
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1a_v1::statics::cast_prohibited(state, player, source, method, x) {
+        return None;
+    }
     // A free cast's X is zero, except Sickening Dreams' X, which counts an
     // additional cost's discards (Premodern wave P1b).
     if x != 0
@@ -1629,6 +1635,16 @@ pub(super) fn prepare_final_spell_payment_v1(
     let definition = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     let player = pending.controller;
     let source = pending.spell;
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1a_v1::statics::cast_prohibited(
+        state,
+        player,
+        source,
+        method,
+        pending.selected_x_v59().unwrap_or(0),
+    ) {
+        return None;
+    }
     let selected = selected_spell_mana_costs_for_source_v1(
         source,
         definition,

@@ -10202,11 +10202,6 @@ fn is_castable_now(
     if crate::eternal_legacy_e7a_v1::cast_prohibited(state, player, id) {
         return false;
     }
-    // Lavinia, Azorius Renegade (eternal wave S1a).
-    #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_sideboard_s1a_v1::statics::cast_prohibited(state, player, id, cast_method) {
-        return false;
-    }
     // Teferi, Time Raveler: an opponent casts spells only at sorcery speed.
     #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_legacy_e8a_v1::statics::sorcery_timing_only(state, player)
@@ -27089,9 +27084,18 @@ fn validate_madness_decision_preflight(state: &GameState) -> Result<(ObjectId, P
 
 fn apply_choose_madness_cast(state: &mut GameState, cast_it: bool) -> Result<(), String> {
     let (card, owner) = validate_madness_decision_preflight(state)?;
-    // Archon of Emeria forbids the cast: the card goes to the graveyard.
+    // A static prohibition ends the attempted Madness cast before its
+    // announcement. Keep the existing offer, then put the card in the graveyard.
     #[cfg(feature = "eternal-fixtures")]
-    let cast_it = cast_it && !crate::eternal_vintage_v1::cast_prohibited(state, owner);
+    let cast_it = cast_it
+        && !crate::eternal_vintage_v1::cast_prohibited(state, owner)
+        && !crate::eternal_sideboard_s1a_v1::statics::cast_prohibited(
+            state,
+            owner,
+            card,
+            CastMethodV4::Madness,
+            0,
+        );
     let item = state
         .stack
         .pop()
