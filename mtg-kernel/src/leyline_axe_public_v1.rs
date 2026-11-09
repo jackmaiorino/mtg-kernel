@@ -201,6 +201,7 @@ fn equip_target(
     source: AbilitySourceContractV4,
     targets: &[Target],
     contracts: &[StackTargetContractV4],
+    published: Option<&crate::state::StackItem>,
 ) -> Result<Option<TargetV1>, String> {
     let spec = TargetSpec::ControlledCreature;
     let (chosen, contract) = match (targets, contracts) {
@@ -209,6 +210,9 @@ fn equip_target(
         _ => return Err("Leyline Axe native equip target count changed".into()),
     };
     if !crate::state::stack_target_contract_is_structurally_valid(state, spec, 0, chosen, contract)
+        && !published.is_some_and(|item| crate::state::stack_target_contract_for_sampled_snapshot(
+            state, item, spec, 0, chosen, contract,
+        ))
     {
         return Err("Leyline Axe native equip target contract changed".into());
     }
@@ -339,6 +343,7 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                 source,
                 &pending.targets_chosen,
                 &pending.target_contracts,
+                None,
             )?,
         });
     }
@@ -396,6 +401,7 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                 source,
                 &item.targets,
                 &item.v4.target_contracts,
+                Some(item),
             )?
             .ok_or("Leyline Axe published equip lost its target")?;
             equip.push(EquipV1 {
