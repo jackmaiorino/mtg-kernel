@@ -39,6 +39,16 @@ Event sample provenance and the archived consumer results are recorded in
 `data/event_history_v1/README.md`. Shared fair search, the bounded DraftZero
 learner/evaluation and Drake's #474 timing acceptance remain unfinished.
 
+The `673a74e0` preflight build was stopped after 140.910 seconds, before any
+runtime case, to repair the reviewed Kiora discard fixture and sampled source
+binding. Its retained manifest has SHA-256
+`94a379a02a29830c38c5146de09ec2c65adc2565a5443cc388fe087c5134833d`.
+The corrected fixture takes two actual singleton discard choices. FullPool's
+threshold choices now retain the validated original battlefield source after
+the live Kiora is moved into a shuffled library; a paid both-seat regression
+requires the sampled world to rewrite that later physical slot. These repairs
+and the direct learner feature-identity source pins await the successor run.
+
 The hosted Limited test build at `5c08b3eeb` received a runner shutdown signal
 and exited 143 before producing a test artifact. Its log is retained at
 `D:/mtg-kernel-limited586-job-128890706329-5c08.log`, SHA-256
