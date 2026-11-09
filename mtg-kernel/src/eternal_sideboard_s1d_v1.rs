@@ -770,11 +770,22 @@ pub(crate) fn execute(op: &S1dOpV1, ctx: &ExecCtx, state: &mut GameState) {
         }
         S1dOpV1::CopShieldV1 { source } => {
             let now = TurnV1::now(state);
-            let spell = state.objects.try_get(source.object)
-                .filter(|live| live.zone == Zone::Stack && live.zone_change_count == source.zone_change_count)
-                .and_then(|_| state.stack.iter().find(|item| item.source == source.object
-                    && item.kind == crate::state::StackItemKind::Spell))
-                .map(|item| CopSpellV1 { item: item.v4.stack_item_id, permanent: None });
+            let spell = state
+                .objects
+                .try_get(source.object)
+                .filter(|live| {
+                    live.zone == Zone::Stack && live.zone_change_count == source.zone_change_count
+                })
+                .and_then(|_| {
+                    state.stack.iter().find(|item| {
+                        item.source == source.object
+                            && item.kind == crate::state::StackItemKind::Spell
+                    })
+                })
+                .map(|item| CopSpellV1 {
+                    item: item.v4.stack_item_id,
+                    permanent: None,
+                });
             let shields = &mut s1d_state(state).cop_shields;
             shields.retain(|shield| shield.turn == now);
             shields.push(CopShieldV1 {
@@ -1029,13 +1040,22 @@ pub(crate) mod statics {
     /// never retarget the shield to another incarnation of the same card.
     pub(crate) fn circle_spell_entered(state: &mut GameState, object: ObjectId) {
         let live = state.objects.get(object);
-        let permanent = ObjectLinkV4 { object, zone_change_count: live.zone_change_count };
-        let Some(previous) = permanent.zone_change_count.checked_sub(1) else { return; };
-        let Some(eternal) = state.eternal_v1.as_mut() else { return; };
+        let permanent = ObjectLinkV4 {
+            object,
+            zone_change_count: live.zone_change_count,
+        };
+        let Some(previous) = permanent.zone_change_count.checked_sub(1) else {
+            return;
+        };
+        let Some(eternal) = state.eternal_v1.as_mut() else {
+            return;
+        };
         for shield in &mut eternal.s1d.cop_shields {
             if shield.source.object == object && shield.source.zone_change_count == previous {
                 if let Some(spell) = &mut shield.spell {
-                    if spell.permanent.is_none() { spell.permanent = Some(permanent); }
+                    if spell.permanent.is_none() {
+                        spell.permanent = Some(permanent);
+                    }
                 }
             }
         }
@@ -1088,7 +1108,8 @@ pub(crate) mod statics {
         }
         let now = TurnV1::now(state);
         let position = s1d.cop_shields.iter().position(|shield| {
-            shield.turn == now && shield.player == player
+            shield.turn == now
+                && shield.player == player
                 && (shield.source == source
                     || shield.spell.and_then(|spell| spell.permanent) == Some(source))
         });
