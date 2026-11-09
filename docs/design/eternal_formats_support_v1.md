@@ -551,8 +551,10 @@ New, each built once in the first wave that needs it:
   form at zero cost, although free casting excludes other alternative costs.
   Circle of Protection: Blue now rechecks blue at damage time and matches genuine
   historical damage to the chosen source incarnation. A native Stack-to-Battlefield
-  entry records the exact permanent that a chosen spell becomes; later blinks do
-  not retarget its shield. Paid Firebrand/Painter and blink/restore qualification
+  entry records the exact permanent that a chosen physical cast becomes, bound
+  to its published cast identity and first committed departure; later blinks do
+  not retarget its shield. Virtual permanent spell copies still need this binding.
+  Paid Firebrand/Painter and blink/restore qualification
   is pending. Its choice menu still offers unrelated graveyard and exile cards as
   sources and excludes contextual sources outside its public-zone list. Policy
   observation v5 omits the shields.
