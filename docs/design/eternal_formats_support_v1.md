@@ -548,6 +548,13 @@ New, each built once in the first wave that needs it:
   it enters. Policy observation v5 omits the shields.
   [Comprehensive Rules, 609.7 and 702.96](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
 
+The Extirpate, Martyr and Lavinia repair batch is composed at `e8d06349e2956e3a386d10a77295ebcc928a991d`.
+The pinned Rust 1.94.1/MSVC standalone generator produced catalog hash
+`e19d5ece9b17ec1e` from that source; the prior capability-only hash was `a07edccb09460703`.
+Generator receipt SHA-256: `3fa633076153461982c151eaf6bc225d4dd73ef8feddd0b00a2784e3b7b97249`.
+Native qualification and the genuine `MartyrRevealPaidV1` event sample remain pending.
+No capability labels or playable-deck counts are promoted by this source batch.
+
 ## Card contract and verification
 
 Each card follows the existing contract: `engine_capability` Full only when every
