@@ -8,7 +8,7 @@ use crate::{
     mana::ManaColor,
     optional_trigger_public_v1 as public,
     rl::PlayerSeatV1,
-    state::{GameState, StackItemKind, StackTargetContractV4, Target, Zone},
+    state::{GameState, StackItem, StackItemKind, StackTargetContractV4, Target, Zone},
     tinybones_public_v72::{CountersV72, IncarnationV72},
 };
 use serde::{Deserialize, Serialize};
@@ -129,6 +129,7 @@ fn target(
     target: Target,
     contract: StackTargetContractV4,
     currently_legal: bool,
+    published: Option<&StackItem>,
 ) -> Result<TargetV1, String> {
     let StackTargetContractV4::Object {
         object,
@@ -141,10 +142,18 @@ fn target(
     else {
         return Err("Electroduplicate original target is not an object".into());
     };
-    if zone != Zone::Battlefield
-        || !crate::state::stack_target_contract_is_structurally_valid(
-            state, TARGET, 0, target, contract,
+    let captured_target = published.is_some_and(|item| {
+        crate::state::stack_target_contract_for_storm_snapshot(
+            state, item, TARGET, 0, target, contract,
         )
+    });
+    let requires_capture = state.thousand_year_storm_consumer_v1
+        && published.is_some_and(|item| !item.is_copy);
+    if zone != Zone::Battlefield
+        || !captured_target
+            && (requires_capture || !crate::state::stack_target_contract_is_structurally_valid(
+                state, TARGET, 0, target, contract,
+            ))
     {
         return Err("Electroduplicate original target incarnation changed".into());
     }
@@ -215,6 +224,7 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                             &pending.targets_chosen,
                             0,
                         ),
+                    None,
                 )?),
                 _ => return Err("Electroduplicate pending target prefix changed".into()),
             };
@@ -234,6 +244,7 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                 *selected,
                 *contract,
                 engine::stack_targets_still_legal(item, state)?,
+                Some(item),
             )?;
             (
                 if item.is_copy {

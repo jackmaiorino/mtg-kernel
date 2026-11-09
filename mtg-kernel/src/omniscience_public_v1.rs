@@ -250,7 +250,12 @@ fn published(
     }
     Ok(Some(CastV1 {
         spell,
-        permission: root(state, viewer, options.source)?,
+        permission: public::archived_root(
+            state,
+            usize::try_from(choice.options_history_index).map_err(|_| "Omniscience option index width")?,
+            options.source,
+            Some(viewer),
+        )?,
         original_permission_active: native::original_permission_active(state, options.source),
         stack_position: position
             .map(u32::try_from)
