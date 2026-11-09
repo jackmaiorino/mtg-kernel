@@ -321,7 +321,8 @@ class ScratchCommitTests(unittest.TestCase):
             ck.write_bytes(f'ckpt-{i}'.encode())
             # Receipt paths are native paths, as the bind mount presents them to the trainer.
             native_upd = self.native / upd.relative_to(self.target)
-            (it / 'complete.json').write_text(json.dumps({'update': {'path': native_upd.as_posix()},
+            (it / 'complete.json').write_text(json.dumps({'update': {'path': native_upd.as_posix(),
+                                                                     'sha256': h(upd.read_bytes())},
                                                           'output_identity': {'checkpoint_sha256': h(
                                                               f'ckpt-{i}'.encode())}}))
         (self.target / 'completion.json').write_text('{}')
