@@ -866,6 +866,12 @@ fn selected_spell_mana_costs_for_source_grant_v1(
     grant: Option<u64>,
 ) -> Option<SelectedSpellManaCostsV1> {
     let (method, kicked, mode) = form;
+    if method == CastMethodV4::Omen
+        && crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name)
+        && !super::resolution_cast_v1::form_allowed_for(state, source, method, player)
+    {
+        return None;
+    }
     let granted = method == CastMethodV4::Flashback && grant.is_some();
     if let Some(index) = grant {
         if state

@@ -549,6 +549,9 @@ New, each built once in the first wave that needs it:
   finish early can bypass it. Vandalblast and Electrickery use the existing graveyard
   permission for a paid overload and retain Retrace's land discard. A free-cast
   permission offers the ordinary spell form with its original target requirement.
+  Omniscience can still cast the ordinary form for free or let its controller pay
+  for overload. Bolas's Citadel offers the ordinary form with its life payment.
+  Normal library permission from Future Sight still needs overload support.
   The affected overload fixtures and consumers still need qualification.
   Circle of Protection: Blue offers
   unrelated graveyard and exile cards as sources, excludes contextual sources outside

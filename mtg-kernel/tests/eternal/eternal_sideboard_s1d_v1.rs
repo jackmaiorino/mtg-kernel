@@ -857,6 +857,83 @@ fn free_cascade_cannot_offer_overload_both_seats() {
     }
 }
 
+#[test]
+fn overload_under_omniscience_keeps_paid_and_free_routes_distinct_both_seats() {
+    use mtg_kernel::engine::HandFreeCastV1;
+    for actor in [P0, P1] {
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let other = actor.opponent();
+        let omniscience = put(&mut state, actor, "Omniscience", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U, ManaColor::U, ManaColor::U], 7);
+        cast(&mut state, omniscience, &[]);
+        settled(&mut state);
+        let first = put(&mut state, other, "Sol Ring", Zone::Battlefield);
+        let second = put(&mut state, other, "Sol Ring", Zone::Battlefield);
+        let spell = put(&mut state, actor, "Vandalblast", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R], 4);
+        act(&mut state, Action::CastSpell(spell));
+        assert!(matches!(next(&mut state), Decision::ChooseSpellMode { legal_modes, .. } if legal_modes == [0, 1]));
+
+        let mut ordinary = state.clone();
+        act(&mut ordinary, Action::ChooseSpellMode(0));
+        choose_target(&mut ordinary, Target::Object(first));
+        assert!(matches!(next(&mut ordinary), Decision::ChooseEffectOption { option_count: 2, .. }));
+        act(&mut ordinary, Action::ChooseEffectOption(1));
+        settled(&mut ordinary);
+        assert_eq!(zone(&ordinary, first), Zone::Graveyard);
+        assert_eq!(zone(&ordinary, second), Zone::Battlefield);
+        assert_eq!(ordinary.players[actor.index()].mana_pool.iter().sum::<u8>(), 5);
+
+        act(&mut state, Action::ChooseSpellMode(1));
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let mut forged = restored.clone();
+        forged.engine.pending_cast.as_mut().unwrap().hand_free_cast_v1 = Some(HandFreeCastV1::WithoutManaCost);
+        assert!(matches!(engine::advance_until_decision(&mut forged), Decision::Halted { .. }));
+        assert_eq!(forged.players[actor.index()].mana_pool.iter().sum::<u8>(), 5);
+        assert!(engine::step(&mut restored, Action::ChooseEffectOption(1)).is_err());
+        settled(&mut restored);
+        assert_eq!(zone(&restored, first), Zone::Graveyard);
+        assert_eq!(zone(&restored, second), Zone::Graveyard);
+        assert_eq!(restored.players[actor.index()].mana_pool, [0; 6]);
+    }
+}
+
+#[test]
+fn overload_cannot_use_bolas_citadel_life_payment_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let other = actor.opponent();
+        let citadel = put(&mut state, actor, "Bolas's Citadel", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::B, ManaColor::B, ManaColor::B], 3);
+        cast(&mut state, citadel, &[]);
+        settled(&mut state);
+        let first = put(&mut state, other, "Sol Ring", Zone::Battlefield);
+        let second = put(&mut state, other, "Sol Ring", Zone::Battlefield);
+        let spell = put(&mut state, actor, "Vandalblast", Zone::Library);
+        pool(&mut state, actor, &[ManaColor::R], 4);
+        act(&mut state, Action::CastSpell(spell));
+        assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+        let mut forged: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        forged.engine.pending_cast.as_mut().unwrap().mode_chosen = Some(1);
+        assert!(matches!(engine::advance_until_decision(&mut forged), Decision::Halted { .. }));
+        assert_eq!(life(&forged, actor), 20);
+        assert_eq!(forged.players[actor.index()].mana_pool.iter().sum::<u8>(), 5);
+
+        act(&mut state, Action::ChooseTarget(Target::Object(first)));
+        settled(&mut state);
+        assert_eq!(life(&state, actor), 19);
+        assert_eq!(state.players[actor.index()].mana_pool.iter().sum::<u8>(), 5);
+        assert_eq!(zone(&state, first), Zone::Graveyard);
+        assert_eq!(zone(&state, second), Zone::Battlefield);
+    }
+}
+
 // ---- Graveyard and library cards --------------------------------------------------
 
 #[test]

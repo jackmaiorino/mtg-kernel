@@ -15386,11 +15386,17 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         && pending.hand_free_cast_v1 == Some(HandFreeCastV1::Undecided)
     {
         let kicked = pending.kicked == Some(true);
-        let mut paying = pending.clone();
-        paying.hand_free_cast_v1 = Some(HandFreeCastV1::PayManaCost);
-        let pay = free_cast_projection_quote(def, &paying, kicked, state);
-        let free =
-            pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, kicked, 0, state).is_some();
+        let overload = pending.mode_chosen == Some(1)
+            && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name);
+        let pay = if overload {
+            pending_cast_quote_v1(def, &pending, CastMethodV4::Omen, kicked, 0, state).is_some()
+        } else {
+            let mut paying = pending.clone();
+            paying.hand_free_cast_v1 = Some(HandFreeCastV1::PayManaCost);
+            free_cast_projection_quote(def, &paying, kicked, state)
+        };
+        let free = !overload
+            && pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, kicked, 0, state).is_some();
         let choice = match (pay, free) {
             (true, true) => {
                 return Some(Decision::ChooseEffectOption {
@@ -24302,6 +24308,8 @@ fn pending_cast_action_stage(
     }
     if pending.cast_mode == Some(CastMode::Normal)
         && pending.hand_free_cast_v1 == Some(HandFreeCastV1::Undecided)
+        && !(pending.mode_chosen == Some(1)
+            && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name))
     {
         return Ok(PendingCastActionStage::ChooseFreeCastV1);
     }
