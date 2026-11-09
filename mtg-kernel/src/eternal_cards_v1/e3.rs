@@ -792,9 +792,12 @@ pub(crate) fn finish_selection(
             kind,
             bindings,
         ),
-        E3ChoiceKindV1::SurgicalExtractionV1 => {
-            crate::eternal_sideboard_s1a_v1::surgical::finish(state, continuation, choice, &bindings)
-        }
+        E3ChoiceKindV1::SurgicalExtractionV1 => crate::eternal_sideboard_s1a_v1::surgical::finish(
+            state,
+            continuation,
+            choice,
+            &bindings,
+        ),
     }
 }
 

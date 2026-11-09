@@ -1291,12 +1291,31 @@ fn surgical_extraction_can_finish_at_zero_or_exile_a_private_subset_in_either_se
         pool(&mut state, actor, &[ManaColor::B], 0);
         cast(&mut state, extraction, &[Target::Object(target)]);
         let prompt = settle(&mut state).expect("native Surgical search");
-        let Decision::ChooseEffectTargets { player, legal_targets, min_targets, max_targets, can_finish, .. } = &prompt else {
+        let Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            min_targets,
+            max_targets,
+            can_finish,
+            ..
+        } = &prompt
+        else {
             panic!("expected private search, got {prompt:?}");
         };
-        assert_eq!((*player, *min_targets, *max_targets, *can_finish), (actor, 0, 4, true));
+        assert_eq!(
+            (*player, *min_targets, *max_targets, *can_finish),
+            (actor, 0, 4, true)
+        );
         let library = state.players[owner.index()].library.clone();
-        assert_eq!(legal_targets, &vec![Target::Object(target), Target::Object(in_hand), Target::Object(library[0]), Target::Object(library[2])]);
+        assert_eq!(
+            legal_targets,
+            &vec![
+                Target::Object(target),
+                Target::Object(in_hand),
+                Target::Object(library[0]),
+                Target::Object(library[2])
+            ]
+        );
         let look = surgical_search_look_v1(&state, actor).unwrap().unwrap();
         assert_eq!(look.owner, owner);
         assert_eq!(look.hand_printings.len(), 2);
@@ -1306,11 +1325,19 @@ fn surgical_extraction_can_finish_at_zero_or_exile_a_private_subset_in_either_se
 
         let rows = legal_action_candidates_v1(&SurfaceDecision::Decision(prompt), &state).unwrap();
         assert_eq!(rows.len(), 5);
-        assert!(matches!(&rows[1].record.semantic, ActionSemanticV1::ChooseEffectTarget {
+        assert!(
+            matches!(&rows[1].record.semantic, ActionSemanticV1::ChooseEffectTarget {
             target: mtg_kernel::rl::TargetRefV1::Object { object }, ..
-        } if object.arena_id == in_hand.0 && object.card_db_id == id("Llanowar Elves")));
-        assert_eq!(rows[1].surface_action, SurfaceAction::Action(Action::ChooseEffectTarget(Target::Object(in_hand))));
-        assert_eq!(rows[4].surface_action, SurfaceAction::Action(Action::FinishEffectSelection));
+        } if object.arena_id == in_hand.0 && object.card_db_id == id("Llanowar Elves"))
+        );
+        assert_eq!(
+            rows[1].surface_action,
+            SurfaceAction::Action(Action::ChooseEffectTarget(Target::Object(in_hand)))
+        );
+        assert_eq!(
+            rows[4].surface_action,
+            SurfaceAction::Action(Action::FinishEffectSelection)
+        );
 
         let mut zero = state.clone();
         act(&mut zero, Action::FinishEffectSelection);
@@ -1320,21 +1347,36 @@ fn surgical_extraction_can_finish_at_zero_or_exile_a_private_subset_in_either_se
         assert_eq!(zone(&zero, library[0]), Zone::Library);
         assert!(zero.observation_journal.notes().iter().any(|note| matches!(note.kind, ObservationNoteKindV1::LibraryRandomized { owner: shuffled } if shuffled == owner)));
 
-        act(&mut state, Action::ChooseEffectTarget(Target::Object(in_hand)));
-        assert!(matches!(next(&mut state), Decision::ChooseEffectTargets { selected_count: 1, .. }));
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(in_hand)),
+        );
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectTargets {
+                selected_count: 1,
+                ..
+            }
+        ));
         let snapshot = serde_json::to_vec(&state).unwrap();
         let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
         assert_eq!(next(&mut state), next(&mut restored));
         let mut reordered = restored.clone();
         let Some(mtg_kernel::effect::PendingEffectChoice::SelectTargets { legal, .. }) = reordered
-            .engine.pending_effect.as_mut().and_then(|pending| pending.choice.as_mut())
+            .engine
+            .pending_effect
+            .as_mut()
+            .and_then(|pending| pending.choice.as_mut())
         else {
             panic!("missing restored search choice");
         };
         legal.swap(0, 1);
         assert!(mtg_kernel::effect::validate_pending_effect_choice(&reordered).is_err());
         for continued in [&mut state, &mut restored] {
-            act(continued, Action::ChooseEffectTarget(Target::Object(library[2])));
+            act(
+                continued,
+                Action::ChooseEffectTarget(Target::Object(library[2])),
+            );
             act(continued, Action::FinishEffectSelection);
             settled(continued);
             assert_eq!(zone(continued, in_hand), Zone::Exile);
@@ -1370,7 +1412,8 @@ fn surgical_extraction_hides_the_search_roster_and_width_from_the_nonchooser() {
             };
             assert_eq!(max_targets, if hidden == "Llanowar Elves" { 2 } else { 1 });
             assert!(surgical_search_look_v1(&state, viewer).unwrap().is_none());
-            let observation = observe_policy_v5(&state, &PolicySurfaceV5::new(), viewer, 0, 0, 0, 1).unwrap();
+            let observation =
+                observe_policy_v5(&state, &PolicySurfaceV5::new(), viewer, 0, 0, 0, 1).unwrap();
             assert!(matches!(
                 observation.projection.surface.engine_context.pending_effect.as_ref()
                     .and_then(|pending| pending.choice.as_ref()),
