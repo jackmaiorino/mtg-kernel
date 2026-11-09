@@ -3,12 +3,14 @@
 #![cfg(feature = "eternal-fixtures")]
 #![allow(dead_code)]
 
-use mtg_kernel::card_def::{card_id_by_name, CardDef, Keywords, Subtype, CARD_DEFS};
+use mtg_kernel::card_def::{card_id_by_name, CardDef, CardType, Keywords, Subtype, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::eternal_cards_v1::EternalStateV1;
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
-use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, StackItemKind, Step, Target, Zone};
+use mtg_kernel::state::{
+    GameObject, GameState, ObjectStateV4, StackItemKind, StackTargetContractV4, Step, Target, Zone,
+};
 use std::hash::{Hash, Hasher};
 
 const P0: PlayerId = PlayerId::P0;
@@ -1929,6 +1931,195 @@ fn flagbearers_do_not_require_an_illegal_optional_target_both_seats() {
         settled(&mut state);
         assert_eq!(zone(&state, other), Zone::Graveyard);
         assert_eq!(zone(&state, bearer), Zone::Battlefield);
+    }
+}
+
+#[test]
+fn flagbearers_constrain_welders_first_slot_only_when_the_pair_can_complete() {
+    for actor in [P0, P1] {
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let opponent = actor.opponent();
+        let bearer = put(&mut state, opponent, "Standard Bearer", Zone::Battlefield);
+        let coating = put(&mut state, actor, "Liquimetal Coating", Zone::Battlefield);
+        let welder = put(&mut state, actor, "Goblin Welder", Zone::Battlefield);
+        let own_card = put(&mut state, actor, "Sol Ring", Zone::Graveyard);
+        let bearer_target = Target::Object(bearer);
+        let coating_target = Target::Object(coating);
+        activate(&mut state, coating, 0, &[bearer_target]);
+        settled(&mut state);
+        assert!(state.objects.get(coating).tapped);
+        assert!(engine::object_has_type(&state, bearer, CardType::Artifact));
+
+        let mut cannot_complete = state.clone();
+        activate(&mut cannot_complete, welder, 0, &[]);
+        assert!(matches!(
+            next(&mut cannot_complete),
+            Decision::ChooseTargets { player, legal_targets, .. }
+                if player == actor && legal_targets == [coating_target]
+        ));
+        choose_target(&mut cannot_complete, coating_target);
+        choose_target(&mut cannot_complete, Target::Object(own_card));
+        settled(&mut cannot_complete);
+        assert!(cannot_complete.objects.get(welder).tapped);
+        assert_eq!(zone(&cannot_complete, coating), Zone::Graveyard);
+        assert_eq!(zone(&cannot_complete, own_card), Zone::Battlefield);
+        assert_eq!(zone(&cannot_complete, bearer), Zone::Battlefield);
+
+        let opponent_card = put(&mut state, opponent, "Sol Ring", Zone::Graveyard);
+        let opponent_target = Target::Object(opponent_card);
+        activate(&mut state, welder, 0, &[]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseTargets { player, legal_targets, .. }
+                if player == actor && legal_targets == [bearer_target]
+        ));
+        let hash = state.state_hash();
+        assert!(engine::step(&mut state, Action::ChooseTarget(coating_target)).is_err());
+        assert_eq!(state.state_hash(), hash);
+        let mut forged = state.clone();
+        let contract = StackTargetContractV4::capture(&forged, coating_target);
+        let pending = forged.engine.pending_activation.as_mut().unwrap();
+        pending.targets_chosen.push(coating_target);
+        pending.target_contracts.push(contract);
+        let mut forged: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut forged),
+            Decision::Halted { .. }
+        ));
+        assert!(!forged.objects.get(welder).tapped);
+
+        choose_target(&mut state, bearer_target);
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut state), next(&mut restored));
+        assert!(matches!(
+            next(&mut restored),
+            Decision::ChooseTargets { player, legal_targets, .. }
+                if player == actor && legal_targets == [opponent_target]
+        ));
+        choose_target(&mut restored, opponent_target);
+        assert!(matches!(
+            next(&mut restored),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert!(restored.objects.get(welder).tapped);
+        let paid = restored.stack.last().expect("paid Welder activation");
+        assert_eq!(paid.source, welder);
+        assert_eq!(paid.targets, [bearer_target, opponent_target]);
+        settled(&mut restored);
+        assert_eq!(zone(&restored, bearer), Zone::Graveyard);
+        assert_eq!(zone(&restored, opponent_card), Zone::Battlefield);
+        assert_eq!(zone(&restored, coating), Zone::Battlefield);
+        assert_eq!(zone(&restored, own_card), Zone::Graveyard);
+    }
+}
+
+#[test]
+fn flagbearers_constrain_payable_shatterskull_allocations_both_seats() {
+    for actor in [P0, P1] {
+        for x in 0..=2 {
+            let mut state = plains();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let opponent = actor.opponent();
+            let bearer = put(&mut state, opponent, "Standard Bearer", Zone::Battlefield);
+            let other = put(&mut state, opponent, "Llanowar Elves", Zone::Battlefield);
+            let spell = put(&mut state, actor, "Shatterskull Smashing", Zone::Hand);
+            let bearer_target = Target::Object(bearer);
+            let other_target = Target::Object(other);
+            pool(&mut state, actor, &[ManaColor::R, ManaColor::R], x);
+            cast(&mut state, spell, &[]);
+            let Decision::ChooseTargets {
+                player,
+                legal_targets,
+                can_finish: true,
+                ..
+            } = next(&mut state)
+            else {
+                panic!("expected Shatterskull targeting with zero targets available");
+            };
+            assert_eq!(player, actor);
+            assert_eq!(legal_targets.contains(&bearer_target), x > 0);
+            assert_eq!(legal_targets.contains(&other_target), x == 2);
+            assert_eq!(legal_targets.len(), usize::from(x));
+
+            if x == 1 {
+                choose_target(&mut state, bearer_target);
+            } else if x == 2 {
+                choose_target(&mut state, other_target);
+                let snapshot = serde_json::to_vec(&state).unwrap();
+                let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
+                let decision = next(&mut state);
+                assert_eq!(decision, next(&mut restored));
+                assert!(matches!(
+                    decision,
+                    Decision::ChooseTargets { can_finish: false, legal_targets, .. }
+                        if legal_targets == [bearer_target]
+                ));
+                let hash = restored.state_hash();
+                assert!(engine::step(&mut restored, Action::FinishEffectSelection).is_err());
+                assert!(engine::step(&mut restored, Action::ChooseTarget(other_target)).is_err());
+                assert_eq!(restored.state_hash(), hash);
+                let mut forged: GameState = serde_json::from_slice(&snapshot).unwrap();
+                forged
+                    .engine
+                    .pending_cast
+                    .as_mut()
+                    .unwrap()
+                    .target_selection_finished = true;
+                assert!(matches!(
+                    engine::advance_until_decision(&mut forged),
+                    Decision::Halted { .. }
+                ));
+                choose_target(&mut restored, bearer_target);
+                state = restored;
+            }
+            act(&mut state, Action::FinishEffectSelection);
+            if x == 1 {
+                let mut forged = state.clone();
+                forged.engine.pending_cast.as_mut().unwrap().x_value = Some(0);
+                let mut forged: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
+                assert!(matches!(
+                    engine::advance_until_decision(&mut forged),
+                    Decision::Halted { .. }
+                ));
+            }
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            let paid = state.stack.last().expect("paid Shatterskull Smashing");
+            assert_eq!(paid.source, spell);
+            let expected = match x {
+                0 => vec![],
+                1 => vec![bearer_target],
+                _ => vec![other_target, bearer_target],
+            };
+            assert_eq!(paid.targets, expected);
+            assert!(state.players[actor.index()]
+                .mana_pool
+                .iter()
+                .all(|&n| n == 0));
+            settled(&mut state);
+            assert_eq!(zone(&state, spell), Zone::Graveyard);
+            assert_eq!(
+                zone(&state, bearer),
+                if x > 0 {
+                    Zone::Graveyard
+                } else {
+                    Zone::Battlefield
+                }
+            );
+            assert_eq!(
+                zone(&state, other),
+                if x == 2 {
+                    Zone::Graveyard
+                } else {
+                    Zone::Battlefield
+                }
+            );
+        }
     }
 }
 

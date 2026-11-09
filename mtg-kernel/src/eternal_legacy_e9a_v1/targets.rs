@@ -10,7 +10,7 @@
 //! k damage and the second the rest, and X may not be so small that the
 //! second would be dealt none (`minimum_x`).
 
-use crate::card_def::{CardType, CARD_DEFS};
+use crate::card_def::{CardType, TargetSpec, CARD_DEFS};
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
 use crate::standard_cards_v1::StandardTargetV1;
@@ -19,6 +19,8 @@ use crate::state::{GameState, Target, Zone};
 /// The most picks Shatterskull Smashing's division takes: its first target
 /// is dealt at most 15 damage, and the rest goes to the second.
 pub(crate) const SHATTERSKULL_PICKS: u8 = 16;
+pub(crate) const SHATTERSKULL_TARGET_SPEC: TargetSpec =
+    TargetSpec::StandardV1(StandardTargetV1::DividedXDamageUpToTwoV1);
 
 /// Whether `target` is one of this module's filters.
 pub(crate) fn owns(target: StandardTargetV1) -> bool {
@@ -219,15 +221,14 @@ pub(crate) fn shatterskull_total(x: u16) -> i32 {
     }
 }
 
-/// The least X for Shatterskull Smashing with these targets: with a second
-/// target, enough damage that it is dealt at least 1 after the first
-/// target's picks.
+/// The least X for Shatterskull Smashing with these targets. Each target
+/// must receive at least one damage, including the single-target case.
 pub(crate) fn shatterskull_minimum_x(targets: &[Target]) -> u8 {
     let Some(&first) = targets.first() else {
         return 0;
     };
     if !targets.iter().any(|&pick| pick != first) {
-        return 0;
+        return 1;
     }
     let first_count = targets.iter().filter(|&&pick| pick == first).count();
     let needed = i32::try_from(first_count)

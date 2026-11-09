@@ -3907,7 +3907,9 @@ fn legal_targets_for_controller_from_source_unframed(
     let mut legal = legal_targets_unrestricted_v1(spec, targets_chosen, controller, source, state);
     // Standard Bearer and Coalition Honor Guard: Flagbearers must be chosen.
     #[cfg(feature = "eternal-fixtures")]
-    if !crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(spec) {
+    if !crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(spec)
+        && spec != crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC
+    {
         crate::eternal_sideboard_s1d_v1::statics::restrict_to_flagbearers(
             state,
             controller,
@@ -9396,6 +9398,10 @@ fn cast_target_choices(
     let candidates =
         |prefix: &[Target]| ordinary_next_cast_targets(def, pending, spec, prefix, state);
     #[cfg(feature = "eternal-fixtures")]
+    if spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC {
+        return shatterskull_cast_targets(def, pending, state, candidates);
+    }
+    #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(spec)
         && crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
             state,
@@ -9422,6 +9428,75 @@ fn cast_target_choices(
     #[cfg(not(feature = "eternal-fixtures"))]
     let _ = max;
     (candidates(chosen), chosen.len() >= min)
+}
+
+#[cfg(feature = "eternal-fixtures")]
+fn shatterskull_cast_targets(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    state: &GameState,
+    candidates: impl Fn(&[Target]) -> Vec<Target>,
+) -> (Vec<Target>, bool) {
+    use crate::eternal_legacy_e9a_v1::targets::{shatterskull_minimum_x, SHATTERSKULL_PICKS};
+    use crate::eternal_sideboard_s1d_v1::statics;
+
+    let pay_projection =
+        (pending.hand_free_cast_v1 == Some(HandFreeCastV1::Undecided)).then(|| {
+            let mut projected = state.clone();
+            let mut paying = pending.clone();
+            paying.hand_free_cast_v1 = Some(HandFreeCastV1::PayManaCost);
+            projected.engine.pending_cast = Some(paying);
+            projected
+        });
+    let quote_state = pay_projection.as_ref().unwrap_or(state);
+    let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
+    let payable = |picks: &[Target]| {
+        let minimum = u16::from(shatterskull_minimum_x(picks));
+        let x = pending.selected_x_v59().unwrap_or(minimum);
+        if x < minimum {
+            return false;
+        }
+        let mut projected = pending.clone();
+        projected.targets_chosen = picks.to_vec();
+        pending_cast_quote_v1(def, &projected, method, false, x, quote_state).is_some()
+    };
+    let flagbearer = statics::flagbearer_requirement_applies(state, pending.controller)
+        .then(|| {
+            candidates(&[])
+                .into_iter()
+                .find(|t| statics::is_flagbearer(state, t))
+        })
+        .flatten();
+    let can_finish = |picks: &[Target]| {
+        picks.is_empty()
+            || (flagbearer.is_none() || picks.iter().any(|t| statics::is_flagbearer(state, t)))
+                && payable(picks)
+    };
+    let chosen = &pending.targets_chosen;
+    let mut next = candidates(chosen);
+    let mut prefix = chosen.clone();
+    next.retain(|&target| {
+        prefix.push(target);
+        // The only useful completion of an unsatisfied Flagbearer obligation
+        // appends an eligible second target. Repeating the first target can
+        // only increase the X floor, so there is no allocation search.
+        let legal = can_finish(&prefix)
+            || flagbearer.is_some_and(|bearer| {
+                if prefix.len() >= usize::from(SHATTERSKULL_PICKS)
+                    || prefix.iter().any(|pick| *pick != prefix[0])
+                    || statics::is_flagbearer(state, &prefix[0])
+                {
+                    return false;
+                }
+                prefix.push(bearer);
+                let can_pay = payable(&prefix);
+                prefix.pop();
+                can_pay
+            });
+        prefix.pop();
+        legal
+    });
+    (next, can_finish(chosen))
 }
 
 fn ordinary_next_cast_targets(
@@ -9985,7 +10060,16 @@ fn free_cast_projection_quote(
 ) -> bool {
     let mut projected = state.clone();
     projected.engine.pending_cast = Some(pending.clone());
-    pending_cast_quote_v1(def, pending, CastMethodV4::Normal, kicked, 0, &projected).is_some()
+    let x = if cfg!(feature = "eternal-fixtures")
+        && def.target_spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC
+    {
+        u16::from(
+            crate::eternal_legacy_e9a_v1::targets::shatterskull_minimum_x(&pending.targets_chosen),
+        )
+    } else {
+        0
+    };
+    pending_cast_quote_v1(def, pending, CastMethodV4::Normal, kicked, x, &projected).is_some()
 }
 
 /// Whether the hand card `id` can be cast without paying its mana cost
@@ -14720,19 +14804,19 @@ pub(crate) fn validate_pending_cast(
         }
         #[cfg(feature = "eternal-fixtures")]
         if pending.kicked.is_some()
-            && crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(spec)
-            && crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
-                state,
-                pending.controller,
-            )
+            && (spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC
+                || (crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(
+                    spec,
+                ) && crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
+                    state,
+                    pending.controller,
+                )))
         {
             let (legal, can_finish) = cast_target_choices(def, pending, spec, state);
             if !can_finish
                 && (pending_cast_targeting_is_complete(pending, spec) || legal.is_empty())
             {
-                return Err(
-                    "pending cast targets do not satisfy the Flagbearer requirement".into(),
-                );
+                return Err("pending cast target selection has no legal payable completion".into());
             }
         }
     }
