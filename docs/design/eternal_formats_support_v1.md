@@ -524,10 +524,10 @@ New, each built once in the first wave that needs it:
   with no targets and the printed mana value on the stack (118.9c). Circle of
   Protection: Blue offers a choice among the blue objects in the public zones and
   records a shield (source incarnation, player, turn) that the damage replacement
-  pass uses up. Flagbearer (Standard Bearer, Coalition Honor Guard) filters the
-  legal targets of the last target slot of a spell or ability being announced
-  against the opponent of the Flagbearer's controller. Stonehorn Dignitary's skip
-  is a pending flag the step machine reads as the combat phase would begin.
+  pass uses up. Flagbearer (Standard Bearer, Coalition Honor Guard) constrains
+  target selection when an opponent announces a spell or activated ability.
+  Stonehorn Dignitary's skip is a pending flag the step machine reads as the
+  combat phase would begin.
   Spreading Seas joins wave E8a's land-type setter (the enchanted land is an
   Island and loses its other land types and abilities); Navigator's Compass adds
   a land type and its mana ability until end of turn, the way Yavimaya does for
@@ -544,9 +544,14 @@ New, each built once in the first wave that needs it:
   Partial: Martyr of Sands awaits native payment, disclosure, restore and consumer
   qualification. Standard Bearer and Coalition Honor Guard now share bounded
   complete-assignment checks for optional target counts, including early Finish,
-  restored selections and payable activations. Native qualification is pending.
-  Fixed-slot dependencies such as Goblin Welder and separate damage-allocation
-  target paths still need qualification and repairs. Vandalblast and Electrickery omit overload on the normal
+  restored selections and payable activations. Goblin Welder uses the same check
+  for its two dependent slots. An artifact Flagbearer is required only if its
+  controller's graveyard contains a legal second target. Shatterskull Smashing
+  checks whether its announced allocation can include a Flagbearer at a payable
+  X. An empty allocation can still finish, and each selected target requires
+  at least one damage. Chandra, Flameshaper and the Flagbearers are in separate
+  shipped registries. Native qualification and broader targeting coverage are
+  pending. Vandalblast and Electrickery omit overload on the normal
   graveyard permission path. The shared free-resolution path can offer the overload
   form at zero cost, although free casting excludes other alternative costs.
   Circle of Protection: Blue offers

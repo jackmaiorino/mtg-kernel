@@ -1183,7 +1183,11 @@ pub(crate) mod statics {
 
     pub(crate) fn uses_flagbearer_count_completion(spec: TargetSpec) -> bool {
         use crate::standard_cards_v1::StandardTargetV1 as S;
-        if spec == TargetSpec::KickerControlledCreatures {
+        if matches!(
+            spec,
+            TargetSpec::KickerControlledCreatures
+                | TargetSpec::StandardV1(S::ArtifactThenArtifactCardInItsControllersGraveyardV1)
+        ) {
             return true;
         }
         let max = crate::engine::target_count(spec);
@@ -1201,9 +1205,9 @@ pub(crate) mod statics {
                 ))
     }
 
-    /// The engine interleaves picking a target count and picking the targets.
-    /// Rule 601.2c fixes the count first. For each possible count, only a
-    /// complete assignment of that count can establish an obligation.
+    /// Only a complete assignment for the selected count establishes an
+    /// obligation. For optional targeting, the engine interleaves picking the
+    /// count and targets even though rule 601.2c fixes the count first.
     pub(crate) fn optional_flagbearer_targets(
         state: &GameState,
         spec: TargetSpec,

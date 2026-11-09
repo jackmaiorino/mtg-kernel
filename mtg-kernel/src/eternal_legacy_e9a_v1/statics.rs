@@ -714,8 +714,7 @@ pub(crate) fn has_land_back_face(name: &str) -> bool {
     name == super::SHATTERSKULL_SMASHING || name == super::SUNDERING_ERUPTION
 }
 
-/// Shatterskull Smashing: X may not be so small that its second target
-/// would be dealt no damage.
+/// Shatterskull Smashing: every selected target needs positive damage.
 pub(crate) fn minimum_x(name: &str, targets: &[Target]) -> Option<u8> {
     (name == super::SHATTERSKULL_SMASHING).then(|| super::targets::shatterskull_minimum_x(targets))
 }
