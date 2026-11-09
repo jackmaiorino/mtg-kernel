@@ -361,17 +361,21 @@ fn paid_ten_elf_hidden_pairs_keep_original_indices_and_observe_actual_life_both_
         assert_eq!(prompt.state, visible.state);
         assert_eq!(prompt.actions, visible.actions);
         assert_eq!(prompt.action_meanings, visible.action_meanings);
-        let original = backend.fixture_original_index_v75(indices[0]).unwrap();
+        // Human choices are sorted by visible handles. Select the first
+        // native Elf through that permutation instead of assuming row zero.
+        let human_index = indices.iter().position(|&native| native == 0).unwrap();
+        let native_index = indices[human_index];
+        let original = backend.fixture_original_index_v75(native_index).unwrap();
         let request = HumanActionRequestV1 {
             prompt_seq: prompt.prompt_seq,
-            action_index: 0,
+            action_index: human_index as u32,
         };
         let wire_action = CommandV1::Step {
             episode_id,
             authority_generation,
             actor: actor.into(),
             prompt_seq: visible.prompt_seq,
-            action_index: 0,
+            action_index: human_index as u32,
         };
         let Body::State {
             snapshot_id: Some(snapshot_id),
@@ -383,7 +387,7 @@ fn paid_ten_elf_hidden_pairs_keep_original_indices_and_observe_actual_life_both_
         let response = raw
             .step(expected.episode_id, expected.step, original)
             .unwrap();
-        assert_eq!(numeric.apply(&d, indices[0]).unwrap(), response);
+        assert_eq!(numeric.apply(&d, native_index).unwrap(), response);
         projector.submit(&mut human, request.clone()).unwrap();
         assert_eq!(human.current_response(), response);
         assert!(matches!(
@@ -530,7 +534,7 @@ fn paid_ten_elf_hidden_pairs_keep_original_indices_and_observe_actual_life_both_
         numeric.restore(&save).unwrap();
         human.restore_v75(&human_save).unwrap();
         assert_eq!(decision(&numeric).packet(), d.packet());
-        assert!(numeric.apply(&d, indices[0]).is_err());
+        assert!(numeric.apply(&d, native_index).is_err());
         assert!(projector.submit(&mut human, request).is_err());
         body(&mut wire, 4, CommandV1::Restore { snapshot_id });
         assert!(matches!(

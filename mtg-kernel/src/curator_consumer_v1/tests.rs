@@ -316,16 +316,27 @@ fn hidden_partition_positions_and_names_leave_opponent_packet_human_wire_and_res
         assert_eq!(human_prompt.state, wire_prompt.state);
         assert_eq!(human_prompt.actions, wire_prompt.actions);
         assert_eq!(human_prompt.action_meanings, wire_prompt.action_meanings);
+        // Human presentation order differs from the native Boolean order.
+        // Bind every surface to the intended face-up pile action.
+        let native_index = backend
+            .candidates_v75()
+            .candidates
+            .iter()
+            .position(|row| {
+                row.curator_action == Some(ActionV1::ChoosePile { pile: PileV1::FaceUp })
+            })
+            .unwrap() as u32;
+        let human_index = indices.iter().position(|&native| native == native_index).unwrap();
         let request = HumanActionRequestV1 {
             prompt_seq: human_prompt.prompt_seq,
-            action_index: 0,
+            action_index: human_index as u32,
         };
         let step = CommandV1::Step {
             episode_id,
             authority_generation,
             actor: chooser.into(),
             prompt_seq: wire_prompt.prompt_seq,
-            action_index: 0,
+            action_index: human_index as u32,
         };
         let Body::State {
             snapshot_id: Some(snapshot_id),
@@ -335,9 +346,9 @@ fn hidden_partition_positions_and_names_leave_opponent_packet_human_wire_and_res
             panic!()
         };
         let mut raw = raw_owner(&a);
-        let index = backend.fixture_original_index_v75(indices[0]).unwrap();
+        let index = backend.fixture_original_index_v75(native_index).unwrap();
         let response = raw.step(expected.episode_id, expected.step, index).unwrap();
-        assert_eq!(numeric.apply(&d, indices[0]).unwrap(), response);
+        assert_eq!(numeric.apply(&d, native_index).unwrap(), response);
         projector.submit(&mut human, request.clone()).unwrap();
         assert_eq!(human.current_response(), response);
         assert!(matches!(
@@ -450,7 +461,7 @@ fn hidden_partition_positions_and_names_leave_opponent_packet_human_wire_and_res
         numeric.restore(&snapshot).unwrap();
         human.restore_v75(&human_save).unwrap();
         assert_eq!(decision(&numeric).packet(), d.packet());
-        assert!(numeric.apply(&d, indices[0]).is_err());
+        assert!(numeric.apply(&d, native_index).is_err());
         assert!(projector.submit(&mut human, request).is_err());
         body(&mut wire, 4, CommandV1::Restore { snapshot_id });
         assert!(matches!(body(&mut wire, 5, step), Body::Error { .. }));
