@@ -26,6 +26,9 @@ use std::{
 ))]
 use std::collections::BTreeMap;
 
+mod world_serde_v1;
+pub(crate) use world_serde_v1::serialize_history;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LedgerV1 {
     pub issued: u64,
@@ -47,6 +50,7 @@ impl Hash for LedgerV1 {
 #[serde(deny_unknown_fields)]
 pub struct RecordV1 {
     pub index: u64,
+    #[serde(serialize_with = "world_serde_v1::serialize_full_journal")]
     pub value: JournalV1,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -773,6 +777,7 @@ pub(crate) fn check_logical_world_prefix_for_test(state: &GameState) {
             _ => None,
         })
         .expect("genuine checkpoint contains a nested Drake reference");
+    check_checkpoint_serde_for_test(&state, first_ref);
     // A real, correctly indexed record exists in the enclosing history, but
     // lies outside the supplied original prefix. Its presence is not authority.
     assert_eq!(
@@ -800,6 +805,101 @@ pub(crate) fn check_logical_world_prefix_for_test(state: &GameState) {
         serde_json::to_vec(&bounded).unwrap(),
         serde_json::to_vec(&state).unwrap()
     );
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn check_checkpoint_serde_for_test(state: &GameState, first: usize) {
+    fn write_without_compaction(state: &GameState) -> Result<serde_json::Value, String> {
+        let history = &state.engine.event_history;
+        let mut value = history
+            .omitted_v2(|| serde_json::to_value(state))
+            .map_err(|err| err.to_string())?;
+        strip_nested_receipts(&mut value, history)?;
+        Ok(value)
+    }
+
+    fn inner_history(state: &mut GameState) -> &mut crate::event_history_v1::EventHistoryV1 {
+        &mut state
+            .engine
+            .linked_aura_operation_v1
+            .pending_general_v36
+            .as_mut()
+            .unwrap()
+            .original
+            .engine
+            .event_history
+    }
+
+    fn inner_event(value: &serde_json::Value, at: usize) -> &serde_json::Value {
+        &value
+            .pointer("/engine/linked_aura_operation_v1/pending_general_v36/original/engine/event_history")
+            .unwrap()[at]
+    }
+
+    // The real suspended Banner world shares the Drake prefix. The old writer
+    // proves the full rows and the next writer actually skips their expansion.
+    let expected = write_without_compaction(state).unwrap();
+    let compacted = world_serde_v1::checkpoint_value(state).unwrap();
+    assert!(inner_event(&compacted, first).get("DrakeHistoryRefV1").is_some());
+    assert_eq!(serde_json::to_value(world(state).unwrap()).unwrap(), expected);
+
+    let mut different = state.clone();
+    let CommittedEvent::DrakeJournalV1 { record } = &mut inner_history(&mut different)[first]
+    else {
+        unreachable!();
+    };
+    *record = Arc::new((**record).clone());
+    // A value-equal but separately allocated row is still checked in full.
+    let compacted = world_serde_v1::checkpoint_value(&different).unwrap();
+    assert!(inner_event(&compacted, first).get("DrakeJournalV1").is_some());
+    assert_eq!(serde_json::to_value(world(&different).unwrap()).unwrap(), expected);
+
+    let CommittedEvent::DrakeJournalV1 { record } = &mut inner_history(&mut different)[first]
+    else {
+        unreachable!();
+    };
+    Arc::make_mut(record).value = JournalV1::CombatFinished { input: u64::MAX };
+    let error = world(&different).unwrap_err();
+    assert_eq!(error, "Drake nested original differs from whole actual indexed record");
+    assert_eq!(error, write_without_compaction(&different).unwrap_err());
+
+    let mut shifted = state.clone();
+    assert!(first > 0);
+    inner_history(&mut shifted).swap(first - 1, first);
+    let error = world(&shifted).unwrap_err();
+    assert_eq!(error, "Drake nested original record shifted from its bound input position");
+    assert_eq!(error, write_without_compaction(&shifted).unwrap_err());
+
+    // A fresh full record is opaque even when its contents share certified
+    // rows. Its saved world must serialize exactly as it does outside the scope.
+    let mut unproved = state.clone();
+    let index = unproved.engine.event_history.len();
+    let row = CommittedEvent::DrakeJournalV1 {
+        record: Arc::new(RecordV1 {
+            index: index.try_into().unwrap(),
+            value: JournalV1::CombatInput {
+                world: Arc::new(state.clone()),
+                proposals: Vec::new(),
+            },
+        }),
+    };
+    unproved.engine.event_history.push(row.clone());
+    let shared_history = unproved.engine.event_history.clone();
+    *inner_history(&mut unproved) = shared_history;
+    let compacted = world_serde_v1::checkpoint_value(&unproved).unwrap();
+    assert_eq!(*inner_event(&compacted, index), serde_json::to_value(&row).unwrap());
+    let expected = write_without_compaction(&unproved).unwrap();
+    assert_eq!(serde_json::to_value(world(&unproved).unwrap()).unwrap(), expected);
+
+    // A full Drake row in the transient log still fails the positional check.
+    unproved.engine.event_log.push(row);
+    let error = world(&unproved).unwrap_err();
+    assert_eq!(error, "Drake nested original record shifted from its bound input position");
+    assert_eq!(error, write_without_compaction(&unproved).unwrap_err());
 }
 
 /// Compare the actual owned replay with the retained borrowing path on all
@@ -920,7 +1020,7 @@ fn world(state: &GameState) -> Result<GameState, String> {
     let history = &state.engine.event_history;
     let mut value = time_serde_phase!(
         DrakeWorldSerialize,
-        history.omitted_v2(|| serde_json::to_value(state))
+        world_serde_v1::checkpoint_value(state)
     )
     .map_err(|e| e.to_string())?;
     time_serde_phase!(DrakeWorldStrip, strip_nested_receipts(&mut value, history))?;
@@ -953,13 +1053,19 @@ fn strip_nested_receipts(
                 .ok()
                 .and_then(|at| prefix.get(at))
                 .ok_or("Drake nested original lies outside actual enclosing prefix")?;
-            if journal(actual).is_none_or(|row| row.index != index)
+            let CommittedEvent::DrakeJournalV1 { record } = actual else {
+                return Err(
+                    "Drake nested original differs from whole actual indexed record".into(),
+                );
+            };
+            if record.index != index
                 || serde_json::to_value(actual).map_err(|e| e.to_string())? != *value
             {
                 return Err(
                     "Drake nested original differs from whole actual indexed record".into(),
                 );
             }
+            world_serde_v1::remember_serializable(record);
             *value = serde_json::json!({ "DrakeHistoryRefV1": { "index": index } });
             return Ok(());
         }

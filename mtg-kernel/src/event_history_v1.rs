@@ -1335,6 +1335,20 @@ impl EventHistoryV1 {
         write()
     }
 
+    /// Clone the persistent prefix for the private Drake checkpoint writer.
+    /// Editable histories and callers already inside an omitted write fall back
+    /// to the ordinary serializer.
+    pub(crate) fn drake_compaction_prefix_v2(&self) -> Option<Self> {
+        (!self.stale
+            && !Self::serde_omission_active_v2()
+            && self.has_any(&[EventKindV1::DrakeJournalV1]))
+        .then(|| self.clone())
+    }
+
+    pub(crate) fn serde_omission_active_v2() -> bool {
+        OMITTED_V2.with(Cell::get) != 0
+    }
+
     fn settle(&mut self) {
         if self.stale {
             self.events.repack();
@@ -1464,7 +1478,7 @@ impl Serialize for EventHistoryV1 {
         if OMITTED_V2.with(Cell::get) == self as *const Self as usize {
             return serializer.collect_seq(std::iter::empty::<&CommittedEvent>());
         }
-        serializer.collect_seq(self.iter())
+        crate::drake_hatcher_v1::custody::serialize_history(self, serializer)
     }
 }
 
