@@ -680,9 +680,9 @@ fn electrickery_overload_hits_each_creature_you_dont_control() {
 fn overload_uses_paid_graveyard_permission_and_restores_both_seats() {
     use mtg_kernel::state::{CastMethodV4, SpellCastRouteV4};
     for actor in [P0, P1] {
-        for (name, victim, generic) in [
-            ("Vandalblast", "Sol Ring", 4),
-            ("Electrickery", "Llanowar Elves", 1),
+        for (name, victim, mine, generic) in [
+            ("Vandalblast", "Sol Ring", "Prophetic Prism", 4),
+            ("Electrickery", "Llanowar Elves", "Kor Skyfisher", 1),
         ] {
             let mut state = plains();
             state.active_player = actor;
@@ -690,7 +690,7 @@ fn overload_uses_paid_graveyard_permission_and_restores_both_seats() {
             let other = actor.opponent();
             let spell = put(&mut state, actor, name, Zone::Graveyard);
             let will = put(&mut state, actor, "Yawgmoth's Will", Zone::Hand);
-            let mine = put(&mut state, actor, victim, Zone::Battlefield);
+            let mine = put(&mut state, actor, mine, Zone::Battlefield);
             let first = put(&mut state, other, victim, Zone::Battlefield);
             let second = put(&mut state, other, victim, Zone::Battlefield);
             pool(&mut state, actor, &[ManaColor::B], 2);
