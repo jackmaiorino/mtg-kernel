@@ -129,7 +129,8 @@ Raw samples are always kept. Do not report the fastest sample.
 
 To see the noise floor of a machine, run an A/A comparison: pass the same binary as both arms under two names. One such probe here, with one block and a build running alongside, showed a 12% "effect" between identical binaries. That is why one block is never conclusive. With three blocks on an idle 4-vCPU cloud guest, the wall-time spread was 15–29%.
 
-`--keep-runs reference` deletes each compared run tree except the reference, to bound disk use.
+`--keep-runs reference` prunes a nonreference run tree only after it passes parity.
+Failed and mismatched runs keep their files for diagnosis.
 
 ## 4. Recompute and write the receipt
 

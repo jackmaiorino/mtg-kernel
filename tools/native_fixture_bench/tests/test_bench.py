@@ -187,6 +187,34 @@ class PlanAndRuleTest(unittest.TestCase):
         self.assertEqual(bench.max_rss_mib(2 << 20, "darwin"), 2.0)
 
 
+class TreeComparisonTest(unittest.TestCase):
+    def compare_timing_prefix(self, left_semantic, right_semantic):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            left, right = root / "reference", root / "sample"
+            for tree, time_value, semantic in ((left, 1, left_semantic), (right, 2, right_semantic)):
+                tree.mkdir()
+                fields = {f"phase_{i:05d}_seconds": time_value for i in range(bench.COLLECTED_DIFFERENCES)}
+                fields["zzz_semantic"] = semantic
+                (tree / "receipt.json").write_text(json.dumps(fields), encoding="utf-8")
+            comparison = bench.TreeComparison(left, right, prefix="run", across_builds=False)
+            return comparison.file("receipt.json"), comparison.summary()
+
+    def test_timing_prefix_cannot_hide_later_semantic_difference(self):
+        file_result, summary = self.compare_timing_prefix("before", "after")
+        self.assertEqual(file_result["status"], "mismatch")
+        self.assertTrue(file_result["truncated"])
+        self.assertIn("JSON difference limit exceeded", file_result["differences"])
+        self.assertEqual(file_result["classes"], {"timing": bench.COLLECTED_DIFFERENCES})
+        self.assertEqual(summary["status"], "mismatch")
+        self.assertEqual(summary["accounted_files"], [])
+
+    def test_exactly_the_limit_of_fully_classified_differences_is_accounted(self):
+        file_result, summary = self.compare_timing_prefix("same", "same")
+        self.assertEqual(file_result, {"status": "accounted", "classes": {"timing": bench.COLLECTED_DIFFERENCES}})
+        self.assertEqual(summary["status"], "equal_up_to_accounted_fields")
+
+
 @unittest.skipUnless(sys.platform.startswith(("linux", "darwin")), "the driver uses os.wait4 and process groups")
 class DriverTest(unittest.TestCase):
     def setUp(self):
@@ -298,7 +326,7 @@ class DriverTest(unittest.TestCase):
 
     def test_a_changed_state_or_a_failed_sample_fails_the_comparison(self):
         code = self.bench("--warmup-runs", "0", "--cases", "fresh",
-                          "--arm-env", "branch:FAKE_STATE_SHIFT=1")
+                          "--keep-runs", "reference", "--arm-env", "branch:FAKE_STATE_SHIFT=1")
         self.assertEqual(code, 1)
         samples = self.samples()
         branch = [s for s in samples if s["arm"] == "branch"]
@@ -307,9 +335,14 @@ class DriverTest(unittest.TestCase):
             self.assertEqual(parity["status"], "mismatch")
             self.assertFalse(parity["boundaries_equal"])
             mismatched = {f["file"] for f in parity["mismatched_files"]}
-            self.assertIn("iterations/000000/attempt-000000/update/checkpoint.json", mismatched)
+            checkpoint = "iterations/000000/attempt-000000/update/checkpoint.json"
+            self.assertIn(checkpoint, mismatched)
+            self.assertTrue((self.out / sample["run_directory"] / checkpoint).is_file())
+            self.assertFalse(sample.get("run_pruned", False))
         main = [s for s in samples if s["arm"] == "main"]
         self.assertEqual(main[1]["parity"]["status"], "equal_up_to_accounted_fields")
+        self.assertTrue(main[1]["run_pruned"])
+        self.assertFalse((self.out / main[1]["run_directory"]).exists())
         comparison = json.loads((self.out / "comparison.json").read_text())
         self.assertFalse(comparison["cases"]["fresh"]["parity_ok"])
 
