@@ -75,11 +75,17 @@ checkpoint_codec_bench_v1 measure --fixture /abs/fixture --work /abs/work-1 \
     --public-pair python/tools/tests/fixtures/checkpoint_container_v1 \
     --out receipt.json [--sections stages,updates,public-pair,s] [--reps 10] \
     [--warmup 2] [--update-reps 5] [--update-warmup 1] [--preparation-workers 2] \
-    [--extra-state LABEL=SOURCE.json]... [--max-wall-seconds N] [--label TEXT]
+    [--extra-state LABEL=SOURCE.json]... [--max-wall-seconds N] \
+    [--verified-reads reread|resident] [--label TEXT]
 ```
 
 The work directory must not exist; every repetition's publication is checked
 and removed. `--max-wall-seconds` refuses to start a repetition after the cap.
+`--verified-reads resident` turns on the process's resident verified reads
+before anything is measured, as a run with `verified_reads: "resident"` does
+(`native_expanded_training_run_v1`); the default, `reread`, is the production
+default. The receipt records the setting, so the A-B-B-A comparison refuses
+runs that differ in it.
 The binary installs the production allocator (`FastAllocatorV1`, with
 `retain_freed_memory_v1`, as `native_expanded_training_run_v1` does) wrapped in
 relaxed atomic counters, so a sample reports the bytes it allocated, its
@@ -102,7 +108,7 @@ rotate between repetitions.
 | `bits` | the checkpoint's three `ParameterBitsV1` sections and `record_format.resolve_v1` |
 | `encode` | `serialize_json_v1` (v1) or `checkpoint_container_v1::encode_v1` (v2) |
 | `seal` | `RecordEnvelopeV1::seal_owned_v1` (zstd1 compresses and reopens to verify) |
-| `publish` | the output directory and `publish_json_bytes_v1` (durable publication) |
+| `publish` | the output directory and `publish_json_shared_v1` (durable publication; the verified-bytes cache keeps the sealed allocation) |
 | `readback_load` | `initialize_any_math_v1` on the new pin: the continuation loader |
 | `readback_digest` | `restored.state_sha256_v1()` and the math check |
 | `readback_v2_equality` | v2 only: `restored.snapshot_v1()` and the item-for-item comparison |
@@ -112,11 +118,12 @@ Before each repetition the process digest memo (`state_digest_memo_v1`) is
 emptied by hashing streams it does not hold, untimed, so `digest` misses as it
 does after a real update. The readback then runs with whatever publication
 left in the process caches, as in production: the verified-bytes cache holds
-the published bytes and the digest memo the new stream; the loaded-source
+the published allocation and the digest memo the new stream; the loaded-source
 cache misses because the pin is new.
 
 After the sequence, the decode is broken down on the published file, each
-call timed alone and outside `total`: `probe_read_pinned`, `probe_open`
+call timed alone and outside `total`: `probe_read_pinned` (the read
+`read_checkpoint_v1` makes, `read_pinned_shared_v1`), `probe_open`
 (envelope), `probe_decode` (`decode_v1` or the JSON parse), and for v2
 `probe_decode_structure` (`document_v1`, the structure check alone),
 `probe_decode_reencode` (`encode_v1` of the decoded checkpoint) and
@@ -168,7 +175,8 @@ so neither is measured for it.
 
 ## Materialization inventory
 
-What each stage copies at baseline `c6329d868ad32467b22a411018894a6eae65205c`,
+What each stage copies at baseline `e8ad219656c72e505ba6b22af0944a46a60de908` (main with #592's shared
+publication and resident reads),
 for net-8 with N = 1,230,994 values per section (3N values, 14.8 MB as f32 or
 u32). The receipt's `allocated_bytes`, `allocations` and `peak_heap_bytes` per
 stage quantify each line.
@@ -182,13 +190,16 @@ Ordinary publication:
    (about 3N × 4 bytes plus its document and table).
 5. `seal` (zstd1 only): the compressed frame plus a full decompression to
    verify it (record-sized).
-6. `publish`: the file write, fsync, SHA-256 of the bytes and link, and
-   the verified-bytes cache's copy of the published bytes (up to its 160 MiB
-   budget).
+6. `publish`: the file write, fsync, SHA-256 of the bytes and link. The
+   verified-bytes cache keeps the sealed allocation itself, not a copy (up to
+   its 160 MiB budget). With resident reads, the publication also skips its
+   two non-bracketing readbacks.
 
 Ordinary readback (`readback_load`, a loaded-source cache miss):
-7. The checkpoint read (file-sized), compared against the verified-bytes
-   cache's copy instead of hashed; for zstd1, the decompressed record.
+7. The checkpoint read: by default (`reread`) the file is read (file-sized)
+   and compared against the verified-bytes cache's held bytes instead of
+   hashed; with resident reads, a metadata check and the held allocation
+   itself, with no read and no copy. For zstd1, the decompressed record.
 8. The parse: v1 JSON into 3N u32; v2 `decode_v1`: the structure check, a 3N u32
    copy out of the sections, then a full re-encode (container-sized) and a
    byte comparison.

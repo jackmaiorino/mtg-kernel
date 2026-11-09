@@ -52,11 +52,12 @@ use super::checkpoint_container_v1::{self, CheckpointRecordFormatV1};
 use super::record_envelope_v1::{self, RecordEnvelopeV1};
 use super::s_learner_v1::S_LEARNER_STATE_FILE_V1;
 use super::{
-    err, execute_v1, hex, initialize_any_math_v1, publish_json_bytes_v1, read_checkpoint_v1,
-    read_pinned_bytes, serialize_json_v1, CollectionSamplerV1, ExpandedCheckpointV1,
-    ExpandedDeckListV1, ExpandedEpisodeV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
-    ExpandedTrainingCommandV1, ExpandedUpdateBackendV1, ParameterBitsV1, PinnedFileV1,
-    UpdateBackwardExecutionV1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, MAX_FILE_BYTES,
+    err, execute_v1, hex, initialize_any_math_v1, publish_json_bytes_v1, publish_json_shared_v1,
+    read_checkpoint_v1, read_pinned_bytes, read_pinned_shared_v1, serialize_json_v1,
+    verified_bytes_cache_v1, CollectionSamplerV1, ExpandedCheckpointV1, ExpandedDeckListV1,
+    ExpandedEpisodeV1, ExpandedLossSelectionV1, ExpandedModelSourceV1, ExpandedTrainingCommandV1,
+    ExpandedUpdateBackendV1, ParameterBitsV1, PinnedFileV1, UpdateBackwardExecutionV1,
+    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, MAX_FILE_BYTES,
 };
 use crate::native_policy_train_step_v1::{
     NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
@@ -75,6 +76,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// The fixture manifest's schema.
@@ -207,6 +209,10 @@ pub struct MeasureConfigV1 {
     pub extra_states: Vec<(String, ExpandedModelSourceV1)>,
     /// Refuses to start another repetition after this much wall time.
     pub max_wall_seconds: Option<u64>,
+    /// Turns on the process's resident verified reads before measuring, as a
+    /// run with `verified_reads: "resident"` does; off is the default
+    /// (`reread`). The mode cannot be turned off again in a process.
+    pub resident_reads: bool,
     /// Free text recorded in the receipt (build profile, A/B role).
     pub label: String,
 }
@@ -226,6 +232,7 @@ impl MeasureConfigV1 {
             public_pair: None,
             extra_states: Vec::new(),
             max_wall_seconds: None,
+            resident_reads: false,
             label: String::new(),
         }
     }
@@ -1318,9 +1325,12 @@ fn ordinary_sequence_v1(
         CheckpointRecordFormatV1::V2 => checkpoint_container_v1::encode_v1(&checkpoint),
     })?;
     let sealed = sequence.step_v1("seal", || cell.envelope.seal_owned_v1(record))?;
-    let pin = sequence.step_v1("publish", || {
+    // As the update publishes: the verified-bytes cache keeps this allocation.
+    let (pin, sealed) = sequence.step_v1("publish", || {
         fs::create_dir(directory).map_err(err)?;
-        publish_json_bytes_v1(directory, "checkpoint.json", &sealed)
+        let sealed = Arc::new(sealed);
+        let pin = publish_json_shared_v1(directory, "checkpoint.json", &sealed)?;
+        Ok((pin, sealed))
     })?;
     let resumed = ExpandedModelSourceV1 {
         checkpoint: Some(pin.clone()),
@@ -1368,7 +1378,8 @@ fn decode_probes_v1(
     expected_v1_sha256: &str,
 ) -> Result<StepsV1, String> {
     let mut samples = Vec::new();
-    let (file, sample) = meter.time_v1(|| read_pinned_bytes(pin))?;
+    // The read `read_checkpoint_v1` makes.
+    let (file, sample) = meter.time_v1(|| read_pinned_shared_v1(pin))?;
     samples.push(("probe_read_pinned", sample));
     // Borrowed when unsealed, as the loader holds it.
     let (record, sample) = meter.time_v1(|| record_envelope_v1::open_v1(&file, MAX_FILE_BYTES))?;
@@ -1851,6 +1862,14 @@ pub fn measure_v1(
             && (1..=64).contains(&config.preparation_workers),
         "measure needs reps 1..=1000, warmup 0..=100, update-reps 1..=100, update-warmup 0..=10 and preparation-workers 1..=64",
     )?;
+    let verified_bytes = verified_bytes_cache_v1::global_v1();
+    if config.resident_reads {
+        verified_bytes.enable_resident_v1();
+    }
+    ensure_v1(
+        verified_bytes.resident_v1() == config.resident_reads,
+        "resident verified reads are already on in this process",
+    )?;
     let deadline = DeadlineV1 {
         started: Instant::now(),
         cap: config.max_wall_seconds.map(Duration::from_secs),
@@ -1952,6 +1971,7 @@ pub fn measure_v1(
                 .collect::<Vec<_>>(),
             "digest_memo_entries": std::env::var("MTG_KERNEL_TRAIN_STATE_DIGEST_MEMO_ENTRIES").ok(),
             "verified_bytes_cache_mib": std::env::var("MTG_KERNEL_VERIFIED_BYTES_CACHE_MIB").ok(),
+            "verified_reads": if config.resident_reads { "resident" } else { "reread" },
         },
         "fixture": {
             "directory": config.fixture_directory,

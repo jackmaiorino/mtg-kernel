@@ -117,7 +117,7 @@ const USAGE: &str = "usage:
       [--sections stages,updates,public-pair,s] [--reps N] [--warmup N]
       [--update-reps N] [--update-warmup N] [--preparation-workers N]
       [--public-pair DIR] [--extra-state LABEL=SOURCE.json]...
-      [--max-wall-seconds N] [--label TEXT]
+      [--max-wall-seconds N] [--verified-reads reread|resident] [--label TEXT]
 DIR and FILE paths are made absolute; the fixture and work directories must not exist yet.";
 
 fn main() {
@@ -305,6 +305,15 @@ fn measure(args: &[String]) -> Result<(), String> {
         config.extra_states.push((label.to_owned(), source));
     }
     config.max_wall_seconds = args.number_v1("max-wall-seconds")?;
+    config.resident_reads = match args.take_v1("verified-reads")?.as_deref() {
+        None | Some("reread") => false,
+        Some("resident") => true,
+        Some(other) => {
+            return Err(format!(
+                "--verified-reads takes reread or resident, not {other:?}"
+            ))
+        }
+    };
     config.label = args.take_v1("label")?.unwrap_or_default();
     args.finish_v1()?;
     let mut receipt = measure_v1(&config, Some(&ProbeV1))?;
