@@ -408,5 +408,87 @@ class ScratchBenchSupervisor(unittest.TestCase):
             self.assertEqual(unrelated.read_text(encoding='utf-8'), 'outside the worker')
 
 
+class ScratchStagePinRecovery(unittest.TestCase):
+    """Check real stage creation and restart with only the bind mount and directory fsync simulated."""
+
+    def interrupted_swap(self, base, with_updates=True):
+        root = base / 'root'
+        cdir = root / 'chains' / 'c1'
+        previous, native = (cdir / f'seg-{i:05d}' for i in range(2))
+        arm = {'arm': 'C', 'scratch_root': (base / 'scratch').as_posix()}
+        man = {'segments': [{'root': p.as_posix(), 'offset': i, 'updates': 1}
+                            for i, p in enumerate((previous, native))]}
+
+        iteration(previous, 0, s_state=True)
+        write(previous / 'completion.json', b'{}')
+        chains.record_commit(cdir, man, 0, 'scratch')
+        retained = {p: p.read_bytes() for p in previous.rglob('*') if p.is_file()}
+        retained[chains.commit_log(cdir)] = chains.commit_log(cdir).read_bytes()
+
+        target = chains.scratch_dir(arm, cdir, native)
+        write(target / 'run.json', b'{}')
+        if with_updates:
+            iteration(target, 0, s_state=True)
+            write(target / 'completion.json', b'{}')
+        real_fsync = chains.fsync_path
+
+        def sync_file(path):
+            if Path(path).is_file():
+                real_fsync(path)
+
+        with mock.patch.object(chains, 'mounted', return_value=True), \
+                mock.patch.object(chains, 'unmount', side_effect=KeyboardInterrupt('before swap')), \
+                mock.patch.object(chains, 'fsync_path', side_effect=sync_file):
+            with self.assertRaises(KeyboardInterrupt):
+                chains.persist(arm, native, cdir)
+        stage = cdir / f'.{native.name}.persist'
+        self.assertTrue((stage / chains.PERSIST_MARKER).is_file())
+        return (arm, root, cdir, man), native, stage, retained
+
+    def settle(self, args):
+        with mock.patch.object(chains, 'mounted', return_value=False), \
+                mock.patch.object(chains, 'fsync_path'), mock.patch.object(chains, 'log'):
+            chains.scratch_settle(*args)
+
+    def test_corrupted_stage_keeps_previous_durable_boundary_and_failed_bytes(self):
+        for name, omit_pin in (('checkpoint.json', False), ('s-train-state.bin', False),
+                               ('s-train-state.bin', True)):
+            with self.subTest(name=name, omit_pin=omit_pin), tempfile.TemporaryDirectory() as directory:
+                args, native, stage, retained = self.interrupted_swap(Path(directory))
+                marker = stage / chains.PERSIST_MARKER
+                manifest = chains.read(marker)
+                rel = next(p for p in manifest['kept'] if Path(p).name == name)
+                corrupt = stage / rel
+                original = corrupt.read_bytes()
+                broken = bytes([original[0] ^ 1]) + original[1:]
+                corrupt.write_bytes(broken)  # same length, so count/size checks cannot substitute for a pin
+                if omit_pin:
+                    del manifest['kept'][rel]
+                    marker.write_text(json.dumps(manifest), encoding='utf-8')
+                expected_stage = {p: p.read_bytes() for p in stage.rglob('*') if p.is_file()}
+                error = None
+                try:
+                    self.settle(args)
+                except chains.Stop as exc:
+                    error = str(exc)
+                for p, expected in retained.items():
+                    self.assertEqual(p.read_bytes(), expected, 'corrupted stage advanced durable state')
+                self.assertFalse(native.exists(), 'corrupted stage was promoted')
+                self.assertIsNotNone(error, 'corrupted stage was not refused')
+                self.assertIn('kept pins' if omit_pin else 'differs from its pin', error)
+                self.assertEqual({p: p.read_bytes() for p in stage.rglob('*') if p.is_file()}, expected_stage)
+
+    def test_empty_marked_wall_cut_keeps_previous_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args, native, stage, retained = self.interrupted_swap(Path(directory), with_updates=False)
+            self.assertEqual(chains.read(stage / chains.PERSIST_MARKER)['kept'], {})
+            self.settle(args)
+            self.assertFalse(stage.exists())
+            self.assertTrue((native / chains.PERSIST_MARKER).is_file())
+            for p, expected in retained.items():
+                self.assertEqual(p.read_bytes(), expected)
+            self.assertEqual(chains.read(args[2] / 'END.json')['last_valid_boundary'], 1)
+
+
 if __name__ == '__main__':
     unittest.main()
