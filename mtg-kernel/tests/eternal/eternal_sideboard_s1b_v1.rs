@@ -1010,6 +1010,16 @@ fn meddling_mage_reanimation_pauses_before_entry_and_life_loss_both_seats() {
         assert_eq!(state.objects.get(mage).owner, owner);
         assert_eq!(state.objects.get(mage).controller, actor);
         assert_eq!(life(&state, actor), 18);
+        let mut altered = serde_json::to_value(&state).unwrap();
+        let named = altered["engine"]["event_history"].as_array_mut().unwrap().iter_mut()
+            .find_map(|row| row.get_mut("MeddlingMageEntryV1")?
+                .get_mut("journal")?.get_mut("Named"))
+            .unwrap();
+        let dart_id = serde_json::json!(id("Lava Dart"));
+        named["named"] = dart_id.clone();
+        altered["eternal_v1"]["s1b"]["mage_names"][0][1] = dart_id;
+        let mut altered: GameState = serde_json::from_value(altered).unwrap();
+        assert!(engine::step(&mut altered, Action::Pass).is_err());
 
         let blink = put(&mut state, actor, "Ephemerate", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::W], 0);
@@ -1135,13 +1145,18 @@ fn meddling_mage_token_copy_names_independently_before_allocation() {
 fn meddling_mage_entering_under_dress_down_never_chose_a_name() {
     let mut state = islands();
     let dress = put(&mut state, P0, "Dress Down", Zone::Hand);
+    let first = put(&mut state, P0, "Meddling Mage", Zone::Hand);
     let mage = put(&mut state, P0, "Meddling Mage", Zone::Hand);
     pool(
         &mut state,
         P0,
-        &[ManaColor::W, ManaColor::U, ManaColor::U],
+        &[ManaColor::W, ManaColor::W, ManaColor::U, ManaColor::U, ManaColor::U],
         1,
     );
+    cast(&mut state, first, &[]);
+    assert!(settle(&mut state).is_some());
+    choose_mage_name(&mut state, P0, "Lava Dart");
+    settled(&mut state);
     cast(&mut state, dress, &[]);
     settled(&mut state);
     assert_eq!(zone(&state, dress), Zone::Battlefield);
@@ -1156,6 +1171,15 @@ fn meddling_mage_entering_under_dress_down_never_chose_a_name() {
     pool(&mut state, P1, &[ManaColor::R], 0);
     state.priority_player = P1;
     assert!(castable(&mut state, bolt));
+    state.eternal_v1.as_mut().unwrap().s1b.mage_names.push((
+        mtg_kernel::state::ObjectLinkV4 {
+            object: mage,
+            zone_change_count: state.objects.get(mage).zone_change_count,
+        },
+        id("Lightning Bolt"),
+    ));
+    let mut restored: GameState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    assert!(engine::step(&mut restored, Action::Pass).is_err());
 }
 
 #[test]

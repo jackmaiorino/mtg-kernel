@@ -149,7 +149,7 @@ struct KinshipPlanV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MagePlanV1 {
     choice: mage_entry::ChoiceV1,
-    named: Option<u16>,
+    named: Option<(u32, u16)>,
     committed: bool,
 }
 
@@ -2214,6 +2214,14 @@ fn answer_mage_plan(state: &mut GameState, index: usize) -> Result<bool, String>
     let Some(name_index) = mage_answer(state, &choice, Some(group))? else {
         return Ok(false);
     };
+    let named = mage_entry::name(group, name_index).ok_or("Meddling Mage name index absent")?;
+    let operation = state.engine.linked_aura_operation_v1.runtime.as_ref()
+        .and_then(|runner| runner.mage_start).ok_or("Meddling Mage choice operation absent")?;
+    let chosen = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Meddling Mage choice index overflow")?;
+    mage_entry::record(state, mage_entry::JournalV1::Chosen {
+        operation, choice: Box::new(choice), group, index: name_index,
+    });
     state
         .engine
         .linked_aura_operation_v1
@@ -2221,8 +2229,7 @@ fn answer_mage_plan(state: &mut GameState, index: usize) -> Result<bool, String>
         .as_mut()
         .unwrap()
         .mage_plans[index]
-        .named =
-        Some(mage_entry::name(group, name_index).ok_or("Meddling Mage name index absent")?);
+        .named = Some((chosen, named));
     Ok(true)
 }
 
@@ -2346,15 +2353,17 @@ pub(crate) fn commit_mage_entry(
         .ok_or("Meddling Mage committed before capturing its actual entry")?;
     let plan = runner.mage_plans[index].clone();
     if !plan.choice.suppressed {
+        let (chosen, named) = plan.named.ok_or("Meddling Mage entry was not named")?;
         mage_entry::commit(
             state,
             &plan.choice,
             runner
                 .mage_start
                 .ok_or("Meddling Mage operation marker absent")?,
+            chosen,
             entry,
             object,
-            plan.named.ok_or("Meddling Mage entry was not named")?,
+            named,
         )?;
     }
     state
