@@ -269,7 +269,7 @@ pub(super) fn write_fixture_v1(options: &FixtureOptionsV1) -> Result<Value, Stri
             .checkpoint
             .as_ref()
             .ok_or("fixture warm-up published no checkpoint")?;
-        let bytes = read_pin_bounded_bytes(saved, ARTIFACT_CAP)?;
+        let bytes = read_pin_bounded_shared_v1(saved, ARTIFACT_CAP)?;
         let retained = write_pinned_v1(&root.join("warm").join("checkpoint.json"), &bytes)?;
         let warm_source = ExpandedModelSourceV1 {
             checkpoint: Some(retained.clone()),
@@ -348,7 +348,7 @@ fn temporary_root_v1(label: &str) -> PathBuf {
 
 fn read_config_v1(case: &Value) -> NativeExpandedTrainingRunV1 {
     let pin: PinnedFileV1 = serde_json::from_value(case["config"].clone()).unwrap();
-    serde_json::from_slice(&read_pin_bounded_bytes(&pin, SMALL_CAP).unwrap()).unwrap()
+    serde_json::from_slice(&read_pin_bounded_shared_v1(&pin, SMALL_CAP).unwrap()).unwrap()
 }
 
 #[test]
