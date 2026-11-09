@@ -132,10 +132,12 @@ between the preparation and learner timers is not a saving.
 
 Use one fixture for baseline and candidate, with identical shape, seed, batch,
 path and worker counts. Compare one worker first, then 2 and 4. Run A-B-B-A,
-one process per trial, and retain every receipt. Builds that contain this
-module run `bench ... reps=1`. Older baselines run the printed command,
-timed by the platform's tool, and are then checked with `verify`. Record both
-SHAs, the Rust and linker versions, the release profile and the machine. A
+one process per trial, and retain every receipt. When a baseline predates
+this module, give both arms commands from `command` with fresh output
+directories. Time both update binaries with the same platform tool and
+verify both results. For comparisons using `bench ... reps=1`, use the
+same preflight and timing boundary on both arms. Record both SHAs, the
+Rust and linker versions, the release profile and the machine. A
 cloud container or CI-profile timing is not a qualified speedup; final
 acceptance goes through [T6 / #600](https://github.com/jackmaiorino/mtg-kernel/issues/600).
 
