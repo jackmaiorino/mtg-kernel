@@ -33,7 +33,11 @@ fn active(state: &GameState) -> impl Iterator<Item = &StackItem> {
             .engine
             .pending_effect
             .as_ref()
-            .map(|pending| &pending.resolving_item),
+            .map(|pending| &pending.resolving_item)
+            // A native paused resolution retains the same item on the stack.
+            // Count that exact mirror once; duplicate stack rows and changed
+            // same-ID continuations still reach the uniqueness check.
+            .filter(|pending| !state.stack.iter().any(|item| item == *pending)),
     )
 }
 
