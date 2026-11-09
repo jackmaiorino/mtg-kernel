@@ -1302,6 +1302,7 @@ def verify_unlogged_scratch_boundary(cdir, man, boundary):
     rows, _ = read_commits(cdir)
     if not any(row['event'] == 'commit' and row['segment'] == s for row in rows):
         validate_scratch_stage(root)
+        fsync_path(root.parent)
 
 
 def commit_recovered(cdir, man, instance=None, *, segment=None):
