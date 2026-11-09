@@ -302,7 +302,106 @@ def validate_fixture(fixture: dict, root: Path) -> dict[str, dict]:
         if "initial_source" in case and config.get("initial_source") != case["initial_source"]:
             raise BenchError(f"case {name}: manifest and config initial sources differ")
         configs[name] = config
+    validate_pool_fixture(fixture, root, configs)
     return configs
+
+
+def validate_pool_pin(pin, expected: Path) -> None:
+    if not isinstance(pin, dict) or not matches_fixture_path(pin.get("path"), expected):
+        raise BenchError(f"pool fixture pin does not name {expected}")
+    try:
+        if sha256_file(expected) != pin.get("sha256"):
+            raise BenchError(f"pool fixture pin changed: {expected}")
+    except OSError as error:
+        raise BenchError(f"cannot read pool fixture pin {expected}: {error}") from error
+
+
+def validate_pool_fixture(fixture: dict, root: Path, configs: dict[str, dict]) -> None:
+    options = fixture.get("options", {})
+    sizes = options.get("pool_members", []) if isinstance(options, dict) else None
+    if (not isinstance(sizes, list)
+            or any(type(size) is not int or not 1 <= size <= 64 for size in sizes)
+            or sizes != sorted(set(sizes))):
+        raise BenchError("invalid pool fixture member counts")
+    cases = {case["name"]: case for case in fixture["cases"]}
+    pool_names = {name for name, case in cases.items()
+                  if name.startswith("pool") or case.get("pool") is not None}
+    if pool_names != {f"pool{size}" for size in sizes}:
+        raise BenchError("pool fixture cases do not match the member counts")
+    pool = fixture.get("pool")
+    if not sizes:
+        if pool is not None:
+            raise BenchError("pool fixture roster has no cases")
+        return
+
+    fresh = configs.get("fresh")
+    source = fresh.get("initial_source") if fresh is not None else None
+    descriptor = fixture.get("descriptor")
+    if (not isinstance(source, dict) or source.get("play_import") != descriptor
+            or source.get("checkpoint") is not None or source.get("s_learner") is not None
+            or fresh.get("opponents", [])):
+        raise BenchError("pool fixture must use the current-opponent fresh source")
+    validate_pool_pin(descriptor, root / "descriptor.json")
+
+    tag = "mtg-kernel-pool-fixture-draw/v1"
+    seed = options.get("seed")
+    draw = pool.get("draw") if isinstance(pool, dict) else None
+    members = pool.get("members") if isinstance(pool, dict) else None
+    if (type(seed) is not int or not 0 <= seed < 2**64
+            or not isinstance(draw, dict) or draw.get("tag") != tag
+            or draw.get("seed_root") != str(seed)
+            or not matches_fixture_path(pool.get("directory"), root / "pool")
+            or not isinstance(members, list) or len(members) != sizes[-1]):
+        raise BenchError("invalid pool fixture roster or draw rule")
+    roster = []
+    digests = set()
+    for index, member in enumerate(members):
+        member_id = f"member-{index:02d}"
+        if not isinstance(member, dict) or member.get("id") != member_id:
+            raise BenchError(f"pool fixture member {index} must be {member_id}")
+        checkpoint = member.get("checkpoint")
+        validate_pool_pin(checkpoint, root / "pool" / member_id / "checkpoint.json")
+        digest = checkpoint["sha256"]
+        if digest in digests:
+            raise BenchError(f"pool fixture member {member_id} repeats a checkpoint")
+        digests.add(digest)
+        roster.append({"id": member_id, "source": {**source, "checkpoint": checkpoint}})
+
+    games = options.get("games")
+    if (type(games) is not int or games < 1
+            or options.get("updates") != len(fresh["iterations"])
+            or cases["fresh"].get("first_iteration") != 0):
+        raise BenchError("invalid pool fixture schedule")
+    for size in sizes:
+        name = f"pool{size}"
+        expected_iterations, draws = [], []
+        for index, iteration in enumerate(fresh["iterations"]):
+            episodes = iteration.get("episodes") if isinstance(iteration, dict) else None
+            if not isinstance(episodes, list) or len(episodes) != games:
+                raise BenchError(f"pool fixture: invalid fresh schedule at iteration {index}")
+            scheduled, ids = [], []
+            for slot, row in enumerate(episodes):
+                episode = row.get("episode") if isinstance(row, dict) else None
+                if (not isinstance(episode, dict) or row.get("opponent") != {"kind": "current"}
+                        or episode.get("id") != f"fixture-{index:04d}-{slot:02d}"
+                        or episode.get("seed") != seed + index * games + slot
+                        or episode.get("starting_player") != slot % 2
+                        or episode.get("learner_seat") != 0):
+                    raise BenchError(f"pool fixture: invalid fresh episode at {index}/{slot}")
+                key = json.dumps([tag, str(seed), index, slot], separators=(",", ":")).encode()
+                member = int.from_bytes(hashlib.sha256(key).digest()[:8], "big") % size
+                member_id = roster[member]["id"]
+                ids.append(member_id)
+                scheduled.append({**row, "opponent": {"kind": "fixed", "id": member_id}})
+            draws.append(ids)
+            expected_iterations.append({**iteration, "episodes": scheduled})
+        config = configs[name]
+        expected = {**fresh, "output_directory": config["output_directory"],
+                    "opponents": roster[:size], "iterations": expected_iterations}
+        case = cases[name]
+        if (config != expected or case.get("first_iteration") != 0
+                or case.get("pool") != {"members": size, "draws": draws}):
+            raise BenchError(f"{name}: config or manifest differs from the pinned roster and draws")
 
 
 # ---------------------------------------------------------------- processes
@@ -843,11 +942,12 @@ def run(args) -> int:
                    "argv": sys.argv[1:]},
         "fixture": {"root": str(fixture_root), "sha256": sha256_file(fixture_root / "fixture.json"),
                     "generator": fixture.get("generator"), "options": fixture.get("options"),
-                    "workload": fixture.get("workload"),
+                    "workload": fixture.get("workload"), "pool": fixture.get("pool"),
                     "cases": {name: {"config": known[name]["config"],
                                      "initial_source": known[name].get("initial_source"),
                                      "first_iteration": known[name].get("first_iteration"),
-                                     "iterations": known[name].get("iterations")}
+                                     "iterations": known[name].get("iterations"),
+                                     "pool": known[name].get("pool")}
                               for name in cases}},
         "arms": {"baseline": arms["A"], "candidate": arms["B"]},
         "env": shared_env,

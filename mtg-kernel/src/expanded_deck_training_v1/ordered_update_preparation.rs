@@ -496,7 +496,9 @@ pub(super) fn load_opponent_cached_v1(
             .add_usize(opponent_cache_diagnostics_v1::policy_bytes_v1(&fork));
         if revalidate {
             stats.hits_revalidated.add(1);
-            stats.revalidated_bytes.add_usize(file_bytes_v1(&files));
+            stats
+                .revalidated_payload_bytes
+                .add_usize(file_bytes_v1(&files));
         } else {
             stats.hits_trusted.add(1);
         }

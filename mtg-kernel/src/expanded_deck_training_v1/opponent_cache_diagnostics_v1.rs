@@ -42,7 +42,13 @@ impl CountV1 {
     }
 
     pub(crate) fn add(&self, amount: u64) {
-        self.0.fetch_add(amount, Ordering::Relaxed);
+        self.incremented_to(amount);
+    }
+
+    fn incremented_to(&self, amount: u64) -> u64 {
+        self.0
+            .fetch_add(amount, Ordering::Relaxed)
+            .wrapping_add(amount)
     }
 
     pub(crate) fn add_usize(&self, amount: usize) {
@@ -235,16 +241,17 @@ pub(crate) fn note_checkpoint_decode_v1(bytes: usize, started: Instant) {
 #[derive(Default)]
 pub(crate) struct ProcessOpponentStatsV1 {
     /// Lookups, and their outcome. A hit serves a fork of the held policy;
-    /// `revalidated` hits first reread every held file (a prepared update),
+    /// `revalidated` hits first recheck every held pin (a prepared update),
     /// `trusted` ones follow the collection boundary's pin check.
     pub(crate) lookups: CountV1,
     pub(crate) hits_revalidated: CountV1,
     pub(crate) hits_trusted: CountV1,
-    /// A hit's whole time: lookup, rereads and fork. Its maximum, and the
-    /// rereads (bytes and time) and forks on their own.
+    /// A hit's whole time: lookup, pin checks and fork. Its maximum, and the
+    /// pin checks and forks on their own.
     pub(crate) hit_nanos: CountV1,
     pub(crate) hit_max_nanos: CountV1,
-    pub(crate) revalidated_bytes: CountV1,
+    /// Payload covered by successful hit pin checks, including resident checks.
+    pub(crate) revalidated_payload_bytes: CountV1,
     pub(crate) revalidation_nanos: CountV1,
     pub(crate) fork_nanos: CountV1,
     /// Forks served, by hits and by kept full loads, and the bytes they
@@ -307,11 +314,10 @@ impl CollectionOpponentStatsV1 {
     /// One policy of `bytes` owned bytes now held by a collection cache.
     pub(crate) fn held_v1(&self, bytes: usize) {
         self.inserts.add(1);
-        self.live_entries.add(1);
-        self.peak_live_entries.raise(self.live_entries.get());
-        self.live_policy_bytes.add_usize(bytes);
+        self.peak_live_entries
+            .raise(self.live_entries.incremented_to(1));
         self.peak_live_policy_bytes
-            .raise(self.live_policy_bytes.get());
+            .raise(self.live_policy_bytes.incremented_to(bytes as u64));
     }
 
     /// One held policy of `bytes` owned bytes dropped.
@@ -378,7 +384,7 @@ pub(crate) fn opponent_cache_section_v1() -> Value {
             },
             "hit_seconds": process.hit_nanos.seconds(),
             "hit_max_seconds": process.hit_max_nanos.seconds(),
-            "revalidated_bytes": process.revalidated_bytes.get(),
+            "revalidated_payload_bytes": process.revalidated_payload_bytes.get(),
             "revalidation_seconds": process.revalidation_nanos.seconds(),
             "fork_seconds": process.fork_nanos.seconds(),
             "forks": process.forks.get(),

@@ -21,6 +21,12 @@ With `--pool-members`, it adds pool cases (#599), which play a W5-shaped roster 
 
 - The generator writes the largest pool's members under `pool/member-NN/`. Each member is a distinct, valid checkpoint container (about 15 MB) over the fresh source's import, which all members share. No private model is used.
 - `poolN` runs the `fresh` schedule, except that every slot plays a fixed member of the first N. Slot `j` of iteration `i` plays member `u64_be(sha256(json([tag, seed_root, i, j]))[0..8]) mod N`. The JSON is compact, the tag is `mtg-kernel-pool-fixture-draw/v1` and the seed root is the fixture seed in decimal. `fixture.json` records the members and every case's drawn ids.
+
+Before running a pool fixture, the driver verifies the shared descriptor and all
+member checkpoint pins. It recomputes each draw and checks that the pool config
+matches the fresh schedule with those fixed opponents. This reads the pinned
+files before timing. Each sample starts a new process with the existing OS page
+cache. The benchmark manifest records the roster and the draws of selected cases.
 - Start with `--pool-members 2,18`. Add 64 only after the 18-member memory envelope is known.
 
 ## 1. Build the two arms
@@ -88,16 +94,17 @@ For every sample, the driver records:
 The driver sets `MTG_KERNEL_CACHE_DIAGNOSTICS_V1` for every sample by default.
 Use `--no-cache-diagnostics` for a matched timing run that excludes diagnostic
 report creation. It also removes an inherited diagnostics path from the sample
-environment. A build without support for that variable ignores it.
+environment. Cache counters still run in builds that include the instrumentation.
+A build without support for that variable ignores it.
 `--env KEY=VALUE` and `--arm-env ARM:KEY=VALUE` pass extra settings to the samples.
 
 Each diagnostics line holds this process's cumulative counters, so differences between lines give one iteration's. The sections are:
 
 - `loaded_source` (#595): loads and copies by caller role;
-- `opponent_cache` (#599): the process opponent cache's lookups, hits and misses by reason, hit, reread and fork time, its full loads split into file reads, byte verification, checkpoint decoding and the rest, entries, evictions and held bytes (files, each distinct shared model once, and the policies' own copies), and the bytes its forks copied. It also holds the summed collection opponent caches and the collection boundary's pin checks;
+- `opponent_cache` (#599) records lookup outcomes, hit, pin revalidation and fork time, full-load work, entries and evictions. `revalidated_payload_bytes` counts held payload covered by successful hit revalidation, including resident checks that skip the byte read. Held policy bytes count owned f32 payloads and shared model f32 payloads. It also reports the summed collection caches and the collection boundary's pin checks.
 - `verified_bytes`: the verified-bytes memo's budget, entries, comparisons, misses by reason, hashes, records, copied bytes and evictions, and with resident reads (#592) the reads it served;
-- `retained_files`: the file bytes both caches hold now, and how much of that is duplicate content;
-- `io`: pinned file reads and checkpoint decodes;
+- `retained_files`: logical file payload bytes across both caches, and how much repeats equal bytes at the same path;
+- `io`: pinned file reads by the fresh-source reader and checkpoint decodes. Process-cache hit revalidation uses a separate reader.
 - `process`: peak and current resident memory and CPU seconds, on Linux (on Windows, the peak working set and CPU). On macOS these are null, and the driver's `wait4` figures cover each sample.
 
 Outputs in `--out` (absent or empty):

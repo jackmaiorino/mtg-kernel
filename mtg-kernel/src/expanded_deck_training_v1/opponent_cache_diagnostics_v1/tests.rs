@@ -193,7 +193,7 @@ fn the_process_opponent_cache_counts_a_full_load_and_its_hits_v1() {
             stats.hits_revalidated.get(),
             stats.hits_trusted.get(),
             stats.captured_bytes.get(),
-            stats.revalidated_bytes.get(),
+            stats.revalidated_payload_bytes.get(),
             stats.forks.get(),
         ]
     };

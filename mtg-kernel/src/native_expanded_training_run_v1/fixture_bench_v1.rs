@@ -734,6 +734,21 @@ fn pool_cases_play_their_drawn_members_and_count_the_opponent_loads() {
     let result = run_native_expanded_training_v1(&config, None).unwrap();
     assert_eq!(result["complete"], true);
     let after = count();
+    let complete_pin: PinnedFileV1 =
+        serde_json::from_value(result["iterations"][0].clone()).unwrap();
+    let complete = read_pin(&complete_pin).unwrap();
+    let collection = read_pin(&parse_pin(&complete, "collection").unwrap()).unwrap();
+    let trajectories = collection["trajectories"].as_array().unwrap();
+    assert_eq!(trajectories.len(), options.games);
+    for (slot, pin) in trajectories.iter().enumerate() {
+        let pin: PinnedFileV1 = serde_json::from_value(pin.clone()).unwrap();
+        let trajectory = read_pin_bounded(&pin, ARTIFACT_CAP).unwrap();
+        let member = draw_v1(seed_root, 0, slot, 2);
+        assert_eq!(
+            trajectory["episode"]["opponent"]["checkpoint"],
+            members[member]["checkpoint"]
+        );
+    }
     println!(
         "{}",
         json!(opponent_cache_diagnostics_v1::sections_v1()
