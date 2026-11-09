@@ -416,7 +416,7 @@ class ScratchBenchSupervisor(unittest.TestCase):
 class ScratchStagePinRecovery(unittest.TestCase):
     """Check real stage creation and restart with the bind mount and stage fsync simulated."""
 
-    def interrupted_swap(self, base, with_updates=True):
+    def interrupted_swap(self, base, with_updates=True, complete=True):
         root = base / 'root'
         cdir = root / 'chains' / 'c1'
         previous, native = (cdir / f'seg-{i:05d}' for i in range(2))
@@ -434,7 +434,12 @@ class ScratchStagePinRecovery(unittest.TestCase):
         write(target / 'run.json', b'{}')
         if with_updates:
             iteration(target, 0, s_state=True)
-            write(target / 'completion.json', b'{}')
+            done = target / 'iterations' / '000000' / 'complete.json'
+            receipt = chains.read(done)
+            receipt['update']['sha256'] = chains.sha(receipt['update']['path'])
+            done.write_text(json.dumps(receipt), encoding='utf-8')
+            if complete:
+                write(target / 'completion.json', b'{}')
         with mock.patch.object(chains, 'mounted', return_value=True), \
                 mock.patch.object(chains, 'unmount', side_effect=KeyboardInterrupt('before swap')), \
                 mock.patch.object(chains, 'fsync_path'):
@@ -476,6 +481,75 @@ class ScratchStagePinRecovery(unittest.TestCase):
                 self.assertIsNotNone(error, 'corrupted stage was not refused')
                 self.assertIn('kept pins' if omit_pin else 'differs from its pin', error)
                 self.assertEqual({p: p.read_bytes() for p in stage.rglob('*') if p.is_file()}, expected_stage)
+
+    def test_corrupted_stage_update_cannot_hide_the_s_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args, native, stage, retained = self.interrupted_swap(Path(directory))
+            marker = stage / chains.PERSIST_MARKER
+            manifest = chains.read(marker)
+            rel = next(p for p in manifest['kept'] if Path(p).suffix == '.bin')
+            del manifest['kept'][rel]
+            marker.write_text(json.dumps(manifest), encoding='utf-8')
+            update = (stage / rel).with_name('update.json')
+            doc = chains.read(update)
+            del doc['s_learner']
+            update.write_text(json.dumps(doc), encoding='utf-8')
+            error = None
+            try:
+                self.settle(args)
+            except chains.Stop as exc:
+                error = str(exc)
+            for p, expected in retained.items():
+                self.assertEqual(p.read_bytes(), expected, 'corrupted update advanced durable state')
+            self.assertFalse(native.exists())
+            self.assertIsNotNone(error)
+            self.assertIn('update.json', error)
+            self.assertIn('differs from its pin', error)
+            self.assertEqual(chains.read(update), doc)
+
+    def recover_promoted(self, args, complete):
+        if complete:
+            with mock.patch.object(chains, 'mounted', return_value=False), \
+                    mock.patch.object(chains, 'fsync_path'):
+                chains.commit_recovered(args[2], args[3])
+        else:
+            self.settle(args)
+
+    def test_corrupted_promoted_scratch_does_not_commit_or_end(self):
+        for complete in (True, False):
+            for name in ('checkpoint.json', 's-train-state.bin'):
+                with self.subTest(complete=complete, name=name), tempfile.TemporaryDirectory() as directory:
+                    args, native, stage, retained = self.interrupted_swap(Path(directory), complete=complete)
+                    stage.rename(native)
+                    marker = native / chains.PERSIST_MARKER
+                    pins = chains.read(marker)['kept']
+                    path = native / next(p for p in pins if Path(p).name == name)
+                    path.write_bytes(b'corrupt')
+                    error = None
+                    try:
+                        self.recover_promoted(args, complete)
+                    except chains.Stop as exc:
+                        error = str(exc)
+                    for p, expected in retained.items():
+                        self.assertEqual(p.read_bytes(), expected, 'corrupted promoted state advanced durable state')
+                    self.assertFalse((args[2] / 'END.json').exists(), 'corrupted promoted state ended the chain')
+                    self.assertIsNotNone(error)
+                    self.assertIn('differs from its pin', error)
+                    self.assertEqual(path.read_bytes(), b'corrupt')
+                    self.assertTrue(marker.is_file())
+
+    def test_valid_promoted_scratch_recovers_commit_before_end(self):
+        for complete in (True, False):
+            with self.subTest(complete=complete), tempfile.TemporaryDirectory() as directory:
+                args, native, stage, _ = self.interrupted_swap(Path(directory), complete=complete)
+                stage.rename(native)
+                self.recover_promoted(args, complete)
+                self.assertEqual(chains.committed_through(args[2]), 2)
+                end = args[2] / 'END.json'
+                if complete:
+                    self.assertFalse(end.exists())
+                else:
+                    self.assertEqual(chains.read(end)['last_valid_boundary'], 2)
 
     def test_valid_stage_promotes_checkpoint_and_s_container(self):
         with tempfile.TemporaryDirectory() as directory:
