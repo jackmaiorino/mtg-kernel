@@ -144,10 +144,17 @@ fn read_state(state: &GameState) -> Option<&S1dStateV1> {
 }
 
 fn circle_cast_matches(state: &GameState, source: ObjectLinkV4, spell: CopSpellV1) -> bool {
-    let Ok(at) = usize::try_from(spell.cast_history_index) else { return false; };
-    let Some(before) = at.checked_sub(1) else { return false; };
+    let Ok(at) = usize::try_from(spell.cast_history_index) else {
+        return false;
+    };
+    let Some(before) = at.checked_sub(1) else {
+        return false;
+    };
     let history = &state.engine.event_history;
-    let Some(event::CommittedEvent::PublishedCastIdentityV1 { receipt }) = history.get(before) else { return false; };
+    let Some(event::CommittedEvent::PublishedCastIdentityV1 { receipt }) = history.get(before)
+    else {
+        return false;
+    };
     receipt.spell_cast_history_index == spell.cast_history_index
         && receipt.spell == source.object
         && receipt.stack_zone_change_count == source.zone_change_count
@@ -155,16 +162,29 @@ fn circle_cast_matches(state: &GameState, source: ObjectLinkV4, spell: CopSpellV
         && receipt.stack_item_id != crate::ids::StackItemId::default()
         && receipt.origin_zone != Zone::Stack
         && receipt.origin_zone_change_count.checked_add(1) == Some(source.zone_change_count)
-        && history.get(at) == Some(&event::CommittedEvent::SpellCast {
-            spell: source.object, controller: receipt.controller,
-        })
+        && history.get(at)
+            == Some(&event::CommittedEvent::SpellCast {
+                spell: source.object,
+                controller: receipt.controller,
+            })
 }
 
 fn circle_entry_matches(state: &GameState, source: ObjectLinkV4, spell: CopSpellV1) -> bool {
-    let (Some(permanent), Some(entry)) = (spell.permanent, spell.entry_history_index) else { return false; };
-    if permanent.object != source.object || source.zone_change_count.checked_add(1) != Some(permanent.zone_change_count)
-        || !circle_cast_matches(state, source, spell) { return false; }
-    let (Ok(cast), Ok(entry)) = (usize::try_from(spell.cast_history_index), usize::try_from(entry)) else { return false; };
+    let (Some(permanent), Some(entry)) = (spell.permanent, spell.entry_history_index) else {
+        return false;
+    };
+    if permanent.object != source.object
+        || source.zone_change_count.checked_add(1) != Some(permanent.zone_change_count)
+        || !circle_cast_matches(state, source, spell)
+    {
+        return false;
+    }
+    let (Ok(cast), Ok(entry)) = (
+        usize::try_from(spell.cast_history_index),
+        usize::try_from(entry),
+    ) else {
+        return false;
+    };
     let history = &state.engine.event_history;
     entry > cast && matches!(history.get(entry), Some(event::CommittedEvent::ZoneChange {
         object, from: Zone::Stack, to: Zone::Battlefield, ..
@@ -816,17 +836,31 @@ pub(crate) fn execute(op: &S1dOpV1, ctx: &ExecCtx, state: &mut GameState) {
                     })
                 })
                 .and_then(|item| {
-                    let mut receipts = state.engine.event_history.scan_for_v1(&[
-                        crate::event_history_v1::EventKindV1::PublishedCastIdentityV1,
-                    ]).iter().filter_map(|event| match event {
-                        event::CommittedEvent::PublishedCastIdentityV1 { receipt }
-                            if receipt.stack_item_id == item.v4.stack_item_id => Some(receipt.spell_cast_history_index),
-                        _ => None,
-                    });
+                    let mut receipts = state
+                        .engine
+                        .event_history
+                        .scan_for_v1(&[
+                            crate::event_history_v1::EventKindV1::PublishedCastIdentityV1,
+                        ])
+                        .iter()
+                        .filter_map(|event| match event {
+                            event::CommittedEvent::PublishedCastIdentityV1 { receipt }
+                                if receipt.stack_item_id == item.v4.stack_item_id =>
+                            {
+                                Some(receipt.spell_cast_history_index)
+                            }
+                            _ => None,
+                        });
                     let cast_history_index = receipts.next()?;
-                    if receipts.next().is_some() { return None; }
-                    let spell = CopSpellV1 { item: item.v4.stack_item_id, cast_history_index,
-                        permanent: None, entry_history_index: None };
+                    if receipts.next().is_some() {
+                        return None;
+                    }
+                    let spell = CopSpellV1 {
+                        item: item.v4.stack_item_id,
+                        cast_history_index,
+                        permanent: None,
+                        entry_history_index: None,
+                    };
                     circle_cast_matches(state, *source, spell).then_some(spell)
                 });
             let shields = &mut s1d_state(state).cop_shields;
@@ -1082,8 +1116,15 @@ pub(crate) mod statics {
     /// CR 609.7a's single Stack-to-Battlefield continuation. Later zone changes
     /// never retarget the shield to another incarnation of the same card.
     pub(crate) fn circle_spell_entered(state: &mut GameState, entry: usize) {
-        let Some(event::CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Battlefield, .. })
-            = state.engine.event_history.get(entry) else { return; };
+        let Some(event::CommittedEvent::ZoneChange {
+            object,
+            from: Zone::Stack,
+            to: Zone::Battlefield,
+            ..
+        }) = state.engine.event_history.get(entry)
+        else {
+            return;
+        };
         let object = *object;
         let live = state.objects.get(object);
         let permanent = ObjectLinkV4 {
@@ -1096,14 +1137,25 @@ pub(crate) mod statics {
         let Some(eternal) = state.eternal_v1.as_ref() else {
             return;
         };
-        let updates = eternal.s1d.cop_shields.iter().enumerate().filter_map(|(index, shield)| {
-            let mut spell = shield.spell?;
-            if shield.source.object != object || shield.source.zone_change_count != previous
-                || spell.permanent.is_some() || spell.entry_history_index.is_some() { return None; }
-            spell.permanent = Some(permanent);
-            spell.entry_history_index = u64::try_from(entry).ok();
-            circle_entry_matches(state, shield.source, spell).then_some((index, spell))
-        }).collect::<Vec<_>>();
+        let updates = eternal
+            .s1d
+            .cop_shields
+            .iter()
+            .enumerate()
+            .filter_map(|(index, shield)| {
+                let mut spell = shield.spell?;
+                if shield.source.object != object
+                    || shield.source.zone_change_count != previous
+                    || spell.permanent.is_some()
+                    || spell.entry_history_index.is_some()
+                {
+                    return None;
+                }
+                spell.permanent = Some(permanent);
+                spell.entry_history_index = u64::try_from(entry).ok();
+                circle_entry_matches(state, shield.source, spell).then_some((index, spell))
+            })
+            .collect::<Vec<_>>();
         for (index, spell) in updates {
             state.eternal_v1.as_mut().unwrap().s1d.cop_shields[index].spell = Some(spell);
         }
@@ -1159,8 +1211,10 @@ pub(crate) mod statics {
             shield.turn == now
                 && shield.player == player
                 && (shield.source == source
-                    || shield.spell.is_some_and(|spell| spell.permanent == Some(source)
-                        && circle_entry_matches(state, shield.source, spell)))
+                    || shield.spell.is_some_and(|spell| {
+                        spell.permanent == Some(source)
+                            && circle_entry_matches(state, shield.source, spell)
+                    }))
         });
         let Some(position) = position else {
             return false;

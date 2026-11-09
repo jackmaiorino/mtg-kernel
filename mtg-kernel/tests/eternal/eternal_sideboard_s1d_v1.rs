@@ -958,21 +958,42 @@ fn circle_of_protection_blue_follows_only_the_chosen_permanent_spell() {
                         zone_change_count: unrelated.objects.get(painter).zone_change_count,
                     };
                     unrelated.eternal_v1.as_mut().unwrap().s1d.cop_shields[0]
-                        .spell.as_mut().unwrap().permanent = Some(replacement);
-                    mtg_kernel::event::propose_and_commit(&mut unrelated,
-                        mtg_kernel::event::ProposedEvent::damage(painter, Target::Player(actor), 1));
+                        .spell
+                        .as_mut()
+                        .unwrap()
+                        .permanent = Some(replacement);
+                    mtg_kernel::event::propose_and_commit(
+                        &mut unrelated,
+                        mtg_kernel::event::ProposedEvent::damage(painter, Target::Player(actor), 1),
+                    );
                     assert_eq!(life(&unrelated, actor), 19);
                     for changed_field in 0..2 {
                         let mut forged = branch.clone();
-                        let proof = forged.eternal_v1.as_mut().unwrap().s1d.cop_shields[0].spell.as_mut().unwrap();
-                        if changed_field == 0 { proof.item = mtg_kernel::ids::StackItemId::default(); }
-                        else { proof.entry_history_index = Some(proof.cast_history_index); }
-                        let mut forged: GameState = serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
-                        if forged.priority_player != opponent { act(&mut forged, Action::Pass); }
+                        let proof = forged.eternal_v1.as_mut().unwrap().s1d.cop_shields[0]
+                            .spell
+                            .as_mut()
+                            .unwrap();
+                        if changed_field == 0 {
+                            proof.item = mtg_kernel::ids::StackItemId::default();
+                        } else {
+                            proof.entry_history_index = Some(proof.cast_history_index);
+                        }
+                        let mut forged: GameState =
+                            serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
+                        if forged.priority_player != opponent {
+                            act(&mut forged, Action::Pass);
+                        }
                         activate(&mut forged, firebrand, 0, &[Target::Player(actor)]);
-                        assert!(matches!(next(&mut forged), Decision::CastSpellOrPass { .. }));
+                        assert!(matches!(
+                            next(&mut forged),
+                            Decision::CastSpellOrPass { .. }
+                        ));
                         settled(&mut forged);
-                        assert_eq!(life(&forged, actor), 19, "forged proof must not prevent damage");
+                        assert_eq!(
+                            life(&forged, actor),
+                            19,
+                            "forged proof must not prevent damage"
+                        );
                         assert_eq!(forged.eternal_v1.as_ref().unwrap().s1d.cop_shields.len(), 1);
                     }
                 }
