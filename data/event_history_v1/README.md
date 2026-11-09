@@ -159,3 +159,23 @@ under `fdn110-ward-20261025/ci40272003668`; the E: root is
 kind order. This standalone event fragment tests serialization; it does not
 make the artificial mixed fixture a valid native replay or qualify a gameplay
 profile or Drakuseth consumers.
+
+## Appended Martyr event sample (November 9, 2026)
+
+Row 316, `MartyrRevealPaidV1`, is the first actual event harvested from
+`eternal_sideboard_s1d_v1::martyr_of_sands_pays_zero_exact_subset_and_more_than_ten_both_seats`
+at source `90bda0c0fee4136f2e30a25182b8068720553e63`. The complete paid producer
+passed under the guarded Rust 1.94.1/MSVC native integration run. Its selected
+scope has two revealed white cards; no sample payload was synthesized. The
+original 315 JSON values and their order remain unchanged.
+
+The original 161-byte payload has SHA-256
+`59b5702344a2157c9fcc3de0e08566c58ae9b3c43e732e434fdd32bb0652bbd0` and remains at
+`D:/codex-mixed21-52f25-20261108/verify-limited-fullpool-s1-90bd-retry2/event-samples/martyr/MartyrRevealPaidV1.json`.
+The run manifest SHA-256 is
+`7c44a409954c5fec97536e4356a3f0ed1532eba487808273c18dd1029b1381c0`;
+the integration binary SHA-256 is
+`b2db3475a3de74058c6a7a70fe4fe021125f5f7b298b8e5f6e996a6f0fb079cd`.
+The full 28-case run had 24 passes and four fixture failures; its evidence is
+retained. This passing producer does not imply that the whole batch or the
+event-history consumers passed. Consumer checks remain pending.
