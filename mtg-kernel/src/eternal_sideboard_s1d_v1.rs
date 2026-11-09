@@ -1232,7 +1232,8 @@ pub(crate) mod statics {
         candidates: &impl Fn(&[Target]) -> Vec<Target>,
     ) -> bool {
         if prefix.len() == count {
-            return !requires_flagbearer || prefix.iter().any(|target| is_flagbearer(state, target));
+            return !requires_flagbearer
+                || prefix.iter().any(|target| is_flagbearer(state, target));
         }
         candidates(prefix).into_iter().any(|target| {
             prefix.push(target);

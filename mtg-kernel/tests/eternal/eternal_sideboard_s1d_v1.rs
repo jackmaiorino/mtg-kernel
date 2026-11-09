@@ -1281,7 +1281,10 @@ fn flagbearers_constrain_positive_optional_target_counts_both_seats() {
             let assert_paid = |state: &mut GameState, targets: &[Target]| {
                 assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
                 assert_eq!(state.stack.last().unwrap().targets.as_slice(), targets);
-                assert!(state.players[actor.index()].mana_pool.iter().all(|&mana| mana == 0));
+                assert!(state.players[actor.index()]
+                    .mana_pool
+                    .iter()
+                    .all(|&mana| mana == 0));
                 settled(state);
                 assert_eq!(zone(state, spell), Zone::Graveyard);
             };
@@ -1313,7 +1316,12 @@ fn flagbearers_constrain_positive_optional_target_counts_both_seats() {
                 assert_eq!(pending.state_hash(), hash);
             }
             let mut forged: GameState = serde_json::from_slice(&snapshot).unwrap();
-            forged.engine.pending_cast.as_mut().unwrap().target_selection_finished = true;
+            forged
+                .engine
+                .pending_cast
+                .as_mut()
+                .unwrap()
+                .target_selection_finished = true;
             assert!(matches!(
                 engine::advance_until_decision(&mut forged),
                 Decision::Halted { .. }
@@ -1321,7 +1329,9 @@ fn flagbearers_constrain_positive_optional_target_counts_both_seats() {
             for pending in [&mut state, &mut restored] {
                 act(pending, Action::ChooseTarget(bearer));
                 assert_paid(pending, &[other, bearer]);
-                let Target::Object(other) = other else { unreachable!() };
+                let Target::Object(other) = other else {
+                    unreachable!()
+                };
                 assert_eq!(zone(pending, other), Zone::Graveyard);
             }
         }
@@ -1375,7 +1385,12 @@ fn flagbearers_constrain_optional_activation_without_requiring_a_target_both_sea
         state.active_player = actor;
         state.priority_player = actor;
         let opponent = actor.opponent();
-        let bearer = put(&mut state, opponent, "Coalition Honor Guard", Zone::Battlefield);
+        let bearer = put(
+            &mut state,
+            opponent,
+            "Coalition Honor Guard",
+            Zone::Battlefield,
+        );
         let other = put(&mut state, opponent, "Llanowar Elves", Zone::Battlefield);
         state.objects.get_mut(bearer).tapped = true;
         state.objects.get_mut(other).tapped = true;
@@ -1387,7 +1402,11 @@ fn flagbearers_constrain_optional_activation_without_requiring_a_target_both_sea
             Decision::ChooseEffectTargets { player, can_finish: true, legal_targets, .. }
                 if player == actor && legal_targets == [Target::Object(bearer)]
         ));
-        assert!(engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(other))).is_err());
+        assert!(engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(other))
+        )
+        .is_err());
         let mut zero = state.clone();
         act(&mut zero, Action::FinishEffectSelection);
         settle_first(&mut zero);
@@ -1399,7 +1418,10 @@ fn flagbearers_constrain_optional_activation_without_requiring_a_target_both_sea
         assert_eq!(zone(&state, relic), Zone::Graveyard);
         assert_eq!(state.objects.get(bearer).counters.stun, 1);
         assert_eq!(state.objects.get(other).counters.stun, 0);
-        assert!(state.players[actor.index()].mana_pool.iter().all(|&mana| mana == 0));
+        assert!(state.players[actor.index()]
+            .mana_pool
+            .iter()
+            .all(|&mana| mana == 0));
     }
 }
 

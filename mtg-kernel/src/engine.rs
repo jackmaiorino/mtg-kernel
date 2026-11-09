@@ -3897,8 +3897,7 @@ fn legal_targets_for_controller_from_source_unframed(
     let mut legal = legal_targets_unrestricted_v1(spec, targets_chosen, controller, source, state);
     // Standard Bearer and Coalition Honor Guard: Flagbearers must be chosen.
     #[cfg(feature = "eternal-fixtures")]
-    if spec != TargetSpec::KickerControlledCreatures
-        && target_min_count(spec) == target_count(spec)
+    if spec != TargetSpec::KickerControlledCreatures && target_min_count(spec) == target_count(spec)
     {
         crate::eternal_sideboard_s1d_v1::statics::restrict_to_flagbearers(
             state,
@@ -5411,9 +5410,8 @@ fn activation_target_choices(
     state: &GameState,
 ) -> (Vec<Target>, bool) {
     let min = usize::from(target_min_count(ability.target_spec));
-    let candidates = |prefix: &[Target]| {
-        ordinary_next_activation_targets(source, ability, prefix, state)
-    };
+    let candidates =
+        |prefix: &[Target]| ordinary_next_activation_targets(source, ability, prefix, state);
     #[cfg(feature = "eternal-fixtures")]
     {
         use crate::eternal_sideboard_s1d_v1::statics;
@@ -5421,7 +5419,13 @@ fn activation_target_choices(
         if min < max
             && statics::flagbearer_requirement_applies(state, state.objects.get(source).controller)
         {
-            return statics::optional_flagbearer_targets(state, targets_chosen, min, max, candidates);
+            return statics::optional_flagbearer_targets(
+                state,
+                targets_chosen,
+                min,
+                max,
+                candidates,
+            );
         }
     }
     (candidates(targets_chosen), targets_chosen.len() >= min)
@@ -9379,7 +9383,8 @@ fn cast_target_choices(
 ) -> (Vec<Target>, bool) {
     let (min, max) = cast_target_bounds(spec, pending.kicked == Some(true));
     let chosen = &pending.targets_chosen;
-    let candidates = |prefix: &[Target]| ordinary_next_cast_targets(def, pending, spec, prefix, state);
+    let candidates =
+        |prefix: &[Target]| ordinary_next_cast_targets(def, pending, spec, prefix, state);
     #[cfg(feature = "eternal-fixtures")]
     if (spec == TargetSpec::KickerControlledCreatures || max.is_some_and(|max| min < max))
         && crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
@@ -9396,8 +9401,12 @@ fn cast_target_choices(
         // leaves every unselected Flagbearer available.
         let legal = candidates(chosen);
         let can_finish = chosen.is_empty()
-            || chosen.iter().any(|target| statics::is_flagbearer(state, target))
-            || !legal.iter().any(|target| statics::is_flagbearer(state, target));
+            || chosen
+                .iter()
+                .any(|target| statics::is_flagbearer(state, target))
+            || !legal
+                .iter()
+                .any(|target| statics::is_flagbearer(state, target));
         return (legal, can_finish);
     }
     #[cfg(not(feature = "eternal-fixtures"))]
@@ -14694,8 +14703,12 @@ pub(crate) fn validate_pending_cast(
             )
         {
             let (legal, can_finish) = cast_target_choices(def, pending, spec, state);
-            if !can_finish && (pending_cast_targeting_is_complete(pending, spec) || legal.is_empty()) {
-                return Err("pending cast targets do not satisfy the Flagbearer requirement".into());
+            if !can_finish
+                && (pending_cast_targeting_is_complete(pending, spec) || legal.is_empty())
+            {
+                return Err(
+                    "pending cast targets do not satisfy the Flagbearer requirement".into(),
+                );
             }
         }
     }
@@ -15412,7 +15425,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         && pending.kicked == Some(true)
         && !pending.target_selection_finished
     {
-        let (legal_targets, can_finish) = cast_target_choices(def, &pending, active_target_spec, state);
+        let (legal_targets, can_finish) =
+            cast_target_choices(def, &pending, active_target_spec, state);
         return Some(Decision::ChooseVariableCastTargets {
             player: pending.controller,
             spell: pending.spell,
@@ -15424,7 +15438,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     let (_, maximum) = cast_target_bounds(active_target_spec, pending.kicked == Some(true));
     if !pending_cast_targeting_is_complete(&pending, active_target_spec) {
         let need = maximum.expect("unfinished unbounded selection handled above");
-        let (legal_targets, can_finish) = cast_target_choices(def, &pending, active_target_spec, state);
+        let (legal_targets, can_finish) =
+            cast_target_choices(def, &pending, active_target_spec, state);
         return Some(Decision::ChooseTargets {
             player: pending.controller,
             spell: pending.spell,
@@ -16126,12 +16141,8 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
     }
     let max_targets = target_count(pending.target_spec);
     if pending.chandra_damage_v74.is_none() && (pending.targets_chosen.len() as u8) < max_targets {
-        let (legal_targets, can_finish) = activation_target_choices(
-            pending.source,
-            ability,
-            &pending.targets_chosen,
-            state,
-        );
+        let (legal_targets, can_finish) =
+            activation_target_choices(pending.source, ability, &pending.targets_chosen, state);
         if target_min_count(pending.target_spec) < max_targets {
             if !legal_targets.is_empty() {
                 return Some(Decision::ChooseEffectTargets {
@@ -25526,7 +25537,9 @@ fn finish_optional_activation_targets(state: &mut GameState) -> Result<(), Strin
     )
     .expect("validate_pending_activation already confirmed this ability index resolves");
     if !activation_target_choices(pending.source, &ability, &pending.targets_chosen, state).1 {
-        return Err("the pending activation targets do not satisfy the Flagbearer requirement".into());
+        return Err(
+            "the pending activation targets do not satisfy the Flagbearer requirement".into(),
+        );
     }
     finalize_activation(state);
     if state.engine.halted.is_some() {
