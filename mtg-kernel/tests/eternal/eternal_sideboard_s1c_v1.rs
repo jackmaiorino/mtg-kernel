@@ -4,7 +4,7 @@
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, CardDef, Keywords, Subtype, CARD_DEFS,
+    card_id_by_name, CardDef, Keywords, Subtype, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, CastMode, Decision, OptionalCostChoice};
 use mtg_kernel::event::{self, ProposedEvent};
@@ -376,9 +376,13 @@ fn eligible_attackers(state: &mut GameState) -> Vec<ObjectId> {
 }
 
 #[test]
-fn every_s1c_card_is_full() {
+fn s1c_cards_keep_their_support_labels() {
     for name in S1C_CARDS {
-        assert_eq!(def(name).capability, CardCapability::Full, "{name}");
+        assert_eq!(
+            def(name).capability,
+            crate::eternal_catalog_v1::expected_capability(name),
+            "{name}"
+        );
     }
 }
 

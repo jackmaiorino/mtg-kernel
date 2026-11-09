@@ -4,7 +4,7 @@
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Supertype, TargetSpec, CARD_DEFS,
+    card_id_by_name, CardDef, CardType, Keywords, Supertype, TargetSpec, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, CastMode, Decision, OptionalCostChoice};
 use mtg_kernel::ids::{ObjectId, PlayerId};
@@ -516,9 +516,13 @@ fn tapped_dual(name: &str, colors: [ManaColor; 2]) {
 // ---- Characteristics -----------------------------------------------------------
 
 #[test]
-fn s1b_cards_are_full_with_their_printed_characteristics() {
+fn s1b_cards_keep_their_support_labels_and_printed_characteristics() {
     for name in S1B_CARDS {
-        assert_eq!(def(name).capability, CardCapability::Full, "{name}");
+        assert_eq!(
+            def(name).capability,
+            crate::eternal_catalog_v1::expected_capability(name),
+            "{name}"
+        );
         assert!(!def(name).is_token, "{name}");
     }
     assert_eq!(def("Debt to the Deathless").cost.x_count, 1);

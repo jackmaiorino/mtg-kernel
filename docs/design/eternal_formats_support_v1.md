@@ -424,9 +424,14 @@ New, each built once in the first wave that needs it:
   creature with power or toughness 1 or less, up to two artifacts and/or enchantments, an
   enchantment, instant or sorcery spell, and a non-basic-land card in a graveyard.
 
-  Known gaps: Surgical Extraction's "any number" always takes every match. Lavinia judges X
-  as 0 and does not restrict casts made during resolution. Left out of the wave: Damping
-  Sphere (its land replacement spans the mana planner and every mana yield path), Collective
+  Partial: Surgical Extraction always takes every match and omits the searcher's look at
+  the searched hand and library. Lavinia judges X as 0 and does not restrict casts made
+  during resolution. Leyline of the Void's opening action goes on the stack during the
+  first upkeep. The opening action belongs before the first turn under rule 103.6.
+  [Comprehensive Rules](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
+
+  Left out of the wave: Damping Sphere (its land replacement spans the mana planner and
+  every mana yield path), Collective
   Brutality (escalate), Stronghold Gambit, Alpine Moon, Ghost Vacuum, Drop of Honey, Triumph
   of Saint Katherine (miracle is Terminus-only and its cost needs generic mana) and From the
   Ashes.
@@ -456,7 +461,12 @@ New, each built once in the first wave that needs it:
   Liquimetal Coating records permanents that are artifacts this turn; the effective type
   check reads it. New target filters: four-point divided damage among creatures (Pyrokinesis)
   and a creature or Vehicle you control (Perilous Snare); Stern Dismissal and Extirpate use
-  S1c's and S1a's filters.
+  S1c's and S1a's filters. Meddling Mage, Extirpate and Leyline of Sanctity are Partial.
+  Mage cannot name on other entry paths. Leyline has the same opening timing gap as
+  Leyline of the Void. Extirpate always takes every match, even in hidden zones, and omits
+  the searcher's look. Rule 701.23 requires the public graveyard matches while permitting
+  hidden-zone fail-to-find for the specified name.
+  [Comprehensive Rules](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
   Not in this wave: Mycosynth Lattice (mana of any color needs a payment-planner change),
   Extinguisher Battleship (station), Cityscape Leveler (unearth, Powerstone), Invasion
   Submersible (waterbend, exhaust), Summon: Bahamut, Keen-Eyed Curator, Outland Liberator
@@ -490,7 +500,7 @@ New, each built once in the first wave that needs it:
   with new characteristics), Apostle's Blessing (protection from artifacts), Sickening
   Shoal (X tied to an exiled card), Darksteel Angel (cannot lose the game) and Portal to
   Phyrexia (subtype grant on reanimation).
-  Known gap: Hullbreacher replaces a draw before dredge can, so the drawing player does
+  Partial: Hullbreacher replaces a draw before dredge can, so the drawing player does
   not choose the order of the two replacements.
 - S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
@@ -515,12 +525,17 @@ New, each built once in the first wave that needs it:
   creature, enchantment or land), each returned independently. New target shapes
   are `StandardTargetV1::S1dV1`. Rhino and Flagbearer use new stable ids 361 and 362;
   Nylea's Disciple uses Centaur's existing stable id 281 from P2c.
-  Known gaps: Martyr of Sands reveals the first X white cards of the hand rather
-  than a chosen set; Flagbearer's restriction is exact for single-target spells
-  and abilities and, for several targets, applies only to the last slot; a spell
-  cast from the graveyard or by a free cast cannot be overloaded (Overload is an
-  alternative cost); Circle of Protection: Blue cannot name a source in a hand or
-  a library; policy observation v5 does not show the shields.
+  Partial: Martyr of Sands offers only X from 1 to 10 and reveals the first X white
+  cards instead of a chosen set. Standard Bearer and Coalition Honor Guard apply the
+  Flagbearer restriction only to the last slot, so a multi-target spell that can
+  finish early can bypass it. Vandalblast and Electrickery omit overload on the normal
+  graveyard permission path. The shared free-resolution path can offer the overload
+  form at zero cost, although free casting excludes other alternative costs.
+  Circle of Protection: Blue offers
+  unrelated graveyard and exile cards as sources, excludes contextual sources outside
+  its public-zone list and does not preserve a chosen permanent spell's shield when
+  it enters. Policy observation v5 omits the shields.
+  [Comprehensive Rules, 609.7 and 702.96](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
 
 ## Card contract and verification
 
@@ -622,7 +637,9 @@ before projection: their canonical allocator does not yet represent hidden
 sideboards. This refusal depends on the public capability, not the remaining
 private cards. An empty, absent module extension contributes no hash bytes.
 
-S1 progress (census after each wave; full 75 share, then missing sideboard cards):
+Historical S1 census with the original capability labels. Each entry gives the
+full 75 share and the number of missing sideboard cards. The S1b row counted 82
+lists before the documented Partial cards were excluded.
 
 | Wave | Cards | Pauper | Legacy | Vintage |
 | --- | ---: | --- | --- | --- |
@@ -631,6 +648,23 @@ S1 progress (census after each wave; full 75 share, then missing sideboard cards
 | S1c (Vintage) | 17 | 94.9%, 1 | 5.9%, 69 | 5.9%, 19 |
 | S1a (Legacy) | 24 | 95.2%, 0 | 46.0%, 46 | 25.7%, 14 |
 | S1b (Legacy) | 26 | 95.2%, 0 | 52.7%, 20 | 44.3%, 10 |
+
+The corrected census classifies 13 S1 definitions as Partial and counts 49
+full-75 lists across Pauper, Legacy, and Vintage. Their mainboards and sideboards
+were measured against the original snapshots with only these capability labels
+changed. This is registry coverage. The affected native tests still qualify the
+actual match paths.
+
+| Format | Playable mainboard share | Full 75 share | Non-Full sideboard cards in mainboard-playable decks |
+| --- | ---: | ---: | ---: |
+| Pauper | 95.2% | 64.8% | 6 |
+| Legacy | 90.0% | 33.8% | 25 |
+| Vintage | 98.1% | 41.9% | 12 |
+| Premodern | 86.0% | 0.0% | 43 |
+
+The Legacy Bant Control mainboard leaves the playable inventory because it
+contains Lavinia. Across the three MTGGoldfish formats, 41 distinct
+sideboard cards remain outside Full.
 
 ## Execution
 

@@ -445,9 +445,13 @@ fn graveyard_count(state: &GameState, player: PlayerId) -> usize {
 // ---- Characteristics -----------------------------------------------------------
 
 #[test]
-fn s1a_cards_are_full_with_their_printed_characteristics() {
+fn s1a_cards_keep_their_support_labels_and_printed_characteristics() {
     for name in S1A_CARDS {
-        assert_eq!(def(name).capability, CardCapability::Full, "{name}");
+        assert_eq!(
+            def(name).capability,
+            crate::eternal_catalog_v1::expected_capability(name),
+            "{name}"
+        );
         assert!(!def(name).is_token, "{name}");
     }
     let bird = def("Swan Song Bird Token");

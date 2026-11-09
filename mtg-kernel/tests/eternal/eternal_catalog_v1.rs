@@ -7,8 +7,8 @@
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
-    card_id_by_name, preflight_fully_supported_deck, CardCapability, TargetSpec, CARD_DEFS,
-    KERNEL_CARDDB_HASH,
+    card_id_by_name, preflight_fully_supported_deck, CardCapability, DeckPreflightError,
+    TargetSpec, CARD_DEFS, KERNEL_CARDDB_HASH,
 };
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1, LimitedJsonlServerV1};
 use serde_json::{json, Value};
@@ -19,7 +19,7 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
 /// deck's companion is part of the deck the session plays.
-const PLAYABLE: [(&str, &str); 136] = [
+const PLAYABLE: [(&str, &str); 135] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -187,7 +187,6 @@ const PLAYABLE: [(&str, &str); 136] = [
     ("premodern", "premodern-psychatog"),
     ("premodern", "premodern-grow"),
     ("premodern", "premodern-enchantress"),
-    ("legacy", "legacy-bant-control"),
     ("premodern", "premodern-white-weenie"),
     ("premodern", "premodern-mono-red-control"),
     ("premodern", "premodern-the-rock"),
@@ -242,6 +241,31 @@ const SNAPSHOTS: [&str; 2] = [
     "data/eternal_v1/meta_snapshot_mtgtop8_premodern_20261101.json",
 ];
 
+/// Executable S1 implementations with known missing reachable branches.
+const PARTIAL_S1: [&str; 13] = [
+    "Circle of Protection: Blue",
+    "Coalition Honor Guard",
+    "Electrickery",
+    "Extirpate",
+    "Hullbreacher",
+    "Lavinia, Azorius Renegade",
+    "Leyline of Sanctity",
+    "Leyline of the Void",
+    "Martyr of Sands",
+    "Meddling Mage",
+    "Standard Bearer",
+    "Surgical Extraction",
+    "Vandalblast",
+];
+
+pub(crate) fn expected_capability(name: &str) -> CardCapability {
+    if PARTIAL_S1.contains(&name) {
+        CardCapability::Partial
+    } else {
+        CardCapability::Full
+    }
+}
+
 /// One zone's decklist rows.
 fn snapshot_rows(rows: &Value) -> Vec<CustomCardCountV1> {
     rows.as_array()
@@ -285,10 +309,21 @@ fn eternal_registry_follows_the_pauper_and_standard_ids() {
     assert_eq!(CARD_DEFS.len(), expected.len());
     for (id, name) in expected.into_iter().enumerate() {
         assert_eq!(CARD_DEFS[id].name, name, "id {id}");
+        assert_eq!(CARD_DEFS[id].capability, expected_capability(name), "{name}");
     }
-    assert!(CARD_DEFS
-        .iter()
-        .all(|def| def.capability == CardCapability::Full));
+    for name in PARTIAL_S1 {
+        let id = card_id_by_name(name).unwrap();
+        assert!(CARD_DEFS[usize::from(id)].is_executable());
+        assert!(matches!(
+            preflight_fully_supported_deck(&[id]),
+            Err(DeckPreflightError::NotFullySupported {
+                index: 0,
+                card_def,
+                name: rejected,
+                capability: CardCapability::Partial,
+            }) if card_def == id && rejected == name
+        ));
+    }
     println!("eternal catalog hash {KERNEL_CARDDB_HASH:#018x}");
 }
 
