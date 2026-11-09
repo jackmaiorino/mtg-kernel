@@ -419,13 +419,17 @@ New, each built once in the first wave that needs it:
   cast prohibition (X judged as 0), and her counter reads the mana a cast spent
   (`payment.commit`), recorded only while she is in play. Carpet of Flowers is queued by the
   main-phase hook as a choice of color and amount, clamped to the Islands at resolution.
-  Surgical Extraction exiles every same-named card of the owner's graveyard, hand and library
-  and shuffles. New target shapes: noncreature artifact or enchantment, black or red permanent,
+  Surgical Extraction now offers a native optional subset of matching cards in the owner's
+  graveyard, hand and library, then shuffles even when zero cards were chosen. Its scoped
+  JSONL search look contains the chooser's full hand and library name multisets; surviving
+  hand knowledge uses the existing observer-only ledger. Native qualification is pending.
+  New target shapes: noncreature artifact or enchantment, black or red permanent,
   creature with power or toughness 1 or less, up to two artifacts and/or enchantments, an
   enchantment, instant or sorcery spell, and a non-basic-land card in a graveyard.
 
-  Partial: Surgical Extraction always takes every match and omits the searcher's look at
-  the searched hand and library. Lavinia judges X as 0 and does not restrict casts made
+  Partial: Surgical Extraction remains unqualified for ordinary Full-deck admission while
+  its native choice, restore, disclosure and transport checks are pending. Frozen infoset
+  and search consumers refuse its active search. Lavinia judges X as 0 and does not restrict casts made
   during resolution. Leyline of the Void's opening action goes on the stack during the
   first upkeep. The opening action belongs before the first turn under rule 103.6.
   [Comprehensive Rules](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
@@ -652,8 +656,8 @@ lists before the documented Partial cards were excluded.
 The corrected census classifies 13 S1 definitions as Partial and counts 49
 full-75 lists across Pauper, Legacy, and Vintage. Their mainboards and sideboards
 were measured against the original snapshots with only these capability labels
-changed. This is registry coverage. The affected native tests still qualify the
-actual match paths.
+changed. This is registry coverage. The combined candidate still needs its affected
+native checks before these match paths are qualified.
 
 | Format | Playable mainboard share | Full 75 share | Non-Full sideboard cards in mainboard-playable decks |
 | --- | ---: | ---: | ---: |
