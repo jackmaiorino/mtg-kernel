@@ -169,10 +169,14 @@ fn paid_kiora_keeps_private_discard_and_exact_threshold_choice_both_seats() {
         for _ in 0..5 {
             put(&mut state, actor, "Island", Zone::Graveyard);
         }
+        // Three cards after the ETB draw require two genuine private choices.
+        // With only the two drawn cards, the native engine discards both directly.
+        put(&mut state, actor, "Island", Zone::Hand);
         let kiora = storm::cast(&mut state, actor, "Kiora, the Rising Tide", &[], 3);
         let mut native = raw(&state);
         let mut owner = KaitoSession::from_session(raw(&state)).unwrap();
         let mut seen_entry = false;
+        let mut discarded = 0;
         for _ in 0..24 {
             let d = decision(&owner);
             let backend = d.fixture_backend_v75();
@@ -186,18 +190,23 @@ fn paid_kiora_keeps_private_discard_and_exact_threshold_choice_both_seats() {
             }
             let discard = |action: &Action| {
                 matches!(action, Action::Discard { actor: chooser, cards }
-                if *chooser == actor.into() && cards.len() == 2 && cards.iter().all(|c| c.owner == actor.into()))
+                if *chooser == actor.into() && cards.len() == 1 && cards.iter().all(|c| c.owner == actor.into()))
             };
             if backend.actions().iter().any(discard) {
                 choose(&mut owner, &mut native, &d, discard);
-                break;
+                discarded += 1;
+                if discarded == 2 {
+                    break;
+                }
+                continue;
             }
             choose(&mut owner, &mut native, &d, |action| {
                 matches!(action, Action::Pass { .. })
             });
         }
         assert!(seen_entry);
-        assert!(owner.fixture_state().players[actor.index()].hand.is_empty());
+        assert_eq!(discarded, 2);
+        assert_eq!(owner.fixture_state().players[actor.index()].hand.len(), 1);
         assert_eq!(
             owner.fixture_state().players[actor.index()].graveyard.len(),
             7
