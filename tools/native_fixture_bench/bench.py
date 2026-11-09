@@ -40,6 +40,7 @@ BENCH_SCHEMA = "mtg-kernel-native-fixture-bench/v1"
 SAMPLE_SCHEMA = "mtg-kernel-native-fixture-sample/v1"
 COMPARISON_SCHEMA = "mtg-kernel-native-fixture-comparison/v1"
 GENERATE_SCHEMA = "mtg-kernel-native-fixture-generate/v1"
+RECEIPT_SCHEMA = "mtg-kernel-native-fixture-receipt/v1"
 RUN_SCHEMA = "mtg-kernel-native-expanded-training-run/v1"
 DIAGNOSTICS_ENV = "MTG_KERNEL_CACHE_DIAGNOSTICS_V1"
 DIAGNOSTICS_SCHEMA = "mtg-kernel-cache-diagnostics/v1"
@@ -864,6 +865,8 @@ def finish(out: Path, manifest: dict, samples: list[dict]) -> int:
     comparison = {
         "schema": COMPARISON_SCHEMA,
         "created_utc": utc_now(),
+        # `compare` can recompute with a newer driver than the one that ran.
+        "compared_by": {"path": str(Path(__file__).resolve()), "sha256": sha256_file(Path(__file__))},
         "label": manifest["label"],
         "baseline": arms["A"]["name"],
         "candidate": arms["B"]["name"],
@@ -895,6 +898,146 @@ def compare(args) -> int:
         # A run from before the manifest recorded it.
         manifest["binaries_unchanged"] = read_json(out / "comparison.json").get("binaries_unchanged")
     return finish(out, manifest, samples)
+
+
+def compact(value):
+    """Rounds every float to six significant digits; the raw outputs keep full precision."""
+    if isinstance(value, float):
+        return float(f"{value:.6g}")
+    if isinstance(value, dict):
+        return {key: compact(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [compact(item) for item in value]
+    return value
+
+
+def receipt_run(out: Path) -> dict:
+    """One finished run as receipt rows, after checking its outputs against its manifest."""
+    manifest = read_json(out / "bench.json")
+    if manifest.get("schema") != BENCH_SCHEMA or manifest.get("status") != "complete":
+        raise BenchError(f"{out} holds no complete {BENCH_SCHEMA} run")
+    for name, pin in manifest.get("outputs", {}).items():
+        if sha256_file(out / name) != pin:
+            raise BenchError(f"{out / name} changed since the run")
+    comparison = read_json(out / "comparison.json")
+    samples = [json.loads(line) for line in (out / "samples.jsonl").read_text().splitlines()]
+    metrics = sorted({name for sample in samples for name in sample.get("metrics", {})})
+    rows = []
+    for sample in samples:
+        parity = sample.get("parity") or {}
+        accounted: dict[str, int] = {}
+        for entry in parity.get("accounted_files", []):
+            for label, count in entry["classes"].items():
+                accounted[label] = accounted.get(label, 0) + count
+        processes = sample.get("processes", [])
+        rows.append(compact([
+            sample["ordinal"], sample["case"], sample["kind"], sample["block"], sample["position"],
+            sample["arm"], sample["ok"], sample.get("error"),
+            processes[0]["wall_seconds"] if len(processes) > 1 else None,
+            *(sample.get("metrics", {}).get(name) for name in metrics),
+            sample.get("durable_completed_iterations"), sample["storage"]["bytes"],
+            parity.get("status", "reference" if sample["ok"] else None),
+            parity.get("identical_files"), parity.get("files"), accounted or None]))
+    cases = {}
+    for case, result in comparison["cases"].items():
+        reference = next((s for s in samples if s["case"] == case and s["ok"]), None)
+        cases[case] = {
+            "parity_ok": result["parity_ok"],
+            "failures": result["failures"],
+            "timed_samples": result["timed_samples"],
+            "boundaries": reference and reference["boundaries"],
+            "storage_bytes_by_name": reference and reference["storage"]["bytes_by_name"],
+            "cold_resume": result["cold_resume"],
+            "counters": {arm: compact(counters) for arm, counters in result["counters"].items()
+                         if counters.get("available")},
+            "verdicts": [compact([name, body["baseline"].get("median"), body["candidate"].get("median"),
+                                  body.get("ratio_candidate_to_baseline"), body.get("max_spread_fraction"),
+                                  body.get("effect_fraction"), body.get("block_ratios"), body["verdict"],
+                                  body.get("reason")])
+                         for name, body in result["metrics"].items()],
+        }
+    provenance = next(iter(comparison["cases"].values()), {}).get("run_provenance", {})
+    arms = {role: {**arm, "run_provenance": provenance.get(arm["name"])}
+            for role, arm in manifest["arms"].items()}
+    return {
+        "label": manifest["label"],
+        "created_utc": manifest["created_utc"],
+        "completed_utc": manifest.get("completed_utc"),
+        "argv": manifest["driver"]["argv"],
+        "run_driver_sha256": manifest["driver"]["sha256"],
+        "compared_by_sha256": comparison.get("compared_by", {}).get("sha256"),
+        "build_profile": manifest["build_profile"],
+        "host": manifest["host"],
+        "env": manifest["env"],
+        "policy": manifest["policy"],
+        "fixture": manifest["fixture"],
+        "rule": comparison["rule"],
+        "arms": arms,
+        "binaries_unchanged": comparison["binaries_unchanged"],
+        "ok": comparison["ok"],
+        "outputs_sha256": {name: sha256_file(out / name)
+                           for name in ("bench.json", "samples.jsonl", "comparison.json")},
+        "sample_columns": ["ordinal", "case", "kind", "block", "position", "arm", "ok", "error",
+                           "first_process_wall_seconds", *metrics, "durable_completed_iterations",
+                           "storage_bytes", "parity", "identical_files", "files", "accounted"],
+        "samples": rows,
+        "verdict_columns": ["metric", "baseline_median", "candidate_median", "ratio",
+                            "max_spread_fraction", "effect_fraction", "block_ratios", "verdict",
+                            "reason"],
+        "cases": cases,
+    }
+
+
+def receipt(args) -> int:
+    """Writes one small committed receipt for finished runs: pins, every raw sample, verdicts."""
+    runs: dict[str, Path] = {}
+    for item in args.run:
+        name, sep, out = item.partition("=")
+        if not sep or not name or not out or name in runs:
+            raise BenchError(f"--run is a unique NAME=OUTPUT_DIRECTORY, not {item!r}")
+        runs[name] = Path(out).resolve()
+    body = {name: receipt_run(out) for name, out in runs.items()}
+    common = {}
+    for key in ("build_profile", "host", "env", "policy", "fixture", "rule"):
+        values = [run[key] for run in body.values()]
+        if len(values) > 1 and all(value == values[0] for value in values):
+            common[key] = values[0]
+            for run in body.values():
+                del run[key]
+    document = {"schema": RECEIPT_SCHEMA, "created_utc": utc_now(),
+                "receipt_driver_sha256": sha256_file(Path(__file__)),
+                "note": "Floats are rounded to six significant digits; outputs_sha256 pins the raw files.",
+                "common": common, "runs": body}
+    # One line per sample row, verdict row or flat object keeps the file short and diffable.
+    rows: list[str] = []
+
+    class Held(str):
+        """A placeholder for one value written on its own line."""
+
+    def hold(value) -> Held:
+        rows.append(json.dumps(value, sort_keys=True))
+        return Held(f"@@row{len(rows) - 1}@@")
+
+    def fold(value):
+        if isinstance(value, (dict, list)):
+            items = value.values() if isinstance(value, dict) else value
+            if value and not any(isinstance(item, (dict, list, Held)) for item in items):
+                return hold(value)
+            if isinstance(value, dict):
+                return {key: fold(item) for key, item in value.items()}
+            return [fold(item) for item in value]
+        return value
+
+    for run in body.values():
+        run["samples"] = [hold(row) for row in run["samples"]]
+        for case in run["cases"].values():
+            case["verdicts"] = [hold(row) for row in case["verdicts"]]
+    text = re.sub(r'"@@row(\d+)@@"', lambda match: rows[int(match.group(1))],
+                  json.dumps(fold(document), indent=1, sort_keys=True))
+    target = Path(args.write)
+    target.write_text(text + "\n")
+    print(f"{target}: {len(text) + 1} bytes")
+    return 0
 
 
 def run_sample(entry: dict, arm: dict, case: dict, out: Path, shared_env: dict,
@@ -1020,11 +1163,16 @@ def main(argv: list[str] | None = None) -> int:
     bench.add_argument("--plan-only", action="store_true", help="print the sample order and exit")
     again = commands.add_parser("compare", help="recompute comparison.json from a run's samples")
     again.add_argument("--out", required=True, help="a finished run's output directory")
+    summary = commands.add_parser("receipt", help="write one small receipt for finished runs")
+    summary.add_argument("--run", action="append", required=True,
+                         help="NAME=OUTPUT_DIRECTORY of a finished run (repeatable)")
+    summary.add_argument("--write", required=True, help="the receipt file to write")
     args = parser.parse_args(argv)
     if args.command == "run" and (args.blocks < 1 or args.warmup_runs < 0):
         parser.error("--blocks must be positive and --warmup-runs nonnegative")
     try:
-        return {"generate": generate, "run": run, "compare": compare}[args.command](args)
+        return {"generate": generate, "run": run, "compare": compare,
+                "receipt": receipt}[args.command](args)
     except BenchError as error:
         print(f"bench: {error}", file=sys.stderr)
         return 2

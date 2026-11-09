@@ -247,6 +247,7 @@ class DriverTest(unittest.TestCase):
         self.assertIn("receipts.checkpoint_io_seconds", timed[0]["metrics"])
         comparison = json.loads((self.out / "comparison.json").read_text())
         self.assertTrue(comparison["ok"])
+        self.assertEqual(comparison["compared_by"]["sha256"], bench.sha256_file(Path(bench.__file__)))
         fresh = comparison["cases"]["fresh"]
         self.assertEqual(fresh["timed_samples"], {"main": 2, "branch": 2})
         self.assertIn(fresh["metrics"]["wall_seconds"]["verdict"],
@@ -272,10 +273,28 @@ class DriverTest(unittest.TestCase):
         with redirect_stdout(StringIO()):
             self.assertEqual(bench.main(["compare", "--out", str(self.out)]), 0)
         self.assertEqual(json.loads((self.out / "comparison.json").read_text())["cases"], before)
+        # receipt keeps every sample as one row, with the outputs' pins and the verdicts.
+        receipt = self.temp / "receipt.json"
+        with redirect_stdout(StringIO()):
+            self.assertEqual(bench.main(["receipt", "--run", f"smoke={self.out}",
+                                         "--write", str(receipt)]), 0)
+        smoke = json.loads(receipt.read_text())["runs"]["smoke"]
+        self.assertEqual(len(smoke["samples"]), len(samples))
+        row = dict(zip(smoke["sample_columns"], smoke["samples"][2]))
+        self.assertEqual((row["kind"], row["position"]), ("timed", "A1"))
+        self.assertEqual(row["parity"], "equal_up_to_accounted_fields")
+        self.assertIn("timing", row["accounted"])
+        self.assertEqual(smoke["outputs_sha256"]["samples.jsonl"],
+                         bench.sha256_file(self.out / "samples.jsonl"))
+        self.assertEqual(smoke["cases"]["fresh"]["counters"]["branch"]["counts"],
+                         counters["counts"])
+        self.assertIn("wall_seconds", [r[0] for r in smoke["cases"]["fresh"]["verdicts"]])
         with open(self.out / "samples.jsonl", "a") as handle:
             handle.write("{}\n")
         with redirect_stderr(StringIO()):
             self.assertEqual(bench.main(["compare", "--out", str(self.out)]), 2)
+            self.assertEqual(bench.main(["receipt", "--run", f"smoke={self.out}",
+                                         "--write", str(receipt)]), 2)
 
     def test_a_changed_state_or_a_failed_sample_fails_the_comparison(self):
         code = self.bench("--warmup-runs", "0", "--cases", "fresh",

@@ -111,9 +111,29 @@ For each metric, the verdict is one of these:
 
 Raw samples are always kept. Do not report the fastest sample.
 
-To see the noise floor of a machine, run an A/A comparison: pass the same binary as both arms under two names. One such probe here, with one block and a build running alongside, showed a 12% "effect" between identical binaries. That is why one block is never conclusive.
+To see the noise floor of a machine, run an A/A comparison: pass the same binary as both arms under two names. One such probe here, with one block and a build running alongside, showed a 12% "effect" between identical binaries. That is why one block is never conclusive. With three blocks on an idle 4-vCPU cloud guest, the wall-time spread was 15–29%.
 
 `--keep-runs reference` deletes each compared run tree except the reference, to bound disk use.
+
+## 4. Recompute and write the receipt
+
+```bash
+python3 tools/native_fixture_bench/bench.py compare --out /abs/results
+python3 tools/native_fixture_bench/bench.py receipt --run aa=/abs/aa --run ab=/abs/results \
+  --write docs/results/NAME.json
+```
+
+`compare` recomputes `comparison.json` from the retained samples, for example after a driver fix. It refuses when `samples.jsonl` no longer matches its pin in `bench.json`. The new comparison records the SHA-256 of the driver that computed it.
+
+`receipt` writes one small file to commit, after checking each run's outputs against its manifest. It holds:
+
+- the pins the runs share, once: fixture, configs, seed, generator commit, host and build profile;
+- for each run, the command, both arms with their SHA-256 and run provenance, and the SHA-256 of the three raw outputs;
+- every sample as one row, with `sample_columns` naming the fields;
+- each case's verdict rows, with `verdict_columns` naming the fields;
+- the state at each boundary, storage bytes by file kind, the cold-resume results and the counters.
+
+Floats are rounded to six significant digits. The raw outputs keep full precision.
 
 ## Tests
 
