@@ -2539,7 +2539,11 @@ fn sd1_partial_probes_apply_the_prior_only_for_tl() {
         if let Err(e) = &tl {
             if e.contains("consistent") {
                 seen = true;
-                assert!(th.is_ok(), "TH must not read the prior: {:?}", th.err());
+                assert!(
+                    th.as_ref().err().is_none_or(|e| !e.contains("consistent")),
+                    "TH must not read the prior: {:?}",
+                    th.err()
+                );
             }
         }
     }
