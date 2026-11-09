@@ -299,7 +299,9 @@ pub(crate) fn has_receipts(state: &GameState) -> bool {
         || state
             .engine
             .event_history
-            .has_any(&[EventKindV1::EtaliPrimalStormReceiptV1])
+            .scan_for_v1(&[EventKindV1::EtaliPrimalStormReceiptV1])
+            .iter()
+            .any(|event| matches!(event, E::EtaliPrimalStormReceiptV1 { .. }))
 }
 
 fn original_source(
