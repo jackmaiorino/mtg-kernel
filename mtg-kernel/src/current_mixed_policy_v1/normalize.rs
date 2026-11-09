@@ -795,7 +795,11 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     let mut meanings = Vec::new();
     if full_pool {
         for &id in &cards {
-            if let Some(printing) = roots::full_pool_life_printing(id)? {
+            let printing = match roots::full_pool_life_printing(id)? {
+                Some(printing) => Some(printing),
+                None => roots::full_pool_modal_printing(id)?,
+            };
+            if let Some(printing) = printing {
                 covered.insert(id);
                 meanings.push(printing);
             }

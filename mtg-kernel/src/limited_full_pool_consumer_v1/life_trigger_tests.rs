@@ -1,16 +1,16 @@
 use super::*;
 use crate::{ids::ObjectId, state::Step};
-use life_triggers::{FactsV1, ProgramV1};
+use trigger_programs::{FactsV1, ProgramV1};
 
-fn facts(d: &KaitoDecision) -> &FactsV1 {
+pub(super) fn facts(d: &KaitoDecision) -> &FactsV1 {
     d.fixture_backend_v75()
         .observation()
-        .life_triggers
+        .trigger_programs
         .as_ref()
         .unwrap()
 }
 
-fn choose(
+pub(super) fn choose(
     owner: &mut KaitoSession,
     native: &mut FastActorSessionV1,
     d: &KaitoDecision,
@@ -64,10 +64,10 @@ fn settle(
                     let (wire, _) =
                         project_limited_kaito_v16(backend, backend.expected().acting_player, 1)
                             .unwrap();
-                    assert_eq!(wire.state.life_triggers.as_ref(), Some(visible));
+                    assert_eq!(wire.state.trigger_programs.as_ref(), Some(visible));
                     let mut missing = backend.observation().clone();
-                    missing.life_triggers.as_mut().unwrap().stack.clear();
-                    missing.life_triggers.as_mut().unwrap().pending.clear();
+                    missing.trigger_programs.as_mut().unwrap().stack.clear();
+                    missing.trigger_programs.as_mut().unwrap().pending.clear();
                     missing.projection_sha256 =
                         crate::kaito_observation_v75::commitment(&missing).unwrap();
                     assert!(crate::kaito_observation_v75::validate_artifact(&missing).is_err());

@@ -10525,7 +10525,7 @@ pub(crate) fn core_policy_action_candidates_kaito_scoped_v75(
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
     crate::kaito_observation_v75::validate_state_scoped(state, appendix)
         .map_err(RlContractError)?;
-    core_policy_action_candidates_next_five_scoped_v59(
+    let mut candidates = core_policy_action_candidates_next_five_scoped_v59(
         decision,
         state,
         true,
@@ -10533,7 +10533,34 @@ pub(crate) fn core_policy_action_candidates_kaito_scoped_v75(
         true,
         true,
         CommonProjectionScopeV42::KaitoV75,
-    )
+    )?;
+    if appendix == LimitedAppendixV1::FullPool {
+        if let PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseTriggerMode {
+            player, source, ..
+        })) = decision
+        {
+            use crate::limited_full_pool_consumer_v1::trigger_programs::{self, ProgramV1};
+            if let Some(pending) = state.engine.pending_triggers.first().filter(|row| {
+                row.source == *source && row.controller == *player
+                    && row.source_contract.is_some_and(|source| matches!(
+                        trigger_programs::printed_program(source, &row.effect),
+                        Some(ProgramV1::SylvanChooseMode | ProgramV1::WardensChooseMode)
+                    ))
+            })
+            {
+                if let Some(reference) = crate::kaito_observation_v75::pending_source_reference(
+                    state, pending, appendix,
+                )? {
+                    for candidate in &mut candidates {
+                        if let ActionSemanticV1::ChooseSpellMode { source, .. } = &mut candidate.semantic {
+                            *source = reference.clone();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(candidates)
 }
 
 fn public_card_v2_non_soul_fields(
