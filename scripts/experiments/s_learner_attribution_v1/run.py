@@ -486,6 +486,8 @@ def profile_summary(profile_rows):
         stage = lambda name, field="ns": mean_of(reports, lambda r: r["stages"][name][field])
         lines.append(f"### Profile, workers={key} (mean of {row['warm_reports']} warm-process repetitions, {substeps} substeps)")
         lines.append("")
+        lines.append("Gradient allocation columns count only the caller thread.")
+        lines.append("")
         lines.append("| stage | spans | mean ms | ms/substep | allocs | alloc KiB |")
         lines.append("|---|---:|---:|---:|---:|---:|")
         for name in reports[0]["stages"]:
@@ -500,7 +502,7 @@ def profile_summary(profile_rows):
         first_bytes = statistics.fmean(f["stages"]["gradient"]["alloc_bytes"] for f in firsts)
         lines.append("")
         lines.append(
-            f"First repetition of each process: gradient allocs {first_allocs:.0f}, "
+            f"First repetition of each process: caller-thread gradient allocs {first_allocs:.0f}, "
             f"{first_bytes / 1024:.1f} KiB."
         )
         lines.append("")
@@ -520,7 +522,7 @@ def profile_summary(profile_rows):
         dead_macs = dead["dx"] + dead["dw"] + dead["attention"]
         lines.append("")
         lines.append(
-            f"Backward MACs per update: dx {total['dx']:,}, dw {total['dw']:,}, attention "
+            f"Backward GEMM MACs per update: dx {total['dx']:,}, dw {total['dw']:,}, attention "
             f"{total['attention']:,}; final-block object query rows {dead_macs:,} "
             f"({100 * dead_macs / all_macs:.1f}% of {all_macs:,})."
         )
@@ -541,7 +543,7 @@ def profile_summary(profile_rows):
                 f"{terms['layer_norm_bias_bytes'] / 2**20:.2f}, additions "
                 f"{terms['addition_bytes'] / 2**20:.2f}); {terms['linear_terms']} Linear terms, "
                 f"{terms['layer_norm_rows']} LayerNorm rows, {terms['additions']} additions; "
-                f"peak block {terms['peak_block_live_bytes'] / 2**20:.2f} MiB live, "
+                f"peak active block {terms['peak_block_live_bytes'] / 2**20:.2f} MiB live, "
                 f"{terms['peak_block_reserved_bytes'] / 2**20:.2f} MiB reserved."
             )
             for kind in ["record", "replay"]:

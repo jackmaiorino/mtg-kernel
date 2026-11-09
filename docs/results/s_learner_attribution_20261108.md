@@ -7,7 +7,7 @@ of the serial gradient, **13.2 ms is record-phase imbalance** across the 11
 four-substep blocks. Copying the terms and replaying them cost about what the
 serial sink saves. Helper spawning cost 1.2 ms per update. Serial replay
 additions cost 2.4 ms. The final block's object query rows are **22.0%** of the
-backward's multiply-adds, which no output reads.
+backward GEMM multiply-adds. The object keys and values remain live.
 
 These are attribution measurements, not a speedup claim. Counts and bytes are
 exact. Times come from a measurement-only build on a noisy VM, and both builds
@@ -32,9 +32,11 @@ profile timings still need a machine with at least 32 GB (see Pending).
   Linear inputs, 18.26 MiB of Linear output gradients, 3.82 MiB of
   materialized LayerNorm gains, 3.82 MiB of LayerNorm biases and 0.69 MiB of
   embedding additions. They come from 1,097 Linear terms, 10,441 LayerNorm rows
-  and 4,479 additions. Copying took 6.1 ms of worker time.
-- **Peak term bytes:** one block holds at most 4.60 MiB live (5.61 MiB
-  reserved). Peak process heap was 30.7 MiB at two workers and 29.1 MiB serial.
+  and 4,479 additions. Linear recording spans took 6.1 ms of worker time,
+  including operand copies, record storage and instrumentation.
+- **Peak term bytes:** the active block holds at most 4.60 MiB live (5.61
+  MiB reserved). Peak process heap was 30.7 MiB at two workers and 29.1 MiB
+  serial, including profile bookkeeping.
 - **Helpers:** each update spawns and joins 22 scoped helpers (11 per drain
   kind) with no spawn failure. The caller spent 0.51 ms spawning record helpers
   and 0.70 ms spawning replay helpers (46 and 64 us each).
@@ -48,14 +50,16 @@ profile timings still need a machine with at least 32 GB (see Pending).
   gradients in the sink are 23.2%. Per layer the backward spends about 30.5 ms
   in the FFN (including its weight gradients), 11.9 ms in attention, 9.3 ms in
   QKV and 3.2 ms in the projection. Adam took 4.9 ms and the state hash 5.4 ms.
-- **Dead rows:** the census counts 1.290 billion backward multiply-adds per
-  update. The final block's object query rows account for 283.1 million of them,
+- **Dead rows:** the census counts 1.290 billion backward GEMM multiply-adds
+  per update. The final block's object query rows account for 283.1 million of them,
   70.6% of that block's backward. They sit in the FFN, the projection, the Q
   part of QKV and attention (dP, dQ and their zero terms in dV and dK). Their
   keys and values stay live.
-- **Allocations:** the serial gradient allocates 1,068 times (6.9 MiB) per
-  update and the two-worker one 812 times (11.4 MiB). The parallel path builds
-  fresh helper workspaces and term records every update. `gae-bench` also
+- **Allocations:** the caller thread records 1,068 allocations (6.9 MiB)
+  during the serial gradient and a mean 812 allocations (11.4 MiB) during the
+  two-worker gradient. The record helper reports another 656 allocation
+  events on average during its work. The parallel path builds fresh helper
+  workspaces and term records every update. `gae-bench` also
   starts every repetition from fresh workspaces. Unlike the production training
   binaries, `s_transformer_v1` does not call `retain_freed_memory_v1`.
 
