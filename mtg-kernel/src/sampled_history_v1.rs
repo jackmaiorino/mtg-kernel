@@ -45,6 +45,17 @@ fn sources(event: &E) -> Vec<AbilitySourceContractV4> {
         E::SphinxsTutelageDrawV1 { observers, .. } => observers.clone(),
         E::ProgenitusShuffledV1 { source, .. } => vec![*source],
         E::FiendArtisanPaidV1 { item, .. } => item.v4.ability_source_contract.into_iter().collect(),
+        E::KaitoCunningV75 { .. } => crate::effect::kaito_cunning_v75::archived_sources_v1(event),
+        E::VivienReidV1 { .. } => crate::effect::vivien_reid_v1::archived_sources_v1(event),
+        E::TinybonesV72 { journal } => match journal.as_ref() {
+            crate::engine::tinybones_v72::JournalV72::Discarded(discard) =>
+                std::iter::once(discard.card).chain(discard.observers.iter().copied()).collect(),
+            _ => vec![],
+        },
+        E::ControlledCreatureDeathCaptureV1 { source, .. }
+        | E::CuratorEnteredV1 { source, .. }
+        | E::NivMizzetVisionaryDamageSourceDepartureV1 { source, .. } => vec![*source],
+        E::NivMizzetVisionaryDamageV1 { observer, damage_source, .. } => vec![*observer, *damage_source],
         E::GreatwurmCombatCaptureV1 { capture } => std::iter::once(capture.creature)
             .chain(capture.observers.iter().copied()).collect(),
         E::FiendArtisanConsumerReceiptV1 { journal } => match journal.as_ref() {
