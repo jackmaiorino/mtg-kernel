@@ -58,7 +58,7 @@ jobs:
               'runner_image': os.environ.get('ImageVersion'),
               'cpus': os.cpu_count(),
               'memory': open('/proc/meminfo').read().splitlines()[:3],
-              'required_free_bytes': int(65.5 * 1024**3),
+              'required_free_bytes': int(81.5 * 1024**3),
               'volumes': volumes,
           }
           selected = max(volumes, key=lambda v: v['free_bytes'])
