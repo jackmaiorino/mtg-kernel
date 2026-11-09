@@ -671,7 +671,11 @@ fn hullbreacher_and_dredge_compete_for_bonders_ornament_draws() {
         ));
         assert!(state.objects.get(ornament).tapped);
         assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
-        assert_eq!(zone(&state, opponent_top), Zone::Library, "active player chooses first");
+        assert_eq!(
+            zone(&state, opponent_top),
+            Zone::Library,
+            "active player chooses first"
+        );
         act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
         settled(&mut state);
         assert_eq!(zone(&state, thug), Zone::Hand);
