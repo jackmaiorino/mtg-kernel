@@ -648,7 +648,10 @@ fn require_fixture_pin_path_v1(pin: &PinnedFileV1, expected: &Path) -> Result<()
     ensure(
         pin.path.as_path() == expected
             && pin.path.canonicalize().map_err(err)?.as_path() == expected,
-        &format!("fixture pin does not name its generated file {}", expected.display()),
+        &format!(
+            "fixture pin does not name its generated file {}",
+            expected.display()
+        ),
     )
 }
 
@@ -663,7 +666,10 @@ fn validate_fixture_v1(manifest: &FixtureManifestV1) -> Result<(), String> {
     )?;
     let sources = manifest.root.join("sources");
     let mut shell = manifest.initial.clone();
-    let member = shell.s_learner.take().ok_or("fixture initial S source is absent")?;
+    let member = shell
+        .s_learner
+        .take()
+        .ok_or("fixture initial S source is absent")?;
     ensure(
         shell == manifest.net8
             && shell.checkpoint.is_none()
@@ -674,8 +680,14 @@ fn validate_fixture_v1(manifest: &FixtureManifestV1) -> Result<(), String> {
     require_fixture_pin_path_v1(&member.initial, &sources.join("s0.bin"))?;
     let descriptor: super::fresh_initialization_source::ExpandedFreshInitializationSourceV1 =
         read_pinned(&shell.play_import)?;
-    require_fixture_pin_path_v1(&descriptor.initialization, &sources.join("net8/initialization.json"))?;
-    require_fixture_pin_path_v1(&descriptor.parameters, &sources.join("net8/parameters.f32le"))?;
+    require_fixture_pin_path_v1(
+        &descriptor.initialization,
+        &sources.join("net8/initialization.json"),
+    )?;
+    require_fixture_pin_path_v1(
+        &descriptor.parameters,
+        &sources.join("net8/parameters.f32le"),
+    )?;
     check_pinned_v1(&descriptor.initialization)?;
     check_pinned_v1(&descriptor.parameters)?;
     let initial = decode_checkpoint_v1(&read_pinned_bytes(&member.initial)?)?;
@@ -700,12 +712,17 @@ fn validate_fixture_v1(manifest: &FixtureManifestV1) -> Result<(), String> {
                 && batch.opponents.len() == manifest.options.episodes
                 && batch.trajectories.len() == manifest.options.episodes
                 && batch.census.episodes == manifest.options.episodes
-                && batch.opponents.iter().copied().eq(cycle.iter().copied().cycle().take(manifest.options.episodes)),
+                && batch.opponents.iter().copied().eq(cycle
+                    .iter()
+                    .copied()
+                    .cycle()
+                    .take(manifest.options.episodes)),
             "fixture batch roster, source or opponent cycle differs",
         )?;
         ensure(
             batch.identity.adam_step == (ordinal + 1) as u64
-                && previous_state.is_none_or(|state| state == batch.identity.before_state_sha256.as_str()),
+                && previous_state
+                    .is_none_or(|state| state == batch.identity.before_state_sha256.as_str()),
             "fixture Adam checkpoints are not one initial-to-warmed chain",
         )?;
         let directory = manifest.root.join(name);
@@ -718,7 +735,8 @@ fn validate_fixture_v1(manifest: &FixtureManifestV1) -> Result<(), String> {
         ensure(
             collection["complete"] == json!(true)
                 && collection["source"] == serde_json::to_value(&batch.source).map_err(err)?
-                && collection["trajectories"] == serde_json::to_value(&batch.trajectories).map_err(err)?
+                && collection["trajectories"]
+                    == serde_json::to_value(&batch.trajectories).map_err(err)?
                 && collection["behavior_state_sha256"] == batch.identity.before_state_sha256,
             "fixture collection does not bind its source, state and trajectory pins",
         )?;
@@ -726,11 +744,15 @@ fn validate_fixture_v1(manifest: &FixtureManifestV1) -> Result<(), String> {
         let reference = directory.join("reference");
         require_fixture_pin_path_v1(&batch.reference, &reference.join("update.json"))?;
         let result: Value = read_pinned(&batch.reference)?;
-        let checkpoint: PinnedFileV1 = serde_json::from_value(result["checkpoint"].clone()).map_err(err)?;
+        let checkpoint: PinnedFileV1 =
+            serde_json::from_value(result["checkpoint"].clone()).map_err(err)?;
         let state: PinnedFileV1 =
             serde_json::from_value(result["s_learner"]["state"].clone()).map_err(err)?;
         require_fixture_pin_path_v1(&checkpoint, &reference.join("checkpoint.json"))?;
-        require_fixture_pin_path_v1(&state, &reference.join(s_learner_v1::S_LEARNER_STATE_FILE_V1))?;
+        require_fixture_pin_path_v1(
+            &state,
+            &reference.join(s_learner_v1::S_LEARNER_STATE_FILE_V1),
+        )?;
         let record: SLearnerCheckpointV1 = read_pinned(&checkpoint)?;
         ensure(
             record.state == state
@@ -751,11 +773,17 @@ fn validate_bench_inputs_v1(
     manifest: &FixtureManifestV1,
     batch: &FixtureBatchV1,
 ) -> Result<(), String> {
-    let ordinal = BATCHES_V1.iter().position(|(name, _)| *name == batch.name)
+    let ordinal = BATCHES_V1
+        .iter()
+        .position(|(name, _)| *name == batch.name)
         .ok_or("fixture batch is unknown")?;
     let episodes = fixture_episodes_v1(manifest, &batch.source, ordinal, &batch.opponents)?;
     let (census, games_sha256) = census_v1(
-        &batch.trajectories, &episodes, &batch.opponents, &manifest.config, &manifest.options,
+        &batch.trajectories,
+        &episodes,
+        &batch.opponents,
+        &manifest.config,
+        &manifest.options,
     )?;
     ensure(
         census == batch.census && games_sha256 == batch.identity.games_sha256,
@@ -765,7 +793,10 @@ fn validate_bench_inputs_v1(
     let verification = verify_v1(manifest, batch, &reference)?;
     ensure(
         verification["verified"] == json!(true),
-        &format!("fixture reference failed verification: {}", verification["mismatches"]),
+        &format!(
+            "fixture reference failed verification: {}",
+            verification["mismatches"]
+        ),
     )
 }
 
@@ -802,7 +833,10 @@ pub fn verify_v1(
     let expected = serde_json::to_value(&batch.identity).map_err(err)?;
     for (field, value) in expected.as_object().ok_or("identity is an object")? {
         // JSON float equality treats both signed zeros as equal.
-        check(actual[field].to_string() == value.to_string(), field.as_str());
+        check(
+            actual[field].to_string() == value.to_string(),
+            field.as_str(),
+        );
     }
     // The container, read through its pin: decoded, it must carry the
     // reference's state hash; any difference is localized.
@@ -1157,12 +1191,16 @@ fn census_v1(
         "the collection returned another episode count",
     )?;
     let trajectory_bytes = trajectories.iter().try_fold(0u64, |total, pin| {
-        total.checked_add(fs::metadata(&pin.path).map_err(err)?.len())
+        total
+            .checked_add(fs::metadata(&pin.path).map_err(err)?.len())
             .ok_or_else(|| "trajectory file sizes overflow the fixture bound".to_owned())
     })?;
     ensure(
         trajectory_bytes <= options.max_batch_mebibytes * MEBIBYTE_V1,
-        &format!("batch holds {trajectory_bytes} trajectory bytes, over max_batch_mebibytes={}", options.max_batch_mebibytes),
+        &format!(
+            "batch holds {trajectory_bytes} trajectory bytes, over max_batch_mebibytes={}",
+            options.max_batch_mebibytes
+        ),
     )?;
     let mut census = BatchCensusV1 {
         episodes: trajectories.len(),
@@ -1214,7 +1252,8 @@ fn census_v1(
             census.decoded_tensor_payload_bytes +=
                 super::ordered_update_preparation::decoded_payload_bytes(&row.tensor)? as u64;
             ensure(
-                census.decoded_tensor_payload_bytes <= options.max_prepared_tensor_mebibytes as u64 * MEBIBYTE_V1,
+                census.decoded_tensor_payload_bytes
+                    <= options.max_prepared_tensor_mebibytes as u64 * MEBIBYTE_V1,
                 "batch exceeds max_prepared_tensor_mebibytes",
             )?;
             if row.actor == learner {

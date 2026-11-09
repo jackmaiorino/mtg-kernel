@@ -1775,7 +1775,8 @@ impl SModelV1 {
             for (sub, substep) in group.substeps.iter().enumerate() {
                 let is_masked = masked.is_some_and(|m| m[sub]);
                 let d_joint = if is_masked { 0.0 } else { d_unmasked };
-                let forward = update_profile_v1::span_v1(update_profile_v1::StageV1::LearnerForward);
+                let forward =
+                    update_profile_v1::span_v1(update_profile_v1::StageV1::LearnerForward);
                 self.forward_into_v1(substep.input, &mut work.tape)?;
                 forward.finish_v1(&work.tape.logits, work.tape.value);
                 let (selected, dlogits) =
@@ -1790,7 +1791,8 @@ impl SModelV1 {
                 } else {
                     0.0
                 };
-                let backward = update_profile_v1::span_v1(update_profile_v1::StageV1::LearnerBackward);
+                let backward =
+                    update_profile_v1::span_v1(update_profile_v1::StageV1::LearnerBackward);
                 self.backward_v1(
                     substep.input,
                     &work.tape,
