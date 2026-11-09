@@ -3,7 +3,7 @@ use crate::{
     card_def::CostComponent,
     effect::{fiend_artisan_v1 as native, EffectObjectBinding},
     event::{CommittedEvent as E, ProposedEvent},
-    event_history_v1::EventKindV1 as K,
+    event_history_v1::EventKindV1,
     ids::{ObjectId, StackItemId},
     optional_trigger_public_v1::{self as public, IdentityV1, ReferenceV1},
     state::{AbilitySourceContractV4, GameState, StackItem, Zone},
@@ -41,17 +41,25 @@ pub enum JournalV1 {
     },
 }
 
-const KINDS: &[K] = &[
-    K::FiendArtisanInputV1,
-    K::FiendArtisanPaidV1,
-    K::FiendArtisanSearchStartedV1,
-    K::FiendArtisanSearchFinishedV1,
-    K::FiendArtisanConsumerReceiptV1,
+const KINDS: &[EventKindV1] = &[
+    EventKindV1::FiendArtisanInputV1,
+    EventKindV1::FiendArtisanPaidV1,
+    EventKindV1::FiendArtisanSearchStartedV1,
+    EventKindV1::FiendArtisanSearchFinishedV1,
+    EventKindV1::FiendArtisanConsumerReceiptV1,
 ];
 
 pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
+    // The index only skips work. Refusal depends on an actual Fiend event,
+    // even when validation forces every history scan open.
     if state.fiend_artisan_receipts_v1
-        || !state.engine.event_history.scan_for_v1(KINDS).is_empty()
+        || state.engine.event_history.scan_for_v1(KINDS).iter().any(|event| {
+            matches!(event, E::FiendArtisanInputV1 { .. }
+                | E::FiendArtisanPaidV1 { .. }
+                | E::FiendArtisanSearchStartedV1 { .. }
+                | E::FiendArtisanSearchFinishedV1 { .. }
+                | E::FiendArtisanConsumerReceiptV1 { .. })
+        })
         || state.stack.iter().any(|item| native::selected(state, item))
         || state.objects.iter().any(|(_, live)| {
             public_destination(live.zone)

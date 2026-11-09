@@ -47,11 +47,10 @@ pub(crate) fn prepare(
     state: &mut GameState,
     actor: PlayerId,
 ) -> Result<Option<FutureSeat>, String> {
-    let history = state
+    let Some(at) = state
         .engine
         .event_history
-        .scan_for_v1(&[crate::event_history_v1::EventKindV1::LeylineOpeningV1]);
-    let Some(at) = history.iter().position(|event| {
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::LeylineOpeningV1]).iter().position(|event| {
         matches!(
             event,
             CommittedEvent::LeylineOpeningV1 {

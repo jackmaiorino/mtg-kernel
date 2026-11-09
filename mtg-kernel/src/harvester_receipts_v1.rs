@@ -345,12 +345,13 @@ struct Rows<'a> {
 }
 
 pub(crate) fn operations(state: &GameState) -> Result<Vec<OperationSet<'_>>, String> {
-    let history = state.engine.event_history.scan_for_v1(&[
+    let history = &state.engine.event_history;
+    let mut rows = BTreeMap::<StackItemId, Rows>::new();
+    for (at, event) in state.engine.event_history.scan_for_v1(&[
         EventKindV1::HarvesterCommitReceiptV1,
         EventKindV1::HarvesterResolvedV1,
-    ]);
-    let mut rows = BTreeMap::<StackItemId, Rows>::new();
-    for (at, event) in history.iter().enumerate() {
+    ]).iter().enumerate() {
+        let (E::HarvesterCommitReceiptV1 { .. } | E::HarvesterResolvedV1 { .. }) = event else { continue; };
         let duplicate = match event {
             E::HarvesterResolvedV1 { resolution } => rows
                 .entry(resolution.item.v4.stack_item_id)

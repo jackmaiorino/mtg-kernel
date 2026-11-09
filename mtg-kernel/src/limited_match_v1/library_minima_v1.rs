@@ -2,7 +2,7 @@
 use crate::{
     curator_receipts_v1::JournalV1 as Curator,
     etali_primal_storm_receipts_v1::JournalV1 as Etali,
-    event::CommittedEvent as Event,
+    event::CommittedEvent as E,
     event_history_v1::EventKindV1,
     fiend_artisan_receipts_v1::JournalV1 as FiendArtisan,
     ids::{ObjectId, PlayerId},
@@ -16,7 +16,7 @@ fn public_departure_name(state: &GameState, at: usize, object: ObjectId) -> Opti
     // These typed witnesses follow the actual committed move and already
     // belong to the verified FullPool history. None names an unseen slot.
     match state.engine.event_history.get(at + 1)? {
-        Event::CuratorReceiptV1 { journal } => match journal.as_ref() {
+        E::CuratorReceiptV1 { journal } => match journal.as_ref() {
             Curator::ArrivalVisibility {
                 event_at,
                 original,
@@ -26,13 +26,13 @@ fn public_departure_name(state: &GameState, at: usize, object: ObjectId) -> Opti
             } if *event_at == at as u64 && original.object == object => *disclosed_printing,
             _ => None,
         },
-        Event::EtaliPrimalStormReceiptV1 { journal } => match journal.as_ref() {
+        E::EtaliPrimalStormReceiptV1 { journal } => match journal.as_ref() {
             Etali::TopExileVisibility { arrival, .. } if arrival.source == object => {
                 Some(arrival.card_def)
             }
             _ => None,
         },
-        Event::FiendArtisanConsumerReceiptV1 { journal } => match journal.as_ref() {
+        E::FiendArtisanConsumerReceiptV1 { journal } => match journal.as_ref() {
             FiendArtisan::ArrivalVisibility {
                 object: actual,
                 observed: Some(card),
@@ -51,18 +51,18 @@ fn public_departure_name(state: &GameState, at: usize, object: ObjectId) -> Opti
 /// the same previously seen copy, so it establishes presence, not arrival.
 /// A shuffled-away physical alias never participates in the count.
 pub(crate) fn minimum_names(state: &GameState, owner: PlayerId) -> Vec<u16> {
-    let history = state
-        .engine
-        .event_history
-        .scan_for_v1(&[EventKindV1::ProgenitusShuffledV1]);
+
     let mut copies = 0usize;
     let mut tokens = BTreeSet::new();
-    for (at, event) in history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::ProgenitusShuffledV1, EventKindV1::CreateToken, EventKindV1::Draw, EventKindV1::ZoneChange]).iter().enumerate() {
         match event {
-            Event::CreateToken { object, .. } => {
+            E::CreateToken { object, .. } => {
                 tokens.insert(*object);
             }
-            Event::ProgenitusShuffledV1 {
+            E::ProgenitusShuffledV1 {
                 move_history_index,
                 source,
                 ..
@@ -80,13 +80,13 @@ pub(crate) fn minimum_names(state: &GameState, owner: PlayerId) -> Vec<u16> {
                     copies = copies.max(1);
                 }
             }
-            Event::Draw {
+            E::Draw {
                 player,
                 object: Some(_),
             } if *player == owner => {
                 copies = copies.saturating_sub(1);
             }
-            Event::ZoneChange {
+            E::ZoneChange {
                 object,
                 controller_before,
                 from: Zone::Library,

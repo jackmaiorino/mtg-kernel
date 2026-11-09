@@ -306,15 +306,7 @@ fn key(op: &EffectOp) -> Option<Key> {
 }
 
 fn combat(state: &GameState, viewer: PlayerId) -> Result<Vec<CombatV1>, String> {
-    use EventKindV1 as K;
-    let history = state.engine.event_history.scan_for_v1(&[
-        K::GreatwurmCombatCaptureV1,
-        K::GreatwurmCombatBoundV1,
-        K::GreatwurmCollectedV1,
-        K::GreatwurmPublishedV1,
-        K::GreatwurmFinishedV1,
-        K::GreatwurmCommitReceiptV1,
-    ]);
+
     let mut captures = Vec::new();
     let mut bound = BTreeSet::new();
     let mut collected = BTreeMap::new();
@@ -322,7 +314,15 @@ fn combat(state: &GameState, viewer: PlayerId) -> Result<Vec<CombatV1>, String> 
     let mut finished = BTreeMap::new();
     let mut endings = BTreeSet::new();
     let mut dispatches = BTreeSet::new();
-    for (at, row) in history.iter().enumerate() {
+    for (at, row) in state.engine.event_history.scan_for_v1(&[
+        EventKindV1::GreatwurmCombatCaptureV1,
+        EventKindV1::GreatwurmCombatBoundV1,
+        EventKindV1::GreatwurmCollectedV1,
+        EventKindV1::GreatwurmPublishedV1,
+        EventKindV1::GreatwurmFinishedV1,
+        EventKindV1::GreatwurmCommitReceiptV1,
+    ]).iter().enumerate() {
+        let (E::GreatwurmCombatCaptureV1 { .. } | E::GreatwurmCombatBoundV1 { .. } | E::GreatwurmCollectedV1 { .. } | E::GreatwurmPublishedV1 { .. } | E::GreatwurmFinishedV1 { .. } | E::GreatwurmCommitReceiptV1 { .. }) = row else { continue; };
         let duplicated = match row {
             E::GreatwurmCombatCaptureV1 { .. } => {
                 captures.push(u64::try_from(at).map_err(|_| "Greatwurm capture history width")?);

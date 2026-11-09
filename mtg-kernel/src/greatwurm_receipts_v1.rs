@@ -182,16 +182,16 @@ fn validate_debit_face(state: &GameState, at: usize, debit: &DebitV1) -> Result<
 }
 
 pub(crate) fn debits(state: &GameState) -> Result<Vec<(&PaidV1, &[DebitV1; 6])>, String> {
-    let history = state.engine.event_history.scan_for_v1(&[
-        EventKindV1::GreatwurmCounterInputV1,
-        EventKindV1::GreatwurmCounterPaymentV1,
-        EventKindV1::GreatwurmCommitReceiptV1,
-    ]);
+
     let mut debited = BTreeMap::new();
     let mut input = BTreeSet::new();
     let mut paid = BTreeSet::new();
     let mut output = Vec::new();
-    for (at, event) in history.iter().enumerate() {
+    for (at, event) in state.engine.event_history.scan_for_v1(&[
+        EventKindV1::GreatwurmCounterInputV1,
+        EventKindV1::GreatwurmCounterPaymentV1,
+        EventKindV1::GreatwurmCommitReceiptV1,
+    ]).iter().enumerate() {
         match event {
             E::GreatwurmCounterInputV1 { input: original } => {
                 if !input.insert(original.stack_item_id) {
@@ -267,11 +267,11 @@ pub(crate) fn end(
     finished_at: usize,
     creature: AbilitySourceContractV4,
 ) -> Result<EndV1, String> {
-    let history = state
+
+    let mut endings = state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::GreatwurmCommitReceiptV1]);
-    let mut endings = history
+        .scan_for_v1(&[EventKindV1::GreatwurmCommitReceiptV1])
         .iter()
         .enumerate()
         .filter_map(|(at, row)| match row {
@@ -287,7 +287,10 @@ pub(crate) fn end(
     if published_at >= at || at.checked_add(1) != Some(finished_at) || endings.next().is_some() {
         return Err("Greatwurm terminal lost its exact original occurrence".into());
     }
-    let mut dispatches = history
+    let mut dispatches = state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::GreatwurmCommitReceiptV1])
         .iter()
         .enumerate()
         .filter_map(|(index, row)| match row {

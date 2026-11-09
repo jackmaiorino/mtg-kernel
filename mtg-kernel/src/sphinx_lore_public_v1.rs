@@ -391,13 +391,13 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
             });
         }
     }
-    let history = state
-        .engine
-        .event_history
-        .scan_for_v1(&[crate::event_history_v1::EventKindV1::SphinxLoreV1]);
+
     let mut attacks = vec![];
     let mut attack_positions = std::collections::BTreeMap::new();
-    for (index, entry) in history.iter().enumerate() {
+    for (index, entry) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::SphinxLoreV1]).iter().enumerate() {
         if let E::SphinxLoreV1 {
             journal: lore::JournalV1::Attack { turn, .. },
         } = entry
@@ -436,7 +436,10 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
     let active = lore::active_at(state, state.engine.event_history.len())?;
     let mut grants = vec![];
     let mut grant_positions = std::collections::BTreeMap::new();
-    for (index, entry) in history.iter().enumerate() {
+    for (index, entry) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::SphinxLoreV1]).iter().enumerate() {
         if let E::SphinxLoreV1 {
             journal: lore::JournalV1::Installed { attack, target, .. },
         } = entry
@@ -469,7 +472,10 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
             });
         }
     }
-    for entry in history {
+    for entry in state
+        .engine
+        .event_history
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::SphinxLoreV1]) {
         if let E::SphinxLoreV1 {
             journal: lore::JournalV1::Published { attack, item },
         } = entry

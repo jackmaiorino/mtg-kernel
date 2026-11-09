@@ -245,18 +245,18 @@ struct Journal<'a> {
 }
 
 fn occurrence_rows(state: &GameState) -> Result<BTreeMap<u64, Journal<'_>>, String> {
-    use EventKindV1 as K;
-    let history = state.engine.event_history.scan_for_v1(&[
-        K::CuratorEnteredV1,
-        K::CuratorCollectedV1,
-        K::CuratorPublishedV1,
-        K::CuratorProgressV1,
-        K::CuratorFinishedV1,
-        K::CuratorReceiptV1,
-    ]);
+
     let mut found = BTreeMap::<u64, Journal>::new();
     let mut auxiliary = Vec::new();
-    for (at, event) in history.iter().enumerate() {
+    for (at, event) in state.engine.event_history.scan_for_v1(&[
+        EventKindV1::CuratorEnteredV1,
+        EventKindV1::CuratorCollectedV1,
+        EventKindV1::CuratorPublishedV1,
+        EventKindV1::CuratorProgressV1,
+        EventKindV1::CuratorFinishedV1,
+        EventKindV1::CuratorReceiptV1,
+    ]).iter().enumerate() {
+        let (E::CuratorEnteredV1 { .. } | E::CuratorCollectedV1 { .. } | E::CuratorPublishedV1 { .. } | E::CuratorProgressV1 { .. } | E::CuratorFinishedV1 { .. } | E::CuratorReceiptV1 { .. }) = event else { continue; };
         let duplicated = match event {
             E::CuratorEnteredV1 {
                 entry_history_index: entry,

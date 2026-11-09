@@ -309,16 +309,13 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
     for (index, entry) in state
         .engine
         .event_history
-        .scan_for_v1(&[
-            crate::event_history_v1::EventKindV1::KykarExiledV1,
-            crate::event_history_v1::EventKindV1::KykarDelayedCollectedV1,
-        ])
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::KykarExiledV1])
         .iter()
         .enumerate()
     {
-        if !matches!(entry, E::KykarExiledV1 { .. }) {
+        let E::KykarExiledV1 { .. } = entry else {
             continue;
-        }
+        };
         let index = u64::try_from(index).map_err(|_| "Kykar history width")?;
         let (source, exiled, owner) = native::validate_schedule(state, index)?;
         let collected = state.engine.event_history.iter().filter(|entry|

@@ -415,20 +415,20 @@ pub(crate) fn record_tokens(state: &mut GameState, capture: u64) -> Result<(), S
 }
 
 pub(crate) fn validate_combat_links(state: &GameState) -> Result<(), String> {
-    use EventKindV1 as K;
     let history = &state.engine.event_history;
     for (index, row) in history
         .scan_for_v1(&[
-            K::LathrilCombatCollectedV1,
-            K::LathrilCombatPublishedV1,
-            K::LathrilCombatResolvedV1,
-            K::LathrilCombatCounteredV1,
-            K::LathrilCombatObservedV1,
-            K::LathrilReceiptV1,
+            EventKindV1::LathrilCombatCollectedV1,
+            EventKindV1::LathrilCombatPublishedV1,
+            EventKindV1::LathrilCombatResolvedV1,
+            EventKindV1::LathrilCombatCounteredV1,
+            EventKindV1::LathrilCombatObservedV1,
+            EventKindV1::LathrilReceiptV1,
         ])
         .iter()
         .enumerate()
     {
+        let (E::LathrilCombatCollectedV1 { .. } | E::LathrilCombatPublishedV1 { .. } | E::LathrilCombatResolvedV1 { .. } | E::LathrilCombatCounteredV1 { .. } | E::LathrilCombatObservedV1 { .. } | E::LathrilReceiptV1 { .. }) = row else { continue; };
         let capture = match row {
             E::LathrilCombatCollectedV1 {
                 capture_history_index,
