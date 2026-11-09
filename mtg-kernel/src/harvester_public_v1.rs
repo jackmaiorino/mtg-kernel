@@ -190,7 +190,7 @@ fn activations(state: &GameState, viewer: PlayerId) -> Result<Vec<ActivationV1>,
                 .v4
                 .ability_source_contract
                 .ok_or("Harvester original activation source absent")?;
-            let mut root = public::root(state, source, Some(viewer))?;
+            let mut root = public::archived_root(state, row.publication_at, source, Some(viewer))?;
             root.original_source.identity = IdentityV1::Known { card_id: PRINTING };
             let [StackTargetContractV4::Object { controller, .. }] =
                 item.v4.target_contracts.as_slice()

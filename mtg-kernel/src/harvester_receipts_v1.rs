@@ -89,10 +89,7 @@ pub(crate) fn selected(item: &StackItem) -> bool {
         && item.inline_effect.as_ref().is_some_and(native::recipe)
 }
 
-fn shape(
-    state: &GameState,
-    item: &StackItem,
-) -> Result<(AbilitySourceContractV4, StackTargetContractV4), String> {
+fn shape(item: &StackItem) -> Result<(AbilitySourceContractV4, StackTargetContractV4), String> {
     let source = item
         .v4
         .ability_source_contract
@@ -122,7 +119,6 @@ fn shape(
     {
         return Err("Harvester paid ability changed exact printing, target or controller".into());
     }
-    crate::engine::validate_historical_ability_source_contract(state, source)?;
     Ok((source, *target))
 }
 
@@ -132,7 +128,8 @@ pub(crate) fn record_published(state: &mut GameState, payment_start: usize) -> R
     }
     let item = state.stack.last().filter(|item| selected(item)).cloned();
     let Some(item) = item else { return Ok(()) };
-    let (source, target) = shape(state, &item)?;
+    let (source, target) = shape(&item)?;
+    crate::engine::validate_historical_ability_source_contract(state, source)?;
     let StackTargetContractV4::Object {
         object,
         card_def,
@@ -328,6 +325,7 @@ impl OperationV1 {
 }
 
 pub(crate) struct OperationSet<'a> {
+    pub publication_at: usize,
     pub publication: &'a PublishedV1,
     pub target_entry: native::GraveyardEntryV1,
     pub moves: Vec<MoveV1>,
@@ -402,7 +400,8 @@ pub(crate) fn operations(state: &GameState) -> Result<Vec<OperationSet<'_>>, Str
         let (published_at, publication) = row
             .publication
             .ok_or("Harvester operation lacks native publication")?;
-        let (source, target) = shape(state, &publication.item)?;
+        let (source, target) = shape(&publication.item)?;
+        crate::sampled_history_v1::validate_source(state, published_at, source)?;
         let StackTargetContractV4::Object {
             object,
             owner,
@@ -597,6 +596,7 @@ pub(crate) fn operations(state: &GameState) -> Result<Vec<OperationSet<'_>>, Str
             }
         }
         output.push(OperationSet {
+            publication_at: published_at,
             publication,
             target_entry,
             moves,

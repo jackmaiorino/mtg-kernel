@@ -10455,7 +10455,8 @@ pub(crate) fn lathril_damage_v1(
         || !is_lathril_v1(source.card_def)
         || state.objects.try_get(source.source).is_none_or(|object| {
             object.owner != source.owner
-                || !crate::engine::source_card_def_matches(state, *source, object.card_def)
+                || (!crate::engine::source_card_def_matches(state, *source, object.card_def)
+                    && !crate::sampled_history_v1::allows_rebound_source(state, index, *source))
                 || object.zone_change_count < source.zone_change_count
                 || (object.zone_change_count == source.zone_change_count
                     && object.zone != source.zone)
