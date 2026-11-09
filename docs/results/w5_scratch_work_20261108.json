@@ -15,7 +15,7 @@
    "commit": "c6329d868ad32467b22a411018894a6eae65205c",
    "files": {"chains.py": "afdf32796df049be532d58d5eeb22b3d9d32f44eb8cd72df7fdac0b4d5715f15", "retention.py": "446f231d05b862488262d497dc18031587908e291539e475a44cd960230a7bb4"},
    "dirty_paths": [],
-   "note": "main has since moved to 23a614c32fa77e57ecf43e4e33ab2960c39acb96 with no change under tools/w5"
+   "note": "main has since moved to c1796ead354dce1a7f84b6084e512d6587e1fa0a (#592 and #602 merged); its reap, persist, compress_config and helpers are syntax-tree identical to A and its scratch_settle to B"
   },
   "B": {
    "tree": "#602 head (T6)",

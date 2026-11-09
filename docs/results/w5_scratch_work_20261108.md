@@ -109,7 +109,9 @@ the paired runs measure this host's spread. Every verdict is inconclusive, so th
 - Bench `a820e75f10a54e84a955e23dedf66c17589e99bb` (`scratch_bench.py` sha256 `46478509...3985`), clean tree.
   A = main `c6329d868ad32467b22a411018894a6eae65205c`. B = #602 head
   `87ae0de6a1593f2a24d06300940d7e172c3d3623`. Each receipt pins its trees' `chains.py` and `retention.py` hashes.
-  Main has since moved to `23a614c32fa77e57ecf43e4e33ab2960c39acb96` with no change under `tools/w5`.
+  Main has since moved to `c1796ead354dce1a7f84b6084e512d6587e1fa0a` (#592 and #602 merged). Its `reap`,
+  `persist`, `compress_config` and their helpers are syntax-tree identical to A's and its `scratch_settle` to B's,
+  so these numbers describe current main.
 - Host: Intel Xeon @ 2.10 GHz, 4 vCPU KVM guest, 15.7 GiB, Linux 6.18.44, glibc 2.39, Python 3.13.18. Scratch was
   tmpfs (`/dev/shm`). The work directory was ext4 on a virtio disk (`/dev/vda`, `relatime,discard`). No Rust build
   is involved. Seed 601.
