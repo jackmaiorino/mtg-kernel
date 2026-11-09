@@ -109,14 +109,19 @@ class Scratch(unittest.TestCase):
     def test_settle_finishes_a_swap_and_resets_an_unfinished_segment(self):
         root = self.cdir.parent.parent
         seg1 = self.cdir / 'seg-00001'
+        iteration(self.target, 0)
+        write(self.target / 'completion.json', b'{}')
+        self.native.mkdir(parents=True)
+        self.mounts.add(self.native)
+        chains.persist(self.arm, self.native, self.cdir)
         tmp = self.cdir / '.seg-00000.persist'
-        write(tmp / 'completion.json', b'{}')
-        write(tmp / chains.PERSIST_MARKER, b'{}')
-        self.native.mkdir(parents=True)  # the empty directory an unmount leaves
+        self.native.rename(tmp)
+        self.native.mkdir()  # the empty directory an unmount leaves
         iteration(chains.scratch_dir(self.arm, self.cdir, seg1), 0)
         seg1.mkdir(parents=True)
         self.mounts.add(seg1)
-        man = {'segments': [{'root': self.native.as_posix()}, {'root': seg1.as_posix()}]}
+        man = {'segments': [{'root': p.as_posix(), 'offset': i, 'updates': 1}
+                            for i, p in enumerate((self.native, seg1))]}
         with mock.patch.object(chains, 'log'):
             chains.scratch_settle(self.arm, root, self.cdir, man)
         self.assertTrue((self.native / 'completion.json').exists())
@@ -477,6 +482,17 @@ class ScratchStagePinRecovery(unittest.TestCase):
                 self.assertIsNotNone(error, 'corrupted stage was not refused')
                 self.assertIn('kept pins' if omit_pin else 'differs from its pin', error)
                 self.assertEqual({p: p.read_bytes() for p in stage.rglob('*') if p.is_file()}, expected_stage)
+
+    def test_valid_stage_promotes_checkpoint_and_s_container(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args, native, stage, _ = self.interrupted_swap(Path(directory))
+            pins = chains.read(stage / chains.PERSIST_MARKER)['kept']
+            self.assertEqual({Path(p).name for p in pins}, {'checkpoint.json', 's-train-state.bin'})
+            self.settle(args)
+            self.assertFalse(stage.exists())
+            for path, digest in pins.items():
+                self.assertEqual(chains.sha(native / path), digest)
+            self.assertEqual(chains.committed_through(args[2]), 2)
 
     def test_empty_marked_wall_cut_keeps_previous_boundary(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -940,6 +940,57 @@ def reap(native):
     return n
 
 
+def scratch_kept_pins(newest, read_record):
+    """The newest complete receipt and its update name the full retained state."""
+    if newest is None:
+        return {}
+    complete = read_record(newest / 'complete.json')
+    update = attempt_dir(newest, complete) / 'update'
+    doc = read_record(update / 'update.json')
+    keep = {update / 'checkpoint.json': complete['output_identity']['checkpoint_sha256']}
+    state = retention.state_pin(doc)
+    if state is not None:
+        name = Path(state['path']).name
+        require(name not in ('', '.', '..', 'checkpoint.json'), f'invalid S container name in {update}')
+        keep[update / name] = state['sha256']
+    return keep
+
+
+def validate_scratch_stage(stage):
+    """Authenticate retained state before promoting an interrupted copy."""
+    def staged(path):
+        rel = path.relative_to(stage)
+        require('..' not in rel.parts and not any(is_link(stage / p) for p in (rel, *rel.parents)),
+                f'{path} leaves the scratch stage or uses a link')
+        return path
+
+    def read_record(path):
+        path = staged(path)
+        require(path.is_file(), f'{path} is missing from the scratch stage')
+        return read(path)
+
+    try:
+        marker = read_record(stage / PERSIST_MARKER)
+        its = staged(stage / 'iterations')
+        done = []
+        if its.exists():
+            for iteration in sorted(its.iterdir()):
+                complete = staged(iteration / 'complete.json')
+                if complete.exists():
+                    require(complete.is_file(), f'invalid completed receipt {complete}')
+                    done.append(iteration)
+        require([p.name for p in done] == [f'{i:06d}' for i in range(len(done))],
+                f'{stage} has a noncontiguous completed iteration prefix')
+        keep = scratch_kept_pins(done[-1] if done else None, read_record)
+        expected = {staged(path).relative_to(stage).as_posix(): digest for path, digest in keep.items()}
+        require(isinstance(marker, dict) and marker.get('kept') == expected,
+                f'{stage} marker kept pins differ from its newest completed state')
+        for path, digest in keep.items():
+            require(path.is_file() and sha(path) == digest, f'{path} is missing or differs from its pin')
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError) as exc:
+        raise Stop(f'{stage} cannot be validated for scratch recovery: {exc}') from exc
+
+
 def persist(arm, native, cdir):
     """Copies a scratch segment's records and its newest checkpoint to the root's volume and swaps the copy in at
     the segment's path. Returns the bytes copied."""
@@ -949,16 +1000,7 @@ def persist(arm, native, cdir):
     reap(native)
     its = target / 'iterations'
     done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists()) if its.exists() else []
-    newest = done[-1] if done else None
-    keep = {}  # the newest full train state: relative path -> pinned sha256 (checkpoint, and an S container)
-    if newest is not None:
-        complete = read(newest / 'complete.json')
-        upd = attempt_dir(newest, complete) / 'update'
-        doc = read(upd / 'update.json')
-        keep[upd / 'checkpoint.json'] = complete['output_identity']['checkpoint_sha256']
-        state = retention.state_pin(doc)
-        if state is not None:
-            keep[upd / Path(state['path']).name] = state['sha256']
+    keep = scratch_kept_pins(done[-1] if done else None, read)
     tmp = Path(cdir) / f'.{native.name}.persist'
     shutil.rmtree(tmp, ignore_errors=True)
     copied, files = 0, []
@@ -1068,7 +1110,9 @@ def scratch_settle(arm, root, cdir, man, instance=None):
         native = Path(seg['root'])
         tmp = cdir / f'.{native.name}.persist'
         if tmp.exists() and not mounted(native) and (not native.exists() or not any(native.iterdir())):
-            if (tmp / PERSIST_MARKER).exists():
+            marker = tmp / PERSIST_MARKER
+            if marker.exists() or is_link(marker):
+                validate_scratch_stage(tmp)
                 with retention.index_lock(cdir / 'chain.json'):
                     os.rename(tmp, native)  # the driver stopped between the unmount and the rename
                     fsync_path(native.parent)  # as persist: the rename is durable before the commit names it
