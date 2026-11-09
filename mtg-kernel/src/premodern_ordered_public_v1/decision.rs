@@ -25,7 +25,9 @@ pub struct NumericNativeActionV1 {
 pub enum NumericMenuV1 {
     /// The actual ordered menu is in `observation.ordered.order_choice`.
     GraveyardOrder,
-    Native { actions: Vec<NumericNativeActionV1> },
+    Native {
+        actions: Vec<NumericNativeActionV1>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -98,8 +100,8 @@ pub fn advance_numeric<'a>(
         .ok_or("Premodern native decision has no actor")?;
     // Check the owning observation before offering any action. Other native
     // guards can refuse worlds outside this observation's scope.
-    let view =
-        rl::observe_premodern_ordered_v1(state, surface, actor, step_index).map_err(|e| e.to_string())?;
+    let view = rl::observe_premodern_ordered_v1(state, surface, actor, step_index)
+        .map_err(|e| e.to_string())?;
     let menu = if let Some(choice) = view.ordered.order_choice {
         let SurfaceDecision::Decision(Decision::ChooseEffectTargets {
             legal_targets,
@@ -109,12 +111,10 @@ pub fn advance_numeric<'a>(
         else {
             return Err("Premodern order is missing its actual native decision".into());
         };
-        if !legal_targets
+        if !legal_targets.iter().copied().eq(choice
+            .native_candidates
             .iter()
-            .copied()
-            .eq(choice.native_candidates.iter().map(|card| {
-                Target::Object(crate::ids::ObjectId(card.arena_id))
-            }))
+            .map(|card| Target::Object(crate::ids::ObjectId(card.arena_id))))
         {
             return Err("Premodern order differs from its actual native menu".into());
         }
@@ -261,8 +261,9 @@ fn activation_program<'a>(
         return None;
     };
     let text = full_text_v1::active_text(state, crate::ids::ObjectId(source.arena_id))?;
-    let program = FullTextAbilityV1::from_action_index(*ability_index, text.first_donated_slot(state))?
-        .public_program(text.definition())?;
+    let program =
+        FullTextAbilityV1::from_action_index(*ability_index, text.first_donated_slot(state))?
+            .public_program(text.definition())?;
     Some((source, program))
 }
 

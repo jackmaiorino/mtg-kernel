@@ -612,18 +612,25 @@ mod tests {
                 else {
                     panic!("expected native main-phase actions");
                 };
-                let Some(NumericMenuV1::Native { actions }) = native.view(owner).unwrap().menu else {
+                let Some(NumericMenuV1::Native { actions }) = native.view(owner).unwrap().menu
+                else {
                     panic!("expected ordinary actions after graveyard order");
                 };
                 let (index, action) = actions
                     .iter()
                     .enumerate()
-                    .find(|(_, row)| matches!(row.action.semantic, rl::ActionSemanticV1::PlayLand { .. }))
+                    .find(|(_, row)| {
+                        matches!(row.action.semantic, rl::ActionSemanticV1::PlayLand { .. })
+                    })
                     .unwrap();
-                assert!(native.choose_native(owner, 17, index, &action.action.stable_id).is_err());
+                assert!(native
+                    .choose_native(owner, 17, index, &action.action.stable_id)
+                    .is_err());
                 assert!(native.choose_native(owner, 18, index, "wrong-id").is_err());
                 assert!(native.choose_human_full_text(owner, 18, index).is_err());
-                native.choose_native(owner, 18, index, &action.action.stable_id).unwrap();
+                native
+                    .choose_native(owner, 18, index, &action.action.stable_id)
+                    .unwrap();
                 assert!(native.view(owner).is_err());
             }
             assert_eq!(b.players[owner.index()].battlefield.len(), 1);

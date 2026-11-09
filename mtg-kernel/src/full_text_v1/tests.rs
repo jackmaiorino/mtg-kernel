@@ -889,8 +889,8 @@ fn donated_hermit_druid_pays_the_host_and_uses_the_selected_graveyard_top() {
         );
         let surface = crate::surface_v2::HarnessSurfaceV2::new();
         for viewer in [player, player.opponent()] {
-            let numeric = crate::rl::observe_premodern_ordered_v1(&state, &surface, viewer, 0)
-                .unwrap();
+            let numeric =
+                crate::rl::observe_premodern_ordered_v1(&state, &surface, viewer, 0).unwrap();
             let [producer] = numeric.ordered.producers.as_slice() else {
                 panic!("expected the actual donated activation");
             };
