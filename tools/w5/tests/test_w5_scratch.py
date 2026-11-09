@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -550,6 +551,57 @@ class ScratchStagePinRecovery(unittest.TestCase):
                     self.assertFalse(end.exists())
                 else:
                     self.assertEqual(chains.read(end)['last_valid_boundary'], 2)
+
+    def external_end(self, args, route, boundary=None):
+        _, root, cdir, man = args
+        plan = {'root': str(root), 'label': 'fixture', 'chains': {'c1': {'arm': 'C'}}, 'pairs': {}}
+        write(cdir / 'chain.json', json.dumps(man).encode())
+        write(root / 'plan' / 'fixture' / 'LAUNCHED.json', b'{}')
+        command = SimpleNamespace(plan='fixture', chain='c1', boundary=boundary, reason='fixture',
+                                  qualification=None, accept_lower_bound=False)
+        with mock.patch.object(chains, 'load_plan', return_value=plan), \
+                mock.patch.object(chains, 'mounted', return_value=False), \
+                mock.patch.object(chains, 'log'), mock.patch('builtins.print'):
+            if route == 'operator':
+                return chains.end_cmd(command)
+            if route == 'supervise':
+                with mock.patch.object(chains, 'oom_closed', return_value=True):
+                    return chains.end_oom_failures(plan, root)
+            with mock.patch.object(chains, 'w5box_plan', return_value='fixture'), \
+                    mock.patch.object(chains.subprocess, 'call', return_value=chains.w5box.EXIT_OOM):
+                return chains.run(command)
+
+    def test_corrupted_promoted_scratch_cannot_be_named_by_external_end(self):
+        for route in ('operator', 'supervise', 'run'):
+            with self.subTest(route=route), tempfile.TemporaryDirectory() as directory:
+                args, native, stage, retained = self.interrupted_swap(Path(directory))
+                stage.rename(native)
+                pins = chains.read(native / chains.PERSIST_MARKER)['kept']
+                checkpoint = native / next(p for p in pins if Path(p).name == 'checkpoint.json')
+                checkpoint.write_bytes(b'corrupt')
+                error = None
+                try:
+                    self.external_end(args, route)
+                except chains.Stop as exc:
+                    error = str(exc)
+                self.assertFalse((args[2] / 'END.json').exists(), 'external END named corrupted scratch')
+                self.assertIsNotNone(error)
+                self.assertIn('differs from its pin', error)
+                for p, expected in retained.items():
+                    self.assertEqual(p.read_bytes(), expected)
+                self.assertEqual(checkpoint.read_bytes(), b'corrupt')
+
+    def test_operator_can_end_at_logged_boundary_before_corrupted_promoted_scratch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args, native, stage, retained = self.interrupted_swap(Path(directory))
+            stage.rename(native)
+            corrupt = native / 'iterations' / '000000' / 'complete.json'
+            corrupt.write_bytes(b'corrupt later receipt')
+            self.assertEqual(self.external_end(args, 'operator', boundary=1), 0)
+            self.assertEqual(chains.read(args[2] / 'END.json')['last_valid_boundary'], 1)
+            for p, expected in retained.items():
+                self.assertEqual(p.read_bytes(), expected)
+            self.assertEqual(corrupt.read_bytes(), b'corrupt later receipt')
 
     def test_valid_stage_promotes_checkpoint_and_s_container(self):
         with tempfile.TemporaryDirectory() as directory:
