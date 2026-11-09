@@ -320,7 +320,7 @@ pub(crate) fn validate_candidate_order<'a>(
         return Ok(());
     };
     let actions: Vec<_> = actions.collect();
-    let annotations = actions.iter().map(|row| action(Some(facts), row));
+    let mut annotations = actions.iter().map(|row| action(Some(facts), row));
     let valid = match choice {
         ChoiceV1::PayX { maximum, .. } => {
             annotations.eq((0..=*maximum).map(|x| Some(ActionV1::PayX { x })))
@@ -341,7 +341,7 @@ pub(crate) fn validate_candidate_order<'a>(
                         if binds(expected, object)
                 ) && action(Some(facts), row) == Some(ActionV1::ChooseCreature)
             })
-                && annotations.last()
+                && annotations.next_back()
                     == Some(Some(ActionV1::FinishSearch {
                         selected_creature: !selected.is_empty(),
                     }))

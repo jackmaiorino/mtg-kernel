@@ -586,9 +586,7 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
         .as_ref()
         .filter(|pending| native::pending_selected(state, pending))
         .and_then(|pending| {
-            let Some(choice) = pending.choice.as_ref() else {
-                return None;
-            };
+            let choice = pending.choice.as_ref()?;
             Some((pending, choice))
         })
         .map(|(pending, choice)| -> Result<Option<ChoiceV1>, String> {

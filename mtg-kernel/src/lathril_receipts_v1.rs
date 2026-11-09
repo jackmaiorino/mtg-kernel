@@ -705,7 +705,9 @@ pub(crate) fn record_paid(
     Ok(())
 }
 
-fn paid(state: &GameState, id: StackItemId) -> Result<Option<(usize, &StackItem, &[u16])>, String> {
+type PaidActivationV1<'a> = (usize, &'a StackItem, &'a [u16]);
+
+fn paid(state: &GameState, id: StackItemId) -> Result<Option<PaidActivationV1<'_>>, String> {
     let mut matched = records(state).filter_map(|(position, journal)| match journal {
         JournalV1::Paid {
             item,

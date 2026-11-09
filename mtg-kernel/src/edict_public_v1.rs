@@ -325,7 +325,7 @@ pub(crate) fn validate_native(state: &GameState) -> Result<(), String> {
                 .v4
                 .source_contract
                 .is_some_and(|source| native::is_printing(source.card_def))
-            && !pending.is_some_and(|pending| pending.spell == item.source)
+            && pending.is_none_or(|pending| pending.spell != item.source)
         {
             native::payment_for(state, item)?;
         }

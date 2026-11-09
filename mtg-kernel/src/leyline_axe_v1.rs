@@ -558,13 +558,15 @@ pub(crate) fn require_legacy_absence(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 
+type VisibleOpeningV1 = (Option<ObjectLinkV4>, Vec<(PlayerId, ObjectLinkV4)>);
+
 /// The current chooser's source and the public entries made through this
 /// opening procedure. Keep the original roster, declines, and raw ordinals in
 /// the native checkpoint. The same proof is checked before every native answer.
 pub(crate) fn visible_opening_v1(
     state: &GameState,
     viewer: PlayerId,
-) -> Result<(Option<ObjectLinkV4>, Vec<(PlayerId, ObjectLinkV4)>), String> {
+) -> Result<VisibleOpeningV1, String> {
     validate(state)?;
     let current = if let Some(opening) = state.leyline_opening_v1 {
         input(state, opening.input_history_index)?
