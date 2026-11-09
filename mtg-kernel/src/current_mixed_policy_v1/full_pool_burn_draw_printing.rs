@@ -1,14 +1,15 @@
-//! Complete printed meanings for the two FullPool-only ordinary cast routes.
+//! Complete printed meanings for selected FullPool-only ordinary cast routes.
 use super::{Error, Result};
 use crate::{
     card_def::{
-        CardCapability, CardDef, CardType, CombatStaticRulesDef, Keywords, Subtype, TargetSpec,
-        CARD_DEFS,
+        CardCapability, CardDef, CardType, CombatStaticRulesDef, CostComponent, Keywords,
+        PermanentFilter, Subtype, TargetSpec, CARD_DEFS,
     },
-    effect::{CreatureFilter, EffectOp, ObjectRef, TargetRef},
+    effect::{CreatureFilter, EffectCond, EffectOp, ObjectRef, PlayerRef, TargetRef},
     mana::{Cost, ManaColor, Pip},
     scrawling_crawler_public_v1::{TriggerV1, NAME as CRAWLER},
     state::Zone,
+    trigger::{self, TriggerCondition},
 };
 use serde_json::{json, Value};
 
@@ -25,6 +26,8 @@ fn printing_for(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let body = match d.name {
         SLAGSTORM => slagstorm(id, d)?,
         CRAWLER => crawler(id, d)?,
+        "Arbiter of Woe" => arbiter(id, d)?,
+        "Needletooth Pack" => needletooth(id, d)?,
         _ => return Ok(None),
     };
     if crate::card_def::card_id_by_name(d.name) != Some(id)
@@ -39,7 +42,7 @@ fn printing_for(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "schema": "full-pool-ordinary-printing/v1",
             "cost": d.cost, "mana_value": d.mana_value, "types": d.types,
             "subtypes": d.subtypes, "supertypes": d.supertypes, "colors": d.colors,
-            "power": d.power, "toughness": d.toughness, "keywords": 0,
+            "power": d.power, "toughness": d.toughness, "keywords": d.keywords.0,
             "cast_route": {
                 "method": "Normal", "origin": "OwnHand", "timing": "SorceryWithPriority",
                 "pay_printed_mana": true, "target_count": 0,
@@ -84,7 +87,7 @@ fn common_shape(d: &CardDef) -> bool {
             mana_ability: _,
             alt_cost: None,
             kicker_cost: None,
-            additional_cost: None,
+            additional_cost: _,
             flashback: None,
             activated_abilities: [],
             plot_cost: None,
@@ -100,7 +103,7 @@ fn common_shape(d: &CardDef) -> bool {
             mana_ability_def: None,
             minimum_blockers: 1,
             omen: None,
-            mana_value: 3,
+            mana_value: _,
             mana_ability_includes_chosen_color: false,
             as_enters_choose_color_other_than: None,
             additional_mana_abilities: [],
@@ -134,8 +137,7 @@ fn common_shape(d: &CardDef) -> bool {
             other_controlled_nontoken_death_v1: None,
             creature_type_entry_v1: None,
         }
-    ) && d.keywords == Keywords::NONE
-        && (d.mana_ability)().is_none()
+    ) && (d.mana_ability)().is_none()
 }
 
 fn slagstorm(id: u16, d: &CardDef) -> Result<Value> {
@@ -145,6 +147,9 @@ fn slagstorm(id: u16, d: &CardDef) -> Result<Value> {
         x_count: 0,
     };
     if d.cost != cost
+        || d.mana_value != 3
+        || d.keywords != Keywords::NONE
+        || d.additional_cost.is_some()
         || d.types != [CardType::Sorcery]
         || !d.subtypes.is_empty()
         || d.colors != [ManaColor::R]
@@ -194,6 +199,9 @@ fn crawler(id: u16, d: &CardDef) -> Result<Value> {
         x_count: 0,
     };
     if d.cost != cost
+        || d.mana_value != 3
+        || d.keywords != Keywords::NONE
+        || d.additional_cost.is_some()
         || d.types != [CardType::Artifact, CardType::Creature]
         || d.subtypes != [Subtype::Phyrexian, Subtype::Construct]
         || !d.colors.is_empty()
@@ -223,5 +231,108 @@ fn crawler(id: u16, d: &CardDef) -> Result<Value> {
         "triggers_mandatory_untargeted": true,
         "trigger_controller_frozen_on_collection": true,
         "active_printed_trigger_source": "FaceUpBattlefieldWithAbilities",
+    }))
+}
+
+fn has_trigger(id: u16, condition: TriggerCondition, target: TargetSpec, effect: EffectOp) -> bool {
+    let [ability] = trigger::triggers_for(id) else {
+        return false;
+    };
+    ability.condition == condition
+        && ability.home_zone == Zone::Battlefield
+        && ability.face_index == 0
+        && !ability.intervening_if_kicked
+        && !ability.intervening_if_controls_another_source_card
+        && (ability.effect)() == effect
+        && trigger::target_spec_for_trigger(id, &effect) == Some(target)
+}
+
+fn enters_as_creature(d: &CardDef) -> bool {
+    d.types == [CardType::Creature]
+        && d.mode2.is_none()
+        && (d.spell_effect)() == Some(EffectOp::MoveObject {
+            object: ObjectRef::ThisSource,
+            to_zone: Zone::Battlefield,
+        })
+}
+
+fn arbiter(id: u16, d: &CardDef) -> Result<Value> {
+    let effect = EffectOp::Sequence(vec![
+        EffectOp::DiscardCards { player: PlayerRef::Opponent, count: 1 },
+        EffectOp::LoseLife { player: PlayerRef::Opponent, amount: 2 },
+        EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 },
+        EffectOp::GainLife { player: PlayerRef::Controller, amount: 2 },
+    ]);
+    if d.cost != (Cost {
+        generic: 4, pips: &[Pip::Colored(ManaColor::B), Pip::Colored(ManaColor::B)], x_count: 0,
+    })
+        || d.mana_value != 6
+        || d.subtypes != [Subtype::Demon]
+        || d.colors != [ManaColor::B]
+        || d.power != Some(5)
+        || d.toughness != Some(4)
+        || d.keywords != Keywords::FLYING
+        || !matches!(d.additional_cost, Some([CostComponent::SacrificeControlled {
+            count: 1, filter: PermanentFilter::Creature
+        }]))
+        || !enters_as_creature(d)
+        || !has_trigger(id, TriggerCondition::Etb, TargetSpec::None, effect)
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    Ok(json!({
+        "resolution_destination": "BattlefieldUnderSpellController",
+        "mandatory_additional_cast_cost": {
+            "operation": "Sacrifice", "controller": "Caster", "permanent_type": "Creature", "count": 1,
+            "choose_and_pay_before_publication": true, "remains_required_with_other_cast_permissions": true,
+        },
+        "trigger": {
+            "when": "ThisPermanentEntersBattlefield", "mandatory": true, "target_count": 0,
+            "ordered_resolution": [
+                {"operation": "Discard", "player": "Opponent", "count": 1,
+                 "chooser": "DiscardingPlayer", "up_to_hand_size": true},
+                {"operation": "LoseLife", "player": "Opponent", "amount": 2},
+                {"operation": "Draw", "player": "Controller", "count": 1},
+                {"operation": "GainLife", "player": "Controller", "amount": 2},
+            ],
+            "continues_after_discard_choice_or_empty_hand": true,
+            "original_trigger_controller_retained": true,
+        },
+    }))
+}
+
+fn needletooth(id: u16, d: &CardDef) -> Result<Value> {
+    let effect = EffectOp::Conditional {
+        cond: EffectCond::CreatureDiedThisTurn,
+        then: Box::new(EffectOp::AddPlusOnePlusOneCounters { object: ObjectRef::Target(0), count: 2 }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    };
+    if d.cost != (Cost {
+        generic: 3, pips: &[Pip::Colored(ManaColor::G), Pip::Colored(ManaColor::G)], x_count: 0,
+    })
+        || d.mana_value != 5
+        || d.subtypes != [Subtype::Dinosaur]
+        || d.colors != [ManaColor::G]
+        || d.power != Some(4)
+        || d.toughness != Some(5)
+        || d.keywords != Keywords::NONE
+        || d.additional_cost.is_some()
+        || !enters_as_creature(d)
+        || !has_trigger(id, TriggerCondition::BeginningControllerEndStepIfCreatureDied, TargetSpec::ControlledCreature, effect)
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    Ok(json!({
+        "resolution_destination": "BattlefieldUnderSpellController",
+        "trigger": {
+            "when": "BeginningOfControllersEndStep",
+            "intervening_if": "AnyCreatureDiedThisTurn", "check_at_collection_and_resolution": true,
+            "mandatory": true, "target_count": 1, "target_slot": 0,
+            "target_kind": "ControlledCreature", "source_itself_eligible": true,
+            "recheck_original_incarnation_and_target_legality_at_resolution": true,
+            "ordered_resolution": [
+                {"operation": "AddPlusOnePlusOneCounters", "target_slot": 0, "count": 2},
+            ],
+        },
     }))
 }
