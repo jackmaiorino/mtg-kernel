@@ -11,12 +11,12 @@ mod attack_trigger_printing;
 mod counter_return_creature_printing;
 #[path = "discard_cost_spell_printing.rs"]
 mod discard_cost_spell_printing;
+#[path = "full_pool_burn_draw_printing.rs"]
+mod full_pool_burn_draw_printing;
 #[path = "utility_activation_printing.rs"]
 mod utility_activation_printing;
 #[path = "ward_discount_creature_printing.rs"]
 mod ward_discount_creature_printing;
-#[path = "full_pool_burn_draw_printing.rs"]
-mod full_pool_burn_draw_printing;
 
 #[path = "bloodwitch_printing.rs"]
 mod bloodwitch_printing;

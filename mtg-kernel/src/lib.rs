@@ -1013,7 +1013,6 @@ mod flamewake_phoenix_v1;
 
 pub mod drake_public_v53;
 pub mod optional_trigger_public_v1;
-pub mod scrawling_crawler_public_v1;
 mod optional_trigger_source_v1;
 #[cfg(all(
     test,
@@ -1025,6 +1024,7 @@ pub mod quandary_public_v55;
 pub mod rules_meaning_drake_hatcher_v53;
 pub mod rules_meaning_quandary_v55;
 pub mod rules_meaning_spinner_v54;
+pub mod scrawling_crawler_public_v1;
 pub mod spinner_public_v54;
 
 pub mod alesha_v1;

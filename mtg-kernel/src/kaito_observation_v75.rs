@@ -938,7 +938,12 @@ pub(crate) fn observe_parts_v75(
     };
     common.projection_sha256 = crate::elenda_observation_v52::commitment(&common)?;
     let scrawling_crawler = (appendix == LimitedAppendixV1::FullPool)
-        .then(|| crate::scrawling_crawler_public_v1::FactsV1::capture(state, &common.common.projection.surface))
+        .then(|| {
+            crate::scrawling_crawler_public_v1::FactsV1::capture(
+                state,
+                &common.common.projection.surface,
+            )
+        })
         .transpose()
         .map_err(RlContractError)?;
     let mut value = KaitoObservationV75 {
@@ -1207,9 +1212,15 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
         value.schema == crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA,
         &value.scrawling_crawler,
     ) {
-        (true, Some(facts)) => facts.validate(&value.common.common.projection.surface).map_err(RlContractError)?,
+        (true, Some(facts)) => facts
+            .validate(&value.common.common.projection.surface)
+            .map_err(RlContractError)?,
         (false, None) => {}
-        _ => return Err(RlContractError("Crawler facts require the FullPool observation schema".into())),
+        _ => {
+            return Err(RlContractError(
+                "Crawler facts require the FullPool observation schema".into(),
+            ))
+        }
     }
     let schema = match (
         &value.artist,

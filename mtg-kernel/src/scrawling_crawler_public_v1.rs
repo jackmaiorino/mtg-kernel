@@ -23,11 +23,26 @@ impl TriggerV1 {
     fn from_program(program: &EffectOp) -> Option<Self> {
         match program {
             EffectOp::Sequence(ops)
-                if matches!(ops.as_slice(), [
-                    EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 },
-                    EffectOp::DrawCards { player: PlayerRef::Opponent, count: 1 },
-                ]) => Some(Self::ControllerUpkeep),
-            EffectOp::LoseLife { player: PlayerRef::Opponent, amount: 1 } => Some(Self::OpponentDraw),
+                if matches!(
+                    ops.as_slice(),
+                    [
+                        EffectOp::DrawCards {
+                            player: PlayerRef::Controller,
+                            count: 1
+                        },
+                        EffectOp::DrawCards {
+                            player: PlayerRef::Opponent,
+                            count: 1
+                        },
+                    ]
+                ) =>
+            {
+                Some(Self::ControllerUpkeep)
+            }
+            EffectOp::LoseLife {
+                player: PlayerRef::Opponent,
+                amount: 1,
+            } => Some(Self::OpponentDraw),
             _ => None,
         }
     }
@@ -37,7 +52,10 @@ pub(crate) fn exact_triggers(id: u16) -> bool {
     let [upkeep, draw] = triggers_for(id) else {
         return false;
     };
-    upkeep.condition == (TriggerCondition::BeginningOfUpkeep { controller_only: true })
+    upkeep.condition
+        == (TriggerCondition::BeginningOfUpkeep {
+            controller_only: true,
+        })
         && draw.condition == TriggerCondition::OpponentDraws
         && [upkeep, draw].iter().all(|ability| {
             ability.home_zone == Zone::Battlefield
@@ -72,13 +90,24 @@ impl FactsV1 {
         state: &GameState,
         common: &PublicObservationProjectionV2,
     ) -> Result<Self, String> {
-        let mut facts = Self { stack: Vec::new(), pending: Vec::new() };
+        let mut facts = Self {
+            stack: Vec::new(),
+            pending: Vec::new(),
+        };
         for (index, row) in common.stack.iter().enumerate() {
-            if row.stack_item_kind != StackItemKindV2::TriggeredAbility || !pending_printing(row.source.card_db_id) {
+            if row.stack_item_kind != StackItemKindV2::TriggeredAbility
+                || !pending_printing(row.source.card_db_id)
+            {
                 continue;
             }
-            let item = state.stack.get(index).ok_or("Crawler stack row lacks a native item")?;
-            let source = item.v4.ability_source_contract.ok_or("Crawler trigger lacks its native source contract")?;
+            let item = state
+                .stack
+                .get(index)
+                .ok_or("Crawler stack row lacks a native item")?;
+            let source = item
+                .v4
+                .ability_source_contract
+                .ok_or("Crawler trigger lacks its native source contract")?;
             if source.card_def != row.source.card_db_id
                 || source.source != item.source
                 || source.source.0 != row.source.arena_id
@@ -97,22 +126,39 @@ impl FactsV1 {
                 if !item.targets.is_empty() {
                     return Err("Crawler's printed trigger has targets".into());
                 }
-                item.inline_effect.as_ref().and_then(TriggerV1::from_program)
+                item.inline_effect
+                    .as_ref()
+                    .and_then(TriggerV1::from_program)
                     .ok_or("Crawler stack program is outside its printed triggers")?
             };
             facts.stack.push(IndexedTriggerV1 { index, trigger });
         }
         let native_pending = state.engine.pending_triggers.iter().chain(
-            state.pending_legend_rule_v1.iter().flat_map(|pending| pending.waiting_triggers())
+            state
+                .pending_legend_rule_v1
+                .iter()
+                .flat_map(|pending| pending.waiting_triggers()),
         );
-        for (index, (row, pending)) in common.engine_context.pending_triggers.iter().zip(native_pending).enumerate() {
-            let Some(public_source) = row.source.as_ref().filter(|source| pending_printing(source.card_db_id)) else {
+        for (index, (row, pending)) in common
+            .engine_context
+            .pending_triggers
+            .iter()
+            .zip(native_pending)
+            .enumerate()
+        {
+            let Some(public_source) = row
+                .source
+                .as_ref()
+                .filter(|source| pending_printing(source.card_db_id))
+            else {
                 continue;
             };
             if row.trigger_kind != PendingTriggerKindV2::TriggeredAbility {
                 continue;
             }
-            let source = pending.source_contract.ok_or("Crawler pending trigger lacks its native source contract")?;
+            let source = pending
+                .source_contract
+                .ok_or("Crawler pending trigger lacks its native source contract")?;
             if source.card_def != public_source.card_db_id
                 || source.source != pending.source
                 || source.source.0 != public_source.arena_id
@@ -140,14 +186,23 @@ impl FactsV1 {
 
     pub(crate) fn validate(&self, common: &PublicObservationProjectionV2) -> Result<(), String> {
         let stack = common.stack.iter().enumerate().filter_map(|(index, row)| {
-            (row.stack_item_kind == StackItemKindV2::TriggeredAbility && pending_printing(row.source.card_db_id))
-                .then_some(index)
+            (row.stack_item_kind == StackItemKindV2::TriggeredAbility
+                && pending_printing(row.source.card_db_id))
+            .then_some(index)
         });
-        let pending = common.engine_context.pending_triggers.iter().enumerate().filter_map(|(index, row)| {
-            (row.trigger_kind == PendingTriggerKindV2::TriggeredAbility
-                && row.source.as_ref().is_some_and(|source| pending_printing(source.card_db_id)))
+        let pending = common
+            .engine_context
+            .pending_triggers
+            .iter()
+            .enumerate()
+            .filter_map(|(index, row)| {
+                (row.trigger_kind == PendingTriggerKindV2::TriggeredAbility
+                    && row
+                        .source
+                        .as_ref()
+                        .is_some_and(|source| pending_printing(source.card_db_id)))
                 .then_some(index)
-        });
+            });
         if self.stack.iter().map(|row| row.index).ne(stack)
             || self.pending.iter().map(|row| row.index).ne(pending)
         {
