@@ -1440,22 +1440,31 @@ fn conflicts_in_scope(
     {
         return true;
     }
-    if state.engine.event_history.scan_for_v1(&[
-        EventKindV1::MuldrothaOptionsV1,
-        EventKindV1::MuldrothaSelectedV1,
-        EventKindV1::MuldrothaPlayedV1,
-    ]).iter().any(|event| matches!(event,
-        crate::event::CommittedEvent::MuldrothaOptionsV1 { .. }
-            | crate::event::CommittedEvent::MuldrothaSelectedV1 { .. }
-            | crate::event::CommittedEvent::MuldrothaPlayedV1 { .. }
-    )) && (!matches!(
-        scope,
-        ReferenceScopeV68::Muldrotha
-            | ReferenceScopeV68::Tinybones
-            | ReferenceScopeV68::Liliana
-            | ReferenceScopeV68::Chandra
-            | ReferenceScopeV68::Kaito
-    ) || crate::engine::muldrotha_v1::sampler_conflicts_v71(state, pool).unwrap_or(true))
+    if state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::MuldrothaOptionsV1,
+            EventKindV1::MuldrothaSelectedV1,
+            EventKindV1::MuldrothaPlayedV1,
+        ])
+        .iter()
+        .any(|event| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::MuldrothaOptionsV1 { .. }
+                    | crate::event::CommittedEvent::MuldrothaSelectedV1 { .. }
+                    | crate::event::CommittedEvent::MuldrothaPlayedV1 { .. }
+            )
+        })
+        && (!matches!(
+            scope,
+            ReferenceScopeV68::Muldrotha
+                | ReferenceScopeV68::Tinybones
+                | ReferenceScopeV68::Liliana
+                | ReferenceScopeV68::Chandra
+                | ReferenceScopeV68::Kaito
+        ) || crate::engine::muldrotha_v1::sampler_conflicts_v71(state, pool).unwrap_or(true))
     {
         return true;
     }
@@ -1480,7 +1489,12 @@ fn conflicts_in_scope(
         .event_history
         .scan_for_v1(&[EventKindV1::LilianaDreadhordeV1])
         .iter()
-        .any(|event| matches!(event, crate::event::CommittedEvent::LilianaDreadhordeV1 { .. }))
+        .any(|event| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::LilianaDreadhordeV1 { .. }
+            )
+        })
         && (!matches!(
             scope,
             ReferenceScopeV68::Liliana | ReferenceScopeV68::Chandra | ReferenceScopeV68::Kaito
@@ -1494,7 +1508,12 @@ fn conflicts_in_scope(
         .event_history
         .scan_for_v1(&[EventKindV1::ChandraFlameshaperV74])
         .iter()
-        .any(|event| matches!(event, crate::event::CommittedEvent::ChandraFlameshaperV74 { .. }))
+        .any(|event| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::ChandraFlameshaperV74 { .. }
+            )
+        })
         && (!matches!(scope, ReferenceScopeV68::Chandra | ReferenceScopeV68::Kaito)
             || crate::effect::chandra_flameshaper_v1::sampler_conflicts_v74(state, pool)
                 .unwrap_or(true))
