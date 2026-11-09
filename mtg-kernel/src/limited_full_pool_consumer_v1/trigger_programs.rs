@@ -87,7 +87,9 @@ impl ProgramV1 {
             Self::Granted => is_printing(id),
             Self::KioraDrawDiscard | Self::KioraThreshold => id == KIORA,
             Self::SylvanChooseMode | Self::SylvanCounter | Self::SylvanRaccoon => id == SYLVAN,
-            Self::WardensChooseMode | Self::WardensGainLife | Self::WardensDrawLoseLife => id == WARDENS,
+            Self::WardensChooseMode | Self::WardensGainLife | Self::WardensDrawLoseLife => {
+                id == WARDENS
+            }
         }
     }
 }

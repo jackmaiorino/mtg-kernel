@@ -22,8 +22,14 @@ fn token(name: &str) -> Option<EffectOp> {
 pub(crate) fn branches(root: ProgramV1) -> &'static [(TargetSpec, ProgramV1)] {
     use ProgramV1::*;
     match root {
-        SylvanChooseMode => &[(TargetSpec::ControlledCreature, SylvanCounter), (TargetSpec::None, SylvanRaccoon)],
-        WardensChooseMode => &[(TargetSpec::None, WardensGainLife), (TargetSpec::None, WardensDrawLoseLife)],
+        SylvanChooseMode => &[
+            (TargetSpec::ControlledCreature, SylvanCounter),
+            (TargetSpec::None, SylvanRaccoon),
+        ],
+        WardensChooseMode => &[
+            (TargetSpec::None, WardensGainLife),
+            (TargetSpec::None, WardensDrawLoseLife),
+        ],
         _ => &[],
     }
 }
@@ -33,23 +39,35 @@ pub(super) fn template(program: ProgramV1) -> Option<EffectOp> {
     let controller = PlayerRef::Controller;
     Some(match program {
         KioraDrawDiscard => EffectOp::Sequence(vec![
-            EffectOp::DrawCards { player: controller, count: 2 },
-            EffectOp::DiscardCards { player: controller, count: 2 },
+            EffectOp::DrawCards {
+                player: controller,
+                count: 2,
+            },
+            EffectOp::DiscardCards {
+                player: controller,
+                count: 2,
+            },
         ]),
         KioraThreshold => conditional(
             EffectCond::ControllerGraveyardCardCountAtLeast(7),
             EffectOp::Choice {
                 controller,
-                options: vec![EffectOp::Sequence(Vec::new()), token("Scion of the Deep Token")?],
+                options: vec![
+                    EffectOp::Sequence(Vec::new()),
+                    token("Scion of the Deep Token")?,
+                ],
             },
         ),
         SylvanChooseMode | WardensChooseMode => EffectOp::Choice {
             controller,
-            options: branches(program).iter()
-                .map(|(_, branch)| template(*branch)).collect::<Option<_>>()?,
+            options: branches(program)
+                .iter()
+                .map(|(_, branch)| template(*branch))
+                .collect::<Option<_>>()?,
         },
         SylvanCounter => EffectOp::AddPlusOnePlusOneCounters {
-            object: ObjectRef::Target(0), count: 1,
+            object: ObjectRef::Target(0),
+            count: 1,
         },
         SylvanRaccoon => conditional(
             EffectCond::ControlsCreaturePowerAtLeast(4),
@@ -57,13 +75,22 @@ pub(super) fn template(program: ProgramV1) -> Option<EffectOp> {
         ),
         WardensGainLife => conditional(
             EffectCond::CreatureDiedThisTurn,
-            EffectOp::GainLife { player: controller, amount: 2 },
+            EffectOp::GainLife {
+                player: controller,
+                amount: 2,
+            },
         ),
         WardensDrawLoseLife => conditional(
             EffectCond::CreatureDiedThisTurn,
             EffectOp::Sequence(vec![
-                EffectOp::DrawCards { player: controller, count: 1 },
-                EffectOp::LoseLife { player: controller, amount: 1 },
+                EffectOp::DrawCards {
+                    player: controller,
+                    count: 1,
+                },
+                EffectOp::LoseLife {
+                    player: controller,
+                    amount: 1,
+                },
             ]),
         ),
         _ => return None,
