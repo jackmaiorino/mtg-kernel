@@ -805,11 +805,16 @@ fn empty_library_draw_chooses_between_jace_and_hullbreacher() {
         act(&mut treasure, Action::FinishEffectSelection);
         settled(&mut treasure);
         assert_eq!(named(&treasure, opponent, "Treasure Token").len(), 1);
-        assert!(treasure.players.iter().all(|player| !player.has_lost && !player.drew_from_empty));
+        assert!(treasure
+            .players
+            .iter()
+            .all(|player| !player.has_lost && !player.drew_from_empty));
 
         for branch in [&mut state, &mut restored] {
             act(branch, Action::ChooseEffectTarget(Target::Object(jace)));
-            assert!(matches!(next(branch), Decision::GameOver { winner: Some(player) } if player == actor));
+            assert!(
+                matches!(next(branch), Decision::GameOver { winner: Some(player) } if player == actor)
+            );
             assert!(!branch.players[actor.index()].drew_from_empty);
             assert!(named(branch, opponent, "Treasure Token").is_empty());
         }

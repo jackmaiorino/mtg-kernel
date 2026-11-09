@@ -124,7 +124,14 @@ pub(crate) fn drive_draws(
                 path: path.clone(),
             });
         }
-        let choice = choice(state, drawer, kind, &cards, path, continuation.frames.clone());
+        let choice = choice(
+            state,
+            drawer,
+            kind,
+            &cards,
+            path,
+            continuation.frames.clone(),
+        );
         crate::eternal_cards_v1::e3::offer(continuation, choice);
         return Ok(true);
     }
@@ -261,7 +268,10 @@ pub(crate) fn validate_jace_or_hullbreacher(
 }
 
 fn jace_choice_kind(choice: &E3ChoiceV1) -> bool {
-    matches!(choice.kind, E3ChoiceKindV1::E7bV1(E7bChoiceV1::JaceOrHullbreacherV1))
+    matches!(
+        choice.kind,
+        E3ChoiceKindV1::E7bV1(E7bChoiceV1::JaceOrHullbreacherV1)
+    )
 }
 
 fn validate_jace_choice(
