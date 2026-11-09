@@ -404,12 +404,16 @@ jobs:
           cargo clippy --release --locked -p mtg-kernel --all-targets --features gameplay-decision-trace-v1 -- -D warnings
           cargo test --release --locked -p mtg-kernel --features gameplay-decision-trace-v1 --lib gameplay_trace
 
-      - name: Saved input scalar diagnostic guards
+      - name: Saved input and checkpoint diagnostic guards
         if: matrix.group == 'saved-input'
         run: |
-          cargo clippy --release --locked -p mtg-kernel --lib --bin saved_input_scalar_diagnostic --bin gameplay_checkpoint_reconstruction_v1 --features saved-input-scalar-diagnostic,gameplay-checkpoint-reconstruction-v1 -- -D warnings
-          cargo test --release --locked -p mtg-kernel --features saved-input-scalar-diagnostic,gameplay-checkpoint-reconstruction-v1 --lib saved_input_scalar_diagnostic::
-          cargo test --release --locked -p mtg-kernel --features gameplay-checkpoint-reconstruction-v1 --lib gameplay_checkpoint_reconstruction_v1::tests
+          features=saved-input-scalar-diagnostic,gameplay-checkpoint-reconstruction-v1,checkpoint-codec-bench-v1
+          cargo clippy --release --locked -p mtg-kernel --features "$features" --lib \
+            --bin saved_input_scalar_diagnostic --bin gameplay_checkpoint_reconstruction_v1 \
+            --example checkpoint_codec_bench_v1 -- -D warnings
+          python python/tools/run_rust_lib_filters.py --features "$features" \
+            saved_input_scalar_diagnostic:: gameplay_checkpoint_reconstruction_v1::tests \
+            checkpoint_codec_bench_v1::fixture_tests::
 
       - name: Validate native Store production feature boundary
         if: matrix.group == 'native-store'
