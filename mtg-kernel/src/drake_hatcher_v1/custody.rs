@@ -897,6 +897,18 @@ fn emit(state: &mut GameState, value: JournalV1) -> Result<u64, String> {
     state.engine.drake_ledger_v1.issued = next;
     Ok(index)
 }
+// Caller and serde spans are diagnostic children of the existing inclusive
+// spans. A release build evaluates only the original expression.
+macro_rules! time_serde_phase {
+    ($phase:ident, $expression:expr) => {{
+        #[cfg(test)]
+        let _timing = crate::rl_session::test_timing_v1::span(
+            crate::rl_session::test_timing_v1::Phase::$phase,
+        );
+        $expression
+    }};
+}
+
 /// Strip only the outer history; replay reattaches its actual immutable prefix.
 /// Pending logs, complete stack, hidden world and family checkpoints are retained.
 fn world(state: &GameState) -> Result<GameState, String> {
@@ -906,11 +918,14 @@ fn world(state: &GameState) -> Result<GameState, String> {
     );
     // Written as if cleared, without cloning the state and its history.
     let history = &state.engine.event_history;
-    let mut value = history
-        .omitted_v2(|| serde_json::to_value(state))
-        .map_err(|e| e.to_string())?;
-    strip_nested_receipts(&mut value, &state.engine.event_history)?;
-    serde_json::from_value(value).map_err(|e| e.to_string())
+    let mut value = time_serde_phase!(
+        DrakeWorldSerialize,
+        history.omitted_v2(|| serde_json::to_value(state))
+    )
+    .map_err(|e| e.to_string())?;
+    time_serde_phase!(DrakeWorldStrip, strip_nested_receipts(&mut value, history))?;
+    time_serde_phase!(DrakeWorldDeserialize, serde_json::from_value(value))
+        .map_err(|e| e.to_string())
 }
 // A sibling checkpoint retains its exact original history length and positions.
 // Only existing Drake records in that original are represented by their actual
@@ -981,6 +996,10 @@ fn restore_world(
     history: &crate::event_history_v1::EventHistoryV1,
     start: usize,
 ) -> Result<GameState, String> {
+    #[cfg(test)]
+    let _timing = crate::rl_session::test_timing_v1::span(
+        crate::rl_session::test_timing_v1::Phase::DrakeRestoreWorld,
+    );
     fn restore(
         value: &mut serde_json::Value,
         history: &crate::event_history_v1::EventHistoryV1,
@@ -1041,9 +1060,12 @@ fn restore_world(
     if start > history.len() {
         return Err("Drake operation original prefix absent".into());
     }
-    let mut value = serde_json::to_value(saved).map_err(|e| e.to_string())?;
-    restore(&mut value, history, start, None)?;
-    let mut input: GameState = serde_json::from_value(value).map_err(|e| e.to_string())?;
+    let mut value = time_serde_phase!(DrakeRestoreSerialize, serde_json::to_value(saved))
+        .map_err(|e| e.to_string())?;
+    time_serde_phase!(DrakeRestoreHydrate, restore(&mut value, history, start, None))?;
+    let mut input: GameState =
+        time_serde_phase!(DrakeRestoreDeserialize, serde_json::from_value(value))
+            .map_err(|e| e.to_string())?;
     // The prefix keeps the actual history's chained prefixes, so the replay's
     // origin digest resumes at `start` instead of rehashing every event.
     input.engine.event_history = history.prefix_v1(start);
@@ -1177,7 +1199,7 @@ pub(crate) fn begin_combat(
     if open_combat(state)?.is_some() {
         return Err("Drake combat input replayed before completion".into());
     }
-    let original = Arc::new(world(state)?);
+    let original = Arc::new(time_serde_phase!(DrakeWorldCombat, world(state))?);
     emit(
         state,
         JournalV1::CombatInput {
@@ -1433,7 +1455,7 @@ pub(crate) fn capture_payment(
         return Err("Drake payment changed exact printed source/cost/input".into());
     }
     Ok(Some(PaymentOwnerV1 {
-        original: Box::new(world(state)?),
+        original: Box::new(time_serde_phase!(DrakeWorldPayment, world(state))?),
         pending: p.clone(),
         start: state.engine.event_history.len(),
         source: AbilitySourceContractV4::capture(state, p.source),
@@ -1579,7 +1601,7 @@ pub(crate) fn acquire(state: &GameState, item: &StackItem) -> Result<Option<Owne
     Ok(Some(OwnerV1 {
         publication: publication(state, item)?,
         item: item.clone(),
-        original: Box::new(world(state)?),
+        original: Box::new(time_serde_phase!(DrakeWorldAcquireRemoval, world(state))?),
         start: state.engine.event_history.len(),
     }))
 }
@@ -1612,7 +1634,8 @@ fn after_remove(
 fn removed(state: &mut GameState, owner: &OwnerV1, kind: RemovalV1) -> Result<u64, String> {
     validate_item(state, &owner.item)?;
     if state.engine.event_history.len() != owner.start
-        || world(state)? != after_remove(&owner.original, &owner.item, kind)?
+        || time_serde_phase!(DrakeWorldCheckRemoval, world(state))?
+            != after_remove(&owner.original, &owner.item, kind)?
     {
         return Err("Drake removal changed its borrowed entire input world".into());
     }
@@ -1627,7 +1650,7 @@ fn removed(state: &mut GameState, owner: &OwnerV1, kind: RemovalV1) -> Result<u6
     )
 }
 fn complete(state: &mut GameState, removed: u64) -> Result<(), String> {
-    let output = Arc::new(world(state)?);
+    let output = Arc::new(time_serde_phase!(DrakeWorldCompletion, world(state))?);
     emit(state, JournalV1::Completed { removed, output })?;
     Ok(())
 }
@@ -1696,11 +1719,11 @@ pub(crate) fn enclose(
         index,
         value: JournalV1::Enclosing {
             start,
-            original: Arc::new(world(original)?),
+            original: Arc::new(time_serde_phase!(DrakeWorldEncloseInput, world(original))?),
             operation: operation.clone(),
             answers: answers.to_vec(),
             used_banner,
-            output: Arc::new(world(output)?),
+            output: Arc::new(time_serde_phase!(DrakeWorldEncloseOutput, world(output))?),
         },
     };
     output
@@ -2098,7 +2121,7 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
         // Compression must prove every discarded nested original equals the
         // whole actual indexed record before any caller can normalize it.
         // Only a success on the frame's own immutable state is remembered.
-        world(state)?;
+        time_serde_phase!(DrakeWorldValidate, world(state))?;
         remember_world_checked_in_frame(state);
     }
     if events_after(
@@ -2492,7 +2515,8 @@ fn check_row(
                                     .engine
                                     .event_history
                                     .get_range_v2(*start as usize..row.index as usize)
-                                || world(&replay)? != **output
+                                || time_serde_phase!(DrakeWorldReplayOutput, world(&replay))?
+                                    != **output
                             {
                                 return Err("Drake complete enclosing original operation/history replay differs".into());
                             }
