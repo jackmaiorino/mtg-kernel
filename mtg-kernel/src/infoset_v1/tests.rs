@@ -131,7 +131,8 @@ fn paid_ninjutsu_keeps_the_waiting_hand_source_pristine_for_opponent_infoset() {
     use crate::state::{GameState, Step, Zone};
 
     for actor in [PlayerId::P0, PlayerId::P1] {
-        for (ninja_name, blue_mana) in [("Ninja of the Deep Hours", 2), ("Moon-Circuit Hacker", 1)] {
+        for (ninja_name, blue_mana) in [("Ninja of the Deep Hours", 2), ("Moon-Circuit Hacker", 1)]
+        {
             let viewer = actor.opponent();
             let actor_cards = [ninja_name, "Faerie Miscreant", "Spellstutter Sprite"]
                 .map(|name| card_id_by_name(name).unwrap());
@@ -224,7 +225,12 @@ fn paid_ninjutsu_keeps_the_waiting_hand_source_pristine_for_opponent_infoset() {
             if let Err(ExportErrorV1::Fault { code, detail }) = result {
                 panic!("{ninja_name} in seat {actor:?}: {code:?} {detail}");
             }
-            assert!(state.objects.get(ninja).v4.ability_uses_this_turn.is_empty());
+            assert!(state
+                .objects
+                .get(ninja)
+                .v4
+                .ability_uses_this_turn
+                .is_empty());
 
             step(&mut state, Action::Pass).unwrap();
             assert!(matches!(
