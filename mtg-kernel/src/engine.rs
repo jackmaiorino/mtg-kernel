@@ -15962,16 +15962,21 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
     .expect("validate_pending_activation already confirmed this ability index resolves");
     let ability = &ability;
     if crate::eternal_sideboard_s1d_v1::martyr::ability(ability) {
-        return Some(match crate::eternal_sideboard_s1d_v1::martyr::decision(state, &pending) {
-            Ok(decision) => decision,
-            Err(_) => {
-                state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, pending.source));
-                Decision::Halted {
-                    mechanic: UnsupportedMechanic::InvalidEffectContinuation,
-                    source: pending.source,
+        return Some(
+            match crate::eternal_sideboard_s1d_v1::martyr::decision(state, &pending) {
+                Ok(decision) => decision,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        UnsupportedMechanic::InvalidEffectContinuation,
+                        pending.source,
+                    ));
+                    Decision::Halted {
+                        mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                        source: pending.source,
+                    }
                 }
-            }
-        });
+            },
+        );
     }
     if effect::fiend_artisan_v1::ability(ability) && pending.mana_x_v1.is_none() {
         let maximum = maximum_activation_mana_x_v1(state, &pending, ability)
@@ -18601,8 +18606,10 @@ fn validated_stack_item_target_metadata(
             } else if effect::fiend_artisan_v1::ability(ability) {
                 u16::from(effect::fiend_artisan_v1::paid_x(state, item)?)
             } else if ability.cost.contains(&CostComponent::LoyaltyX) {
-                u16::from(crate::standard_cards_v1::paid_loyalty_x(state, item.v4.stack_item_id)
-                    .ok_or("variable loyalty payment lost its paid X")?)
+                u16::from(
+                    crate::standard_cards_v1::paid_loyalty_x(state, item.v4.stack_item_id)
+                        .ok_or("variable loyalty payment lost its paid X")?,
+                )
             } else {
                 u16::from(activation_x_value(ability, &item.targets, state)?)
             };
@@ -24199,13 +24206,22 @@ enum PendingActivationActionStage {
 }
 
 pub(crate) fn pending_martyr_reveal_v1(state: &GameState) -> bool {
-    state.engine.pending_activation.as_ref().is_some_and(|pending| {
-        state.objects.try_get(pending.source).is_some_and(|object| {
-            resolved_activated_ability(object.card_def, pending.ability_index, state, pending.source)
+    state
+        .engine
+        .pending_activation
+        .as_ref()
+        .is_some_and(|pending| {
+            state.objects.try_get(pending.source).is_some_and(|object| {
+                resolved_activated_ability(
+                    object.card_def,
+                    pending.ability_index,
+                    state,
+                    pending.source,
+                )
                 .as_ref()
                 .is_some_and(crate::eternal_sideboard_s1d_v1::martyr::ability)
+            })
         })
-    })
 }
 
 /// Purely derives the one action family, if any, exposed by a staged cast.
@@ -28820,12 +28836,18 @@ fn materialize_aborted_cast_v1(
 /// Commit the private reveal, mana, sacrifice and publication together. A
 /// restored provisional announcement may still fail during publication.
 fn finish_martyr_reveal_v1(state: &mut GameState) -> Result<(), String> {
-    let source = state.engine.pending_activation.as_ref().ok_or("Martyr activation absent")?.source;
+    let source = state
+        .engine
+        .pending_activation
+        .as_ref()
+        .ok_or("Martyr activation absent")?
+        .source;
     let mut transaction = state.clone();
     finalize_activation(&mut transaction);
-    let item = transaction.stack.last().filter(|item| {
-        item.source == source && item.kind == StackItemKind::ActivatedAbility
-    });
+    let item = transaction
+        .stack
+        .last()
+        .filter(|item| item.source == source && item.kind == StackItemKind::ActivatedAbility);
     if transaction.engine.halted.is_some() || transaction.engine.pending_activation.is_some() {
         return Err("Martyr reveal payment did not commit".into());
     }
@@ -29004,7 +29026,12 @@ fn finalize_activation(state: &mut GameState) {
         match crate::eternal_sideboard_s1d_v1::martyr::reveal(state, &pending) {
             Ok(revealed)
                 if pay_cost_components_with_x(
-                    state, pending.controller, pending.source, ability.cost, &[], x_value,
+                    state,
+                    pending.controller,
+                    pending.source,
+                    ability.cost,
+                    &[],
+                    x_value,
                 ) && state.engine.halted.is_none() =>
             {
                 frozen.martyr_revealed = Some(revealed);
@@ -29328,9 +29355,12 @@ fn push_paid_activation(
     if ability.cost.contains(&CostComponent::LoyaltyX) {
         crate::standard_cards_v1::record_loyalty_x(state, stack_item_id, x_value);
     }
-    let x_value = frozen.martyr_revealed.as_ref().map_or(u16::from(x_value), |revealed| {
-        u16::try_from(revealed.len()).expect("validated Martyr reveal count")
-    });
+    let x_value = frozen
+        .martyr_revealed
+        .as_ref()
+        .map_or(u16::from(x_value), |revealed| {
+            u16::try_from(revealed.len()).expect("validated Martyr reveal count")
+        });
     state.stack.push(StackItem {
         kind: StackItemKind::ActivatedAbility,
         source: pending.source,
@@ -29363,9 +29393,14 @@ fn push_paid_activation(
         },
     });
     if let Some(revealed) = frozen.martyr_revealed {
-        state.engine.event_history.push(CommittedEvent::MartyrRevealPaidV1 {
-            item: stack_item_id, source: ability_source_contract, revealed,
-        });
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::MartyrRevealPaidV1 {
+                item: stack_item_id,
+                source: ability_source_contract,
+                revealed,
+            });
     }
     if effect::fiend_artisan_v1::record_paid(state, stack_item_id, frozen.fiend_input).is_err() {
         state.engine.halted = Some((
