@@ -1,25 +1,31 @@
 """S learner attribution receipt (issue #598, first milestone).
 
 Runs the public synthetic `s_transformer_v1` learner diagnostic and writes one
-small manifest with every raw sample. It is a bounded engineering diagnostic,
-not training qualification:
+small manifest with every raw timing sample. It is a bounded engineering
+diagnostic, not training qualification:
 
-- `abba`: balanced A-B-B-A rounds of `gae-bench` per worker count, one
-  process per attempt, with the child's wall time, CPU time and peak RSS, and
-  the full Adam state digests of every attempt. Optional CPU affinity.
 - `parity`: `parity-dump` under both binaries in fresh directories; the
   exported `files_sha256` must match.
-- `profile`: `gae-bench` under a binary built with `s-learner-profile-v1`,
-  whose per-repetition attribution `summarize` condenses. Its digests must
-  match the default binaries'.
-- `summarize`: a Markdown table of a manifest (timings and attribution).
+- `abba`: balanced A-B-B-A rounds of `gae-bench` per worker count, one
+  process per attempt, with the child's wall time, CPU time, peak RSS and page
+  faults. Every attempt's receipt, including both full train-state digests,
+  must match apart from its times.
+- `profile`: `gae-bench` under a binary built with `s-learner-profile-v1`.
+  Its digests must match the default binaries'. Raw receipts go to
+  `<out>/raw`; the manifest keeps their aggregate and every repetition's stage
+  times.
+- `summarize`: Markdown tables of a manifest (timings and attribution).
 
-Standard library only. Example (binaries built beforehand):
+Standard library only; Linux or native Windows. `--cpus` takes a taskset-style
+list (`8-11`, `0,2`): Linux pins each child with `taskset`, Windows pins this
+process and its children inherit it. Example (binaries built beforehand; add
+`.exe` on Windows):
 
     python scripts/experiments/s_learner_attribution_v1/run.py run \\
         --baseline base/s_transformer_v1 --candidate cand/s_transformer_v1 \\
-        --profile prof/s_transformer_v1 --out receipts/t4 --workers 1,2 \\
-        --seed 7 --groups 32 --reps 3 --rounds 2 --cpus 0,1
+        --profile prof/s_transformer_v1 --baseline-commit <sha> \\
+        --candidate-commit <sha> --out receipts/t4 --workers 1,2 --seed 7 \\
+        --groups 32 --reps 3 --rounds 4 --profile-runs 4 --cpus 2,3
 """
 from __future__ import annotations
 
@@ -49,35 +55,104 @@ def binary_identity(path):
     return {"path": str(path), "sha256": sha256_file(path), "bytes": path.stat().st_size}
 
 
+def cpu_list(cpus):
+    """Logical CPU numbers from a taskset-style list such as `8-11` or `0,2`."""
+    numbers = set()
+    for part in cpus.split(","):
+        first, _, last = part.partition("-")
+        numbers.update(range(int(first), int(last or first) + 1))
+    return sorted(numbers)
+
+
+def pin_windows(cpus):
+    """Pins this process, and so every child it starts, to `cpus`."""
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+    kernel32.SetProcessAffinityMask.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+    mask = sum(1 << cpu for cpu in cpu_list(cpus))
+    if not kernel32.SetProcessAffinityMask(kernel32.GetCurrentProcess(), mask):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def windows_usage(process):
+    """CPU times, peak working set and page faults of an exited child."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Counters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = ctypes.c_void_p(int(process._handle))
+    times = [wintypes.FILETIME() for _ in range(4)]
+    kernel32.GetProcessTimes.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+    if not kernel32.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    counters = Counters()
+    counters.cb = ctypes.sizeof(counters)
+    kernel32.K32GetProcessMemoryInfo.argtypes = [ctypes.c_void_p, ctypes.POINTER(Counters), wintypes.DWORD]
+    if not kernel32.K32GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+        raise ctypes.WinError(ctypes.get_last_error())
+    seconds = lambda t: ((t.dwHighDateTime << 32) | t.dwLowDateTime) / 1e7
+    return {
+        "user_seconds": seconds(times[3]),
+        "system_seconds": seconds(times[2]),
+        "max_rss_kib": counters.PeakWorkingSetSize // 1024,
+        # Windows counts soft and hard faults together.
+        "page_faults": counters.PageFaultCount,
+        "involuntary_switches": None,
+    }
+
+
 def attempt(binary, arguments, cpus):
     """One measured child: the receipt plus wall, CPU and peak RSS (KiB).
 
     Output goes to unnamed files, not pipes, so a large profile receipt
-    cannot block the child while this process waits for its usage.
+    cannot block the child while this process waits for its usage. Linux
+    pins each child with `taskset`; Windows pins this process once (see
+    `main`) and children inherit it.
     """
     command = [str(binary), *arguments]
-    if cpus:
+    if cpus and os.name != "nt":
         command = ["taskset", "-c", cpus, *command]
     with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         started = time.monotonic()
         process = subprocess.Popen(command, stdout=stdout, stderr=stderr)
-        _, status, usage = os.wait4(process.pid, 0)
-        wall = time.monotonic() - started
-        process.returncode = os.waitstatus_to_exitcode(status)
+        if os.name == "nt":
+            process.wait()
+            wall = time.monotonic() - started
+            usage = windows_usage(process)
+        else:
+            _, status, rusage = os.wait4(process.pid, 0)
+            wall = time.monotonic() - started
+            process.returncode = os.waitstatus_to_exitcode(status)
+            usage = {
+                "user_seconds": rusage.ru_utime,
+                "system_seconds": rusage.ru_stime,
+                "max_rss_kib": rusage.ru_maxrss,
+                "page_faults": rusage.ru_minflt + rusage.ru_majflt,
+                "involuntary_switches": rusage.ru_nivcsw,
+            }
         stdout.seek(0)
         stderr.seek(0)
         output, diagnostics = stdout.read(), stderr.read()
     if process.returncode != 0:
         tail = diagnostics.decode(errors="replace")[-2000:]
         raise RuntimeError(f"{command} exited {process.returncode}: {tail}")
-    return {
-        "command": command,
-        "wall_seconds": wall,
-        "user_seconds": usage.ru_utime,
-        "system_seconds": usage.ru_stime,
-        "max_rss_kib": usage.ru_maxrss,
-        "receipt": json.loads(output),
-    }
+    return {"command": command, "wall_seconds": wall, **usage, "receipt": json.loads(output)}
 
 
 def gae_arguments(args, workers):
@@ -94,12 +169,15 @@ def digests(receipt):
     return receipt["before_state_sha256"], receipt["after_state_sha256"]
 
 
-def warm_seconds(receipt):
-    """Repetitions after the first, which grows the fresh workspaces."""
-    return receipt["seconds"][1:] or receipt["seconds"]
+def warm_seconds(seconds):
+    """Repetitions after a process's first. Every repetition starts from a
+    clone of the warmed state with fresh workspaces; the first also pays the
+    process's allocator, page and cache warm-up."""
+    return seconds[1:] or seconds
 
 
 def describe(values):
+    values = [v for v in values if v is not None]
     if not values:
         return None
     return {
@@ -117,28 +195,37 @@ def abba(args, out):
     results = {}
     for workers in args.workers:
         attempts = []
+        commands = {}
+        common = None
         for round_index in range(args.rounds):
             for position, arm in enumerate("ABBA"):
                 record = attempt(arms[arm], gae_arguments(args, workers), args.cpus)
-                record.update({"arm": arm, "round": round_index, "position": position})
+                receipt = record.pop("receipt")
+                commands[arm] = record.pop("command")
+                # Everything but the times must be identical in every attempt,
+                # including both full train-state digests.
+                rest = {k: v for k, v in receipt.items() if k != "seconds"}
+                if common is None:
+                    common = rest
+                elif rest != common:
+                    raise RuntimeError(f"workers {workers}: receipts differ: {rest} vs {common}")
+                record.update(
+                    {"arm": arm, "round": round_index, "position": position, "seconds": receipt["seconds"]}
+                )
                 attempts.append(record)
                 print(
-                    f"workers={workers} round={round_index} {arm}: "
-                    f"{record['receipt']['seconds']}",
+                    f"workers={workers} round={round_index} {arm}: {receipt['seconds']}",
                     file=sys.stderr,
                     flush=True,
                 )
-        seen = {digests(a["receipt"]) for a in attempts}
-        if len(seen) != 1:
-            raise RuntimeError(f"workers {workers}: full-state digests differ: {seen}")
         summary = {}
         for arm in "AB":
             mine = [a for a in attempts if a["arm"] == arm]
-            per_rep = [s for a in mine for s in a["receipt"]["seconds"]]
-            # Warm repetitions only (each attempt's first repetition grows its
-            # fresh workspaces and is kept separately).
-            warm = [s for a in mine for s in warm_seconds(a["receipt"])]
-            first = [a["receipt"]["seconds"][0] for a in mine]
+            per_rep = [s for a in mine for s in a["seconds"]]
+            # Warm-process repetitions only (each attempt's first repetition
+            # pays process warm-up and is kept separately).
+            warm = [s for a in mine for s in warm_seconds(a["seconds"])]
+            first = [a["seconds"][0] for a in mine]
             summary[arm] = {
                 "rep_seconds": describe(per_rep),
                 "warm_rep_seconds": describe(warm),
@@ -148,27 +235,31 @@ def abba(args, out):
                     [a["user_seconds"] + a["system_seconds"] for a in mine]
                 ),
                 "max_rss_kib": describe([a["max_rss_kib"] for a in mine]),
+                "page_faults": describe([a["page_faults"] for a in mine]),
+                "involuntary_switches": describe([a["involuntary_switches"] for a in mine]),
             }
         rounds = []
         for round_index in range(args.rounds):
             mine = [a for a in attempts if a["round"] == round_index]
             arm_mean = lambda arm: statistics.fmean(
-                s for a in mine if a["arm"] == arm for s in warm_seconds(a["receipt"])
+                s for a in mine if a["arm"] == arm for s in warm_seconds(a["seconds"])
             )
             rounds.append(arm_mean("B") / arm_mean("A"))
-        a_mean = summary["A"]["warm_rep_seconds"] or summary["A"]["rep_seconds"]
-        b_mean = summary["B"]["warm_rep_seconds"] or summary["B"]["rep_seconds"]
-        ratio = b_mean["mean"] / a_mean["mean"]
+        a_warm = summary["A"]["warm_rep_seconds"]
+        b_warm = summary["B"]["warm_rep_seconds"]
+        ratio = b_warm["mean"] / a_warm["mean"]
         spread = max(
-            (a_mean["max"] - a_mean["min"]) / a_mean["mean"],
-            (b_mean["max"] - b_mean["min"]) / b_mean["mean"],
+            (a_warm["max"] - a_warm["min"]) / a_warm["mean"],
+            (b_warm["max"] - b_warm["min"]) / b_warm["mean"],
         )
         results[str(workers)] = {
             "workers": workers,
-            "state_digests": list(next(iter(seen))),
+            "commands": commands,
+            "receipt_common": common,
             "attempts": attempts,
             "summary": summary,
             "candidate_to_baseline_warm_mean_ratio": ratio,
+            "candidate_to_baseline_warm_median_ratio": b_warm["median"] / a_warm["median"],
             "paired_round_ratios": rounds,
             "max_relative_spread_within_arm": spread,
             "verdict": "inconclusive (difference within observed spread)"
@@ -206,8 +297,9 @@ def aggregate(values):
     """One report-shaped value from several reports of the same shape.
 
     Equal leaves (every count the profile derives from the workload) are kept
-    exactly; differing numbers (times, and allocator counts on threads that
-    race for the job queue) become their mean.
+    exactly; differing numbers (times, and counts that depend on which worker
+    takes which job) become their mean. Per-worker count lists end at the
+    last worker that did something, so shorter ones are padded with zeros.
     """
     first = values[0]
     if isinstance(first, dict):
@@ -215,9 +307,13 @@ def aggregate(values):
             raise RuntimeError("profile reports differ in shape")
         return {key: aggregate([v[key] for v in values]) for key in first}
     if isinstance(first, list):
-        if any(len(v) != len(first) for v in values):
-            raise RuntimeError("profile reports differ in shape")
-        return [aggregate([v[i] for v in values]) for i in range(len(first))]
+        width = max(len(v) for v in values)
+        if any(len(v) != width for v in values):
+            numeric = all(isinstance(x, (int, float)) and not isinstance(x, bool) for v in values for x in v)
+            if not numeric:
+                raise RuntimeError("profile reports differ in shape")
+            values = [v + [0] * (width - len(v)) for v in values]
+        return [aggregate([v[i] for v in values]) for i in range(width)]
     if all(v == first for v in values):
         return first
     if isinstance(first, bool) or not all(isinstance(v, (int, float)) for v in values):
@@ -227,8 +323,9 @@ def aggregate(values):
 
 def profile(args, out, reference):
     """Profile-build attempts. Raw receipts go to `out/raw` (not part of the
-    manifest); the manifest keeps the aggregate of the warm and of the first
-    repetitions, plus every warm repetition's stage times."""
+    manifest); the manifest keeps the aggregate of the warm-process and of
+    the first repetitions, plus every warm-process repetition's stage
+    times."""
     raw = out / "raw"
     raw.mkdir()
     rows = {}
@@ -239,7 +336,7 @@ def profile(args, out, reference):
         for index in range(args.profile_runs):
             record = attempt(args.profile, gae_arguments(args, workers), args.cpus)
             receipt = record["receipt"]
-            if reference and digests(receipt) != tuple(reference[str(workers)]["state_digests"]):
+            if reference and digests(receipt) != digests(reference[str(workers)]["receipt_common"]):
                 raise RuntimeError(f"profile build digests differ at workers {workers}")
             path = raw / f"profile-workers{workers}-{index}.json"
             path.write_text(json.dumps(receipt, indent=1) + "\n", encoding="utf-8")
@@ -253,6 +350,8 @@ def profile(args, out, reference):
                     "user_seconds": record["user_seconds"],
                     "system_seconds": record["system_seconds"],
                     "max_rss_kib": record["max_rss_kib"],
+                    "page_faults": record["page_faults"],
+                    "involuntary_switches": record["involuntary_switches"],
                     "seconds": receipt["seconds"],
                     "before_state_sha256": receipt["before_state_sha256"],
                     "after_state_sha256": receipt["after_state_sha256"],
@@ -266,19 +365,24 @@ def profile(args, out, reference):
                 name: [r["stages"][name]["ns"] for r in warm] for name in warm[0]["stages"]
             },
             "warm": aggregate(warm),
-            "first": aggregate(first),
+            # First repetitions differ in time and allocations only.
+            "first": {key: aggregate([r[key] for r in first]) for key in ("stages", "heap")},
         }
     return rows
 
 
 def host():
-    info = {"platform": platform.platform(), "python": platform.python_version()}
+    info = {
+        "platform": platform.platform(),
+        "python": platform.python_version(),
+        "cpu_model": platform.processor() or None,
+        "logical_cpus": os.cpu_count(),
+    }
     try:
         cpuinfo = Path("/proc/cpuinfo").read_text()
         info["cpu_model"] = next(
             line.split(":", 1)[1].strip() for line in cpuinfo.splitlines() if line.startswith("model name")
         )
-        info["logical_cpus"] = os.cpu_count()
         info["mem_total_kib"] = int(
             next(line.split()[1] for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemTotal"))
         )
@@ -339,21 +443,24 @@ def summarize(manifest):
     if "parity" in manifest:
         lines.append(f"parity-dump files_sha256 identical: {manifest['parity']['files_sha256_identical']}")
     lines.append("")
-    lines.append("| workers | arm | warm rep mean s | min | max | first rep mean s | process CPU s | peak RSS MiB |")
-    lines.append("|---:|---|---:|---:|---:|---:|---:|---:|")
+    lines.append(
+        "| workers | arm | warm rep mean s | median | min | max | first rep mean s | process CPU s | peak RSS MiB | page faults |"
+    )
+    lines.append("|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|")
     for key, row in manifest["abba"].items():
         for arm in "AB":
             s = row["summary"][arm]
-            warm = s["warm_rep_seconds"] or s["rep_seconds"]
+            warm = s["warm_rep_seconds"]
             lines.append(
-                f"| {key} | {arm} | {warm['mean']:.4f} | {warm['min']:.4f} | {warm['max']:.4f} | "
+                f"| {key} | {arm} | {warm['mean']:.4f} | {warm['median']:.4f} | {warm['min']:.4f} | {warm['max']:.4f} | "
                 f"{s['first_rep_seconds']['mean']:.4f} | {s['process_cpu_seconds']['mean']:.3f} | "
-                f"{s['max_rss_kib']['mean'] / 1024:.1f} |"
+                f"{s['max_rss_kib']['mean'] / 1024:.1f} | {s['page_faults']['mean']:.0f} |"
             )
     lines.append("")
     for key, row in manifest["abba"].items():
         lines.append(
             f"workers={key}: B/A warm mean {row['candidate_to_baseline_warm_mean_ratio']:.4f}, "
+            f"median {row['candidate_to_baseline_warm_median_ratio']:.4f}, "
             f"paired rounds {[round(r, 4) for r in row['paired_round_ratios']]}, "
             f"max within-arm spread {row['max_relative_spread_within_arm']:.3f}: {row['verdict']}"
         )
@@ -370,13 +477,13 @@ def mean_of(reports, getter):
 def profile_summary(profile_rows):
     lines = []
     for key, row in profile_rows.items():
-        # The aggregate of the warm repetitions (each attempt's first grows
-        # fresh workspaces; its aggregate is reported separately below).
+        # The aggregate of the warm-process repetitions (each attempt's first
+        # pays process warm-up; its aggregate is reported separately below).
         reports = [row["warm"]]
         firsts = [row["first"]]
         substeps = reports[0]["substeps"]
         stage = lambda name, field="ns": mean_of(reports, lambda r: r["stages"][name][field])
-        lines.append(f"### Profile, workers={key} (mean of {row['warm_reports']} warm repetitions, {substeps} substeps)")
+        lines.append(f"### Profile, workers={key} (mean of {row['warm_reports']} warm-process repetitions, {substeps} substeps)")
         lines.append("")
         lines.append("| stage | spans | mean ms | ms/substep | allocs | alloc KiB |")
         lines.append("|---|---:|---:|---:|---:|---:|")
@@ -392,7 +499,7 @@ def profile_summary(profile_rows):
         first_bytes = statistics.fmean(f["stages"]["gradient"]["alloc_bytes"] for f in firsts)
         lines.append("")
         lines.append(
-            f"First repetition (fresh workspaces): gradient allocs {first_allocs:.0f}, "
+            f"First repetition of each process: gradient allocs {first_allocs:.0f}, "
             f"{first_bytes / 1024:.1f} KiB."
         )
         lines.append("")
@@ -507,6 +614,8 @@ def main():
     summary.add_argument("manifest")
     summary.set_defaults(func=command_summarize)
     args = parser.parse_args()
+    if getattr(args, "cpus", None) and os.name == "nt":
+        pin_windows(args.cpus)
     args.func(args)
 
 
