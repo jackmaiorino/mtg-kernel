@@ -7,7 +7,45 @@ use crate::{
     state::{GameState, Zone},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, hash::{Hash, Hasher}};
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct SampledHandArrivalsV1(BTreeSet<u64>);
+
+impl SampledHandArrivalsV1 {
+    pub(crate) fn hash_if_sampled(&self, state: &mut impl Hasher) {
+        if !self.0.is_empty() {
+            "curator-sampled-hand-arrivals/v1".hash(state);
+            self.0.hash(state);
+        }
+    }
+}
+
+#[cfg(feature = "limited-fdn-fixtures")]
+pub(crate) fn mark_sampled_hand_arrivals(
+    state: &mut GameState,
+    actor: PlayerId,
+    opponent_slots: &[ObjectId],
+) -> Result<(), String> {
+    let arrivals = rows(state).filter_map(|(_, row)| {
+        let JournalV1::Moved { move_row, .. } = row else { return None };
+        let original = move_row.original;
+        let live = state.objects.try_get(original.object)?;
+        (move_row.owner == actor.opponent()
+            && move_row.destination == Zone::Hand
+            && move_row.public_printing.is_some()
+            && live.zone == Zone::Hand
+            && original.expected_zone_change_count.checked_add(1) == Some(live.zone_change_count)
+            && opponent_slots.contains(&original.object))
+        .then_some(move_row.event_at)
+    }).collect::<Vec<_>>();
+    if !arrivals.is_empty() {
+        // Validate the original native history before detaching any hand slot.
+        crate::curator_public_v1::validate_native(state)?;
+        state.curator_sampled_hand_arrivals_v1.0.extend(arrivals);
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -281,6 +319,8 @@ fn validate_move_identity(
         if live.zone != row.destination {
             return Err("Curator exact arrival changed its native destination".into());
         }
+        let sampled_hand = row.destination == Zone::Hand
+            && state.curator_sampled_hand_arrivals_v1.0.contains(&row.event_at);
         if may_name && live.v4.face_down_v1.is_none() && mask == 3 {
             let printing = row
                 .public_printing
@@ -294,7 +334,9 @@ fn validate_move_identity(
                 zone_change_count: arrival,
                 attached_to: None,
             };
-            if !crate::engine::source_card_def_matches(state, original, live.card_def) {
+            if !sampled_hand
+                && !crate::engine::source_card_def_matches(state, original, live.card_def)
+            {
                 return Err(
                     "Curator public arrival name differs from the exact committed incarnation"
                         .into(),
