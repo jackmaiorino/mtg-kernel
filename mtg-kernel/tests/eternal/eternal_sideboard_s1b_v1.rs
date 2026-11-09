@@ -1061,6 +1061,38 @@ fn meddling_mage_filters_paid_bilbo_resolution_cast_both_seats() {
 }
 
 #[test]
+fn meddling_mage_named_front_leaves_adventure_castable_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = paid_meddling_against(actor, "Fang Dragon", &["Island"; 20]);
+        let dragon = put(&mut state, actor, "Fang Dragon", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R, ManaColor::R], 5);
+        cast(&mut state, dragon, &[]);
+        settled(&mut state);
+        assert_eq!(zone(&state, dragon), Zone::Exile);
+        assert!(state.objects.get(dragon).v4.on_adventure);
+        pool(&mut state, actor, &[ManaColor::R, ManaColor::R], 5);
+        assert!(!castable(&mut state, dragon));
+
+        let mut state = paid_meddling_against(actor, "Fang Dragon", &["Island"; 20]);
+        let bilbo = put(&mut state, actor, "Bilbo, Thief in the Night", Zone::Battlefield);
+        let dragon = put(&mut state, actor, "Fang Dragon", Zone::Graveyard);
+        pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+        act(&mut state, Action::DeclareAttackers(vec![bilbo]));
+        pool(&mut state, actor, &[ManaColor::R], 0);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                if legal_targets == [Target::Object(dragon)]
+        ));
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(dragon)));
+        settled(&mut state);
+        assert_eq!(zone(&state, dragon), Zone::Exile);
+        assert!(state.objects.get(dragon).v4.on_adventure);
+        assert!(state.players[actor.index()].mana_pool.iter().all(|&count| count == 0));
+    }
+}
+
+#[test]
 fn meddling_mage_reanimation_pauses_before_entry_and_life_loss_both_seats() {
     for actor in [P0, P1] {
         let mut state = islands();

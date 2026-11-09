@@ -19,7 +19,7 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
 use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{
-    AbilitySourceContractV4, GameState, LinkedExileRecordV4, ObjectLinkV4, Target, Zone,
+    AbilitySourceContractV4, CastMethodV4, GameState, LinkedExileRecordV4, ObjectLinkV4, Target, Zone,
 };
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
@@ -614,9 +614,8 @@ fn noncreature_casts(state: &GameState, player: PlayerId) -> u8 {
 /// Cast prohibitions of this module: Deafening Silence ("Each player can't
 /// cast more than one noncreature spell each turn."), Gaddock Teeg
 /// ("Noncreature spells with mana value 4 or greater can't be cast.
-/// Noncreature spells with {X} in their mana costs can't be cast.") and
-/// Meddling Mage ("Spells with the chosen name can't be cast."). Whether
-/// `player` can't cast `card` now.
+/// Noncreature spells with {X} in their mana costs can't be cast.").
+/// Meddling Mage is checked after selecting the spell's form.
 pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId, card: ObjectId) -> bool {
     let Some(def) = definition(state, card) else {
         return false;
@@ -632,10 +631,13 @@ pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId, card: ObjectI
     {
         return true;
     }
-    mage_prohibits(state, def)
+    false
 }
 
-pub(crate) fn mage_prohibits(state: &GameState, def: &CardDef) -> bool {
+pub(crate) fn mage_prohibits(state: &GameState, def: &CardDef, method: CastMethodV4) -> bool {
+    let Some(spell_name) = selected_spell_name(def, method) else {
+        return false;
+    };
     read_state(state).is_some_and(|s1b| {
         s1b.mage_names.iter().any(|(mage, named)| {
             state.objects.try_get(mage.object).is_some_and(|live| {
@@ -643,9 +645,34 @@ pub(crate) fn mage_prohibits(state: &GameState, def: &CardDef) -> bool {
                     && active_named(state, mage.object, MEDDLING_MAGE)
             }) && CARD_DEFS
                 .get(usize::from(*named))
-                .is_some_and(|named_def| named_def.object_name == def.object_name)
+                .is_some_and(|named_def| named_def.object_name == spell_name)
         })
     })
+}
+
+fn selected_spell_name(def: &CardDef, method: CastMethodV4) -> Option<&'static str> {
+    if method == CastMethodV4::Alternative
+        && def.alt_cost.is_some_and(|alt| alt.condition == crate::card_def::AltCostCondition::DisguiseFromHand)
+    {
+        return None;
+    }
+    if crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name) {
+        return Some(def.object_name);
+    }
+    if method == CastMethodV4::Omen {
+        // The true Omen form is outside the current catalog's name menu.
+        // Adventure and the supported split half carry their actual name.
+        return def.adventure.as_ref().map(|adventure| adventure.name);
+    }
+    if let Some((left, right)) = def.name.split_once(" // ") {
+        if crate::standard_cards_v1::room_cast_mana_value(def, method).is_some() {
+            return Some(if method == CastMethodV4::Alternative { right } else { left });
+        }
+        if crate::eternal_premodern_p1a_v1::statics::split_card(def.name) {
+            return Some(left);
+        }
+    }
+    Some(def.object_name)
 }
 
 /// Counts noncreature spells as they are cast (Deafening Silence counts

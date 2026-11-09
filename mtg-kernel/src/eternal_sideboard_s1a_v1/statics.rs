@@ -264,7 +264,7 @@ pub(crate) fn cast_prohibited(
     else {
         return false;
     };
-    if crate::eternal_sideboard_s1b_v1::mage_prohibits(state, def) {
+    if crate::eternal_sideboard_s1b_v1::mage_prohibits(state, def, method) {
         return true;
     }
     if active_controlled_by(state, LAVINIA, player.opponent()).is_empty() {
