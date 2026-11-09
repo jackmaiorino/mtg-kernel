@@ -342,14 +342,25 @@ fn departed_observer_and_countered_original_keep_copy_after_hidden_resampling_bo
             &mut state,
             ProposedEvent::zone_change(source, Zone::Library),
         );
-        let resolving = state.engine.pending_effect.as_ref().unwrap().resolving_item.clone();
+        let resolving = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .resolving_item
+            .clone();
         assert!(state.stack.contains(&resolving));
         let mut duplicate = state.clone();
         duplicate.stack.push(resolving);
         assert!(crate::sampled_history_v1::capture(&duplicate).is_err());
         let mut changed_mirror = state.clone();
-        changed_mirror.engine.pending_effect.as_mut().unwrap().resolving_item.controller =
-            actor.opponent();
+        changed_mirror
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .resolving_item
+            .controller = actor.opponent();
         assert!(crate::sampled_history_v1::capture(&changed_mirror).is_err());
         let mut other = sampled_printings(
             &state,
