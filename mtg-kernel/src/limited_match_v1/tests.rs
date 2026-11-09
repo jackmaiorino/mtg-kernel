@@ -458,24 +458,41 @@ fn closed_list_v3_courtyard_answers_in_sampled_world_without_restoring_hidden_ca
             sampled.diagnostic_current_action_semantics().unwrap(),
             expected
         );
+        let before = live.game_state().clone();
+        let mut sampled_at_entry = sample_world_v1(&live, mode, Some(&belief), 552).unwrap();
         assert_eq!(
-            sample_world_v1(&live, mode, Some(&belief), 552)
+            sampled_at_entry.diagnostic_current_action_semantics().unwrap(),
+            expected
+        );
+
+        let tampered = live.census_edited_clone_v1(|state| {
+            let id = state.players[actor.opponent().index()].library[0];
+            let hidden = state.objects.get_mut(id);
+            hidden.card_def = island;
+            hidden.name = CARD_DEFS[island as usize].name.into();
+            hidden.v4 = ObjectStateV4::from_card_def(island);
+        });
+        assert_eq!(
+            sample_world_v1(&tampered, mode, Some(&belief), 552)
                 .err()
                 .as_deref(),
-            Some("linked operation checkpoint requires sampled replay"),
+            Some("Kinship checkpoint/source/proposal/scene/stack/answers changed"),
         );
 
         let chosen = CreatureTypeV60::Goblin;
-        step_index(&mut sampled, u32::from(chosen.choice_index()), true).unwrap();
-        let state = sampled.game_state();
-        let entered = state.objects.get(object);
-        assert_eq!(entered.zone, Zone::Battlefield);
-        assert_eq!(entered.v4.kinship_type_v1, Some(chosen));
-        let opponent_library = &state.players[actor.opponent().index()].library;
-        assert_eq!(opponent_library.len(), 40);
-        assert!(opponent_library
-            .iter()
-            .all(|&id| state.objects.get(id).card_def == island));
+        for branch in [&mut sampled, &mut sampled_at_entry] {
+            step_index(branch, u32::from(chosen.choice_index()), true).unwrap();
+            let state = branch.game_state();
+            let entered = state.objects.get(object);
+            assert_eq!(entered.zone, Zone::Battlefield);
+            assert_eq!(entered.v4.kinship_type_v1, Some(chosen));
+            let opponent_library = &state.players[actor.opponent().index()].library;
+            assert_eq!(opponent_library.len(), 40);
+            assert!(opponent_library
+                .iter()
+                .all(|&id| state.objects.get(id).card_def == island));
+        }
+        assert_eq!(live.game_state(), &before);
     }
 }
 

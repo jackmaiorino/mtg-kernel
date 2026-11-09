@@ -1162,8 +1162,9 @@ struct FastActorCurrentDecisionV1 {
 }
 
 #[cfg(feature = "limited-fdn-fixtures")]
-pub(crate) struct LimitedClosedListRootV3 {
+pub(crate) struct LimitedClosedListRootV3<'a> {
     actor: PlayerId,
+    courtyard: Option<crate::linked_aura_operation_v1::CourtyardSampleV1<'a>>,
     slots: [Vec<ObjectId>; 2],
     knowledge: crate::reveal_meaning_v3::RevealKnowledgeV3,
     known_names: Vec<u16>,
@@ -8582,7 +8583,7 @@ impl FastActorSessionV1 {
     }
 
     #[cfg(feature = "limited-fdn-fixtures")]
-    pub(crate) fn limited_closed_list_root_v3(&self) -> Result<LimitedClosedListRootV3, String> {
+    pub(crate) fn limited_closed_list_root_v3(&self) -> Result<LimitedClosedListRootV3<'_>, String> {
         use crate::kernel_native_search_opponent_v1::pending_selection_hidden_objects_v1;
         use crate::limited_match_v1::closed_list_v2;
         use crate::reveal_meaning_v3::RevealReducerV3;
@@ -8596,11 +8597,12 @@ impl FastActorSessionV1 {
             return Err("closedlist-v3 requires a rules-only or full-pool owning session".into());
         }
         let actor = self.current.as_ref().ok_or("no current decision")?.actor;
-        // Answering an already-open operation replays its original GameState.
-        // A checkpoint opened inside a sampled rollout has a sampled origin.
-        if crate::linked_aura_operation_v1::has_pending(&self.state) {
-            return Err("linked operation checkpoint requires sampled replay".into());
-        }
+        let courtyard =
+            crate::linked_aura_operation_v1::CourtyardSampleV1::from_live(&self.state, actor)?;
+        let sampling_state = match &courtyard {
+            Some(checkpoint) => checkpoint.original(&self.state)?,
+            None => &self.state,
+        };
         let opponent = actor.opponent();
         let knowledge = if typed_full_pool {
             self.state
@@ -8618,7 +8620,7 @@ impl FastActorSessionV1 {
             reducer.absorb(&transcript)?;
             reducer.opponent_knowledge(actor)
         };
-        let hand_len = self.state.players[opponent.index()].hand.len();
+        let hand_len = sampling_state.players[opponent.index()].hand.len();
         let mut known_names = Vec::new();
         for (def, count) in knowledge.hand(opponent) {
             if count > hand_len - known_names.len() {
@@ -8626,7 +8628,7 @@ impl FastActorSessionV1 {
             }
             known_names.extend(std::iter::repeat_n(def, count));
         }
-        if self.state.objects.iter().any(|(_, card)| {
+        if sampling_state.objects.iter().any(|(_, card)| {
             card.v4
                 .face_down_v1
                 .is_some_and(|face| face.lookers & (1 << actor.index()) == 0)
@@ -8634,30 +8636,31 @@ impl FastActorSessionV1 {
             return Err("unknown face-down identity".into());
         }
         let sampled_history = if typed_full_pool {
-            crate::sampled_history_v1::capture(&self.state)?
+            crate::sampled_history_v1::capture(sampling_state)?
         } else {
             Default::default()
         };
-        let mut pinned = pending_selection_hidden_objects_v1(&self.state, actor);
+        let mut pinned = pending_selection_hidden_objects_v1(sampling_state, actor);
         pinned.extend(flat_action_v4::limited_public_source_pins_v3(
-            &self.state,
+            sampling_state,
             actor,
             &sampled_history,
         )?);
         if pinned
             .iter()
-            .any(|id| self.state.players[opponent.index()].hand.contains(id))
+            .any(|id| sampling_state.players[opponent.index()].hand.contains(id))
         {
             return Err("opponent hand selection binds physical copies".into());
         }
-        let slots = closed_list_v2::resampled_slots(&self.state, actor, &pinned);
+        let slots = closed_list_v2::resampled_slots(sampling_state, actor, &pinned);
         let library_minima = if typed_full_pool {
-            crate::limited_match_v1::library_minima_v1::minimum_names(&self.state, opponent)
+            crate::limited_match_v1::library_minima_v1::minimum_names(sampling_state, opponent)
         } else {
             Vec::new()
         };
         Ok(LimitedClosedListRootV3 {
             actor,
+            courtyard,
             slots,
             knowledge,
             known_names,
@@ -8672,7 +8675,7 @@ impl FastActorSessionV1 {
     #[cfg(feature = "limited-fdn-fixtures")]
     pub(crate) fn limited_closed_list_clone_v3(
         &self,
-        root: &LimitedClosedListRootV3,
+        root: &LimitedClosedListRootV3<'_>,
         seed: u64,
         belief: &crate::limited_match_v1::LimitedBeliefV1,
     ) -> Result<Self, String> {
@@ -8686,6 +8689,11 @@ impl FastActorSessionV1 {
             return Err("sampled root actor or owning profile differs".into());
         }
         let mut sampled = self.clone();
+        if let Some(checkpoint) = &root.courtyard {
+            sampled.state = checkpoint.original(&self.state)?.clone();
+        } else if crate::linked_aura_operation_v1::has_pending(&self.state) {
+            return Err("linked operation checkpoint requires sampled replay".into());
+        }
         sampled.state.sampled_history_v1 = root.sampled_history.clone();
         let opening = crate::leyline_axe_v1::sampling::prepare(&mut sampled.state, root.actor)?;
         if typed_full_pool {
@@ -8718,6 +8726,9 @@ impl FastActorSessionV1 {
         sampled.state.hand_departures_by_name_v1 = false;
         sampled.state.hand_knowledge_by_name_v2 = false;
         sampled.state.resample_future_randomness_for_search_v3(seed);
+        if let Some(checkpoint) = &root.courtyard {
+            sampled.state = checkpoint.replay(&sampled.state)?;
+        }
 
         if typed_full_pool {
             // Rebind the exact native root without advancing it again. A

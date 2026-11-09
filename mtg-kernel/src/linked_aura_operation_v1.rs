@@ -551,6 +551,79 @@ pub fn has_pending(state: &GameState) -> bool {
         || crate::season_token_attachment_v48::pending(state).is_some()
         || crate::fake_your_own_death_v50::return_aura::pending(state).is_some()
 }
+/// A closed-list world can replay this exact land play from its sampled
+/// pre-operation state. Other suspended operations still require their own
+/// sampling proof before their original worlds can be replaced.
+#[cfg(feature = "limited-fdn-fixtures")]
+pub(crate) struct CourtyardSampleV1<'a>(&'a crate::banner_of_kinship_v1::entry::CheckpointV1);
+
+#[cfg(feature = "limited-fdn-fixtures")]
+impl<'a> CourtyardSampleV1<'a> {
+    pub(crate) fn from_live(
+        state: &'a GameState,
+        actor: crate::ids::PlayerId,
+    ) -> Result<Option<Self>, String> {
+        if !has_pending(state) {
+            return Ok(None);
+        }
+        const REFUSAL: &str = "linked operation checkpoint requires sampled replay";
+        let pending = state
+            .engine
+            .linked_aura_operation_v1
+            .pending_kinship_v1
+            .as_deref()
+            .ok_or(REFUSAL)?;
+        let (OperationV1::Step(Action::PlayLand(object)), GeneralChoiceV36::KinshipV1 { choice, .. }) =
+            (&pending.operation, &pending.choice)
+        else {
+            return Err(REFUSAL.into());
+        };
+        if !pending.answers.is_empty()
+            || pending.used_banner
+            || choice.controller != actor
+            || !crate::banner_of_kinship_v1::entry::owns_courtyard(choice.card_def)
+            || !matches!(&choice.proposal, ProposedEvent::ZoneChange(change)
+                if change.object == *object && change.to_zone == Zone::Battlefield)
+            || !pending.original.objects.try_get(*object).is_some_and(|source| {
+                source.zone == Zone::Hand && source.owner == actor && source.card_def == choice.card_def
+            })
+        {
+            return Err(REFUSAL.into());
+        }
+        validate(state)?;
+        Ok(Some(Self(pending)))
+    }
+
+    pub(crate) fn original(&self, live: &GameState) -> Result<&'a GameState, String> {
+        if !live
+            .engine
+            .linked_aura_operation_v1
+            .pending_kinship_v1
+            .as_deref()
+            .is_some_and(|pending| std::ptr::eq(pending, self.0))
+        {
+            return Err("sampled Courtyard checkpoint is not the live root".into());
+        }
+        Ok(self.0.original.as_ref())
+    }
+
+    pub(crate) fn replay(&self, sampled: &GameState) -> Result<GameState, String> {
+        let (next, _) = replay_general(sampled, &self.0.operation, &[], false)?;
+        let pending = next
+            .engine
+            .linked_aura_operation_v1
+            .pending_kinship_v1
+            .as_deref()
+            .ok_or("sampled Courtyard did not reach its native checkpoint")?;
+        if pending.choice != self.0.choice
+            || pending.operation_history_index != self.0.operation_history_index
+        {
+            return Err("sampled Courtyard checkpoint binding changed".into());
+        }
+        Ok(next)
+    }
+}
+
 pub(crate) fn has_banner_pending(state: &GameState) -> bool {
     state
         .engine
