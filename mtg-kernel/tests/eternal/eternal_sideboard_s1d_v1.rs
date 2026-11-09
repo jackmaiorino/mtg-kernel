@@ -860,7 +860,11 @@ fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             for branch in [&mut state, &mut restored] {
                 activate(branch, firebrand, 0, &[Target::Player(actor)]);
+                assert!(matches!(next(branch), Decision::CastSpellOrPass { .. }));
+                assert!(branch.stack.iter().any(|item| item.source == firebrand
+                    && item.kind == StackItemKind::ActivatedAbility));
                 assert_eq!(zone(branch, firebrand), Zone::Graveyard);
+                assert_eq!(life(branch, actor), 20);
                 settled(branch);
                 assert_eq!(life(branch, actor), if scenario == 0 { 20 } else { 19 });
                 let shields = &branch.eternal_v1.as_ref().unwrap().s1d.cop_shields;
