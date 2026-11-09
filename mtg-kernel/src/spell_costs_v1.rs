@@ -1635,6 +1635,16 @@ pub(super) fn prepare_final_spell_payment_v1(
     let definition = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     let player = pending.controller;
     let source = pending.spell;
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1a_v1::statics::cast_prohibited(
+        state,
+        player,
+        source,
+        method,
+        pending.selected_x_v59().unwrap_or(0),
+    ) {
+        return None;
+    }
     let selected = selected_spell_mana_costs_for_source_v1(
         source,
         definition,
