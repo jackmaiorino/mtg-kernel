@@ -1968,6 +1968,11 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    if crate::eternal_opening_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Eternal opening actions require their consumer successor".into(),
+        ));
+    }
     if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state) {
         return Err(RlContractError(
             "Meddling Mage named entry requires its consumer successor".into(),
@@ -2342,6 +2347,11 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     accept_fake: bool,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<ObservationV2> {
+    if crate::eternal_opening_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Eternal opening actions require their consumer successor".into(),
+        ));
+    }
     if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state) {
         return Err(RlContractError(
             "Meddling Mage named entry requires its consumer successor".into(),
@@ -7118,7 +7128,8 @@ fn core_surface_action_candidates_fake_scoped_v50(
             | Decision::ChooseVariableCastKicker { .. }
             | Decision::ChooseEntryColorV36 { .. }
             | Decision::ChooseEntryCreatureTypeV1 { .. }
-            | Decision::ChooseMeddlingMageNameV1 { .. } => {
+            | Decision::ChooseMeddlingMageNameV1 { .. }
+            | Decision::ChooseEternalOpeningV1 { .. } => {
                 return Err(RlContractError(
                     "variable cast targeting requires its legal-action successor".into(),
                 ))
@@ -7757,6 +7768,7 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseEntryColorV36 { player, .. }
             | Decision::ChooseEntryCreatureTypeV1 { player, .. }
             | Decision::ChooseMeddlingMageNameV1 { player, .. }
+            | Decision::ChooseEternalOpeningV1 { player, .. }
             | Decision::ChooseOptionalCost { player, .. }
             | Decision::ChooseSpellCopyPayment { player, .. }
             | Decision::ChooseSpellCopyRetarget { player, .. }

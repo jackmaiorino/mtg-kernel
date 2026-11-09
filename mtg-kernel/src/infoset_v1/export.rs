@@ -916,6 +916,12 @@ fn export_versioned(
     let opp = v.opponent();
     let mutant = options.mutant;
     let is = |m: MutantV1| mutant == Some(m);
+    if crate::eternal_opening_v1::requires_successor(state) {
+        return Err(refuse(
+            RefusalCodeV1::R3,
+            "Eternal opening actions are unavailable in this infoset export",
+        ));
+    }
     if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state) {
         return Err(refuse(
             RefusalCodeV1::R3,

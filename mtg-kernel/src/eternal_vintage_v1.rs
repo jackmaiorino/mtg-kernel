@@ -870,17 +870,9 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
             if !in_hand {
                 return;
             }
-            // spellbench-public-reveal: hand card revealed by the card rules.
-            for observer in [PlayerId::P0, PlayerId::P1] {
-                if state
-                    .reveal_distinct_hand_card(observer, contract.owner, contract.source)
-                    .is_err()
-                {
-                    halt(state, ctx.source);
-                    return;
-                }
+            if reveal_chancellor_from_opening(state, contract).is_err() {
+                halt(state, ctx.source);
             }
-            vintage_state(state).chancellor_reveals.push(contract);
         }
         VintageOpV1::BindCounterUnlessPaysOneV1 => halt(state, ctx.source),
         VintageOpV1::PayOneOrCounterV1 { spell } => {
@@ -1562,6 +1554,20 @@ pub(crate) fn delayed_triggers(
 /// "You may reveal this card from your opening hand": offered for each
 /// Chancellor of the Annex in a hand as the game's first upkeep begins,
 /// before anyone could have cast a spell.
+pub(crate) fn reveal_chancellor_from_opening(
+    state: &mut GameState,
+    source: AbilitySourceContractV4,
+) -> Result<(), String> {
+    // spellbench-public-reveal: hand card revealed by the card rules.
+    for observer in [PlayerId::P0, PlayerId::P1] {
+        state.reveal_distinct_hand_card(observer, source.owner, source.source)?;
+    }
+    let vintage = vintage_state(state);
+    vintage.opening_hand_offered = true;
+    vintage.chancellor_reveals.push(source);
+    Ok(())
+}
+
 fn opening_hand_triggers(state: &mut GameState, events: &[CommittedEvent]) -> Vec<PendingTrigger> {
     let first_upkeep = state.turn == 1
         && state.active_player == state.starting_player
@@ -1570,6 +1576,7 @@ fn opening_hand_triggers(state: &mut GameState, events: &[CommittedEvent]) -> Ve
             .iter()
             .any(|event| matches!(event, CommittedEvent::UpkeepBegan { .. }));
     if !first_upkeep
+        || crate::eternal_opening_v1::enabled(state)
         || state
             .eternal_v1
             .as_ref()

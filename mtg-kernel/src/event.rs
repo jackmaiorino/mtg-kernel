@@ -2098,6 +2098,9 @@ pub enum CommittedEvent {
     MeddlingMageEntryV1 {
         journal: Box<crate::eternal_sideboard_s1b_v1::meddling_mage_entry::JournalV1>,
     },
+    EternalOpeningV1 {
+        record: crate::eternal_opening_v1::RecordV1,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

@@ -337,6 +337,7 @@ pub mod eternal_sideboard_s1d_v1;
 pub mod eternal_vintage_e7b_v1;
 /// Vintage card programs of the eternal catalog (wave E4).
 pub mod eternal_vintage_v1;
+pub mod eternal_opening_v1;
 pub mod event;
 pub mod event_history_v1;
 pub mod expanded_deck_training_v1;
