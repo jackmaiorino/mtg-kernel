@@ -5945,6 +5945,7 @@ impl RlEpisodeSessionV1 {
             deck_ids,
             card_ids,
             [None, None],
+            None,
             priority_mode,
             foundations_combat,
             london_mulligans,
@@ -5952,7 +5953,8 @@ impl RlEpisodeSessionV1 {
     }
 
     /// `reset_with_custom_decks_and_london_v1` with each seat's companion,
-    /// put face up in exile before the game begins.
+    /// put face up in exile before the game begins, and each seat's cards
+    /// outside the game (`eternal_outside_game_v1`).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn reset_with_custom_decks_companions_and_london_v1(
         episode_id: u64,
@@ -5962,6 +5964,7 @@ impl RlEpisodeSessionV1 {
         deck_ids: SessionDeckIdsV1,
         card_ids: [&[u16]; 2],
         companions: [Option<u16>; 2],
+        outside_the_game: Option<[Vec<u16>; 2]>,
         priority_mode: crate::surface_v2::PriorityModeV1,
         foundations_combat: bool,
         london_mulligans: bool,
@@ -5974,6 +5977,7 @@ impl RlEpisodeSessionV1 {
             deck_ids,
             card_ids,
             companions,
+            outside_the_game,
             priority_mode,
             foundations_combat,
             london_mulligans,
@@ -5993,6 +5997,7 @@ impl RlEpisodeSessionV1 {
         deck_ids: SessionDeckIdsV1,
         card_ids: [&[u16]; 2],
         companions: [Option<u16>; 2],
+        outside_the_game: Option<[Vec<u16>; 2]>,
         priority_mode: crate::surface_v2::PriorityModeV1,
         foundations_combat: bool,
         london_mulligans: bool,
@@ -6029,6 +6034,11 @@ impl RlEpisodeSessionV1 {
         // requires an empty exile.
         if companions.iter().any(Option::is_some) {
             crate::eternal_lurrus_v1::add_companions(&mut state, companions);
+        }
+        // None preserves legacy best-of-one snapshots and hashes. An explicit
+        // profile stays public even with empty or subsequently depleted lists.
+        if let Some(cards) = outside_the_game {
+            crate::eternal_outside_game_v1::set_outside_the_game(&mut state, cards);
         }
         let deck_hashes = card_ids
             .map(|cards| fnv1a64(&serde_json::to_vec(cards).expect("card-id arrays serialize")));
@@ -6341,6 +6351,13 @@ impl RlEpisodeSessionV1 {
         })?;
         session.advance_to_decision_or_terminal_profiled(profile);
         Ok(session)
+    }
+
+    pub(crate) fn outside_game_options(
+        &self,
+        viewer: PlayerSeatV1,
+    ) -> Option<Vec<crate::eternal_outside_game_v1::OutsideGameOptionV1>> {
+        crate::eternal_outside_game_v1::decision_options(&self.state, viewer)
     }
 
     pub fn current_response(&self) -> RlSessionResponseV1 {
