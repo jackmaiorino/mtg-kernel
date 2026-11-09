@@ -149,12 +149,10 @@ fn every_frozen_fdn_printing_in_own_hand_has_current_numeric_coverage_both_seats
     assert_eq!(names.len(), 286);
     const KNOWN_GAPS: &[&str] = &[
         "Abyssal Harvester",
-        "Adventuring Gear",
         "Arbiter of Woe",
         "Banner of Kinship",
         "Blasphemous Edict",
         "Cat Collector",
-        "Celestial Armor",
         "Consuming Aberration",
         "Curator of Destinies",
         "Drakuseth, Maw of Flames",

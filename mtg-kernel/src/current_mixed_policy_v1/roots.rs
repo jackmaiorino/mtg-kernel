@@ -896,6 +896,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || threshold_loot.is_some()
             || attack_trigger.is_some()
             || elf_lord.is_some()
+            || ordinary_equipment.is_some()
             || ward_discount_creature.is_some()
             || observer_trigger.is_some()))
     {

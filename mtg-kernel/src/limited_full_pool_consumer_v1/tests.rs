@@ -18,6 +18,8 @@ use crate::{
 
 #[path = "elf_lords.rs"]
 mod elf_lords;
+#[path = "equipment.rs"]
+mod equipment;
 
 fn card(name: &str) -> u16 {
     card_id_by_name(name).unwrap()

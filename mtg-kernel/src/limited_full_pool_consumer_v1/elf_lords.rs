@@ -16,7 +16,7 @@ fn board(decision: &KaitoDecision) -> &PublicObservationProjectionV2 {
         .surface
 }
 
-fn action_index(decision: &KaitoDecision, choose: impl Fn(&Action) -> bool) -> Option<u32> {
+pub(super) fn action_index(decision: &KaitoDecision, choose: impl Fn(&Action) -> bool) -> Option<u32> {
     decision
         .fixture_backend_v75()
         .actions()
@@ -25,7 +25,7 @@ fn action_index(decision: &KaitoDecision, choose: impl Fn(&Action) -> bool) -> O
         .map(|i| u32::try_from(i).unwrap())
 }
 
-fn apply(owner: &mut KaitoSession, native: &mut FastActorSessionV1, d: &KaitoDecision, i: u32) {
+pub(super) fn apply(owner: &mut KaitoSession, native: &mut FastActorSessionV1, d: &KaitoDecision, i: u32) {
     let backend = d.fixture_backend_v75();
     let expected = backend.expected();
     let original = backend.fixture_original_index_v75(i).unwrap();
@@ -38,7 +38,7 @@ fn apply(owner: &mut KaitoSession, native: &mut FastActorSessionV1, d: &KaitoDec
     assert_eq!(owner.fixture_state(), native.kaito_fixture_state());
 }
 
-fn act(
+pub(super) fn act(
     owner: &mut KaitoSession,
     native: &mut FastActorSessionV1,
     choose: impl Fn(&Action) -> bool,
@@ -49,7 +49,7 @@ fn act(
     apply(owner, native, &d, i);
 }
 
-fn pass(action: &Action) -> bool {
+pub(super) fn pass(action: &Action) -> bool {
     matches!(action, Action::Pass { .. })
 }
 
@@ -81,7 +81,7 @@ fn cast_action(action: &Action, object: ObjectId) -> bool {
     matches!(action, Action::CastSpell { source, .. } if source.arena_id == object.0)
 }
 
-fn advance_to_actor_main(
+pub(super) fn advance_to_actor_main(
     owner: &mut KaitoSession,
     native: &mut FastActorSessionV1,
     actor: PlayerId,
@@ -101,7 +101,7 @@ fn advance_to_actor_main(
     panic!("next main phase did not become a real actor decision");
 }
 
-fn assert_stats(d: &KaitoDecision, object: ObjectId, power: i32, toughness: i32) {
+pub(super) fn assert_stats(d: &KaitoDecision, object: ObjectId, power: i32, toughness: i32) {
     let live = board(d)
         .battlefield
         .iter()
