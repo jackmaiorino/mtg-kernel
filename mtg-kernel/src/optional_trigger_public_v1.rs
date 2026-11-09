@@ -107,7 +107,7 @@ pub(crate) fn reference(
     let visible = match o.zone {
         Zone::Hand => viewer.is_some_and(|v| {
             v == o.owner
-                || state
+                || state.reveal_knowledge_v4.is_none() && state
                     .known_hand_cards(v, o.owner)
                     .iter()
                     .any(|k| k.object == id && k.zone_change_count == o.zone_change_count)
