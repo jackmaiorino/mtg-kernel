@@ -22,7 +22,7 @@ fn eligible(
         || !matches!(contract.zone, Zone::Battlefield | Zone::Graveyard | Zone::Command)
         || item.v4.hidden_ability_source.is_some()
         || item.v4.granted_by.is_some()
-        || item.v4.cauldron_grant.is_some()
+        || !item.v4.cauldron_grant.is_empty()
     {
         return false;
     }
