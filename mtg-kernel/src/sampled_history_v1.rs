@@ -44,6 +44,23 @@ fn sources(event: &E) -> Vec<AbilitySourceContractV4> {
         E::SquadRallierResolutionBoundaryV1 { receipt } => vec![receipt.source],
         E::SphinxsTutelageDrawV1 { observers, .. } => observers.clone(),
         E::ProgenitusShuffledV1 { source, .. } => vec![*source],
+        E::OmniscienceCastOptionsV1 { options } => vec![options.source],
+        E::LathrilCombatDamageV1 { source, .. } => vec![*source],
+        E::HarvesterCommitReceiptV1 { journal } => match journal.as_ref() {
+            crate::harvester_receipts_v1::JournalV1::Published(publication) =>
+                publication.item.v4.ability_source_contract.into_iter().collect(),
+            _ => vec![],
+        },
+        E::LathrilReceiptV1 { journal } => match journal.as_ref() {
+            crate::lathril_receipts_v1::JournalV1::Paid { item, .. } =>
+                item.v4.ability_source_contract.into_iter().collect(),
+            _ => vec![],
+        },
+        E::KinshipEntryV1 { journal } => match journal.as_ref() {
+            crate::banner_of_kinship_v1::entry::JournalV1::Committed { entered } => vec![entered.source],
+            crate::banner_of_kinship_v1::entry::JournalV1::Captured { choice, .. } => choice.replacement.seasons.clone(),
+            _ => vec![],
+        },
         E::FiendArtisanPaidV1 { item, .. } => item.v4.ability_source_contract.into_iter().collect(),
         E::KaitoCunningV75 { .. } => crate::effect::kaito_cunning_v75::archived_sources_v1(event),
         E::VivienReidV1 { .. } => crate::effect::vivien_reid_v1::archived_sources_v1(event),
