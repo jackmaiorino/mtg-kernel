@@ -16,6 +16,9 @@ use crate::{
     state::{Target, Zone},
 };
 
+#[path = "elf_lords.rs"]
+mod elf_lords;
+
 fn card(name: &str) -> u16 {
     card_id_by_name(name).unwrap()
 }
@@ -516,59 +519,83 @@ fn paid_axe_equips_the_real_harvester_nightmare_under_one_copy_scope_both_seats(
 
 #[test]
 fn every_frozen_printing_reaches_the_full_pool_sealed_learner_for_each_seat() {
-    let deck: Vec<_> = declared_printings_v1().unwrap().iter().copied().collect();
-    let model = ModelV1::deterministic_fixture();
-    let library = [card("Forest"); 40];
-    for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut covered = BTreeSet::new();
-        for printings in deck.chunks(7) {
-            // Put a bounded own-hand sample at an actual main-phase decision.
-            // The memberships and actions are read from the owned menu.
-            let mut state = GameState::new_from_libraries_with_starting_player_v1(
-                &library,
-                &library,
-                crate::rl::card_name,
-                550_286,
-                actor,
-            );
-            state.step = crate::state::Step::Main1;
-            FastActorSessionV1::enable_limited_native_modes_v1(
-                &mut state,
-                LimitedAppendixV1::FullPool,
-            );
-            for land in ["Plains", "Island", "Swamp", "Mountain", "Forest"] {
-                put(&mut state, actor, land, Zone::Battlefield);
-            }
-            let objects: Vec<_> = printings
-                .iter()
-                .map(|&id| {
-                    put(
-                        &mut state,
-                        actor,
-                        CARD_DEFS[usize::from(id)].name,
-                        Zone::Hand,
-                    )
-                })
-                .collect();
-            let owner = KaitoSession::from_session(raw(&state)).unwrap();
-            let d = decision(&owner);
-            let backend = d.fixture_backend_v75();
-            assert_eq!(backend.expected().acting_player, actor.into());
-            let hand = &backend.observation().common.common.own_hand;
-            for (&printing, object) in printings.iter().zip(objects) {
-                assert!(
-                    hand.iter().any(|row| {
-                        row.stable.arena_id == object.0 && row.stable.card_db_id == printing
-                    }),
-                    "own hand lost frozen printing {printing}"
-                );
-                assert!(covered.insert(printing));
-            }
-            let input = owner.training_input_v1(&d).unwrap();
-            let scores = model.forward(&input).unwrap();
-            assert_eq!(scores.len(), d.packet().actions().len());
-            assert!(scores.iter().all(|score| score.is_finite()));
+    fn check(actor: PlayerId, printings: &[u16], model: &ModelV1) -> Result<(), String> {
+        let library = [card("Forest"); 40];
+        // Put a bounded own-hand sample at an actual main-phase decision.
+        let mut state = GameState::new_from_libraries_with_starting_player_v1(
+            &library,
+            &library,
+            crate::rl::card_name,
+            550_286,
+            actor,
+        );
+        state.step = crate::state::Step::Main1;
+        FastActorSessionV1::enable_limited_native_modes_v1(&mut state, LimitedAppendixV1::FullPool);
+        for land in ["Plains", "Island", "Swamp", "Mountain", "Forest"] {
+            put(&mut state, actor, land, Zone::Battlefield);
         }
-        assert_eq!(&covered, declared_printings_v1().unwrap());
+        let objects: Vec<_> = printings
+            .iter()
+            .map(|&id| {
+                put(
+                    &mut state,
+                    actor,
+                    CARD_DEFS[usize::from(id)].name,
+                    Zone::Hand,
+                )
+            })
+            .collect();
+        let owner = KaitoSession::from_session(raw(&state)).map_err(|e| format!("{e:?}"))?;
+        let FastActorResponseV1::Decision(expected) = owner.current_response() else {
+            return Err(format!(
+                "expected native decision, got {:?}",
+                owner.current_response()
+            ));
+        };
+        if expected.acting_player != actor.into() {
+            return Err(format!(
+                "unexpected native chooser {:?}",
+                expected.acting_player
+            ));
+        }
+        let d = owner.encode(expected).map_err(|e| format!("{e:?}"))?;
+        let hand = &d.fixture_backend_v75().observation().common.common.own_hand;
+        for (&printing, object) in printings.iter().zip(objects) {
+            if !hand
+                .iter()
+                .any(|row| row.stable.arena_id == object.0 && row.stable.card_db_id == printing)
+            {
+                return Err(format!("own hand lost frozen printing {printing}"));
+            }
+        }
+        let input = owner.training_input_v1(&d).map_err(|e| format!("{e:?}"))?;
+        let scores = model.forward(&input).map_err(|e| format!("{e:?}"))?;
+        if scores.len() != d.packet().actions().len()
+            || scores.iter().any(|score| !score.is_finite())
+        {
+            return Err("sealed learner returned an invalid score vector".into());
+        }
+        Ok(())
     }
+
+    let deck: Vec<_> = declared_printings_v1().unwrap().iter().copied().collect();
+    assert_eq!(deck.len(), 286);
+    let model = ModelV1::deterministic_fixture();
+    let mut failures = Vec::new();
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for printings in deck.chunks(7) {
+            if let Err(error) = check(actor, printings, &model) {
+                failures.push(format!("{actor:?} batch {printings:?}: {error}"));
+                // A failed batch can hide later unsupported roots. Keep its
+                // failure and report each individually failing printing too.
+                for &id in printings {
+                    if let Err(error) = check(actor, &[id], &model) {
+                        let name = CARD_DEFS[usize::from(id)].name;
+                        failures.push(format!("{actor:?} {id} {name}: {error}"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

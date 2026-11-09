@@ -105,6 +105,11 @@ fn packet_from_current(
     // annotation remain present. Raw executable pairs and index maps are never encoded.
     let mut state =
         serde_json::to_value(candidates).map_err(|e| Error::Projection(e.to_string()))?;
+    if let Some(counts) = super::roots::elf_lord_printing::visible_counts(
+        &candidates.observation.common.common.projection.surface,
+    ) {
+        state["elf_lord_visible_counts"] = counts;
+    }
     let minima = match hand_facts {
         HandFacts::CopyRows => None,
         HandFacts::NamesV2 => Some(
