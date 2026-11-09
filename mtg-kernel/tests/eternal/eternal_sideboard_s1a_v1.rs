@@ -1325,7 +1325,10 @@ fn surgical_extraction_can_finish_at_zero_or_exile_a_private_subset_in_either_se
         let look = surgical_search_look_v1(&state, actor).unwrap().unwrap();
         assert_eq!(look.owner, PlayerSeatV1::from(owner));
         assert_eq!(look.hand_printings, ["Llanowar Elves", "Snap", "Snap"]);
-        assert_eq!(look.library_printings, ["Island", "Llanowar Elves", "Llanowar Elves"]);
+        assert_eq!(
+            look.library_printings,
+            ["Island", "Llanowar Elves", "Llanowar Elves"]
+        );
         assert!(surgical_search_look_v1(&state, owner).unwrap().is_none());
         let known_names = |state: &GameState| {
             let mut names = state

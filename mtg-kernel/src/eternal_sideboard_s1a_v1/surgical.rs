@@ -67,7 +67,11 @@ pub fn surgical_search_look_v1(
     let printings = |cards: &[crate::ids::ObjectId]| {
         let mut result: Vec<_> = cards
             .iter()
-            .map(|&card| CARD_DEFS[usize::from(state.objects.get(card).card_def)].name.to_string())
+            .map(|&card| {
+                CARD_DEFS[usize::from(state.objects.get(card).card_def)]
+                    .name
+                    .to_string()
+            })
             .collect();
         result.sort_unstable();
         result

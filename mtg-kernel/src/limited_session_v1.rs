@@ -345,9 +345,18 @@ impl LimitedReplyV1 {
                     crate::rl::PlayerSeatV1::P0 => crate::ids::PlayerId::P0,
                     crate::rl::PlayerSeatV1::P1 => crate::ids::PlayerId::P1,
                 };
-                match crate::eternal_sideboard_s1a_v1::surgical_search_look_v1(session.game_state(), viewer) {
+                match crate::eternal_sideboard_s1a_v1::surgical_search_look_v1(
+                    session.game_state(),
+                    viewer,
+                ) {
                     Ok(look) => surgical_search_look_v1 = look,
-                    Err(_) => return Self::error(Some(request_id), "invalid_surgical_search", "The active Surgical Extraction search is invalid."),
+                    Err(_) => {
+                        return Self::error(
+                            Some(request_id),
+                            "invalid_surgical_search",
+                            "The active Surgical Extraction search is invalid.",
+                        )
+                    }
                 }
                 LimitedReplyBodyV1::Decision {
                     decision: Box::new(decision),
