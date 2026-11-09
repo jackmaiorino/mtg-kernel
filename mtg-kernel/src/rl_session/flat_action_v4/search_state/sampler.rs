@@ -582,6 +582,20 @@ pub(super) fn same_current_unknown_pool_v69(
         shape(&a) == shape(&b) && pool(before, &a) == pool(current, &b)
     })
 }
+/// Which unknown slots a whole-object determinization permutes. `All` is the
+/// formal sampler. The others are SD1's partial-information probes (collab
+/// LANES/search-diagnostic-20261108/DESIGN.md v4 section 3.1, E5), diagnostics
+/// only: `LibrariesOnly` keeps every hand as it is (the opponent's real hand
+/// and, with no deck prior, its real deck) and reshuffles each owner's unknown
+/// library slots; `OpponentOnly` leaves the actor's own library in its
+/// realized order and permutes only the opponent's unknown slots.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SlotFilterV1 {
+    All,
+    LibrariesOnly,
+    OpponentOnly,
+}
+
 fn redeterminize_with_library_plan_inner(
     state: &mut GameState,
     actor: PlayerId,
@@ -589,6 +603,46 @@ fn redeterminize_with_library_plan_inner(
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
     classified: bool,
     scope: SamplingScopeV68,
+) -> Result<(), Error> {
+    redeterminize_filtered_inner(
+        state,
+        actor,
+        seed,
+        plan,
+        classified,
+        scope,
+        SlotFilterV1::All,
+    )
+}
+
+/// SD1 (opt-in, diagnostic only): the classified legacy-scope sampler over
+/// the unknown slots `filter` keeps.
+pub(super) fn redeterminize_partial_v1(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+    filter: SlotFilterV1,
+) -> Result<(), Error> {
+    redeterminize_filtered_inner(
+        state,
+        actor,
+        seed,
+        plan,
+        true,
+        SamplingScopeV68::Legacy,
+        filter,
+    )
+}
+
+fn redeterminize_filtered_inner(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+    classified: bool,
+    scope: SamplingScopeV68,
+    filter: SlotFilterV1,
 ) -> Result<(), Error> {
     // Refuse before even the first hidden-owner permutation, including empty pools.
     if crate::bloodthirsty_conqueror_v49::has_history(state)
@@ -636,7 +690,13 @@ fn redeterminize_with_library_plan_inner(
     let mut pools = Vec::with_capacity(2);
     for owner in [PlayerId::P0, PlayerId::P1] {
         // Slots are canonical: owner order, then hand indices, then library indices.
-        let slots = current_unknown_slots(state, actor, owner);
+        let mut slots = current_unknown_slots(state, actor, owner);
+        match filter {
+            SlotFilterV1::All => {}
+            SlotFilterV1::LibrariesOnly => slots.retain(|s| s.0 == Zone::Library),
+            SlotFilterV1::OpponentOnly if owner == actor => slots.clear(),
+            SlotFilterV1::OpponentOnly => {}
+        }
         let mut pool: Vec<_> = slots.iter().map(|x| x.2).collect();
         pool.sort_unstable();
         if pool.windows(2).any(|x| x[0] == x[1]) {
