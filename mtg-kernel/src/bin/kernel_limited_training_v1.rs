@@ -210,12 +210,16 @@ fn game(roster: [(&str, &[u8]); 2], seed: u64, leg: usize, model: &ModelV1, coll
                 PlayerSeatV1::P1 => 1,
             };
             let context = format!(
-                "seat {actor} step {} {:?} width {}",
+                "seat {actor} step {} {:?} native width {}",
                 decision.step, decision.decision_kind, decision.legal_action_count
             );
             let bound = session
                 .encode(decision)
                 .map_err(|error| format!("encode {context}: {error}"))?;
+            // Combat projection can remove an infeasible native answer.
+            // Selection and the receipt both use the sealed public ordinals.
+            let legal = u32::try_from(bound.packet().actions().len())
+                .map_err(|_| format!("sealed action count exceeds u32: {context}"))?;
             let input = if model_seat.is_none_or(|seat| seat == actor) {
                 Some(
                     session
@@ -229,7 +233,7 @@ fn game(roster: [(&str, &[u8]); 2], seed: u64, leg: usize, model: &ModelV1, coll
                 Some(input) => model
                     .forward(input)
                     .map_err(|error| format!("inference {context}: {error}"))?,
-                None => vec![0.; decision.legal_action_count as usize],
+                None => vec![0.; legal as usize],
             };
             let selected = sample(&scores, &mut rng[actor])
                 .map_err(|error| format!("sample {context}: {error}"))?;
@@ -250,7 +254,7 @@ fn game(roster: [(&str, &[u8]); 2], seed: u64, leg: usize, model: &ModelV1, coll
                     FastActorDecisionKindV1::AttackerInclusion => DecisionKind::AttackerInclusion,
                     FastActorDecisionKindV1::BlockerInclusion => DecisionKind::BlockerInclusion,
                 },
-                legal: decision.legal_action_count,
+                legal,
                 selected,
                 retained_for_update: retain,
             });

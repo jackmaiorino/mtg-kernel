@@ -534,6 +534,51 @@ fn real_raid_target_accept_decline_training_capture_restore_and_foreign_refusal_
 }
 
 #[test]
+fn issue552_paid_phoenix_forced_attack_uses_one_sealed_ordinal_both_seats() {
+    use crate::{engine, rl_session::FastActorDecisionKindV1};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = native::ready(actor);
+        state.reveal_knowledge_v4 = Some(Default::default());
+        state.reveal_meaning_v3.enable();
+        let phoenix = native::paid(&mut state, actor, "Flamewake Phoenix", None);
+        assert_eq!(state.objects.get(phoenix).zone, Zone::Battlefield);
+        let mut reached_combat = false;
+        for _ in 0..16 {
+            let choice = engine::advance_until_decision(&mut state);
+            if let engine::Decision::DeclareAttackers { player, eligible } = &choice {
+                assert_eq!(*player, actor);
+                assert_eq!(eligible.as_slice(), &[phoenix]);
+                reached_combat = true;
+                break;
+            }
+            native::quiet(&mut state, choice);
+        }
+        assert!(reached_combat);
+
+        let mut owner = KaitoSession::from_session(
+            FastActorSessionV1::from_kaito_v75_fixture_state(state),
+        )
+        .unwrap();
+        let d = decision(&owner);
+        let backend = d.fixture_backend_v75();
+        assert_eq!(
+            backend.expected().decision_kind,
+            FastActorDecisionKindV1::AttackerInclusion
+        );
+        assert_eq!(backend.expected().legal_action_count, 2);
+        assert_eq!(d.packet().actions().len(), 1);
+        assert_eq!(backend.fixture_original_index_v75(0), Some(1));
+        assert!(owner.apply(&d, 1).is_err());
+        owner.apply(&d, 0).unwrap();
+        assert!(owner.fixture_state().engine.event_history.iter().any(|event| matches!(
+            event,
+            crate::event::CommittedEvent::DeclaredAttacker { source, controller, .. }
+                if *source == phoenix && *controller == actor
+        )));
+    }
+}
+
+#[test]
 fn independent_hidden_worlds_preserve_active_call_human_wire_and_numeric_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let make = |hidden| {

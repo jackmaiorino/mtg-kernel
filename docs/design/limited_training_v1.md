@@ -37,7 +37,9 @@ search and typed learner use separate decision entry points.
 
 The two train games start with opposite seats and sample from one immutable
 tree model. The learner uses the first 32 non-forced decisions per seat per
-game, retaining the full action-index trace. Every example gets that seat's
+game, retaining the full action-index trace. The trace width and fixed opponent's
+uniform choice use the sealed numeric menu, which omits infeasible combat
+answers. Every example gets that seat's
 natural terminal return of +1, 0 or -1. One synchronous Adam update minimizes
 mean `-return * log p(action)`. This is terminal REINFORCE at gamma 1 with a
 zero critic, a bounded form of the Pauper terminal-return objective. Both
