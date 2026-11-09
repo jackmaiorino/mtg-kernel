@@ -13,6 +13,8 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, sync::OnceLock};
 
+pub mod life_triggers;
+
 pub const PROFILE_V1: &str = "fdn-full-pool-consumer/v1";
 pub const OBSERVATION_SCHEMA: &str = "mtg-kernel/full-pool-fdn-observation/v1";
 pub const CANDIDATES_SCHEMA: &str = "mtg-kernel/full-pool-fdn-candidates/v1";

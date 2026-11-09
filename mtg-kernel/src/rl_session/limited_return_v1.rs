@@ -284,6 +284,9 @@ impl FastActorSessionV1 {
         state: &mut GameState,
         appendix: LimitedAppendixV1,
     ) {
+        if appendix == LimitedAppendixV1::FullPool {
+            crate::life_gain_turn_v1::initialize_full_pool(state);
+        }
         state.curator_unordered_reveal_v1 = appendix.includes(LimitedAppendixV1::Curator);
         state.greatwurm_commit_receipts_v1 = appendix.includes(LimitedAppendixV1::Greatwurm);
         state.harvester_commit_receipts_v1 = appendix.includes(LimitedAppendixV1::Harvester);

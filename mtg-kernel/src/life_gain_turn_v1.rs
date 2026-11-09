@@ -1,5 +1,5 @@
-//! Opt-in, engine-only history for the first actual life gain each turn.
-//! Public observations and frozen policy encoders do not inspect this ledger.
+//! Native history for the first actual life gain each turn.
+//! FullPool exposes only whether each seat has consumed its first gain.
 
 use crate::event::CommittedEvent;
 use crate::ids::ObjectId;
@@ -24,6 +24,15 @@ pub(crate) fn initialize_for_pool(state: &mut GameState) {
     }
     #[cfg(not(feature = "limited-fdn-fixtures"))]
     let _ = state;
+}
+
+/// FullPool can sample first-gain cards into a world whose original decks
+/// contained neither observer. Its ledger starts before the first decision
+/// regardless of which printings the hidden decks actually contain.
+pub(crate) fn initialize_full_pool(state: &mut GameState) {
+    if state.life_gain_turn_v1.is_none() {
+        begin_turn(state);
+    }
 }
 
 fn begin_turn(state: &mut GameState) {
@@ -57,12 +66,7 @@ pub(crate) fn reset_at_untap(state: &mut GameState) {
     }
 }
 
-/// Reconstruct the ordinal at each event's own commit time, before the entire
-/// atomic resolution's events are collected. Zero/nonpositive gains do not count.
-pub(crate) fn event_ordinals(
-    state: &GameState,
-    events: &[CommittedEvent],
-) -> Result<Vec<Option<u32>>, String> {
+fn turn_history(state: &GameState) -> Result<&[CommittedEvent], String> {
     let ledger = state
         .life_gain_turn_v1
         .as_ref()
@@ -84,6 +88,27 @@ pub(crate) fn event_ordinals(
     {
         return Err("first-life-gain cursor precedes a newer turn boundary".into());
     }
+    Ok(history)
+}
+
+pub(crate) fn positive_gain_consumed(state: &GameState) -> Result<[bool; 2], String> {
+    let mut consumed = [false; 2];
+    for (player, _) in turn_history(state)?
+        .iter()
+        .filter_map(crate::snack_wide_life_v59::positive_gain)
+    {
+        consumed[player.index()] = true;
+    }
+    Ok(consumed)
+}
+
+/// Reconstruct the ordinal at each event's own commit time, before the entire
+/// atomic resolution's events are collected. Zero/nonpositive gains do not count.
+pub(crate) fn event_ordinals(
+    state: &GameState,
+    events: &[CommittedEvent],
+) -> Result<Vec<Option<u32>>, String> {
+    let history = turn_history(state)?;
     let gain = crate::snack_wide_life_v59::positive_gain;
     let historical: Vec<_> = history.iter().filter_map(gain).collect();
     let batch: Vec<_> = events.iter().filter_map(gain).collect();

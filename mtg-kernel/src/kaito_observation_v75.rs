@@ -121,6 +121,8 @@ pub struct KaitoObservationV75 {
     pub thousand_year_storm: Option<crate::thousand_year_storm_public_v1::FactsV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scrawling_crawler: Option<crate::scrawling_crawler_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub life_triggers: Option<crate::limited_full_pool_consumer_v1::life_triggers::FactsV1>,
     pub complete_ordinary_observation: bool,
     pub owning_consumer_admitted: bool,
     pub projection_sha256: String,
@@ -169,6 +171,8 @@ pub fn producer_sha256() -> String {
             include_str!("limited_mixed_consumer_v1.rs"),
             include_str!("limited_full_pool_consumer_v1.rs"),
             include_str!("scrawling_crawler_public_v1.rs"),
+            include_str!("limited_full_pool_consumer_v1/life_triggers.rs"),
+            include_str!("life_gain_turn_v1.rs"),
             crate::limited_full_pool_consumer_v1::FROZEN_POOL_JSON_V1,
             include_str!("leyline_axe_public_v1.rs"),
             include_str!("leyline_axe_v1.rs"),
@@ -805,6 +809,7 @@ pub(crate) fn stack_source_reference(
 pub(crate) fn pending_source_reference(
     state: &GameState,
     pending: &crate::trigger::PendingTrigger,
+    appendix: LimitedAppendixV1,
 ) -> Result<Option<CardStableRefV1>, RlContractError> {
     let Some(source) = pending.source_contract else {
         return Ok(None);
@@ -852,6 +857,14 @@ pub(crate) fn pending_source_reference(
         && pending.effect == crate::effect::EffectOp::ExileTopEachPlayerThenCastV1;
     let kykar = crate::effect::kykar_v1::definition(source.card_def)
         && crate::effect::kykar_v1::recipe(&pending.effect);
+    let printed_life_trigger = appendix == LimitedAppendixV1::FullPool
+        && !pending.is_madness_offer
+        && pending.granted_by.is_none()
+        && crate::limited_full_pool_consumer_v1::life_triggers::printed_program(
+            source,
+            &pending.effect,
+        )
+        .is_some();
     if !selected_source(source)
         && !kykar
         && !sphinx_lore
@@ -865,6 +878,7 @@ pub(crate) fn pending_source_reference(
         && !zimone_trigger
         && !tutelage
         && !curator
+        && !printed_life_trigger
     {
         return Ok(None);
     }
@@ -886,7 +900,11 @@ pub(crate) fn pending_source_reference(
             "V75 source requires unique genuine held trigger".into(),
         ));
     }
-    Ok(Some(captured_reference(state, source)))
+    let mut reference = captured_reference(state, source);
+    if printed_life_trigger {
+        reference.card_db_id = source.card_def;
+    }
+    Ok(Some(reference))
 }
 
 pub fn observe_v75(
@@ -940,6 +958,15 @@ pub(crate) fn observe_parts_v75(
     let scrawling_crawler = (appendix == LimitedAppendixV1::FullPool)
         .then(|| {
             crate::scrawling_crawler_public_v1::FactsV1::capture(
+                state,
+                &common.common.projection.surface,
+            )
+        })
+        .transpose()
+        .map_err(RlContractError)?;
+    let life_triggers = (appendix == LimitedAppendixV1::FullPool)
+        .then(|| {
+            crate::limited_full_pool_consumer_v1::life_triggers::capture(
                 state,
                 &common.common.projection.surface,
             )
@@ -1186,6 +1213,7 @@ pub(crate) fn observe_parts_v75(
             .transpose()
             .map_err(RlContractError)?,
         scrawling_crawler,
+        life_triggers,
         complete_ordinary_observation: true,
         owning_consumer_admitted: false,
         projection_sha256: String::new(),
@@ -1207,6 +1235,24 @@ pub(crate) fn observe_parts_v75(
 /// Standalone checks do not prove that an untrusted sender supplied every
 /// historical row or terminal. Neither function grants action or restore authority.
 pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractError> {
+    match (
+        &value.life_triggers,
+        value.schema == crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA,
+    ) {
+        (Some(facts), true) => {
+            crate::limited_full_pool_consumer_v1::life_triggers::validate(
+                facts,
+                &value.common.common.projection.surface,
+            )
+            .map_err(RlContractError)?;
+        }
+        (None, false) => {}
+        _ => {
+            return Err(RlContractError(
+                "life trigger facts do not match their owning schema".into(),
+            ))
+        }
+    }
     let actor = value.common.common.acting_player;
     match (
         value.schema == crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA,
