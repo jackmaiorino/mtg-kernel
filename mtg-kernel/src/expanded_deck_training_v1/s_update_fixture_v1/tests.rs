@@ -112,6 +112,7 @@ fn fixture_end_to_end_v1() {
     // Every path reproduces each reference exactly; the forward counts show
     // each row replayed once and each learner row forwarded once more, with
     // the replay's outputs.
+    let executable_sha256 = sha(&fs::read(std::env::current_exe().unwrap()).unwrap());
     for batch in [initial, warmed] {
         for (path, workers) in [
             (UpdatePathV1::Serial, 1),
@@ -131,11 +132,13 @@ fn fixture_end_to_end_v1() {
                     .unwrap(),
                 receipt
             );
+            assert_eq!(receipt["executable_sha256"], executable_sha256);
             let sample = &receipt["samples"][0];
             assert_eq!(sample["verified"], true, "{sample}");
             assert!(sample["elapsed_seconds"].as_f64().unwrap() > 0.0);
             let profile = &sample["forward_profile"];
             if s_update_profile::ENABLED_V1 {
+                assert_eq!(sample["attribution_verified"], true);
                 assert_eq!(profile["counts_match_census"], true, "{profile}");
                 assert_eq!(
                     profile["learner_forwards_repeat_replayed_rows"], true,
@@ -148,6 +151,7 @@ fn fixture_end_to_end_v1() {
                 );
             } else {
                 assert_eq!(profile["enabled"], false);
+                assert!(sample["attribution_verified"].is_null());
             }
         }
     }
@@ -258,6 +262,36 @@ fn fixture_end_to_end_v1() {
     .unwrap_err()
     .contains("differs from the reference"));
 
+    // A signed-zero loss difference is still a different numerical receipt.
+    let mut signed_zero = warmed.clone();
+    signed_zero.identity.loss = 0.0;
+    let mut result: Value = read_pinned(&warmed.reference).unwrap();
+    result["loss"] = json!(-0.0);
+    let report = verify_v1(&manifest, &signed_zero, &result).unwrap();
+    assert_eq!(report["mismatches"], json!(["loss"]));
+
+    // Census edits do not alter the root-independent output identity. The
+    // timed path must independently reject them before publishing anything.
+    let manifest_file = fixture.join(MANIFEST_FILE_V1);
+    let mut forged = manifest.clone();
+    forged.batches[1].census.learner_rows += 1;
+    fs::write(&manifest_file, serde_json::to_vec(&forged).unwrap()).unwrap();
+    let refused = root.join("forged-census");
+    assert!(bench_v1(&fixture, &existing, &refused)
+        .unwrap_err()
+        .contains("fixture census or games identity differs"));
+    assert!(!refused.exists());
+
+    // Substituting an actual pin from the wrong file is also rejected.
+    forged = manifest.clone();
+    let other_pin = forged.batches[0].trajectories[0].clone();
+    forged.batches[1].trajectories[0] = other_pin;
+    fs::write(&manifest_file, serde_json::to_vec(&forged).unwrap()).unwrap();
+    assert!(load_manifest_v1(&fixture)
+        .unwrap_err()
+        .contains("fixture pin does not name its generated file"));
+    fs::write(&manifest_file, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
     // A second generation elsewhere has the same root-independent identity;
     // a moved fixture is refused.
     let again = generate_v1(&options, &root.join("again")).unwrap();
@@ -282,6 +316,37 @@ fn fixture_end_to_end_v1() {
         .unwrap_err()
         .contains("over max_batch_mebibytes"));
     let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn forward_attribution_requires_both_census_and_output_agreement() {
+    use s_update_profile::{StageTotalsV1, StageV1};
+    let census = BatchCensusV1 {
+        learner_rows: 2,
+        other_rows: 1,
+        ..BatchCensusV1::default()
+    };
+    let mut totals = [StageTotalsV1::default(); s_update_profile::STAGES_V1];
+    totals[StageV1::ReplayLearnerRow as usize].calls = 2;
+    totals[StageV1::ReplayLearnerRow as usize].output_digest = 9;
+    totals[StageV1::ReplayOtherRow as usize].calls = 1;
+    totals[StageV1::LearnerForward as usize].calls = 2;
+    totals[StageV1::LearnerForward as usize].output_digest = 10;
+    totals[StageV1::LearnerBackward as usize].calls = 2;
+    let mismatched = forward_profile_v1(Some(totals), &census);
+    assert_eq!(mismatched["counts_match_census"], true);
+    assert_eq!(mismatched["learner_forwards_repeat_replayed_rows"], false);
+    assert!(mismatched["duplicate_forwards"].is_null());
+    assert!(mismatched["duplicate_share_of_forward_calls"].is_null());
+
+    totals[StageV1::LearnerForward as usize].output_digest = 9;
+    let matched = forward_profile_v1(Some(totals), &census);
+    assert_eq!(matched["duplicate_forwards"], 2);
+
+    totals[StageV1::ReplayOtherRow as usize].calls = 0;
+    let incomplete = forward_profile_v1(Some(totals), &census);
+    assert_eq!(incomplete["counts_match_census"], false);
+    assert!(incomplete["duplicate_forwards"].is_null());
 }
 
 #[test]

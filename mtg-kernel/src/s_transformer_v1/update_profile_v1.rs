@@ -146,8 +146,7 @@ mod imp {
     }
 
     impl SpanV1 {
-        fn record(self, digest: u64) {
-            let nanos = self.start.elapsed().as_nanos() as u64;
+        fn record(self, nanos: u64, digest: u64) {
             if let Some(sink) = &self.sink {
                 let stage = self.stage as usize;
                 sink.calls[stage].fetch_add(1, Ordering::AcqRel);
@@ -159,18 +158,19 @@ mod imp {
         /// A finished forward with its outputs.
         #[inline]
         pub(crate) fn finish_v1(self, logits: &[f32], value: f32) {
-            let digest = if self.sink.is_some() {
-                output_hash_v1(logits, value)
-            } else {
-                0
-            };
-            self.record(digest);
+            if self.sink.is_some() {
+                let nanos = self.start.elapsed().as_nanos() as u64;
+                self.record(nanos, output_hash_v1(logits, value));
+            }
         }
 
         /// A finished call without outputs (the backward).
         #[inline]
         pub(crate) fn finish_plain_v1(self) {
-            self.record(0);
+            if self.sink.is_some() {
+                let nanos = self.start.elapsed().as_nanos() as u64;
+                self.record(nanos, 0);
+            }
         }
     }
 }

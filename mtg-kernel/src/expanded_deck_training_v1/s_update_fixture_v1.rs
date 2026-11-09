@@ -488,6 +488,33 @@ pub fn update_command_v1(
     })
 }
 
+fn fixture_episodes_v1(
+    manifest: &FixtureManifestV1,
+    source: &ExpandedModelSourceV1,
+    ordinal: usize,
+    opponents: &[OpponentV1],
+) -> Result<Vec<ExpandedEpisodeV1>, String> {
+    let (name, _) = BATCHES_V1[ordinal];
+    opponents
+        .iter()
+        .enumerate()
+        .map(|(index, opponent)| {
+            let source = match opponent {
+                OpponentV1::Current => source,
+                OpponentV1::Net8 => &manifest.net8,
+                OpponentV1::Initial => &manifest.initial,
+            };
+            let label = serde_json::to_value(opponent).map_err(err)?;
+            let label = label.as_str().ok_or("opponent label")?;
+            episode_v1(
+                &format!("{name}-{index:02}-{label}"),
+                manifest.options.seed + 1000 * ordinal as u64 + index as u64,
+                Some(source.clone()),
+            )
+        })
+        .collect()
+}
+
 /// Writes a new fixture at `out` (which must not exist) and returns its
 /// manifest.
 pub fn generate_v1(options: &FixtureOptionsV1, out: &Path) -> Result<FixtureManifestV1, String> {
@@ -529,27 +556,10 @@ pub fn generate_v1(options: &FixtureOptionsV1, out: &Path) -> Result<FixtureMani
         let opponents: Vec<OpponentV1> = (0..options.episodes)
             .map(|index| cycle[index % cycle.len()])
             .collect();
-        let episodes = opponents
-            .iter()
-            .enumerate()
-            .map(|(index, opponent)| {
-                let source = match opponent {
-                    OpponentV1::Current => &state,
-                    OpponentV1::Net8 => &net8,
-                    OpponentV1::Initial => &initial,
-                };
-                let label = serde_json::to_value(opponent).map_err(err)?;
-                let label = label.as_str().ok_or("opponent label")?;
-                episode_v1(
-                    &format!("{name}-{index:02}-{label}"),
-                    options.seed + 1000 * ordinal as u64 + index as u64,
-                    Some(source.clone()),
-                )
-            })
-            .collect::<Result<Vec<_>, String>>()?;
+        let episodes = fixture_episodes_v1(&manifest, &state, ordinal, &opponents)?;
         let collection = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
             source: state.clone(),
-            episodes,
+            episodes: episodes.clone(),
             workers: options.collection_workers,
             max_non_natural_episode_fraction: 0.0,
             collection_sampler: CollectionSamplerV1::Legacy,
@@ -561,22 +571,8 @@ pub fn generate_v1(options: &FixtureOptionsV1, out: &Path) -> Result<FixtureMani
         let trajectories: Vec<PinnedFileV1> =
             serde_json::from_value(collection["trajectories"].clone()).map_err(err)?;
         let collection = pin_file_v1(&directory.join("collect").join("collection.json"))?;
-        let (census, games_sha256) = census_v1(&trajectories, &opponents, &config)?;
-        ensure(
-            census.trajectory_bytes <= options.max_batch_mebibytes * MEBIBYTE_V1,
-            &format!(
-                "batch {name} holds {} trajectory bytes, over max_batch_mebibytes={}",
-                census.trajectory_bytes, options.max_batch_mebibytes
-            ),
-        )?;
-        ensure(
-            census.decoded_tensor_payload_bytes
-                <= options.max_prepared_tensor_mebibytes as u64 * MEBIBYTE_V1,
-            &format!(
-                "batch {name} decodes to {} tensor bytes, over max_prepared_tensor_mebibytes={}",
-                census.decoded_tensor_payload_bytes, options.max_prepared_tensor_mebibytes
-            ),
-        )?;
+        let (census, games_sha256) =
+            census_v1(&trajectories, &episodes, &opponents, &config, options)?;
         let mut batch = FixtureBatchV1 {
             name: (*name).into(),
             source: state.clone(),
@@ -644,7 +640,133 @@ pub fn load_manifest_v1(fixture: &Path) -> Result<FixtureManifestV1, String> {
         manifest.identity_sha256 == identity_sha256_v1(&manifest.batches)?,
         "the fixture manifest's identity differs from its batches",
     )?;
+    validate_fixture_v1(&manifest)?;
     Ok(manifest)
+}
+
+fn require_fixture_pin_path_v1(pin: &PinnedFileV1, expected: &Path) -> Result<(), String> {
+    ensure(
+        pin.path.as_path() == expected
+            && pin.path.canonicalize().map_err(err)?.as_path() == expected,
+        &format!("fixture pin does not name its generated file {}", expected.display()),
+    )
+}
+
+fn validate_fixture_v1(manifest: &FixtureManifestV1) -> Result<(), String> {
+    manifest.options.validate_v1()?;
+    ensure(
+        manifest.config == manifest.options.shape.config_v1()
+            && manifest.learning.learning_rate.to_bits() == LEARNING_RATE_V1.to_bits()
+            && manifest.learning.value_coefficient.to_bits() == VALUE_COEFFICIENT_V1.to_bits()
+            && manifest.learning.loss_selection == loss_selection_v1(),
+        "fixture config or learning settings differ from the generated fixture",
+    )?;
+    let sources = manifest.root.join("sources");
+    let mut shell = manifest.initial.clone();
+    let member = shell.s_learner.take().ok_or("fixture initial S source is absent")?;
+    ensure(
+        shell == manifest.net8
+            && shell.checkpoint.is_none()
+            && member.schema == S_LEARNER_SOURCE_SCHEMA_V1,
+        "fixture initial source does not use the generated net-8 shell",
+    )?;
+    require_fixture_pin_path_v1(&shell.play_import, &sources.join("net8-descriptor.json"))?;
+    require_fixture_pin_path_v1(&member.initial, &sources.join("s0.bin"))?;
+    let descriptor: super::fresh_initialization_source::ExpandedFreshInitializationSourceV1 =
+        read_pinned(&shell.play_import)?;
+    require_fixture_pin_path_v1(&descriptor.initialization, &sources.join("net8/initialization.json"))?;
+    require_fixture_pin_path_v1(&descriptor.parameters, &sources.join("net8/parameters.f32le"))?;
+    check_pinned_v1(&descriptor.initialization)?;
+    check_pinned_v1(&descriptor.parameters)?;
+    let initial = decode_checkpoint_v1(&read_pinned_bytes(&member.initial)?)?;
+    ensure(
+        initial.model_v1().config_v1() == manifest.config
+            && initial.adam_step_v1() == 1
+            && initial.first_moments_v1().iter().any(|m| *m != 0.0)
+            && initial.second_moments_v1().iter().any(|m| *m != 0.0),
+        "fixture starting container has another shape or optimizer state",
+    )?;
+
+    ensure(
+        manifest.batches.len() == BATCHES_V1.len(),
+        "fixture must contain the initial and warmed batches",
+    )?;
+    let mut source = manifest.initial.clone();
+    let mut previous_state: Option<&str> = None;
+    for (ordinal, (batch, (name, cycle))) in manifest.batches.iter().zip(BATCHES_V1).enumerate() {
+        ensure(
+            batch.name == name
+                && batch.source == source
+                && batch.opponents.len() == manifest.options.episodes
+                && batch.trajectories.len() == manifest.options.episodes
+                && batch.census.episodes == manifest.options.episodes
+                && batch.opponents.iter().copied().eq(cycle.iter().copied().cycle().take(manifest.options.episodes)),
+            "fixture batch roster, source or opponent cycle differs",
+        )?;
+        ensure(
+            batch.identity.adam_step == (ordinal + 1) as u64
+                && previous_state.is_none_or(|state| state == batch.identity.before_state_sha256.as_str()),
+            "fixture Adam checkpoints are not one initial-to-warmed chain",
+        )?;
+        let directory = manifest.root.join(name);
+        let collect = directory.join("collect");
+        require_fixture_pin_path_v1(&batch.collection, &collect.join("collection.json"))?;
+        for (index, pin) in batch.trajectories.iter().enumerate() {
+            require_fixture_pin_path_v1(pin, &collect.join(format!("episode-{index:04}.json")))?;
+        }
+        let collection: Value = read_pinned(&batch.collection)?;
+        ensure(
+            collection["complete"] == json!(true)
+                && collection["source"] == serde_json::to_value(&batch.source).map_err(err)?
+                && collection["trajectories"] == serde_json::to_value(&batch.trajectories).map_err(err)?
+                && collection["behavior_state_sha256"] == batch.identity.before_state_sha256,
+            "fixture collection does not bind its source, state and trajectory pins",
+        )?;
+
+        let reference = directory.join("reference");
+        require_fixture_pin_path_v1(&batch.reference, &reference.join("update.json"))?;
+        let result: Value = read_pinned(&batch.reference)?;
+        let checkpoint: PinnedFileV1 = serde_json::from_value(result["checkpoint"].clone()).map_err(err)?;
+        let state: PinnedFileV1 =
+            serde_json::from_value(result["s_learner"]["state"].clone()).map_err(err)?;
+        require_fixture_pin_path_v1(&checkpoint, &reference.join("checkpoint.json"))?;
+        require_fixture_pin_path_v1(&state, &reference.join(s_learner_v1::S_LEARNER_STATE_FILE_V1))?;
+        let record: SLearnerCheckpointV1 = read_pinned(&checkpoint)?;
+        ensure(
+            record.state == state
+                && record.state_sha256 == batch.identity.after_state_sha256
+                && record.adam_step == batch.identity.adam_step
+                && state.sha256 == batch.identity.after_container_sha256
+                && record.trajectories == batch.trajectories,
+            "fixture reference checkpoint does not bind its state and trajectories",
+        )?;
+        check_pinned_v1(&state)?;
+        source.checkpoint = Some(checkpoint);
+        previous_state = Some(batch.identity.after_state_sha256.as_str());
+    }
+    Ok(())
+}
+
+fn validate_bench_inputs_v1(
+    manifest: &FixtureManifestV1,
+    batch: &FixtureBatchV1,
+) -> Result<(), String> {
+    let ordinal = BATCHES_V1.iter().position(|(name, _)| *name == batch.name)
+        .ok_or("fixture batch is unknown")?;
+    let episodes = fixture_episodes_v1(manifest, &batch.source, ordinal, &batch.opponents)?;
+    let (census, games_sha256) = census_v1(
+        &batch.trajectories, &episodes, &batch.opponents, &manifest.config, &manifest.options,
+    )?;
+    ensure(
+        census == batch.census && games_sha256 == batch.identity.games_sha256,
+        "fixture census or games identity differs from its pinned trajectories",
+    )?;
+    let reference: Value = read_pinned(&batch.reference)?;
+    let verification = verify_v1(manifest, batch, &reference)?;
+    ensure(
+        verification["verified"] == json!(true),
+        &format!("fixture reference failed verification: {}", verification["mismatches"]),
+    )
 }
 
 /// Checks a finished update of `batch` (its receipt `result`) against the
@@ -679,7 +801,8 @@ pub fn verify_v1(
     let actual = serde_json::to_value(&identity).map_err(err)?;
     let expected = serde_json::to_value(&batch.identity).map_err(err)?;
     for (field, value) in expected.as_object().ok_or("identity is an object")? {
-        check(actual[field] == *value, field.as_str());
+        // JSON float equality treats both signed zeros as equal.
+        check(actual[field].to_string() == value.to_string(), field.as_str());
     }
     // The container, read through its pin: decoded, it must carry the
     // reference's state hash; any difference is localized.
@@ -791,6 +914,7 @@ pub fn bench_v1(fixture: &Path, options: &BenchOptionsV1, out: &Path) -> Result<
         !out.exists(),
         "the bench directory already exists; bench writes a new one",
     )?;
+    validate_bench_inputs_v1(&manifest, batch)?;
     fs::create_dir_all(out).map_err(err)?;
     let out = out.canonicalize().map_err(err)?;
     let mut samples = Vec::with_capacity(options.reps);
@@ -819,14 +943,19 @@ pub fn bench_v1(fixture: &Path, options: &BenchOptionsV1, out: &Path) -> Result<
         });
         let peak_rss = peak_rss_bytes_v1();
         let verification = verify_v1(&manifest, batch, &result)?;
-        failed |= verification["verified"] != json!(true);
+        let profile = forward_profile_v1(totals, &batch.census);
+        let attribution_verified = (profile["enabled"] == json!(true)).then(|| {
+            profile["counts_match_census"] == json!(true)
+                && profile["learner_forwards_repeat_replayed_rows"] == json!(true)
+        });
+        failed = verification["verified"] != json!(true) || attribution_verified == Some(false);
         let mut sample = json!({"rep":rep, "elapsed_seconds":elapsed,
             "process_cpu_seconds":cpu, "peak_rss_bytes":peak_rss,
             "peak_rss_scope":if peak_rss_reset {"this update (VmHWM reset before it)"}
                 else {"process lifetime (VmHWM reset unavailable)"},
             "numerical_backend":result["numerical_backend"],
             "verified":verification["verified"], "mismatches":verification["mismatches"],
-            "forward_profile":forward_profile_v1(totals, &batch.census)});
+            "attribution_verified":attribution_verified, "forward_profile":profile});
         for field in [
             "input_read_seconds",
             "behavior_replay_seconds",
@@ -844,8 +973,12 @@ pub fn bench_v1(fixture: &Path, options: &BenchOptionsV1, out: &Path) -> Result<
                 "decoded_tensor_payload_bytes":preparation["decoded_tensor_payload_bytes"]});
         }
         samples.push(sample);
+        if failed {
+            break;
+        }
     }
-    let receipt = json!({"schema":BENCH_SCHEMA_V1, "fixture":manifest.root,
+    let executable_sha256 = sha(&fs::read(std::env::current_exe().map_err(err)?).map_err(err)?);
+    let receipt = json!({"schema":BENCH_SCHEMA_V1, "executable_sha256":executable_sha256, "fixture":manifest.root,
         "fixture_identity_sha256":manifest.identity_sha256, "shape":manifest.options.shape,
         "config":manifest.config, "batch":batch.name, "path":options.path,
         "workers":options.workers, "reps":options.reps, "census":batch.census,
@@ -862,7 +995,7 @@ pub fn bench_v1(fixture: &Path, options: &BenchOptionsV1, out: &Path) -> Result<
     .map_err(err)?;
     if failed {
         return Err(format!(
-            "an update differs from the reference; see {}",
+            "an update or its forward attribution failed verification; see {}",
             out.join("bench.json").display()
         ));
     }
@@ -898,19 +1031,20 @@ fn forward_profile_v1(
     let forward_nanos =
         replay_learner.thread_nanos + replay_other.thread_nanos + learner_forward.thread_nanos;
     let learner_rows = census.learner_rows as u64;
+    let counts_match = replay_learner.calls == learner_rows
+        && replay_other.calls == census.other_rows as u64
+        && learner_forward.calls == learner_rows
+        && learner_backward.calls == learner_rows;
+    let repeat = counts_match && learner_forward.output_digest == replay_learner.output_digest;
     json!({"enabled":true, "stages":stages,
-        "counts_match_census":replay_learner.calls == learner_rows
-            && replay_other.calls == census.other_rows as u64
-            && learner_forward.calls == learner_rows
-            && learner_backward.calls == learner_rows,
-        "learner_forwards_repeat_replayed_rows":learner_forward.calls == replay_learner.calls
-            && learner_forward.output_digest == replay_learner.output_digest,
-        "duplicate_forwards":learner_forward.calls.min(replay_learner.calls),
+        "counts_match_census":counts_match,
+        "learner_forwards_repeat_replayed_rows":repeat,
+        "duplicate_forwards":repeat.then_some(learner_forward.calls),
         "forward_calls":forwards,
-        "duplicate_share_of_forward_calls":if forwards == 0 {0.0}
-            else {learner_forward.calls as f64 / forwards as f64},
-        "duplicate_share_of_forward_thread_seconds":if forward_nanos == 0 {0.0}
-            else {learner_forward.thread_nanos as f64 / forward_nanos as f64},
+        "duplicate_share_of_forward_calls":(repeat && forwards != 0)
+            .then(|| learner_forward.calls as f64 / forwards as f64),
+        "duplicate_share_of_forward_thread_seconds":(repeat && forward_nanos != 0)
+            .then(|| learner_forward.thread_nanos as f64 / forward_nanos as f64),
         "scope":"thread time of each call (wall time on the thread that ran it; parallel \
                  workers add up). learner_backward is backward_v1 on one worker and \
                  backward_into_v1 (term recording) on more; the ordered weight-gradient \
@@ -1013,23 +1147,38 @@ fn identity_sha256_v1(batches: &[FixtureBatchV1]) -> Result<String, String> {
 /// A batch's census and games digest, from its trajectories.
 fn census_v1(
     trajectories: &[PinnedFileV1],
+    episodes: &[ExpandedEpisodeV1],
     opponents: &[OpponentV1],
     config: &SConfigV1,
+    options: &FixtureOptionsV1,
 ) -> Result<(BatchCensusV1, String), String> {
     ensure(
-        trajectories.len() == opponents.len(),
+        trajectories.len() == episodes.len() && trajectories.len() == opponents.len(),
         "the collection returned another episode count",
+    )?;
+    let trajectory_bytes = trajectories.iter().try_fold(0u64, |total, pin| {
+        total.checked_add(fs::metadata(&pin.path).map_err(err)?.len())
+            .ok_or_else(|| "trajectory file sizes overflow the fixture bound".to_owned())
+    })?;
+    ensure(
+        trajectory_bytes <= options.max_batch_mebibytes * MEBIBYTE_V1,
+        &format!("batch holds {trajectory_bytes} trajectory bytes, over max_batch_mebibytes={}", options.max_batch_mebibytes),
     )?;
     let mut census = BatchCensusV1 {
         episodes: trajectories.len(),
+        trajectory_bytes,
         ..BatchCensusV1::default()
     };
     let mut games = Sha256::new();
     let mut tokens = Vec::new();
     let mut tape_bytes = Vec::new();
-    for (pin, opponent) in trajectories.iter().zip(opponents) {
-        census.trajectory_bytes += fs::metadata(&pin.path).map_err(err)?.len();
+    for ((pin, episode), opponent) in trajectories.iter().zip(episodes).zip(opponents) {
         let trajectory: ExpandedTrajectoryV1 = read_pinned(pin)?;
+        ensure(
+            trajectory.episode == *episode,
+            "fixture trajectory episode differs from the generated episode",
+        )?;
+        validate_trajectory(&trajectory)?;
         let content = serde_json::to_vec(&(
             &trajectory.episode.id,
             trajectory.episode.seed,
@@ -1064,6 +1213,10 @@ fn census_v1(
             census.rows += 1;
             census.decoded_tensor_payload_bytes +=
                 super::ordered_update_preparation::decoded_payload_bytes(&row.tensor)? as u64;
+            ensure(
+                census.decoded_tensor_payload_bytes <= options.max_prepared_tensor_mebibytes as u64 * MEBIBYTE_V1,
+                "batch exceeds max_prepared_tensor_mebibytes",
+            )?;
             if row.actor == learner {
                 census.learner_rows += 1;
                 let tensor = row.tensor.tensor();
@@ -1232,12 +1385,7 @@ pub fn main_v1(args: &[String]) -> Result<Value, String> {
                 workers: arguments.number_v1("workers", 1)?,
                 reps: arguments.number_v1("reps", 1)?,
             };
-            let mut receipt = bench_v1(Path::new(fixture), &options, Path::new(out))?;
-            receipt["executable_sha256"] = json!(std::env::current_exe()
-                .and_then(fs::read)
-                .ok()
-                .map(|bytes| sha(&bytes)));
-            Ok(receipt)
+            bench_v1(Path::new(fixture), &options, Path::new(out))
         }
         _ => Err(USAGE_V1.into()),
     }

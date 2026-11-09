@@ -55,7 +55,10 @@ target/release/s_update_fixture_v1 generate out=$F-s shape=s episodes=8 collecti
 target/release/s_update_fixture_v1 bench fixture=$F batch=warmed path=prepared workers=2 out=$F-bench-1
 ```
 
-`bench` runs `reps` updates (default 1) in its own process, each published
+Before timing, `bench` checks the fixture's generated source and checkpoint
+chain and recomputes the selected batch's census and game identity from its
+pinned trajectories. This preflight reads the input files. `bench` then runs
+`reps` updates (default 1) in its own process, each published
 under `out/rep-NNN`, and writes `out/bench.json`: the census, every sample's
 elapsed and process CPU seconds, peak RSS (Linux `VmHWM`, reset before each
 update), the update receipt's input, replay, learner, checkpoint and total
@@ -119,9 +122,10 @@ nothing; take uninstrumented timings from a default build.
 learner row forwarded and backpropagated once. When
 `learner_forwards_repeat_replayed_rows` is true, the learner's forward calls
 and output digest equal the learner-row replay's. The learner then
-recomputed exactly the outputs the replay had already authenticated:
-`duplicate_forwards` per update, one per learner row. The thread-time shares
-bound what removing them can save. Count one removed forward once; a shift
+recomputed the outputs the replay had already authenticated, with one
+`duplicate_forwards` entry per learner row in the count. A count or digest
+mismatch leaves the duplicate metrics unavailable and fails the benchmark.
+The thread-time shares exclude hashing the outputs. Count one removed forward once; a shift
 between the preparation and learner timers is not a saving.
 
 ## Timing procedure

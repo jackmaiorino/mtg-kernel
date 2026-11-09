@@ -406,10 +406,11 @@ jobs:
 
       - name: Saved input scalar diagnostic guards
         if: matrix.group == 'saved-input'
+        env:
+          SAVED_INPUT_FEATURES: saved-input-scalar-diagnostic,gameplay-checkpoint-reconstruction-v1,s-update-profile-v1
         run: |
-          cargo clippy --release --locked -p mtg-kernel --lib --bin saved_input_scalar_diagnostic --bin gameplay_checkpoint_reconstruction_v1 --features saved-input-scalar-diagnostic,gameplay-checkpoint-reconstruction-v1 -- -D warnings
-          cargo test --release --locked -p mtg-kernel --features saved-input-scalar-diagnostic,gameplay-checkpoint-reconstruction-v1 --lib saved_input_scalar_diagnostic::
-          cargo test --release --locked -p mtg-kernel --features gameplay-checkpoint-reconstruction-v1 --lib gameplay_checkpoint_reconstruction_v1::tests
+          cargo clippy --release --locked -p mtg-kernel --lib --bin saved_input_scalar_diagnostic --bin gameplay_checkpoint_reconstruction_v1 --bin s_update_fixture_v1 --features "$SAVED_INPUT_FEATURES" -- -D warnings
+          python python/tools/run_rust_lib_filters.py --features "$SAVED_INPUT_FEATURES" saved_input_scalar_diagnostic:: gameplay_checkpoint_reconstruction_v1::tests s_update_fixture_v1::tests:: s_transformer_v1::update_profile_v1::tests:: tape_bytes_bound_matches_the_buffers_a_forward_sizes parallel_gae_reports_first_batch_error_without_updating_adam
 
       - name: Validate native Store production feature boundary
         if: matrix.group == 'native-store'
