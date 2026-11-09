@@ -9,7 +9,7 @@ diagnostic, not training qualification:
 - `abba`: balanced A-B-B-A rounds of `gae-bench` per worker count, one
   process per attempt, with the child's wall time, CPU time, peak RSS and page
   faults. Every attempt's receipt, including both full train-state digests,
-  must match apart from its times.
+  must match apart from its times and the requested worker count.
 - `profile`: `gae-bench` under a binary built with `s-learner-profile-v1`.
   Its digests must match the default binaries'. Raw receipts go to
   `<out>/raw`; the manifest keeps their aggregate and every repetition's stage
@@ -51,7 +51,6 @@ def sha256_file(path):
 
 
 def binary_identity(path):
-    path = Path(path).resolve()
     return {"path": str(path), "sha256": sha256_file(path), "bytes": path.stat().st_size}
 
 
@@ -166,8 +165,14 @@ def gae_arguments(args, workers):
     ]
 
 
-def digests(receipt):
-    return receipt["before_state_sha256"], receipt["after_state_sha256"]
+def learner_identity(receipt, args, workers, *, profiled):
+    actual = (receipt["seed"], receipt["groups"], receipt["workers"], len(receipt["seconds"]))
+    expected = (args.seed, args.groups, workers, args.reps)
+    if actual != expected:
+        raise RuntimeError(f"gae-bench fixture differs: {actual} vs {expected}")
+    if ("profile" in receipt) != profiled or (profiled and len(receipt["profile"]) != args.reps):
+        raise RuntimeError(f"gae-bench profile shape differs at workers {workers}")
+    return {key: value for key, value in receipt.items() if key not in ("seconds", "profile")}
 
 
 def warm_seconds(seconds):
@@ -194,6 +199,7 @@ def describe(values):
 def abba(args, out):
     arms = {"A": args.baseline, "B": args.candidate}
     results = {}
+    worker_reference = None
     for workers in args.workers:
         attempts = []
         commands = {}
@@ -205,8 +211,13 @@ def abba(args, out):
                 commands[arm] = record.pop("command")
                 # Everything but the times must be identical in every attempt,
                 # including both full train-state digests.
-                rest = {k: v for k, v in receipt.items() if k != "seconds"}
+                rest = learner_identity(receipt, args, workers, profiled=False)
                 if common is None:
+                    comparable = {key: value for key, value in rest.items() if key != "workers"}
+                    if worker_reference is None:
+                        worker_reference = comparable
+                    elif comparable != worker_reference:
+                        raise RuntimeError(f"workers {workers}: fixture or full train-state digest differs across worker counts")
                     common = rest
                 elif rest != common:
                     raise RuntimeError(f"workers {workers}: receipts differ: {rest} vs {common}")
@@ -337,8 +348,9 @@ def profile(args, out, reference):
         for index in range(args.profile_runs):
             record = attempt(args.profile, gae_arguments(args, workers), args.cpus)
             receipt = record["receipt"]
-            if reference and digests(receipt) != digests(reference[str(workers)]["receipt_common"]):
-                raise RuntimeError(f"profile build digests differ at workers {workers}")
+            identity = learner_identity(receipt, args, workers, profiled=True)
+            if identity != reference[str(workers)]["receipt_common"]:
+                raise RuntimeError(f"profile build fixture or full train-state digest differs at workers {workers}")
             path = raw / f"profile-workers{workers}-{index}.json"
             path.write_text(json.dumps(receipt, indent=1) + "\n", encoding="utf-8")
             reports = receipt["profile"]
@@ -393,6 +405,10 @@ def host():
 
 
 def command_run(args):
+    args.baseline = Path(args.baseline).resolve(strict=True)
+    args.candidate = Path(args.candidate).resolve(strict=True)
+    if args.profile:
+        args.profile = Path(args.profile).resolve(strict=True)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=False)
     manifest = {
@@ -546,6 +562,11 @@ def profile_summary(profile_rows):
                 f"peak active block {terms['peak_block_live_bytes'] / 2**20:.2f} MiB live, "
                 f"{terms['peak_block_reserved_bytes'] / 2**20:.2f} MiB reserved."
             )
+            if "peak_retained_term_capacity_bytes" in terms:
+                lines.append(
+                    f"Peak retained term capacity across all slots: "
+                    f"{terms['peak_retained_term_capacity_bytes'] / 2**20:.2f} MiB."
+                )
             for kind in ["record", "replay"]:
                 drain = reports[0]["drains"][kind]
                 busy = [mean_of(reports, lambda r, i=i: r["drains"][kind]["busy_ns_by_worker"][i])

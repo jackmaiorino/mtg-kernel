@@ -87,6 +87,14 @@ pub(super) enum DrainV1 {
     Replay,
 }
 
+#[derive(Default)]
+pub(crate) struct BlockBytesV1 {
+    pub(super) values: usize,
+    pub(super) records: usize,
+    pub(super) active_capacity: usize,
+    pub(super) retained_capacity: usize,
+}
+
 #[cfg(feature = "s-learner-profile-v1")]
 mod imp {
     use super::{DrainV1, SectionV1, StageV1};
@@ -294,6 +302,7 @@ mod imp {
         record_bytes: u64,
         peak_live_bytes: u64,
         peak_reserved_bytes: u64,
+        peak_retained_capacity_bytes: u64,
     }
 
     #[derive(Default)]
@@ -395,6 +404,9 @@ mod imp {
             t.record_bytes += o.record_bytes;
             t.peak_live_bytes = t.peak_live_bytes.max(o.peak_live_bytes);
             t.peak_reserved_bytes = t.peak_reserved_bytes.max(o.peak_reserved_bytes);
+            t.peak_retained_capacity_bytes = t
+                .peak_retained_capacity_bytes
+                .max(o.peak_retained_capacity_bytes);
             for (slot, other) in self.drains.iter_mut().zip(&other.drains) {
                 slot.drains += other.drains;
                 slot.worker_slots += other.worker_slots;
@@ -530,23 +542,28 @@ mod imp {
         });
     }
 
-    /// One recorded block: its substeps, active workers and its term records'
-    /// live value bytes, live record bytes and reserved bytes.
+    /// One recorded block's live records and capacity, including the
+    /// capacity still held by inactive slots in a partial block.
     pub(crate) fn block_v1(
         substeps: usize,
         active_workers: usize,
-        bytes: impl FnOnce() -> (usize, usize, usize),
+        bytes: impl FnOnce() -> super::BlockBytesV1,
     ) {
-        let (values, records, reserved) = bytes();
+        let bytes = bytes();
         with_acc_v1(|acc| {
             let terms = &mut acc.terms;
             terms.blocks += 1;
             terms.block_substeps += substeps as u64;
             terms.block_active_workers += active_workers as u64;
-            terms.value_bytes += values as u64;
-            terms.record_bytes += records as u64;
-            terms.peak_live_bytes = terms.peak_live_bytes.max((values + records) as u64);
-            terms.peak_reserved_bytes = terms.peak_reserved_bytes.max(reserved as u64);
+            terms.value_bytes += bytes.values as u64;
+            terms.record_bytes += bytes.records as u64;
+            terms.peak_live_bytes = terms
+                .peak_live_bytes
+                .max((bytes.values + bytes.records) as u64);
+            terms.peak_reserved_bytes = terms.peak_reserved_bytes.max(bytes.active_capacity as u64);
+            terms.peak_retained_capacity_bytes = terms
+                .peak_retained_capacity_bytes
+                .max(bytes.retained_capacity as u64);
         });
     }
 
@@ -974,6 +991,7 @@ mod imp {
                 "block_record_bytes": terms.record_bytes,
                 "peak_block_live_bytes": terms.peak_live_bytes,
                 "peak_block_reserved_bytes": terms.peak_reserved_bytes,
+                "peak_retained_term_capacity_bytes": terms.peak_retained_capacity_bytes,
             },
             "drains": drains,
             "shards": shards,
@@ -1038,7 +1056,7 @@ mod imp {
     pub(crate) fn addition_term_v1(_: usize) {}
 
     #[inline(always)]
-    pub(crate) fn block_v1(_: usize, _: usize, _: impl FnOnce() -> (usize, usize, usize)) {}
+    pub(crate) fn block_v1(_: usize, _: usize, _: impl FnOnce() -> super::BlockBytesV1) {}
 
     #[inline(always)]
     pub(crate) fn backward_census_v1(_: &SConfigV1, _: CountsV1) {}

@@ -135,6 +135,10 @@ fn profile_counts_match_the_recorded_work_and_change_no_result() {
             number(terms, &["peak_block_reserved_bytes"])
                 >= number(terms, &["peak_block_live_bytes"])
         );
+        assert!(
+            number(terms, &["peak_retained_term_capacity_bytes"])
+                >= number(terms, &["peak_block_reserved_bytes"])
+        );
         // Replay runs exactly the analytic weight-gradient multiply-adds.
         let shards = profile["shards"].as_array().unwrap();
         let replayed: u64 = shards.iter().map(|s| number(s, &["macs"])).sum();

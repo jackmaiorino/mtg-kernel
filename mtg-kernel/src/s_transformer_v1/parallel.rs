@@ -330,6 +330,47 @@ struct PreparedGaeV1<'a> {
     score: Option<Result<(f32, f32), String>>,
 }
 
+fn term_block_bytes_v1(
+    active: &[PreparedGaeV1<'_>],
+    inactive: &[PreparedGaeV1<'_>],
+) -> profile::BlockBytesV1 {
+    let mut bytes = profile::BlockBytesV1::default();
+    for slot in active {
+        let (values, records, capacity) = slot.terms.bytes_v1();
+        bytes.values += values;
+        bytes.records += records;
+        bytes.active_capacity += capacity;
+    }
+    bytes.retained_capacity = bytes.active_capacity
+        + inactive
+            .iter()
+            .map(|slot| slot.terms.bytes_v1().2)
+            .sum::<usize>();
+    bytes
+}
+
+#[cfg(all(test, feature = "s-learner-profile-v1"))]
+#[test]
+fn partial_block_counts_inactive_slot_capacity_separately() {
+    let mut slots = [PreparedGaeV1::default(), PreparedGaeV1::default()];
+    let active_range = slots[0].terms.store_v1(&[1.0, 2.0]);
+    slots[0].terms.additions.push((0, active_range));
+    let old_range = slots[1].terms.store_v1(&[0.0; 32]);
+    slots[1].terms.additions.push((0, old_range));
+
+    let (active, inactive) = slots.split_at(1);
+    let bytes = term_block_bytes_v1(active, inactive);
+    let (values, records, active_capacity) = slots[0].terms.bytes_v1();
+    assert_eq!(bytes.values, values);
+    assert_eq!(bytes.records, records);
+    assert_eq!(bytes.active_capacity, active_capacity);
+    assert_eq!(
+        bytes.retained_capacity,
+        active_capacity + slots[1].terms.bytes_v1().2
+    );
+    assert!(bytes.retained_capacity > bytes.active_capacity);
+}
+
 fn jobs_v1<'a>(
     groups: &'a [SGroupV1<'a>],
 ) -> impl Iterator<Item = Result<GaeJobV1<'a>, String>> + 'a {
@@ -401,7 +442,7 @@ impl SModelV1 {
                 break;
             }
             let active_workers = workers.min(len);
-            let block = &mut block[..len];
+            let (block, inactive) = block.split_at_mut(len);
             let record = profile::span_v1(StageV1::RecordDrain);
             drain_v1(
                 DrainV1::Record,
@@ -419,12 +460,7 @@ impl SModelV1 {
                 },
             )?;
             drop(record);
-            profile::block_v1(len, active_workers, || {
-                block.iter().fold((0, 0, 0), |sum, slot| {
-                    let bytes = slot.terms.bytes_v1();
-                    (sum.0 + bytes.0, sum.1 + bytes.1, sum.2 + bytes.2)
-                })
-            });
+            profile::block_v1(len, active_workers, || term_block_bytes_v1(block, inactive));
             let merge = profile::span_v1(StageV1::ScoreMerge);
             for slot in block.iter_mut() {
                 let job = slot.job.take().expect("S learner scheduled job")?;

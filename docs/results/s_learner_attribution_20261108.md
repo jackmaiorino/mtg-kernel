@@ -104,8 +104,10 @@ instrumentation shows no measurable cost here. This is not a speedup.
 ## Identities
 
 Baseline is `c6329d868ad32467b22a411018894a6eae65205c`. The candidate and the
-profile build are `dc3a0081aefab2cb7ed30c25cd1fa50fc29be95b`. Later commits on
-the branch touch documentation and the receipt script only. Binary SHA-256s are
+profile build are `dc3a0081aefab2cb7ed30c25cd1fa50fc29be95b`. The tests and
+measurements above refer to those original builds. The follow-up profile
+also reports capacity retained across all slots. That field has no value
+in the archived receipt. Binary SHA-256s are
 `361fcaf5…e370` (baseline), `ad8df6c6…c504` (candidate) and `79f7d5b8…624a`
 (profile); the full values are in the manifest. The builds used Rust and Cargo
 1.94.1 (LLVM 21.1.8), x86_64-unknown-linux-gnu, GNU ld 2.42, `--release
@@ -121,8 +123,8 @@ regenerates every table from it.
 The checked-in release profile (thin LTO, one codegen unit) needs more memory
 than this 15 GiB host. These steps still need a machine with at least 32 GB:
 
-1. Build baseline `c6329d8` and candidate `dc3a008` with that profile, the
-   candidate both with and without `--features s-learner-profile-v1`.
+1. Build baseline `c6329d8` and the reviewed successor with that profile,
+   the successor both with and without `--features s-learner-profile-v1`.
 2. Run the five exact tests and `--test s_learner_profile_v1` under it.
 3. Run `run.py run` with the three binaries, fixed `--cpus`, workers 1 and 2,
    four rounds and four profile runs. The result is a second manifest.
