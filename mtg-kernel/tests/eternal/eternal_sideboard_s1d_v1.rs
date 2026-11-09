@@ -790,27 +790,46 @@ fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
             let mut state = plains();
             state.active_player = actor;
             state.priority_player = actor;
-            let firebrand = put(&mut state, opponent, "Fanatical Firebrand", Zone::Battlefield);
+            let firebrand = put(
+                &mut state,
+                opponent,
+                "Fanatical Firebrand",
+                Zone::Battlefield,
+            );
             let painter = put(&mut state, actor, "Painter's Servant", Zone::Hand);
             pool(&mut state, actor, &[], 2);
             cast(&mut state, painter, &[]);
             settle_option(&mut state, 1);
-            assert_eq!(state.objects.get(painter).v4.chosen_color, Some(ManaColor::U));
+            assert_eq!(
+                state.objects.get(painter).v4.chosen_color,
+                Some(ManaColor::U)
+            );
             let circle = put(&mut state, actor, "Circle of Protection: Blue", Zone::Hand);
             pool(&mut state, actor, &[ManaColor::W], 1);
             cast(&mut state, circle, &[]);
             settled(&mut state);
             pool(&mut state, actor, &[], 1);
             activate(&mut state, circle, 0, &[]);
-            assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { .. })));
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectOption { .. })
+            ));
             let Some(PendingEffectChoice::ChooseOption { options, .. }) = state
-                .engine.pending_effect.as_ref().and_then(|pending| pending.choice.as_ref())
-            else { panic!("Circle source choice missing"); };
+                .engine
+                .pending_effect
+                .as_ref()
+                .and_then(|pending| pending.choice.as_ref())
+            else {
+                panic!("Circle source choice missing");
+            };
             let option = options.iter().position(|op| matches!(op,
                 EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(S1dOpV1::CopShieldV1 { source })))
                     if source.object == firebrand
             )).unwrap();
-            act(&mut state, Action::ChooseEffectOption(u16::try_from(option).unwrap()));
+            act(
+                &mut state,
+                Action::ChooseEffectOption(u16::try_from(option).unwrap()),
+            );
             settled(&mut state);
             let original = state.objects.get(firebrand).zone_change_count;
             if scenario == 1 {
@@ -824,7 +843,9 @@ fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
             } else if scenario == 2 {
                 // A blinked card is a different source even though
                 // its arena id and its blue color remain the same.
-                if state.priority_player != opponent { act(&mut state, Action::Pass); }
+                if state.priority_player != opponent {
+                    act(&mut state, Action::Pass);
+                }
                 let blink = put(&mut state, opponent, "Ephemerate", Zone::Hand);
                 pool(&mut state, opponent, &[ManaColor::W], 0);
                 cast(&mut state, blink, &[Target::Object(firebrand)]);
@@ -832,8 +853,11 @@ fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
                 assert_eq!(zone(&state, firebrand), Zone::Battlefield);
                 assert!(state.objects.get(firebrand).zone_change_count > original);
             }
-            if state.priority_player != opponent { act(&mut state, Action::Pass); }
-            let mut restored: GameState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            if state.priority_player != opponent {
+                act(&mut state, Action::Pass);
+            }
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             for branch in [&mut state, &mut restored] {
                 activate(branch, firebrand, 0, &[Target::Player(actor)]);
                 assert_eq!(zone(branch, firebrand), Zone::Graveyard);

@@ -1043,9 +1043,7 @@ pub(crate) mod statics {
         }
         let now = TurnV1::now(state);
         let position = s1d.cop_shields.iter().position(|shield| {
-            shield.turn == now
-                && shield.player == player
-                && shield.source == source
+            shield.turn == now && shield.player == player && shield.source == source
         });
         let Some(position) = position else {
             return false;
