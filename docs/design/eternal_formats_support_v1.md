@@ -560,7 +560,14 @@ The Extirpate, Martyr and Lavinia repair batch is composed at `e8d06349e2956e3a3
 The pinned Rust 1.94.1/MSVC standalone generator produced catalog hash
 `e19d5ece9b17ec1e` from that source; the prior capability-only hash was `a07edccb09460703`.
 Generator receipt SHA-256: `3fa633076153461982c151eaf6bc225d4dd73ef8feddd0b00a2784e3b7b97249`.
-Native qualification and the genuine `MartyrRevealPaidV1` event sample remain pending.
+The guarded native batch at `90bda0c0f` completed 24 passes and four fixture
+failures. Surgical, Extirpate, Martyr and the five optional Flagbearer cases
+passed. The Lavinia Bestow fixture accidentally provided an extra mana creature;
+the host is now summoning sick. Two Hullbreacher fixtures now use the available
+Opt, and the Niv/Hull combination is documented as absent from shipped catalogs.
+Those changed fixtures await rerun. The genuine `MartyrRevealPaidV1` sample is
+appended with its passing producer receipt in `data/event_history_v1/README.md`;
+the three event-history consumer checks remain pending.
 No capability labels or playable-deck counts are promoted by this source batch.
 
 ## Card contract and verification
