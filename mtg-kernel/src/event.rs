@@ -4670,6 +4670,8 @@ fn commit_with_entry_batch_and_source_color(
     }
     state.engine.event_history.push(committed);
     #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1d_v1::statics::circle_spell_entered(state, entry_history_index);
+    #[cfg(feature = "eternal-fixtures")]
     if let Some(source) = nishoba_source.filter(|source| {
         matches!(state.engine.event_history.get(entry_history_index),
             Some(CommittedEvent::Damage { source: object, amount, .. })

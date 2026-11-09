@@ -560,10 +560,15 @@ New, each built once in the first wave that needs it:
   for overload. Bolas's Citadel offers the ordinary form with its life payment.
   Normal library permission from Future Sight still needs overload support.
   The affected overload fixtures and consumers still need qualification.
-  Circle of Protection: Blue offers
-  unrelated graveyard and exile cards as sources, excludes contextual sources outside
-  its public-zone list and does not preserve a chosen permanent spell's shield when
-  it enters. Policy observation v5 omits the shields.
+  Circle of Protection: Blue now rechecks blue at damage time and matches genuine
+  historical damage to the chosen source incarnation. A native Stack-to-Battlefield
+  entry records the exact permanent that a chosen physical cast becomes, bound
+  to its published cast identity and first committed departure; later blinks do
+  not retarget its shield. Virtual permanent spell copies still need this binding.
+  Paid Firebrand/Painter and blink/restore qualification
+  is pending. Its choice menu still offers unrelated graveyard and exile cards as
+  sources and excludes contextual sources outside its public-zone list. Policy
+  observation v5 omits the shields.
   [Comprehensive Rules, 609.7 and 702.96](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
 
 The Extirpate, Martyr and Lavinia repair batch is composed at `e8d06349e2956e3a386d10a77295ebcc928a991d`.

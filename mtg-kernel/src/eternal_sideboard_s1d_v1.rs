@@ -90,7 +90,7 @@ impl TurnV1 {
 
 /// "The next time a blue source of your choice would deal damage to you this
 /// turn, prevent that damage."
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CopShieldV1 {
     /// The chosen source, by object incarnation.
@@ -98,6 +98,32 @@ pub struct CopShieldV1 {
     /// The protected player.
     pub player: PlayerId,
     pub turn: TurnV1,
+    /// A chosen permanent spell also protects against the permanent it becomes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spell: Option<CopSpellV1>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CopSpellV1 {
+    pub item: crate::ids::StackItemId,
+    pub cast_history_index: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permanent: Option<ObjectLinkV4>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_history_index: Option<u64>,
+}
+
+impl Hash for CopShieldV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.source.hash(state);
+        self.player.hash(state);
+        self.turn.hash(state);
+        if let Some(spell) = self.spell {
+            b"circle-permanent-spell/v1".hash(state);
+            spell.hash(state);
+        }
+    }
 }
 
 /// One land and the basic land type it gained until end of turn.
@@ -115,6 +141,56 @@ fn s1d_state(state: &mut GameState) -> &mut S1dStateV1 {
 
 fn read_state(state: &GameState) -> Option<&S1dStateV1> {
     state.eternal_v1.as_ref().map(|eternal| &eternal.s1d)
+}
+
+fn circle_cast_matches(state: &GameState, source: ObjectLinkV4, spell: CopSpellV1) -> bool {
+    let Ok(at) = usize::try_from(spell.cast_history_index) else {
+        return false;
+    };
+    let Some(before) = at.checked_sub(1) else {
+        return false;
+    };
+    let history = &state.engine.event_history;
+    let Some(event::CommittedEvent::PublishedCastIdentityV1 { receipt }) = history.get(before)
+    else {
+        return false;
+    };
+    receipt.spell_cast_history_index == spell.cast_history_index
+        && receipt.spell == source.object
+        && receipt.stack_zone_change_count == source.zone_change_count
+        && receipt.stack_item_id == spell.item
+        && receipt.stack_item_id != crate::ids::StackItemId::default()
+        && receipt.origin_zone != Zone::Stack
+        && receipt.origin_zone_change_count.checked_add(1) == Some(source.zone_change_count)
+        && history.get(at)
+            == Some(&event::CommittedEvent::SpellCast {
+                spell: source.object,
+                controller: receipt.controller,
+            })
+}
+
+fn circle_entry_matches(state: &GameState, source: ObjectLinkV4, spell: CopSpellV1) -> bool {
+    let (Some(permanent), Some(entry)) = (spell.permanent, spell.entry_history_index) else {
+        return false;
+    };
+    if permanent.object != source.object
+        || source.zone_change_count.checked_add(1) != Some(permanent.zone_change_count)
+        || !circle_cast_matches(state, source, spell)
+    {
+        return false;
+    }
+    let (Ok(cast), Ok(entry)) = (
+        usize::try_from(spell.cast_history_index),
+        usize::try_from(entry),
+    ) else {
+        return false;
+    };
+    let history = &state.engine.event_history;
+    entry > cast && matches!(history.get(entry), Some(event::CommittedEvent::ZoneChange {
+        object, from: Zone::Stack, to: Zone::Battlefield, ..
+    }) if *object == source.object)
+        && !history.iter().skip(cast + 1).take(entry - cast - 1)
+            .any(|event| matches!(event, event::CommittedEvent::ZoneChange { object, .. } if *object == source.object))
 }
 
 /// Effect leaves owned by this module, carried as
@@ -747,12 +823,53 @@ pub(crate) fn execute(op: &S1dOpV1, ctx: &ExecCtx, state: &mut GameState) {
         }
         S1dOpV1::CopShieldV1 { source } => {
             let now = TurnV1::now(state);
+            let spell = state
+                .objects
+                .try_get(source.object)
+                .filter(|live| {
+                    live.zone == Zone::Stack && live.zone_change_count == source.zone_change_count
+                })
+                .and_then(|_| {
+                    state.stack.iter().find(|item| {
+                        item.source == source.object
+                            && item.kind == crate::state::StackItemKind::Spell
+                    })
+                })
+                .and_then(|item| {
+                    let mut receipts = state
+                        .engine
+                        .event_history
+                        .scan_for_v1(&[
+                            crate::event_history_v1::EventKindV1::PublishedCastIdentityV1,
+                        ])
+                        .iter()
+                        .filter_map(|event| match event {
+                            event::CommittedEvent::PublishedCastIdentityV1 { receipt }
+                                if receipt.stack_item_id == item.v4.stack_item_id =>
+                            {
+                                Some(receipt.spell_cast_history_index)
+                            }
+                            _ => None,
+                        });
+                    let cast_history_index = receipts.next()?;
+                    if receipts.next().is_some() {
+                        return None;
+                    }
+                    let spell = CopSpellV1 {
+                        item: item.v4.stack_item_id,
+                        cast_history_index,
+                        permanent: None,
+                        entry_history_index: None,
+                    };
+                    circle_cast_matches(state, *source, spell).then_some(spell)
+                });
             let shields = &mut s1d_state(state).cop_shields;
             shields.retain(|shield| shield.turn == now);
             shields.push(CopShieldV1 {
                 source: *source,
                 player: ctx.controller,
                 turn: now,
+                spell,
             });
         }
         S1dOpV1::DamageFlyingV1 => {
@@ -996,13 +1113,61 @@ pub(crate) fn drive(
 pub(crate) mod statics {
     use super::*;
 
+    /// CR 609.7a's single Stack-to-Battlefield continuation. Later zone changes
+    /// never retarget the shield to another incarnation of the same card.
+    pub(crate) fn circle_spell_entered(state: &mut GameState, entry: usize) {
+        let Some(event::CommittedEvent::ZoneChange {
+            object,
+            from: Zone::Stack,
+            to: Zone::Battlefield,
+            ..
+        }) = state.engine.event_history.get(entry)
+        else {
+            return;
+        };
+        let object = *object;
+        let live = state.objects.get(object);
+        let permanent = ObjectLinkV4 {
+            object,
+            zone_change_count: live.zone_change_count,
+        };
+        let Some(previous) = permanent.zone_change_count.checked_sub(1) else {
+            return;
+        };
+        let Some(eternal) = state.eternal_v1.as_ref() else {
+            return;
+        };
+        let updates = eternal
+            .s1d
+            .cop_shields
+            .iter()
+            .enumerate()
+            .filter_map(|(index, shield)| {
+                let mut spell = shield.spell?;
+                if shield.source.object != object
+                    || shield.source.zone_change_count != previous
+                    || spell.permanent.is_some()
+                    || spell.entry_history_index.is_some()
+                {
+                    return None;
+                }
+                spell.permanent = Some(permanent);
+                spell.entry_history_index = u64::try_from(entry).ok();
+                circle_entry_matches(state, shield.source, spell).then_some((index, spell))
+            })
+            .collect::<Vec<_>>();
+        for (index, spell) in updates {
+            state.eternal_v1.as_mut().unwrap().s1d.cop_shields[index].spell = Some(spell);
+        }
+    }
+
     /// Circle of Protection: Blue. Whether a shield prevents `damage`; the
     /// shield is used up.
     pub(crate) fn consume_circle_shield(state: &mut GameState, damage: &DamageProposed) -> bool {
         let Target::Player(player) = damage.target else {
             return false;
         };
-        if damage.amount <= 0 || damage.historical_source.is_some() {
+        if damage.amount <= 0 {
             return false;
         }
         let Some(s1d) = read_state(state) else {
@@ -1011,15 +1176,45 @@ pub(crate) mod statics {
         if s1d.cop_shields.is_empty() {
             return false;
         }
+        let (source, color_mask) = if let Some(item) = damage.historical_source {
+            let Ok(facts) =
+                crate::source_power_activation_v1::damage_source(state, damage.source, item)
+            else {
+                return false;
+            };
+            (
+                ObjectLinkV4 {
+                    object: facts.source.source,
+                    zone_change_count: facts.source.zone_change_count,
+                },
+                facts.color_mask,
+            )
+        } else {
+            let Some(live) = state.objects.try_get(damage.source) else {
+                return false;
+            };
+            (
+                ObjectLinkV4 {
+                    object: damage.source,
+                    zone_change_count: live.zone_change_count,
+                },
+                crate::engine::object_color_mask(state, damage.source),
+            )
+        };
+        // CR 609.7b: losing blue does not spend the shield. Historical damage
+        // uses the exact published source incarnation and its damage-time LKI.
+        if color_mask & blue_mask() == 0 {
+            return false;
+        }
         let now = TurnV1::now(state);
         let position = s1d.cop_shields.iter().position(|shield| {
             shield.turn == now
                 && shield.player == player
-                && shield.source.object == damage.source
-                && state
-                    .objects
-                    .try_get(damage.source)
-                    .is_some_and(|live| live.zone_change_count == shield.source.zone_change_count)
+                && (shield.source == source
+                    || shield.spell.is_some_and(|spell| {
+                        spell.permanent == Some(source)
+                            && circle_entry_matches(state, shield.source, spell)
+                    }))
         });
         let Some(position) = position else {
             return false;
