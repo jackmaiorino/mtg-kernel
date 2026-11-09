@@ -94,6 +94,7 @@ fn lavinia_distinguishes_creature_and_bestow_x_both_seats() {
             tap(&mut state, actor, "Forest");
             tap(&mut state, actor, "Sol Ring");
             let host = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            state.objects.get_mut(host).summoning_sick = true;
             let hydra = put(&mut state, actor, "Nyxborn Hydra", Zone::Hand);
             cast(&mut state, hydra, &[]);
             assert!(
