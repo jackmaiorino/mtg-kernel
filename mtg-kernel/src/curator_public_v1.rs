@@ -513,7 +513,7 @@ fn entries(state: &GameState, viewer: PlayerId) -> Result<Vec<EntryV1>, String> 
         } else {
             return Err("Curator original occurrence lost its native lifetime".into());
         };
-        let mut root = public::root(state, source, Some(viewer))?;
+        let mut root = public::archived_root(state, entered, source, Some(viewer))?;
         root.original_source.identity = IdentityV1::Known { card_id: PRINTING };
         result.push(EntryV1 {
             source: root,

@@ -568,7 +568,7 @@ fn capture_parts_scoped(
         };
         damage_draws.push(DamageDrawV63 {
             occurrence: ordinal(damage_draws.len())?,
-            observer: public::root(state, *observer, Some(viewer))?,
+            observer: public::archived_root(state, at, *observer, Some(viewer))?,
             damage_source: original_damage_source(
                 state,
                 *damage_source,
