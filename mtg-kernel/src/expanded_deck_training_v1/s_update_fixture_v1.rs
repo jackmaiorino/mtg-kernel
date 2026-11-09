@@ -17,7 +17,7 @@
 //! included; [`verify_v1`] checks a finished update against the batch's
 //! reference; [`bench_v1`] runs and verifies updates in this process and
 //! reports elapsed and CPU time, peak RSS and, in `s-update-profile-v1`
-//! builds, the forward counts of `s_transformer_v1::profile`.
+//! builds, the forward counts of `s_transformer_v1::update_profile_v1`.
 //!
 //! Episode files embed absolute paths (#475), so a fixture is used where it
 //! was generated and moved by generating it again. [`BatchIdentityV1`] is
@@ -26,7 +26,7 @@
 
 use super::s_learner_v1::{SLearnerCheckpointV1, SLearnerSourceV1, S_LEARNER_SOURCE_SCHEMA_V1};
 use super::*;
-use crate::s_transformer_v1::profile as s_update_profile;
+use crate::s_transformer_v1::update_profile_v1 as s_update_profile;
 use crate::s_transformer_v1::{
     decode_checkpoint_v1, encode_checkpoint_v1, SConfigV1, SInputV1, SModelV1, STapeV1,
     STrainStateV1,

@@ -107,7 +107,7 @@ gives the same `identity_sha256`, which the tests check across two roots.
 ## Forward counts
 
 A build with `--features s-update-profile-v1` adds the `forward_profile` of
-`s_transformer_v1::profile` to each sample. It counts four stages: replay of
+`s_transformer_v1::update_profile_v1` to each sample. It counts four stages: replay of
 learner-seat rows, replay of other rows, learner forwards and learner
 backwards. For each stage it records finished calls, summed thread time and
 an order-independent digest of the forward outputs. The counters are armed

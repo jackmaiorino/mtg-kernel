@@ -3352,11 +3352,11 @@ pub(crate) fn encoded_decision_view_generic_v1(
     )
 }
 
-/// The measured stages of the replay's rows (`s_transformer_v1::profile`).
-const S_UPDATE_REPLAY_LEARNER_ROW_V1: crate::s_transformer_v1::profile::StageV1 =
-    crate::s_transformer_v1::profile::StageV1::ReplayLearnerRow;
-const S_UPDATE_REPLAY_OTHER_ROW_V1: crate::s_transformer_v1::profile::StageV1 =
-    crate::s_transformer_v1::profile::StageV1::ReplayOtherRow;
+/// The measured stages of the replay's rows (`s_transformer_v1::update_profile_v1`).
+const S_UPDATE_REPLAY_LEARNER_ROW_V1: crate::s_transformer_v1::update_profile_v1::StageV1 =
+    crate::s_transformer_v1::update_profile_v1::StageV1::ReplayLearnerRow;
+const S_UPDATE_REPLAY_OTHER_ROW_V1: crate::s_transformer_v1::update_profile_v1::StageV1 =
+    crate::s_transformer_v1::update_profile_v1::StageV1::ReplayOtherRow;
 
 /// Validate every stored actor-visible forward before returning learner-only
 /// physical decisions. Opponent tensors never enter the optimizer input.
@@ -3396,7 +3396,7 @@ fn replay_learner_groups_v1<'a>(
                 (opponent.unwrap_or(learner), S_UPDATE_REPLAY_OTHER_ROW_V1)
             };
             let input = common.clone();
-            let span = crate::s_transformer_v1::profile::span_v1(stage);
+            let span = crate::s_transformer_v1::update_profile_v1::span_v1(stage);
             let output = acting.score_replay_tensor_v1(
                 generation,
                 input,

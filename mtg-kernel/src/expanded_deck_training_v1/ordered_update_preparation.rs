@@ -3,7 +3,7 @@
 //! original order. No model/RNG state is mutated by these workers.
 
 use super::*;
-use crate::s_transformer_v1::profile as s_update_profile;
+use crate::s_transformer_v1::update_profile_v1 as s_update_profile;
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
