@@ -673,6 +673,9 @@ impl KaitoSessionV75 {
             ));
         }
         let before = self.validated_current(decision)?;
+        let hand_minima = self.reveal_hand_minima_v3().ok_or_else(|| {
+            RlContractError("full-pool sampling requires reveal hand minima".into())
+        })?;
         let belief =
             crate::limited_match_v1::full_pool_belief_v1(belief).map_err(RlContractError)?;
         let root = self
@@ -688,14 +691,19 @@ impl KaitoSessionV75 {
             owner: std::sync::Arc::new(()),
             generation: self.generation,
         };
+        if sampled.reveal_hand_minima_v3().as_ref() != Some(&hand_minima) {
+            return Err(RlContractError(
+                "sampled full-pool reveal hand minima changed".into(),
+            ));
+        }
         let after = sampled.fresh_binding()?;
-        // The numeric V3 owner checks the complete canonical public packet
-        // after replacing physical known-hand rows by public name minima.
-        // Native commands, indices and family bindings must already be exact.
         if after.expected != before.expected
             || after.original != before.original
             || after.public_to_original != before.public_to_original
-            || after.families != before.families
+            || !crate::akroma_family_public_v40::FamilyProjectionV40::sampled_families_match(
+                before.families,
+                after.families,
+            )
         {
             return Err(RlContractError(
                 "sampled full-pool native binding changed".into(),

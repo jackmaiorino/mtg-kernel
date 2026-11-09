@@ -268,6 +268,54 @@ pub(crate) enum FamilyProjectionV40 {
     Twinflame(Box<crate::twinflame_observation_v1::TwinflameObservationV1>),
 }
 impl FamilyProjectionV40 {
+    /// Compare fresh FullPool bindings after the sampler checks reveal name minima.
+    /// The predecessor observations duplicate physical revealed-hand rows and
+    /// commit to them in their digest. Neither belongs to the sampled binding.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn sampled_families_match(mut before: Vec<Self>, mut after: Vec<Self>) -> bool {
+        for projection in before.iter_mut().chain(&mut after) {
+            projection.clear_sampled_hand_rows();
+        }
+        before == after
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn clear_sampled_hand_rows(&mut self) {
+        macro_rules! clear_hand_rows {
+            ($observation:expr) => {{
+                ($observation).known_hand_cards = Default::default();
+                ($observation).projection_sha256.clear();
+            }};
+        }
+        match self {
+            Self::Early(_) | Self::GameOutcome(_) => {}
+            Self::Sower(o) => clear_hand_rows!(o),
+            Self::Frenzied(o) => clear_hand_rows!(o),
+            Self::Wildwood(o) => clear_hand_rows!(o),
+            Self::Authority(o) => clear_hand_rows!(o),
+            Self::Employment(o) => clear_hand_rows!(o),
+            Self::Cerberus(o) => clear_hand_rows!(o),
+            Self::Librarian(o) => clear_hand_rows!(o),
+            Self::ExtraTurn(o) => clear_hand_rows!(o),
+            Self::Juggernaut(o) => clear_hand_rows!(o),
+            Self::Ashroot(o) => clear_hand_rows!(o),
+            Self::Banishing(o) => clear_hand_rows!(o),
+            Self::Stromkirk(o) => clear_hand_rows!(o),
+            Self::Gourmand(o) => clear_hand_rows!(o),
+            Self::Garruk(o) => clear_hand_rows!(o),
+            Self::Crystal(o) => clear_hand_rows!(o),
+            Self::Arahbo(o) => clear_hand_rows!(o),
+            Self::Strongbox(o) => clear_hand_rows!(o),
+            Self::Fiery(o) => clear_hand_rows!(o),
+            Self::Krenko(o) => clear_hand_rows!(o),
+            Self::ZulAshur(o) => clear_hand_rows!(o),
+            Self::Banner(o) => clear_hand_rows!(o),
+            Self::Inspiration(o) => clear_hand_rows!(o),
+            Self::Twinflame(o) => clear_hand_rows!(o),
+            Self::Fishing(o) => clear_hand_rows!(o.parts),
+        }
+    }
+
     pub(crate) fn facts(&self) -> FamilyFactsV40 {
         match self {
             Self::GameOutcome(o) => FamilyFactsV40::GameOutcome(Box::new(o.facts.clone())),
