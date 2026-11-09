@@ -2508,3 +2508,43 @@ fn sd1_partial_probes_keep_what_they_reveal() {
         assert_eq!(world::WorldMode::parse(mode.label()), Ok(mode));
     }
 }
+
+/// SD1 E5: TL applies the deck prior and TH never reads it. With a one-deck
+/// prior that the opponent's observed cards rule out, TL declares a
+/// rejection while TH still samples (its opponent is the real one).
+#[test]
+fn sd1_partial_probes_apply_the_prior_only_for_tl() {
+    use crate::rl_session::SlotFilterV1;
+    let (session, _) = value_leaf_root();
+    let cfg = test_cfg();
+    let mut seen = false;
+    for &d in &cfg.decks {
+        let prior = world::DeckPrior::new(&[d]);
+        let tl = world::sample_partial_recorded(
+            &session,
+            3,
+            &prior,
+            SlotFilterV1::OpponentOnly,
+            true,
+            &mut None,
+        );
+        let th = world::sample_partial_recorded(
+            &session,
+            3,
+            &prior,
+            SlotFilterV1::LibrariesOnly,
+            false,
+            &mut None,
+        );
+        if let Err(e) = &tl {
+            if e.contains("consistent") {
+                seen = true;
+                assert!(th.is_ok(), "TH must not read the prior: {:?}", th.err());
+            }
+        }
+    }
+    assert!(
+        seen,
+        "no single-deck prior ruled out the opponent's observed cards"
+    );
+}
