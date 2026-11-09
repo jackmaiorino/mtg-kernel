@@ -1024,7 +1024,11 @@ fn validate_fixture_manifest_v1(manifest: &FixtureManifestV1) -> Result<(), Stri
             && (1..=8).contains(&config.games_per_update)
             && config.s_warm_steps <= 64
             && (1..=256).contains(&config.s_groups_per_step)
-            && config.decks.iter().map(String::as_str).eq(["Affinity", "Terror"])
+            && config
+                .decks
+                .iter()
+                .map(String::as_str)
+                .eq(["Affinity", "Terror"])
             && config.learning_rate == LEARNING_RATE_V1
             && config.value_coefficient == VALUE_COEFFICIENT_V1
             && config.gamma == GAMMA_V1
@@ -1075,7 +1079,9 @@ fn validate_fixture_manifest_v1(manifest: &FixtureManifestV1) -> Result<(), Stri
                 .s_states
                 .iter()
                 .zip(s_states)
-                .all(|(state, (label, step))| state.label == label && state.adam_step == step as u64),
+                .all(|(state, (label, step))| {
+                    state.label == label && state.adam_step == step as u64
+                }),
         "fixture lacks its generated S states",
     )
 }
@@ -1645,10 +1651,16 @@ fn measure_updates_v1(
                     && receipt["before_state_sha256"].as_str()
                         == Some(measured.metadata.state_sha256.as_str())
                     && receipt["adam_step"].as_u64() == measured.metadata.adam_step.checked_add(1)
-                    && receipt["physical_decisions"].as_u64().is_some_and(|count| count > 0)
-                    && receipt["policy_substeps"].as_u64().is_some_and(|count| count > 0),
-                format!("{} {}: real update did not complete the expected optimizer step",
-                        measured.label, cell.name),
+                    && receipt["physical_decisions"]
+                        .as_u64()
+                        .is_some_and(|count| count > 0)
+                    && receipt["policy_substeps"]
+                        .as_u64()
+                        .is_some_and(|count| count > 0),
+                format!(
+                    "{} {}: real update did not complete the expected optimizer step",
+                    measured.label, cell.name
+                ),
             )?;
             let pin: PinnedFileV1 =
                 serde_json::from_value(receipt["checkpoint"].clone()).map_err(err)?;
@@ -1951,7 +1963,11 @@ pub fn measure_v1(
     )?;
     ensure_v1(
         !config.sections.is_empty()
-            && config.sections.iter().collect::<std::collections::BTreeSet<_>>().len()
+            && config
+                .sections
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
                 == config.sections.len()
             && (!config.sections.contains(&SectionV1::PublicPair) || config.public_pair.is_some()),
         "measure needs distinct sections and a directory for the public-pair section",
