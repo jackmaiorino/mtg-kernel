@@ -341,6 +341,8 @@ pub mod frenzied_public_v1;
 // Unregistered layer-3 source preparation; no card or schema admission.
 pub mod full_text_v1;
 mod graveyard_order_v1;
+/// Public ordered-graveyard and full-text facts for the opt-in Premodern profile.
+pub mod premodern_ordered_public_v1;
 pub mod garruk_public_v1;
 mod gorehorn_damage_v1;
 pub mod rules_meaning_divine_v44;

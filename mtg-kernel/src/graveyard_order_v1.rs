@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub(crate) enum BatchV1 {
+pub enum BatchV1 {
     Effect,
     StateBasedDeaths,
     SacrificeCost,
@@ -26,22 +26,46 @@ struct ChoiceV1 {
     batch: BatchV1,
     history_len: usize,
     owner: PlayerId,
-    original: Vec<EffectObjectBinding>,
-    chosen: Vec<EffectObjectBinding>,
-    remaining: Vec<EffectObjectBinding>,
+    arrivals: [Vec<ArrivalCardV1>; 2],
+    chosen: Vec<ArrivalCardV1>,
+    remaining: Vec<ArrivalCardV1>,
 }
 
 impl ChoiceV1 {
     fn decision(&self) -> Decision {
-        let count = self.original.len() as u16;
+        let original = &self.arrivals[self.owner.index()];
+        let count = original.len() as u16;
         Decision::ChooseEffectTargets {
             player: self.owner,
-            source: self.original[0].object,
+            source: original[0].binding.object,
             selected_count: self.chosen.len() as u16,
             min_targets: count,
             max_targets: count,
             can_finish: false,
-            legal_targets: self.remaining.iter().map(|card| Target::Object(card.object)).collect(),
+            legal_targets: self.remaining.iter()
+                .map(|card| Target::Object(card.binding.object))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArrivalCardV1 {
+    binding: EffectObjectBinding,
+    printing: u16,
+    controller: PlayerId,
+}
+
+impl ArrivalCardV1 {
+    fn public_ref(self, owner: PlayerId) -> crate::rl::CardStableRefV1 {
+        crate::rl::CardStableRefV1 {
+            arena_id: self.binding.object.0,
+            card_db_id: self.printing,
+            owner: owner.into(),
+            controller: self.controller.into(),
+            zone: Zone::Graveyard,
+            zone_change_count: self.binding.expected_zone_change_count,
         }
     }
 }
@@ -50,7 +74,7 @@ impl ChoiceV1 {
 #[serde(deny_unknown_fields)]
 struct AnswerV1 {
     choice: ChoiceV1,
-    card: EffectObjectBinding,
+    card: ArrivalCardV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -191,6 +215,43 @@ fn validate_pending(state: &GameState, pending: &PendingV1) -> Result<(), String
     Ok(())
 }
 
+pub(crate) struct PublicBoundaryV1 {
+    pub(crate) choice: Option<crate::premodern_ordered_public_v1::OrderChoiceV1>,
+    pub(crate) unplaced: [Vec<ObjectLinkV4>; 2],
+}
+
+/// The whole pending operation is authenticated before reading its projection.
+/// Quote-stage identities are carried from the actual post-replacement
+/// arrival and disclosed only to its owner at the ordering prompt.
+pub(crate) fn public_boundary(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<Option<PublicBoundaryV1>, String> {
+    if !enabled(state) {
+        return Err("Premodern ordered observation requires its native reset profile".into());
+    }
+    let Some(pending) = state.engine.graveyard_order_v1.pending.as_ref() else {
+        return Ok(None);
+    };
+    validate_pending(state, pending)?;
+    let choice = &pending.choice;
+    let unplaced = choice.arrivals.each_ref().map(|arrivals| {
+        if arrivals.len() < 2 {
+            return Vec::new();
+        }
+        arrivals.iter().map(|card| ObjectLinkV4 {
+            object: card.binding.object,
+            zone_change_count: card.binding.expected_zone_change_count,
+        }).collect()
+    });
+    let view = (choice.owner == viewer).then(|| crate::premodern_ordered_public_v1::OrderChoiceV1 {
+        batch: choice.batch,
+        chosen_bottom_first: choice.chosen.iter().map(|card| card.public_ref(viewer)).collect(),
+        native_candidates: choice.remaining.iter().map(|card| card.public_ref(viewer)).collect(),
+    });
+    Ok(Some(PublicBoundaryV1 { choice: view, unplaced }))
+}
+
 pub(crate) fn advance(state: &mut GameState) -> Decision {
     let result = if let Some(pending) = state.engine.graveyard_order_v1.pending.as_ref() {
         validate_pending(state, pending).map(|()| pending.choice.decision())
@@ -212,7 +273,7 @@ pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> 
         let Action::ChooseEffectTarget(Target::Object(object)) = action else {
             return Err("only an exact graveyard ordering choice is available".into());
         };
-        let card = pending.choice.remaining.iter().find(|card| card.object == object)
+        let card = pending.choice.remaining.iter().find(|card| card.binding.object == object)
             .ok_or("graveyard order choice is not in the native batch")?;
         let mut answers = pending.answers.clone();
         answers.push(AnswerV1 { choice: pending.choice.clone(), card: *card });
@@ -253,7 +314,7 @@ pub(crate) fn state_based_actions(state: &mut GameState) {
     direct(state, OperationV1::StateBasedActions);
 }
 
-fn pick(state: &mut GameState, choice: ChoiceV1) -> Result<Option<EffectObjectBinding>, String> {
+fn pick(state: &mut GameState, choice: ChoiceV1) -> Result<Option<ArrivalCardV1>, String> {
     let runner = state.engine.graveyard_order_v1.runner.as_ref()
         .ok_or("graveyard order batch has no native engine operation owner")?;
     if runner.checkpoint.is_some() {
@@ -327,7 +388,7 @@ pub(crate) fn defer_donated_entry(
     Ok(true)
 }
 
-type ArrivalsV1 = [Vec<(usize, EffectObjectBinding)>; 2];
+type ArrivalsV1 = [Vec<(usize, ArrivalCardV1)>; 2];
 
 pub(crate) struct OrderedEntrySceneV1 {
     original: ArrivalsV1,
@@ -454,10 +515,14 @@ impl PreparedBatchV1 {
                 {
                     return Err("graveyard arrival lost its native zone-change occurrence".into());
                 }
-                actual[owner.index()].push((slot, EffectObjectBinding {
-                    object,
-                    expected_zone: Zone::Graveyard,
-                    expected_zone_change_count: live.zone_change_count,
+                actual[owner.index()].push((slot, ArrivalCardV1 {
+                    binding: EffectObjectBinding {
+                        object,
+                        expected_zone: Zone::Graveyard,
+                        expected_zone_change_count: live.zone_change_count,
+                    },
+                    printing: crate::rl::projected_card_def(state, object, live.zone_change_count),
+                    controller: live.controller,
                 }));
             }
         }
@@ -471,18 +536,19 @@ impl PreparedBatchV1 {
     ) -> Result<Option<ArrivalsV1>, String> {
         let active = state.active_player;
         let mut ordered: ArrivalsV1 = Default::default();
+        let arrivals: [Vec<_>; 2] = actual.each_ref()
+            .map(|rows| rows.iter().map(|(_, card)| *card).collect());
         for owner in [active, active.opponent()] {
             let rows = &actual[owner.index()];
-            let original: Vec<_> = rows.iter().map(|(_, binding)| *binding).collect();
-            let mut remaining = original.clone();
+            let mut remaining = arrivals[owner.index()].clone();
             let mut chosen = Vec::new();
-            u16::try_from(original.len()).map_err(|_| "graveyard order exceeds native action width")?;
+            u16::try_from(remaining.len()).map_err(|_| "graveyard order exceeds native action width")?;
             while remaining.len() > 1 {
                 let choice = ChoiceV1 {
                     batch: self.batch,
                     history_len: state.engine.event_history.len(),
                     owner,
-                    original: original.clone(),
+                    arrivals: arrivals.clone(),
                     chosen: chosen.clone(),
                     remaining: remaining.clone(),
                 };
@@ -571,7 +637,7 @@ impl PreparedBatchV1 {
 fn apply_order(state: &mut GameState, ordered: &ArrivalsV1) {
     for (player, rows) in state.players.iter_mut().zip(ordered) {
         for (slot, card) in rows {
-            player.graveyard[*slot] = card.object;
+            player.graveyard[*slot] = card.binding.object;
         }
     }
 }

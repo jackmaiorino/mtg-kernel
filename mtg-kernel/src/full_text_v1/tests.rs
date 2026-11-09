@@ -712,6 +712,7 @@ fn donated_triskelion_spends_the_hosts_counter_and_keeps_the_original_program() 
 #[test]
 fn donated_hermit_druid_pays_the_host_and_uses_the_selected_graveyard_top() {
     use crate::engine::{self, Action, Decision};
+    use crate::premodern_ordered_public_v1::{self as public, FullTextProgramV1, ProducerStageV1};
     use crate::state::{Step, Target};
 
     for player in [PlayerId::P0, PlayerId::P1] {
@@ -750,6 +751,17 @@ fn donated_hermit_druid_pays_the_host_and_uses_the_selected_graveyard_top() {
         assert!(!state.objects.get(druid).tapped);
         assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
         assert_eq!(state.stack.last().unwrap().v4.ability_source_contract, Some(host));
+        for viewer in [player, player.opponent()] {
+            let view = public::observe(&state, viewer).unwrap();
+            let [producer] = view.producers.as_slice() else {
+                panic!("expected the actual donated activation");
+            };
+            assert_eq!(producer.stage, ProducerStageV1::Stack { position: 0 });
+            assert_eq!(producer.program, FullTextProgramV1::DonatedActivation { printed_index: 0 });
+            assert_eq!(producer.physical.arena_id, source.0);
+            assert_eq!(producer.text_donor.arena_id, druid.0);
+            assert_eq!(producer.native_ability_index, state.stack[0].v4.activated_ability_index);
+        }
 
         let mut ordering = false;
         for _ in 0..2 {
@@ -778,11 +790,36 @@ fn donated_hermit_druid_pays_the_host_and_uses_the_selected_graveyard_top() {
         assert!(ordering);
         assert!(crate::full_text_v1::refuse_legacy(&state).is_err());
         assert_eq!(state.objects.get(basic).zone, Zone::Hand);
+        let chooser = public::observe(&state, player).unwrap();
+        let opponent = public::observe(&state, player.opponent()).unwrap();
+        assert!(opponent.order_choice.is_none());
+        assert_eq!(chooser.graveyards, opponent.graveyards);
+        assert!(chooser.full_text.is_none());
+        let graveyard = &chooser.graveyards[player.index()];
+        assert_eq!(graveyard.bottom_to_top.iter().map(|card| card.arena_id).collect::<Vec<_>>(), [druid.0]);
+        assert_eq!(graveyard.unplaced.len(), 2);
+        let choice = chooser.order_choice.unwrap();
+        assert_eq!(choice.native_candidates.iter().map(|card| card.arena_id).collect::<Vec<_>>(),
+            [devourer.0, triskelion.0]);
         let saved = serde_json::to_vec(&state).unwrap();
-        for (first, top) in [(devourer, triskelion), (triskelion, devourer)] {
+        let mut altered: serde_json::Value = serde_json::from_slice(&saved).unwrap();
+        let printing = altered.pointer_mut(
+            "/engine/graveyard_order_v1/pending/choice/remaining/0/printing",
+        ).unwrap();
+        *printing = serde_json::json!(id("Forest"));
+        let altered: GameState = serde_json::from_value(altered).unwrap();
+        assert!(public::observe(&altered, player).is_err());
+        assert!(public::observe(&altered, player.opponent()).is_err());
+        for (ordinal, (first, top)) in [(devourer, triskelion), (triskelion, devourer)].into_iter().enumerate() {
             let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
             assert_eq!(restored.state_hash(), state.state_hash());
-            engine::step(&mut restored, Action::ChooseEffectTarget(Target::Object(first))).unwrap();
+            assert!(public::choose_order(&mut restored, player.opponent(), &choice, ordinal).is_err());
+            let mut forged = choice.clone();
+            forged.native_candidates[ordinal].zone_change_count += 1;
+            assert!(public::choose_order(&mut restored, player, &forged, ordinal).is_err());
+            assert_eq!(restored.state_hash(), state.state_hash());
+            public::choose_order(&mut restored, player, &choice, ordinal).unwrap();
+            assert!(public::choose_order(&mut restored, player, &choice, ordinal).is_err());
             assert!(matches!(
                 engine::advance_until_decision(&mut restored),
                 Decision::CastSpellOrPass { .. }
@@ -792,6 +829,11 @@ fn donated_hermit_druid_pays_the_host_and_uses_the_selected_graveyard_top() {
             assert_eq!(restored.objects.get(basic).zone, Zone::Hand);
             assert!(restored.stack.is_empty());
             assert!(restored.objects.get(source).tapped);
+            let public_order = public::observe(&restored, player.opponent()).unwrap();
+            let graveyard = &public_order.graveyards[player.index()];
+            assert!(graveyard.unplaced.is_empty());
+            assert_eq!(graveyard.bottom_to_top.iter().map(|card| card.arena_id).collect::<Vec<_>>(),
+                [druid.0, first.0, top.0]);
         }
     }
 }

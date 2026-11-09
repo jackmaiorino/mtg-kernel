@@ -135,6 +135,10 @@ impl FullTextV1 {
         self.host
     }
 
+    pub(crate) fn donor(self) -> ObjectLinkV4 {
+        self.donor
+    }
+
     pub(crate) fn is_wall_mana(self) -> bool {
         self.definition().name == "Wall of Roots"
     }
@@ -874,6 +878,100 @@ impl Hash for FullTextActivationRecordV1 {
             record.hash(state);
         }
     }
+}
+
+pub(crate) fn public_producers(
+    state: &GameState,
+) -> Result<Vec<crate::premodern_ordered_public_v1::FullTextProducerV1>, String> {
+    use crate::premodern_ordered_public_v1::ProducerStageV1 as Stage;
+
+    let mut rows = Vec::new();
+    if let Some(pending) = &state.engine.pending_activation {
+        if let Some(record) = pending.full_text_activation_v1.0 {
+            crate::engine::validate_pending_activation(state, pending)?;
+            rows.push(activation_producer(record, Stage::ActivationAnnouncing, pending.ability_index));
+        }
+    }
+    for (ordinal, pending) in state.engine.pending_triggers.iter().enumerate() {
+        if let Some(index) = trigger_index(&pending.effect) {
+            crate::engine::validate_pending_trigger_identity(state, pending)?;
+            let record = trigger_record(state, index)?;
+            rows.push(trigger_producer(record, Stage::TriggerPending { ordinal }));
+        }
+    }
+    for (position, item) in state.stack.iter().enumerate() {
+        if !item.v4.full_text_activation_v1.is_empty() || is_donated_trigger(item) {
+            crate::engine::validated_stack_item_target_spec(item, state)?;
+            rows.push(stack_producer(state, item, Stage::Stack { position })?);
+        }
+    }
+    if let Some(pending) = &state.engine.pending_effect {
+        let item = &pending.resolving_item;
+        if !item.v4.full_text_activation_v1.is_empty() || is_donated_trigger(item) {
+            crate::effect::validate_pending_effect_choice(state)?;
+            rows.push(stack_producer(state, item, Stage::Resolving)?);
+        }
+    }
+    Ok(rows)
+}
+
+fn activation_producer(
+    record: FullTextActivationV1,
+    stage: crate::premodern_ordered_public_v1::ProducerStageV1,
+    action_index: u8,
+) -> crate::premodern_ordered_public_v1::FullTextProducerV1 {
+    use crate::premodern_ordered_public_v1::{captured_card, FullTextProducerV1, FullTextProgramV1};
+
+    let program = match record.selector {
+        FullTextAbilityV1::RetainedDiscard => FullTextProgramV1::RetainedDiscard,
+        FullTextAbilityV1::Printed(printed_index) => FullTextProgramV1::DonatedActivation { printed_index },
+    };
+    FullTextProducerV1 {
+        stage,
+        physical: captured_card(record.host),
+        text_donor: captured_card(record.donor),
+        native_ability_index: Some(action_index),
+        program,
+    }
+}
+
+fn trigger_producer(
+    record: DonatedTriggerCaptureV1,
+    stage: crate::premodern_ordered_public_v1::ProducerStageV1,
+) -> crate::premodern_ordered_public_v1::FullTextProducerV1 {
+    use crate::premodern_ordered_public_v1::{captured_card, FullTextProducerV1, FullTextProgramV1};
+
+    let program = match record.kind {
+        DonatedTriggerKindV1::PalinchronEntered { .. }
+        | DonatedTriggerKindV1::PalinchronEnteredAfterBatch { .. } =>
+            FullTextProgramV1::PalinchronUntapLands,
+        DonatedTriggerKindV1::KarmicGuideEntered { .. }
+        | DonatedTriggerKindV1::KarmicGuideEnteredAfterBatch { .. } =>
+            FullTextProgramV1::KarmicGuideReturnCreature,
+        DonatedTriggerKindV1::KarmicGuideEcho { .. } => FullTextProgramV1::KarmicGuideEcho,
+        DonatedTriggerKindV1::DevourerPower { .. } => FullTextProgramV1::DevourerSacrifice,
+    };
+    FullTextProducerV1 {
+        stage,
+        physical: captured_card(record.host),
+        text_donor: captured_card(record.donor),
+        native_ability_index: None,
+        program,
+    }
+}
+
+fn stack_producer(
+    state: &GameState,
+    item: &StackItem,
+    stage: crate::premodern_ordered_public_v1::ProducerStageV1,
+) -> Result<crate::premodern_ordered_public_v1::FullTextProducerV1, String> {
+    if let Some(record) = item.v4.full_text_activation_v1.0 {
+        let index = item.v4.activated_ability_index.ok_or("full-text stack ability index absent")?;
+        return Ok(activation_producer(record, stage, index));
+    }
+    let index = item.inline_effect.as_ref().and_then(trigger_index)
+        .ok_or("full-text stack trigger capture absent")?;
+    Ok(trigger_producer(trigger_record(state, index)?, stage))
 }
 
 pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
