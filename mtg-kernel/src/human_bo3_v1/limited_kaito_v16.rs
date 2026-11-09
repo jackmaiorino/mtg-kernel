@@ -51,7 +51,9 @@ pub(crate) fn project_limited_kaito_v16(
         .transpose()?;
     Ok((
         LimitedKaitoDecisionV16 {
-            schema: if observation.schema == crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA {
+            schema: if observation.schema
+                == crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA
+            {
                 crate::limited_full_pool_consumer_v1::WIRE_DECISION_SCHEMA
             } else if observation.schema == crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA {
                 "mtg-kernel-limited-mixed-fdn-decision/v1"

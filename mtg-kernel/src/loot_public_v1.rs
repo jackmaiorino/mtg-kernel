@@ -247,7 +247,8 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
         .engine
         .event_history
         .scan_for_v1(&[crate::event_history_v1::EventKindV1::SquadRallierResolutionBoundaryV1])
-        .iter().enumerate()
+        .iter()
+        .enumerate()
     {
         if let CommittedEvent::SquadRallierResolutionBoundaryV1 { receipt } = event {
             if native::definition(receipt.source.card_def) {

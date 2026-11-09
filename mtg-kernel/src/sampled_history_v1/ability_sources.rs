@@ -7,11 +7,7 @@ pub(super) struct AbilitySourceProofV1 {
     source: AbilitySourceContractV4,
 }
 
-fn eligible(
-    state: &GameState,
-    item: &StackItem,
-    contract: AbilitySourceContractV4,
-) -> bool {
+fn eligible(state: &GameState, item: &StackItem, contract: AbilitySourceContractV4) -> bool {
     if !matches!(item.kind, StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility)
         || item.v4.stack_item_id == Default::default()
         || item.v4.ability_source_contract != Some(contract)
@@ -33,7 +29,11 @@ fn eligible(
 
 fn active(state: &GameState) -> impl Iterator<Item = &StackItem> {
     state.stack.iter().chain(
-        state.engine.pending_effect.as_ref().map(|pending| &pending.resolving_item),
+        state
+            .engine
+            .pending_effect
+            .as_ref()
+            .map(|pending| &pending.resolving_item),
     )
 }
 
@@ -58,7 +58,10 @@ pub(super) fn capture(state: &GameState) -> Result<Vec<AbilitySourceProofV1>, St
         crate::engine::validated_stack_item_target_spec(item, state)?;
         let live = state.objects.get(source.source);
         crate::engine::validate_historical_permanent_copy_source(state, source, live)?;
-        proofs.push(AbilitySourceProofV1 { item: fingerprint(item)?, source });
+        proofs.push(AbilitySourceProofV1 {
+            item: fingerprint(item)?,
+            source,
+        });
     }
     Ok(proofs)
 }
@@ -76,7 +79,10 @@ impl CustodyV1 {
             return None;
         }
         let hash = fingerprint(item).ok()?;
-        if !self.2.iter().any(|proof| proof.item == hash && proof.source == contract)
+        if !self
+            .2
+            .iter()
+            .any(|proof| proof.item == hash && proof.source == contract)
             || !owns_active(state, item)
         {
             return None;

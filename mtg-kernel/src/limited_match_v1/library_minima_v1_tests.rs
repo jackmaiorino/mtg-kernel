@@ -22,13 +22,17 @@ fn numeric(state: &GameState) -> KaitoSession {
 
 fn raw(state: &GameState) -> FastActorSessionV1 {
     FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
-        state.clone(), LimitedAppendixV1::FullPool,
+        state.clone(),
+        LimitedAppendixV1::FullPool,
     )
 }
 
 fn decision(owner: &KaitoSession) -> KaitoDecision {
     let FastActorResponseV1::Decision(expected) = owner.current_response() else {
-        panic!("library minima fixture stopped: {:?}", owner.current_response());
+        panic!(
+            "library minima fixture stopped: {:?}",
+            owner.current_response()
+        );
     };
     owner.encode(expected).unwrap()
 }
@@ -39,10 +43,18 @@ fn genuine_replacement(owner: PlayerId) -> (GameState, ObjectId) {
     state.reveal_knowledge_v4 = Some(Default::default());
     let source = put(&mut state, owner, "Progenitus", Zone::Hand);
     native::cast(
-        &mut state, owner, "Thrill of Possibility", (false, 0, false), &[], Some(source), 2,
+        &mut state,
+        owner,
+        "Thrill of Possibility",
+        (false, 0, false),
+        &[],
+        Some(source),
+        2,
     );
     assert_eq!(state.objects.get(source).zone, Zone::Library);
-    assert!(state.known_library_cards(owner.opponent(), owner).is_empty());
+    assert!(state
+        .known_library_cards(owner.opponent(), owner)
+        .is_empty());
     assert_eq!(minimum_names(&state, owner), [PRINTING]);
     (state, source)
 }
@@ -71,7 +83,9 @@ fn corpus() -> LimitedBeliefV1 {
 }
 
 fn definitions(state: &GameState, ids: &[ObjectId]) -> Vec<u16> {
-    ids.iter().map(|&id| state.objects.get(id).card_def).collect()
+    ids.iter()
+        .map(|&id| state.objects.get(id).card_def)
+        .collect()
 }
 
 #[test]
@@ -80,7 +94,9 @@ fn paid_public_shuffle_conditions_only_the_sampled_library_both_seats() {
         let viewer = physical_owner.opponent();
         let (mut state, source) = genuine_replacement(physical_owner);
         let hand = put(&mut state, physical_owner, "Forest", Zone::Hand);
-        state.reveal_distinct_hand_card(viewer, physical_owner, hand).unwrap();
+        state
+            .reveal_distinct_hand_card(viewer, physical_owner, hand)
+            .unwrap();
         give_priority(&mut state, viewer);
         let mut paired = state.clone();
         let library = &mut paired.players[physical_owner.index()].library;
@@ -103,27 +119,32 @@ fn paid_public_shuffle_conditions_only_the_sampled_library_both_seats() {
         let right_live = right.fixture_state().clone();
         let belief = corpus();
         let mut independently_known = state.clone();
-        independently_known.reveal_library_position(
-            viewer, physical_owner, original_position,
-        );
+        independently_known.reveal_library_position(viewer, physical_owner, original_position);
         let pinned = numeric(&independently_known);
         let pinned_d = decision(&pinned);
-        let pinned_sample = pinned.sampled_full_pool_closed_list_v1(
-            &pinned_d, 552_480, &belief,
-        ).unwrap();
+        let pinned_sample = pinned
+            .sampled_full_pool_closed_list_v1(&pinned_d, 552_480, &belief)
+            .unwrap();
         let pinned_state = pinned_sample.fixture_state();
         let pinned_library = &pinned_state.players[physical_owner.index()].library;
         assert_eq!(pinned_library[original_position], source);
         assert_eq!(
-            definitions(pinned_state, pinned_library).iter().filter(|&&id| id == PRINTING).count(),
+            definitions(pinned_state, pinned_library)
+                .iter()
+                .filter(|&&id| id == PRINTING)
+                .count(),
             1,
         );
         assert_eq!(decision(&pinned_sample).packet(), pinned_d.packet());
 
         let mut sampled_original_alias_changed = false;
         for seed in [552_480, 552_481, 552_482] {
-            let mut sample = left.sampled_full_pool_closed_list_v1(&da, seed, &belief).unwrap();
-            let mut other = right.sampled_full_pool_closed_list_v1(&db, seed, &belief).unwrap();
+            let mut sample = left
+                .sampled_full_pool_closed_list_v1(&da, seed, &belief)
+                .unwrap();
+            let mut other = right
+                .sampled_full_pool_closed_list_v1(&db, seed, &belief)
+                .unwrap();
             let current = decision(&sample);
             let other_current = decision(&other);
             assert_eq!(current.packet(), da.packet());
@@ -132,19 +153,33 @@ fn paid_public_shuffle_conditions_only_the_sampled_library_both_seats() {
             let other_player = &other.fixture_state().players[physical_owner.index()];
             let library = definitions(sample.fixture_state(), &player.library);
             let hand = definitions(sample.fixture_state(), &player.hand);
-            assert_eq!(library, definitions(other.fixture_state(), &other_player.library));
+            assert_eq!(
+                library,
+                definitions(other.fixture_state(), &other_player.library)
+            );
             assert_eq!(hand, definitions(other.fixture_state(), &other_player.hand));
             assert_eq!(library.iter().filter(|&&name| name == PRINTING).count(), 1);
             assert!(!hand.contains(&PRINTING));
             assert!(hand.contains(&card("Forest")));
-            sampled_original_alias_changed |= sample.fixture_state().objects.get(source).card_def != PRINTING;
+            sampled_original_alias_changed |=
+                sample.fixture_state().objects.get(source).card_def != PRINTING;
 
-            let selected = current.fixture_backend_v75().candidates_v75().candidates.iter()
-                .position(|row| matches!(row.action, ActionSemanticV1::Pass { .. })).unwrap() as u32;
+            let selected = current
+                .fixture_backend_v75()
+                .candidates_v75()
+                .candidates
+                .iter()
+                .position(|row| matches!(row.action, ActionSemanticV1::Pass { .. }))
+                .unwrap() as u32;
             let expected = current.fixture_backend_v75().expected();
-            let native_index = current.fixture_backend_v75().fixture_original_index_v75(selected).unwrap();
+            let native_index = current
+                .fixture_backend_v75()
+                .fixture_original_index_v75(selected)
+                .unwrap();
             let mut expected_owner = raw(sample.fixture_state());
-            let native = expected_owner.step(expected.episode_id, expected.step, native_index).unwrap();
+            let native = expected_owner
+                .step(expected.episode_id, expected.step, native_index)
+                .unwrap();
             let snapshot = sample.snapshot();
             assert_eq!(sample.apply(&current, selected).unwrap(), native);
             assert_eq!(sample.fixture_state(), expected_owner.kaito_fixture_state());
@@ -166,19 +201,29 @@ fn library_minima_preserve_ordinary_mill_and_reduce_anonymous_draws_both_seats()
     for owner in [PlayerId::P0, PlayerId::P1] {
         let (mut state, original) = genuine_replacement(owner);
         let second = put(&mut state, owner, "Progenitus", Zone::Hand);
-        event::propose_and_commit(&mut state, ProposedEvent::zone_change(second, Zone::Graveyard));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(second, Zone::Graveyard),
+        );
         assert_eq!(state.objects.get(second).zone, Zone::Library);
         assert_eq!(minimum_names(&state, owner), [PRINTING; 2]);
 
         let mill = put(&mut state, owner, "Island", Zone::Library);
-        event::propose_and_commit(&mut state, ProposedEvent::zone_change(mill, Zone::Graveyard));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(mill, Zone::Graveyard),
+        );
         assert_eq!(state.objects.get(mill).zone, Zone::Graveyard);
         assert_eq!(minimum_names(&state, owner), [PRINTING; 2]);
 
-        event::propose_and_commit(&mut state, ProposedEvent::zone_change(original, Zone::Graveyard));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(original, Zone::Graveyard),
+        );
         assert_eq!(state.objects.get(original).zone, Zone::Library);
         assert_eq!(minimum_names(&state, owner), [PRINTING; 2]);
-        let restored: GameState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         assert_eq!(minimum_names(&restored, owner), [PRINTING; 2]);
 
         let mut paired = state.clone();
@@ -188,8 +233,12 @@ fn library_minima_preserve_ordinary_mill_and_reduce_anonymous_draws_both_seats()
             library.swap(0, position);
         };
         top(&mut state, original);
-        let ordinary = paired.players[owner.index()].library.iter().copied()
-            .find(|&id| paired.objects.get(id).card_def != PRINTING).unwrap();
+        let ordinary = paired.players[owner.index()]
+            .library
+            .iter()
+            .copied()
+            .find(|&id| paired.objects.get(id).card_def != PRINTING)
+            .unwrap();
         top(&mut paired, ordinary);
         for branch in [&mut state, &mut paired] {
             event::propose_and_commit(branch, ProposedEvent::draw(owner));
@@ -208,48 +257,86 @@ fn paid_shuffle_archive_custody_requires_the_exact_old_native_occurrence() {
         // A second genuine replacement occurs within Library and does not
         // change this incarnation. It needs the narrowly scoped same-generation
         // exception after that private position receives a sampled printing.
-        event::propose_and_commit(&mut state, ProposedEvent::zone_change(original, Zone::Graveyard));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(original, Zone::Graveyard),
+        );
         give_priority(&mut state, owner.opponent());
         let live = numeric(&state);
         let _ = decision(&live);
         let mut sampled = live.fixture_state().clone();
         sampled.sampled_history_v1 = crate::sampled_history_v1::capture(&sampled).unwrap();
-        let (at, source) = sampled.engine.event_history.iter().enumerate().rev().find_map(|(at, e)| {
-            if let crate::event::CommittedEvent::ProgenitusShuffledV1 { source, move_history_index: None, .. } = e {
-                Some((at, *source))
-            } else { None }
-        }).unwrap();
+        let (at, source) = sampled
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(at, e)| {
+                if let crate::event::CommittedEvent::ProgenitusShuffledV1 {
+                    source,
+                    move_history_index: None,
+                    ..
+                } = e
+                {
+                    Some((at, *source))
+                } else {
+                    None
+                }
+            })
+            .unwrap();
         assert_eq!(source.zone, Zone::Library);
-        assert_eq!(source.zone_change_count, sampled.objects.get(original).zone_change_count);
+        assert_eq!(
+            source.zone_change_count,
+            sampled.objects.get(original).zone_change_count
+        );
         let object = sampled.objects.get_mut(original);
         object.card_def = card("Forest");
         object.name = CARD_DEFS[usize::from(object.card_def)].name.into();
         object.v4 = ObjectStateV4::from_card_def(object.card_def);
-        assert!(crate::engine::validate_historical_ability_source_contract(&sampled, source).is_err());
+        assert!(
+            crate::engine::validate_historical_ability_source_contract(&sampled, source).is_err()
+        );
         crate::progenitus_v1::validate(&sampled).unwrap();
-        assert!(crate::sampled_history_v1::allows_rebound_source(&sampled, at, source));
+        assert!(crate::sampled_history_v1::allows_rebound_source(
+            &sampled, at, source
+        ));
         // Recursive worlds retain only still-authenticated old occurrences.
         sampled.sampled_history_v1 = crate::sampled_history_v1::capture(&sampled).unwrap();
         crate::progenitus_v1::validate(&sampled).unwrap();
 
-        let restored: GameState = serde_json::from_slice(&serde_json::to_vec(&sampled).unwrap()).unwrap();
-        assert!(!crate::sampled_history_v1::allows_rebound_source(&restored, at, source));
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&sampled).unwrap()).unwrap();
+        assert!(!crate::sampled_history_v1::allows_rebound_source(
+            &restored, at, source
+        ));
         assert!(crate::progenitus_v1::validate(&restored).is_err());
         let mut appended = sampled.clone();
         let copied = appended.engine.event_history[at].clone();
         let new_at = appended.engine.event_history.len();
         appended.engine.event_history.push(copied);
-        assert!(!crate::sampled_history_v1::allows_rebound_source(&appended, new_at, source));
+        assert!(!crate::sampled_history_v1::allows_rebound_source(
+            &appended, new_at, source
+        ));
         assert!(crate::sampled_history_v1::capture(&appended).is_err());
 
         let mut changed = sampled.clone();
-        let crate::event::CommittedEvent::ProgenitusShuffledV1 { input_history_index, .. } =
-            &mut changed.engine.event_history[at] else { unreachable!() };
+        let crate::event::CommittedEvent::ProgenitusShuffledV1 {
+            input_history_index,
+            ..
+        } = &mut changed.engine.event_history[at]
+        else {
+            unreachable!()
+        };
         *input_history_index += 1;
-        assert!(!crate::sampled_history_v1::allows_rebound_source(&changed, at, source));
+        assert!(!crate::sampled_history_v1::allows_rebound_source(
+            &changed, at, source
+        ));
         assert!(crate::sampled_history_v1::capture(&changed).is_err());
         let mut foreign = source;
         foreign.controller = foreign.controller.opponent();
-        assert!(!crate::sampled_history_v1::allows_rebound_source(&sampled, at, foreign));
+        assert!(!crate::sampled_history_v1::allows_rebound_source(
+            &sampled, at, foreign
+        ));
     }
 }

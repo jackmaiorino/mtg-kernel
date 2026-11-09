@@ -137,13 +137,13 @@ fn kept_hands(state: &GameState) -> Result<Option<[Vec<ObjectLinkV4>; 2]>, Strin
         links(state, &state.players[1].hand)?,
     ]))
 }
-fn candidates_for(
-    state: &GameState,
-    hand: &[ObjectLinkV4],
-) -> Result<Vec<ObjectLinkV4>, String> {
+fn candidates_for(state: &GameState, hand: &[ObjectLinkV4]) -> Result<Vec<ObjectLinkV4>, String> {
     let mut result = Vec::new();
     for link in hand {
-        let object = state.objects.try_get(link.object).ok_or("opening candidate absent")?;
+        let object = state
+            .objects
+            .try_get(link.object)
+            .ok_or("opening candidate absent")?;
         if definition(object.card_def) {
             result.push(*link);
         }
@@ -156,7 +156,10 @@ fn candidates(
     hands: &[Vec<ObjectLinkV4>; 2],
 ) -> Result<Vec<ObjectLinkV4>, String> {
     let mut result = candidates_for(state, &hands[state.starting_player.index()])?;
-    result.extend(candidates_for(state, &hands[state.starting_player.opponent().index()])?);
+    result.extend(candidates_for(
+        state,
+        &hands[state.starting_player.opponent().index()],
+    )?);
     Ok(result)
 }
 fn already_started(state: &GameState) -> bool {

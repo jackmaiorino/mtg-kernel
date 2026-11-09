@@ -112,10 +112,7 @@ pub(crate) fn definition(id: u16) -> bool {
                 && d.capability == card_def::CardCapability::Partial
                 && d.cost
                     == crate::mana::Cost {
-                        pips: &[
-                            Pip::Colored(ManaColor::R),
-                            Pip::Colored(ManaColor::R),
-                        ],
+                        pips: &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::R)],
                         generic: 4,
                         x_count: 0,
                     }
@@ -196,8 +193,6 @@ pub(crate) fn definition(id: u16) -> bool {
         })
 }
 
-
-
 use crate::{
     effect::{standard_exile, EffectTargetSelectionPurpose, PendingEffectChoice},
     etali_primal_storm_receipts_v1 as receipts,
@@ -229,7 +224,8 @@ pub(crate) fn producer_sha256() -> String {
             hash.update(source.as_bytes());
         }
         format!("{:x}", hash.finalize())
-    }).clone()
+    })
+    .clone()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -303,8 +299,15 @@ pub struct AttackV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ChoiceV1 {
-    CastOrDecline { source: ReferenceV1, legal: Vec<ReferenceV1> },
-    ChildCast { source: ReferenceV1, original_exile: ReferenceV1, placeholder: ReferenceV1 },
+    CastOrDecline {
+        source: ReferenceV1,
+        legal: Vec<ReferenceV1>,
+    },
+    ChildCast {
+        source: ReferenceV1,
+        original_exile: ReferenceV1,
+        placeholder: ReferenceV1,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -325,14 +328,22 @@ fn captured(source: AbilitySourceContractV4) -> ReferenceV1 {
         owner: source.owner.into(),
         controller: source.controller.into(),
         zone: source.zone,
-        identity: IdentityV1::Known { card_id: source.card_def },
+        identity: IdentityV1::Known {
+            card_id: source.card_def,
+        },
     }
 }
 
-fn attack_root(state: &GameState, source: AbilitySourceContractV4, archived: Option<usize>) -> Result<RootV1, String> {
+fn attack_root(
+    state: &GameState,
+    source: AbilitySourceContractV4,
+    archived: Option<usize>,
+) -> Result<RootV1, String> {
     let mut root = if let Some(at) = archived {
         public::archived_root(state, at, source, None)?
-    } else { public::root(state, source, None)? };
+    } else {
+        public::root(state, source, None)?
+    };
     if source.card_def != PRINTING {
         return Err("Etali native source is not the exact attack printing".into());
     }
@@ -349,38 +360,81 @@ fn current_choice(
     if origin.actor(state) != Some(viewer) {
         return Ok(None);
     }
-    if let Some(pending) = state.engine.pending_effect.as_ref()
+    if let Some(pending) = state
+        .engine
+        .pending_effect
+        .as_ref()
         .filter(|pending| standard_exile::top_batch_pending(pending))
     {
         let Some(PendingEffectChoice::SelectTargets {
-            player, purpose: EffectTargetSelectionPurpose::ExileBatch { .. }, legal, ..
+            player,
+            purpose: EffectTargetSelectionPurpose::ExileBatch { .. },
+            legal,
+            ..
         }) = &pending.choice
-        else { return Ok(None) };
+        else {
+            return Ok(None);
+        };
         if *player != viewer {
             return Ok(None);
         }
-        let row = rows.iter().find(|row| row.id == pending.resolving_item.v4.stack_item_id)
+        let row = rows
+            .iter()
+            .find(|row| row.id == pending.resolving_item.v4.stack_item_id)
             .ok_or("Etali current cast menu has no actual original attack")?;
-        let legal = legal.iter().map(|candidate| {
-            let (Target::Object(object), Some(binding)) = (candidate.target, candidate.expected_object)
-            else { return Err("Etali native menu has no original exile binding".into()) };
-            row.exiled.iter().find(|top| top.arrival.source == object && binding.object == object
-                && binding.expected_zone == Zone::Exile
-                && top.arrival.zone_change_count == binding.expected_zone_change_count)
-                .map(|top| captured(top.arrival))
-                .ok_or_else(|| "Etali offered card was not exiled by its original attack".into())
-        }).collect::<Result<_, String>>()?;
-        return Ok(Some(ChoiceV1::CastOrDecline { source: captured(row.source), legal }));
+        let legal = legal
+            .iter()
+            .map(|candidate| {
+                let (Target::Object(object), Some(binding)) =
+                    (candidate.target, candidate.expected_object)
+                else {
+                    return Err("Etali native menu has no original exile binding".into());
+                };
+                row.exiled
+                    .iter()
+                    .find(|top| {
+                        top.arrival.source == object
+                            && binding.object == object
+                            && binding.expected_zone == Zone::Exile
+                            && top.arrival.zone_change_count == binding.expected_zone_change_count
+                    })
+                    .map(|top| captured(top.arrival))
+                    .ok_or_else(|| {
+                        "Etali offered card was not exiled by its original attack".into()
+                    })
+            })
+            .collect::<Result<_, String>>()?;
+        return Ok(Some(ChoiceV1::CastOrDecline {
+            source: captured(row.source),
+            legal,
+        }));
     }
-    let Some(context) = state.standard_v1.as_ref().and_then(|standard| standard.resolution_play.as_ref())
-        .filter(|context| context.suspended.as_ref().is_some_and(|pending|
-            pending.ctx.controller == viewer && standard_exile::top_batch_pending(pending)))
-    else { return Ok(None) };
-    let row = rows.iter().find(|row| row.id == context.parent)
+    let Some(context) = state
+        .standard_v1
+        .as_ref()
+        .and_then(|standard| standard.resolution_play.as_ref())
+        .filter(|context| {
+            context.suspended.as_ref().is_some_and(|pending| {
+                pending.ctx.controller == viewer && standard_exile::top_batch_pending(pending)
+            })
+        })
+    else {
+        return Ok(None);
+    };
+    let row = rows
+        .iter()
+        .find(|row| row.id == context.parent)
         .ok_or("Etali current child has no actual original attack")?;
-    let permission = context.permission.ok_or("Etali current child permission absent")?;
-    let top = row.exiled.iter().find(|top| top.arrival.source == permission.card.object
-        && top.arrival.zone_change_count == permission.card.expected_zone_change_count)
+    let permission = context
+        .permission
+        .ok_or("Etali current child permission absent")?;
+    let top = row
+        .exiled
+        .iter()
+        .find(|top| {
+            top.arrival.source == permission.card.object
+                && top.arrival.zone_change_count == permission.card.expected_zone_change_count
+        })
         .ok_or("Etali current child lost its original public exile")?;
     let placeholder = public::reference(state, permission.card.object, None)
         .filter(|card| card.zone == Zone::Stack && card.controller == viewer.into())
@@ -412,30 +466,56 @@ pub(crate) fn capture(
         }
         held.push(attack_root(state, source, None)?);
     }
-    let attacks = rows.into_iter().map(|row| {
-        let actual_casts = row.casts.iter().map(|cast| {
-            let original = row.exiled.iter().find(|top| top.arrival.source == cast.original.object)
-                .ok_or("Etali actual cast lost original public exile")?;
-            let spell = cast.source;
-            Ok(CastV1 {
-                original_exile: captured(original.arrival),
-                spell: ReferenceV1 {
-                    object: spell.source.0, generation: spell.zone_change_count,
-                    owner: spell.owner.into(), controller: spell.controller.into(), zone: Zone::Stack,
-                    identity: IdentityV1::Known { card_id: spell.card_def },
-                },
-                method: spell.cast_method,
-                x: spell.finalized_cast_binding.ok_or("Etali actual cast lacks finalized X")?.x_value,
+    let attacks = rows
+        .into_iter()
+        .map(|row| {
+            let actual_casts = row
+                .casts
+                .iter()
+                .map(|cast| {
+                    let original = row
+                        .exiled
+                        .iter()
+                        .find(|top| top.arrival.source == cast.original.object)
+                        .ok_or("Etali actual cast lost original public exile")?;
+                    let spell = cast.source;
+                    Ok(CastV1 {
+                        original_exile: captured(original.arrival),
+                        spell: ReferenceV1 {
+                            object: spell.source.0,
+                            generation: spell.zone_change_count,
+                            owner: spell.owner.into(),
+                            controller: spell.controller.into(),
+                            zone: Zone::Stack,
+                            identity: IdentityV1::Known {
+                                card_id: spell.card_def,
+                            },
+                        },
+                        method: spell.cast_method,
+                        x: spell
+                            .finalized_cast_binding
+                            .ok_or("Etali actual cast lacks finalized X")?
+                            .x_value,
+                    })
+                })
+                .collect::<Result<_, String>>()?;
+            Ok(AttackV1 {
+                source: attack_root(state, row.source, Some(row.published_at))?,
+                stack_position: row.stack_position,
+                batch_started: row.started,
+                original_exiles: row.exiled.iter().map(|row| captured(row.arrival)).collect(),
+                actual_casts,
+                finished: row.finished,
+                countered: row.countered,
             })
-        }).collect::<Result<_, String>>()?;
-        Ok(AttackV1 {
-            source: attack_root(state, row.source, Some(row.published_at))?, stack_position: row.stack_position,
-            batch_started: row.started, original_exiles: row.exiled.iter().map(|row| captured(row.arrival)).collect(),
-            actual_casts, finished: row.finished, countered: row.countered,
         })
-    }).collect::<Result<_, String>>()?;
+        .collect::<Result<_, String>>()?;
     Ok(FactsV1 {
-        schema: SCHEMA.into(), viewer: viewer.into(), meaning: printed_meaning()?,
-        held, attacks, chooser,
+        schema: SCHEMA.into(),
+        viewer: viewer.into(),
+        meaning: printed_meaning()?,
+        held,
+        attacks,
+        chooser,
     })
 }

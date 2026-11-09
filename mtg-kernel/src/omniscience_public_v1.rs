@@ -252,7 +252,8 @@ fn published(
         spell,
         permission: public::archived_root(
             state,
-            usize::try_from(choice.options_history_index).map_err(|_| "Omniscience option index width")?,
+            usize::try_from(choice.options_history_index)
+                .map_err(|_| "Omniscience option index width")?,
             options.source,
             Some(viewer),
         )?,

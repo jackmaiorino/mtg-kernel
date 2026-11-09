@@ -14290,7 +14290,7 @@ fn drive_resumable_inner_with_native_row_v1(
                         LibrarySearchDestinationV1::Battlefield { tapped } => {
                             let fiend_owner = (state.fiend_artisan_receipts_v1
                                 && fiend_artisan_v1::selected(state, &continuation.resolving_item))
-                                .then_some(continuation.resolving_item.v4.stack_item_id);
+                            .then_some(continuation.resolving_item.v4.stack_item_id);
                             for &binding in &selected {
                                 validate_effect_object_binding(state, binding)?;
                             }
@@ -28973,12 +28973,18 @@ fn require_unrepresented_copy_sources_v1(
     } else {
         standard_exile::refuse_top_batch_legacy(state)?;
     }
-    if matches!(scope, KaitoCopyScopeV1::LeylineAxe | KaitoCopyScopeV1::FullPool) {
+    if matches!(
+        scope,
+        KaitoCopyScopeV1::LeylineAxe | KaitoCopyScopeV1::FullPool
+    ) {
         crate::leyline_axe_v1::validate(state)?;
     } else {
         crate::leyline_axe_v1::require_legacy_absence(state)?;
     }
-    if matches!(scope, KaitoCopyScopeV1::Harvester | KaitoCopyScopeV1::FullPool) {
+    if matches!(
+        scope,
+        KaitoCopyScopeV1::Harvester | KaitoCopyScopeV1::FullPool
+    ) {
         harvester_v1::validate_state(state)?;
     } else {
         harvester_v1::require_legacy_absence(state)?;

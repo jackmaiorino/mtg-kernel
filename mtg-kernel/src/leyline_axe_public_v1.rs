@@ -210,9 +210,11 @@ fn equip_target(
         _ => return Err("Leyline Axe native equip target count changed".into()),
     };
     if !crate::state::stack_target_contract_is_structurally_valid(state, spec, 0, chosen, contract)
-        && !published.is_some_and(|item| crate::state::stack_target_contract_for_sampled_snapshot(
-            state, item, spec, 0, chosen, contract,
-        ))
+        && !published.is_some_and(|item| {
+            crate::state::stack_target_contract_for_sampled_snapshot(
+                state, item, spec, 0, chosen, contract,
+            )
+        })
     {
         return Err("Leyline Axe native equip target contract changed".into());
     }

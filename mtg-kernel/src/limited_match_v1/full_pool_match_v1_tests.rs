@@ -1,10 +1,7 @@
 use super::*;
 use crate::{
-    effect::thousand_year_storm_v1_tests as paid,
-    policy_observation_v6::tests::put,
-    policy_surface_v5::LimitedAppendixV1,
-    rl::ActionSemanticV1,
-    state::Target,
+    effect::thousand_year_storm_v1_tests as paid, policy_observation_v6::tests::put,
+    policy_surface_v5::LimitedAppendixV1, rl::ActionSemanticV1, state::Target,
 };
 
 fn limits(max_decisions: u64) -> GameLimitsV1 {
@@ -31,22 +28,32 @@ fn scene(actor: PlayerId, hidden: &str) -> (KaitoSession, LimitedBeliefV1) {
     state.players[opponent.index()].life = 2;
     let partial = paid::cast(&mut state, actor, "Alesha, Who Laughs at Fate", &[], 3);
     let damage = paid::cast(
-        &mut state, actor, "Burst Lightning", &[Target::Player(opponent)], 1,
+        &mut state,
+        actor,
+        "Burst Lightning",
+        &[Target::Player(opponent)],
+        1,
     );
     assert!(state.stack.iter().any(|row| row.source == partial));
     assert_eq!(state.stack.last().unwrap().source, damage);
     put(&mut state, actor, "Burst Lightning", Zone::Hand);
 
     let opposing = &state.players[opponent.index()];
-    let mut public_corpus = opposing.battlefield.iter()
-        .map(|&object| state.objects.get(object).card_def).collect::<Vec<_>>();
+    let mut public_corpus = opposing
+        .battlefield
+        .iter()
+        .map(|&object| state.objects.get(object).card_def)
+        .collect::<Vec<_>>();
     public_corpus.extend(std::iter::repeat_n(
-        card_id_by_name("Forest").unwrap(), opposing.hand.len() + opposing.library.len(),
+        card_id_by_name("Forest").unwrap(),
+        opposing.hand.len() + opposing.library.len(),
     ));
-    let raw = FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
-        state, LimitedAppendixV1::FullPool,
-    );
-    (KaitoSession::from_session(raw).unwrap(), LimitedBeliefV1::new([public_corpus]))
+    let raw =
+        FastActorSessionV1::from_kaito_v75_fixture_state_scoped(state, LimitedAppendixV1::FullPool);
+    (
+        KaitoSession::from_session(raw).unwrap(),
+        LimitedBeliefV1::new([public_corpus]),
+    )
 }
 
 #[test]
@@ -58,10 +65,17 @@ fn full_pool_terminal_pimc_plays_paid_partial_and_preserves_hidden_pair_both_sea
         let a = encode_current(&left).unwrap();
         let b = encode_current(&right).unwrap();
         assert_eq!(a.packet(), b.packet());
-        assert_eq!(a.fixture_backend_v75().expected().acting_player, PlayerSeatV1::from(actor));
+        assert_eq!(
+            a.fixture_backend_v75().expected().acting_player,
+            PlayerSeatV1::from(actor)
+        );
         let before = left.fixture_state().clone();
-        let pass = a.fixture_backend_v75().actions().iter()
-            .position(|action| matches!(action, ActionSemanticV1::Pass { .. })).unwrap();
+        let pass = a
+            .fixture_backend_v75()
+            .actions()
+            .iter()
+            .position(|action| matches!(action, ActionSemanticV1::Pass { .. }))
+            .unwrap();
         let sims = legal_count(&a).unwrap();
         assert!(sims > 1);
         let a_search = pimc_choose_full_pool_v1(&left, &a, sims, 8, 20, &belief, 552_286).unwrap();
@@ -78,10 +92,18 @@ fn full_pool_terminal_pimc_plays_paid_partial_and_preserves_hidden_pair_both_sea
         policies[actor.index()] = &search;
         let mut beliefs = [None; 2];
         beliefs[actor.index()] = Some(&belief);
-        let outcome = play_owner(left, policies, beliefs, 552_286, limits(24), &mut result).unwrap();
+        let outcome =
+            play_owner(left, policies, beliefs, 552_286, limits(24), &mut result).unwrap();
         assert_eq!(outcome, GameOutcomeV1::Winner(actor));
         assert!(result.searched_decisions > 0);
-        assert_eq!((result.search_fallbacks, result.rejected_worlds, result.rollout_errors), (0, 0, 0));
+        assert_eq!(
+            (
+                result.search_fallbacks,
+                result.rejected_worlds,
+                result.rollout_errors
+            ),
+            (0, 0, 0)
+        );
     }
 }
 
@@ -96,10 +118,21 @@ fn full_pool_match_reset_and_caps_are_distinct_from_natural_draw() {
         let capped = play_game_v1(decks, [&random; 2], [None; 2], 552, starting, limits(0));
         assert_eq!(capped.outcome, GameOutcomeV1::Stall);
         assert_eq!(capped.decisions, 0);
-        let missing = play_game_v1(decks, [&search, &random], [None; 2], 552, starting, limits(0));
+        let missing = play_game_v1(
+            decks,
+            [&search, &random],
+            [None; 2],
+            552,
+            starting,
+            limits(0),
+        );
         assert!(matches!(missing.outcome, GameOutcomeV1::Error(_)));
     }
-    assert!(search.validate_full_pool_session_v1(SessionKindV1::PreparedV57).is_err());
-    assert!(PolicySpecV1::parse("pimc:closedlist-v3").unwrap()
-        .validate_full_pool_session_v1(SessionKindV1::FullPoolV1).is_err());
+    assert!(search
+        .validate_full_pool_session_v1(SessionKindV1::PreparedV57)
+        .is_err());
+    assert!(PolicySpecV1::parse("pimc:closedlist-v3")
+        .unwrap()
+        .validate_full_pool_session_v1(SessionKindV1::FullPoolV1)
+        .is_err());
 }

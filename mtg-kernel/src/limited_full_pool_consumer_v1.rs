@@ -84,14 +84,17 @@ fn authenticate_frozen_pool() -> Result<BTreeSet<u16>, String> {
     let mut printings = BTreeSet::new();
     let mut legacy_full = Vec::new();
     for name in frozen.card_names {
-        let id = card_id_by_name(&name).ok_or_else(|| format!("unregistered FDN printing {name}"))?;
+        let id =
+            card_id_by_name(&name).ok_or_else(|| format!("unregistered FDN printing {name}"))?;
         let card = &CARD_DEFS[usize::from(id)];
         if card.name != name || card.is_token || !card.is_executable() || !printings.insert(id) {
             return Err(format!("invalid frozen FDN printing {name}"));
         }
         if !partial.contains(&id) {
             if !card.has_full_support() {
-                return Err(format!("frozen FDN printing {name} lacks an exact consumer"));
+                return Err(format!(
+                    "frozen FDN printing {name} lacks an exact consumer"
+                ));
             }
             legacy_full.push(id);
         }
@@ -131,7 +134,12 @@ pub(crate) fn preflight(config: &ResetV1) -> Result<(), String> {
         return Err("invalid full-pool Foundations profile reset".into());
     }
     let printings = declared_printings_v1()?;
-    if let Some(id) = config.mainboards.iter().flatten().find(|id| !printings.contains(*id)) {
+    if let Some(id) = config
+        .mainboards
+        .iter()
+        .flatten()
+        .find(|id| !printings.contains(*id))
+    {
         return Err(format!("card {id} is outside the frozen Foundations pool"));
     }
     Ok(())
@@ -152,7 +160,8 @@ pub(crate) fn require_native_modes(state: &GameState) -> Result<(), String> {
 }
 
 fn native(config: &ResetV1) -> Result<FastActorSessionV1, String> {
-    FastActorSessionV1::reset_limited_full_pool_v1(config, false).map_err(|error| format!("{error:?}"))
+    FastActorSessionV1::reset_limited_full_pool_v1(config, false)
+        .map_err(|error| format!("{error:?}"))
 }
 
 pub fn reset_numeric_v1(config: &ResetV1) -> Result<KaitoSession, String> {

@@ -296,7 +296,12 @@ pub(crate) fn capture_scoped(
                         .seasons
                         .iter()
                         .map(|source| {
-                            public::archived_root(state, entered.capture as usize, *source, Some(viewer))
+                            public::archived_root(
+                                state,
+                                entered.capture as usize,
+                                *source,
+                                Some(viewer),
+                            )
                         })
                         .collect::<Result<Vec<_>, _>>()?,
                 })

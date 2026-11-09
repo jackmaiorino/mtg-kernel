@@ -414,7 +414,7 @@ impl LimitedAppendixV1 {
             || (self == Self::FullPool
                 && matches!(
                     family,
-                        Self::Artist
+                    Self::Artist
                         | Self::Niv
                         | Self::ChosenType
                         | Self::Drakuseth

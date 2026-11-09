@@ -232,7 +232,12 @@ pub(super) fn free_cast_for(state: &GameState, spell: ObjectId, player: PlayerId
         && origin.origin_zone == Zone::Hand
         && origin.origin_zone_change_count == hand_generation
         && hand_generation.checked_add(1) == Some(live.zone_change_count)
-        && options(state, options_history_index, origin.finalized_method.is_some()).is_ok_and(|o| {
+        && options(
+            state,
+            options_history_index,
+            origin.finalized_method.is_some(),
+        )
+        .is_ok_and(|o| {
             o.hand.source == spell
                 && o.controller == player
                 && o.hand.zone_change_count == hand_generation
@@ -733,6 +738,10 @@ pub(crate) fn definition(id: u16) -> bool {
 #[path = "omniscience_cast_v1_tests.rs"]
 pub(crate) mod tests;
 
-#[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 #[path = "omniscience_full_pool_sampling_tests.rs"]
 mod full_pool_sampling_tests;

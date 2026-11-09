@@ -326,7 +326,6 @@ pub mod eternal_vintage_e7b_v1;
 pub mod eternal_vintage_v1;
 pub mod event;
 pub mod event_history_v1;
-mod sampled_history_v1;
 pub mod expanded_deck_training_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod experimental_burn_net8_packed_v1;
@@ -338,6 +337,7 @@ pub mod garruk_public_v1;
 mod gorehorn_damage_v1;
 pub mod rules_meaning_divine_v44;
 pub mod rules_meaning_zul_ashur_v1;
+mod sampled_history_v1;
 pub mod zul_ashur_observation_v1;
 pub mod zul_ashur_public_v1;
 mod zul_ashur_v1;

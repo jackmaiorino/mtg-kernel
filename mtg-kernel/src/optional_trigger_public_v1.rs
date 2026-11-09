@@ -107,10 +107,11 @@ pub(crate) fn reference(
     let visible = match o.zone {
         Zone::Hand => viewer.is_some_and(|v| {
             v == o.owner
-                || state.reveal_knowledge_v4.is_none() && state
-                    .known_hand_cards(v, o.owner)
-                    .iter()
-                    .any(|k| k.object == id && k.zone_change_count == o.zone_change_count)
+                || state.reveal_knowledge_v4.is_none()
+                    && state
+                        .known_hand_cards(v, o.owner)
+                        .iter()
+                        .any(|k| k.object == id && k.zone_change_count == o.zone_change_count)
         }),
         Zone::Library => viewer.is_some_and(|v| {
             state
@@ -420,13 +421,22 @@ pub(crate) fn validate_state_for_consumer(
     checked: bool,
     consumer: ConsumerV1,
 ) -> Result<(), String> {
-    if !matches!(consumer, ConsumerV1::KaitoThousandYearStormV1 | ConsumerV1::KaitoFullPoolV1) {
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoThousandYearStormV1 | ConsumerV1::KaitoFullPoolV1
+    ) {
         crate::effect::thousand_year_storm_v1::refuse_legacy(state)?;
     }
-    if !matches!(consumer, ConsumerV1::KaitoCuratorV1 | ConsumerV1::KaitoFullPoolV1) {
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoCuratorV1 | ConsumerV1::KaitoFullPoolV1
+    ) {
         crate::effect::curator_v1::refuse_legacy(state)?;
     }
-    if !matches!(consumer, ConsumerV1::KaitoSphinxLoreV1 | ConsumerV1::KaitoFullPoolV1) {
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoSphinxLoreV1 | ConsumerV1::KaitoFullPoolV1
+    ) {
         crate::effect::sphinx_lore_v1::refuse_legacy(state)?;
     }
     if !matches!(
@@ -435,45 +445,58 @@ pub(crate) fn validate_state_for_consumer(
     ) {
         crate::engine::omniscience_cast_v1::refuse_legacy(state)?;
     }
-    if matches!(consumer, ConsumerV1::KaitoProgenitusV1 | ConsumerV1::KaitoFullPoolV1) {
+    if matches!(
+        consumer,
+        ConsumerV1::KaitoProgenitusV1 | ConsumerV1::KaitoFullPoolV1
+    ) {
         crate::progenitus_v1::validate(state)?;
     } else {
         crate::progenitus_v1::refuse_legacy(state)?;
     }
-    if !matches!(consumer, ConsumerV1::KaitoGreatwurmV1 | ConsumerV1::KaitoFullPoolV1) {
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoGreatwurmV1 | ConsumerV1::KaitoFullPoolV1
+    ) {
         crate::effect::greatwurm_v1::refuse_legacy(state)?;
     }
-    if !matches!(consumer, ConsumerV1::KaitoKykarV1 | ConsumerV1::KaitoFullPoolV1) {
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoKykarV1 | ConsumerV1::KaitoFullPoolV1
+    ) {
         crate::effect::kykar_v1::refuse_legacy(state)?;
     }
-    if !matches!(consumer, ConsumerV1::KaitoLootV1 | ConsumerV1::KaitoFullPoolV1) {
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoLootV1 | ConsumerV1::KaitoFullPoolV1
+    ) {
         crate::effect::loot_v1::refuse_legacy(state)?;
     }
     consumer.validate_copy_prefix(state)?;
-    if !matches!(consumer, ConsumerV1::KaitoLathrilV1 | ConsumerV1::KaitoFullPoolV1)
-        && (state.objects.iter().any(|(_, o)| {
-            matches!(o.zone, Zone::Battlefield | Zone::Stack)
-                && o.v4.face_down_v1.is_none()
-                && crate::event::is_lathril_v1(o.card_def)
-        }) || state.engine.event_history.iter().any(|entry| {
-            matches!(
-                entry,
-                crate::event::CommittedEvent::LathrilCombatDamageV1 { .. }
-                    | crate::event::CommittedEvent::LathrilReceiptV1 { .. }
-            )
-        }) || state.stack.iter().any(|row| {
-            row.v4
-                .ability_source_contract
-                .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
-        }) || held(state).iter().any(|row| {
-            row.source_contract
-                .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
-        }) || state.engine.pending_effect.as_ref().is_some_and(|p| {
-            p.ctx
-                .ability_source_contract
-                .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
-        }))
-    {
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoLathrilV1 | ConsumerV1::KaitoFullPoolV1
+    ) && (state.objects.iter().any(|(_, o)| {
+        matches!(o.zone, Zone::Battlefield | Zone::Stack)
+            && o.v4.face_down_v1.is_none()
+            && crate::event::is_lathril_v1(o.card_def)
+    }) || state.engine.event_history.iter().any(|entry| {
+        matches!(
+            entry,
+            crate::event::CommittedEvent::LathrilCombatDamageV1 { .. }
+                | crate::event::CommittedEvent::LathrilReceiptV1 { .. }
+        )
+    }) || state.stack.iter().any(|row| {
+        row.v4
+            .ability_source_contract
+            .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
+    }) || held(state).iter().any(|row| {
+        row.source_contract
+            .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
+    }) || state.engine.pending_effect.as_ref().is_some_and(|p| {
+        p.ctx
+            .ability_source_contract
+            .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
+    })) {
         return Err(
             "Lathril native combat/cost history requires a distinct complete consumer".into(),
         );
@@ -484,23 +507,25 @@ pub(crate) fn validate_state_for_consumer(
             .get(usize::from(definition))
             .is_some_and(|d| d.name == "Consuming Aberration")
     };
-    if !matches!(consumer, ConsumerV1::KaitoAberrationV1 | ConsumerV1::KaitoFullPoolV1)
-        && (state.objects.iter().any(|(_, o)| {
-            matches!(o.zone, Zone::Battlefield | Zone::Stack)
-                && o.v4.face_down_v1.is_none()
-                && aberration(o.card_def)
-        }) || state.stack.iter().any(|row| {
-            row.v4
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoAberrationV1 | ConsumerV1::KaitoFullPoolV1
+    ) && (state.objects.iter().any(|(_, o)| {
+        matches!(o.zone, Zone::Battlefield | Zone::Stack)
+            && o.v4.face_down_v1.is_none()
+            && aberration(o.card_def)
+    }) || state.stack.iter().any(|row| {
+        row.v4
+            .ability_source_contract
+            .is_some_and(|s| aberration(s.card_def))
+    }) || held(state)
+        .iter()
+        .any(|row| row.source_contract.is_some_and(|s| aberration(s.card_def)))
+        || state.engine.pending_effect.as_ref().is_some_and(|p| {
+            p.ctx
                 .ability_source_contract
                 .is_some_and(|s| aberration(s.card_def))
-        }) || held(state)
-            .iter()
-            .any(|row| row.source_contract.is_some_and(|s| aberration(s.card_def)))
-            || state.engine.pending_effect.as_ref().is_some_and(|p| {
-                p.ctx
-                    .ability_source_contract
-                    .is_some_and(|s| aberration(s.card_def))
-            }))
+        }))
     {
         return Err("Aberration CDA and mill require a distinct complete consumer".into());
     }

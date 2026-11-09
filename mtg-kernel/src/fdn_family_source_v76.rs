@@ -9,8 +9,8 @@ use crate::{
     optional_trigger_public_v1 as public,
     rl::PlayerSeatV1,
     state::{
-        AbilitySourceContractV4, GameState, StackItem, StackItemKind, StackTargetContractV4, Target,
-        Zone,
+        AbilitySourceContractV4, GameState, StackItem, StackItemKind, StackTargetContractV4,
+        Target, Zone,
     },
     tinybones_public_v72::CountersV72,
 };
@@ -198,11 +198,13 @@ fn slots(
         .enumerate()
         .map(|(i, (&t, &c))| {
             let spec = crate::rules_meaning_drakuseth_v67::target_spec();
-            let structurally_valid = crate::state::stack_target_contract_is_structurally_valid(
-                s, spec, i, t, c,
-            ) || published.is_some_and(|item| {
-                crate::state::stack_target_contract_for_sampled_snapshot(s, item, spec, i, t, c)
-            });
+            let structurally_valid =
+                crate::state::stack_target_contract_is_structurally_valid(s, spec, i, t, c)
+                    || published.is_some_and(|item| {
+                        crate::state::stack_target_contract_for_sampled_snapshot(
+                            s, item, spec, i, t, c,
+                        )
+                    });
             if targets[..i].contains(&t) || !structurally_valid {
                 return Err("V76 distinct target contract changed".into());
             }
@@ -295,7 +297,9 @@ fn trigger(
             s,
             c,
             v,
-            published.and_then(|item| item.v4.drakuseth_published_v76.0).map(|at| at as usize),
+            published
+                .and_then(|item| item.v4.drakuseth_published_v76.0)
+                .map(|at| at as usize),
         )?,
         current_or_original_departure_characteristics: DamageSourceV76 {
             uses_original_departure_values: !s.objects.try_get(c.source).is_some_and(|o| {

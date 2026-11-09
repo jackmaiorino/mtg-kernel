@@ -23,7 +23,8 @@ fn initial(first: PlayerId, first_axes: usize, other_axes: usize) -> GameState {
 
 fn raw(state: &GameState) -> FastActorSessionV1 {
     FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
-        state.clone(), LimitedAppendixV1::FullPool,
+        state.clone(),
+        LimitedAppendixV1::FullPool,
     )
 }
 
@@ -33,22 +34,33 @@ fn owner(state: &GameState) -> KaitoSession {
 
 fn decision(owner: &KaitoSession) -> KaitoDecision {
     let FastActorResponseV1::Decision(expected) = owner.current_response() else {
-        panic!("sampled opening lost current decision: {:?}", owner.current_response());
+        panic!(
+            "sampled opening lost current decision: {:?}",
+            owner.current_response()
+        );
     };
     owner.encode(expected).unwrap()
 }
 
 fn answer(state: &mut GameState, player: PlayerId, accept: bool) -> ObjectId {
-    let Decision::ChooseEffectOption { player: chooser, source, option_count: 2 } =
-        engine::advance_until_decision(state)
-    else { panic!("genuine opening choice unavailable") };
+    let Decision::ChooseEffectOption {
+        player: chooser,
+        source,
+        option_count: 2,
+    } = engine::advance_until_decision(state)
+    else {
+        panic!("genuine opening choice unavailable")
+    };
     assert_eq!(chooser, player);
     engine::step(state, Action::ChooseEffectOption(u16::from(accept))).unwrap();
     source
 }
 
 fn ordinal(d: &KaitoDecision, accept: bool) -> u32 {
-    d.fixture_backend_v75().candidates_v75().candidates.iter()
+    d.fixture_backend_v75()
+        .candidates_v75()
+        .candidates
+        .iter()
         .position(|row| row.leyline_axe_action == Some(Axe::ChooseOpeningEntry { accept }))
         .unwrap() as u32
 }
@@ -70,8 +82,12 @@ fn active_opening_rebinds_future_opponent_choices_and_retires_past_declines_both
         assert_eq!(a.packet(), b.packet());
         let before = live.fixture_state().clone();
         let paired_before = paired.fixture_state().clone();
-        let mut sample = live.sampled_full_pool_closed_list_v1(&a, 552_482, &corpus(40)).unwrap();
-        let mut alternate = paired.sampled_full_pool_closed_list_v1(&b, 552_482, &corpus(40)).unwrap();
+        let mut sample = live
+            .sampled_full_pool_closed_list_v1(&a, 552_482, &corpus(40))
+            .unwrap();
+        let mut alternate = paired
+            .sampled_full_pool_closed_list_v1(&b, 552_482, &corpus(40))
+            .unwrap();
         let d = decision(&sample);
         let other = decision(&alternate);
         assert_eq!(d.packet(), a.packet());
@@ -81,17 +97,32 @@ fn active_opening_rebinds_future_opponent_choices_and_retires_past_declines_both
         let original = binding.fixture_original_index_v75(decline).unwrap();
         let expected = binding.expected();
         let mut native = raw(sample.fixture_state());
-        let native_outcome = native.step(expected.episode_id, expected.step, original).unwrap();
+        let native_outcome = native
+            .step(expected.episode_id, expected.step, original)
+            .unwrap();
         assert_eq!(sample.apply(&d, decline).unwrap(), native_outcome);
         assert_eq!(sample.fixture_state(), native.kaito_fixture_state());
         alternate.apply(&other, decline).unwrap();
         let future = decision(&sample);
         let future_pair = decision(&alternate);
         assert_eq!(future.packet(), future_pair.packet());
-        assert_eq!(future.fixture_backend_v75().expected().acting_player, opponent.into());
-        let actual = future.fixture_backend_v75().observation().leyline_axe
-            .as_ref().unwrap().opening_choice.as_ref().unwrap();
-        assert_eq!(actual.object, sample.fixture_state().players[opponent.index()].hand[0].0);
+        assert_eq!(
+            future.fixture_backend_v75().expected().acting_player,
+            opponent.into()
+        );
+        let actual = future
+            .fixture_backend_v75()
+            .observation()
+            .leyline_axe
+            .as_ref()
+            .unwrap()
+            .opening_choice
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            actual.object,
+            sample.fixture_state().players[opponent.index()].hand[0].0
+        );
         sample.apply(&future, ordinal(&future, true)).unwrap();
         let entered = public::capture(sample.fixture_state(), first).unwrap();
         assert_eq!(entered.opening_entries.len(), 1);
@@ -107,10 +138,20 @@ fn active_opening_rebinds_future_opponent_choices_and_retires_past_declines_both
         let a = decision(&original);
         let b = decision(&paired);
         assert_eq!(a.packet(), b.packet());
-        assert_eq!(a.fixture_backend_v75().expected().acting_player, opponent.into());
-        let mut sample = original.sampled_full_pool_closed_list_v1(&a, 552_483, &corpus(0)).unwrap();
-        let alternate = paired.sampled_full_pool_closed_list_v1(&b, 552_483, &corpus(0)).unwrap();
-        assert_ne!(sample.fixture_state().objects.get(hidden).card_def, PRINTING);
+        assert_eq!(
+            a.fixture_backend_v75().expected().acting_player,
+            opponent.into()
+        );
+        let mut sample = original
+            .sampled_full_pool_closed_list_v1(&a, 552_483, &corpus(0))
+            .unwrap();
+        let alternate = paired
+            .sampled_full_pool_closed_list_v1(&b, 552_483, &corpus(0))
+            .unwrap();
+        assert_ne!(
+            sample.fixture_state().objects.get(hidden).card_def,
+            PRINTING
+        );
         let fresh = decision(&sample);
         assert_eq!(fresh.packet(), decision(&alternate).packet());
         assert_eq!(fresh.packet(), a.packet());
@@ -121,14 +162,20 @@ fn active_opening_rebinds_future_opponent_choices_and_retires_past_declines_both
     }
 }
 
-fn closed_opening(first: PlayerId, hidden_decline: bool) -> (GameState, ObjectId, ObjectId, ObjectId) {
+fn closed_opening(
+    first: PlayerId,
+    hidden_decline: bool,
+) -> (GameState, ObjectId, ObjectId, ObjectId) {
     let viewer = first.opponent();
     let mut state = initial(first, 1 + usize::from(hidden_decline), 0);
     let accepted = answer(&mut state, first, true);
     if hidden_decline {
         answer(&mut state, first, false);
     }
-    assert!(matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { .. }));
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
     assert!(state.leyline_opening_v1.is_none());
     // Identical public mana and private viewer spell support after the real
     // native opening. All subsequent payment and targeting use owned actions.
@@ -136,8 +183,9 @@ fn closed_opening(first: PlayerId, hidden_decline: bool) -> (GameState, ObjectId
     let spell = put(&mut state, viewer, "Burst Lightning", Zone::Hand);
     for _ in 0..4 {
         match engine::advance_until_decision(&mut state) {
-            Decision::CastSpellOrPass { player, .. } if player == viewer =>
-                return (state, accepted, mana, spell),
+            Decision::CastSpellOrPass { player, .. } if player == viewer => {
+                return (state, accepted, mana, spell)
+            }
             Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
             other => panic!("expected actual priority after the opening: {other:?}"),
         }
@@ -160,15 +208,31 @@ fn closed_opening_resamples_private_declines_preserves_public_entry_and_runs_pai
         let d = decision(&original);
         let other = decision(&paired);
         assert_eq!(d.packet(), other.packet());
-        let mut sample = original.sampled_full_pool_closed_list_v1(&d, 552_484, &corpus(1)).unwrap();
-        let alternate = paired.sampled_full_pool_closed_list_v1(&other, 552_484, &corpus(1)).unwrap();
+        let mut sample = original
+            .sampled_full_pool_closed_list_v1(&d, 552_484, &corpus(1))
+            .unwrap();
+        let alternate = paired
+            .sampled_full_pool_closed_list_v1(&other, 552_484, &corpus(1))
+            .unwrap();
         let fresh = decision(&sample);
         assert_eq!(fresh.packet(), decision(&alternate).packet());
         assert_eq!(fresh.packet(), d.packet());
-        assert_ne!(sample.fixture_state().objects.get(hidden).card_def, PRINTING);
-        assert_eq!(sample.fixture_state().objects.get(accepted).card_def, PRINTING);
-        assert_eq!(sample.fixture_state().objects.get(accepted).zone, Zone::Battlefield);
-        assert_eq!(sample.fixture_state().engine.event_history, original.fixture_state().engine.event_history);
+        assert_ne!(
+            sample.fixture_state().objects.get(hidden).card_def,
+            PRINTING
+        );
+        assert_eq!(
+            sample.fixture_state().objects.get(accepted).card_def,
+            PRINTING
+        );
+        assert_eq!(
+            sample.fixture_state().objects.get(accepted).zone,
+            Zone::Battlefield
+        );
+        assert_eq!(
+            sample.fixture_state().engine.event_history,
+            original.fixture_state().engine.event_history
+        );
         let serialized = serde_json::to_vec(sample.fixture_state()).unwrap();
         let untrusted: GameState = serde_json::from_slice(&serialized).unwrap();
         assert!(untrusted.leyline_sampled_history_v1.is_none());
@@ -186,20 +250,34 @@ fn closed_opening_resamples_private_declines_preserves_public_entry_and_runs_pai
             }
             let current = decision(&sample);
             let rows = &current.fixture_backend_v75().candidates_v75().candidates;
-            let pick = rows.iter().position(|row| match &row.action {
-                ActionSemanticV1::CastSpell { source, .. } => source.arena_id == spell.0,
-                ActionSemanticV1::ChooseKicker { pay, .. } => !pay,
-                ActionSemanticV1::ChooseTarget { target: TargetRefV1::Player { player }, .. } =>
-                    *player == first.into(),
-                _ => false,
-            }).expect("expected actual paid Burst Lightning continuation");
+            let pick = rows
+                .iter()
+                .position(|row| match &row.action {
+                    ActionSemanticV1::CastSpell { source, .. } => source.arena_id == spell.0,
+                    ActionSemanticV1::ChooseKicker { pay, .. } => !pay,
+                    ActionSemanticV1::ChooseTarget {
+                        target: TargetRefV1::Player { player },
+                        ..
+                    } => *player == first.into(),
+                    _ => false,
+                })
+                .expect("expected actual paid Burst Lightning continuation");
             sample.apply(&current, pick as u32).unwrap();
         }
         assert!(paid);
         sample.restore(&snapshot).unwrap();
         assert_eq!(decision(&sample).packet(), d.packet());
         assert!(sample.apply(&fresh, 0).is_err());
-        assert_eq!(public::capture(original.fixture_state(), viewer).unwrap().opening_entries.len(), 1);
-        assert_eq!(original.fixture_state().objects.get(hidden).card_def, PRINTING);
+        assert_eq!(
+            public::capture(original.fixture_state(), viewer)
+                .unwrap()
+                .opening_entries
+                .len(),
+            1
+        );
+        assert_eq!(
+            original.fixture_state().objects.get(hidden).card_def,
+            PRINTING
+        );
     }
 }

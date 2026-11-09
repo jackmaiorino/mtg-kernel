@@ -605,7 +605,7 @@ fn visible_action(value: &KaitoObservationV75, mut action: A) -> Result<A, RlCon
         option_index: 0,
         option_count: 1,
     } = &action
-        {
+    {
         if matches!(
             value
                 .fiend_artisan
@@ -1414,12 +1414,12 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                 != crate::fiend_artisan_consumer_v1::action(
                     value.observation.fiend_artisan.as_ref(),
                     &row.action,
-            )
+                )
             || row.etali_action
                 != crate::etali_primal_storm_consumer_v1::action(
                     value.observation.etali.as_ref(),
                     &row.action,
-            )
+                )
             || row.chosen_type_answer
                 != chosen_type::answer(value.observation.chosen_type.as_ref(), &row.action)
                     .map_err(error)?

@@ -479,7 +479,10 @@ fn full_pool_archived_combat_survives_paid_bounce_without_authorizing_new_receip
         finish(&mut state);
         next_own_main(&mut state, p);
         let trigger = combat_trigger(&mut state, p, attacker);
-        let Some(EffectOp::KaitoCunningV75 { kind: 3, origin: Some(index) }) = trigger.inline_effect
+        let Some(EffectOp::KaitoCunningV75 {
+            kind: 3,
+            origin: Some(index),
+        }) = trigger.inline_effect
         else {
             panic!("missing paid game's native combat capture");
         };
@@ -492,7 +495,11 @@ fn full_pool_archived_combat_survives_paid_bounce_without_authorizing_new_receip
         let mut chosen = false;
         for _ in 0..32 {
             match next(&mut state) {
-                Decision::ChooseTargets { spell, legal_targets, .. } if spell == pup => {
+                Decision::ChooseTargets {
+                    spell,
+                    legal_targets,
+                    ..
+                } if spell == pup => {
                     assert!(legal_targets.contains(&Target::Object(kaito)));
                     engine::step(&mut state, Action::ChooseTarget(Target::Object(kaito))).unwrap();
                     chosen = true;
@@ -509,9 +516,12 @@ fn full_pool_archived_combat_survives_paid_bounce_without_authorizing_new_receip
         let viewer = p.opponent();
         priority(&mut state, viewer);
         let knowledge = &state.reveal_knowledge_v4.as_ref().unwrap()[viewer.index()];
-        assert!(knowledge.hand(p).any(|(name, count)| name == original.card_def && count == 1));
+        assert!(knowledge
+            .hand(p)
+            .any(|(name, count)| name == original.card_def && count == 1));
         let native = FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
-            state.clone(), LimitedAppendixV1::FullPool,
+            state.clone(),
+            LimitedAppendixV1::FullPool,
         );
         let owner = KaitoSession::from_session(native).unwrap();
         let FastActorResponseV1::Decision(expected) = owner.current_response() else {
@@ -528,7 +538,9 @@ fn full_pool_archived_combat_survives_paid_bounce_without_authorizing_new_receip
         let belief = LimitedBeliefV1::new([deck]);
         let mut detached = false;
         for seed in 552_500..552_508 {
-            let sampled = owner.sampled_full_pool_closed_list_v1(&live, seed, &belief).unwrap();
+            let sampled = owner
+                .sampled_full_pool_closed_list_v1(&live, seed, &belief)
+                .unwrap();
             let fresh = sampled.encode(expected).unwrap();
             assert_eq!(fresh.packet(), live.packet());
             let world = sampled.fixture_state();
@@ -537,14 +549,21 @@ fn full_pool_archived_combat_survives_paid_bounce_without_authorizing_new_receip
                 continue;
             }
             detached = true;
-            assert!(crate::engine::validate_historical_ability_source_contract(world, original).is_err());
-            assert!(crate::sampled_history_v1::allows_rebound_source(world, at, original));
+            assert!(
+                crate::engine::validate_historical_ability_source_contract(world, original)
+                    .is_err()
+            );
+            assert!(crate::sampled_history_v1::allows_rebound_source(
+                world, at, original
+            ));
 
             let mut later = world.clone();
             let new_index = later.engine.event_history.len();
             let copied_receipt = later.engine.event_history[at].clone();
             later.engine.event_history.push(copied_receipt);
-            assert!(crate::sampled_history_v1::validate_source(&later, new_index, original).is_err());
+            assert!(
+                crate::sampled_history_v1::validate_source(&later, new_index, original).is_err()
+            );
 
             let mut changed = world.clone();
             let E::KaitoCunningV75 { journal } = &mut changed.engine.event_history[at] else {

@@ -288,7 +288,8 @@ impl FastActorSessionV1 {
         state.harvester_commit_receipts_v1 = appendix.includes(LimitedAppendixV1::Harvester);
         state.fiend_artisan_receipts_v1 = appendix.includes(LimitedAppendixV1::FiendArtisan);
         state.etali_commit_receipts_v1 = appendix.includes(LimitedAppendixV1::Etali);
-        state.thousand_year_storm_consumer_v1 = appendix.includes(LimitedAppendixV1::ThousandYearStorm);
+        state.thousand_year_storm_consumer_v1 =
+            appendix.includes(LimitedAppendixV1::ThousandYearStorm);
     }
 
     fn initialize_limited_consumer_v1(

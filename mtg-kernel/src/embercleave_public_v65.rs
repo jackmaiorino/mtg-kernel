@@ -253,9 +253,16 @@ fn ability(
             index,
             target,
             contract,
-        ) && !published.is_some_and(|item| crate::state::stack_target_contract_for_sampled_snapshot(
-            state, item, TargetSpec::ControlledCreature, index, target, contract,
-        )) {
+        ) && !published.is_some_and(|item| {
+            crate::state::stack_target_contract_for_sampled_snapshot(
+                state,
+                item,
+                TargetSpec::ControlledCreature,
+                index,
+                target,
+                contract,
+            )
+        }) {
             return Err("V65 original target contract changed".into());
         }
         let StackTargetContractV4::Object {

@@ -444,7 +444,12 @@ fn executable_belief_v2(belief: Option<&LimitedBeliefV1>) -> Result<&LimitedBeli
 pub(crate) fn full_pool_belief_v1(belief: &LimitedBeliefV1) -> Result<&LimitedBeliefV1, String> {
     let belief = executable_belief_v2(Some(belief))?;
     let printings = crate::limited_full_pool_consumer_v1::declared_printings_v1()?;
-    if belief.decks.iter().flatten().any(|id| !printings.contains(id)) {
+    if belief
+        .decks
+        .iter()
+        .flatten()
+        .any(|id| !printings.contains(id))
+    {
         return Err("full-pool belief contains a printing outside the frozen pool".into());
     }
     Ok(belief)
@@ -478,9 +483,9 @@ pub fn sample_world_v1(
             let root = session.limited_closed_list_root_v3()?;
             session.limited_closed_list_clone_v3(&root, seed, belief)
         }
-        WorldModeV1::FullPoolClosedListV1 => Err(
-            "closedlist-full-pool-v1 requires the sealed numeric owner".into(),
-        ),
+        WorldModeV1::FullPoolClosedListV1 => {
+            Err("closedlist-full-pool-v1 requires the sealed numeric owner".into())
+        }
     }
 }
 
@@ -592,10 +597,20 @@ impl PolicySpecV1 {
     pub fn validate_full_pool_session_v1(&self, session: SessionKindV1) -> Result<(), String> {
         match (session, self) {
             (SessionKindV1::FullPoolV1, Self::Random)
-            | (SessionKindV1::FullPoolV1, Self::Pimc { world: WorldModeV1::FullPoolClosedListV1, .. }) => Ok(()),
-            (_, Self::Pimc { world: WorldModeV1::FullPoolClosedListV1, .. }) => {
-                Err("closedlist-full-pool-v1 requires -session full-pool".into())
-            }
+            | (
+                SessionKindV1::FullPoolV1,
+                Self::Pimc {
+                    world: WorldModeV1::FullPoolClosedListV1,
+                    ..
+                },
+            ) => Ok(()),
+            (
+                _,
+                Self::Pimc {
+                    world: WorldModeV1::FullPoolClosedListV1,
+                    ..
+                },
+            ) => Err("closedlist-full-pool-v1 requires -session full-pool".into()),
             (SessionKindV1::FullPoolV1, _) => {
                 Err("full-pool requires random or closedlist-full-pool-v1".into())
             }
@@ -870,7 +885,12 @@ pub fn play_game_v1(
 ) -> GameResultV1 {
     if limits.session == SessionKindV1::FullPoolV1 {
         return full_pool_match_v1::play_game(
-            decks, policies, beliefs, env_seed, starting_player, limits,
+            decks,
+            policies,
+            beliefs,
+            env_seed,
+            starting_player,
+            limits,
         );
     }
     play_game_observed_v1(
@@ -933,7 +953,8 @@ pub(crate) fn play_game_observed_v1(
     let mainboards = [decks[0].to_vec(), decks[1].to_vec()];
     let reset = match limits.session {
         SessionKindV1::FullPoolV1 => {
-            result.outcome = GameOutcomeV1::Error("raw session observer does not own full-pool matches".into());
+            result.outcome =
+                GameOutcomeV1::Error("raw session observer does not own full-pool matches".into());
             return result;
         }
         SessionKindV1::PreparedV57 => FastActorSessionV1::reset_prepared_v57(

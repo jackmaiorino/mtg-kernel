@@ -147,13 +147,14 @@ fn target(
             state, item, TARGET, 0, target, contract,
         )
     });
-    let requires_capture = state.thousand_year_storm_consumer_v1
-        && published.is_some_and(|item| !item.is_copy);
+    let requires_capture =
+        state.thousand_year_storm_consumer_v1 && published.is_some_and(|item| !item.is_copy);
     if zone != Zone::Battlefield
         || !captured_target
-            && (requires_capture || !crate::state::stack_target_contract_is_structurally_valid(
-                state, TARGET, 0, target, contract,
-            ))
+            && (requires_capture
+                || !crate::state::stack_target_contract_is_structurally_valid(
+                    state, TARGET, 0, target, contract,
+                ))
     {
         return Err("Electroduplicate original target incarnation changed".into());
     }

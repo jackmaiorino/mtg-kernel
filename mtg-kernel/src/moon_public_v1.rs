@@ -9,7 +9,9 @@ use crate::{
     optional_trigger_public_v1 as public,
     rl::PlayerSeatV1,
     standard_cards_v1::StandardTargetV1,
-    state::{CastMethodV4, GameState, StackItem, StackItemKind, StackTargetContractV4, Target, Zone},
+    state::{
+        CastMethodV4, GameState, StackItem, StackItemKind, StackTargetContractV4, Target, Zone,
+    },
     tinybones_public_v72::{CountersV72, IncarnationV72},
 };
 use serde::{Deserialize, Serialize};

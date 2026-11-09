@@ -68,47 +68,68 @@ fn sources(event: &E) -> Vec<AbilitySourceContractV4> {
         E::OmniscienceCastOptionsV1 { options } => vec![options.source],
         E::LathrilCombatDamageV1 { source, .. } => vec![*source],
         E::HarvesterCommitReceiptV1 { journal } => match journal.as_ref() {
-            crate::harvester_receipts_v1::JournalV1::Published(publication) =>
-                publication.item.v4.ability_source_contract.into_iter().collect(),
+            crate::harvester_receipts_v1::JournalV1::Published(publication) => publication
+                .item
+                .v4
+                .ability_source_contract
+                .into_iter()
+                .collect(),
             _ => vec![],
         },
         E::LathrilReceiptV1 { journal } => match journal.as_ref() {
-            crate::lathril_receipts_v1::JournalV1::Paid { item, .. } =>
-                item.v4.ability_source_contract.into_iter().collect(),
+            crate::lathril_receipts_v1::JournalV1::Paid { item, .. } => {
+                item.v4.ability_source_contract.into_iter().collect()
+            }
             _ => vec![],
         },
         E::KinshipEntryV1 { journal } => match journal.as_ref() {
-            crate::banner_of_kinship_v1::entry::JournalV1::Committed { entered } => vec![entered.source],
-            crate::banner_of_kinship_v1::entry::JournalV1::Captured { choice, .. } => choice.replacement.seasons.clone(),
+            crate::banner_of_kinship_v1::entry::JournalV1::Committed { entered } => {
+                vec![entered.source]
+            }
+            crate::banner_of_kinship_v1::entry::JournalV1::Captured { choice, .. } => {
+                choice.replacement.seasons.clone()
+            }
             _ => vec![],
         },
         E::FiendArtisanPaidV1 { item, .. } => item.v4.ability_source_contract.into_iter().collect(),
         E::KaitoCunningV75 { .. } => crate::effect::kaito_cunning_v75::archived_sources_v1(event),
         E::VivienReidV1 { .. } => crate::effect::vivien_reid_v1::archived_sources_v1(event),
         E::TinybonesV72 { journal } => match journal.as_ref() {
-            crate::engine::tinybones_v72::JournalV72::Discarded(discard) =>
-                std::iter::once(discard.card).chain(discard.observers.iter().copied()).collect(),
+            crate::engine::tinybones_v72::JournalV72::Discarded(discard) => {
+                std::iter::once(discard.card)
+                    .chain(discard.observers.iter().copied())
+                    .collect()
+            }
             _ => vec![],
         },
         E::ControlledCreatureDeathCaptureV1 { source, .. }
         | E::CuratorEnteredV1 { source, .. }
         | E::NivMizzetVisionaryDamageSourceDepartureV1 { source, .. } => vec![*source],
-        E::NivMizzetVisionaryDamageV1 { observer, damage_source, .. } => vec![*observer, *damage_source],
+        E::NivMizzetVisionaryDamageV1 {
+            observer,
+            damage_source,
+            ..
+        } => vec![*observer, *damage_source],
         E::DrakusethDamageSourceV76 { journal } => match journal.as_ref() {
-            crate::drakuseth_damage_source_v76::JournalV76::Departure { facts, .. } => vec![facts.source],
-            crate::drakuseth_damage_source_v76::JournalV76::Published { item } =>
-                item.v4.ability_source_contract.into_iter().collect(),
+            crate::drakuseth_damage_source_v76::JournalV76::Departure { facts, .. } => {
+                vec![facts.source]
+            }
+            crate::drakuseth_damage_source_v76::JournalV76::Published { item } => {
+                item.v4.ability_source_contract.into_iter().collect()
+            }
             _ => vec![],
         },
         E::GreatwurmCombatCaptureV1 { capture } => std::iter::once(capture.creature)
-            .chain(capture.observers.iter().copied()).collect(),
+            .chain(capture.observers.iter().copied())
+            .collect(),
         E::FiendArtisanConsumerReceiptV1 { journal } => match journal.as_ref() {
             crate::fiend_artisan_receipts_v1::JournalV1::Sacrificed { source, .. } => vec![*source],
             _ => vec![],
         },
         E::EtaliPrimalStormReceiptV1 { journal } => match journal.as_ref() {
-            crate::etali_primal_storm_receipts_v1::JournalV1::Published { item, .. } =>
-                item.v4.ability_source_contract.into_iter().collect(),
+            crate::etali_primal_storm_receipts_v1::JournalV1::Published { item, .. } => {
+                item.v4.ability_source_contract.into_iter().collect()
+            }
             _ => vec![],
         },
         _ => vec![],
@@ -129,17 +150,37 @@ pub(crate) fn capture(state: &GameState) -> Result<CustodyV1, String> {
         let event_hash = fingerprint(event)?;
         for source in contracts {
             validate_source(state, at, source)?;
-            proofs.push(ProofV1 { at, source, event: event_hash });
+            proofs.push(ProofV1 {
+                at,
+                source,
+                event: event_hash,
+            });
         }
     }
     let mut targets = Vec::new();
-    let mut items = state.stack.iter().chain(state.engine.pending_effect.as_ref().map(|p| &p.resolving_item))
-        .map(|item| (item, None)).collect::<Vec<_>>();
-    if state.engine.event_history.has_any(&[crate::event_history_v1::EventKindV1::DrakusethDamageSourceV76]) {
+    let mut items = state
+        .stack
+        .iter()
+        .chain(
+            state
+                .engine
+                .pending_effect
+                .as_ref()
+                .map(|p| &p.resolving_item),
+        )
+        .map(|item| (item, None))
+        .collect::<Vec<_>>();
+    if state
+        .engine
+        .event_history
+        .has_any(&[crate::event_history_v1::EventKindV1::DrakusethDamageSourceV76])
+    {
         crate::drakuseth_damage_source_v76::validate_state(state)?;
         for (at, event) in state.engine.event_history.iter().enumerate() {
             if let E::DrakusethDamageSourceV76 { journal } = event {
-                if let crate::drakuseth_damage_source_v76::JournalV76::Published { item } = journal.as_ref() {
+                if let crate::drakuseth_damage_source_v76::JournalV76::Published { item } =
+                    journal.as_ref()
+                {
                     items.push((item.as_ref(), Some((at, fingerprint(event)?))));
                 }
             }
@@ -154,15 +195,27 @@ pub(crate) fn capture(state: &GameState) -> Result<CustodyV1, String> {
         }
         let item_hash = fingerprint(item)?;
         let refs = crate::rl::frozen_stack_target_refs(state, item).map_err(|e| e.to_string())?;
-        for (slot, (&contract, projected)) in item.v4.target_contracts.iter().zip(refs).enumerate() {
-            let (StackTargetContractV4::Object { zone, .. }, crate::rl::TargetRefV1::Object { object }) =
-                (contract, projected) else { continue };
+        for (slot, (&contract, projected)) in item.v4.target_contracts.iter().zip(refs).enumerate()
+        {
+            let (
+                StackTargetContractV4::Object { zone, .. },
+                crate::rl::TargetRefV1::Object { object },
+            ) = (contract, projected)
+            else {
+                continue;
+            };
             // A private chooser's hand/library target must never become an
             // actor-independent frozen reference in a later opponent rollout.
             if matches!(zone, Zone::Hand | Zone::Library) {
                 continue;
             }
-            let proof = TargetProofV1 { item: item_hash, archived, slot, contract, public_face: object.card_db_id };
+            let proof = TargetProofV1 {
+                item: item_hash,
+                archived,
+                slot,
+                contract,
+                public_face: object.card_db_id,
+            };
             if !targets.contains(&proof) {
                 targets.push(proof);
             }
@@ -183,22 +236,46 @@ pub(crate) fn object_target_face(
     slot: usize,
     contract: StackTargetContractV4,
 ) -> Option<u16> {
-    let StackTargetContractV4::Object { object, owner, zone, zone_change_count, spell_copy_origin, .. } = contract
-        else { return None };
+    let StackTargetContractV4::Object {
+        object,
+        owner,
+        zone,
+        zone_change_count,
+        spell_copy_origin,
+        ..
+    } = contract
+    else {
+        return None;
+    };
     let live = state.objects.try_get(object)?;
     if matches!(zone, Zone::Hand | Zone::Library)
-        || live.owner != owner || live.zone_change_count <= zone_change_count
-        || spell_copy_origin.is_some() || live.spell_copy_origin != spell_copy_origin
+        || live.owner != owner
+        || live.zone_change_count <= zone_change_count
+        || spell_copy_origin.is_some()
+        || live.spell_copy_origin != spell_copy_origin
         || item.v4.target_contracts.get(slot) != Some(&contract)
         || item.targets.get(slot) != Some(&contract.target())
     {
         return None;
     }
     let item_hash = fingerprint(item).ok()?;
-    state.sampled_history_v1.1.iter().find(|proof|
-        proof.item == item_hash && proof.slot == slot && proof.contract == contract
-            && proof.archived.is_none_or(|(at, digest)| state.engine.event_history.get(at)
-                .and_then(|event| fingerprint(event).ok()) == Some(digest)))
+    state
+        .sampled_history_v1
+        .1
+        .iter()
+        .find(|proof| {
+            proof.item == item_hash
+                && proof.slot == slot
+                && proof.contract == contract
+                && proof.archived.is_none_or(|(at, digest)| {
+                    state
+                        .engine
+                        .event_history
+                        .get(at)
+                        .and_then(|event| fingerprint(event).ok())
+                        == Some(digest)
+                })
+        })
         .map(|proof| proof.public_face)
 }
 
@@ -220,23 +297,34 @@ pub(crate) fn allows_rebound_source(
     at: usize,
     source: AbilitySourceContractV4,
 ) -> bool {
-    let Some(event) = state.engine.event_history.get(at) else { return false };
+    let Some(event) = state.engine.event_history.get(at) else {
+        return false;
+    };
     if !sources(event).contains(&source) {
         return false;
     }
-    let Ok(digest) = fingerprint(event) else { return false };
-    if !state.sampled_history_v1.0.iter().any(|proof|
-        proof.at == at && proof.source == source && proof.event == digest)
+    let Ok(digest) = fingerprint(event) else {
+        return false;
+    };
+    if !state
+        .sampled_history_v1
+        .0
+        .iter()
+        .any(|proof| proof.at == at && proof.source == source && proof.event == digest)
     {
         return false;
     }
-    let Some(live) = state.objects.try_get(source.source) else { return false };
+    let Some(live) = state.objects.try_get(source.source) else {
+        return false;
+    };
     // A same-generation exception is needed only for a revealed card shuffled
     // within its library. All other same-generation/live contracts stay strict.
-    let same_library_shuffle = source.zone == Zone::Library && matches!(event,
+    let same_library_shuffle = source.zone == Zone::Library
+        && matches!(event,
         E::ProgenitusShuffledV1 { source: original, move_history_index: None, .. }
             if *original == source);
-    if live.owner != source.owner || live.zone_change_count < source.zone_change_count
+    if live.owner != source.owner
+        || live.zone_change_count < source.zone_change_count
         || live.zone_change_count == source.zone_change_count
             && (!same_library_shuffle || live.zone != source.zone)
     {

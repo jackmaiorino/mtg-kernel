@@ -121,7 +121,12 @@ fn sampled_paid_attack_preserves_archived_target_and_departure_without_hidden_pr
     let scope = ConsumerV1::KaitoFullPoolV1;
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut live, source) = paid(actor);
-        let victim = put(&mut live, actor.opponent(), "Aegis Turtle", Zone::Battlefield);
+        let victim = put(
+            &mut live,
+            actor.opponent(),
+            "Aegis Turtle",
+            Zone::Battlefield,
+        );
         attack(&mut live, source, actor);
         choose(
             &mut live,
@@ -166,10 +171,16 @@ fn sampled_paid_attack_preserves_archived_target_and_departure_without_hidden_pr
 
         for viewer in [actor, actor.opponent()] {
             let actual = public76::capture_scoped(&sampled, viewer, scope).unwrap();
-            assert_eq!(actual, public76::capture_scoped(&live, viewer, scope).unwrap());
+            assert_eq!(
+                actual,
+                public76::capture_scoped(&live, viewer, scope).unwrap()
+            );
             let public76::LaterFamilyV76::Drakuseth(family) = &actual.families[0];
             assert_eq!(family.publications.len(), 1);
-            assert_eq!(family.publications[0].original_target_slots[0].printed_damage, 4);
+            assert_eq!(
+                family.publications[0].original_target_slots[0].printed_damage,
+                4
+            );
             assert!(family.triggers.is_empty());
         }
         let restored: GameState =

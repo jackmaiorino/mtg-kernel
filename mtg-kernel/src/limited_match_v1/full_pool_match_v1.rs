@@ -47,7 +47,10 @@ fn rollout(
     let mut decision = encode_current(&world)?;
     let mut action = action;
     for step in 0..=depth {
-        match world.apply(&decision, action).map_err(|error| error.to_string())? {
+        match world
+            .apply(&decision, action)
+            .map_err(|error| error.to_string())?
+        {
             FastActorResponseV1::Terminal(terminal) => {
                 return match terminal_outcome(terminal) {
                     GameOutcomeV1::Winner(winner) if winner == root => Ok(1.0),
@@ -97,7 +100,14 @@ fn pimc_choose_full_pool_v1(
                 .map_err(|error| error.to_string())
         },
         |sampled, action, rng| {
-            rollout(sampled, seat(expected.acting_player), action, depth, max_turns, rng)
+            rollout(
+                sampled,
+                seat(expected.acting_player),
+                action,
+                depth,
+                max_turns,
+                rng,
+            )
         },
     ))
 }
@@ -115,7 +125,9 @@ pub(super) fn play_game(
         for (policy, belief) in policies.into_iter().zip(beliefs) {
             policy.validate_full_pool_session_v1(SessionKindV1::FullPoolV1)?;
             if policy.needs_belief() {
-                full_pool_belief_v1(belief.ok_or("closedlist-full-pool-v1 needs a belief corpus")?)?;
+                full_pool_belief_v1(
+                    belief.ok_or("closedlist-full-pool-v1 needs a belief corpus")?,
+                )?;
             }
         }
         let deck_ids = decks.map(|deck| {
@@ -164,7 +176,9 @@ fn play_owner(
             FastActorResponseV1::Terminal(terminal) => return Ok(terminal_outcome(terminal)),
             FastActorResponseV1::Decision(expected) => expected,
         };
-        let decision = session.encode(expected).map_err(|error| error.to_string())?;
+        let decision = session
+            .encode(expected)
+            .map_err(|error| error.to_string())?;
         result.turns = decision.public_turn();
         if result.turns > limits.max_turns || result.decisions >= limits.max_decisions {
             return Ok(GameOutcomeV1::Stall);
@@ -174,9 +188,16 @@ fn play_owner(
         let selected = match policies[actor.index()] {
             PolicySpecV1::Random => random_index(&mut rng, legal),
             PolicySpecV1::Pimc { sims, depth, .. } => {
-                let belief = beliefs[actor.index()].ok_or("full-pool match lacks a belief corpus")?;
+                let belief =
+                    beliefs[actor.index()].ok_or("full-pool match lacks a belief corpus")?;
                 let (selected, stats) = pimc_choose_full_pool_v1(
-                    &session, &decision, *sims, *depth, limits.max_turns, belief, rng.next_u64(),
+                    &session,
+                    &decision,
+                    *sims,
+                    *depth,
+                    limits.max_turns,
+                    belief,
+                    rng.next_u64(),
                 )?;
                 result.rejected_worlds += u64::from(stats.rejected);
                 result.rollout_errors += u64::from(stats.rollout_errors);
@@ -199,11 +220,12 @@ fn play_owner(
                 result.turns, result.decisions,
             );
         }
-        session.apply(&decision, selected).map_err(|error| error.to_string())?;
+        session
+            .apply(&decision, selected)
+            .map_err(|error| error.to_string())?;
         result.decisions += 1;
     }
 }
-
 
 #[cfg(all(test, not(feature = "standard-magezero-fixtures")))]
 #[path = "full_pool_match_v1_tests.rs"]

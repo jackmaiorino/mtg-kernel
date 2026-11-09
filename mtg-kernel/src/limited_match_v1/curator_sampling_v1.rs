@@ -3,9 +3,7 @@ use super::{closed_list_v2, derive_seed, draw, LimitedBeliefV1, SplitMix64};
 use crate::{
     card_def::CARD_DEFS,
     curator_receipts_v1::{self as receipts, JournalV1, ShownV1},
-    effect::{
-        curator_v1, EffectBooleanChoicePurpose, EffectObjectBinding, PendingEffectChoice,
-    },
+    effect::{curator_v1, EffectBooleanChoicePurpose, EffectObjectBinding, PendingEffectChoice},
     event::CommittedEvent,
     ids::{ObjectId, PlayerId},
     state::{GameState, LibraryKnowledgeEntry, ObjectStateV4},
@@ -52,9 +50,14 @@ fn active_pile(
     };
     let Some(PendingEffectChoice::ChooseBoolean {
         player,
-        purpose: EffectBooleanChoicePurpose::CuratorPileV1 { face_down_count, face_up_count },
+        purpose:
+            EffectBooleanChoicePurpose::CuratorPileV1 {
+                face_down_count,
+                face_up_count,
+            },
         ..
-    }) = &pending.choice else {
+    }) = &pending.choice
+    else {
         return Ok(None);
     };
     if *player != actor {
@@ -68,16 +71,22 @@ fn active_pile(
     let mut labels: Vec<_> = shown.iter().map(|row| Some(row.printing)).collect();
     labels.extend(std::iter::repeat_n(None, usize::from(*face_down_count)));
     labels.sort_unstable();
-    let fixed: Vec<_> = choice.prefix.iter().map(|binding| {
-        (!unknown.contains(&binding.object))
-            .then(|| state.objects.get(binding.object).card_def)
-    }).collect();
+    let fixed: Vec<_> = choice
+        .prefix
+        .iter()
+        .map(|binding| {
+            (!unknown.contains(&binding.object)).then(|| state.objects.get(binding.object).card_def)
+        })
+        .collect();
     let mut possible = Vec::new();
     layouts(&mut labels, &fixed, 0, &mut possible);
     if possible.is_empty() {
         return Err("public Curator names and known positions have no pile layout".into());
     }
-    let mut rng = SplitMix64::seed(derive_seed(b"mtg-kernel/curator-pile-sampling/v1\0", &[seed]));
+    let mut rng = SplitMix64::seed(derive_seed(
+        b"mtg-kernel/curator-pile-sampling/v1\0",
+        &[seed],
+    ));
     let layout = possible.swap_remove(draw(&mut rng, possible.len()));
     Ok(Some(ActivePile {
         entry: choice.entry,
@@ -109,7 +118,10 @@ impl ActivePile {
             if card.card_def != printing {
                 return Err("sampled Curator pile disagrees with a known library position".into());
             }
-            shown.push(ShownV1 { original: binding, printing });
+            shown.push(ShownV1 {
+                original: binding,
+                printing,
+            });
         }
         // The ordinary corpus sampler accounts for these placements as known
         // deck cards and fills all other unknown slots, including down slots.
@@ -118,14 +130,20 @@ impl ActivePile {
         let mut reveal_count = 0;
         for event in state.engine.event_history.iter_mut() {
             match event {
-                CommittedEvent::CuratorProgressV1 { entry_history_index, choice }
-                    if *entry_history_index == self.entry && choice.phase == 1 =>
-                {
+                CommittedEvent::CuratorProgressV1 {
+                    entry_history_index,
+                    choice,
+                } if *entry_history_index == self.entry && choice.phase == 1 => {
                     choice.down.clone_from(&down);
                     progress_count += 1;
                 }
                 CommittedEvent::CuratorReceiptV1 { journal } => {
-                    if let JournalV1::Revealed { entry, shown: actual, .. } = journal.as_mut() {
+                    if let JournalV1::Revealed {
+                        entry,
+                        shown: actual,
+                        ..
+                    } = journal.as_mut()
+                    {
                         if *entry == self.entry {
                             actual.clone_from(&shown);
                             reveal_count += 1;
@@ -145,12 +163,16 @@ impl ActivePile {
         // The normal clone clears the other actor's private memory. This one
         // prefix is a native operation operand, reconstructed from the sampled
         // cards to support the controller's subsequent graveyard-order prompt.
-        state.library_knowledge[self.controller.index()][self.controller.index()] = self.prefix
-            .iter().enumerate().map(|(position, binding)| LibraryKnowledgeEntry {
+        state.library_knowledge[self.controller.index()][self.controller.index()] = self
+            .prefix
+            .iter()
+            .enumerate()
+            .map(|(position, binding)| LibraryKnowledgeEntry {
                 position: position as u32,
                 object: binding.object,
                 zone_change_count: binding.expected_zone_change_count,
-            }).collect();
+            })
+            .collect();
     }
 }
 
@@ -169,7 +191,13 @@ pub(crate) fn rewrite(
         pile.place_shown(state, &mut slots[1])?;
     }
     closed_list_v2::rewrite_names_with_library(
-        state, actor, slots, belief, seed, known_names, library_minima,
+        state,
+        actor,
+        slots,
+        belief,
+        seed,
+        known_names,
+        library_minima,
     )?;
     if let Some(pile) = pile {
         pile.restore_controller_look(state);

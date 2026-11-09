@@ -10,7 +10,11 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 mod full_pool_sampler_tests;
 
 pub struct KaitoSession {
@@ -38,7 +42,13 @@ impl KaitoDecision {
     }
     #[cfg(feature = "limited-fdn-fixtures")]
     pub(crate) fn public_turn(&self) -> u32 {
-        self.backend.observation().common.common.projection.surface.turn
+        self.backend
+            .observation()
+            .common
+            .common
+            .projection
+            .surface
+            .turn
     }
     #[cfg(all(
         test,
@@ -255,7 +265,9 @@ impl KaitoSession {
     /// supplied as a belief. The caller supplies the public belief corpus.
     #[cfg(feature = "limited-fdn-fixtures")]
     pub fn sampled_full_pool_closed_list_v1(
-        &self, decision: &KaitoDecision, seed: u64,
+        &self,
+        decision: &KaitoDecision,
+        seed: u64,
         belief: &crate::limited_match_v1::LimitedBeliefV1,
     ) -> Result<Self> {
         if !Arc::ptr_eq(&self.owner, &decision.owner) || self.generation != decision.generation {
@@ -263,15 +275,26 @@ impl KaitoSession {
         }
         let facts = self.hand_facts();
         if !matches!(facts, HandFacts::RevealMinimaV3(_)) {
-            return Err(Error::Projection("full-pool sampling requires public reveal minima".into()));
+            return Err(Error::Projection(
+                "full-pool sampling requires public reveal minima".into(),
+            ));
         }
-        if packet_from_current(decision.backend.candidates_v75(), decision.backend.actions(), &facts)? != decision.packet {
+        if packet_from_current(
+            decision.backend.candidates_v75(),
+            decision.backend.actions(),
+            &facts,
+        )? != decision.packet
+        {
             return Err(Error::StaleBinding);
         }
-        let inner = self.inner.sampled_full_pool_closed_list_v1(&decision.backend, seed, belief)
+        let inner = self
+            .inner
+            .sampled_full_pool_closed_list_v1(&decision.backend, seed, belief)
             .map_err(|e| Error::Projection(e.to_string()))?;
         let sampled = Self::from_kaito(inner);
-        if sampled.encode(decision.backend.expected())?.packet != decision.packet { return Err(Error::StaleBinding); }
+        if sampled.encode(decision.backend.expected())?.packet != decision.packet {
+            return Err(Error::StaleBinding);
+        }
         Ok(sampled)
     }
 

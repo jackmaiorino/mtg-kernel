@@ -200,10 +200,16 @@ fn private_search_ref(
     })
 }
 
-fn paid_root(state: &GameState, source: AbilitySourceContractV4, archived: Option<usize>) -> Result<RootV1, String> {
+fn paid_root(
+    state: &GameState,
+    source: AbilitySourceContractV4,
+    archived: Option<usize>,
+) -> Result<RootV1, String> {
     let mut root = if let Some(at) = archived {
         public::archived_root(state, at, source, None)?
-    } else { public::root(state, source, None)? };
+    } else {
+        public::root(state, source, None)?
+    };
     if source.card_def != PRINTING {
         return Err("Fiend Artisan paid row changed exact printing".into());
     }
@@ -248,15 +254,15 @@ fn choose(
                 remaining: 1,
                 ..
             })) if *id == pending.source => Ok(Some(ChoiceV1::Sacrifice {
-                    source,
+                source,
                 x: pending
                     .mana_x_v1
                     .ok_or("Fiend Artisan sacrifice has no selected X")?,
                 legal: candidates
                     .iter()
                     .map(|&id| battlefield_ref(state, id))
-                        .collect::<Result<_, _>>()?,
-                })),
+                    .collect::<Result<_, _>>()?,
+            })),
             _ => Err("Fiend Artisan activation changed native menu".into()),
         };
     }
@@ -347,16 +353,16 @@ pub(crate) fn capture(
                 .v4
                 .ability_source_contract
                 .ok_or("Fiend Artisan paid source absent")?;
-        Ok(ActivationV1 {
-            source: paid_root(state, source, Some(row.paid_at))?,
-            stack_position: row.stack_position,
-            paid_x: row.x,
-            original_sacrifice: row.sacrifice.clone(),
-            searching: row.searching,
-            shuffled: row.shuffled,
-            countered: row.countered,
-            actual_public_arrival: row.arrival.cloned(),
-        })
+            Ok(ActivationV1 {
+                source: paid_root(state, source, Some(row.paid_at))?,
+                stack_position: row.stack_position,
+                paid_x: row.x,
+                original_sacrifice: row.sacrifice.clone(),
+                searching: row.searching,
+                shuffled: row.shuffled,
+                countered: row.countered,
+                actual_public_arrival: row.arrival.cloned(),
+            })
         })
         .collect::<Result<Vec<_>, String>>()?;
     Ok(FactsV1 {

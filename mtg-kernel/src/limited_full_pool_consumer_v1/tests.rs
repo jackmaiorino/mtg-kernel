@@ -3,8 +3,7 @@ use crate::{
     current_mixed_policy_v1::KaitoDecision,
     current_tree_learner_v1::ModelV1,
     effect::{
-        standard_exile::etali_primal_storm_tests as etali,
-        thousand_year_storm_v1_tests as storm,
+        standard_exile::etali_primal_storm_tests as etali, thousand_year_storm_v1_tests as storm,
     },
     engine::{Action as NativeAction, Decision as NativeDecision},
     human_bo3_v1::{project_limited_kaito_v16, HumanActionRequestV1, HumanKaitoProjectorV75},
@@ -89,7 +88,11 @@ fn frozen_286_declared_reset_all_appendices_and_distinct_sealed_profile_both_sea
         let expected = backend.expected();
         assert_eq!(backend.observation().schema, OBSERVATION_SCHEMA);
         assert_eq!(backend.candidates_v75().schema, CANDIDATES_SCHEMA);
-        assert!(backend.candidates_v75().candidates.iter().all(|row| row.schema == ACTION_SCHEMA));
+        assert!(backend
+            .candidates_v75()
+            .candidates
+            .iter()
+            .all(|row| row.schema == ACTION_SCHEMA));
         assert_model(&owner, &d);
 
         let human = reset_human_v1(&config, expected.acting_player).unwrap();
@@ -99,11 +102,18 @@ fn frozen_286_declared_reset_all_appendices_and_distinct_sealed_profile_both_sea
         assert_eq!(prompt.schema, HUMAN_DECISION_SCHEMA);
         let mut wire = JsonlServerV1::new();
         let Body::State { state, .. } = wire_state(wire_command(
-            &mut wire, 1, CommandV1::Reset { config: config.clone() },
+            &mut wire,
+            1,
+            CommandV1::Reset {
+                config: config.clone(),
+            },
         )) else {
             panic!("full-pool reset did not reach its first decision");
         };
-        let WireState::Decision { decision: visible, .. } = *state else {
+        let WireState::Decision {
+            decision: visible, ..
+        } = *state
+        else {
             panic!("full-pool reset was terminal");
         };
         assert_eq!(visible.schema, WIRE_DECISION_SCHEMA);
@@ -129,7 +139,6 @@ fn frozen_286_declared_reset_all_appendices_and_distinct_sealed_profile_both_sea
     }
 }
 
-
 fn paid_etali_storm(actor: PlayerId) -> (GameState, crate::ids::ObjectId) {
     let mut state = storm::ready(actor, "Island");
     crate::combat_damage_v1::enable_foundations_combat_v1(&mut state).unwrap();
@@ -141,20 +150,34 @@ fn paid_etali_storm(actor: PlayerId) -> (GameState, crate::ids::ObjectId) {
     advance_to_next_main_for(&mut state, actor);
     // A genuine paid instant this turn supplies exactly one prior Storm cast.
     storm::cast(
-        &mut state, actor, "Burst Lightning", &[Target::Player(actor.opponent())], 1,
+        &mut state,
+        actor,
+        "Burst Lightning",
+        &[Target::Player(actor.opponent())],
+        1,
     );
     storm::finish(&mut state);
 
     // Seed the next authentic top-card batch with one nonland and one land.
-    let hit = put(&mut state, actor.opponent(), "Burst Lightning", Zone::Library);
-    state.players[actor.opponent().index()].library.rotate_right(1);
+    let hit = put(
+        &mut state,
+        actor.opponent(),
+        "Burst Lightning",
+        Zone::Library,
+    );
+    state.players[actor.opponent().index()]
+        .library
+        .rotate_right(1);
     for _ in 0..24 {
         match etali::next(&mut state) {
             NativeDecision::DeclareAttackers { player, eligible } if player == actor => {
                 assert!(eligible.contains(&source));
                 etali::answer(&mut state, NativeAction::DeclareAttackers(vec![source]));
                 let choice = etali::batch(&mut state, actor);
-                assert!(choice.scans.iter().any(|scan| scan.hit.is_some_and(|row| row.object == hit)));
+                assert!(choice
+                    .scans
+                    .iter()
+                    .any(|scan| scan.hit.is_some_and(|row| row.object == hit)));
                 return (state, hit);
             }
             NativeDecision::CastSpellOrPass { .. } => etali::answer(&mut state, NativeAction::Pass),
@@ -178,26 +201,39 @@ fn paid_etali_free_cast_feeds_storm_and_both_owners_bind_the_actual_actions() {
         let mut disabled = state.clone();
         disabled.fiend_artisan_receipts_v1 = false;
         assert!(crate::kaito_observation_v75::validate_state_scoped(
-            &disabled, LimitedAppendixV1::FullPool,
-        ).is_err());
+            &disabled,
+            LimitedAppendixV1::FullPool,
+        )
+        .is_err());
 
         let mut numeric = KaitoSession::from_session(raw(&state)).unwrap();
         let mut paired = KaitoSession::from_session(raw(&other)).unwrap();
         let opening = decision(&numeric);
         assert_eq!(opening.packet(), decision(&paired).packet());
         let candidate = |d: &KaitoDecision| {
-            d.fixture_backend_v75().candidates_v75().candidates.iter().position(|row| {
-                row.etali_action == Some(crate::etali_primal_storm_consumer_v1::ActionV1::CastOriginalExile)
-                    && matches!(&row.action, Action::ChooseEffectTarget {
+            d.fixture_backend_v75()
+                .candidates_v75()
+                .candidates
+                .iter()
+                .position(|row| {
+                    row.etali_action
+                        == Some(crate::etali_primal_storm_consumer_v1::ActionV1::CastOriginalExile)
+                        && matches!(&row.action, Action::ChooseEffectTarget {
                         target: TargetRefV1::Object { object }, ..
                     } if object.arena_id == hit.0)
-            }).unwrap()
+                })
+                .unwrap()
         };
         let selected = candidate(&opening) as u32;
-        let raw_index = opening.fixture_backend_v75().fixture_original_index_v75(selected).unwrap();
+        let raw_index = opening
+            .fixture_backend_v75()
+            .fixture_original_index_v75(selected)
+            .unwrap();
         let expected = opening.fixture_backend_v75().expected();
         let mut engine_owner = raw(&state);
-        let expected_after = engine_owner.step(expected.episode_id, expected.step, raw_index).unwrap();
+        let expected_after = engine_owner
+            .step(expected.episode_id, expected.step, raw_index)
+            .unwrap();
         assert_eq!(numeric.apply(&opening, selected).unwrap(), expected_after);
         let pair_opening = decision(&paired);
         paired.apply(&pair_opening, selected).unwrap();
@@ -219,67 +255,136 @@ fn paid_etali_free_cast_feeds_storm_and_both_owners_bind_the_actual_actions() {
                 let attack = obs.etali.as_ref().unwrap().attacks.last().unwrap();
                 assert_eq!(attack.actual_casts.len(), 1);
                 assert_eq!(attack.actual_casts[0].spell.object, hit.0);
-                assert_eq!(attack.actual_casts[0].original_exile.owner, actor.opponent().into());
+                assert_eq!(
+                    attack.actual_casts[0].original_exile.owner,
+                    actor.opponent().into()
+                );
                 assert_eq!(attack.actual_casts[0].method, cast.spell.cast_method);
                 assert_model(&numeric, &d);
 
-                let original = rows.iter().position(|row| row.thousand_year_storm_action.is_some()
-                    && matches!(row.action, Action::FinishEffectSelection { .. })).unwrap();
+                let original = rows
+                    .iter()
+                    .position(|row| {
+                        row.thousand_year_storm_action.is_some()
+                            && matches!(row.action, Action::FinishEffectSelection { .. })
+                    })
+                    .unwrap();
                 let mut raw_copy = raw(numeric.fixture_state());
-                let mut human = HumanKaitoSessionV75::from_session(raw(numeric.fixture_state()), actor.into()).unwrap();
+                let mut human =
+                    HumanKaitoSessionV75::from_session(raw(numeric.fixture_state()), actor.into())
+                        .unwrap();
                 let mut human_projector = HumanKaitoProjectorV75::new(actor.into());
                 let current = backend.expected();
                 let human_binding = match human.current_response() {
                     FastActorResponseV1::Decision(h) => h,
                     _ => panic!("Storm Human checkpoint missing"),
                 };
-                let prompt = human_projector.project_current(&human, human_binding).unwrap();
+                let prompt = human_projector
+                    .project_current(&human, human_binding)
+                    .unwrap();
                 let mut wire = JsonlServerV1::new();
-                wire.0.install_fixture_core(KaitoSessionV75::from_session(raw(numeric.fixture_state())).unwrap());
-                let Body::State { state, .. } = wire_state(wire_command(&mut wire, 1, CommandV1::Current)) else {
+                wire.0.install_fixture_core(
+                    KaitoSessionV75::from_session(raw(numeric.fixture_state())).unwrap(),
+                );
+                let Body::State { state, .. } =
+                    wire_state(wire_command(&mut wire, 1, CommandV1::Current))
+                else {
                     panic!("Storm wire checkpoint missing");
                 };
-                let WireState::Decision { episode_id, authority_generation, decision: visible } = *state else {
+                let WireState::Decision {
+                    episode_id,
+                    authority_generation,
+                    decision: visible,
+                } = *state
+                else {
                     panic!("Storm wire checkpoint terminal");
                 };
-                let (_, indices) = project_limited_kaito_v16(
-                    backend, actor.into(), visible.prompt_seq,
-                ).unwrap();
+                let (_, indices) =
+                    project_limited_kaito_v16(backend, actor.into(), visible.prompt_seq).unwrap();
                 assert_eq!(prompt.actions, visible.actions);
                 assert_eq!(prompt.action_meanings, visible.action_meanings);
-                let ui = indices.iter().position(|&i| i as usize == original).unwrap();
-                let raw_backend = decision(&KaitoSession::from_session(raw(numeric.fixture_state())).unwrap());
+                let ui = indices
+                    .iter()
+                    .position(|&i| i as usize == original)
+                    .unwrap();
+                let raw_backend =
+                    decision(&KaitoSession::from_session(raw(numeric.fixture_state())).unwrap());
                 let raw_expected = raw_backend.fixture_backend_v75().expected();
-                let raw_index = raw_backend.fixture_backend_v75().fixture_original_index_v75(original as u32).unwrap();
-                let raw_response = raw_copy.step(raw_expected.episode_id, raw_expected.step, raw_index).unwrap();
+                let raw_index = raw_backend
+                    .fixture_backend_v75()
+                    .fixture_original_index_v75(original as u32)
+                    .unwrap();
+                let raw_response = raw_copy
+                    .step(raw_expected.episode_id, raw_expected.step, raw_index)
+                    .unwrap();
                 let saved = numeric.snapshot();
                 numeric.apply(&d, original as u32).unwrap();
                 assert_eq!(raw_copy.kaito_fixture_state(), numeric.fixture_state());
-                human_projector.submit(&mut human, HumanActionRequestV1 {
-                    prompt_seq: prompt.prompt_seq, action_index: ui as u32,
-                }).unwrap();
+                human_projector
+                    .submit(
+                        &mut human,
+                        HumanActionRequestV1 {
+                            prompt_seq: prompt.prompt_seq,
+                            action_index: ui as u32,
+                        },
+                    )
+                    .unwrap();
                 assert_eq!(human.current_response(), raw_response);
                 let step = CommandV1::Step {
-                    episode_id, authority_generation, actor: current.acting_player,
-                    prompt_seq: visible.prompt_seq, action_index: ui as u32,
+                    episode_id,
+                    authority_generation,
+                    actor: current.acting_player,
+                    prompt_seq: visible.prompt_seq,
+                    action_index: ui as u32,
                 };
-                assert!(matches!(wire_state(wire_command(&mut wire, 2, step)), Body::State { receipt: Some(_), .. }));
+                assert!(matches!(
+                    wire_state(wire_command(&mut wire, 2, step)),
+                    Body::State {
+                        receipt: Some(_),
+                        ..
+                    }
+                ));
                 let after = decision(&numeric);
-                let after_storm = after.fixture_backend_v75().observation().thousand_year_storm.as_ref().unwrap();
-                assert!(after_storm.triggers.iter().any(|row| row.created_copies.len() == 1));
+                let after_storm = after
+                    .fixture_backend_v75()
+                    .observation()
+                    .thousand_year_storm
+                    .as_ref()
+                    .unwrap();
+                assert!(after_storm
+                    .triggers
+                    .iter()
+                    .any(|row| row.created_copies.len() == 1));
                 numeric.restore(&saved).unwrap();
                 assert_eq!(decision(&numeric).packet(), d.packet());
                 assert!(numeric.apply(&d, original as u32).is_err());
                 reached_storm = true;
                 break;
             }
-            let pick = rows.iter().position(|row| matches!(&row.action,
-                Action::ChooseKicker { pay: false, .. }
-                    | Action::ChooseTarget { target: TargetRefV1::Player { .. }, .. }
-            )).or_else(|| rows.iter().position(|row| matches!(row.action,
-                Action::Pass { .. } | Action::OrderTriggers { .. }
-                    | Action::ChooseTriggerOrderNext { .. } | Action::FinishEffectSelection { .. }
-            ))).expect("missing real Etali child or Storm continuation");
+            let pick = rows
+                .iter()
+                .position(|row| {
+                    matches!(
+                        &row.action,
+                        Action::ChooseKicker { pay: false, .. }
+                            | Action::ChooseTarget {
+                                target: TargetRefV1::Player { .. },
+                                ..
+                            }
+                    )
+                })
+                .or_else(|| {
+                    rows.iter().position(|row| {
+                        matches!(
+                            row.action,
+                            Action::Pass { .. }
+                                | Action::OrderTriggers { .. }
+                                | Action::ChooseTriggerOrderNext { .. }
+                                | Action::FinishEffectSelection { .. }
+                        )
+                    })
+                })
+                .expect("missing real Etali child or Storm continuation");
             numeric.apply(&d, pick as u32).unwrap();
             paired.apply(&paired_d, pick as u32).unwrap();
         }
@@ -290,8 +395,7 @@ fn paid_etali_free_cast_feeds_storm_and_both_owners_bind_the_actual_actions() {
 #[test]
 fn paid_axe_equips_the_real_harvester_nightmare_under_one_copy_scope_both_seats() {
     use crate::{
-        card_def::Keywords,
-        effect::electroduplicate_v1_tests as native,
+        card_def::Keywords, effect::electroduplicate_v1_tests as native,
         leyline_axe_consumer_v1::ActionV1 as Axe,
     };
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -302,7 +406,11 @@ fn paid_axe_equips_the_real_harvester_nightmare_under_one_copy_scope_both_seats(
         native::hv_main(&mut state, actor);
         let victim = native::paid(&mut state, actor, "Llanowar Elves", 1);
         storm::cast(
-            &mut state, actor.opponent(), "Burst Lightning", &[Target::Object(victim)], 1,
+            &mut state,
+            actor.opponent(),
+            "Burst Lightning",
+            &[Target::Object(victim)],
+            1,
         );
         storm::finish(&mut state);
         assert_eq!(state.objects.get(victim).zone, Zone::Graveyard);
@@ -315,7 +423,11 @@ fn paid_axe_equips_the_real_harvester_nightmare_under_one_copy_scope_both_seats(
         assert!(crate::leyline_axe_v1::require_legacy_absence(&state).is_err());
 
         storm::cast(
-            &mut state, actor, "Electroduplicate", &[Target::Object(nightmare)], 3,
+            &mut state,
+            actor,
+            "Electroduplicate",
+            &[Target::Object(nightmare)],
+            3,
         );
         storm::finish(&mut state);
         let mut owner = KaitoSession::from_session(raw(&state)).unwrap();
@@ -338,37 +450,58 @@ fn paid_axe_equips_the_real_harvester_nightmare_under_one_copy_scope_both_seats(
             assert_eq!(birth.original.object, nightmare.0);
             assert_eq!(birth.copied_printing, card("Llanowar Elves"));
             assert!(birth.added_copiable_nightmare);
-            let equipment = obs.leyline_axe.as_ref().unwrap().battlefield
-                .iter().find(|row| row.card.object == axe.0).unwrap();
+            let equipment = obs
+                .leyline_axe
+                .as_ref()
+                .unwrap()
+                .battlefield
+                .iter()
+                .find(|row| row.card.object == axe.0)
+                .unwrap();
             if let Some(host) = &equipment.host {
                 assert!(selected);
                 assert_eq!(host.card.object, nightmare.0);
                 assert!(host.receives_printed_bonus);
                 assert!(crate::engine::has_effective_keyword(
-                    owner.fixture_state(), nightmare, Keywords::DOUBLE_STRIKE,
+                    owner.fixture_state(),
+                    nightmare,
+                    Keywords::DOUBLE_STRIKE,
                 ));
                 assert!(crate::engine::has_effective_subtype(
-                    owner.fixture_state(), nightmare, crate::card_def::Subtype::Nightmare,
+                    owner.fixture_state(),
+                    nightmare,
+                    crate::card_def::Subtype::Nightmare,
                 ));
                 assert_model(&owner, &d);
                 equipped = true;
                 break;
             }
             let rows = &backend.candidates_v75().candidates;
-            let pick = rows.iter().position(|row| {
-                !selected && (row.leyline_axe_action == Some(Axe::ActivateEquip { generic_cost: 3 })
-                    || (row.leyline_axe_action == Some(Axe::ChooseEquipTarget)
-                        && matches!(&row.action, Action::ChooseTarget {
+            let pick = rows
+                .iter()
+                .position(|row| {
+                    !selected
+                        && (row.leyline_axe_action == Some(Axe::ActivateEquip { generic_cost: 3 })
+                            || (row.leyline_axe_action == Some(Axe::ChooseEquipTarget)
+                                && matches!(&row.action, Action::ChooseTarget {
                             target: TargetRefV1::Object { object }, ..
                         } if object.arena_id == nightmare.0)))
-            }).or_else(|| rows.iter().position(|row| matches!(row.action, Action::Pass { .. })))
+                })
+                .or_else(|| {
+                    rows.iter()
+                        .position(|row| matches!(row.action, Action::Pass { .. }))
+                })
                 .expect("missing genuine Axe equip continuation");
             let target_choice = rows[pick].leyline_axe_action == Some(Axe::ChooseEquipTarget);
             let count_tapped_lands = |state: &GameState| {
-                state.players[actor.index()].battlefield.iter().filter(|&&id| {
-                    let object = state.objects.get(id);
-                    object.tapped && CARD_DEFS[usize::from(object.card_def)].is_land
-                }).count()
+                state.players[actor.index()]
+                    .battlefield
+                    .iter()
+                    .filter(|&&id| {
+                        let object = state.objects.get(id);
+                        object.tapped && CARD_DEFS[usize::from(object.card_def)].is_land
+                    })
+                    .count()
             };
             let before = count_tapped_lands(owner.fixture_state());
             owner.apply(&d, pick as u32).unwrap();
@@ -392,25 +525,43 @@ fn every_frozen_printing_reaches_the_full_pool_sealed_learner_for_each_seat() {
             // Put a bounded own-hand sample at an actual main-phase decision.
             // The memberships and actions are read from the owned menu.
             let mut state = GameState::new_from_libraries_with_starting_player_v1(
-                &library, &library, crate::rl::card_name, 550_286, actor,
+                &library,
+                &library,
+                crate::rl::card_name,
+                550_286,
+                actor,
             );
             state.step = crate::state::Step::Main1;
-            FastActorSessionV1::enable_limited_native_modes_v1(&mut state, LimitedAppendixV1::FullPool);
+            FastActorSessionV1::enable_limited_native_modes_v1(
+                &mut state,
+                LimitedAppendixV1::FullPool,
+            );
             for land in ["Plains", "Island", "Swamp", "Mountain", "Forest"] {
                 put(&mut state, actor, land, Zone::Battlefield);
             }
-            let objects: Vec<_> = printings.iter().map(|&id| {
-                put(&mut state, actor, CARD_DEFS[usize::from(id)].name, Zone::Hand)
-            }).collect();
+            let objects: Vec<_> = printings
+                .iter()
+                .map(|&id| {
+                    put(
+                        &mut state,
+                        actor,
+                        CARD_DEFS[usize::from(id)].name,
+                        Zone::Hand,
+                    )
+                })
+                .collect();
             let owner = KaitoSession::from_session(raw(&state)).unwrap();
             let d = decision(&owner);
             let backend = d.fixture_backend_v75();
             assert_eq!(backend.expected().acting_player, actor.into());
             let hand = &backend.observation().common.common.own_hand;
             for (&printing, object) in printings.iter().zip(objects) {
-                assert!(hand.iter().any(|row| {
-                    row.stable.arena_id == object.0 && row.stable.card_db_id == printing
-                }), "own hand lost frozen printing {printing}");
+                assert!(
+                    hand.iter().any(|row| {
+                        row.stable.arena_id == object.0 && row.stable.card_db_id == printing
+                    }),
+                    "own hand lost frozen printing {printing}"
+                );
                 assert!(covered.insert(printing));
             }
             let input = owner.training_input_v1(&d).unwrap();

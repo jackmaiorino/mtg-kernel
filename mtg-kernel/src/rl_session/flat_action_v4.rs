@@ -92,7 +92,9 @@ pub(super) fn limited_public_source_pins_v3(
             // constraints. An old ability does not pin a hidden copy to a slot.
             state.objects.try_get(source.source).is_some_and(|live| {
                 live.zone == Zone::Library || (live.zone == Zone::Hand && live.owner != viewer)
-            }) && sampled_history.ability_source_face(state, item, *source).is_some()
+            }) && sampled_history
+                .ability_source_face(state, item, *source)
+                .is_some()
         },
     );
     if conflict {

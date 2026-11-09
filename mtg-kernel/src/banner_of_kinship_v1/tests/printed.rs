@@ -117,7 +117,12 @@ fn full_pool_archives_paid_banner_entry_and_season_after_both_bounce() {
             let mut answered = false;
             for _ in 0..16 {
                 let decision = engine::advance_until_decision(&mut state);
-                if let Decision::ChooseTargets { spell, legal_targets, .. } = &decision {
+                if let Decision::ChooseTargets {
+                    spell,
+                    legal_targets,
+                    ..
+                } = &decision
+                {
                     assert_eq!(*spell, pup);
                     assert!(legal_targets.contains(&Target::Object(target)));
                     engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
@@ -153,19 +158,26 @@ fn full_pool_archives_paid_banner_entry_and_season_after_both_bounce() {
             .find(|entry| entry.source.original_source.object == banner.0)
             .unwrap();
         assert_eq!(
-            entry.fellowship.as_ref().unwrap().captured_seasons[0].original_source.object,
+            entry.fellowship.as_ref().unwrap().captured_seasons[0]
+                .original_source
+                .object,
             season.0
         );
         let mut deck = vec![card("Forest"); 80];
         deck.extend([card("Plains"); 3]);
         deck.extend([
-            card("Llanowar Elves"), card("Mischievous Pup"), card("Mischievous Pup"),
-            card("Banner of Kinship"), card("Doubling Season"),
+            card("Llanowar Elves"),
+            card("Mischievous Pup"),
+            card("Mischievous Pup"),
+            card("Banner of Kinship"),
+            card("Doubling Season"),
         ]);
         let belief = LimitedBeliefV1::new([deck]);
         let mut detached = [false; 2];
         for seed in 552_601..552_609 {
-            let world = owner.sampled_full_pool_closed_list_v1(&decision, seed, &belief).unwrap();
+            let world = owner
+                .sampled_full_pool_closed_list_v1(&decision, seed, &belief)
+                .unwrap();
             assert_eq!(world.encode(expected).unwrap().packet(), decision.packet());
             for (index, source) in [banner, season].into_iter().enumerate() {
                 detached[index] |= world.fixture_state().objects.get(source).card_def

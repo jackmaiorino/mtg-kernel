@@ -911,7 +911,9 @@ pub(crate) enum DrainOutcomeV1 {
     },
 }
 
-pub(crate) fn drains(state: &GameState) -> Result<Vec<(usize, &StackItem, DrainOutcomeV1)>, String> {
+pub(crate) fn drains(
+    state: &GameState,
+) -> Result<Vec<(usize, &StackItem, DrainOutcomeV1)>, String> {
     for (at, receipt) in records(state) {
         match receipt {
             JournalV1::DrainBegin { id } | JournalV1::DrainEnded { id, .. } => {

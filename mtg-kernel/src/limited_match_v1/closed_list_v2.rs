@@ -78,9 +78,10 @@ pub(crate) fn rewrite_names_with_library(
     if !required_library.is_empty() {
         for &id in &state.players[opponent.index()].library {
             if !unknown.contains(&id) {
-                if let Some(index) = required_library.iter().position(|name| {
-                    *name == state.objects.get(id).card_def
-                }) {
+                if let Some(index) = required_library
+                    .iter()
+                    .position(|name| *name == state.objects.get(id).card_def)
+                {
                     required_library.remove(index);
                 }
             }
@@ -137,7 +138,10 @@ pub(crate) fn rewrite_names_with_library(
         })
         .collect::<Vec<_>>();
     if !required_library.is_empty() {
-        let mut rng = SplitMix64::seed(derive_seed(b"mtg-kernel/limited-library-minima/v1\0", &[seed]));
+        let mut rng = SplitMix64::seed(derive_seed(
+            b"mtg-kernel/limited-library-minima/v1\0",
+            &[seed],
+        ));
         shuffle(&mut opponent_slots[hand_len..], &mut rng);
     }
     let opponent_order = hand_order

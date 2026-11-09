@@ -1328,8 +1328,12 @@ pub(crate) fn stack_target_contract_for_storm_snapshot(
 }
 
 pub(crate) fn stack_target_contract_for_sampled_snapshot(
-    state: &GameState, item: &StackItem, spec: TargetSpec, slot: usize,
-    target: Target, contract: StackTargetContractV4,
+    state: &GameState,
+    item: &StackItem,
+    spec: TargetSpec,
+    slot: usize,
+    target: Target,
+    contract: StackTargetContractV4,
 ) -> bool {
     crate::sampled_history_v1::object_target_face(state, item, slot, contract).is_some()
         && stack_target_contract_shape(state, spec, slot, target, contract, true)
@@ -2554,7 +2558,8 @@ pub struct GameState {
     pub leyline_opening_v1: Option<crate::leyline_axe_v1::OpeningV1>,
     /// Native opening answers retired before the disposable belief rewrite.
     #[serde(skip)]
-    pub(crate) leyline_sampled_history_v1: Option<crate::leyline_axe_v1::sampling::SampledHistoryV1>,
+    pub(crate) leyline_sampled_history_v1:
+        Option<crate::leyline_axe_v1::sampling::SampledHistoryV1>,
     /// Opt-in (issue #531): the other player reads a card leaving a hand by
     /// name, never by copy (see [`GameState::forget_departing_hand_object`]).
     /// Off in every historical session, whose rows, snapshot bytes and hashes

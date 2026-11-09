@@ -8588,8 +8588,11 @@ impl FastActorSessionV1 {
         use crate::reveal_meaning_v3::RevealReducerV3;
 
         let typed_full_pool = self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75
-            && self.surface.limited_appendix_v1() == crate::policy_surface_v5::LimitedAppendixV1::FullPool;
-        if self.flat_action_contract_mode != FlatActionContractModeV1::RulesOnlyV1 && !typed_full_pool {
+            && self.surface.limited_appendix_v1()
+                == crate::policy_surface_v5::LimitedAppendixV1::FullPool;
+        if self.flat_action_contract_mode != FlatActionContractModeV1::RulesOnlyV1
+            && !typed_full_pool
+        {
             return Err("closedlist-v3 requires a rules-only or full-pool owning session".into());
         }
         let actor = self.current.as_ref().ok_or("no current decision")?.actor;
@@ -8600,10 +8603,16 @@ impl FastActorSessionV1 {
         }
         let opponent = actor.opponent();
         let knowledge = if typed_full_pool {
-            self.state.reveal_knowledge_v4.as_ref()
-                .ok_or("full-pool sampling requires public reveal minima")?[actor.index()].clone()
+            self.state
+                .reveal_knowledge_v4
+                .as_ref()
+                .ok_or("full-pool sampling requires public reveal minima")?[actor.index()]
+            .clone()
         } else {
-            let transcript = self.state.reveal_meaning_v3.transcript(actor)
+            let transcript = self
+                .state
+                .reveal_meaning_v3
+                .transcript(actor)
                 .ok_or("closedlist-v3 needs the viewer's public reveal stream")?;
             let mut reducer = RevealReducerV3::default();
             reducer.absorb(&transcript)?;
@@ -8671,7 +8680,8 @@ impl FastActorSessionV1 {
 
         let live = self.current.as_ref().ok_or("no current decision")?;
         let typed_full_pool = self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75
-            && self.surface.limited_appendix_v1() == crate::policy_surface_v5::LimitedAppendixV1::FullPool;
+            && self.surface.limited_appendix_v1()
+                == crate::policy_surface_v5::LimitedAppendixV1::FullPool;
         if root.actor != live.actor || root.typed_full_pool != typed_full_pool {
             return Err("sampled root actor or owning profile differs".into());
         }
@@ -8712,7 +8722,10 @@ impl FastActorSessionV1 {
         if typed_full_pool {
             // Rebind the exact native root without advancing it again. A
             // repeated advance can append genuine enclosing-operation rows.
-            let mut current = sampled.current.take().ok_or("sampled full-pool root absent")?;
+            let mut current = sampled
+                .current
+                .take()
+                .ok_or("sampled full-pool root absent")?;
             kaito_v75::prepare_current(&sampled, &mut current)
                 .map_err(|e| format!("sampled full-pool binding: {e:?}"))?;
             sampled.flat_action_cache_spare = None;
