@@ -768,9 +768,6 @@ impl FullTextAbilityV1 {
         let definition = CARD_DEFS
             .get(usize::from(text_definition))
             .ok_or("full-text definition is absent")?;
-        if !definition.capability.is_fully_supported() {
-            return Err("full-text definition is not fully supported");
-        }
         match self {
             Self::RetainedDiscard => Ok(ActivatedAbilityDef {
                 cost: &[CostComponent::Mana(Cost {
@@ -786,15 +783,20 @@ impl FullTextAbilityV1 {
                 max_activations_per_turn: None,
                 face: None,
             }),
-            Self::Printed(index) => definition
-                .activated_abilities
-                .get(usize::from(index))
-                .copied()
-                .filter(|ability| {
-                    ability.activation_zone == Zone::Battlefield
-                        && ability.face.is_none_or(|face| face == 0)
-                })
-                .ok_or("full-text selector is not a front-face battlefield ability"),
+            Self::Printed(index) => {
+                if !definition.capability.is_fully_supported() {
+                    return Err("full-text definition is not fully supported");
+                }
+                definition
+                    .activated_abilities
+                    .get(usize::from(index))
+                    .copied()
+                    .filter(|ability| {
+                        ability.activation_zone == Zone::Battlefield
+                            && ability.face.is_none_or(|face| face == 0)
+                    })
+                    .ok_or("full-text selector is not a front-face battlefield ability")
+            }
         }
     }
 }

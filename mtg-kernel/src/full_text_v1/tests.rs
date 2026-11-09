@@ -705,7 +705,7 @@ fn full_text_native_stack_resolves_retained_discard_after_both_sources_leave() {
 }
 
 #[test]
-fn full_text_retained_activation_requires_mana_but_not_a_card_in_hand() {
+fn full_text_retained_activation_requires_mana_but_not_hand_or_supported_donor() {
     use crate::engine::{self, Action, Decision};
     let mut state = game();
     state.step = crate::state::Step::Main1;
@@ -713,10 +713,16 @@ fn full_text_retained_activation_requires_mana_but_not_a_card_in_hand() {
     put(
         &mut state,
         PlayerId::P0,
-        "Birds of Paradise",
+        "Abyssal Harvester",
         Zone::Graveyard,
     );
     let text = top_creature_text(&state, host).unwrap();
+    assert_eq!(text.definition().capability, CardCapability::Partial);
+    assert_eq!(
+        text.freeze_activated(&state, FullTextAbilityV1::Printed(0))
+            .unwrap_err(),
+        "full-text definition is not fully supported"
+    );
     let before = state.diagnostic_state_hash();
     assert!(engine::activate_full_text_retained_discard(&mut state, text).is_err());
     assert_eq!(state.diagnostic_state_hash(), before);
@@ -895,6 +901,16 @@ fn donated_hermit_druid_pays_the_host_and_uses_the_selected_graveyard_top() {
                 producer.native_ability_index,
                 state.stack[0].v4.activated_ability_index
             );
+            let human = public::observe_human(&state, viewer).unwrap();
+            let [human_producer] = human.producers.as_slice() else {
+                panic!("expected the donated activation in the Human view");
+            };
+            assert_eq!(human_producer.stage, producer.stage);
+            assert_eq!(human_producer.program, producer.program);
+            assert_eq!(human_producer.controller, player.into());
+            assert_eq!(human_producer.physical_name, "Tireless Tribe");
+            assert_eq!(human_producer.text_donor_name, "Hermit Druid");
+            assert!(!serde_json::to_string(&human).unwrap().contains("arena_id"));
         }
 
         let mut ordering = false;

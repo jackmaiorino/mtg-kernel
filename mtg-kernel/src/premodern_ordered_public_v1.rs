@@ -14,6 +14,7 @@ use crate::{
 use serde::Serialize;
 
 pub const SCHEMA_V1: &str = "mtg-kernel-premodern-ordered-public/v1";
+pub const HUMAN_SCHEMA_V1: &str = "mtg-kernel-human-premodern-ordered-public/v1";
 pub const HUMAN_ORDER_SCHEMA_V1: &str = "mtg-kernel-human-premodern-graveyard-order/v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -55,12 +56,19 @@ impl HumanOrderPromptV1 {
 pub struct FullTextFormV1 {
     pub physical: CardStableRefV1,
     pub text_donor: Option<CardStableRefV1>,
+    pub characteristics: FullTextCharacteristicsV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FullTextCharacteristicsV1 {
     pub text_name: &'static str,
     pub color_mask: u8,
     pub mana_value: u16,
     pub types: Vec<CardType>,
     pub subtype_ids: Vec<u16>,
     pub keyword_bits: u32,
+    pub protection_color_mask: u8,
+    pub legendary: bool,
     pub power_toughness: Option<(i32, i32)>,
     pub printed_abilities_active: bool,
 }
@@ -102,6 +110,40 @@ pub struct ObservationV1 {
     /// During ordering there is no stable post-batch battlefield text yet.
     pub full_text: Option<Vec<FullTextFormV1>>,
     pub producers: Vec<FullTextProducerV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanGraveyardV1 {
+    pub bottom_to_top: Vec<&'static str>,
+    pub unplaced: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanFullTextFormV1 {
+    pub physical_name: &'static str,
+    pub controller: PlayerSeatV1,
+    pub text_donor_name: Option<&'static str>,
+    pub characteristics: FullTextCharacteristicsV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanFullTextProducerV1 {
+    pub stage: ProducerStageV1,
+    pub physical_name: &'static str,
+    pub controller: PlayerSeatV1,
+    pub text_donor_name: &'static str,
+    pub program: FullTextProgramV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanObservationV1 {
+    pub schema: &'static str,
+    pub card_db_hash: u64,
+    pub viewer: PlayerSeatV1,
+    pub graveyards: [HumanGraveyardV1; 2],
+    pub order_choice: Option<HumanOrderPromptV1>,
+    pub full_text: Option<Vec<HumanFullTextFormV1>>,
+    pub producers: Vec<HumanFullTextProducerV1>,
 }
 
 pub(crate) fn captured_card(source: AbilitySourceContractV4) -> CardStableRefV1 {
@@ -186,16 +228,23 @@ fn form(state: &GameState, object: ObjectId) -> Result<Option<FullTextFormV1>, S
     Ok(Some(FullTextFormV1 {
         physical: rl::card_ref(state, object).map_err(|error| error.to_string())?,
         text_donor,
-        text_name: text.map_or(physical.name, |text| text.definition().name),
-        color_mask: engine::object_color_mask(state, object),
-        mana_value: engine::object_mana_value(state, object),
-        types,
-        subtype_ids: engine::effective_subtype_ids(state, object),
-        keyword_bits: engine::effective_keywords(state, object, Keywords(u32::MAX)).0,
-        power_toughness,
-        printed_abilities_active: continuous_characteristics_v1::printed_abilities_active(
-            state, object,
-        ),
+        characteristics: FullTextCharacteristicsV1 {
+            text_name: text.map_or(physical.name, |text| text.definition().name),
+            color_mask: engine::object_color_mask(state, object),
+            mana_value: engine::object_mana_value(state, object),
+            types,
+            subtype_ids: engine::effective_subtype_ids(state, object),
+            keyword_bits: engine::effective_keywords(state, object, Keywords(u32::MAX)).0,
+            protection_color_mask: crate::eternal_premodern_p2c_v1::statics::protection_mask(
+                state, object,
+            ),
+            legendary: engine::effective_supertypes(state, object)
+                .contains(&crate::card_def::Supertype::Legendary),
+            power_toughness,
+            printed_abilities_active: continuous_characteristics_v1::printed_abilities_active(
+                state, object,
+            ),
+        },
     }))
 }
 
@@ -259,35 +308,81 @@ pub fn observe_human_order(
     state: &GameState,
     viewer: PlayerId,
 ) -> Result<Option<HumanOrderPromptV1>, String> {
-    let Some(expected) =
-        graveyard_order_v1::public_boundary(state, viewer)?.and_then(|row| row.choice)
-    else {
-        return Ok(None);
-    };
-    let name = |card: &CardStableRefV1| {
-        CARD_DEFS
-            .get(usize::from(card.card_db_id))
-            .map(|definition| definition.name)
-            .ok_or_else(|| "graveyard order printing absent".to_string())
-    };
+    graveyard_order_v1::public_boundary(state, viewer)?
+        .and_then(|row| row.choice)
+        .map(|choice| human_order_prompt(choice, viewer.into()))
+        .transpose()
+}
+
+fn public_name(card: &CardStableRefV1) -> Result<&'static str, String> {
+    CARD_DEFS
+        .get(usize::from(card.card_db_id))
+        .map(|definition| definition.name)
+        .ok_or_else(|| "Premodern public printing absent".to_string())
+}
+
+fn human_order_prompt(
+    expected: OrderChoiceV1,
+    viewer: PlayerSeatV1,
+) -> Result<HumanOrderPromptV1, String> {
     let chosen_bottom_first = expected
         .chosen_bottom_first
         .iter()
-        .map(name)
+        .map(public_name)
         .collect::<Result<Vec<_>, _>>()?;
     let action_labels = expected
         .native_candidates
         .iter()
         .enumerate()
-        .map(|(index, card)| Ok(format!("Place {} next (choice {})", name(card)?, index + 1)))
+        .map(|(index, card)| Ok(format!("Place {} next (choice {})", public_name(card)?, index + 1)))
         .collect::<Result<Vec<_>, String>>()?;
-    Ok(Some(HumanOrderPromptV1 {
+    Ok(HumanOrderPromptV1 {
         schema: HUMAN_ORDER_SCHEMA_V1,
-        viewer: viewer.into(),
+        viewer,
         chosen_bottom_first,
         action_labels,
         expected,
-    }))
+    })
+}
+
+/// Projects the same native facts for a human reader. Historical producers
+/// use their captured printings, including after either object changes zones.
+pub fn observe_human(state: &GameState, viewer: PlayerId) -> Result<HumanObservationV1, String> {
+    let view = observe(state, viewer)?;
+    let graveyard = |row: &GraveyardV1| -> Result<HumanGraveyardV1, String> {
+        Ok(HumanGraveyardV1 {
+            bottom_to_top: row.bottom_to_top.iter().map(public_name).collect::<Result<_, _>>()?,
+            unplaced: row.unplaced.iter().map(public_name).collect::<Result<_, _>>()?,
+        })
+    };
+    let full_text = view.full_text.map(|rows| {
+        rows.into_iter().map(|row| {
+            Ok(HumanFullTextFormV1 {
+                physical_name: public_name(&row.physical)?,
+                controller: row.physical.controller,
+                text_donor_name: row.text_donor.as_ref().map(public_name).transpose()?,
+                characteristics: row.characteristics,
+            })
+        }).collect::<Result<Vec<_>, String>>()
+    }).transpose()?;
+    let producers = view.producers.into_iter().map(|row| {
+        Ok(HumanFullTextProducerV1 {
+            stage: row.stage,
+            physical_name: public_name(&row.physical)?,
+            controller: row.physical.controller,
+            text_donor_name: public_name(&row.text_donor)?,
+            program: row.program,
+        })
+    }).collect::<Result<Vec<_>, String>>()?;
+    Ok(HumanObservationV1 {
+        schema: HUMAN_SCHEMA_V1,
+        card_db_hash: view.card_db_hash,
+        viewer: view.viewer,
+        graveyards: [graveyard(&view.graveyards[0])?, graveyard(&view.graveyards[1])?],
+        order_choice: view.order_choice.map(|choice| human_order_prompt(choice, view.viewer)).transpose()?,
+        full_text,
+        producers,
+    })
 }
 
 /// Uses the prompt's private native binding while the wire data carries names
@@ -342,9 +437,14 @@ mod tests {
                     observe_human_order(&a, viewer).unwrap(),
                     observe_human_order(&b, viewer).unwrap()
                 );
+                assert_eq!(
+                    observe_human(&a, viewer).unwrap(),
+                    observe_human(&b, viewer).unwrap()
+                );
             }
-            assert!(observe_human_order(&a, owner.opponent()).unwrap().is_none());
-            let prompt = observe_human_order(&a, owner).unwrap().unwrap();
+            assert!(observe_human(&a, owner.opponent()).unwrap().order_choice.is_none());
+            let prompt = observe_human(&a, owner).unwrap().order_choice.unwrap();
+            assert_eq!(Some(&prompt), observe_human_order(&a, owner).unwrap().as_ref());
             assert_eq!(
                 prompt.action_labels,
                 [
