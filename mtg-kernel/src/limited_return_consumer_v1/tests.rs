@@ -407,7 +407,10 @@ fn paid_three_printing_cast_death_return_and_all_consumer_index_parity_both_seat
         let pending = pair.current();
         let facts = &pending.fixture_backend_v75().observation().call;
         let [returning] = facts.returns.as_slice() else {
-            panic!("expected one published Call return, got {:?}", facts.returns);
+            panic!(
+                "expected one published Call return, got {:?}",
+                facts.returns
+            );
         };
         assert_eq!(returning.stage, StageV62::Published);
         assert_eq!(returning.source.original_source.object, call.0);
@@ -555,10 +558,9 @@ fn issue552_paid_phoenix_forced_attack_uses_one_sealed_ordinal_both_seats() {
         }
         assert!(reached_combat);
 
-        let mut owner = KaitoSession::from_session(
-            FastActorSessionV1::from_kaito_v75_fixture_state(state),
-        )
-        .unwrap();
+        let mut owner =
+            KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state(state))
+                .unwrap();
         let d = decision(&owner);
         let backend = d.fixture_backend_v75();
         assert_eq!(
@@ -570,11 +572,16 @@ fn issue552_paid_phoenix_forced_attack_uses_one_sealed_ordinal_both_seats() {
         assert_eq!(backend.fixture_original_index_v75(0), Some(1));
         assert!(owner.apply(&d, 1).is_err());
         owner.apply(&d, 0).unwrap();
-        assert!(owner.fixture_state().engine.event_history.iter().any(|event| matches!(
-            event,
-            crate::event::CommittedEvent::DeclaredAttacker { source, controller, .. }
-                if *source == phoenix && *controller == actor
-        )));
+        assert!(owner
+            .fixture_state()
+            .engine
+            .event_history
+            .iter()
+            .any(|event| matches!(
+                event,
+                crate::event::CommittedEvent::DeclaredAttacker { source, controller, .. }
+                    if *source == phoenix && *controller == actor
+            )));
     }
 }
 
