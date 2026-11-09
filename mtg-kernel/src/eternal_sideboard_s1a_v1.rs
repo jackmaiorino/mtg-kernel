@@ -28,7 +28,9 @@
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 pub mod statics;
+pub(crate) mod surgical;
 pub(crate) mod targets;
+pub use surgical::{surgical_search_look_v1, SurgicalSearchLookV1};
 
 use crate::card_def::{CardType, Keywords, TargetSpec, CARD_DEFS};
 use crate::effect::{
@@ -115,8 +117,8 @@ pub enum S1aOpV1 {
     /// Lavinia, Azorius Renegade: counter the spell `spell` an opponent cast
     /// without spending mana.
     CounterSpellItemV1 { spell: StackItemId },
-    /// Surgical Extraction: exile target 0 and every card with its name from
-    /// its owner's graveyard, hand and library, then shuffle that library.
+    /// Surgical Extraction: choose which matching cards to exile, then
+    /// shuffle the target owner's library.
     SurgicalExtractionV1,
     /// Carpet of Flowers: add up to `amount` mana of `color`, no more than
     /// the Islands the opponent controls.
@@ -125,10 +127,9 @@ pub enum S1aOpV1 {
 
 impl S1aOpV1 {
     /// Whether this leaf can yield a player decision or pushes frames, so
-    /// its program must use the resumable interpreter. None of these do:
-    /// their choices are `EffectOp::Choice` branches around them.
+    /// its program must use the resumable interpreter.
     pub(crate) fn contains_player_choice(&self) -> bool {
-        false
+        matches!(self, Self::SurgicalExtractionV1)
     }
 }
 
@@ -616,7 +617,7 @@ pub(crate) fn execute(op: &S1aOpV1, ctx: &ExecCtx, state: &mut GameState) {
             s1a_state(state).flute_names.push((link, *named));
         }
         S1aOpV1::CounterSpellItemV1 { spell } => counter_spell_item(state, *spell, ctx.source),
-        S1aOpV1::SurgicalExtractionV1 => surgical_extraction_resolve(ctx, state),
+        S1aOpV1::SurgicalExtractionV1 => halt(state, ctx.source),
         S1aOpV1::CarpetManaV1 { color, amount } => {
             let Some(contract) = ctx.ability_source_contract else {
                 halt(state, ctx.source);
@@ -690,65 +691,6 @@ fn counter_spell_item(state: &mut GameState, item: StackItemId, source: ObjectId
     }
     if crate::engine::counter_stack_item_by_id(state, item).is_err() {
         halt(state, source);
-    }
-}
-
-/// Surgical Extraction's resolution: the target is a card in a graveyard
-/// other than a basic land card. Every card with its name in its owner's
-/// graveyard, hand and library is exiled (the searcher takes them all), then
-/// that library is shuffled.
-fn surgical_extraction_resolve(ctx: &ExecCtx, state: &mut GameState) {
-    let spec = TargetSpec::StandardV1(
-        crate::standard_cards_v1::StandardTargetV1::NonbasicLandCardInAGraveyardV1,
-    );
-    let Some(Target::Object(target)) = ctx.targets.first().copied() else {
-        return;
-    };
-    if !(ctx.target_incarnation_matches(0, state)
-        && crate::engine::effect_target_is_legal(
-            state,
-            ctx.source,
-            ctx.controller,
-            spec,
-            &ctx.targets,
-            0,
-        ))
-    {
-        return;
-    }
-    let live = state.objects.get(target);
-    let owner = live.owner;
-    let Some(name) = CARD_DEFS
-        .get(usize::from(live.card_def))
-        .map(|def| def.object_name)
-    else {
-        return;
-    };
-    let seat = &state.players[owner.index()];
-    let cards = seat
-        .graveyard
-        .iter()
-        .chain(seat.hand.iter())
-        .chain(seat.library.iter())
-        .copied()
-        .filter(|&card| {
-            let live = state.objects.get(card);
-            !live.v4.is_token
-                && live.spell_copy_origin.is_none()
-                && CARD_DEFS
-                    .get(usize::from(live.card_def))
-                    .is_some_and(|def| def.object_name == name)
-        })
-        .collect::<Vec<_>>();
-    event::propose_and_commit_batch(
-        state,
-        cards
-            .into_iter()
-            .map(|card| ProposedEvent::zone_change(card, Zone::Exile))
-            .collect(),
-    );
-    if state.shuffle_library(owner).is_err() {
-        halt(state, ctx.source);
     }
 }
 

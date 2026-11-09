@@ -12247,7 +12247,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                         crate::effect::EffectTargetSelectionPurpose::EternalV1 { choice }
                             if choice.library_search()
                     )) && acting_player == *player;
-                    let redact_search_shape = matches!(
+                    let redact_search_shape = (matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
@@ -12260,7 +12260,11 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
-                    ) && acting_player != *player;
+                    ) || matches!(
+                        purpose,
+                        crate::effect::EffectTargetSelectionPurpose::EternalV1 { choice }
+                            if choice.is_surgical_extraction()
+                    )) && acting_player != *player;
                     let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
                         if chooser_private {
                             return Ok(Vec::new());

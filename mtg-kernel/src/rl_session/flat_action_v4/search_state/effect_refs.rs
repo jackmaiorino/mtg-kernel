@@ -513,7 +513,9 @@ impl Scan<'_> {
                 self.bs(&choice.hand) || self.bs(selected) || self.fs(&choice.remaining)
             }
             EternalSelectionV1 { choice, .. } => {
-                self.bs(&choice.referenced_bindings()) || self.fs(&choice.remaining)
+                choice.is_surgical_extraction()
+                    || self.bs(&choice.referenced_bindings())
+                    || self.fs(&choice.remaining)
             }
             ExileBatchSelect { choice, .. } | ExileBatchResume { choice } => {
                 self.fs(&choice.remaining)
@@ -795,7 +797,9 @@ impl Scan<'_> {
             DiscardPaymentV1 { choice } => self.bs(&choice.hand) || self.op(&choice.unpaid),
             DiscardDraw { choice } => self.bs(&choice.hand) || self.fs(&choice.remaining),
             EternalV1 { choice } => {
-                self.bs(&choice.referenced_bindings()) || self.fs(&choice.remaining)
+                choice.is_surgical_extraction()
+                    || self.bs(&choice.referenced_bindings())
+                    || self.fs(&choice.remaining)
             }
             ExileBatch { choice } => {
                 self.fs(&choice.remaining)
