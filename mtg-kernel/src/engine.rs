@@ -9430,13 +9430,14 @@ fn shatterskull_cast_targets(
     use crate::eternal_legacy_e9a_v1::targets::{shatterskull_minimum_x, SHATTERSKULL_PICKS};
     use crate::eternal_sideboard_s1d_v1::statics;
 
-    let pay_projection = (pending.hand_free_cast_v1 == Some(HandFreeCastV1::Undecided)).then(|| {
-        let mut projected = state.clone();
-        let mut paying = pending.clone();
-        paying.hand_free_cast_v1 = Some(HandFreeCastV1::PayManaCost);
-        projected.engine.pending_cast = Some(paying);
-        projected
-    });
+    let pay_projection =
+        (pending.hand_free_cast_v1 == Some(HandFreeCastV1::Undecided)).then(|| {
+            let mut projected = state.clone();
+            let mut paying = pending.clone();
+            paying.hand_free_cast_v1 = Some(HandFreeCastV1::PayManaCost);
+            projected.engine.pending_cast = Some(paying);
+            projected
+        });
     let quote_state = pay_projection.as_ref().unwrap_or(state);
     let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
     let payable = |picks: &[Target]| {
@@ -9450,7 +9451,11 @@ fn shatterskull_cast_targets(
         pending_cast_quote_v1(def, &projected, method, false, x, quote_state).is_some()
     };
     let flagbearer = statics::flagbearer_requirement_applies(state, pending.controller)
-        .then(|| candidates(&[]).into_iter().find(|t| statics::is_flagbearer(state, t)))
+        .then(|| {
+            candidates(&[])
+                .into_iter()
+                .find(|t| statics::is_flagbearer(state, t))
+        })
         .flatten();
     let can_finish = |picks: &[Target]| {
         picks.is_empty()
@@ -10046,9 +10051,9 @@ fn free_cast_projection_quote(
     let x = if cfg!(feature = "eternal-fixtures")
         && def.target_spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC
     {
-        u16::from(crate::eternal_legacy_e9a_v1::targets::shatterskull_minimum_x(
-            &pending.targets_chosen,
-        ))
+        u16::from(
+            crate::eternal_legacy_e9a_v1::targets::shatterskull_minimum_x(&pending.targets_chosen),
+        )
     } else {
         0
     };
@@ -14770,19 +14775,18 @@ pub(crate) fn validate_pending_cast(
         #[cfg(feature = "eternal-fixtures")]
         if pending.kicked.is_some()
             && (spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC
-                || (crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(spec)
-                    && crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
-                        state,
-                        pending.controller,
-                    )))
+                || (crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(
+                    spec,
+                ) && crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
+                    state,
+                    pending.controller,
+                )))
         {
             let (legal, can_finish) = cast_target_choices(def, pending, spec, state);
             if !can_finish
                 && (pending_cast_targeting_is_complete(pending, spec) || legal.is_empty())
             {
-                return Err(
-                    "pending cast target selection has no legal payable completion".into(),
-                );
+                return Err("pending cast target selection has no legal payable completion".into());
             }
         }
     }

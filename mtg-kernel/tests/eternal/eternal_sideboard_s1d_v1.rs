@@ -1447,7 +1447,10 @@ fn flagbearers_constrain_welders_first_slot_only_when_the_pair_can_complete() {
                 if player == actor && legal_targets == [opponent_target]
         ));
         choose_target(&mut restored, opponent_target);
-        assert!(matches!(next(&mut restored), Decision::CastSpellOrPass { .. }));
+        assert!(matches!(
+            next(&mut restored),
+            Decision::CastSpellOrPass { .. }
+        ));
         assert!(restored.objects.get(welder).tapped);
         let paid = restored.stack.last().expect("paid Welder activation");
         assert_eq!(paid.source, welder);
@@ -1480,7 +1483,8 @@ fn flagbearers_constrain_payable_shatterskull_allocations_both_seats() {
                 legal_targets,
                 can_finish: true,
                 ..
-            } = next(&mut state) else {
+            } = next(&mut state)
+            else {
                 panic!("expected Shatterskull targeting with zero targets available");
             };
             assert_eq!(player, actor);
@@ -1506,7 +1510,12 @@ fn flagbearers_constrain_payable_shatterskull_allocations_both_seats() {
                 assert!(engine::step(&mut restored, Action::ChooseTarget(other_target)).is_err());
                 assert_eq!(restored.state_hash(), hash);
                 let mut forged: GameState = serde_json::from_slice(&snapshot).unwrap();
-                forged.engine.pending_cast.as_mut().unwrap().target_selection_finished = true;
+                forged
+                    .engine
+                    .pending_cast
+                    .as_mut()
+                    .unwrap()
+                    .target_selection_finished = true;
                 assert!(matches!(
                     engine::advance_until_decision(&mut forged),
                     Decision::Halted { .. }
@@ -1534,11 +1543,28 @@ fn flagbearers_constrain_payable_shatterskull_allocations_both_seats() {
                 _ => vec![other_target, bearer_target],
             };
             assert_eq!(paid.targets, expected);
-            assert!(state.players[actor.index()].mana_pool.iter().all(|&n| n == 0));
+            assert!(state.players[actor.index()]
+                .mana_pool
+                .iter()
+                .all(|&n| n == 0));
             settled(&mut state);
             assert_eq!(zone(&state, spell), Zone::Graveyard);
-            assert_eq!(zone(&state, bearer), if x > 0 { Zone::Graveyard } else { Zone::Battlefield });
-            assert_eq!(zone(&state, other), if x == 2 { Zone::Graveyard } else { Zone::Battlefield });
+            assert_eq!(
+                zone(&state, bearer),
+                if x > 0 {
+                    Zone::Graveyard
+                } else {
+                    Zone::Battlefield
+                }
+            );
+            assert_eq!(
+                zone(&state, other),
+                if x == 2 {
+                    Zone::Graveyard
+                } else {
+                    Zone::Battlefield
+                }
+            );
         }
     }
 }
