@@ -178,7 +178,7 @@ pub(crate) fn replace_zone_change(state: &GameState, change: &mut event::ZoneCha
             let Some(def) = CARD_DEFS.get(usize::from(live.card_def)) else {
                 return;
             };
-            if !def.has_type(CardType::Creature) {
+            if !change.battlefield_manifested_v1 && !def.has_type(CardType::Creature) {
                 return;
             }
             // The Priest is on the battlefield; it does not exile itself.

@@ -1174,10 +1174,18 @@ fn meddling_mage_priest_replacement_does_not_offer_a_name() {
 #[test]
 fn meddling_mage_manifest_does_not_expose_hidden_printing_as_a_name_choice() {
     for actor in [P0, P1] {
-        for hidden in ["Meddling Mage", "Llanowar Elves"] {
+        for (hidden, priest) in [
+            ("Meddling Mage", false),
+            ("Lightning Bolt", false),
+            ("Meddling Mage", true),
+            ("Lightning Bolt", true),
+        ] {
             let mut state = islands();
             state.active_player = actor;
             state.priority_player = actor;
+            if priest {
+                put(&mut state, actor.opponent(), "Containment Priest", Zone::Battlefield);
+            }
             let oculus = put(&mut state, actor, "Abhorrent Oculus", Zone::Hand);
             for _ in 0..6 {
                 put(&mut state, actor, "Island", Zone::Graveyard);
@@ -1204,6 +1212,11 @@ fn meddling_mage_manifest_does_not_expose_hidden_printing_as_a_name_choice() {
                 },
             );
             let live = state.objects.get(chosen);
+            if priest {
+                assert_eq!(live.zone, Zone::Exile);
+                assert!(live.v4.face_down_v1.is_none());
+                continue;
+            }
             assert_eq!(live.zone, Zone::Battlefield);
             assert_eq!(live.v4.face_down_v1.unwrap().lookers, 1 << actor.index());
             assert_eq!(live.v4.ward_generic, 0);
