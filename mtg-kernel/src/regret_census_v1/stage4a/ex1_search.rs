@@ -228,6 +228,77 @@ impl Ex1SearcherV1 {
         Ok((record, root))
     }
 
+    /// SD1 (collab LANES/search-diagnostic-20261108/DESIGN.md v4 E1, E2): one
+    /// search at the live decision `s` under an explicit world lifecycle,
+    /// with the same seeds model, sampler, key mode and key memo as `search`.
+    /// `value_leaf` = (horizon, simulations) runs `s4a-vl-v1` as
+    /// `value_leaf_search` does; `None` runs the rollout search at `budget`
+    /// raw selection transitions. It retains no tree. Returns the search
+    /// record (with the world receipt) and, for a completed search, the root
+    /// in live menu order.
+    pub(crate) fn sd1_search_v1(
+        &mut self,
+        s: &FastActorSessionV1,
+        budget: u64,
+        value_leaf: Option<(super::value_leaf::Horizon, u64)>,
+        world: super::world::WorldMode,
+        seed_root: String,
+    ) -> Result<(Value, Option<Sd1RootV1>), String> {
+        self.clear();
+        let seeds = RootSeeds {
+            model: EX1_SEED_MODEL_V1.into(),
+            root: seed_root,
+        };
+        let limits = Limits {
+            select_cap: match value_leaf {
+                Some((_, sims)) => sims.saturating_mul(512),
+                None => budget,
+            },
+            ..Limits::FORMAL
+        };
+        let ctx = guide_ctx(s, self.focal, 0, &seeds, &self.prior, limits)?;
+        let started = Instant::now();
+        let roles = &mut self.roles;
+        let options = SearchOptions {
+            key_memo: self.key_memo,
+            work_limit: value_leaf.map(|(_, sims)| sims),
+            value_leaf: value_leaf.map(|(horizon, _)| super::value_leaf::ValueLeafV1 { horizon }),
+            world: Some(world),
+            ..SearchOptions::default()
+        };
+        let (sel, tree) = std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .name("sd1-search".into())
+                .stack_size(EX1_SEARCH_STACK_BYTES_V1)
+                .spawn_scoped(scope, || {
+                    roles.select_e_options(&ctx, None, 1, None, None, None, &options)
+                })
+                .map_err(|e| format!("sd1 search thread: {e}"))?
+                .join()
+                .map_err(|_| "sd1 search thread panicked".to_string())
+        })?;
+        let wall = started.elapsed().as_secs_f64();
+        let failed = sel.incomplete || !sel.faults.is_empty();
+        let mut record = json!({"seed_root":seeds.root,"budget":limits.select_cap,
+            "world":world.label(),"transitions":sel.transitions,"inference":sel.inference,
+            "completed":sel.completed,"attempted":sel.attempted,"nonnatural":sel.nonnatural,
+            "cap_reached":sel.cap_reached,"incomplete":sel.incomplete,"faults":sel.faults,
+            "sampler":sel.sampler.json(),"world_receipt":sel.extra.get("world").cloned(),
+            "nodes":tree.nodes.len(),"wall":wall,"failed":failed});
+        if let Some((horizon, sims)) = value_leaf {
+            record["value_leaf"] = json!({"horizon":horizon.label(),"sims":sims});
+        }
+        if let Some(memo) = self.key_memo {
+            record["key_memo_bytes"] = json!(memo);
+        }
+        let root = if failed {
+            None
+        } else {
+            sd1_root_v1(&tree, decision(s).map(|d| d.legal_action_count as usize))?
+        };
+        Ok((record, root))
+    }
+
     /// Looks up the current learner decision (two or more legal actions) in
     /// the retained tree. Every such decision along the burst must be looked
     /// up and then advanced with the learner's sampled action.
@@ -319,4 +390,68 @@ pub(crate) fn ex1_self_target_v1(s: &FastActorSessionV1, focal: PlayerId) -> Opt
     s.diagnostic_current_action_semantics()?
         .iter()
         .position(|x| super::labels::classify(x, s.game_state(), focal, &defs).1)
+}
+
+/// A searched root in live menu order (SD1's capture): per live action the
+/// natural backups, wins and draws (and value units in a value-leaf tree),
+/// the node's seeded edge order as live indices (the frozen choice's tie
+/// order), and the engine's own `frozen_choice` as a live index.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Sd1RootV1 {
+    pub(crate) visits: u64,
+    pub(crate) n: Vec<u64>,
+    pub(crate) wins: Vec<u64>,
+    pub(crate) draws: Vec<u64>,
+    pub(crate) units: Option<Vec<u64>>,
+    pub(crate) perm_live: Vec<u32>,
+    pub(crate) frozen_live: Option<u32>,
+}
+
+/// The root of `tree` mapped to live indices; an edge that does not bind to
+/// exactly one live candidate, two edges on one live action, or a width other
+/// than the live menu's is an error. `None` when the tree has no root.
+pub(crate) fn sd1_root_v1(
+    tree: &super::tree::Tree,
+    width: Option<usize>,
+) -> Result<Option<Sd1RootV1>, String> {
+    let Some(r) = super::value_leaf::root(tree) else {
+        return Ok(None);
+    };
+    let k = r.n.len();
+    if width.is_some_and(|w| w != k) {
+        return Err("sd1: the root's menu differs from the live menu".into());
+    }
+    let mut live = Vec::with_capacity(k);
+    for e in 0..k {
+        live.push(
+            super::tree::live_index(&r.canon, &r.canon.edges[e])
+                .map_err(|_| "sd1: a root edge does not bind to one live candidate".to_string())?,
+        );
+    }
+    let mut seen = vec![false; k];
+    for &l in &live {
+        let slot = seen
+            .get_mut(l as usize)
+            .ok_or("sd1: a root edge maps outside the live menu")?;
+        if *slot {
+            return Err("sd1: two root edges map to one live action".into());
+        }
+        *slot = true;
+    }
+    let place = |v: &[u64]| {
+        let mut out = vec![0; k];
+        for e in 0..k {
+            out[live[e] as usize] = v[e];
+        }
+        out
+    };
+    Ok(Some(Sd1RootV1 {
+        visits: r.visits,
+        n: place(&r.n),
+        wins: place(&r.wins),
+        draws: place(&r.draws),
+        units: (r.vsum.len() == k).then(|| place(&r.vsum)),
+        perm_live: r.perm.iter().map(|&e| live[e]).collect(),
+        frozen_live: r.frozen_choice().map(|e| live[e]),
+    }))
 }

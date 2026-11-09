@@ -70,3 +70,46 @@ a changed prior action and a changed prior moment with
 the same final state hash, missing dependencies and pin corruption, native
 container/JSON equivalence, path boundaries, typed-marker collisions and CLI
 execution. These are deterministic engineering checks, not training evidence.
+
+## Native portable chain package
+
+The native training runner can emit a separate
+`mtg-kernel-native-expanded-portable-chain/v1` package for ordinary
+fresh runs with both physical-seat source bindings, including G(i). Each
+play-import descriptor, trajectory, checkpoint, initializer manifest and
+parameter payload is written beneath `objects/<sha256>`. Each live pin is
+relative to the package root and commits the bytes of the rewritten target.
+The seat identity's checkpoint digest follows its verified checkpoint pin,
+including across earlier updates and blocks. Initializer manifests and
+parameter payloads retain their exact bytes, including historical producer
+metadata. Portable pins depend on the rewritten target bytes. The manifest
+retains feature transfer and
+commits the root model source. Run, episode, model and optimizer data retain
+their meaning.
+
+To emit a package when a future ordinary run completes, add
+`--portable-output ABS_PACKAGE_DIRECTORY` to its native runner arguments.
+The result printed to stdout includes the package's manifest pin. For a
+completed run, save its `completion.json` member `source` alone to a
+JSON file and use the standalone export of the retained inputs.
+
+```text
+native_expanded_training_run_v1 --write-portable-chain ABS_SOURCE.json ABS_PACKAGE_DIRECTORY
+native_expanded_training_run_v1 --inspect-portable-chain ABS_MOVED_PACKAGE_DIRECTORY MANIFEST_SHA256
+```
+
+The parent of the package directory must exist, and the package directory
+must be new. Every original file named by a pin must be accessible and
+match its recorded SHA-256. Missing archived dependencies, unsupported
+record kinds and mismatched pins refuse. The writer publishes `chain.json`
+last and prints its SHA-256. A failed export can be retried with a new
+package directory after recovering the missing inputs. A failed export
+after a completed run leaves the ordinary completion available for this
+standalone retry. Keep the original completion and its pins as provenance.
+
+Inspection uses the supplied manifest digest and verifies every reachable
+object under the moved package root. It restores the final model and Adam
+state through the ordinary fresh-checkpoint validations and reports the
+resulting inference identity. The checkpoint file hash in that identity is
+the portable object's hash. Existing run records and resume use their
+original physical pins.
