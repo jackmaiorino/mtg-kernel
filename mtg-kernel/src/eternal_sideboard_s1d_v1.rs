@@ -90,7 +90,7 @@ impl TurnV1 {
 
 /// "The next time a blue source of your choice would deal damage to you this
 /// turn, prevent that damage."
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CopShieldV1 {
     /// The chosen source, by object incarnation.
@@ -98,6 +98,29 @@ pub struct CopShieldV1 {
     /// The protected player.
     pub player: PlayerId,
     pub turn: TurnV1,
+    /// A chosen permanent spell also protects against the permanent it becomes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spell: Option<CopSpellV1>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CopSpellV1 {
+    pub item: crate::ids::StackItemId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permanent: Option<ObjectLinkV4>,
+}
+
+impl Hash for CopShieldV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.source.hash(state);
+        self.player.hash(state);
+        self.turn.hash(state);
+        if let Some(spell) = self.spell {
+            b"circle-permanent-spell/v1".hash(state);
+            spell.hash(state);
+        }
+    }
 }
 
 /// One land and the basic land type it gained until end of turn.
@@ -747,12 +770,18 @@ pub(crate) fn execute(op: &S1dOpV1, ctx: &ExecCtx, state: &mut GameState) {
         }
         S1dOpV1::CopShieldV1 { source } => {
             let now = TurnV1::now(state);
+            let spell = state.objects.try_get(source.object)
+                .filter(|live| live.zone == Zone::Stack && live.zone_change_count == source.zone_change_count)
+                .and_then(|_| state.stack.iter().find(|item| item.source == source.object
+                    && item.kind == crate::state::StackItemKind::Spell))
+                .map(|item| CopSpellV1 { item: item.v4.stack_item_id, permanent: None });
             let shields = &mut s1d_state(state).cop_shields;
             shields.retain(|shield| shield.turn == now);
             shields.push(CopShieldV1 {
                 source: *source,
                 player: ctx.controller,
                 turn: now,
+                spell,
             });
         }
         S1dOpV1::DamageFlyingV1 => {
@@ -996,6 +1025,22 @@ pub(crate) fn drive(
 pub(crate) mod statics {
     use super::*;
 
+    /// CR 609.7a's single Stack-to-Battlefield continuation. Later zone changes
+    /// never retarget the shield to another incarnation of the same card.
+    pub(crate) fn circle_spell_entered(state: &mut GameState, object: ObjectId) {
+        let live = state.objects.get(object);
+        let permanent = ObjectLinkV4 { object, zone_change_count: live.zone_change_count };
+        let Some(previous) = permanent.zone_change_count.checked_sub(1) else { return; };
+        let Some(eternal) = state.eternal_v1.as_mut() else { return; };
+        for shield in &mut eternal.s1d.cop_shields {
+            if shield.source.object == object && shield.source.zone_change_count == previous {
+                if let Some(spell) = &mut shield.spell {
+                    if spell.permanent.is_none() { spell.permanent = Some(permanent); }
+                }
+            }
+        }
+    }
+
     /// Circle of Protection: Blue. Whether a shield prevents `damage`; the
     /// shield is used up.
     pub(crate) fn consume_circle_shield(state: &mut GameState, damage: &DamageProposed) -> bool {
@@ -1043,7 +1088,9 @@ pub(crate) mod statics {
         }
         let now = TurnV1::now(state);
         let position = s1d.cop_shields.iter().position(|shield| {
-            shield.turn == now && shield.player == player && shield.source == source
+            shield.turn == now && shield.player == player
+                && (shield.source == source
+                    || shield.spell.and_then(|spell| spell.permanent) == Some(source))
         });
         let Some(position) = position else {
             return false;

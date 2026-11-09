@@ -878,6 +878,76 @@ fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
     }
 }
 
+#[test]
+fn circle_of_protection_blue_follows_only_the_chosen_permanent_spell() {
+    use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_sideboard_s1d_v1::S1dOpV1;
+    use mtg_kernel::standard_cards_v1::StandardOpV1;
+
+    for actor in [P0, P1] {
+        for blink in [false, true] {
+            let opponent = actor.opponent();
+            let mut state = plains();
+            state.active_player = opponent;
+            state.priority_player = opponent;
+            let circle = put(&mut state, actor, "Circle of Protection: Blue", Zone::Battlefield);
+            let painter = put(&mut state, opponent, "Painter's Servant", Zone::Hand);
+            pool(&mut state, opponent, &[], 2);
+            cast(&mut state, painter, &[]);
+            settle_option(&mut state, 1);
+            let firebrand = put(&mut state, opponent, "Fanatical Firebrand", Zone::Hand);
+            pool(&mut state, opponent, &[ManaColor::R], 0);
+            cast(&mut state, firebrand, &[]);
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert_eq!(zone(&state, firebrand), Zone::Stack);
+            let spell_item = state.stack.last().unwrap().v4.stack_item_id;
+            if state.priority_player != actor { act(&mut state, Action::Pass); }
+            pool(&mut state, actor, &[], 1);
+            activate(&mut state, circle, 0, &[]);
+            assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { .. })));
+            let Some(PendingEffectChoice::ChooseOption { options, .. }) = state.engine.pending_effect
+                .as_ref().and_then(|pending| pending.choice.as_ref()) else { panic!("Circle choice missing"); };
+            let option = options.iter().position(|op| matches!(op,
+                EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(S1dOpV1::CopShieldV1 { source })))
+                    if source.object == firebrand)).unwrap();
+            act(&mut state, Action::ChooseEffectOption(u16::try_from(option).unwrap()));
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert_eq!(zone(&state, firebrand), Zone::Stack);
+            let shield = state.eternal_v1.as_ref().unwrap().s1d.cop_shields[0];
+            assert_eq!(shield.spell.unwrap().item, spell_item);
+            assert_eq!(shield.spell.unwrap().permanent, None);
+            let mut restored: GameState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                settled(branch);
+                assert_eq!(zone(branch, firebrand), Zone::Battlefield);
+                let entry = branch.objects.get(firebrand).zone_change_count;
+                assert_eq!(branch.eternal_v1.as_ref().unwrap().s1d.cop_shields[0]
+                    .spell.unwrap().permanent.unwrap().zone_change_count, entry);
+                if blink {
+                    if branch.priority_player != opponent { act(branch, Action::Pass); }
+                    let spell = put(branch, opponent, "Ephemerate", Zone::Hand);
+                    pool(branch, opponent, &[ManaColor::W], 0);
+                    cast(branch, spell, &[Target::Object(firebrand)]);
+                    settled(branch);
+                    assert!(branch.objects.get(firebrand).zone_change_count > entry);
+                    assert_eq!(branch.eternal_v1.as_ref().unwrap().s1d.cop_shields[0]
+                        .spell.unwrap().permanent.unwrap().zone_change_count, entry);
+                }
+                if branch.priority_player != opponent { act(branch, Action::Pass); }
+                activate(branch, firebrand, 0, &[Target::Player(actor)]);
+                assert!(matches!(next(branch), Decision::CastSpellOrPass { .. }));
+                assert_eq!(zone(branch, firebrand), Zone::Graveyard);
+                assert_eq!(life(branch, actor), 20);
+                settled(branch);
+                assert_eq!(life(branch, actor), if blink { 19 } else { 20 });
+                assert_eq!(branch.eternal_v1.as_ref().unwrap().s1d.cop_shields.len(), usize::from(blink));
+            }
+            assert_eq!(state.state_hash(), restored.state_hash());
+        }
+    }
+}
+
 // ---- Creatures with triggers -----------------------------------------------------
 
 #[test]

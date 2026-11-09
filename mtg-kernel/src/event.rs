@@ -7424,6 +7424,10 @@ fn materialize_zone_change_v1(
             obj.summoning_sick = false;
         }
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if from_zone == Zone::Stack && to_zone == Zone::Battlefield {
+        crate::eternal_sideboard_s1d_v1::statics::circle_spell_entered(state, id);
+    }
     if to_zone == Zone::Battlefield {
         if let Some(entry) = entering_characteristics {
             if let Some(host) = entry.attached_to {
