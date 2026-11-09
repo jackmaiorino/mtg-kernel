@@ -102,6 +102,24 @@ fn paid_public_shuffle_conditions_only_the_sampled_library_both_seats() {
         let live = left.fixture_state().clone();
         let right_live = right.fixture_state().clone();
         let belief = corpus();
+        let mut independently_known = state.clone();
+        independently_known.reveal_library_position(
+            viewer, physical_owner, original_position,
+        );
+        let pinned = numeric(&independently_known);
+        let pinned_d = decision(&pinned);
+        let pinned_sample = pinned.sampled_full_pool_closed_list_v1(
+            &pinned_d, 552_480, &belief,
+        ).unwrap();
+        let pinned_state = pinned_sample.fixture_state();
+        let pinned_library = &pinned_state.players[physical_owner.index()].library;
+        assert_eq!(pinned_library[original_position], source);
+        assert_eq!(
+            definitions(pinned_state, pinned_library).iter().filter(|&&id| id == PRINTING).count(),
+            1,
+        );
+        assert_eq!(decision(&pinned_sample).packet(), pinned_d.packet());
+
         let mut sampled_original_alias_changed = false;
         for seed in [552_480, 552_481, 552_482] {
             let mut sample = left.sampled_full_pool_closed_list_v1(&da, seed, &belief).unwrap();
