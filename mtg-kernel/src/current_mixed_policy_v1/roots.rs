@@ -96,6 +96,8 @@ mod targeted_entry_printing;
 mod targeted_spell_printing;
 #[path = "team_static_printing.rs"]
 mod team_static_printing;
+#[path = "elf_lord_printing.rs"]
+pub(super) mod elf_lord_printing;
 #[path = "threshold_loot_printing.rs"]
 mod threshold_loot_printing;
 #[path = "triggered_enchantment_printing.rs"]
@@ -471,7 +473,7 @@ pub(super) fn is_ordinary_aura(id: u16) -> bool {
 pub(super) fn is_team_static_permanent(id: u16) -> bool {
     CARD_DEFS
         .get(usize::from(id))
-        .is_some_and(|d| team_static_printing::handles(d.name))
+        .is_some_and(|d| team_static_printing::handles(d.name) || elf_lord_printing::handles(d.name))
 }
 pub(super) fn is_shivan_permanent(id: u16) -> bool {
     CARD_DEFS
@@ -561,6 +563,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let creature_power_spell = creature_power_spell_printing::printing(id, d)?;
     let luminous = luminous_printing::printing(id, d)?;
     let team_static = team_static_printing::printing(id, d)?;
+    let elf_lord = elf_lord_printing::printing(id, d)?;
     let triggered_enchantment = triggered_enchantment_printing::printing(id, d)?;
     let shivan = shivan_printing::printing(id, d)?;
     let sacrifice = sacrifice_printing::printing(id, d)?;
@@ -848,7 +851,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && d.kicked_target_spec.is_none()
         && d.escape.is_none()
         && (!d.enters_battlefield_tapped || diregraf || gain_land.is_some())
-        && (d.mana_ability_def.is_none() || treasure)
+        && (d.mana_ability_def.is_none() || treasure || elf_lord.is_some())
         && d.minimum_blockers == 1
         && d.omen.is_none()
         && !d.mana_ability_includes_chosen_color
@@ -892,6 +895,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || surveil_many.is_some()
             || threshold_loot.is_some()
             || attack_trigger.is_some()
+            || elf_lord.is_some()
             || ward_discount_creature.is_some()
             || observer_trigger.is_some()))
     {
@@ -966,6 +970,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = team_static {
+        return Ok(printing);
+    }
+    if let Some(printing) = elf_lord {
         return Ok(printing);
     }
     if let Some(printing) = triggered_enchantment {
