@@ -189,7 +189,9 @@ pub(crate) fn capture(state: &GameState) -> Result<CustodyV1, String> {
     if state
         .engine
         .event_history
-        .has_any(&[crate::event_history_v1::EventKindV1::DrakusethDamageSourceV76])
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::DrakusethDamageSourceV76])
+        .iter()
+        .any(|event| matches!(event, E::DrakusethDamageSourceV76 { .. }))
     {
         crate::drakuseth_damage_source_v76::validate_state(state)?;
         for (at, event) in state.engine.event_history.iter().enumerate() {

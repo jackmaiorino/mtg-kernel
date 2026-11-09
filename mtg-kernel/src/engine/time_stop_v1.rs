@@ -163,7 +163,9 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     if !state
         .engine
         .event_history
-        .has_any(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1])
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1])
+        .iter()
+        .any(|event| matches!(event, CommittedEvent::TimeStopJournalV1 { .. }))
     {
         return if state.engine.time_stop_v1.is_empty() {
             Ok(())
