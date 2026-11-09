@@ -33,6 +33,7 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
+from itertools import islice
 from pathlib import Path
 
 FIXTURE_SCHEMA = "mtg-kernel-native-fixture/v1"
@@ -441,23 +442,21 @@ def storage(tree: Path) -> dict:
     return {"files": len(files), "bytes": total, "bytes_by_name": dict(sorted(by_kind.items()))}
 
 
-def json_differences(a, b, path, parents, out) -> None:
-    if len(out) >= COLLECTED_DIFFERENCES:
-        return
+def json_differences(a, b, path, parents):
     if isinstance(a, dict) and isinstance(b, dict):
         for key in sorted(set(a) | set(b)):
             if key not in a or key not in b:
-                out.append((path + (key,), "structure", parents))
+                yield path + (key,), "structure", parents
             else:
-                json_differences(a[key], b[key], path + (key,), (a, b), out)
+                yield from json_differences(a[key], b[key], path + (key,), (a, b))
     elif isinstance(a, list) and isinstance(b, list):
         if len(a) != len(b):
-            out.append((path, "structure", parents))
+            yield path, "structure", parents
         else:
             for index, (left, right) in enumerate(zip(a, b)):
-                json_differences(left, right, path + (index,), (a, b), out)
+                yield from json_differences(left, right, path + (index,), (a, b))
     elif type(a) is not type(b) or a != b:
-        out.append((path, "value", parents))
+        yield path, "value", parents
 
 
 def is_number(value) -> bool:
@@ -518,8 +517,11 @@ class TreeComparison:
             a, b = read_json(left), read_json(right)
         except (json.JSONDecodeError, UnicodeDecodeError):
             return {"status": "mismatch", "differences": ["non-JSON file differs"]}
-        found: list = []
-        json_differences(a, b, (), (None, None), found)
+        found = list(islice(json_differences(a, b, (), (None, None)), COLLECTED_DIFFERENCES + 1))
+        # Only a real extra difference proves the comparison was incomplete.
+        truncated = len(found) > COLLECTED_DIFFERENCES
+        if truncated:
+            found.pop()
         classes: dict[str, int] = {}
         unaccounted = []
         for path, kind, parents in found:
@@ -527,11 +529,12 @@ class TreeComparison:
             classes[label] = classes.get(label, 0) + 1
             if label == "unaccounted":
                 unaccounted.append("/".join(map(str, path)) + f" ({kind})")
-        if unaccounted:
-            return {"status": "mismatch", "classes": classes,
-                    "differences": unaccounted[:LISTED_DIFFERENCES],
-                    "unaccounted": len(unaccounted),
-                    "truncated": len(found) >= COLLECTED_DIFFERENCES}
+        if unaccounted or truncated:
+            differences = unaccounted[:LISTED_DIFFERENCES]
+            if truncated:
+                differences = ["JSON difference limit exceeded", *differences[:LISTED_DIFFERENCES - 1]]
+            return {"status": "mismatch", "classes": classes, "differences": differences,
+                    "unaccounted": len(unaccounted), "truncated": truncated}
         return {"status": "accounted", "classes": classes}
 
     def classify(self, path, kind, parents, a, b) -> str:
@@ -842,7 +845,9 @@ def run(args) -> int:
             sample["parity"] = comparison.summary()
             sample["parity"]["reference_ordinal"] = reference["ordinal"]
         if (args.keep_runs == "reference" and sample["ok"]
-                and references.get(entry["case"]) is not sample):
+                and references.get(entry["case"]) is not sample
+                and (sample.get("parity") or {}).get("status") in (
+                    "identical", "equal_up_to_accounted_fields")):
             shutil.rmtree(out / sample["run_directory"], ignore_errors=True)
             sample["run_pruned"] = True
         append_jsonl(samples_path, sample)
@@ -1156,7 +1161,7 @@ def main(argv: list[str] | None = None) -> int:
     bench.add_argument("--arm-env", action="append", help="ARM:KEY=VALUE for one arm's samples")
     bench.add_argument("--max-wall-seconds", type=float, default=None, help="per process")
     bench.add_argument("--keep-runs", choices=("all", "reference"), default="all",
-                       help="'reference' deletes every other run tree once compared")
+                       help="'reference' prunes only nonreference run trees that pass parity")
     bench.add_argument("--label", default="", help="e.g. 'local smoke, shared vCPU, noisy'")
     bench.add_argument("--build-profile", default="unspecified",
                        help="how both arms were built (they must match)")
