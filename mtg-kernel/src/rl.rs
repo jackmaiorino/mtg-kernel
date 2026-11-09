@@ -12593,11 +12593,15 @@ fn pending_activation_semantic_v2(
 ) -> Result<PendingActivationSemanticV2> {
     engine::validate_pending_activation(state, p)
         .map_err(|error| RlContractError(format!("invalid pending activation: {error}")))?;
-    let object_cost_chosen = p
-        .object_cost_chosen
-        .iter()
-        .map(|binding| binding.object)
-        .collect::<Vec<_>>();
+    let object_cost_chosen =
+        if p.controller != acting_player && engine::pending_martyr_reveal_v1(state) {
+            Vec::new()
+        } else {
+            p.object_cost_chosen
+                .iter()
+                .map(|binding| binding.object)
+                .collect()
+        };
     Ok(PendingActivationSemanticV2 {
         source: visible_card_ref(state, p.source, acting_player)?,
         controller: p.controller.into(),

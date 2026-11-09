@@ -174,7 +174,11 @@ pub enum S1dOpV1 {
     WaterbendTapV1 { object: ObjectLinkV4 },
     /// Waterbend: pay `amount` generic mana from the mana sources.
     WaterbendManaV1 { amount: u8 },
+    /// The actual reveal cost binds this single printed Martyr ability.
+    MartyrRevealV1,
 }
+
+pub(crate) mod martyr;
 
 impl S1dOpV1 {
     /// Whether this leaf can yield a player decision, so its program must
@@ -197,7 +201,6 @@ const ARASHIN_CLERIC: &str = "Arashin Cleric";
 const COALITION_HONOR_GUARD: &str = "Coalition Honor Guard";
 const FOOT_NINJAS: &str = "Foot Ninjas";
 const GRUUL_TURF: &str = "Gruul Turf";
-const MARTYR_OF_SANDS: &str = "Martyr of Sands";
 const NAVIGATORS_COMPASS: &str = "Navigator's Compass";
 const NYLEAS_DISCIPLE: &str = "Nylea's Disciple";
 const PALACE_SENTINELS: &str = "Palace Sentinels";
@@ -209,6 +212,10 @@ const ELECTRICKERY: &str = "Electrickery";
 
 fn s1d(op: S1dOpV1) -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(op)))
+}
+
+pub fn martyr_of_sands() -> EffectOp {
+    s1d(S1dOpV1::MartyrRevealV1)
 }
 
 fn nothing() -> EffectOp {
@@ -241,10 +248,6 @@ fn bind(state: &GameState, object: ObjectId) -> EffectObjectBinding {
 fn definition(state: &GameState, object: ObjectId) -> Option<&'static CardDef> {
     let live = state.objects.try_get(object)?;
     CARD_DEFS.get(live.card_def as usize)
-}
-
-fn definition_name(state: &GameState, object: ObjectId) -> Option<&'static str> {
-    definition(state, object).map(|def| def.name)
 }
 
 /// Whether `object` is a battlefield permanent named `name` showing its
@@ -863,6 +866,7 @@ pub(crate) fn execute(op: &S1dOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 ));
             }
         }
+        S1dOpV1::MartyrRevealV1 => martyr::resolve(state, ctx),
         // Choices run in `drive`.
         S1dOpV1::CopChooseV1
         | S1dOpV1::CompassChooseV1
@@ -1175,61 +1179,6 @@ pub(crate) mod statics {
             .collect::<Vec<_>>();
         if !flagbearers.is_empty() {
             *legal = flagbearers;
-        }
-    }
-
-    fn white_cards_in_hand(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
-        let white = white_mask();
-        state.players[player.index()]
-            .hand
-            .iter()
-            .copied()
-            .filter(|&card| crate::engine::object_color_mask(state, card) & white != 0)
-            .collect()
-    }
-
-    /// Martyr of Sands: its ability `index` reveals `index + 1` white cards.
-    /// Whether the controller has that many in hand.
-    pub(crate) fn activation_allowed(
-        state: &GameState,
-        source: ObjectId,
-        name: &str,
-        ability_index: usize,
-    ) -> bool {
-        if name != MARTYR_OF_SANDS {
-            return true;
-        }
-        let owner = state.objects.get(source).controller;
-        white_cards_in_hand(state, owner).len() > ability_index
-    }
-
-    /// Martyr of Sands: the cost "Reveal X white cards from your hand" is
-    /// paid as the ability is put on the stack. The revealed cards are the
-    /// first X white cards in the hand's order.
-    pub(crate) fn activation_paid(
-        state: &mut GameState,
-        source: ObjectId,
-        controller: PlayerId,
-        ability_index: u8,
-    ) {
-        if definition_name(state, source) != Some(MARTYR_OF_SANDS) {
-            return;
-        }
-        let revealed = white_cards_in_hand(state, controller)
-            .into_iter()
-            .take(usize::from(ability_index) + 1)
-            .collect::<Vec<_>>();
-        for &card in &revealed {
-            let card_def = state.objects.get(card).card_def;
-            let same_name = revealed
-                .iter()
-                .filter(|&&object| state.objects.get(object).card_def == card_def)
-                .count();
-            // spellbench-public-reveal: Martyr of Sands reveals the cards to
-            // pay its cost.
-            state
-                .record_hand_reveal(controller.opponent(), controller, card, Some(same_name))
-                .expect("Martyr's cost reveals cards still in the payer's hand");
         }
     }
 }
