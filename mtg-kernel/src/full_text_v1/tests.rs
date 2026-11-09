@@ -843,7 +843,9 @@ fn donated_triskelion_spends_the_hosts_counter_and_keeps_the_original_program() 
 #[test]
 fn donated_hermit_druid_pays_the_host_and_uses_the_selected_graveyard_top() {
     use crate::engine::{self, Action, Decision};
-    use crate::premodern_ordered_public_v1::{self as public, FullTextProgramV1, ProducerStageV1};
+    use crate::premodern_ordered_public_v1::{
+        self as public, DonatedActivationV1, FullTextProgramV1, ProducerStageV1,
+    };
     use crate::state::{Step, Target};
 
     for player in [PlayerId::P0, PlayerId::P1] {
@@ -893,7 +895,10 @@ fn donated_hermit_druid_pays_the_host_and_uses_the_selected_graveyard_top() {
             assert_eq!(producer.stage, ProducerStageV1::Stack { position: 0 });
             assert_eq!(
                 producer.program,
-                FullTextProgramV1::DonatedActivation { printed_index: 0 }
+                FullTextProgramV1::DonatedActivation {
+                    printed_index: 0,
+                    effect: DonatedActivationV1::HermitDruidRevealThroughBasic,
+                }
             );
             assert_eq!(producer.physical.arena_id, source.0);
             assert_eq!(producer.text_donor.arena_id, druid.0);
@@ -1062,9 +1067,13 @@ fn donated_devourer_uses_the_exiled_cost_value_after_the_graveyard_top_changes()
 #[test]
 fn donated_psychatog_can_discard_above_or_exile_its_own_donor() {
     use crate::engine::{self, Action, CostKind, Decision};
+    use crate::premodern_ordered_public_v1::{DonatedActivationV1, FullTextProgramV1};
     use crate::state::Step;
 
-    for index in [0, 1] {
+    for (index, effect) in [
+        (0, DonatedActivationV1::PsychatogDiscardPump),
+        (1, DonatedActivationV1::PsychatogExilePump),
+    ] {
         let mut state = game();
         state.step = Step::Main1;
         let host = host(&mut state);
@@ -1100,6 +1109,19 @@ fn donated_psychatog_can_discard_above_or_exile_its_own_donor() {
         assert_eq!(item.v4.ability_source_contract, Some(host));
         assert_eq!(item.v4.activated_ability_index, Some(index + 3));
         assert_eq!(item.v4.paid_cost_refs.len(), if index == 0 { 1 } else { 2 });
+        let rows = public_producers(&state).unwrap();
+        let [producer] = rows.as_slice() else {
+            panic!("expected the paid Psychatog ability");
+        };
+        assert_eq!(
+            producer.program,
+            FullTextProgramV1::DonatedActivation {
+                printed_index: index,
+                effect,
+            }
+        );
+        assert_eq!(producer.text_donor.arena_id, donor.0);
+        assert_eq!(producer.text_donor.zone, Zone::Graveyard);
         if index == 1 {
             assert_eq!(state.objects.get(donor).zone, Zone::Exile);
             assert!(item

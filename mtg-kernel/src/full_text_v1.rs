@@ -750,17 +750,35 @@ impl FullTextAbilityV1 {
     }
 
     pub(crate) fn owns_payment(self, definition: &CardDef) -> bool {
+        self.public_program(definition).is_some()
+    }
+
+    fn public_program(
+        self,
+        definition: &CardDef,
+    ) -> Option<crate::premodern_ordered_public_v1::FullTextProgramV1> {
+        use crate::premodern_ordered_public_v1::{DonatedActivationV1, FullTextProgramV1};
+
         match self {
-            Self::RetainedDiscard => true,
-            Self::Printed(_) => matches!(
-                definition.name,
-                p2c::PALINCHRON
-                    | p2c::PHYREXIAN_DEVOURER
-                    | p2c::TRISKELION
-                    | p2c::BATTLEFIELD_SCROUNGER
-                    | "Hermit Druid"
-                    | "Psychatog"
-            ),
+            Self::RetainedDiscard => Some(FullTextProgramV1::RetainedDiscard),
+            Self::Printed(printed_index) => {
+                let effect = match (definition.name, printed_index) {
+                    (p2c::PALINCHRON, 0) => DonatedActivationV1::PalinchronReturnHost,
+                    (p2c::PHYREXIAN_DEVOURER, 0) => {
+                        DonatedActivationV1::DevourerExileTopForCounters
+                    }
+                    (p2c::TRISKELION, 0) => DonatedActivationV1::TriskelionRemoveCounterForDamage,
+                    (p2c::BATTLEFIELD_SCROUNGER, 0) => DonatedActivationV1::ScroungerThresholdPump,
+                    ("Hermit Druid", 0) => DonatedActivationV1::HermitDruidRevealThroughBasic,
+                    ("Psychatog", 0) => DonatedActivationV1::PsychatogDiscardPump,
+                    ("Psychatog", 1) => DonatedActivationV1::PsychatogExilePump,
+                    _ => return None,
+                };
+                Some(FullTextProgramV1::DonatedActivation {
+                    printed_index,
+                    effect,
+                })
+            }
         }
     }
 
@@ -992,7 +1010,7 @@ pub(crate) fn public_producers(
                 record,
                 Stage::ActivationAnnouncing,
                 pending.ability_index,
-            ));
+            )?);
         }
     }
     for (ordinal, pending) in state.engine.pending_triggers.iter().enumerate() {
@@ -1022,24 +1040,23 @@ fn activation_producer(
     record: FullTextActivationV1,
     stage: crate::premodern_ordered_public_v1::ProducerStageV1,
     action_index: u8,
-) -> crate::premodern_ordered_public_v1::FullTextProducerV1 {
-    use crate::premodern_ordered_public_v1::{
-        captured_card, FullTextProducerV1, FullTextProgramV1,
-    };
+) -> Result<crate::premodern_ordered_public_v1::FullTextProducerV1, String> {
+    use crate::premodern_ordered_public_v1::{captured_card, FullTextProducerV1};
 
-    let program = match record.selector {
-        FullTextAbilityV1::RetainedDiscard => FullTextProgramV1::RetainedDiscard,
-        FullTextAbilityV1::Printed(printed_index) => {
-            FullTextProgramV1::DonatedActivation { printed_index }
-        }
-    };
-    FullTextProducerV1 {
+    let donor = CARD_DEFS
+        .get(usize::from(record.donor.card_def))
+        .ok_or("full-text producer donor printing absent")?;
+    let program = record
+        .selector
+        .public_program(donor)
+        .ok_or("full-text activation has no public program")?;
+    Ok(FullTextProducerV1 {
         stage,
         physical: captured_card(record.host),
         text_donor: captured_card(record.donor),
         native_ability_index: Some(action_index),
         program,
-    }
+    })
 }
 
 fn trigger_producer(
@@ -1081,7 +1098,7 @@ fn stack_producer(
             .v4
             .activated_ability_index
             .ok_or("full-text stack ability index absent")?;
-        return Ok(activation_producer(record, stage, index));
+        return activation_producer(record, stage, index);
     }
     let index = item
         .inline_effect

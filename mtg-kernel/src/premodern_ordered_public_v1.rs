@@ -76,11 +76,34 @@ pub struct FullTextCharacteristicsV1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum FullTextProgramV1 {
     RetainedDiscard,
-    DonatedActivation { printed_index: u8 },
+    DonatedActivation {
+        printed_index: u8,
+        effect: DonatedActivationV1,
+    },
     PalinchronUntapLands,
     KarmicGuideReturnCreature,
     KarmicGuideEcho,
     DevourerSacrifice,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum DonatedActivationV1 {
+    /// {2}{U}{U}: return the physical host to its owner's hand.
+    PalinchronReturnHost,
+    /// Exile the library top to put its mana value in +1/+1 counters on the host.
+    DevourerExileTopForCounters,
+    /// Remove one host +1/+1 counter to deal one damage to any target.
+    TriskelionRemoveCounterForDamage,
+    /// At threshold, bottom three graveyard cards to give the host +3/+3 this turn.
+    /// Restricted to one use per turn for the donated ability instance.
+    ScroungerThresholdPump,
+    /// Pay {G} and tap the host to reveal through the first basic land.
+    /// The controller takes the basic land and puts the other cards into their graveyard.
+    HermitDruidRevealThroughBasic,
+    /// Discard a card to give the host +1/+1 this turn.
+    PsychatogDiscardPump,
+    /// Exile two graveyard cards to give the host +1/+1 this turn.
+    PsychatogExilePump,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
