@@ -13,10 +13,12 @@ pub(crate) const COLLECTOR: u16 = 333;
 
 pub(crate) fn is_printing(id: u16) -> bool {
     CARD_DEFS.get(usize::from(id)).is_some_and(|def| {
-        matches!((id, def.name),
+        matches!(
+            (id, def.name),
             (EXEMPLAR, "Exemplar of Light")
                 | (VANGUARD, "Vanguard Seraph")
-                | (COLLECTOR, "Cat Collector"))
+                | (COLLECTOR, "Cat Collector")
+        )
     })
 }
 
@@ -35,8 +37,14 @@ impl ProgramV1 {
     pub(crate) fn template(self) -> Option<EffectOp> {
         Some(match self {
             Self::ExemplarCounter => EffectOp::BindPlusOnePlusOneCounterToTriggerSource,
-            Self::ExemplarDraw => EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 },
-            Self::VanguardSurveil => EffectOp::Surveil { player: PlayerRef::Controller, count: 1 },
+            Self::ExemplarDraw => EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            },
+            Self::VanguardSurveil => EffectOp::Surveil {
+                player: PlayerRef::Controller,
+                count: 1,
+            },
             Self::CollectorFood | Self::CollectorCat => EffectOp::CreateToken {
                 token_def: crate::card_def::card_id_by_name(self.token_name()?)?,
                 controller: PlayerRef::Controller,
@@ -84,7 +92,9 @@ pub(crate) fn printed_program(
         ProgramV1::CollectorCat,
     ]
     .into_iter()
-    .find(|program| program.belongs_to(source.card_def) && program.template().as_ref() == Some(effect))
+    .find(|program| {
+        program.belongs_to(source.card_def) && program.template().as_ref() == Some(effect)
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,21 +156,39 @@ pub(crate) fn capture(
         return Err("life trigger stack and public roster have different lengths".into());
     }
     for (ordinal, (native, row)) in state.stack.iter().zip(&board.stack).enumerate() {
-        if row.stack_item_kind == StackItemKindV2::TriggeredAbility && is_printing(row.source.card_db_id) {
-            facts.stack.push(bind(ordinal, &row.source, native.v4.ability_source_contract,
-                native.inline_effect.as_ref(), native.v4.granted_by.is_some())?);
+        if row.stack_item_kind == StackItemKindV2::TriggeredAbility
+            && is_printing(row.source.card_db_id)
+        {
+            facts.stack.push(bind(
+                ordinal,
+                &row.source,
+                native.v4.ability_source_contract,
+                native.inline_effect.as_ref(),
+                native.v4.granted_by.is_some(),
+            )?);
         }
     }
     let mut native_pending = state.engine.pending_triggers.iter().chain(
-        state.pending_legend_rule_v1.iter().flat_map(|p| p.waiting_triggers()),
+        state
+            .pending_legend_rule_v1
+            .iter()
+            .flat_map(|p| p.waiting_triggers()),
     );
     for (ordinal, row) in board.engine_context.pending_triggers.iter().enumerate() {
-        let native = native_pending.next().ok_or("life trigger pending roster lost a native row")?;
+        let native = native_pending
+            .next()
+            .ok_or("life trigger pending roster lost a native row")?;
         if let Some(source) = row.source.as_ref().filter(|source| {
-            row.trigger_kind == PendingTriggerKindV2::TriggeredAbility && is_printing(source.card_db_id)
+            row.trigger_kind == PendingTriggerKindV2::TriggeredAbility
+                && is_printing(source.card_db_id)
         }) {
-            facts.pending.push(bind(ordinal, source, native.source_contract,
-                Some(&native.effect), native.granted_by.is_some())?);
+            facts.pending.push(bind(
+                ordinal,
+                source,
+                native.source_contract,
+                Some(&native.effect),
+                native.granted_by.is_some(),
+            )?);
         }
     }
     if native_pending.next().is_some() {
@@ -169,7 +197,10 @@ pub(crate) fn capture(
     Ok(facts)
 }
 
-pub(crate) fn validate(facts: &FactsV1, board: &PublicObservationProjectionV2) -> Result<(), String> {
+pub(crate) fn validate(
+    facts: &FactsV1,
+    board: &PublicObservationProjectionV2,
+) -> Result<(), String> {
     fn check<'a>(
         mut facts: impl Iterator<Item = &'a TriggerRowV1>,
         roster: impl Iterator<Item = (usize, u16)>,
@@ -186,15 +217,25 @@ pub(crate) fn validate(facts: &FactsV1, board: &PublicObservationProjectionV2) -
         }
         Ok(())
     }
-    check(facts.stack.iter(), board.stack.iter().enumerate().filter_map(|(ordinal, row)| {
-        (row.stack_item_kind == StackItemKindV2::TriggeredAbility && is_printing(row.source.card_db_id))
+    check(
+        facts.stack.iter(),
+        board.stack.iter().enumerate().filter_map(|(ordinal, row)| {
+            (row.stack_item_kind == StackItemKindV2::TriggeredAbility
+                && is_printing(row.source.card_db_id))
             .then_some((ordinal, row.source.card_db_id))
-    }))?;
-    check(facts.pending.iter(), board.engine_context.pending_triggers.iter().enumerate().filter_map(
-        |(ordinal, row)| {
-            let id = row.source.as_ref()?.card_db_id;
-            (row.trigger_kind == PendingTriggerKindV2::TriggeredAbility && is_printing(id))
-                .then_some((ordinal, id))
-        },
-    ))
+        }),
+    )?;
+    check(
+        facts.pending.iter(),
+        board
+            .engine_context
+            .pending_triggers
+            .iter()
+            .enumerate()
+            .filter_map(|(ordinal, row)| {
+                let id = row.source.as_ref()?.card_db_id;
+                (row.trigger_kind == PendingTriggerKindV2::TriggeredAbility && is_printing(id))
+                    .then_some((ordinal, id))
+            }),
+    )
 }

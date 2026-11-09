@@ -34,8 +34,6 @@ pub(super) mod early_activation_printing;
 pub(super) mod eaten_printing;
 #[path = "elf_lord_printing.rs"]
 pub(super) mod elf_lord_printing;
-#[path = "full_pool_life_printing.rs"]
-mod full_pool_life_printing;
 #[path = "enchantment_hunter_printing.rs"]
 pub(super) mod enchantment_hunter_printing;
 #[path = "entry_branch_printing.rs"]
@@ -50,6 +48,8 @@ mod evolving_printing;
 pub(super) mod faebloom_printing;
 #[path = "fiery_printing.rs"]
 pub(super) mod fiery_printing;
+#[path = "full_pool_life_printing.rs"]
+mod full_pool_life_printing;
 #[path = "gnarlid_printing.rs"]
 mod gnarlid_printing;
 #[path = "graveyard_batch_spell_printing.rs"]

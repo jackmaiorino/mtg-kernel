@@ -17,23 +17,60 @@ pub(super) fn printing(id: u16, def: &CardDef) -> Result<Option<Value>> {
     use TriggerCondition::*;
     let (printing, generic, white_pips, subtypes, keywords, toughness, roots) = match def.name {
         "Exemplar of Light" => (
-            EXEMPLAR, 2, &[Pip::Colored(ManaColor::W); 2][..], &[Subtype::Angel][..],
-            Keywords::FLYING, 3, &[
+            EXEMPLAR,
+            2,
+            &[Pip::Colored(ManaColor::W); 2][..],
+            &[Subtype::Angel][..],
+            Keywords::FLYING,
+            3,
+            &[
                 (ControllerGainsLife, ExemplarCounter),
-                (ControllerAddedPlusOneCountersToSelf { max_per_turn: Some(1) }, ExemplarDraw),
+                (
+                    ControllerAddedPlusOneCountersToSelf {
+                        max_per_turn: Some(1),
+                    },
+                    ExemplarDraw,
+                ),
             ][..],
         ),
         "Vanguard Seraph" => (
-            VANGUARD, 3, &[Pip::Colored(ManaColor::W)][..], &[Subtype::Angel, Subtype::Warrior][..],
-            Keywords::FLYING, 3, &[(ControllerFirstLifeGain { own_turn_only: false }, VanguardSurveil)][..],
+            VANGUARD,
+            3,
+            &[Pip::Colored(ManaColor::W)][..],
+            &[Subtype::Angel, Subtype::Warrior][..],
+            Keywords::FLYING,
+            3,
+            &[(
+                ControllerFirstLifeGain {
+                    own_turn_only: false,
+                },
+                VanguardSurveil,
+            )][..],
         ),
         "Cat Collector" => (
-            COLLECTOR, 2, &[Pip::Colored(ManaColor::W)][..], &[Subtype::Human, Subtype::Citizen][..],
-            Keywords::NONE, 2, &[(Etb, CollectorFood), (ControllerFirstLifeGain { own_turn_only: true }, CollectorCat)][..],
+            COLLECTOR,
+            2,
+            &[Pip::Colored(ManaColor::W)][..],
+            &[Subtype::Human, Subtype::Citizen][..],
+            Keywords::NONE,
+            2,
+            &[
+                (Etb, CollectorFood),
+                (
+                    ControllerFirstLifeGain {
+                        own_turn_only: true,
+                    },
+                    CollectorCat,
+                ),
+            ][..],
         ),
         _ => return Ok(None),
     };
-    let cost = Cost { generic, pips: white_pips, x_count: 0 };
+    let cost = Cost {
+        generic,
+        pips: white_pips,
+        x_count: 0,
+    };
     if id != printing
         || !is_printing(id)
         || crate::card_def::card_id_by_name(def.name) != Some(id)
@@ -53,9 +90,11 @@ pub(super) fn printing(id: u16, def: &CardDef) -> Result<Option<Value>> {
         || !def.produces_mana.is_empty()
         || !def.mana_ability_choices.is_empty()
         || (def.mana_ability)().is_some()
-        || (def.spell_effect)() != Some(EffectOp::MoveObject {
-            object: ObjectRef::ThisSource, to_zone: Zone::Battlefield,
-        })
+        || (def.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
@@ -66,7 +105,9 @@ pub(super) fn printing(id: u16, def: &CardDef) -> Result<Option<Value>> {
     }
     let mut meanings = Vec::with_capacity(roots.len());
     for (ordinal, (def, &(condition, program))) in triggered.iter().zip(roots).enumerate() {
-        let effect = program.template().ok_or(Error::UnsupportedPrintedRoot(id))?;
+        let effect = program
+            .template()
+            .ok_or(Error::UnsupportedPrintedRoot(id))?;
         if def.condition != condition
             || def.home_zone != Zone::Battlefield
             || def.face_index != 0
@@ -81,14 +122,16 @@ pub(super) fn printing(id: u16, def: &CardDef) -> Result<Option<Value>> {
         let event = match condition {
             ControllerGainsLife => json!({"event":"CapturedControllerGainsPositiveLife",
                 "per_actual_committed_gain_event":true,"ignores_amount_as_trigger_multiplier":true}),
-            ControllerAddedPlusOneCountersToSelf { max_per_turn } =>
+            ControllerAddedPlusOneCountersToSelf { max_per_turn } => {
                 json!({"event":"ControllerPutsPositivePlusOneCountersOnOriginalSource",
                     "requires_original_battlefield_incarnation":true,"max_per_turn":max_per_turn,
-                    "per_committed_counter_event":true,"consumed_when_trigger_captured":true}),
-            ControllerFirstLifeGain { own_turn_only } =>
+                    "per_committed_counter_event":true,"consumed_when_trigger_captured":true})
+            }
+            ControllerFirstLifeGain { own_turn_only } => {
                 json!({"event":"CapturedControllerFirstPositiveLifeGainOfActualTurn",
                     "requires_own_turn":own_turn_only,"earlier_gain_without_source_still_consumes_first":true,
-                    "uses_event_time_source_incarnation_controller_and_active_player":true}),
+                    "uses_event_time_source_incarnation_controller_and_active_player":true})
+            }
             Etb => json!({"event":"OriginalPermanentEntersBattlefield"}),
             _ => return Err(Error::UnsupportedPrintedRoot(id)),
         };
@@ -99,18 +142,24 @@ pub(super) fn printing(id: u16, def: &CardDef) -> Result<Option<Value>> {
             ExemplarDraw => json!({"operation":"DrawCards","count":1,"player":"CapturedController",
                 "normal_draw_replacements_and_empty_library_loss_apply":true,
                 "drawn_identity_private_to_authorized_viewers":true}),
-            VanguardSurveil => json!({"operation":"Surveil","count":1,"player":"CapturedController",
+            VanguardSurveil => {
+                json!({"operation":"Surveil","count":1,"player":"CapturedController",
                 "selection_is_not_targeting":true,"look_at_current_top_is_chooser_only":true,
                 "options":[{"index":0,"operation":"KeepOriginalTopCardOnTop"},
                     {"index":1,"operation":"MoveOriginalTopCardToOwnersGraveyard"}],
                 "empty_library_skips_choice":true,"does_not_draw_or_shuffle":true,
-                "normal_zone_replacements_apply":true}),
+                "normal_zone_replacements_apply":true})
+            }
             CollectorFood | CollectorCat => {
                 let token = crate::card_def::card_id_by_name(
-                    program.token_name().ok_or(Error::UnsupportedPrintedRoot(id))?,
-                ).ok_or(Error::UnsupportedPrintedRoot(id))?;
+                    program
+                        .token_name()
+                        .ok_or(Error::UnsupportedPrintedRoot(id))?,
+                )
+                .ok_or(Error::UnsupportedPrintedRoot(id))?;
                 let printing = if program == CollectorFood {
-                    super::super::next_five::printing(token)?.ok_or(Error::UnsupportedPrintedRoot(token))?
+                    super::super::next_five::printing(token)?
+                        .ok_or(Error::UnsupportedPrintedRoot(token))?
                 } else {
                     super::baseline(token)?
                 };
