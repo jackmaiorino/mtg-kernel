@@ -1224,19 +1224,25 @@ pub(crate) mod statics {
         }
         match spec {
             TargetSpec::StandardV1(
-                S::OneToThreeDistinctAnyTargetsV1 | S::AnyNumberControlledNonlandNontokenPermanentsV1,
+                S::OneToThreeDistinctAnyTargetsV1
+                | S::AnyNumberControlledNonlandNontokenPermanentsV1,
             ) => {
                 // Distinct targets come from one independent roster. A
                 // non-Flagbearer pick cannot consume an eligible Flagbearer.
                 let available = if chosen.len() == max {
-                    candidates(&[]).iter().any(|target| is_flagbearer(state, target))
+                    candidates(&[])
+                        .iter()
+                        .any(|target| is_flagbearer(state, target))
                 } else {
                     next.iter().any(|target| is_flagbearer(state, target))
                 };
                 if available && chosen.len() + 1 == max {
                     next.retain(|target| is_flagbearer(state, target));
                 }
-                return (next, chosen.len() >= min && (chosen.is_empty() || !available));
+                return (
+                    next,
+                    chosen.len() >= min && (chosen.is_empty() || !available),
+                );
             }
             TargetSpec::StandardV1(S::CreatureThenGraveyardCardsV1) => {
                 // Only the first slot can target a permanent. The later
@@ -1247,7 +1253,10 @@ pub(crate) mod statics {
                     }
                     return (next, false);
                 }
-                if candidates(&[]).iter().any(|target| is_flagbearer(state, target)) {
+                if candidates(&[])
+                    .iter()
+                    .any(|target| is_flagbearer(state, target))
+                {
                     return (Vec::new(), false);
                 }
                 return (next, true);

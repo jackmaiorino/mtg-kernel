@@ -1442,7 +1442,13 @@ fn flagbearers_constrain_a_wide_independent_target_roster() {
             if legal_targets.len() == 24 && legal_targets.contains(&Target::Object(bearer))
     ));
     choose_target(&mut state, Target::Object(bearer));
-    assert!(matches!(next(&mut state), Decision::ChooseTargets { can_finish: true, .. }));
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseTargets {
+            can_finish: true,
+            ..
+        }
+    ));
     act(&mut state, Action::FinishEffectSelection);
     settled(&mut state);
     assert_eq!(zone(&state, bearer), Zone::Hand);
