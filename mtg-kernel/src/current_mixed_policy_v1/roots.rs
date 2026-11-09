@@ -820,6 +820,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || (targeted_spell.is_some() && matches!(d.name, "Bulk Up" | "Self-Reflection"))
             || (ordinary_batch_spell.is_some() && d.name == "Revenge of the Rats"))
         && (d.kicker_cost.is_none()
+            || (simple_trigger.is_some() && id == simple_trigger_printing::BUSHWHACKER_ID)
             || gnarlid.is_some()
             || (targeted_spell.is_some() && d.name == "Burst Lightning")
             || (targeted_entry.is_some() && d.name == "Sun-Blessed Healer")

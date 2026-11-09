@@ -5,6 +5,139 @@ use crate::{
     state::{GameState, Step, Zone},
 };
 
+#[test]
+fn goblin_bushwhacker_paid_kicker_and_entry_root_both_seats() {
+    use super::{
+        surveil_many::{checkpoint, sessions},
+        targeted_entry::{actions, cast},
+    };
+    use crate::{
+        card_def::{card_id_by_name, Keywords},
+        engine::{
+            effective_power, effective_toughness, has_effective_keyword, EffectDuration,
+            UntilEndOfTurnEffect,
+        },
+        state::StackItemKind,
+    };
+
+    let forest = card_id_by_name("Forest").unwrap();
+    let id = card_id_by_name("Goblin Bushwhacker").unwrap();
+    assert_eq!(id, 44);
+    let meaning = super::super::super::roots::baseline(id).unwrap();
+    assert_eq!(
+        super::super::super::roots::registered_permanent_printing(id).unwrap(),
+        Some(meaning.clone())
+    );
+    let printed = &meaning["simple_trigger_printing"];
+    assert_eq!(
+        printed["ordered_triggers"][0]["intervening_if"]["operation"],
+        "EnteringSpellWasKicked"
+    );
+    assert_eq!(
+        printed["ordered_triggers"][0]["ordered_resolution"][0]["grant_keyword"],
+        "Haste"
+    );
+
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for kicked in [false, true] {
+            let cast_root = &printed["ordered_cast_roots"][usize::from(kicked)];
+            assert_eq!(cast_root["optional_additional_cost"]["selected"], kicked);
+            assert_eq!(
+                cast_root["ordered_costs"][0]["base_total_before_increases_and_reductions"]
+                    ["pips"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1 + usize::from(kicked)
+            );
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[forest; 40],
+                &[forest; 40],
+                crate::rl::card_name,
+                552_044,
+                actor,
+            );
+            state.step = Step::Main1;
+            let mountains = [0; 2].map(|_| put(&mut state, actor, "Mountain", Zone::Battlefield));
+            let ally = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let opponent = put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Battlefield);
+            let source = put(&mut state, actor, "Goblin Bushwhacker", Zone::Hand);
+            let (mut owner, mut native) = sessions(state);
+            cast(&mut owner, &mut native, source);
+            let choices = actions(&owner);
+            for pay in [false, true] {
+                assert!(choices.iter().any(|a| matches!(a,
+                    A::ChooseKicker {source: cast_source, pay: answer, ..}
+                        if cast_source.arena_id == source.0 && *answer == pay
+                )));
+            }
+            checkpoint(&mut owner, &mut native);
+            act(&mut owner, &mut native, |a| matches!(a,
+                A::ChooseKicker {source: cast_source, pay, ..}
+                    if cast_source.arena_id == source.0 && *pay == kicked
+            ));
+            let paid = owner.fixture_state();
+            let spell = paid.stack.last().unwrap();
+            assert_eq!(spell.kind, StackItemKind::Spell);
+            assert_eq!(spell.source, source);
+            assert_eq!(spell.kicked, kicked);
+            assert_eq!(crate::engine::stack_spell_mana_value(paid, spell), 1);
+            assert_eq!(
+                mountains.iter().filter(|&&land| paid.objects.get(land).tapped).count(),
+                1 + usize::from(kicked)
+            );
+            assert_eq!(paid.players[actor.index()].mana_pool, [0; 6]);
+
+            let mut saw_trigger = false;
+            for _ in 0..16 {
+                let state = owner.fixture_state();
+                if let Some(item) = state.stack.iter().find(|item| {
+                    item.source == source && item.kind == StackItemKind::TriggeredAbility
+                }) {
+                    assert_eq!(item.controller, actor);
+                    assert!(item.kicked);
+                    assert!(item.targets.is_empty());
+                    saw_trigger = true;
+                }
+                if state.stack.is_empty() && state.engine.pending_triggers.is_empty() {
+                    break;
+                }
+                act(&mut owner, &mut native, |a| {
+                    matches!(
+                        a,
+                        A::Pass { .. }
+                            | A::OrderTriggers { .. }
+                            | A::ChooseTriggerOrderNext { .. }
+                    )
+                });
+            }
+            let resolved = owner.fixture_state();
+            assert!(resolved.stack.is_empty());
+            assert_eq!(saw_trigger, kicked);
+            assert_eq!(resolved.objects.get(source).zone, Zone::Battlefield);
+            for creature in [source, ally] {
+                assert_eq!(effective_power(resolved, creature), 1 + i32::from(kicked));
+                assert_eq!(effective_toughness(resolved, creature), 1);
+                assert_eq!(has_effective_keyword(resolved, creature, Keywords::HASTE), kicked);
+            }
+            assert_eq!(effective_power(resolved, opponent), 1);
+            assert!(!has_effective_keyword(resolved, opponent, Keywords::HASTE));
+            assert_eq!(effective_power(resolved, mountains[0]), 0);
+            assert_eq!(
+                resolved.engine.until_end_of_turn.iter().any(|effect| matches!(
+                    effect,
+                    UntilEndOfTurnEffect::ResolvedSetEffect {
+                        object_ids, duration: EffectDuration::EndOfTurn,
+                        power: 1, toughness: 0, grant_haste: true, ..
+                    } if object_ids.len() == 2
+                        && object_ids.contains(&source) && object_ids.contains(&ally)
+                )),
+                kicked
+            );
+        }
+    }
+}
+
 const NAMES: [&str; 8] = [
     "Helpful Hunter",
     "Icewind Elemental",

@@ -165,7 +165,6 @@ fn every_frozen_fdn_printing_in_own_hand_has_current_numeric_coverage_both_seats
         "Etali, Primal Storm",
         "Exemplar of Light",
         "Fiend Artisan",
-        "Goblin Bushwhacker",
         "Imprisoned in the Moon",
         "Kiora, the Rising Tide",
         "Kykar, Zephyr Awakener",
