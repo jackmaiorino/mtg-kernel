@@ -177,6 +177,39 @@ fn lavinia_restricts_free_resolution_casts_before_the_offer_both_seats() {
 }
 
 #[test]
+fn lavinia_refuses_madness_before_target_announcement_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = paid_lavinia(actor, &["Island"; 20]);
+        tap(&mut state, actor, "Mountain");
+        pool(&mut state, actor, &[ManaColor::R], 0);
+        let temper = put(&mut state, actor, "Fiery Temper", Zone::Hand);
+        let looting = put(&mut state, actor, "Faithless Looting", Zone::Hand);
+        cast(&mut state, looting, &[]);
+        let mut offered = false;
+        settle_with(&mut state, |state, decision| match decision {
+            Decision::Discard { count, choices, .. } => {
+                assert!(choices.contains(&temper));
+                let mut chosen = vec![temper];
+                chosen.extend(choices.into_iter().filter(|card| *card != temper).take(usize::from(count) - 1));
+                Action::Discard(chosen)
+            }
+            Decision::ChooseMadnessCast { card, .. } => {
+                assert_eq!(card, temper);
+                assert_eq!(mana(state, actor, ManaColor::R), 1, "Madness cost is affordable");
+                offered = true;
+                Action::ChooseMadnessCast(true)
+            }
+            Decision::ChooseTargets { .. } => panic!("a forbidden Madness spell cannot announce targets"),
+            other => first_answer(other),
+        });
+        assert!(offered);
+        assert_eq!(zone(&state, temper), Zone::Graveyard);
+        assert_eq!(mana(&state, actor, ManaColor::R), 1);
+        assert_eq!(state.players[actor.opponent().index()].life, 20);
+    }
+}
+
+#[test]
 fn lavinia_restricts_paid_graveyard_resolution_casts_both_seats() {
     for actor in [P0, P1] {
         let mut state = paid_lavinia(actor, &["Island"; 20]);
