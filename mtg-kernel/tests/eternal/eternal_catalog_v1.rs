@@ -309,7 +309,11 @@ fn eternal_registry_follows_the_pauper_and_standard_ids() {
     assert_eq!(CARD_DEFS.len(), expected.len());
     for (id, name) in expected.into_iter().enumerate() {
         assert_eq!(CARD_DEFS[id].name, name, "id {id}");
-        assert_eq!(CARD_DEFS[id].capability, expected_capability(name), "{name}");
+        assert_eq!(
+            CARD_DEFS[id].capability,
+            expected_capability(name),
+            "{name}"
+        );
     }
     for name in PARTIAL_S1 {
         let id = card_id_by_name(name).unwrap();

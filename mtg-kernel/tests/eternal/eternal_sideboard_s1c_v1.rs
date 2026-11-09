@@ -3,9 +3,7 @@
 //! wave's cards).
 #![cfg(feature = "eternal-fixtures")]
 
-use mtg_kernel::card_def::{
-    card_id_by_name, CardDef, Keywords, Subtype, CARD_DEFS,
-};
+use mtg_kernel::card_def::{card_id_by_name, CardDef, Keywords, Subtype, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, CastMode, Decision, OptionalCostChoice};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
