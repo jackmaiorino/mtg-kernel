@@ -111,6 +111,9 @@ fn default_max_prepared_tensor_mebibytes() -> usize {
 fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
     *value == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES
 }
+/// The opt-in checkpoint codec benchmark (mtg-kernel#596): measurement only.
+#[cfg(feature = "checkpoint-codec-bench-v1")]
+pub mod checkpoint_codec_bench_v1;
 pub(crate) mod checkpoint_container_v1;
 mod fresh_initialization_source;
 mod fresh_registry_transfer_source;
