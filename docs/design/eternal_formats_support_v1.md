@@ -517,10 +517,11 @@ New, each built once in the first wave that needs it:
   Shoal (X tied to an exiled card), Darksteel Angel (cannot lose the game) and Portal to
   Phyrexia (subtype grant on reanimation).
   Partial: the drawing player can choose dredge or let Hullbreacher replace the draw (616.1) on
-  resumable draw programs, including the monarch's draw, Bonder's Ornament,
-  Niv-Mizzet, Visionary's damage draws, and both selected-discard draw paths. An affected
-  player can also choose between Jace's empty-library win and Hullbreacher on verified
-  fixed-count draw instructions, the monarch's draw, and Niv-Mizzet's damage draws.
+  resumable draw programs, including the monarch's draw, Bonder's Ornament, and both
+  selected-discard draw paths. An affected player can also choose between Jace's
+  empty-library win and Hullbreacher on fixed-count draw instructions and the monarch's
+  draw. Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
+  Their damage-draw interaction has no native qualification.
   Some specialized synchronous draws and unbound generated or dynamic draw instructions
   still lack a replacement choice. Native qualification of the repairs is pending.
 - S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
@@ -580,7 +581,14 @@ The Extirpate, Martyr and Lavinia repair batch is composed at `e8d06349e2956e3a3
 The pinned Rust 1.94.1/MSVC standalone generator produced catalog hash
 `e19d5ece9b17ec1e` from that source; the prior capability-only hash was `a07edccb09460703`.
 Generator receipt SHA-256: `3fa633076153461982c151eaf6bc225d4dd73ef8feddd0b00a2784e3b7b97249`.
-Native qualification and the genuine `MartyrRevealPaidV1` event sample remain pending.
+The guarded native batch at `90bda0c0f` completed 24 passes and four fixture
+failures. Surgical, Extirpate, Martyr and the five optional Flagbearer cases
+passed. The Lavinia Bestow fixture accidentally provided an extra mana creature;
+the host is now summoning sick. Two Hullbreacher fixtures now use the available
+Opt, and the Niv/Hull combination is documented as absent from shipped catalogs.
+Those changed fixtures await rerun. The genuine `MartyrRevealPaidV1` sample is
+appended with its passing producer receipt in `data/event_history_v1/README.md`;
+the three event-history consumer checks remain pending.
 No capability labels or playable-deck counts are promoted by this source batch.
 
 ## Card contract and verification
