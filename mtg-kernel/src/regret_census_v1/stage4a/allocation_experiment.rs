@@ -123,6 +123,7 @@ impl Config {
                 work_limit,
                 key_memo: None,
                 value_leaf: None,
+                world: None,
             },
             arm,
             seed,
