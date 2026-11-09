@@ -7,7 +7,13 @@ use crate::{
 };
 
 fn board(decision: &KaitoDecision) -> &PublicObservationProjectionV2 {
-    &decision.fixture_backend_v75().observation().common.common.projection.surface
+    &decision
+        .fixture_backend_v75()
+        .observation()
+        .common
+        .common
+        .projection
+        .surface
 }
 
 fn action_index(decision: &KaitoDecision, choose: impl Fn(&Action) -> bool) -> Option<u32> {
@@ -25,12 +31,18 @@ fn apply(owner: &mut KaitoSession, native: &mut FastActorSessionV1, d: &KaitoDec
     let original = backend.fixture_original_index_v75(i).unwrap();
     assert_eq!(
         owner.apply(d, i).unwrap(),
-        native.step(expected.episode_id, expected.step, original).unwrap()
+        native
+            .step(expected.episode_id, expected.step, original)
+            .unwrap()
     );
     assert_eq!(owner.fixture_state(), native.kaito_fixture_state());
 }
 
-fn act(owner: &mut KaitoSession, native: &mut FastActorSessionV1, choose: impl Fn(&Action) -> bool) {
+fn act(
+    owner: &mut KaitoSession,
+    native: &mut FastActorSessionV1,
+    choose: impl Fn(&Action) -> bool,
+) {
     let d = decision(owner);
     let i = action_index(&d, choose)
         .unwrap_or_else(|| panic!("expected action in {:?}", d.fixture_backend_v75().actions()));
@@ -69,7 +81,11 @@ fn cast_action(action: &Action, object: ObjectId) -> bool {
     matches!(action, Action::CastSpell { source, .. } if source.arena_id == object.0)
 }
 
-fn advance_to_actor_main(owner: &mut KaitoSession, native: &mut FastActorSessionV1, actor: PlayerId) {
+fn advance_to_actor_main(
+    owner: &mut KaitoSession,
+    native: &mut FastActorSessionV1,
+    actor: PlayerId,
+) {
     let turn = owner.fixture_state().turn_key_v1();
     for _ in 0..96 {
         let state = owner.fixture_state();
@@ -86,7 +102,10 @@ fn advance_to_actor_main(owner: &mut KaitoSession, native: &mut FastActorSession
 }
 
 fn assert_stats(d: &KaitoDecision, object: ObjectId, power: i32, toughness: i32) {
-    let live = board(d).battlefield.iter().flatten()
+    let live = board(d)
+        .battlefield
+        .iter()
+        .flatten()
         .find(|card| card.stable.arena_id == object.0)
         .unwrap();
     assert_eq!(live.characteristics.effective_power, Some(power));
@@ -102,16 +121,28 @@ fn paid_elf_lords_keep_original_actions_and_live_counts_for_both_seats() {
         ] {
             let library = [card("Forest"); 40];
             let mut state = GameState::new_from_libraries_with_starting_player_v1(
-                &library, &library, crate::rl::card_name, 550_210, actor,
+                &library,
+                &library,
+                crate::rl::card_name,
+                550_210,
+                actor,
             );
             state.step = Step::Main1;
             crate::combat_damage_v1::enable_foundations_combat_v1(&mut state).unwrap();
-            FastActorSessionV1::enable_limited_native_modes_v1(&mut state, LimitedAppendixV1::FullPool);
+            FastActorSessionV1::enable_limited_native_modes_v1(
+                &mut state,
+                LimitedAppendixV1::FullPool,
+            );
             let lands: Vec<_> = (0..mana)
                 .map(|_| put(&mut state, actor, "Forest", Zone::Battlefield))
                 .collect();
             let own_elf = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
-            let other_elf = put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Battlefield);
+            let other_elf = put(
+                &mut state,
+                actor.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
             let hawk = put(&mut state, actor, "Healer's Hawk", Zone::Battlefield);
             let lord = put(&mut state, actor, name, Zone::Hand);
             let removal = put(&mut state, actor.opponent(), "Stab", Zone::Hand);
@@ -126,9 +157,14 @@ fn paid_elf_lords_keep_original_actions_and_live_counts_for_both_seats() {
             let cast = action_index(&d, |action| cast_action(action, lord)).unwrap();
             apply(&mut owner, &mut native, &d, cast);
             assert_eq!(owner.fixture_state().objects.get(lord).zone, Zone::Stack);
-            assert!(lands.iter().all(|&id| owner.fixture_state().objects.get(id).tapped));
+            assert!(lands
+                .iter()
+                .all(|&id| owner.fixture_state().objects.get(id).tapped));
             assert!(!owner.fixture_state().objects.get(own_elf).tapped);
-            assert_eq!(owner.fixture_state().players[actor.index()].mana_pool, [0; 6]);
+            assert_eq!(
+                owner.fixture_state().players[actor.index()].mana_pool,
+                [0; 6]
+            );
             settle(&mut owner, &mut native);
             assert!(owner.fixture_state().objects.get(lord).summoning_sick);
             let entered = decision(&owner);
@@ -164,19 +200,29 @@ fn paid_elf_lords_keep_original_actions_and_live_counts_for_both_seats() {
             }
 
             for _ in 0..24 {
-                if owner.fixture_state().stack.iter().any(|item| {
-                    item.source == lord && item.kind == StackItemKind::TriggeredAbility
-                }) {
+                if owner
+                    .fixture_state()
+                    .stack
+                    .iter()
+                    .any(|item| item.source == lord && item.kind == StackItemKind::TriggeredAbility)
+                {
                     break;
                 }
                 let d = decision(&owner);
                 let attack = action_index(&d, |action| match action {
-                    Action::ChooseAttackerInclusion { attacker, include, .. } =>
-                        *include == [lord.0, own_elf.0].contains(&attacker.arena_id),
-                    Action::DeclareAttackers { attackers, .. } =>
-                        attackers.len() == 2 && attackers.iter().all(|a| [lord.0, own_elf.0].contains(&a.arena_id)),
+                    Action::ChooseAttackerInclusion {
+                        attacker, include, ..
+                    } => *include == [lord.0, own_elf.0].contains(&attacker.arena_id),
+                    Action::DeclareAttackers { attackers, .. } => {
+                        attackers.len() == 2
+                            && attackers
+                                .iter()
+                                .all(|a| [lord.0, own_elf.0].contains(&a.arena_id))
+                    }
                     _ => false,
-                }).or_else(|| action_index(&d, pass)).expect("actual attack declaration");
+                })
+                .or_else(|| action_index(&d, pass))
+                .expect("actual attack declaration");
                 apply(&mut owner, &mut native, &d, attack);
             }
             let triggered = decision(&owner);
@@ -189,7 +235,9 @@ fn paid_elf_lords_keep_original_actions_and_live_counts_for_both_seats() {
             if action_index(&triggered, |action| cast_action(action, removal)).is_none() {
                 act(&mut owner, &mut native, pass);
             }
-            act(&mut owner, &mut native, |action| cast_action(action, removal));
+            act(&mut owner, &mut native, |action| {
+                cast_action(action, removal)
+            });
             act(&mut owner, &mut native, |action| {
                 matches!(action,
                     Action::ChooseTarget { target: TargetRefV1::Object { object }, .. }
@@ -198,7 +246,10 @@ fn paid_elf_lords_keep_original_actions_and_live_counts_for_both_seats() {
             });
             let after_target = decision(&owner);
             if let Some(finish) = action_index(&after_target, |action| {
-                matches!(action, Action::FinishTargetSelection { .. } | Action::FinishEffectSelection { .. })
+                matches!(
+                    action,
+                    Action::FinishTargetSelection { .. } | Action::FinishEffectSelection { .. }
+                )
             }) {
                 apply(&mut owner, &mut native, &after_target, finish);
             }

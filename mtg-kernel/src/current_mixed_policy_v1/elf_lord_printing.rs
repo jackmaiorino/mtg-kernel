@@ -55,31 +55,38 @@ pub(super) fn printing(id: u16, def: &CardDef) -> Result<Option<Value>> {
     let trigger = triggers_for(id);
     let exact_roots = if id == DWYNEN {
         matches!(trigger, [trigger]
-            if trigger.condition == TriggerCondition::Attacks
-                && trigger.home_zone == Zone::Battlefield
-                && trigger.face_index == 0
-                && !trigger.intervening_if_kicked
-                && !trigger.intervening_if_controls_another_source_card
-                && (trigger.effect)() == (EffectOp::GainLifeByAttackingSubtypeCount {
-                    player: PlayerRef::Controller,
-                    subtype: Subtype::Elf,
-                }))
+        if trigger.condition == TriggerCondition::Attacks
+            && trigger.home_zone == Zone::Battlefield
+            && trigger.face_index == 0
+            && !trigger.intervening_if_kicked
+            && !trigger.intervening_if_controls_another_source_card
+            && (trigger.effect)() == (EffectOp::GainLifeByAttackingSubtypeCount {
+                player: PlayerRef::Controller,
+                subtype: Subtype::Elf,
+            }))
             && def.mana_ability_def.is_none()
             && (def.mana_ability)().is_none()
     } else {
         trigger.is_empty()
-            && def.mana_ability_def == Some(ManaAbilityDef {
-                cost: ManaAbilityCostDef::TapSelf,
-                amount: ManaAbilityAmountDef::Dynamic(
-                    DynamicValueDef::ControlledPermanentsWithSubtype(Subtype::Elf),
-                ),
-                controller_damage: 0,
-                max_activations_per_turn: None,
-            })
-            && (def.mana_ability)() == Some(EffectOp::Sequence(vec![
-                EffectOp::TapObject { object: ObjectRef::ThisSource },
-                EffectOp::AddMana { player: PlayerRef::Controller, colors: vec![ManaColor::G] },
-            ]))
+            && def.mana_ability_def
+                == Some(ManaAbilityDef {
+                    cost: ManaAbilityCostDef::TapSelf,
+                    amount: ManaAbilityAmountDef::Dynamic(
+                        DynamicValueDef::ControlledPermanentsWithSubtype(Subtype::Elf),
+                    ),
+                    controller_damage: 0,
+                    max_activations_per_turn: None,
+                })
+            && (def.mana_ability)()
+                == Some(EffectOp::Sequence(vec![
+                    EffectOp::TapObject {
+                        object: ObjectRef::ThisSource,
+                    },
+                    EffectOp::AddMana {
+                        player: PlayerRef::Controller,
+                        colors: vec![ManaColor::G],
+                    },
+                ]))
     };
     if id != printing
         || crate::card_def::card_id_by_name(def.name) != Some(id)
@@ -98,13 +105,20 @@ pub(super) fn printing(id: u16, def: &CardDef) -> Result<Option<Value>> {
         || !def.activated_abilities.is_empty()
         || def.produces_mana != colors
         || def.mana_ability_choices != colors
-        || (def.spell_effect)() != Some(EffectOp::MoveObject {
-            object: ObjectRef::ThisSource,
-            to_zone: Zone::Battlefield,
-        })
-        || !matches!(static_controlled_subtype_boost_for(def.name), Some(StaticControlledSubtypeBoostDef {
-            subtype: Subtype::Elf, exclude_source: true, power: 1, toughness: 1,
-        }))
+        || (def.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        || !matches!(
+            static_controlled_subtype_boost_for(def.name),
+            Some(StaticControlledSubtypeBoostDef {
+                subtype: Subtype::Elf,
+                exclude_source: true,
+                power: 1,
+                toughness: 1,
+            })
+        )
         || !exact_roots
     {
         return Err(Error::UnsupportedPrintedRoot(id));
@@ -159,7 +173,9 @@ pub(in crate::current_mixed_policy_v1) fn visible_counts(
                 .get(usize::from(id))
                 .is_some_and(|def| handles(def.name))
     };
-    if !battlefield.clone().any(|card| named(card.stable.card_db_id))
+    if !battlefield
+        .clone()
+        .any(|card| named(card.stable.card_db_id))
         && !board.stack.iter().any(|item| named(item.source.card_db_id))
     {
         return None;
@@ -171,9 +187,9 @@ pub(in crate::current_mixed_policy_v1) fn visible_counts(
         let controlled = battlefield.clone().filter(|card| {
             card.stable.controller == seat && card.stable.zone == Zone::Battlefield && elf(card)
         });
-        let attacking = controlled.clone().filter(|card| {
-            board.combat.ordered_attackers.contains(&card.stable)
-        });
+        let attacking = controlled
+            .clone()
+            .filter(|card| board.combat.ordered_attackers.contains(&card.stable));
         json!({"controller":seat,"current_elf_permanent_count":controlled.count(),
             "current_attacking_elf_permanent_count":attacking.count()})
     });

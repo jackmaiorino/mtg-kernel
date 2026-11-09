@@ -519,11 +519,7 @@ fn paid_axe_equips_the_real_harvester_nightmare_under_one_copy_scope_both_seats(
 
 #[test]
 fn every_frozen_printing_reaches_the_full_pool_sealed_learner_for_each_seat() {
-    fn check(
-        actor: PlayerId,
-        printings: &[u16],
-        model: &ModelV1,
-    ) -> Result<(), String> {
+    fn check(actor: PlayerId, printings: &[u16], model: &ModelV1) -> Result<(), String> {
         let library = [card("Forest"); 40];
         // Put a bounded own-hand sample at an actual main-phase decision.
         let mut state = GameState::new_from_libraries_with_starting_player_v1(
@@ -540,27 +536,43 @@ fn every_frozen_printing_reaches_the_full_pool_sealed_learner_for_each_seat() {
         }
         let objects: Vec<_> = printings
             .iter()
-            .map(|&id| put(&mut state, actor, CARD_DEFS[usize::from(id)].name, Zone::Hand))
+            .map(|&id| {
+                put(
+                    &mut state,
+                    actor,
+                    CARD_DEFS[usize::from(id)].name,
+                    Zone::Hand,
+                )
+            })
             .collect();
         let owner = KaitoSession::from_session(raw(&state)).map_err(|e| format!("{e:?}"))?;
         let FastActorResponseV1::Decision(expected) = owner.current_response() else {
-            return Err(format!("expected native decision, got {:?}", owner.current_response()));
+            return Err(format!(
+                "expected native decision, got {:?}",
+                owner.current_response()
+            ));
         };
         if expected.acting_player != actor.into() {
-            return Err(format!("unexpected native chooser {:?}", expected.acting_player));
+            return Err(format!(
+                "unexpected native chooser {:?}",
+                expected.acting_player
+            ));
         }
         let d = owner.encode(expected).map_err(|e| format!("{e:?}"))?;
         let hand = &d.fixture_backend_v75().observation().common.common.own_hand;
         for (&printing, object) in printings.iter().zip(objects) {
-            if !hand.iter().any(|row| {
-                row.stable.arena_id == object.0 && row.stable.card_db_id == printing
-            }) {
+            if !hand
+                .iter()
+                .any(|row| row.stable.arena_id == object.0 && row.stable.card_db_id == printing)
+            {
                 return Err(format!("own hand lost frozen printing {printing}"));
             }
         }
         let input = owner.training_input_v1(&d).map_err(|e| format!("{e:?}"))?;
         let scores = model.forward(&input).map_err(|e| format!("{e:?}"))?;
-        if scores.len() != d.packet().actions().len() || scores.iter().any(|score| !score.is_finite()) {
+        if scores.len() != d.packet().actions().len()
+            || scores.iter().any(|score| !score.is_finite())
+        {
             return Err("sealed learner returned an invalid score vector".into());
         }
         Ok(())

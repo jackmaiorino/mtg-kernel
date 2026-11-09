@@ -32,6 +32,8 @@ pub(super) mod divine_printing;
 pub(super) mod early_activation_printing;
 #[path = "eaten_printing.rs"]
 pub(super) mod eaten_printing;
+#[path = "elf_lord_printing.rs"]
+pub(super) mod elf_lord_printing;
 #[path = "enchantment_hunter_printing.rs"]
 pub(super) mod enchantment_hunter_printing;
 #[path = "entry_branch_printing.rs"]
@@ -96,8 +98,6 @@ mod targeted_entry_printing;
 mod targeted_spell_printing;
 #[path = "team_static_printing.rs"]
 mod team_static_printing;
-#[path = "elf_lord_printing.rs"]
-pub(super) mod elf_lord_printing;
 #[path = "threshold_loot_printing.rs"]
 mod threshold_loot_printing;
 #[path = "triggered_enchantment_printing.rs"]
@@ -471,9 +471,9 @@ pub(super) fn is_ordinary_aura(id: u16) -> bool {
         .is_some_and(|d| ordinary_aura_printing::handles(d.name))
 }
 pub(super) fn is_team_static_permanent(id: u16) -> bool {
-    CARD_DEFS
-        .get(usize::from(id))
-        .is_some_and(|d| team_static_printing::handles(d.name) || elf_lord_printing::handles(d.name))
+    CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
+        team_static_printing::handles(d.name) || elf_lord_printing::handles(d.name)
+    })
 }
 pub(super) fn is_shivan_permanent(id: u16) -> bool {
     CARD_DEFS
