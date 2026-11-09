@@ -150,10 +150,10 @@ pub(crate) fn quoted_offer(
     let paid = is_castable_now(player, spell, CastMethodV4::Normal, state);
     Some((source, paid))
 }
-fn options(state: &GameState, index: u64) -> Result<&OptionsV1, String> {
-    let Some(CommittedEvent::OmniscienceCastOptionsV1 { options: o }) = usize::try_from(index)
-        .ok()
-        .and_then(|i| state.engine.event_history.get(i))
+fn options(state: &GameState, index: u64, finalized: bool) -> Result<&OptionsV1, String> {
+    let at = usize::try_from(index).map_err(|_| "Omniscience option index width")?;
+    let Some(CommittedEvent::OmniscienceCastOptionsV1 { options: o }) =
+        state.engine.event_history.get(at)
     else {
         return Err("Omniscience original option record absent".into());
     };
@@ -181,7 +181,11 @@ fn options(state: &GameState, index: u64) -> Result<&OptionsV1, String> {
     if !d.is_executable() || !d.is_castable() || d.has_type(CardType::Land) {
         return Err("Omniscience original hand printing changed".into());
     }
-    validate_historical_ability_source_contract(state, o.source)?;
+    if finalized {
+        crate::sampled_history_v1::validate_source(state, at, o.source)?;
+    } else {
+        validate_historical_ability_source_contract(state, o.source)?;
+    }
     Ok(o)
 }
 pub(super) fn waiting(p: &PendingCast) -> bool {
@@ -228,7 +232,7 @@ pub(super) fn free_cast_for(state: &GameState, spell: ObjectId, player: PlayerId
         && origin.origin_zone == Zone::Hand
         && origin.origin_zone_change_count == hand_generation
         && hand_generation.checked_add(1) == Some(live.zone_change_count)
-        && options(state, options_history_index).is_ok_and(|o| {
+        && options(state, options_history_index, origin.finalized_method.is_some()).is_ok_and(|o| {
             o.hand.source == spell
                 && o.controller == player
                 && o.hand.zone_change_count == hand_generation
@@ -242,7 +246,7 @@ pub(super) fn validate(state: &GameState, p: &PendingCast) -> Result<(), String>
             Err("Omniscience pending choice erased".into())
         } else { Ok(()) };
     };
-    let o = options(state, c.options_history_index)?;
+    let o = options(state, c.options_history_index, false)?;
     let cast = p
         .source_contract
         .spell_cast_origin
@@ -266,7 +270,7 @@ pub(super) fn validate(state: &GameState, p: &PendingCast) -> Result<(), String>
 pub(super) fn answer(state: &mut GameState, p: &PendingCast, index: u16) -> Result<(), String> {
     validate(state, p)?;
     let c = p.omniscience_v1.ok_or("Omniscience choice absent")?;
-    let o = options(state, c.options_history_index)?;
+    let o = options(state, c.options_history_index, false)?;
     if c.free.is_some() || !o.paid || index > 1 {
         return Err("Omniscience choice already selected/outside menu".into());
     }
@@ -358,7 +362,7 @@ pub(super) fn paid_contract(
     if state.engine.event_history.iter().filter(|e| matches!(e, CommittedEvent::OmniscienceCastSelectedV1 { stack_item_id:id, .. } if id == stack_item_id)).count() != 1 {
         return Err("Omniscience finalized receipt duplicated".into());
     }
-    let o = options(state, choice.options_history_index)?;
+    let o = options(state, choice.options_history_index, true)?;
     let mut before = contract;
     before.finalized_cast_binding = None;
     before.cast_method = original.cast_method;
@@ -431,7 +435,7 @@ pub(crate) fn pending_options<'a>(
     validate_pending_cast(state, pending)?;
     pending
         .omniscience_v1
-        .map(|choice| Ok((choice, options(state, choice.options_history_index)?)))
+        .map(|choice| Ok((choice, options(state, choice.options_history_index, false)?)))
         .transpose()
 }
 
@@ -475,7 +479,7 @@ pub(crate) fn published_options<'a>(
     };
     Ok(Some((
         *choice,
-        options(state, choice.options_history_index)?,
+        options(state, choice.options_history_index, true)?,
     )))
 }
 
@@ -728,3 +732,7 @@ pub(crate) fn definition(id: u16) -> bool {
 ))]
 #[path = "omniscience_cast_v1_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
+#[path = "omniscience_full_pool_sampling_tests.rs"]
+mod full_pool_sampling_tests;
