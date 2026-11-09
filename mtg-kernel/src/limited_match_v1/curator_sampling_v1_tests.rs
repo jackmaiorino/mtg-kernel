@@ -148,7 +148,8 @@ fn paid_curator_sampled_layout_is_invariant_to_private_piles_and_aliases_both_se
             let other = decision(&sb);
             assert_eq!(current.packet(), da.packet());
             assert_eq!(current.packet(), other.packet());
-            let selected = pile_ordinal(&current, PileV1::FaceUp);
+            let pile = if seed % 2 == 0 { PileV1::FaceDown } else { PileV1::FaceUp };
+            let selected = pile_ordinal(&current, pile);
             let native_index = current.fixture_backend_v75().fixture_original_index_v75(selected).unwrap();
             assert_eq!(other.fixture_backend_v75().fixture_original_index_v75(selected), Some(native_index));
             let expected = current.fixture_backend_v75().expected();
@@ -158,17 +159,35 @@ fn paid_curator_sampled_layout_is_invariant_to_private_piles_and_aliases_both_se
             assert_eq!(sa.apply(&current, selected).unwrap(), result);
             assert_eq!(sa.fixture_state(), engine.kaito_fixture_state());
             sb.apply(&other, selected).unwrap();
-            let order_a = decision(&sa);
-            let order_b = decision(&sb);
-            assert_eq!(order_names(&order_a), order_names(&order_b));
-            sa.apply(&order_a, 0).unwrap();
-            sb.apply(&order_b, 0).unwrap();
+            let order = decision(&sa);
+            if seed == 552_001 {
+                let sampled_order = sa.sampled_full_pool_closed_list_v1(&order, seed, &belief).unwrap();
+                assert_eq!(decision(&sampled_order).packet(), order.packet());
+            }
+            for _ in 0..2 {
+                let order_a = decision(&sa);
+                let order_b = decision(&sb);
+                if !matches!(
+                    order_a.fixture_backend_v75().observation().curator.as_ref().unwrap().chooser,
+                    Some(ChoiceV1::Cards { stage: CardsStageV1::OrderGraveyard, .. }),
+                ) {
+                    break;
+                }
+                assert_eq!(order_names(&order_a), order_names(&order_b));
+                sa.apply(&order_a, 0).unwrap();
+                sb.apply(&order_b, 0).unwrap();
+            }
             for sampled in [&sa, &sb] {
                 let facts = public::capture(sampled.fixture_state(), viewer).unwrap();
                 let StageV1::Resolved(outcome) = &facts.entries[0].stage else { panic!() };
-                assert_eq!(outcome.actual_hand_arrivals, 3);
-                assert_eq!(outcome.public_moves.len(), 2);
-                assert_eq!(outcome.revealed_hand_arrivals.len(), 2);
+                assert_eq!(outcome.chosen, pile);
+                let (hand, graveyard, revealed) = match pile {
+                    PileV1::FaceUp => (3, 2, 2),
+                    PileV1::FaceDown => (2, 3, 0),
+                };
+                assert_eq!(outcome.actual_hand_arrivals, hand);
+                assert_eq!(outcome.public_moves.len(), graveyard);
+                assert_eq!(outcome.revealed_hand_arrivals.len(), revealed);
             }
             sa.restore(&saved).unwrap();
             assert_eq!(decision(&sa).packet(), da.packet());
