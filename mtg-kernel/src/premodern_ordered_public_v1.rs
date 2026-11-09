@@ -357,7 +357,13 @@ fn human_order_prompt(
         .native_candidates
         .iter()
         .enumerate()
-        .map(|(index, card)| Ok(format!("Place {} next (choice {})", public_name(card)?, index + 1)))
+        .map(|(index, card)| {
+            Ok(format!(
+                "Place {} next (choice {})",
+                public_name(card)?,
+                index + 1
+            ))
+        })
         .collect::<Result<Vec<_>, String>>()?;
     Ok(HumanOrderPromptV1 {
         schema: HUMAN_ORDER_SCHEMA_V1,
@@ -374,35 +380,58 @@ pub fn observe_human(state: &GameState, viewer: PlayerId) -> Result<HumanObserva
     let view = observe(state, viewer)?;
     let graveyard = |row: &GraveyardV1| -> Result<HumanGraveyardV1, String> {
         Ok(HumanGraveyardV1 {
-            bottom_to_top: row.bottom_to_top.iter().map(public_name).collect::<Result<_, _>>()?,
-            unplaced: row.unplaced.iter().map(public_name).collect::<Result<_, _>>()?,
+            bottom_to_top: row
+                .bottom_to_top
+                .iter()
+                .map(public_name)
+                .collect::<Result<_, _>>()?,
+            unplaced: row
+                .unplaced
+                .iter()
+                .map(public_name)
+                .collect::<Result<_, _>>()?,
         })
     };
-    let full_text = view.full_text.map(|rows| {
-        rows.into_iter().map(|row| {
-            Ok(HumanFullTextFormV1 {
+    let full_text = view
+        .full_text
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| {
+                    Ok(HumanFullTextFormV1 {
+                        physical_name: public_name(&row.physical)?,
+                        controller: row.physical.controller,
+                        text_donor_name: row.text_donor.as_ref().map(public_name).transpose()?,
+                        characteristics: row.characteristics,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()
+        })
+        .transpose()?;
+    let producers = view
+        .producers
+        .into_iter()
+        .map(|row| {
+            Ok(HumanFullTextProducerV1 {
+                stage: row.stage,
                 physical_name: public_name(&row.physical)?,
                 controller: row.physical.controller,
-                text_donor_name: row.text_donor.as_ref().map(public_name).transpose()?,
-                characteristics: row.characteristics,
+                text_donor_name: public_name(&row.text_donor)?,
+                program: row.program,
             })
-        }).collect::<Result<Vec<_>, String>>()
-    }).transpose()?;
-    let producers = view.producers.into_iter().map(|row| {
-        Ok(HumanFullTextProducerV1 {
-            stage: row.stage,
-            physical_name: public_name(&row.physical)?,
-            controller: row.physical.controller,
-            text_donor_name: public_name(&row.text_donor)?,
-            program: row.program,
         })
-    }).collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(HumanObservationV1 {
         schema: HUMAN_SCHEMA_V1,
         card_db_hash: view.card_db_hash,
         viewer: view.viewer,
-        graveyards: [graveyard(&view.graveyards[0])?, graveyard(&view.graveyards[1])?],
-        order_choice: view.order_choice.map(|choice| human_order_prompt(choice, view.viewer)).transpose()?,
+        graveyards: [
+            graveyard(&view.graveyards[0])?,
+            graveyard(&view.graveyards[1])?,
+        ],
+        order_choice: view
+            .order_choice
+            .map(|choice| human_order_prompt(choice, view.viewer))
+            .transpose()?,
         full_text,
         producers,
     })
@@ -465,9 +494,15 @@ mod tests {
                     observe_human(&b, viewer).unwrap()
                 );
             }
-            assert!(observe_human(&a, owner.opponent()).unwrap().order_choice.is_none());
+            assert!(observe_human(&a, owner.opponent())
+                .unwrap()
+                .order_choice
+                .is_none());
             let prompt = observe_human(&a, owner).unwrap().order_choice.unwrap();
-            assert_eq!(Some(&prompt), observe_human_order(&a, owner).unwrap().as_ref());
+            assert_eq!(
+                Some(&prompt),
+                observe_human_order(&a, owner).unwrap().as_ref()
+            );
             assert_eq!(
                 prompt.action_labels,
                 [
