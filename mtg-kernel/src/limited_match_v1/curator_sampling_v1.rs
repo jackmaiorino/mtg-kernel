@@ -161,13 +161,16 @@ pub(crate) fn rewrite(
     belief: &LimitedBeliefV1,
     seed: u64,
     known_names: Vec<u16>,
+    library_minima: &[u16],
 ) -> Result<(), String> {
     let pile = active_pile(state, actor, &slots[1], seed)?;
     receipts::mark_sampled_hand_arrivals(state, actor, &slots[1])?;
     if let Some(pile) = &pile {
         pile.place_shown(state, &mut slots[1])?;
     }
-    closed_list_v2::rewrite_names(state, actor, slots, belief, seed, known_names)?;
+    closed_list_v2::rewrite_names_with_library(
+        state, actor, slots, belief, seed, known_names, library_minima,
+    )?;
     if let Some(pile) = pile {
         pile.restore_controller_look(state);
     }

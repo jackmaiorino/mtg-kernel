@@ -51,19 +51,48 @@ pub(crate) fn rewrite_names(
     slots: [Vec<ObjectId>; 2],
     belief: &LimitedBeliefV1,
     seed: u64,
+    known_hand: Vec<u16>,
+) -> Result<(), String> {
+    rewrite_names_with_library(state, actor, slots, belief, seed, known_hand, &[])
+}
+
+pub(crate) fn rewrite_names_with_library(
+    state: &mut GameState,
+    actor: PlayerId,
+    slots: [Vec<ObjectId>; 2],
+    belief: &LimitedBeliefV1,
+    seed: u64,
     mut known_hand: Vec<u16>,
+    library_minima: &[u16],
 ) -> Result<(), String> {
     let opponent = actor.opponent();
-    let [own_library, opponent_slots] = slots;
+    let [own_library, mut opponent_slots] = slots;
     let hand_len = state.players[opponent.index()].hand.len();
     let unknown: HashSet<_> = opponent_slots.iter().copied().collect();
     known_hand.sort_unstable();
-    if known_hand.len() > hand_len {
+    if known_hand.len() > hand_len || opponent_slots.len() < hand_len {
         return Err("invalid hand knowledge".into());
+    }
+
+    let mut required_library = library_minima.to_vec();
+    if !required_library.is_empty() {
+        for &id in &state.players[opponent.index()].library {
+            if !unknown.contains(&id) {
+                if let Some(index) = required_library.iter().position(|name| {
+                    *name == state.objects.get(id).card_def
+                }) {
+                    required_library.remove(index);
+                }
+            }
+        }
+    }
+    if required_library.len() > opponent_slots.len() - hand_len {
+        return Err("public library minima exceed unknown library slots".into());
     }
 
     let mut observed = observed_cards_v1(state, opponent, &unknown);
     observed.extend(known_hand.iter().copied());
+    observed.extend(required_library.iter().copied());
     // Face-down identities only reach here if this actor is allowed to look.
     observed.extend(
         state
@@ -80,12 +109,18 @@ pub(crate) fn rewrite_names(
     );
     observed.sort_unstable();
 
-    let unknown_count = opponent_slots.len() - known_hand.len();
+    let unknown_hand = hand_len - known_hand.len();
+    let unknown_count = opponent_slots.len() - known_hand.len() - required_library.len();
+    let rest = if unknown_count > 0 {
+        belief_remainder(belief, &observed, observed.len() + unknown_count, seed)?.0
+    } else {
+        Vec::new()
+    };
+    let mut remainder = rest.into_iter().cycle().take(unknown_count);
     let mut opponent_definitions = known_hand.clone();
-    if unknown_count > 0 {
-        let (rest, _) = belief_remainder(belief, &observed, observed.len() + unknown_count, seed)?;
-        opponent_definitions.extend(rest.into_iter().cycle().take(unknown_count));
-    }
+    opponent_definitions.extend(remainder.by_ref().take(unknown_hand));
+    opponent_definitions.extend(required_library.iter().copied());
+    opponent_definitions.extend(remainder);
     // Shuffle name facts among hand slots, then recreate the name ledger at
     // the sampled placement. Neither the live slot nor its rank is a fact.
     let mut hand_order: Vec<_> = (0..hand_len).collect();
@@ -101,6 +136,10 @@ pub(crate) fn rewrite_names(
             }
         })
         .collect::<Vec<_>>();
+    if !required_library.is_empty() {
+        let mut rng = SplitMix64::seed(derive_seed(b"mtg-kernel/limited-library-minima/v1\0", &[seed]));
+        shuffle(&mut opponent_slots[hand_len..], &mut rng);
+    }
     let opponent_order = hand_order
         .into_iter()
         .map(|index| opponent_slots[index])

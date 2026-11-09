@@ -1167,6 +1167,7 @@ pub(crate) struct LimitedClosedListRootV3 {
     slots: [Vec<ObjectId>; 2],
     knowledge: crate::reveal_meaning_v3::RevealKnowledgeV3,
     known_names: Vec<u16>,
+    library_minima: Vec<u16>,
     typed_full_pool: bool,
 }
 
@@ -8634,11 +8635,17 @@ impl FastActorSessionV1 {
             return Err("opponent hand selection binds physical copies".into());
         }
         let slots = closed_list_v2::resampled_slots(&self.state, actor, &pinned);
+        let library_minima = if typed_full_pool {
+            crate::limited_match_v1::library_minima_v1::minimum_names(&self.state, opponent)
+        } else {
+            Vec::new()
+        };
         Ok(LimitedClosedListRootV3 {
             actor,
             slots,
             knowledge,
             known_names,
+            library_minima,
             typed_full_pool,
         })
     }
@@ -8661,19 +8668,26 @@ impl FastActorSessionV1 {
             return Err("sampled root actor or owning profile differs".into());
         }
         let mut sampled = self.clone();
-        let rewrite = if typed_full_pool {
-            crate::limited_match_v1::curator_sampling_v1::rewrite
+        if typed_full_pool {
+            crate::limited_match_v1::curator_sampling_v1::rewrite(
+                &mut sampled.state,
+                root.actor,
+                root.slots.clone(),
+                belief,
+                seed,
+                root.known_names.clone(),
+                &root.library_minima,
+            )?;
         } else {
-            closed_list_v2::rewrite_names
-        };
-        rewrite(
-            &mut sampled.state,
-            root.actor,
-            root.slots.clone(),
-            belief,
-            seed,
-            root.known_names.clone(),
-        )?;
+            closed_list_v2::rewrite_names(
+                &mut sampled.state,
+                root.actor,
+                root.slots.clone(),
+                belief,
+                seed,
+                root.known_names.clone(),
+            )?;
+        }
         let mut viewers = [Default::default(), Default::default()];
         viewers[root.actor.index()] = root.knowledge.clone();
         sampled.state.reveal_knowledge_v4 = Some(viewers);
