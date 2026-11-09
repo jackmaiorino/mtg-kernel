@@ -16,47 +16,58 @@ import abba_v1 as abba  # noqa: E402
 # stage times are SCALE times the baseline's and whose run-to-run variation
 # depends on the attempt index in the label.
 FAKE_BENCH = r'''
-import json, sys
+import hashlib, json, sys
+from pathlib import Path
 SCALE = {scale}
 PUBLISHED = {published!r}
-FAIL = {fail}
+FAIL = {fail!r}
+FORGE_FIXTURE = {forge_fixture!r}
+MALFORMED = {malformed!r}
 args = sys.argv[1:]
 assert args[0] == "measure"
 options = dict(zip(args[1::2], args[2::2]))
-if FAIL:
-    sys.exit(3)
 attempt = int(options["--label"].rsplit(" ", 1)[1])
+if FAIL is True or (type(FAIL) is int and attempt == FAIL):
+    sys.exit(3)
+fixture_bytes = (Path(options["--fixture"]) / "fixture.json").read_bytes()
+fixture_sha256 = "f" * 64 if FORGE_FIXTURE else hashlib.sha256(fixture_bytes).hexdigest()
 jitter = {{0: 1.00, 1: 1.02, 2: 0.99, 3: 1.01}}[attempt % 4]
 def summary(value):
     return {{"median": value, "q1": value, "q3": value, "min": value, "max": value}}
 receipt = {{
     "schema": "mtg-kernel-checkpoint-codec-bench/v1",
     "config": {{"sections": ["stages"], "reps": 3, "public_pair": options.get("--public-pair")}},
-    "fixture": {{"manifest_sha256": "f" * 64}},
-    "checks": [{{"state": "warmed", "check": "fake", "after_state_sha256": "a" * 64, "passed": True}}],
+    "fixture": {{"manifest_sha256": fixture_sha256}},
+    "checks": [{{"section": "stages", "state": "warmed", "check": "fake", "state_sha256": "a" * 64,
+                "passed": True}}],
     "published": [{{"state": "warmed", "cell": "v2", "sha256": PUBLISHED, "bytes": 10}}],
     "series": [{{"section": "stages", "state": "warmed", "cell": "v2", "stage": "encode",
                  "summary": {{"n": 3, "wall_ns": summary(1e6 * SCALE * jitter),
-                              "allocated_bytes": summary(4096.0)}}}}],
+                              "allocated_bytes": summary(4096.0)}},
+                 "samples": [{{"wall_ns": 1e6 * SCALE * jitter, "allocated_bytes": 4096}}] * 3}}],
     "section_seconds": {{"stages": 2.0 * SCALE}},
     "process_peak_rss_bytes": 1 << 30,
 }}
 with open(options["--out"], "w") as stream:
-    json.dump(receipt, stream)
+    if MALFORMED:
+        stream.write("not a receipt\n")
+    else:
+        json.dump(receipt, stream)
 '''
 
 
 def receipt(wall_ns, published="b" * 64, passed=True, reps=3, after="a" * 64):
     return {
         "schema": abba.RECEIPT_SCHEMA,
-        "config": {"sections": ["stages"], "reps": reps, "public_pair": "/somewhere"},
+        "config": {"sections": ["updates"], "reps": reps, "update_reps": reps, "public_pair": "/somewhere"},
         "fixture": {"manifest_sha256": "f" * 64},
         "checks": [{"section": "updates", "state": "warmed", "check": "fake", "after_state_sha256": after,
                     "passed": passed}],
         "published": [{"state": "warmed", "cell": "v2", "sha256": published, "bytes": 10}],
-        "series": [{"section": "stages", "state": "warmed", "cell": "v2", "stage": "encode",
-                    "summary": {"n": 3, "wall_ns": {"median": wall_ns}}}],
-        "section_seconds": {"stages": 1.0},
+        "series": [{"section": "updates", "state": "warmed", "cell": "v2", "stage": "encode",
+                    "summary": {"n": 3, "wall_ns": {"median": wall_ns}},
+                    "samples": [{"wall_ns": wall_ns}] * 3}],
+        "section_seconds": {"updates": 1.0},
         "process_peak_rss_bytes": 100,
     }
 
@@ -136,6 +147,23 @@ class ComparisonTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "other settings"):
             abba.compare(entries([100, 104], [80, 82], reps=4))
 
+    def test_duplicate_series_cannot_manufacture_more_runs(self):
+        rows = entries([100, 101], [10, 11])
+        for _, sample, _ in rows:
+            sample["series"] *= 3
+        with self.assertRaisesRegex(ValueError, "duplicate series"):
+            abba.compare(rows)
+
+    def test_missing_checks_or_metrics_do_not_compare(self):
+        rows = entries([100, 101], [10, 11])
+        rows[1][1]["checks"].clear()
+        with self.assertRaisesRegex(ValueError, "lack checks or measurements"):
+            abba.compare(rows)
+        rows = entries([100, 101], [10, 11])
+        rows[1][1]["series"][0]["summary"]["allocated_bytes"] = {"median": 42}
+        with self.assertRaisesRegex(ValueError, "metric coverage"):
+            abba.compare(rows)
+
     def test_both_roles_are_required(self):
         with self.assertRaisesRegex(ValueError, "baseline and candidate"):
             abba.compare([("baseline", receipt(1), "only")])
@@ -170,13 +198,16 @@ class RunTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def fake(self, name, scale=1.0, published="b" * 64, fail=False):
+    def fake(self, name, scale=1.0, published="b" * 64, fail=False, forge_fixture=False, malformed=False):
         path = self.root / f"{name}.py"
-        path.write_text(FAKE_BENCH.format(scale=scale, published=published, fail=fail))
+        path.write_text(FAKE_BENCH.format(scale=scale, published=published, fail=fail,
+                                        forge_fixture=forge_fixture, malformed=malformed))
         return path
 
     def run_abba(self, baseline, candidate, rounds=1, **options):
-        binaries = {"baseline": abba.pin(baseline), "candidate": abba.pin(candidate)}
+        binaries = {role: {**abba.pin(path), "declared_build": {
+            "source": path.stem, "toolchain": "fake test toolchain", "profile": "release"}}
+            for role, path in (("baseline", baseline), ("candidate", candidate))}
         commands = {"baseline": [sys.executable, str(baseline)], "candidate": [sys.executable, str(candidate)]}
         return abba.run_abba(commands, binaries, self.fixture, self.root / "run", rounds, **options)
 
@@ -222,9 +253,41 @@ class RunTests(unittest.TestCase):
         self.assertEqual(manifest["status"], "invalid")
         self.assertIn("published bytes differ", manifest["error"])
 
+    def test_matching_child_receipts_must_use_the_pinned_fixture(self):
+        manifest, comparison = self.run_abba(self.fake("baseline", forge_fixture=True),
+                                             self.fake("candidate", forge_fixture=True), keep_going=True)
+        self.assertEqual(manifest["status"], "incomplete")
+        self.assertIsNone(comparison)
+        self.assertEqual(len(manifest["attempts"]), 4)
+        for attempt in manifest["attempts"]:
+            self.assertIn("different fixture manifest", attempt["error"])
+            self.assertTrue(Path(attempt["receipt"]["path"]).is_file())
+
+    def test_an_exit_zero_invalid_receipt_is_retained(self):
+        manifest, comparison = self.run_abba(self.fake("baseline", malformed=True), self.fake("candidate"))
+        self.assertIsNone(comparison)
+        self.assertEqual(manifest["status"], "incomplete")
+        attempt, = manifest["attempts"]
+        self.assertEqual(attempt["exit_code"], 0)
+        self.assertIn("error", attempt)
+        self.assertTrue(Path(attempt["receipt"]["path"]).is_file())
+
+    def test_compare_refuses_successful_subset_of_an_incomplete_run(self):
+        manifest, comparison = self.run_abba(self.fake("baseline"),
+                                             self.fake("candidate", fail=1), keep_going=True)
+        self.assertEqual(manifest["status"], "incomplete")
+        self.assertIsNone(comparison)
+        self.assertEqual([attempt["exit_code"] for attempt in manifest["attempts"]], [0, 3, 0, 0])
+        self.assertEqual(abba.main(["compare", "--run-dir", str(self.root / "run")]), 1)
+
     def test_compare_reads_a_finished_run_back(self):
         self.run_abba(self.fake("baseline"), self.fake("candidate", scale=0.5))
-        self.assertEqual(abba.main(["compare", "--run-dir", str(self.root / "run")]), 0)
+        run_dir = self.root / "run"
+        self.assertEqual(abba.main(["compare", "--run-dir", str(run_dir)]), 0)
+        run = json.loads((run_dir / "run.json").read_text())
+        run["attempts"][2]["receipt"] = run["attempts"][1]["receipt"]
+        (run_dir / "run.json").write_text(json.dumps(run))
+        self.assertEqual(abba.main(["compare", "--run-dir", str(run_dir)]), 1)
 
 
 if __name__ == "__main__":

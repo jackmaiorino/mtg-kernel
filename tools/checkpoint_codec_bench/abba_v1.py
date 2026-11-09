@@ -121,7 +121,8 @@ def write_json(path, value):
 def load_receipt(path):
     with open(path, encoding="utf-8") as stream:
         receipt = json.load(stream)
-    require(receipt.get("schema") == RECEIPT_SCHEMA, f"{path}: not a {RECEIPT_SCHEMA} receipt")
+    require(isinstance(receipt, dict) and receipt.get("schema") == RECEIPT_SCHEMA,
+            f"{path}: not a {RECEIPT_SCHEMA} receipt")
     return receipt
 
 
@@ -174,6 +175,35 @@ def compare_metric(baseline, candidate, alpha=ALPHA):
             "verdict": verdict(baseline, candidate, alpha)}
 
 
+def unique_rows(rows, fields, label, kind):
+    indexed = {}
+    for row in rows:
+        key = tuple(row[field] for field in fields)
+        require(key not in indexed, f"{label}: duplicate {kind} row {key}")
+        indexed[key] = row
+    return indexed
+
+
+def receipt_series(receipt, label):
+    rows = unique_rows(receipt["series"], ("section", "state", "cell", "stage"), label, "series")
+    signatures = {}
+    for key, row in rows.items():
+        summary = row["summary"]
+        count = summary["n"]
+        repetition_key = "update_reps" if key[0] == "updates" else "reps"
+        require(type(count) is int and count > 0 and count == receipt["config"][repetition_key]
+                and len(row["samples"]) == count,
+                f"{label}: {key} lacks its complete raw sample count")
+        metrics = {metric for metric in METRICS if metric in summary}
+        require("wall_ns" in metrics, f"{label}: {key} lacks wall time")
+        for metric in metrics:
+            median = summary[metric]["median"]
+            require(type(median) in (int, float) and math.isfinite(median),
+                    f"{label}: {key} {metric} median is not finite")
+        signatures[key] = (count, metrics)
+    return rows, signatures
+
+
 def compare(entries, alpha=ALPHA):
     """Compares `entries`, a list of (role, receipt, label) in run order."""
     require(entries, "no receipts to compare")
@@ -181,8 +211,13 @@ def compare(entries, alpha=ALPHA):
     roles = {role for role, _, _ in entries}
     require(roles <= set(ROLES), f"unknown roles {sorted(roles - set(ROLES))}")
     require(roles == set(ROLES), "the comparison needs baseline and candidate receipts")
+    require(len(entries) % 4 == 0 and [role for role, _, _ in entries] == abba_order(len(entries) // 4),
+            "the comparison needs complete A-B-B-A rounds in planned order")
     first_identity = identity_of(entries[0][1])
     published = None
+    first_checks = None
+    first_signatures = None
+    first_process_fields = None
     check_identities = {}
     series = {}
     process = {role: {"peak_rss_bytes": [], "section_seconds": {}} for role in ROLES}
@@ -191,28 +226,43 @@ def compare(entries, alpha=ALPHA):
                 f"{label}: measured another fixture or other settings than {entries[0][2]}")
         failed = [check for check in receipt["checks"] if check.get("passed") is not True]
         require(not failed, f"{label}: in-run checks failed: {failed}")
-        these = {(item["state"], item["cell"]): (item["sha256"], item["bytes"])
-                 for item in receipt["published"]}
+        sections = set(receipt["config"]["sections"])
+        checks = unique_rows(receipt["checks"], ("section", "state"), label, "check")
+        these = unique_rows(receipt["published"], ("state", "cell"), label, "published")
+        these = {key: (item["sha256"], item["bytes"]) for key, item in these.items()}
+        rows, signatures = receipt_series(receipt, label)
+        section_seconds = receipt["section_seconds"]
+        rss = receipt.get("process_peak_rss_bytes")
+        process_fields = (rss is not None, set(section_seconds))
+        require(sections and sections == {key[0] for key in checks} == {key[0] for key in rows}
+                == set(section_seconds), f"{label}: requested sections lack checks or measurements")
+        require(these or sections == {"public-pair"}, f"{label}: missing published identities")
         if published is None:
-            published = these
+            published, first_checks, first_signatures, first_process_fields = (
+                these, checks, signatures, process_fields)
         require(these == published, f"{label}: published bytes differ from {entries[0][2]}")
-        for check in receipt["checks"]:
+        require(checks.keys() == first_checks.keys(), f"{label}: check keys differ")
+        require(signatures == first_signatures, f"{label}: series keys or metric coverage differ")
+        require(process_fields == first_process_fields, f"{label}: process metric coverage differs")
+        for (section, state), check in checks.items():
+            original = first_checks[(section, state)]
+            require(check.keys() == original.keys(), f"{label}: {section} {state} check fields differ")
             for field in CHECK_IDENTITIES:
                 if field in check:
-                    key = (check.get("section", ""), check["state"], field)
-                    held = check_identities.setdefault(key, check[field])
-                    require(held == check[field], f"{label}: {' '.join(key)} differs")
-        for item in receipt["series"]:
-            key = (item["section"], item["state"], item["cell"], item["stage"])
-            for metric in METRICS:
-                summary = item["summary"].get(metric)
-                if summary is not None:
-                    series.setdefault(key, {}).setdefault(metric, {"baseline": [], "candidate": []})[
-                        role].append(summary["median"])
-        rss = receipt.get("process_peak_rss_bytes")
+                    key = (section, state, field)
+                    require(original[field] == check[field], f"{label}: {' '.join(key)} differs")
+                    check_identities[key] = check[field]
+            require(check == original, f"{label}: {section} {state} check differs")
+        for key, item in rows.items():
+            for metric in signatures[key][1]:
+                series.setdefault(key, {}).setdefault(metric, {"baseline": [], "candidate": []})[
+                    role].append(item["summary"][metric]["median"])
         if rss is not None:
+            require(type(rss) in (int, float) and math.isfinite(rss), f"{label}: invalid peak RSS")
             process[role]["peak_rss_bytes"].append(rss)
-        for section, seconds in receipt.get("section_seconds", {}).items():
+        for section, seconds in section_seconds.items():
+            require(type(seconds) in (int, float) and math.isfinite(seconds),
+                    f"{label}: invalid {section} elapsed time")
             process[role]["section_seconds"].setdefault(section, []).append(seconds)
     rows = []
     for key, metrics in sorted(series.items()):
@@ -294,58 +344,142 @@ def format_table(comparison, metric="wall_ns"):
     return "\n".join(lines)
 
 
+def require_build_declarations(binaries):
+    declared = [binaries[role].get("declared_build") for role in ROLES]
+    for role, build in zip(ROLES, declared):
+        require(isinstance(build, dict) and all(
+            isinstance(build.get(field), str) and build[field].strip()
+            for field in ("source", "toolchain", "profile")),
+            f"{role}: missing declared source, toolchain or build profile")
+    require(all(declared[0][field] == declared[1][field] for field in ("toolchain", "profile")),
+            "baseline and candidate declare different build toolchains or profiles")
+
+
+def checked_receipt(receipt, manifest, role):
+    expected = manifest["fixture"]["manifest"]["sha256"]
+    require(receipt["fixture"]["manifest_sha256"] == expected,
+            "child receipt used a different fixture manifest than the run pin")
+    build = receipt.get("build", {})
+    require(isinstance(build, dict), "child receipt build identity is not an object")
+    recorded_source = build.get("git_head")
+    declared = manifest["binaries"][role]["declared_build"]["source"]
+    require(recorded_source is None or recorded_source == declared,
+            f"{role}: receipt build source differs from its declaration")
+    return receipt
+
+
+def attempt_arguments(run_dir, manifest, index, role):
+    return ["measure", "--fixture", manifest["fixture"]["directory"],
+            "--work", str(run_dir / f"work-{index:02d}"),
+            "--out", str(run_dir / f"receipt-{index:02d}-{role}.json"),
+            "--label", f"{role} attempt {index}", *manifest["measure_args"]]
+
+
+def read_completed_run(run_dir, manifest):
+    require(isinstance(manifest, dict) and manifest.get("schema") == RUN_SCHEMA,
+            "not an A-B-B-A run manifest")
+    require(manifest.get("status") == "compared", "the run is incomplete or invalid")
+    require_build_declarations(manifest["binaries"])
+    order = abba_order(manifest["rounds"])
+    attempts = manifest["attempts"]
+    require(manifest["order"] == order and len(attempts) == len(order),
+            "attempts do not match the complete planned A-B-B-A schedule")
+    entries = []
+    for index, (role, attempt) in enumerate(zip(order, attempts)):
+        require(attempt["index"] == index and attempt["role"] == role
+                and attempt.get("exit_code") == 0 and not attempt.get("error")
+                and not attempt.get("timed_out"),
+                f"attempt {index}: wrong role or failed attempt")
+        tail = attempt_arguments(run_dir, manifest, index, role)
+        argv = attempt["argv"]
+        prefix = argv[:-len(tail)]
+        require(prefix and argv[-len(tail):] == tail
+                and Path(prefix[-1]).resolve() == Path(manifest["binaries"][role]["path"]),
+                f"attempt {index}: command differs from its planned binary or inputs")
+        path = run_dir / f"receipt-{index:02d}-{role}.json"
+        pinned = attempt["receipt"]
+        require(Path(pinned["path"]).resolve() == path
+                and sha256_file(path) == pinned["sha256"],
+                f"receipt of attempt {index} changed or belongs to another attempt")
+        receipt = checked_receipt(load_receipt(path), manifest, role)
+        entries.append((role, receipt, f"attempt {index} ({role})"))
+    return entries
+
+
 def run_abba(commands, binaries, fixture, out_dir, rounds, measure_args=(), attempt_timeout=None,
              keep_going=False, alpha=ALPHA):
     """Runs the A-B-B-A schedule; `commands` maps each role to the argv
     prefix of its benchmark binary. Returns (manifest, comparison or None)."""
+    require_build_declarations(binaries)
+    require(0 < alpha < 1, "alpha must lie between 0 and 1")
+    require(attempt_timeout is None or (math.isfinite(attempt_timeout) and attempt_timeout > 0),
+            "attempt timeout must be finite and positive")
+    order = abba_order(rounds)
+    for role in ROLES:
+        require(commands[role] and Path(commands[role][-1]).resolve() == Path(binaries[role]["path"]),
+                f"{role} command does not name its pinned executable")
     out_dir = Path(out_dir).resolve()
     fixture = Path(fixture).resolve()
+    fixture_path = fixture / "fixture.json"
+    fixture_pin = pin(fixture_path)
     out_dir.mkdir(parents=True, exist_ok=False)
     manifest = {"schema": RUN_SCHEMA, "status": "running", "rounds": rounds,
-                "order": abba_order(rounds), "binaries": binaries,
+                "order": order, "binaries": binaries,
                 "null_comparison": binaries["baseline"]["sha256"] == binaries["candidate"]["sha256"],
-                "fixture": {"directory": str(fixture), "manifest": pin(fixture / "fixture.json")},
+                "fixture": {"directory": str(fixture), "manifest": fixture_pin},
                 "measure_args": list(measure_args), "toolchain": toolchain(), "machine": machine(),
                 "started_unix": time.time(), "attempts": []}
     write_json(out_dir / "run.json", manifest)
     entries = []
     for index, role in enumerate(manifest["order"]):
         receipt = out_dir / f"receipt-{index:02d}-{role}.json"
-        argv = [*commands[role], "measure", "--fixture", str(fixture),
-                "--work", str(out_dir / f"work-{index:02d}"), "--out", str(receipt),
-                "--label", f"{role} attempt {index}", *measure_args]
+        argv = [*commands[role], *attempt_arguments(out_dir, manifest, index, role)]
         attempt = {"index": index, "role": role, "argv": argv, "started_unix": time.time()}
         started = time.monotonic()
         with open(out_dir / f"attempt-{index:02d}-{role}.stdout", "wb") as stdout, \
                 open(out_dir / f"attempt-{index:02d}-{role}.stderr", "wb") as stderr:
             try:
+                require(sha256_file(binaries[role]["path"]) == binaries[role]["sha256"],
+                        f"the {role} binary changed before attempt {index}")
+                require(sha256_file(fixture_path) == fixture_pin["sha256"],
+                        f"the fixture manifest changed before attempt {index}")
                 completed = subprocess.run(argv, stdout=stdout, stderr=stderr, timeout=attempt_timeout)
                 attempt["exit_code"] = completed.returncode
             except subprocess.TimeoutExpired:
                 attempt["exit_code"] = None
                 attempt["timed_out"] = True
+            except (OSError, ValueError) as error:
+                attempt["exit_code"] = None
+                attempt["error"] = str(error)
         attempt["wall_seconds"] = time.monotonic() - started
-        ok = attempt["exit_code"] == 0 and receipt.is_file()
-        if ok:
-            attempt["receipt"] = pin(receipt)
-            entries.append((role, load_receipt(receipt), f"attempt {index} ({role})"))
+        ok = False
+        try:
+            if receipt.is_file():
+                attempt["receipt"] = pin(receipt)
+            if attempt["exit_code"] == 0:
+                require("receipt" in attempt, "child exited successfully without a receipt")
+                value = checked_receipt(load_receipt(receipt), manifest, role)
+                entries.append((role, value, f"attempt {index} ({role})"))
+                ok = True
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            attempt["error"] = str(error)
         manifest["attempts"].append(attempt)
         write_json(out_dir / "run.json", manifest)
         if not ok and not keep_going:
             break
-    for role, binary in binaries.items():
-        require(sha256_file(binary["path"]) == binary["sha256"], f"the {role} binary changed during the run")
-    complete = len(entries) == len(manifest["order"])
     comparison = None
-    if complete:
-        try:
+    try:
+        for role, binary in binaries.items():
+            require(sha256_file(binary["path"]) == binary["sha256"], f"the {role} binary changed during the run")
+        require(sha256_file(fixture_path) == fixture_pin["sha256"], "the fixture manifest changed during the run")
+        if len(entries) == len(order):
             comparison = compare(entries, alpha)
             manifest["status"] = "compared"
-        except ValueError as error:
-            manifest["status"] = "invalid"
-            manifest["error"] = str(error)
-    else:
-        manifest["status"] = "incomplete"
+        else:
+            manifest["status"] = "incomplete"
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        manifest["status"] = "invalid"
+        manifest["error"] = str(error)
     manifest["finished_unix"] = time.time()
     if comparison is not None:
         write_json(out_dir / "comparison.json", comparison)
@@ -360,6 +494,9 @@ def main(argv=None):
     run = commands.add_parser("run", help="measure baseline and candidate A-B-B-A")
     run.add_argument("--baseline-bin", required=True, type=Path)
     run.add_argument("--candidate-bin", required=True, type=Path)
+    for role in ROLES:
+        run.add_argument(f"--{role}-build", required=True, type=json.loads,
+                         help='JSON declaration with "source", "toolchain" and "profile"')
     run.add_argument("--fixture", required=True, type=Path)
     run.add_argument("--out-dir", required=True, type=Path)
     run.add_argument("--rounds", type=int, default=1)
@@ -377,24 +514,23 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "run":
         extra = args.measure_args[1:] if args.measure_args[:1] == ["--"] else args.measure_args
-        binaries = {"baseline": pin(args.baseline_bin), "candidate": pin(args.candidate_bin)}
+        binaries = {role: {**pin(getattr(args, f"{role}_bin")),
+                           "declared_build": getattr(args, f"{role}_build")} for role in ROLES}
         manifest, comparison = run_abba(
             {role: [binaries[role]["path"]] for role in ROLES}, binaries, args.fixture, args.out_dir,
             args.rounds, extra, args.attempt_timeout, args.keep_going, args.alpha)
     else:
-        manifest = json.loads((args.run_dir / "run.json").read_text(encoding="utf-8"))
-        entries = [(attempt["role"], load_receipt(attempt["receipt"]["path"]),
-                    f"attempt {attempt['index']} ({attempt['role']})")
-                   for attempt in manifest["attempts"] if "receipt" in attempt]
-        for attempt in manifest["attempts"]:
-            if "receipt" in attempt:
-                require(sha256_file(attempt["receipt"]["path"]) == attempt["receipt"]["sha256"],
-                        f"receipt of attempt {attempt['index']} changed")
-        comparison = compare(entries, args.alpha)
+        run_dir = args.run_dir.resolve()
+        try:
+            manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+            comparison = compare(read_completed_run(run_dir, manifest), args.alpha)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            print(f"status: invalid ({error})", file=sys.stderr)
+            return 1
     if comparison is not None:
         print(format_table(comparison, getattr(args, "metric", "wall_ns")))
     print(f"status: {manifest['status']}" + (f" ({manifest['error']})" if "error" in manifest else ""))
-    return 0 if manifest["status"] in ("compared",) or args.command == "compare" else 1
+    return 0 if manifest["status"] == "compared" else 1
 
 
 if __name__ == "__main__":

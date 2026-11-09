@@ -267,7 +267,8 @@ fn measure(args: &[String]) -> Result<(), String> {
     let work = args.path_v1("work")?.ok_or("measure needs --work")?;
     let out = args.path_v1("out")?.ok_or("measure needs --out")?;
     let mut config = MeasureConfigV1::defaults_v1(fixture, work);
-    if let Some(sections) = args.take_v1("sections")? {
+    let requested_sections = args.take_v1("sections")?;
+    if let Some(sections) = &requested_sections {
         config.sections = sections
             .split(',')
             .map(SectionV1::parse_v1)
@@ -289,7 +290,7 @@ fn measure(args: &[String]) -> Result<(), String> {
         config.preparation_workers = workers;
     }
     config.public_pair = args.path_v1("public-pair")?;
-    if config.public_pair.is_none() {
+    if config.public_pair.is_none() && requested_sections.is_none() {
         config
             .sections
             .retain(|section| *section != SectionV1::PublicPair);

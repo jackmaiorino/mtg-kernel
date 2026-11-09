@@ -88,10 +88,12 @@ default. The receipt records the setting, so the A-B-B-A comparison refuses
 runs that differ in it.
 The binary installs the production allocator (`FastAllocatorV1`, with
 `retain_freed_memory_v1`, as `native_expanded_training_run_v1` does) wrapped in
-relaxed atomic counters, so a sample reports the bytes it allocated, its
-number of allocations, its transient heap peak above its starting heap and
-the heap it left allocated. The counters cost the same in every build of this
-binary.
+relaxed atomic counters. The receipt reports requested allocation bytes and
+counts, a sampled process-wide live-byte high-water mark above the starting
+heap, and the live-byte delta. Concurrent allocator operations can overlap
+the accounting. These are instrumented heap measurements, separate from
+peak RSS. The same wrapper is used for both builds, and its work varies with
+the number of allocations.
 
 ### `stages`: the ordinary publication and readback sequence
 
@@ -234,6 +236,8 @@ profile (`git worktree add`, then the build above in each), copy them out of
 ```bash
 python tools/checkpoint_codec_bench/abba_v1.py run \
     --baseline-bin /abs/bins/bench-<baseline-sha> --candidate-bin /abs/bins/bench-<candidate-sha> \
+    --baseline-build '{"source":"<baseline-full-git-sha>","toolchain":"rustc 1.94.1, pinned linker","profile":"release thin LTO, one codegen unit"}' \
+    --candidate-build '{"source":"<candidate-full-git-sha>","toolchain":"rustc 1.94.1, pinned linker","profile":"release thin LTO, one codegen unit"}' \
     --fixture /abs/fixture --out-dir /abs/abba-1 --rounds 3 \
     -- --public-pair /abs/repo/python/tools/tests/fixtures/checkpoint_container_v1
 ```
@@ -245,14 +249,18 @@ pinned by SHA-256, `rustc -vV`, `cargo -V`, `cc`/`ld` versions, the machine,
 and every attempt's command, exit status and wall time), each attempt's
 stdout, stderr and receipt, and `comparison.json`. `compare --run-dir` reads a
 finished run back (`--metric wall_ns|cpu_ns|allocated_bytes|...` for the
-table). Both binaries must be built by this benchmark; record the exact build
-command beside the run.
+table). The build declarations are caller-supplied and recorded beside each
+binary's hash. The declared profile and toolchain must match between arms,
+and each available binary build source must match its declaration. Record the
+exact build commands. The runtime tool versions record the measurement host
+and do not attest which profile compiled the executables.
 
-The comparison is refused (status `invalid`) unless every receipt measured the
-same fixture manifest with the same settings, every in-run check passed, and
-every (state, cell) published the same bytes, every real update reached the
-same after-state and checkpoint content. Then each run contributes its median
-per stage and metric, a role's value is the median of its runs' medians, and
+The runner compares only a complete A-B-B-A schedule of successful attempts.
+Failed attempts keep their logs and any receipt they wrote. Every receipt
+must bind the run's pinned fixture and use the same settings, checks, stage
+rows, metrics, and published identities. Each real update must reach the same
+after-state and checkpoint content across arms. Then each run contributes its
+median per stage and metric, a role's value is the median of its runs' medians, and
 the candidate is reported `candidate_lower` or `candidate_higher` only when no
 candidate run overlaps any baseline run **and** a separation that complete has
 chance probability at most `--alpha` (default 0.01) if the role made no

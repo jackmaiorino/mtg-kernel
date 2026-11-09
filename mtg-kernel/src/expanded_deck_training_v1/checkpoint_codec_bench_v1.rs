@@ -1001,14 +1001,90 @@ pub fn generate_fixture_v1(config: &GenerateConfigV1) -> Result<Value, String> {
     Ok(value)
 }
 
+fn valid_trajectory_roster_v1(pins: &[PinnedFileV1], expected: usize) -> bool {
+    pins.len() == expected
+        && pins.iter().all(|pin| {
+            pin.path.is_absolute()
+                && pin.sha256.len() == 64
+                && pin.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+        && pins
+            .iter()
+            .map(|pin| &pin.path)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            == expected
+}
+
+fn validate_fixture_manifest_v1(manifest: &FixtureManifestV1) -> Result<(), String> {
+    let config = &manifest.config;
+    ensure_v1(
+        manifest.schema == FIXTURE_SCHEMA_V1
+            && (1..=64).contains(&config.warm_updates)
+            && (1..=8).contains(&config.games_per_update)
+            && config.s_warm_steps <= 64
+            && (1..=256).contains(&config.s_groups_per_step)
+            && config.decks.iter().map(String::as_str).eq(["Affinity", "Terror"])
+            && config.learning_rate == LEARNING_RATE_V1
+            && config.value_coefficient == VALUE_COEFFICIENT_V1
+            && config.gamma == GAMMA_V1
+            && config.lambda == LAMBDA_V1,
+        "not a generated checkpoint codec bench fixture",
+    )?;
+    ensure_v1(
+        manifest.chain.len() == config.warm_updates
+            && manifest.chain.iter().enumerate().all(|(index, step)| {
+                step.update == index
+                    && step.adam_step == (index + 1) as u64
+                    && valid_trajectory_roster_v1(&step.trajectories, config.games_per_update)
+            }),
+        "fixture has an incomplete generated update chain or trajectory roster",
+    )?;
+
+    let mut ordinary = vec![("update-1", 1)];
+    if config.warm_updates > 1 {
+        ordinary.push(("warmed", config.warm_updates));
+    }
+    ensure_v1(
+        manifest.states.len() == ordinary.len(),
+        "fixture lacks its generated ordinary states",
+    )?;
+    for (state, (label, index)) in manifest.states.iter().zip(ordinary) {
+        let step = &manifest.chain[index - 1];
+        ensure_v1(
+            state.label == label
+                && state.source.checkpoint.as_ref() == Some(&step.checkpoint)
+                && state.adam_step == step.adam_step
+                && state.state_sha256 == step.after_state_sha256
+                && valid_trajectory_roster_v1(&state.trajectories, config.games_per_update)
+                && manifest
+                    .chain
+                    .get(index)
+                    .is_none_or(|next| next.trajectories == state.trajectories),
+            format!("fixture state {label} differs from its generated chain or trajectory roster"),
+        )?;
+    }
+
+    let mut s_states = vec![("s-initial", 0)];
+    if config.s_warm_steps > 0 {
+        s_states.push(("s-warmed", config.s_warm_steps));
+    }
+    ensure_v1(
+        manifest.s_states.len() == s_states.len()
+            && manifest
+                .s_states
+                .iter()
+                .zip(s_states)
+                .all(|(state, (label, step))| state.label == label && state.adam_step == step as u64),
+        "fixture lacks its generated S states",
+    )
+}
+
 fn read_fixture_v1(directory: &Path) -> Result<(FixtureManifestV1, String), String> {
     let path = directory.join(FIXTURE_MANIFEST_NAME_V1);
     let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let manifest: FixtureManifestV1 = serde_json::from_slice(&bytes).map_err(err)?;
-    ensure_v1(
-        manifest.schema == FIXTURE_SCHEMA_V1,
-        "not a checkpoint codec bench fixture",
-    )?;
+    validate_fixture_manifest_v1(&manifest)?;
     Ok((manifest, sha256_hex_v1(&bytes)))
 }
 
@@ -1563,6 +1639,17 @@ fn measure_updates_v1(
                     output_directory: directory.clone(),
                 })
             })?;
+            ensure_v1(
+                receipt["complete"].as_bool() == Some(true)
+                    && receipt["checkpoint_readback"].as_bool() == Some(true)
+                    && receipt["before_state_sha256"].as_str()
+                        == Some(measured.metadata.state_sha256.as_str())
+                    && receipt["adam_step"].as_u64() == measured.metadata.adam_step.checked_add(1)
+                    && receipt["physical_decisions"].as_u64().is_some_and(|count| count > 0)
+                    && receipt["policy_substeps"].as_u64().is_some_and(|count| count > 0),
+                format!("{} {}: real update did not complete the expected optimizer step",
+                        measured.label, cell.name),
+            )?;
             let pin: PinnedFileV1 =
                 serde_json::from_value(receipt["checkpoint"].clone()).map_err(err)?;
             let file = fs::read(&pin.path).map_err(err)?;
@@ -1862,6 +1949,23 @@ pub fn measure_v1(
             && (1..=64).contains(&config.preparation_workers),
         "measure needs reps 1..=1000, warmup 0..=100, update-reps 1..=100, update-warmup 0..=10 and preparation-workers 1..=64",
     )?;
+    ensure_v1(
+        !config.sections.is_empty()
+            && config.sections.iter().collect::<std::collections::BTreeSet<_>>().len()
+                == config.sections.len()
+            && (!config.sections.contains(&SectionV1::PublicPair) || config.public_pair.is_some()),
+        "measure needs distinct sections and a directory for the public-pair section",
+    )?;
+    for (label, _) in &config.extra_states {
+        let mut components = Path::new(label).components();
+        ensure_v1(
+            matches!(components.next(), Some(std::path::Component::Normal(_)))
+                && components.next().is_none()
+                && !label.contains('/')
+                && !label.contains('\\'),
+            format!("extra state label {label:?} must be one directory name"),
+        )?;
+    }
     let verified_bytes = verified_bytes_cache_v1::global_v1();
     if config.resident_reads {
         verified_bytes.enable_resident_v1();
@@ -1986,4 +2090,101 @@ pub fn measure_v1(
         "section_seconds": section_seconds,
         "peak_rss_bytes": peak_rss,
     }))
+}
+
+#[cfg(test)]
+mod fixture_tests {
+    use super::*;
+
+    fn manifest_v1() -> FixtureManifestV1 {
+        let root = std::env::current_dir().unwrap();
+        let pin = |name: &str| PinnedFileV1 {
+            path: root.join(name),
+            sha256: "a".repeat(64),
+        };
+        let identity = FRESH_FEATURE_IDENTITY_V4;
+        let initial_source = ExpandedModelSourceV1 {
+            play_import: pin("descriptor.json"),
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: identity.feature_contract_digest.into(),
+                expected_feature_encoding_digest: identity.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+            s_learner: None,
+        };
+        let chain: Vec<_> = (0..2)
+            .map(|update| FixtureUpdateV1 {
+                update,
+                trajectories: vec![pin(&format!("trajectory-{update}"))],
+                checkpoint: pin(&format!("checkpoint-{update}")),
+                adam_step: (update + 1) as u64,
+                after_state_sha256: format!("{:064x}", update + 1),
+            })
+            .collect();
+        let states = ["update-1", "warmed"]
+            .into_iter()
+            .zip(&chain)
+            .map(|(label, step)| FixtureStateV1 {
+                label: label.into(),
+                source: ExpandedModelSourceV1 {
+                    checkpoint: Some(step.checkpoint.clone()),
+                    ..initial_source.clone()
+                },
+                adam_step: step.adam_step,
+                state_sha256: step.after_state_sha256.clone(),
+                trajectories: vec![pin(&format!("trajectory-{}", step.update + 1))],
+            })
+            .collect();
+        FixtureManifestV1 {
+            schema: FIXTURE_SCHEMA_V1.into(),
+            generator: json!({}),
+            config: FixtureConfigRecordV1 {
+                seed: 1,
+                games_per_update: 1,
+                warm_updates: 2,
+                decks: ["Affinity".into(), "Terror".into()],
+                learning_rate: LEARNING_RATE_V1,
+                value_coefficient: VALUE_COEFFICIENT_V1,
+                gamma: GAMMA_V1,
+                lambda: LAMBDA_V1,
+                s_seed: 2,
+                s_config: SConfigV1::s_v1(),
+                s_warm_steps: 0,
+                s_groups_per_step: 1,
+                s_learning_rate: S_LEARNING_RATE_V1,
+                s_value_coefficient: S_VALUE_COEFFICIENT_V1,
+            },
+            initial_source,
+            chain,
+            states,
+            s_states: vec![FixtureSStateV1 {
+                label: "s-initial".into(),
+                container: pin("s-initial"),
+                adam_step: 0,
+                state_sha256: "b".repeat(64),
+            }],
+        }
+    }
+
+    #[test]
+    fn generated_fixture_rejects_missing_duplicate_and_unbound_work() {
+        let manifest = manifest_v1();
+        validate_fixture_manifest_v1(&manifest).unwrap();
+
+        let mut changed = manifest.clone();
+        changed.states.clear();
+        assert!(validate_fixture_manifest_v1(&changed).is_err());
+        let mut changed = manifest.clone();
+        changed.states[1].label = changed.states[0].label.clone();
+        assert!(validate_fixture_manifest_v1(&changed).is_err());
+        let mut changed = manifest.clone();
+        changed.states[0].trajectories.clear();
+        assert!(validate_fixture_manifest_v1(&changed).is_err());
+        let mut changed = manifest.clone();
+        changed.states[0].trajectories[0].sha256 = "b".repeat(64);
+        assert!(validate_fixture_manifest_v1(&changed).is_err());
+        let mut changed = manifest;
+        changed.s_states.clear();
+        assert!(validate_fixture_manifest_v1(&changed).is_err());
+    }
 }
