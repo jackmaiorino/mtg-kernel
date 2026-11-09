@@ -323,7 +323,7 @@ pub(crate) fn activations(state: &GameState) -> Result<Vec<Activation<'_>>, Stri
                                     != Some(card.generation)
                                 || live.map(|o| crate::rl::PlayerSeatV1::from(o.owner)) != Some(card.owner)
                                 || live.filter(|o| o.zone_change_count == card.generation
-                                    && o.controller.index() == card.controller.index()
+                                    && crate::rl::PlayerSeatV1::from(o.controller) == card.controller
                                     && !history.iter().skip(at + 1).any(|event| matches!(event,
                                         E::TurnedFaceUp { object: turned, zone_change_count }
                                             if *turned == *object && *zone_change_count == card.generation)))
