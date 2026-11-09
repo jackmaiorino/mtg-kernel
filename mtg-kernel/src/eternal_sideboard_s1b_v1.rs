@@ -26,6 +26,9 @@ use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
 pub(crate) mod targets;
+pub use crate::eternal_sideboard_s1a_v1::surgical::{
+    extirpate_search_look_v1, SurgicalSearchLookV1 as ExtirpateSearchLookV1,
+};
 
 /// Per-game state for this module's cards, kept inside
 /// `eternal_cards_v1::EternalStateV1`. Default (and absent from snapshots)
@@ -123,8 +126,8 @@ pub enum S1bOpV1 {
     MageNamesV1 { named: u16 },
     /// Pyrokinesis: 4 damage divided among its creature targets.
     PyrokinesisV1,
-    /// Extirpate: exile every card with the target's name from its owner's
-    /// graveyard, hand and library, then shuffle.
+    /// Extirpate: exile all public matches and the hidden matches found by
+    /// the chooser, then shuffle.
     ExtirpateV1,
     /// Tourach, kicked: target opponent discards two cards at random.
     TourachDiscardV1,
@@ -142,7 +145,7 @@ impl S1bOpV1 {
     /// Whether this leaf can yield a player decision, so its program must
     /// use the resumable interpreter.
     pub(crate) fn contains_player_choice(&self) -> bool {
-        matches!(self, Self::PeerV1)
+        matches!(self, Self::PeerV1 | Self::ExtirpateV1)
     }
 }
 
@@ -424,7 +427,7 @@ pub(crate) fn execute(op: &S1bOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         S1bOpV1::PyrokinesisV1 => run_pyrokinesis(ctx, state),
-        S1bOpV1::ExtirpateV1 => run_extirpate(ctx, state),
+        S1bOpV1::ExtirpateV1 => halt(state, ctx.source),
         S1bOpV1::TourachDiscardV1 => run_tourach_discard(ctx, state),
         S1bOpV1::LeylineBeginsV1 => run_leyline_begins(ctx, state),
         S1bOpV1::ExplosivesEnterV1 => run_explosives_enter(ctx, state),
@@ -548,6 +551,9 @@ pub(crate) fn drive(
             }
             Ok(false)
         }
+        S1bOpV1::ExtirpateV1 => crate::eternal_sideboard_s1a_v1::surgical::drive(
+            state, continuation, path, crate::eternal_sideboard_s1a_v1::surgical::ExtractionV1::Extirpate,
+        ),
         other => {
             execute(other, &continuation.ctx, state);
             Ok(false)
@@ -896,37 +902,6 @@ fn halt(state: &mut GameState, source: ObjectId) {
         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
         source,
     ));
-}
-
-fn run_extirpate(ctx: &ExecCtx, state: &mut GameState) {
-    let Some(Target::Object(target)) = ctx.targets.first().copied() else {
-        return;
-    };
-    if !ctx.target_incarnation_matches(0, state)
-        || state.objects.get(target).zone != Zone::Graveyard
-    {
-        return;
-    }
-    let owner = state.objects.get(target).owner;
-    let name = CARD_DEFS[usize::from(state.objects.get(target).card_def)].object_name;
-    let seat = &state.players[owner.index()];
-    let cards = seat
-        .graveyard
-        .iter()
-        .chain(seat.hand.iter())
-        .chain(seat.library.iter())
-        .copied()
-        .filter(|&card| {
-            let live = state.objects.get(card);
-            !live.v4.is_token && CARD_DEFS[usize::from(live.card_def)].object_name == name
-        })
-        .collect::<Vec<_>>();
-    for card in cards {
-        event::propose_and_commit(state, ProposedEvent::zone_change(card, Zone::Exile));
-    }
-    if state.shuffle_library(owner).is_err() {
-        halt(state, ctx.source);
-    }
 }
 
 fn run_tourach_discard(ctx: &ExecCtx, state: &mut GameState) {

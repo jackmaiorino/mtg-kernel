@@ -513,7 +513,7 @@ impl Scan<'_> {
                 self.bs(&choice.hand) || self.bs(selected) || self.fs(&choice.remaining)
             }
             EternalSelectionV1 { choice, .. } => {
-                choice.is_surgical_extraction()
+                choice.is_extraction_search()
                     || self.bs(&choice.referenced_bindings())
                     || self.fs(&choice.remaining)
             }
@@ -797,7 +797,7 @@ impl Scan<'_> {
             DiscardPaymentV1 { choice } => self.bs(&choice.hand) || self.op(&choice.unpaid),
             DiscardDraw { choice } => self.bs(&choice.hand) || self.fs(&choice.remaining),
             EternalV1 { choice } => {
-                choice.is_surgical_extraction()
+                choice.is_extraction_search()
                     || self.bs(&choice.referenced_bindings())
                     || self.fs(&choice.remaining)
             }
