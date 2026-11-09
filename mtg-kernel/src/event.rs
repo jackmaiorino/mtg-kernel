@@ -5690,6 +5690,8 @@ fn materialize_event_v1(
             }
             if drawn.is_some() {
                 state.players[d.player.index()].draws_this_turn += 1;
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cards_v1::note_draw_step_draw(state, d.player);
             }
             CommittedEvent::Draw {
                 player: d.player,

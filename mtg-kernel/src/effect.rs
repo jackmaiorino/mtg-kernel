@@ -8882,10 +8882,8 @@ pub(crate) fn validate_monarch_trigger_binding(
     Ok(())
 }
 
-/// Draws one card for the monarch trigger's binding player -- 306.3's "the
-/// monarch draws a card." Synchronous: unlike the Initiative Undercity route,
-/// this trigger never needs a player choice, so it resolves through ordinary
-/// `execute` rather than the resumable interpreter.
+/// Draws one card for the monarch trigger's binding player (726.2). The
+/// resumable interpreter owns this draw when that player has a dredge choice.
 fn resolve_monarch_trigger(
     state: &mut GameState,
     binding: MonarchTriggerBindingV1,
@@ -10614,6 +10612,12 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_sideboard_s1a_v1::surgical::validate_continuation(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(EffectOp::ResolveMonarchTrigger { binding }) =
+        pending.resolving_item.inline_effect.as_ref()
+    {
+        crate::eternal_vintage_e7b_v1::dredge::validate_monarch_draw(state, pending, *binding)?;
+    }
     thousand_year_storm_v1::validate_continuation(state, pending)?;
     blasphemous_edict_v1::validate(state, pending)?;
     liliana_dreadhorde_v1::validate_continuation(state, pending)?;
@@ -16929,6 +16933,26 @@ fn drive_resumable_inner_with_native_row_v1(
                 }
             }
             // Dredge (wave E7b): each card drawn may be dredged instead.
+            EffectOp::ResolveMonarchTrigger { binding }
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_dredge(
+                        state,
+                        &continuation,
+                        PlayerRef::Controller,
+                    ) =>
+            {
+                validate_monarch_trigger_binding(state, binding)?;
+                if crate::eternal_vintage_e7b_v1::dredge::drive_draws(
+                    state,
+                    &mut continuation,
+                    PlayerRef::Controller,
+                    1,
+                    path,
+                )? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
             EffectOp::DrawCards { player, count }
                 if cfg!(feature = "eternal-fixtures")
                     && crate::eternal_vintage_e7b_v1::dredge::draw_may_dredge(

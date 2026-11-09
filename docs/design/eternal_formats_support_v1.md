@@ -494,8 +494,8 @@ New, each built once in the first wave that needs it:
   Day's attack and block ban are engine hooks, Urborg extends Yavimaya's extra land type
   and mana ability to Swamps, and Sphinx of the Steel Wind adds protection from red and
   green to the color protection mask. Hullbreacher replaces an opponent's draw (except
-  their first draw step draw, tracked by Bowmasters' draw step marker) with a Treasure for
-  its controller in `propose_and_commit_inner`. Argentum Masticore's upkeep trigger is
+  their first actual draw in their draw step, tracked by Bowmasters' draw ordinal) with a
+  Treasure for its controller in `propose_and_commit_inner`. Argentum Masticore's upkeep trigger is
   two selections (`E3ChoiceKindV1::S1cV1`): the card to discard (or none, sacrificing
   it), then the reflexive destroy target among the opponent's nonland permanents with
   mana value at most the discarded card's; it shares Stonecoil Serpent's protection from
@@ -505,8 +505,10 @@ New, each built once in the first wave that needs it:
   with new characteristics), Apostle's Blessing (protection from artifacts), Sickening
   Shoal (X tied to an exiled card), Darksteel Angel (cannot lose the game) and Portal to
   Phyrexia (subtype grant on reanimation).
-  Partial: Hullbreacher replaces a draw before dredge can, so the drawing player does
-  not choose the order of the two replacements.
+  Partial: the drawing player can choose dredge or let Hullbreacher replace the draw (616.1) on
+  resumable draw programs, including the monarch's draw. Specialized synchronous draws
+  such as Bonder's Ornament and the competing empty-library Jace replacement still need
+  coverage. Native qualification of the monarch and draw-step fixes is pending.
 - S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
   S1c, S1a, S1b and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload

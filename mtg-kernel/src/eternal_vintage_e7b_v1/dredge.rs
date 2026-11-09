@@ -13,11 +13,14 @@ use super::{
     binding_link, definition, definition_name, e7b_state, graveyard_cards, link_live_in,
     read_state, E7bChoiceV1, GOLGARI_GRAVE_TROLL, GOLGARI_THUG, SHAMBLING_SHELL, STINKWEED_IMP,
 };
-use crate::effect::{EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp, PlayerRef};
+use crate::effect::{
+    EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp, EffectTargetSelectionPurpose,
+    PendingEffectChoice, PlayerRef,
+};
 use crate::eternal_cards_v1::e3::{E3ChoiceKindV1, E3ChoiceV1};
 use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
-use crate::state::{GameState, Target, Zone};
+use crate::state::{GameState, MonarchTriggerBindingV1, Target, Zone};
 
 /// Life from the Loam (wave E7a): "Dredge 3".
 const LIFE_FROM_THE_LOAM: &str = "Life from the Loam";
@@ -58,7 +61,9 @@ fn any_dredge(state: &GameState) -> bool {
 /// Whether `op` draws cards anywhere in its tree.
 fn draws(op: &EffectOp) -> bool {
     match op {
-        EffectOp::DrawCards { .. } | EffectOp::DrawCardsDynamic { .. } => true,
+        EffectOp::DrawCards { .. }
+        | EffectOp::DrawCardsDynamic { .. }
+        | EffectOp::ResolveMonarchTrigger { .. } => true,
         EffectOp::Sequence(ops) => ops.iter().any(draws),
         EffectOp::Conditional { then, else_, .. } => draws(then) || draws(else_),
         EffectOp::Choice { options, .. } => options.iter().any(draws),
@@ -121,26 +126,89 @@ pub(crate) fn drive_draws(
             path: path.clone(),
         });
     }
-    let bindings = cards
-        .iter()
-        .map(|&card| super::bind(state, card))
-        .collect::<Vec<_>>();
-    let remaining = continuation.frames.clone();
-    crate::eternal_cards_v1::e3::offer(
-        continuation,
-        E3ChoiceV1 {
-            kind: E3ChoiceKindV1::E7bV1(E7bChoiceV1::DredgeV1),
-            player: drawer,
-            candidates: cards.iter().map(|&card| Target::Object(card)).collect(),
-            bindings,
-            min: 0,
-            max: 1,
-            ordered: false,
-            path,
-            remaining,
-        },
+    let choice = choice(
+        state,
+        drawer,
+        &cards,
+        path,
+        continuation.frames.clone(),
     );
+    crate::eternal_cards_v1::e3::offer(continuation, choice);
     Ok(true)
+}
+
+fn choice(
+    state: &GameState,
+    drawer: PlayerId,
+    cards: &[ObjectId],
+    path: Vec<u16>,
+    remaining: Vec<EffectFrame>,
+) -> E3ChoiceV1 {
+    E3ChoiceV1 {
+        kind: E3ChoiceKindV1::E7bV1(E7bChoiceV1::DredgeV1),
+        player: drawer,
+        candidates: cards.iter().copied().map(Target::Object).collect(),
+        bindings: cards.iter().map(|&card| super::bind(state, card)).collect(),
+        min: 0,
+        max: 1,
+        ordered: false,
+        path,
+        remaining,
+    }
+}
+
+pub(crate) fn validate_monarch_draw(
+    state: &GameState,
+    pending: &EffectContinuation,
+    binding: MonarchTriggerBindingV1,
+) -> Result<(), String> {
+    let item = &pending.resolving_item;
+    if pending.ctx.controller != binding.player
+        || pending.ctx.source != item.source
+        || pending.ctx.ability_source_contract != Some(binding.source)
+        || pending.ctx.stack_item_id != Some(item.v4.stack_item_id)
+        || pending.ctx.targets != item.targets
+        || pending.ctx.target_contracts != item.v4.target_contracts
+    {
+        return Err("Monarch draw changed its original trigger".into());
+    }
+    if matches!((&pending.choice, pending.frames.as_slice()),
+        (None, [EffectFrame::Program { op: EffectOp::ResolveMonarchTrigger { binding: found }, path }])
+            if *found == binding && path.is_empty())
+    {
+        return Ok(());
+    }
+    let cards = dredge_cards(state, binding.player);
+    if cards.is_empty() {
+        return Err("Monarch draw lost its dredge candidates".into());
+    }
+    let expected = choice(state, binding.player, &cards, Vec::new(), Vec::new());
+    let valid = match (&pending.choice, pending.frames.as_slice()) {
+        (
+            Some(PendingEffectChoice::SelectTargets {
+                purpose: EffectTargetSelectionPurpose::EternalV1 { choice },
+                selected,
+                legal,
+                min_targets: 0,
+                ..
+            }),
+            [],
+        ) => {
+            **choice == expected
+                && selected.is_empty()
+                && legal.iter().map(|candidate| candidate.target).eq(expected.candidates)
+        }
+        (None, [EffectFrame::EternalSelectionV1 { choice, selected }]) => {
+            **choice == expected
+                && selected.len() <= 1
+                && selected.iter().all(|target| expected.candidates.contains(target))
+        }
+        _ => false,
+    };
+    if !valid {
+        return Err("Monarch draw changed its native replacement choice".into());
+    }
+    Ok(())
 }
 
 /// Applies a dredge choice: no card draws, a card dredges.
@@ -232,7 +300,6 @@ pub(crate) fn answer_pending_decision(state: &mut GameState, option: u16) -> Res
     };
     if !dredged {
         event::propose_and_commit(state, ProposedEvent::draw(player));
-        crate::eternal_cards_v1::note_draw_step_draw(state, player);
     }
     Ok(true)
 }

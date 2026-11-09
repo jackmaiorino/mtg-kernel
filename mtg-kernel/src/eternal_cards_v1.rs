@@ -52,7 +52,7 @@ pub struct EternalStateV1 {
     /// Delve exiled, keyed by the spell's stack incarnation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub delve_instants_and_sorceries: Vec<(ObjectLinkV4, u32)>,
-    /// The active player's turn-based draw this turn (Orcish Bowmasters'
+    /// The active player's first actual draw in their draw step (Orcish Bowmasters'
     /// "except the first one they draw in each of their draw steps").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draw_step_draw: Option<DrawStepDrawV1>,
@@ -1689,9 +1689,22 @@ pub(crate) fn note_delve_exile(state: &mut GameState, spell: ObjectId, exiled: &
         .push((link, u32::try_from(count).unwrap_or(u32::MAX)));
 }
 
-/// Marks the active player's turn-based draw, which Orcish Bowmasters
-/// ignores. Recorded only in games with an Orcish Bowmasters.
+pub(crate) fn is_first_draw_in_draw_step(state: &GameState, player: PlayerId) -> bool {
+    state.step == crate::state::Step::Draw
+        && state.active_player == player
+        && !state
+            .eternal_v1
+            .as_ref()
+            .and_then(|eternal| eternal.draw_step_draw)
+            .is_some_and(|marker| marker.turn == state.turn_key_v1() && marker.player == player)
+}
+
+/// Records the ordinal of the first actual draw in the active player's draw
+/// step. A replacement such as dredge does not consume this exemption.
 pub(crate) fn note_draw_step_draw(state: &mut GameState, player: PlayerId) {
+    if !is_first_draw_in_draw_step(state, player) {
+        return;
+    }
     let has_bowmasters = card_id_by_name(ORCISH_BOWMASTERS).is_some_and(|bowmasters| {
         state
             .objects

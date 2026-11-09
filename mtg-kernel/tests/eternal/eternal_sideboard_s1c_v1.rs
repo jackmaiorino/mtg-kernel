@@ -557,6 +557,98 @@ fn hullbreacher_replaces_all_but_the_draw_step_draw() {
 }
 
 #[test]
+fn hullbreacher_and_dredge_compete_for_the_monarchs_draw() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let sentinels = put(&mut state, actor, "Palace Sentinels", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::W], 3);
+        cast(&mut state, sentinels, &[]);
+        settled(&mut state);
+        assert_eq!(state.monarch, Some(actor));
+        assert_eq!(zone(&state, sentinels), Zone::Battlefield);
+        let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
+        let library = state.players[actor.index()].library.clone();
+
+        pass_until(&mut state, |state| state.step == Step::End);
+        let prompt = settle(&mut state).expect("the monarch's actual draw");
+        assert!(matches!(
+            &prompt,
+            Decision::ChooseEffectTargets {
+                player, source, min_targets: 0, max_targets: 1, legal_targets, can_finish: true, ..
+            } if *player == actor && *source == sentinels && legal_targets.as_slice() == [Target::Object(thug)]
+        ));
+        assert!(named(&state, opponent, "Treasure Token").is_empty());
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(prompt, next(&mut restored));
+        let mut stale = restored.clone();
+        stale.objects.get_mut(thug).zone_change_count += 1;
+        assert!(mtg_kernel::effect::validate_pending_effect_choice(&stale).is_err());
+
+        let mut treasure = state.clone();
+        act(&mut treasure, Action::FinishEffectSelection);
+        settled(&mut treasure);
+        assert_eq!(named(&treasure, opponent, "Treasure Token").len(), 1);
+        assert_eq!(zone(&treasure, thug), Zone::Graveyard);
+        assert_eq!(treasure.players[actor.index()].library, library);
+        assert_eq!(treasure.players[actor.index()].draws_this_turn, 0);
+
+        for branch in [&mut state, &mut restored] {
+            act(branch, Action::ChooseEffectTarget(Target::Object(thug)));
+            settled(branch);
+            assert_eq!(zone(branch, thug), Zone::Hand);
+            assert!(library[..4].iter().all(|&card| zone(branch, card) == Zone::Graveyard));
+            assert_eq!(branch.players[actor.index()].library, library[4..]);
+            assert_eq!(branch.players[actor.index()].draws_this_turn, 0);
+            assert!(named(branch, opponent, "Treasure Token").is_empty());
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
+    }
+}
+
+#[test]
+fn dredging_the_turn_based_draw_exempts_only_the_first_actual_draw() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = plains();
+        state.turn = 2;
+        state.active_player = actor;
+        state.priority_player = actor;
+        state.step = Step::Upkeep;
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        put(&mut state, opponent, "Orcish Bowmasters", Zone::Battlefield);
+        let imp = put(&mut state, actor, "Stinkweed Imp", Zone::Graveyard);
+
+        pass_until(&mut state, |state| state.step == Step::Draw);
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption { player, source, option_count: 2 }
+                if player == actor && source == imp
+        ));
+        act(&mut state, Action::ChooseEffectOption(1));
+        assert_eq!(zone(&state, imp), Zone::Hand);
+        assert_eq!(state.players[actor.index()].draws_this_turn, 0);
+        let top = state.players[actor.index()].library[0];
+        let second = state.players[actor.index()].library[1];
+
+        for (card, expected_zone, treasures) in [(top, Zone::Hand, 0), (second, Zone::Library, 1)] {
+            let spell = put(&mut state, actor, "Think Twice", Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::U], 1);
+            cast(&mut state, spell, &[]);
+            settled(&mut state);
+            assert_eq!(state.step, Step::Draw);
+            assert_eq!(zone(&state, card), expected_zone);
+            assert_eq!(state.players[actor.index()].draws_this_turn, 1);
+            assert_eq!(named(&state, opponent, "Treasure Token").len(), treasures);
+        }
+    }
+}
+
+#[test]
 fn wurmcoil_engine_leaves_two_wurms() {
     let mut state = plains();
     let engine_card = put(&mut state, P1, "Wurmcoil Engine", Zone::Battlefield);

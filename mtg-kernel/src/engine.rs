@@ -21448,8 +21448,6 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     && crate::eternal_vintage_e7b_v1::dredge::defer_draw_step_draw(state, p);
                 if !dredge {
                     event::propose_and_commit(state, ProposedEvent::draw(p));
-                    #[cfg(feature = "eternal-fixtures")]
-                    crate::eternal_cards_v1::note_draw_step_draw(state, p);
                 }
                 collect_and_queue_triggers(state);
             }
