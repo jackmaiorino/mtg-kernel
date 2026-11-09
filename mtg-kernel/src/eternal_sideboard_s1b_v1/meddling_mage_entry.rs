@@ -41,9 +41,15 @@ pub(crate) fn choice(
             let object = state.objects.try_get(change.object)?;
             if object.zone == Zone::Battlefield
                 || !owns_definition(object.card_def)
+                || change.battlefield_manifested_v1
                 || change.battlefield_face_index.is_some_and(|face| face != 0)
                 || (object.zone == Zone::Stack && object.v4.face_down_v1.is_some())
             {
+                return None;
+            }
+            let mut final_change = change.clone();
+            crate::eternal_sideboard_s1a_v1::statics::replace_zone_change(state, &mut final_change);
+            if final_change.to_zone != Zone::Battlefield {
                 return None;
             }
             let controller = change.battlefield_controller.unwrap_or(if object.zone == Zone::Stack {

@@ -1114,6 +1114,57 @@ fn meddling_mage_entering_under_dress_down_never_chose_a_name() {
     assert!(castable(&mut state, bolt));
 }
 
+#[test]
+fn meddling_mage_priest_replacement_does_not_offer_a_name() {
+    let mut state = islands();
+    put(&mut state, P1, "Containment Priest", Zone::Battlefield);
+    let mage = put(&mut state, P1, "Meddling Mage", Zone::Graveyard);
+    let reanimate = put(&mut state, P0, "Reanimate", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    cast(&mut state, reanimate, &[Target::Object(mage)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, mage), Zone::Exile);
+    assert_eq!(life(&state, P0), 18);
+}
+
+#[test]
+fn meddling_mage_manifest_does_not_expose_hidden_printing_as_a_name_choice() {
+    for actor in [P0, P1] {
+        for hidden in ["Meddling Mage", "Llanowar Elves"] {
+            let mut state = islands();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let oculus = put(&mut state, actor, "Abhorrent Oculus", Zone::Hand);
+            for _ in 0..6 {
+                put(&mut state, actor, "Island", Zone::Graveyard);
+            }
+            let chosen = put(&mut state, actor, hidden, Zone::Library);
+            pool(&mut state, actor, &[ManaColor::U], 2);
+            cast(&mut state, oculus, &[]);
+            settle_with(&mut state, |_, decision| first_answer(decision));
+            run_until(
+                &mut state,
+                |state| state.active_player == actor.opponent() && state.step == Step::Main1,
+                |_, decision| match decision {
+                    Decision::ChooseEffectTargets { player, legal_targets, .. }
+                        if *player == actor && legal_targets.contains(&Target::Object(chosen)) =>
+                    {
+                        Some(Action::ChooseEffectTarget(Target::Object(chosen)))
+                    }
+                    Decision::ChooseMeddlingMageNameV1 { .. } =>
+                        panic!("the face-down entry cannot expose a printed name ability"),
+                    _ => None,
+                },
+            );
+            let live = state.objects.get(chosen);
+            assert_eq!(live.zone, Zone::Battlefield);
+            assert_eq!(live.v4.face_down_v1.unwrap().lookers, 1 << actor.index());
+            assert_eq!(live.v4.ward_generic, 0);
+            assert_eq!(power_toughness(&state, chosen), (2, 2));
+        }
+    }
+}
+
 fn def_is_land(named: u16) -> bool {
     CARD_DEFS[named as usize].types.contains(&CardType::Land)
 }

@@ -2216,18 +2216,16 @@ pub(crate) fn finish_selection(
 /// Puts `card` onto the battlefield face down as a 2/2 creature under
 /// `player`'s control; only `player` may look at it.
 fn manifest(state: &mut GameState, player: PlayerId, card: ObjectId) {
-    put_onto_battlefield(state, card, player);
+    let ProposedEvent::ZoneChange(mut entry) =
+        ProposedEvent::zone_change_to_battlefield_under_controller(card, player)
+    else {
+        unreachable!("manifest uses a native zone change");
+    };
+    entry.battlefield_manifested_v1 = true;
+    event::propose_and_commit(state, ProposedEvent::ZoneChange(entry));
     if state.objects.get(card).zone != Zone::Battlefield {
         return;
     }
-    let live = state.objects.get_mut(card);
-    live.v4.face_down_v1 = Some(crate::state::FaceDownV1 {
-        disguised: true,
-        lookers: 1 << player.index(),
-        hidden_by: None,
-        hidden_by_source: None,
-    });
-    live.v4.ward_generic = 0;
     let link = live_link(state, card);
     e7a_state(state).manifested.push(link);
 }
