@@ -20,7 +20,7 @@ pub enum TriggerV1 {
 }
 
 impl TriggerV1 {
-    fn from_program(program: &EffectOp) -> Option<Self> {
+    pub(crate) fn from_program(program: &EffectOp) -> Option<Self> {
         match program {
             EffectOp::Sequence(ops)
                 if matches!(

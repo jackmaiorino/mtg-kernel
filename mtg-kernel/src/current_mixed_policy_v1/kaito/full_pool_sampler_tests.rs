@@ -23,12 +23,7 @@ fn decision(owner: &KaitoSession) -> KaitoDecision {
 }
 
 fn modes(state: &mut GameState) {
-    state.curator_unordered_reveal_v1 = true;
-    state.greatwurm_commit_receipts_v1 = true;
-    state.harvester_commit_receipts_v1 = true;
-    state.fiend_artisan_receipts_v1 = true;
-    state.etali_commit_receipts_v1 = true;
-    state.thousand_year_storm_consumer_v1 = true;
+    FastActorSessionV1::enable_limited_native_modes_v1(state, LimitedAppendixV1::FullPool);
     state.reveal_knowledge_v4 = Some(Default::default());
     state.reveal_meaning_v3.enable();
 }

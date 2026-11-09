@@ -41,7 +41,7 @@ fn printing_for(id: u16, d: &CardDef) -> Result<Option<Value>> {
         "full_pool_ordinary_printing": {
             "schema": "full-pool-ordinary-printing/v1",
             "cost": d.cost, "mana_value": d.mana_value, "types": d.types,
-            "subtypes": d.subtypes, "supertypes": d.supertypes, "colors": d.colors,
+            "subtypes": d.subtypes, "supertypes": [], "colors": d.colors,
             "power": d.power, "toughness": d.toughness, "keywords": d.keywords.0,
             "cast_route": {
                 "method": "Normal", "origin": "OwnHand", "timing": "SorceryWithPriority",

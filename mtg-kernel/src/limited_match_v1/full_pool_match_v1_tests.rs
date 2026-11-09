@@ -39,12 +39,7 @@ fn scene(actor: PlayerId, hidden: &str) -> (KaitoSession, LimitedBeliefV1) {
     }
     put(&mut state, actor, "Swamp", Zone::Battlefield);
     put(&mut state, actor.opponent(), "Forest", Zone::Battlefield);
-    state.curator_unordered_reveal_v1 = true;
-    state.greatwurm_commit_receipts_v1 = true;
-    state.harvester_commit_receipts_v1 = true;
-    state.fiend_artisan_receipts_v1 = true;
-    state.etali_commit_receipts_v1 = true;
-    state.thousand_year_storm_consumer_v1 = true;
+    FastActorSessionV1::enable_limited_native_modes_v1(&mut state, LimitedAppendixV1::FullPool);
     state.reveal_knowledge_v4 = Some(Default::default());
     state.reveal_meaning_v3.enable();
     let opponent = actor.opponent();

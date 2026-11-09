@@ -865,6 +865,12 @@ pub(crate) fn pending_source_reference(
             &pending.effect,
         )
         .is_some();
+    let crawler_trigger = appendix == LimitedAppendixV1::FullPool
+        && !pending.is_madness_offer
+        && source.zone == crate::state::Zone::Battlefield
+        && crate::scrawling_crawler_public_v1::pending_printing(source.card_def)
+        && (pending.granted_by.is_some()
+            || crate::scrawling_crawler_public_v1::TriggerV1::from_program(&pending.effect).is_some());
     if !selected_source(source)
         && !kykar
         && !sphinx_lore
@@ -879,6 +885,7 @@ pub(crate) fn pending_source_reference(
         && !tutelage
         && !curator
         && !printed_life_trigger
+        && !crawler_trigger
     {
         return Ok(None);
     }
@@ -901,7 +908,7 @@ pub(crate) fn pending_source_reference(
         ));
     }
     let mut reference = captured_reference(state, source);
-    if printed_life_trigger {
+    if printed_life_trigger || crawler_trigger {
         reference.card_db_id = source.card_def;
     }
     Ok(Some(reference))
