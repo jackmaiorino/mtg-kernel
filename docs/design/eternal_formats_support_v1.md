@@ -542,9 +542,11 @@ New, each built once in the first wave that needs it:
   are `StandardTargetV1::S1dV1`. Rhino and Flagbearer use new stable ids 361 and 362;
   Nylea's Disciple uses Centaur's existing stable id 281 from P2c.
   Partial: Martyr of Sands awaits native payment, disclosure, restore and consumer
-  qualification. Standard Bearer and Coalition Honor Guard apply the
-  Flagbearer restriction only to the last slot, so a multi-target spell that can
-  finish early can bypass it. Vandalblast and Electrickery omit overload on the normal
+  qualification. Standard Bearer and Coalition Honor Guard now share bounded
+  complete-assignment checks for optional target counts, including early Finish,
+  restored selections and payable activations. Native qualification is pending.
+  Fixed-slot dependencies such as Goblin Welder and separate damage-allocation
+  target paths still need qualification and repairs. Vandalblast and Electrickery omit overload on the normal
   graveyard permission path. The shared free-resolution path can offer the overload
   form at zero cost, although free casting excludes other alternative costs.
   Circle of Protection: Blue offers
