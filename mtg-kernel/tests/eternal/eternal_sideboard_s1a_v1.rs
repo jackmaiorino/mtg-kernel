@@ -1233,7 +1233,12 @@ fn surgical_extraction_exiles_every_copy_from_the_graveyard_hand_and_library() {
     };
     assert_eq!(library(&state, P1, "Llanowar Elves"), 2);
     cast(&mut state, extraction, &[Target::Object(target)]);
-    settled(&mut state);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectTargets { legal_targets, .. } => {
+            Action::ChooseEffectTarget(legal_targets[0])
+        }
+        other => first_answer(other),
+    });
     assert_eq!(zone(&state, target), Zone::Exile);
     assert_eq!(zone(&state, in_hand), Zone::Exile);
     assert_eq!(zone(&state, other), Zone::Hand, "another name");
@@ -1260,11 +1265,186 @@ fn surgical_extraction_can_be_paid_with_life_and_never_targets_a_basic_land() {
             assert!(legal_targets.contains(&Target::Object(theirs)));
             Action::ChooseTarget(Target::Object(mine))
         }
+        Decision::ChooseEffectTargets { legal_targets, .. } => {
+            assert_eq!(legal_targets, vec![Target::Object(mine)]);
+            Action::ChooseEffectTarget(Target::Object(mine))
+        }
         other => first_answer(other),
     });
     assert_eq!(state.players[0].life, 18);
     assert_eq!(zone(&state, mine), Zone::Exile);
     assert_eq!(zone(&state, basic), Zone::Graveyard);
+}
+
+#[test]
+fn surgical_extraction_can_finish_at_zero_or_exile_a_private_subset_in_either_seat() {
+    use mtg_kernel::eternal_sideboard_s1a_v1::surgical_search_look_v1;
+    use mtg_kernel::rl::{legal_action_candidates_v1, ActionSemanticV1, PlayerSeatV1};
+    use mtg_kernel::state::ObservationNoteKindV1;
+    use mtg_kernel::surface::{SurfaceAction, SurfaceDecision};
+
+    for actor in [P0, P1] {
+        let owner = actor.opponent();
+        let mut state = game(&["Llanowar Elves", "Island", "Llanowar Elves"]);
+        state.active_player = actor;
+        state.priority_player = actor;
+        state.enable_hand_knowledge_by_name_v2();
+        let target = put(&mut state, owner, "Llanowar Elves", Zone::Graveyard);
+        let in_hand = put(&mut state, owner, "Llanowar Elves", Zone::Hand);
+        let other = put(&mut state, owner, "Snap", Zone::Hand);
+        let duplicate = put(&mut state, owner, "Snap", Zone::Hand);
+        let extraction = put(&mut state, actor, "Surgical Extraction", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::B], 0);
+        cast(&mut state, extraction, &[Target::Object(target)]);
+        let prompt = settle(&mut state).expect("native Surgical search");
+        let Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            min_targets,
+            max_targets,
+            can_finish,
+            ..
+        } = &prompt
+        else {
+            panic!("expected private search, got {prompt:?}");
+        };
+        assert_eq!(
+            (*player, *min_targets, *max_targets, *can_finish),
+            (actor, 0, 4, true)
+        );
+        let library = state.players[owner.index()].library.clone();
+        assert_eq!(
+            legal_targets,
+            &vec![
+                Target::Object(target),
+                Target::Object(in_hand),
+                Target::Object(library[0]),
+                Target::Object(library[2])
+            ]
+        );
+        let look = surgical_search_look_v1(&state, actor).unwrap().unwrap();
+        assert_eq!(look.owner, PlayerSeatV1::from(owner));
+        assert_eq!(look.hand_printings, ["Llanowar Elves", "Snap", "Snap"]);
+        assert_eq!(look.library_printings, ["Island", "Llanowar Elves", "Llanowar Elves"]);
+        assert!(surgical_search_look_v1(&state, owner).unwrap().is_none());
+        let known_names = |state: &GameState| {
+            let mut names = state
+                .known_hand_cards(actor, owner)
+                .iter()
+                .map(|entry| name_of(state, entry.object))
+                .collect::<Vec<_>>();
+            names.sort_unstable();
+            names
+        };
+        assert_eq!(known_names(&state), ["Llanowar Elves", "Snap", "Snap"]);
+
+        let rows = legal_action_candidates_v1(&SurfaceDecision::Decision(prompt), &state).unwrap();
+        assert_eq!(rows.len(), 5);
+        assert!(
+            matches!(&rows[1].record.semantic, ActionSemanticV1::ChooseEffectTarget {
+            target: mtg_kernel::rl::TargetRefV1::Object { object }, ..
+        } if object.arena_id == in_hand.0 && object.card_db_id == id("Llanowar Elves"))
+        );
+        assert_eq!(
+            rows[1].surface_action,
+            SurfaceAction::Action(Action::ChooseEffectTarget(Target::Object(in_hand)))
+        );
+        assert_eq!(
+            rows[4].surface_action,
+            SurfaceAction::Action(Action::FinishEffectSelection)
+        );
+
+        let mut zero = state.clone();
+        act(&mut zero, Action::FinishEffectSelection);
+        settled(&mut zero);
+        assert_eq!(zone(&zero, target), Zone::Graveyard);
+        assert_eq!(zone(&zero, in_hand), Zone::Hand);
+        assert_eq!(zone(&zero, library[0]), Zone::Library);
+        assert_eq!(known_names(&zero), ["Llanowar Elves", "Snap", "Snap"]);
+        assert!(zero.known_hand_cards(owner, actor).is_empty());
+        assert!(zero.observation_journal.notes().iter().any(|note| matches!(note.kind, ObservationNoteKindV1::LibraryRandomized { owner: shuffled } if shuffled == owner)));
+
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(in_hand)),
+        );
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectTargets {
+                selected_count: 1,
+                ..
+            }
+        ));
+        let snapshot = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
+        assert_eq!(next(&mut state), next(&mut restored));
+        let mut reordered = restored.clone();
+        let Some(mtg_kernel::effect::PendingEffectChoice::SelectTargets { legal, .. }) = reordered
+            .engine
+            .pending_effect
+            .as_mut()
+            .and_then(|pending| pending.choice.as_mut())
+        else {
+            panic!("missing restored search choice");
+        };
+        legal.swap(0, 1);
+        assert!(mtg_kernel::effect::validate_pending_effect_choice(&reordered).is_err());
+        for continued in [&mut state, &mut restored] {
+            act(
+                continued,
+                Action::ChooseEffectTarget(Target::Object(library[2])),
+            );
+            act(continued, Action::FinishEffectSelection);
+            settled(continued);
+            assert_eq!(zone(continued, in_hand), Zone::Exile);
+            assert_eq!(zone(continued, library[2]), Zone::Exile);
+            assert_eq!(zone(continued, target), Zone::Graveyard);
+            assert_eq!(zone(continued, other), Zone::Hand);
+            assert_eq!(zone(continued, duplicate), Zone::Hand);
+            assert_eq!(zone(continued, library[0]), Zone::Library);
+            assert_eq!(known_names(continued), ["Snap", "Snap"]);
+            assert!(continued.known_hand_cards(owner, actor).is_empty());
+            assert!(surgical_search_look_v1(continued, actor).unwrap().is_none());
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
+    }
+}
+
+#[test]
+fn surgical_extraction_hides_the_search_roster_and_width_from_the_nonchooser() {
+    use mtg_kernel::eternal_sideboard_s1a_v1::surgical_search_look_v1;
+    use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
+    use mtg_kernel::rl::{observe_policy_v5, PendingEffectChoiceSemanticV4};
+
+    for actor in [P0, P1] {
+        let viewer = actor.opponent();
+        let run = |hidden| {
+            let mut state = game(&["Island"; 4]);
+            state.active_player = actor;
+            state.priority_player = actor;
+            let target = put(&mut state, actor, "Llanowar Elves", Zone::Graveyard);
+            put(&mut state, actor, hidden, Zone::Library);
+            let extraction = put(&mut state, actor, "Surgical Extraction", Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::B], 0);
+            cast(&mut state, extraction, &[Target::Object(target)]);
+            let Some(Decision::ChooseEffectTargets { max_targets, .. }) = settle(&mut state) else {
+                panic!("expected Surgical search");
+            };
+            assert_eq!(max_targets, if hidden == "Llanowar Elves" { 2 } else { 1 });
+            assert!(surgical_search_look_v1(&state, viewer).unwrap().is_none());
+            let observation =
+                observe_policy_v5(&state, &PolicySurfaceV5::new(), viewer, 0, 0, 0, 1).unwrap();
+            assert!(matches!(
+                observation.projection.surface.engine_context.pending_effect.as_ref()
+                    .and_then(|pending| pending.choice.as_ref()),
+                Some(PendingEffectChoiceSemanticV4::Targets {
+                    selected_targets, legal_targets, min_targets: 0, max_targets: 0, ..
+                }) if selected_targets.is_empty() && legal_targets.is_empty()
+            ));
+            observation
+        };
+        assert_eq!(run("Llanowar Elves"), run("Forest"));
+    }
 }
 
 #[test]

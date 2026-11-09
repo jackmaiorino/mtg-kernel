@@ -10612,6 +10612,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     }
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1a_v1::surgical::validate_continuation(state, pending)?;
     thousand_year_storm_v1::validate_continuation(state, pending)?;
     blasphemous_edict_v1::validate(state, pending)?;
     liliana_dreadhorde_v1::validate_continuation(state, pending)?;
