@@ -753,7 +753,7 @@ impl FullTextAbilityV1 {
         self.public_program(definition).is_some()
     }
 
-    fn public_program(
+    pub(crate) fn public_program(
         self,
         definition: &CardDef,
     ) -> Option<crate::premodern_ordered_public_v1::FullTextProgramV1> {

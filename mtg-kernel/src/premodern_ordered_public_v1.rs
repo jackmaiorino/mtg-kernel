@@ -16,6 +16,12 @@ use crate::{
 };
 use serde::Serialize;
 
+mod decision;
+pub use decision::{
+    advance_numeric, NumericBoundaryV1, NumericDecisionV1, NumericDecisionViewV1, NumericMenuV1,
+    NumericNativeActionV1,
+};
+
 pub const SCHEMA_V1: &str = "mtg-kernel-premodern-ordered-public/v1";
 pub const NUMERIC_SCHEMA_V1: &str = "mtg-kernel-numeric-premodern-ordered/v1";
 pub const HUMAN_SCHEMA_V1: &str = "mtg-kernel-human-premodern-ordered-public/v1";
@@ -547,9 +553,29 @@ mod tests {
             let human = serde_json::to_value(&prompt).unwrap();
             assert!(human.get("expected").is_none());
             assert!(!human.to_string().contains("arena_id"));
-            let choice = observe(&b, owner).unwrap().order_choice.unwrap();
             choose_human_order(&mut a, owner, &prompt, 1).unwrap();
-            choose_order(&mut b, owner, &choice, 1).unwrap();
+            let mut numeric_surface =
+                crate::surface_v2::HarnessSurfaceV2::new_with_priority_mode_v1(
+                    crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+                    crate::surface_v2::SuppressionAuditMode::Off,
+                );
+            {
+                let NumericBoundaryV1::Decision(mut native) =
+                    advance_numeric(&mut b, &mut numeric_surface, 17).unwrap()
+                else {
+                    panic!("expected the native order decision");
+                };
+                assert_eq!(
+                    native.view(owner).unwrap().menu,
+                    Some(NumericMenuV1::GraveyardOrder)
+                );
+                assert!(native.view(owner.opponent()).unwrap().menu.is_none());
+                assert!(native.choose_order(owner.opponent(), 17, 1).is_err());
+                assert!(native.choose_order(owner, 16, 1).is_err());
+                assert!(native.choose_order(owner, 17, 2).is_err());
+                native.choose_order(owner, 17, 1).unwrap();
+                assert!(native.choose_order(owner, 17, 0).is_err());
+            }
             for state in [&a, &b] {
                 assert_eq!(state.players[owner.index()].graveyard, [second, first]);
             }
@@ -570,6 +596,27 @@ mod tests {
                 rl::observe_premodern_ordered_v1(&a, &surface, owner.opponent(), 18).unwrap();
             assert_eq!(opponent.stable.unwrap().own_hand[0].card_name, "Island");
             assert!(rl::observe_v2(&a, &surface, owner, 18).is_err());
+            {
+                let NumericBoundaryV1::Decision(mut native) =
+                    advance_numeric(&mut b, &mut numeric_surface, 18).unwrap()
+                else {
+                    panic!("expected native main-phase actions");
+                };
+                let Some(NumericMenuV1::Native { actions }) = native.view(owner).unwrap().menu else {
+                    panic!("expected ordinary actions after graveyard order");
+                };
+                let (index, action) = actions
+                    .iter()
+                    .enumerate()
+                    .find(|(_, row)| matches!(row.action.semantic, rl::ActionSemanticV1::PlayLand { .. }))
+                    .unwrap();
+                assert!(native.choose_native(owner, 17, index, &action.action.stable_id).is_err());
+                assert!(native.choose_native(owner, 18, index, "wrong-id").is_err());
+                native.choose_native(owner, 18, index, &action.action.stable_id).unwrap();
+                assert!(native.view(owner).is_err());
+            }
+            assert_eq!(b.players[owner.index()].battlefield.len(), 1);
+            assert!(b.players[owner.index()].hand.is_empty());
         }
     }
 }
