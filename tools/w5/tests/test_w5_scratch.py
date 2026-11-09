@@ -3,6 +3,7 @@ fixture of scratch_bench.py (mtg-kernel#601)."""
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -274,6 +275,30 @@ class ScratchWork(unittest.TestCase):
             self.assertEqual(state[case], {'segment_persisted': True, 'mounted': False, 'scratch_left': False}, case)
         self.assertEqual(state['reset'], {'segment_persisted': False, 'mounted': False, 'scratch_left': False})
 
+    def test_settle_setup_keeps_two_bulk_iterations_and_one_case_at_a_time(self):
+        scratch, work = self.base / 'shm', self.base / 'work'
+        live_iterations = peak_bytes = 0
+        put = scratch_bench.Segment.put
+
+        def observe(segment, *args, **kwargs):
+            nonlocal live_iterations, peak_bytes
+            result = put(segment, *args, **kwargs)
+            live_iterations = max(live_iterations, len(segment.bulk))
+            for parent in (scratch, work):
+                if parent.exists():
+                    self.assertLessEqual(len(list(parent.iterdir())), 1)
+            peak_bytes = max(peak_bytes, sum(
+                path.stat().st_size for parent in (scratch, work) for path in parent.rglob('*')
+                if path.is_file() and not path.is_symlink()))
+            return result
+
+        with mock.patch.object(scratch_bench.Segment, 'put', observe):
+            scratch_bench.run_settle(chains, 8, self.profile, 7, scratch, work, False)
+        self.assertEqual(live_iterations, 2)
+        self.assertLessEqual(peak_bytes, scratch_bench.fixture_bytes(self.profile, 8, settle=True, seed=7))
+        self.assertEqual(list(scratch.iterdir()), [])
+        self.assertEqual(list(work.iterdir()), [])
+
     def test_schedule_runs_each_size_a_b_b_a(self):
         order = scratch_bench.schedule([16, 64], ['A', 'B'], 2)
         for n in (16, 64):
@@ -301,6 +326,7 @@ class ScratchWork(unittest.TestCase):
         r = json.loads(out.read_text())
         self.assertEqual((r['schema'], r['complete'], r['sizes']), (scratch_bench.SCHEMA, True, [2]))
         self.assertTrue(r['counts']['A']['2']['deterministic'])
+        self.assertEqual([row['status'] for row in r['attempts']], ['complete'] * 4)
         self.assertTrue(r['summary']['A']['2']['counts']['persist_identical'])
         self.assertEqual([s['round'] for s in r['samples']], [0, 1])
         self.assertEqual([len(s['reap']['idle']['wall_us']) for s in r['samples']], [2, 2])  # every tick kept
@@ -309,6 +335,77 @@ class ScratchWork(unittest.TestCase):
         self.assertEqual(r['variants']['A']['files']['chains.py'], hashlib.sha256(
             Path(chains.__file__).read_bytes()).hexdigest())
         self.assertEqual(sorted(p.name for p in self.base.iterdir()), ['receipt.json'])  # workers clean up
+
+    def test_bench_retains_completed_count_and_cleans_partial_worker_on_failure(self):
+        original_run = subprocess.run
+        for status in ('timed_out', 'failed'):
+            with self.subTest(status=status):
+                root = self.base / status
+                root.mkdir()
+                out = root / 'receipt.json'
+                starts = []
+
+                def fail_second(command, *args, **kwargs):
+                    if len(command) < 3 or command[2] != scratch_bench.WORKER:
+                        return original_run(command, *args, **kwargs)
+                    payload = json.loads(command[3])
+                    paths = [Path(payload[k]) for k in ('scratch', 'work')]
+                    starts.append(paths)
+                    self.assertTrue(all(path.parent == root for path in paths))
+                    if len(starts) == 1:
+                        return original_run(command, *args, **kwargs)
+                    for path in paths:
+                        (path / 'partial-fixture').write_text('owned sample', encoding='utf-8')
+                    if status == 'timed_out':
+                        raise subprocess.TimeoutExpired(
+                            command, kwargs['timeout'], output=b'partial stdout', stderr=b'fault stderr')
+                    raise subprocess.CalledProcessError(
+                        7, command, output='partial stdout', stderr='fault stderr')
+
+                with mock.patch.object(scratch_bench.subprocess, 'run', side_effect=fail_second):
+                    rc = scratch_bench.main([
+                        '--out', str(out), '--sizes', '2', '--rounds', '2',
+                        '--scratch-dir', str(root), '--work-dir', str(root),
+                        '--max-wall-seconds', '120', '--quiet',
+                    ])
+                self.assertEqual(rc, 3)
+                receipt = json.loads(out.read_text(encoding='utf-8'))
+                self.assertFalse(receipt['complete'])
+                self.assertIsNone(receipt['counts']['A']['2']['deterministic'])
+                self.assertTrue(receipt['counts']['A']['2']['persist']['identical'])
+                self.assertEqual([row['status'] for row in receipt['attempts']], ['complete', status])
+                failure = receipt['attempts'][1]
+                self.assertEqual((failure['variant'], failure['n'], failure['repeat']), ('A', 2, 1))
+                self.assertEqual(failure['stdout_tail'], 'partial stdout')
+                self.assertEqual(failure['stderr_tail'], 'fault stderr')
+                if status == 'failed':
+                    self.assertEqual(failure['exit'], 7)
+                else:
+                    self.assertGreater(failure['timeout_seconds'], 0)
+                self.assertEqual(sorted(path.name for path in root.iterdir()), ['receipt.json'])
+
+
+class ScratchBenchSupervisor(unittest.TestCase):
+    def test_parent_removes_only_owned_worker_paths_after_timeout(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            unrelated = root / 'keep'
+            unrelated.write_text('outside the worker', encoding='utf-8')
+
+            def interrupted(command, **kwargs):
+                payload = json.loads(command[3])
+                paths = [Path(payload[key]) for key in ('scratch', 'work')]
+                self.assertNotEqual(*paths)
+                for path in paths:
+                    self.assertEqual(path.parent, root)
+                    (path / 'partial').write_text('unfinished fixture', encoding='utf-8')
+                raise subprocess.TimeoutExpired(command, kwargs['timeout'])
+
+            with mock.patch.object(scratch_bench.subprocess, 'run', side_effect=interrupted):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    scratch_bench.spawn({'scratch': name, 'work': name}, timeout=0.1)
+            self.assertEqual(list(root.iterdir()), [unrelated])
+            self.assertEqual(unrelated.read_text(encoding='utf-8'), 'outside the worker')
 
 
 if __name__ == '__main__':

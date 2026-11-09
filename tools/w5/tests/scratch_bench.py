@@ -56,6 +56,7 @@ import gzip
 import hashlib
 import io
 import json
+import math
 import os
 import platform
 import random
@@ -471,19 +472,20 @@ class Segment:
     def end(self):
         self.put('completion.json', doc(f'{self.seed}/completion', self.p['completion_bytes'], {'complete': True}))
 
-    def build(self, updates, sim, reap_upto=None):
-        """A whole segment, untimed: every iteration but the last `updates - reap_upto` reaped (the reaper's
-        state at the segment end: all but the newest, or all but the last two if its last tick came first)."""
+    def prune_bulk(self, iteration):
+        for rel in self.bulk.pop(iteration, []):
+            (self.target / rel).unlink()
+
+    def build(self, updates, sim):
+        """Build the same pruned segment without retaining every update's bulk at once."""
         self.mount(sim)
         self.begin(updates)
         for i in range(updates):
             self.start(i)
             self.finish(i)
+            if i:
+                self.prune_bulk(i - 1)
         self.end()
-        upto = updates - 1 if reap_upto is None else reap_upto
-        for i in range(upto):
-            for rel in self.bulk.pop(i, []):
-                (self.target / rel).unlink()
 
     def fixture_digest(self):
         return digest_map(self.expected)
@@ -726,10 +728,9 @@ def run_settle(ch, n, profile, seed, scratch, work, count):
                     for i in range(n - 1):
                         second.start(i)
                         second.finish(i)
+                        if i:
+                            second.prune_bulk(i - 1)
                     second.start(n - 1)
-                    for i in range(n - 2):
-                        for rel in second.bulk.pop(i, []):
-                            (second.target / rel).unlink()
             root = first.root
             _, s = measured(lambda: ch.scratch_settle(first.arm, root, first.cdir, man), full=count,
                             classify=persist_classifier(second), detail=True)
@@ -740,6 +741,9 @@ def run_settle(ch, n, profile, seed, scratch, work, count):
                               'mounted': ch.mounted(second.native),
                               'scratch_left': second.target.exists()}
             out[case] = row
+        for path in (base_s, base_w):
+            if path.exists():
+                shutil.rmtree(path)
     return out
 
 
@@ -751,14 +755,14 @@ def worker(argv):
     if Path(ch.__file__).resolve().parent != Path(a['src']).resolve():
         raise SystemExit(f'chains loaded from {ch.__file__}, not {a["src"]}')
     profile = PROFILES[a['profile']]
-    scratch = tempfile.mkdtemp(prefix='w5-scratch-bench-', dir=a['scratch'])
-    work = tempfile.mkdtemp(prefix='w5-scratch-bench-', dir=a['work'])
-    try:
-        fn = run_segment if a['scenario'] == 'segment' else run_settle
-        out = fn(ch, a['n'], profile, a['seed'], scratch, work, a['count'])
-    finally:
-        shutil.rmtree(scratch, ignore_errors=True)
-        shutil.rmtree(work, ignore_errors=True)
+    scratch, work = Path(a['scratch']), Path(a['work'])
+    if scratch.resolve() == work.resolve() or any(
+        not path.name.startswith('w5-scratch-bench-') or path.is_symlink()
+        or not path.is_dir() or any(path.iterdir()) for path in (scratch, work)
+    ):
+        raise SystemExit('worker needs two fresh, private fixture directories')
+    fn = run_segment if a['scenario'] == 'segment' else run_settle
+    out = fn(ch, a['n'], profile, a['seed'], scratch, work, a['count'])
     out['maxrss_kb'] = rusage()['maxrss_kb']
     out['chains'] = str(Path(ch.__file__).resolve())
     sys.stdout.write(json.dumps(out, sort_keys=True) + '\n')
@@ -816,13 +820,21 @@ def machine():
     return info
 
 
-def fixture_bytes(profile, n):
-    """Upper bound on one sample's live bytes: every record, two iterations' bulk and the staging copy."""
+def fixture_bytes(profile, n, *, settle=False, seed=601):
+    """Conservative logical live bytes, including staging and one settle predecessor."""
     p = profile
-    records = sum(p['records'].values()) + p['complete_bytes']
-    bulk = p['episodes'] * p['trajectory_bytes'] + p['checkpoint_bytes']
-    return 2 * (n * records + p['run_bytes'] + p['completion_bytes'] + p['checkpoint_bytes']) + 3 * bulk + \
-        n * p['config_bytes_per_update']
+    # doc() can overshoot by one padded JSON member. Allow for its tag and
+    # fixed fields, gzip framing and the small persistence/index records.
+    slack = 512 + len(str(seed)) + len(str(n))
+    records = sum(p['records'].values()) + p['complete_bytes'] + (len(p['records']) + 1) * slack
+
+    def metadata(updates):
+        return updates * (records + p['config_bytes_per_update']) + p['run_bytes'] + p['completion_bytes'] + 3 * slack
+
+    checkpoint = p['checkpoint_bytes']
+    bulk = p['episodes'] * p['trajectory_bytes'] + checkpoint
+    predecessor = metadata(2) + checkpoint if settle else 0
+    return 2 * metadata(n) + 3 * bulk + checkpoint + predecessor + 64 * 1024
 
 
 def schedule(sizes, variants, rounds):
@@ -836,14 +848,32 @@ def schedule(sizes, variants, rounds):
     return out
 
 
+def stream_tail(stream):
+    if isinstance(stream, bytes):
+        stream = stream.decode('utf-8', errors='replace')
+    return (stream or '')[-4000:]
+
+
 def spawn(args, timeout):
-    t0 = time.perf_counter_ns()
-    r = subprocess.run([sys.executable, str(Path(__file__).resolve()), WORKER, json.dumps(args)],
-                       capture_output=True, text=True, timeout=timeout)
-    if r.returncode != 0:
-        raise SystemExit(f'worker failed ({r.returncode}): {args}\n{r.stderr[-4000:]}')
-    out = json.loads(r.stdout.strip().splitlines()[-1])
-    out['process_wall_ns'] = time.perf_counter_ns() - t0
+    # The supervisor owns these paths, including when a killed worker cannot
+    # run cleanup. Only its exact per-attempt directories are removed.
+    with (tempfile.TemporaryDirectory(prefix='w5-scratch-bench-', dir=args['scratch']) as scratch,
+          tempfile.TemporaryDirectory(prefix='w5-scratch-bench-', dir=args['work']) as work):
+        payload = {**args, 'scratch': scratch, 'work': work}
+        t0 = time.perf_counter_ns()
+        r = subprocess.run([sys.executable, str(Path(__file__).resolve()), WORKER, json.dumps(payload)],
+                           capture_output=True, encoding='utf-8', errors='replace', timeout=timeout, check=True)
+        wall_ns = time.perf_counter_ns() - t0
+    try:
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        required = ('reap', 'persist', 'compress_config') if args['scenario'] == 'segment' else (
+            'steady', 'swap_finish', 'late_persist', 'reset')
+        if not isinstance(out, dict) or any(not isinstance(out.get(key), dict) for key in required):
+            raise ValueError('worker result lacks its scenario rows')
+    except (IndexError, ValueError) as error:
+        raise RuntimeError(f'worker returned no valid result: {error}\n{stream_tail(r.stdout)}\n'
+                           f'{stream_tail(r.stderr)}') from error
+    out['process_wall_ns'] = wall_ns
     return out
 
 
@@ -1005,8 +1035,10 @@ def main(argv=None):
     sizes = [int(x) for x in a.sizes.split(',')]
     if any(n < 2 for n in sizes):
         raise SystemExit('every size is at least 2 updates (a segment with something to reap)')
+    if not math.isfinite(a.max_wall_seconds) or a.max_wall_seconds <= 0:
+        raise SystemExit('--max-wall-seconds must be finite and positive')
     profile = PROFILES[a.profile]
-    need = max(fixture_bytes(profile, n) for n in sizes)
+    need = max(fixture_bytes(profile, n, settle=a.settle, seed=a.seed) for n in sizes)
     if need > a.max_fixture_bytes:
         raise SystemExit(f'a sample needs up to {need} bytes, over --max-fixture-bytes {a.max_fixture_bytes}')
     for d in {a.scratch_dir, a.work_dir}:
@@ -1026,7 +1058,7 @@ def main(argv=None):
                'machine': machine(), 'dirs': {'scratch': mount_of(a.scratch_dir), 'work': mount_of(a.work_dir)},
                'profile': {'name': a.profile, **profile}, 'seed': a.seed, 'sizes': sizes, 'rounds': a.rounds,
                'variants': variants, 'max_fixture_bytes_per_sample': need, 'counts': {}, 'samples': [],
-               'settle': {}}
+               'settle': {}, 'attempts': []}
 
     def remaining():
         left = a.max_wall_seconds - (time.monotonic() - t_start)
@@ -1034,38 +1066,65 @@ def main(argv=None):
             raise TimeoutError
         return left
 
-    def base(v, n, scenario, count):
-        return {'src': str(Path(srcs[v]).resolve()), 'scenario': scenario, 'n': n, 'profile': a.profile,
+    def attempt(v, n, scenario, count, **position):
+        row = {'variant': v, 'n': n, 'scenario': scenario, 'count': count, **position}
+        receipt['attempts'].append(row)
+        args = {'src': str(Path(srcs[v]).resolve()), 'scenario': scenario, 'n': n, 'profile': a.profile,
                 'seed': a.seed, 'scratch': a.scratch_dir, 'work': a.work_dir, 'count': count}
+        try:
+            timeout = remaining()
+        except TimeoutError:
+            row['status'] = 'budget_expired'
+            raise
+        try:
+            sample = spawn(args, timeout)
+        except subprocess.TimeoutExpired as error:
+            row.update(status='timed_out', timeout_seconds=error.timeout,
+                       stdout_tail=stream_tail(error.stdout), stderr_tail=stream_tail(error.stderr))
+            raise
+        except subprocess.CalledProcessError as error:
+            row.update(status='failed', exit=error.returncode,
+                       stdout_tail=stream_tail(error.stdout), stderr_tail=stream_tail(error.stderr))
+            raise
+        except (OSError, RuntimeError) as error:
+            row.update(status='failed', error=str(error))
+            raise
+        row.update(status='complete', process_wall_ns=sample['process_wall_ns'])
+        return sample
 
+    order = schedule(sizes, list(variants), a.rounds)
+    receipt['order'] = [{'round': r, 'n': n, 'variant': v} for r, n, v in order]
     try:
         if not a.no_counts:
             for v in variants:
                 receipt['counts'][v] = {}
                 for n in sizes:
-                    first = spawn(base(v, n, 'segment', True), remaining())
-                    second = spawn(base(v, n, 'segment', True), remaining())
+                    first = attempt(v, n, 'segment', True, repeat=0)
+                    first['deterministic'] = None
+                    receipt['counts'][v][str(n)] = first
+                    second = attempt(v, n, 'segment', True, repeat=1)
                     same = first['reap'] == second['reap'] and all(
                         first[k][f] == second[k][f] for k, f in DETERMINISTIC)
                     first['deterministic'] = same
-                    receipt['counts'][v][str(n)] = first
                     say(f'counts {v} n={n}: deterministic={same}')
-        receipt['order'] = [{'round': r, 'n': n, 'variant': v} for r, n, v in schedule(sizes, list(variants),
-                                                                                       a.rounds)]
-        for pos, (r, n, v) in enumerate(schedule(sizes, list(variants), a.rounds)):
-            s = spawn(base(v, n, 'segment', False), remaining())
+        for pos, (r, n, v) in enumerate(order):
+            s = attempt(v, n, 'segment', False, round=r, position=pos)
             s.update({'round': r, 'position': pos, 'variant': v, 'n': n})
             receipt['samples'].append(s)
             say(f'round {r} n={n} {v}: reap {sum(s["reap"]["productive"]["wall_ns"]) / 1e6:.1f} + '
                 f'{sum(s["reap"]["idle"]["wall_ns"]) / 1e6:.1f} ms, persist {s["persist"]["wall_ns"] / 1e6:.1f} ms')
         if a.settle:
             for v in variants:
-                receipt['settle'][v] = {'counts': None if a.no_counts else
-                                        spawn(base(v, max(sizes), 'settle', True), remaining()),
-                                        'time': spawn(base(v, max(sizes), 'settle', False), remaining())}
+                results = {'counts': None}
+                receipt['settle'][v] = results
+                if not a.no_counts:
+                    results['counts'] = attempt(v, max(sizes), 'settle', True)
+                results['time'] = attempt(v, max(sizes), 'settle', False)
         receipt['complete'] = True
-    except TimeoutError:
+    except (TimeoutError, subprocess.TimeoutExpired):
         receipt['stopped'] = f'--max-wall-seconds {a.max_wall_seconds} reached'
+    except (subprocess.CalledProcessError, OSError, RuntimeError):
+        receipt['stopped'] = 'worker failed'
     receipt['wall_seconds'] = round(time.monotonic() - t_start, 3)
     receipt['summary'] = summarize(receipt)
     out = Path(a.out)
