@@ -597,7 +597,7 @@ class ScratchStagePinRecovery(unittest.TestCase):
                 else:
                     self.assertEqual(chains.read(end)['last_valid_boundary'], 2)
 
-    def external_end(self, args, route, boundary=None):
+    def external_end(self, args, route, boundary=None, sync=None):
         _, root, cdir, man = args
         plan = {'root': str(root), 'label': 'fixture', 'chains': {'c1': {'arm': 'C'}}, 'pairs': {}}
         write(cdir / 'chain.json', json.dumps(man).encode())
@@ -606,6 +606,7 @@ class ScratchStagePinRecovery(unittest.TestCase):
                                   qualification=None, accept_lower_bound=False)
         with mock.patch.object(chains, 'load_plan', return_value=plan), \
                 mock.patch.object(chains, 'mounted', return_value=False), \
+                mock.patch.object(chains, 'fsync_path', side_effect=sync), \
                 mock.patch.object(chains, 'log'), mock.patch('builtins.print'):
             if route == 'operator':
                 return chains.end_cmd(command)
@@ -635,6 +636,34 @@ class ScratchStagePinRecovery(unittest.TestCase):
                 for p, expected in retained.items():
                     self.assertEqual(p.read_bytes(), expected)
                 self.assertEqual(checkpoint.read_bytes(), b'corrupt')
+
+    def test_external_end_requires_parent_sync_before_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args, native, stage, retained = self.interrupted_swap(Path(directory))
+            stage.rename(native)
+            end = args[2] / 'END.json'
+
+            def sync_parent(path):
+                self.assertEqual(Path(path), native.parent)
+                self.assertFalse(end.exists())
+
+            def fail_sync(path):
+                sync_parent(path)
+                raise OSError('simulated parent fsync failure')
+
+            with self.assertRaisesRegex(OSError, 'simulated parent fsync failure'):
+                self.external_end(args, 'operator', sync=fail_sync)
+            self.assertFalse(end.exists())
+            self.assertEqual(chains.committed_through(args[2]), 1)
+            for p, expected in retained.items():
+                self.assertEqual(p.read_bytes(), expected)
+            self.assertTrue((native / chains.PERSIST_MARKER).is_file())
+
+            synced = mock.Mock(side_effect=sync_parent)
+            self.assertEqual(self.external_end(args, 'operator', sync=synced), 0)
+            synced.assert_called_once_with(native.parent)
+            self.assertEqual(chains.read(end)['last_valid_boundary'], 2)
+            self.assertEqual(chains.committed_through(args[2]), 1)
 
     def test_operator_can_end_at_logged_boundary_before_corrupted_promoted_scratch(self):
         with tempfile.TemporaryDirectory() as directory:
