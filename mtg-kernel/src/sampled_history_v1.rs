@@ -102,6 +102,7 @@ fn sources(event: &E) -> Vec<AbilitySourceContractV4> {
             }
             _ => vec![],
         },
+        E::ProtectionSourceColorDepartureV1 { snapshot, .. } => vec![snapshot.source],
         E::ControlledCreatureDeathCaptureV1 { source, .. }
         | E::CuratorEnteredV1 { source, .. }
         | E::NivMizzetVisionaryDamageSourceDepartureV1 { source, .. } => vec![*source],
@@ -143,6 +144,21 @@ fn sources(event: &E) -> Vec<AbilitySourceContractV4> {
 pub(crate) fn capture(state: &GameState) -> Result<CustodyV1, String> {
     let mut proofs = Vec::new();
     for (at, event) in state.engine.event_history.iter().enumerate() {
+        if let E::ProtectionSourceColorDepartureV1 { snapshot, .. } = event {
+            // Only later physical hand/library incarnations may be rewritten.
+            // Preserve already-proven history after that incarnation is revealed.
+            let live = state
+                .objects
+                .try_get(snapshot.source.source)
+                .ok_or("color departure source absent")?;
+            if live.spell_copy_origin.is_some()
+                || live.v4.is_token
+                || !(matches!(live.zone, Zone::Hand | Zone::Library)
+                    || allows_rebound_source(state, at, snapshot.source))
+            {
+                continue;
+            }
+        }
         let contracts = sources(event);
         if contracts.is_empty() {
             continue;

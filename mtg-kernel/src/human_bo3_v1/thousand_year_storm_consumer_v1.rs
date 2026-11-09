@@ -289,20 +289,25 @@ pub(super) fn project(
 pub(super) fn label(
     facts: Option<&public::FactsV1>,
     action: &Action,
-    _: &Handles,
+    handles: &Handles,
 ) -> Result<Option<String>, Error> {
-    Ok(
-        crate::thousand_year_storm_consumer_v1::action(facts, action)
-            .map_err(|_| Error::InvalidVisibleReference)?
-            .map(|a| match a {
-                ActionV1::ChooseNewTarget { copy, slot } => format!(
-                    "Choose a new target for copy {copy}, target slot {}",
-                    usize::from(slot) + 1
-                ),
-                ActionV1::KeepOriginalTarget { copy, slot } => format!(
-                    "Keep the original target for copy {copy}, target slot {}",
-                    usize::from(slot) + 1
-                ),
-            }),
-    )
+    match crate::thousand_year_storm_consumer_v1::action(facts, action)
+        .map_err(|_| Error::InvalidVisibleReference)?
+    {
+        Some(ActionV1::ChooseNewTarget { copy, slot }) => {
+            let Action::ChooseEffectTarget { actor, target, .. } = action else {
+                return Err(Error::InvalidVisibleReference);
+            };
+            Ok(Some(format!(
+                "Retarget copy {copy}, slot {}, to {}",
+                usize::from(slot) + 1,
+                super::labels::target(target, handles, *actor)?,
+            )))
+        }
+        Some(ActionV1::KeepOriginalTarget { copy, slot }) => Ok(Some(format!(
+            "Keep the original target for copy {copy}, target slot {}",
+            usize::from(slot) + 1
+        ))),
+        None => Ok(None),
+    }
 }

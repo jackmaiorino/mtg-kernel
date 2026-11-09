@@ -251,6 +251,7 @@ fn choose(
             PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseCostTargets {
                 source: id,
                 candidates,
+                cost_kind: engine::CostKind::SacrificePermanents,
                 remaining: 1,
                 ..
             })) if *id == pending.source => Ok(Some(ChoiceV1::Sacrifice {

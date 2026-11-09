@@ -102,7 +102,7 @@ fn paid_stale_creature_target(
     // Exercise the real zone commit after the copy menu has already opened.
     event::propose_and_commit(
         &mut state,
-        ProposedEvent::private_bottom_library_insert(creature),
+        ProposedEvent::zone_change(creature, Zone::Library),
     );
     assert_eq!(state.objects.get(creature).zone, Zone::Library);
     assert_eq!(native::next(&mut state), before);
@@ -154,17 +154,11 @@ fn assert_retained_face_required(state: &GameState, copy: crate::ids::StackItemI
 fn stale_creature_copy_target_ignores_later_hidden_printing_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (state, bolt, creature, original_target) = paid_stale_creature_target(actor);
-        let mut other = state.clone();
         // Resample only the new hidden incarnation, preserving the original
         // cast, target contract, actual zone transition, and decision.
-        other.objects.get_mut(creature).card_def = id("Mountain");
+        let other = sampled_printings(&state, &[(creature, id("Mountain"))]);
         assert_ne!(state.state_hash(), other.state_hash());
-        let mut states = [state, other].map(|state| {
-            let restored: GameState =
-                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-            assert_eq!(restored, state);
-            restored
-        });
+        let mut states = [state, other];
         assert_paired_views(&states[0], &states[1]);
 
         let mut owners = states

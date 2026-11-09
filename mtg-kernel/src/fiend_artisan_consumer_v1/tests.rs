@@ -35,6 +35,7 @@ fn config(actor: PlayerId) -> ResetV1 {
     }
 }
 
+#[track_caller]
 fn decision(session: &KaitoSession) -> KaitoDecision {
     let FastActorResponseV1::Decision(expected) = session.current_response() else {
         panic!(
@@ -235,7 +236,12 @@ fn paid(state: &GameState, actor: PlayerId, source: ObjectId, sacrifice: ObjectI
     let selection = decision(&session);
     let backend = selection.fixture_backend_v75();
     let index = backend.candidates_v75().candidates.iter().position(|row| matches!(
-        &row.action, Action::ChooseCostTarget { candidate, .. } if candidate.arena_id == sacrifice.0
+        &row.action,
+        Action::ChooseCostTarget {
+            candidate,
+            cost_kind: engine::CostKind::SacrificePermanents,
+            ..
+        } if candidate.arena_id == sacrifice.0
     )).unwrap();
     assert_eq!(
         backend.candidates_v75().candidates[index].fiend_artisan_action,

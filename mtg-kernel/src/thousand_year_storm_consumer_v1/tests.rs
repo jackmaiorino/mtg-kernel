@@ -44,6 +44,37 @@ fn raw_owner(state: &GameState) -> FastActorSessionV1 {
         LimitedAppendixV1::ThousandYearStorm,
     )
 }
+
+fn sampled_printings(state: &GameState, replacements: &[(ObjectId, u16)]) -> GameState {
+    let mut sampled: GameState =
+        serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
+    assert_eq!(&sampled, state);
+    // Qualify the original native root before attaching the same ephemeral
+    // custody used by the sealed sampler. Raw restores cannot recreate it.
+    KaitoSessionV75::from_session(raw_owner(&sampled))
+        .unwrap()
+        .decision_v75()
+        .unwrap();
+    let custody = crate::sampled_history_v1::capture(&sampled).unwrap();
+    for &(object, card_def) in replacements {
+        let live = sampled.objects.get(object);
+        assert_eq!(live.zone, Zone::Library);
+        for viewer in [PlayerId::P0, PlayerId::P1] {
+            assert!(sampled
+                .known_library_cards(viewer, live.owner)
+                .iter()
+                .all(|row| row.object != object));
+        }
+        let live = sampled.objects.get_mut(object);
+        live.card_def = card_def;
+        live.name = crate::card_def::CARD_DEFS[usize::from(card_def)].name.into();
+        live.v4 = crate::state::ObjectStateV4::from_card_def(card_def);
+    }
+    assert!(crate::controlled_creature_grants_v1::validate_color_history(&sampled).is_err());
+    sampled.sampled_history_v1 = custody;
+    crate::controlled_creature_grants_v1::validate_color_history(&sampled).unwrap();
+    sampled
+}
 fn body(wire: &mut JsonlServerV1, serial: u64, command: CommandV1) -> Body {
     let reply = wire.handle_request(RequestV1 {
         profile: PROFILE_V1.into(),
@@ -216,6 +247,14 @@ fn paid_copy_slot_hidden_pairs_native_index_human_wire_numeric_and_restore_both_
         assert_eq!(prompt.state, wire_prompt.state);
         assert_eq!(prompt.actions, wire_prompt.actions);
         assert_eq!(prompt.action_meanings, wire_prompt.action_meanings);
+        assert!(prompt
+            .actions
+            .iter()
+            .any(|action| action.label.ends_with("to you")));
+        assert!(prompt
+            .actions
+            .iter()
+            .any(|action| action.label.ends_with("to your opponent")));
         let ui=indices.iter().position(|&index|matches!(&backend.candidates_v75().candidates[index as usize].action,
             Action::ChooseEffectTarget{target:TargetRefV1::Player{player},..} if *player==actor.into())).unwrap();
         let original = backend.fixture_original_index_v75(indices[ui]).unwrap();
@@ -301,10 +340,26 @@ fn departed_observer_and_countered_original_keep_copy_after_hidden_resampling_bo
             &mut state,
             ProposedEvent::zone_change(source, Zone::Library),
         );
-        let mut other = state.clone();
-        other.objects.get_mut(original).card_def = id("Forest");
-        other.objects.get_mut(source).card_def = id("Mountain");
+        let mut other =
+            sampled_printings(&state, &[(original, id("Forest")), (source, id("Mountain"))]);
         assert_ne!(state.state_hash(), other.state_hash());
+        let mut forged = other.clone();
+        let index = forged
+            .engine
+            .event_history
+            .iter()
+            .position(|event| matches!(event,
+                CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. }
+                    if snapshot.source.source == source))
+            .unwrap();
+        let mut event = serde_json::to_value(&forged.engine.event_history[index]).unwrap();
+        let mask = &mut event["ProtectionSourceColorDepartureV1"]["snapshot"]["color_mask"];
+        *mask = serde_json::Value::from(mask.as_u64().unwrap() ^ 1);
+        forged.engine.event_history[index] = serde_json::from_value(event).unwrap();
+        assert!(crate::controlled_creature_grants_v1::validate_color_history(&forged).is_err());
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&other).unwrap()).unwrap();
+        assert!(crate::controlled_creature_grants_v1::validate_color_history(&restored).is_err());
         for viewer in [actor, actor.opponent()] {
             assert_eq!(
                 public::capture(&state, viewer).unwrap(),
@@ -315,9 +370,6 @@ fn departed_observer_and_countered_original_keep_copy_after_hidden_resampling_bo
         let paired = KaitoSession::from_session(raw_owner(&other)).unwrap();
         assert_eq!(decision(&numeric).packet(), decision(&paired).packet());
         for branch in [&mut state, &mut other] {
-            let restored: GameState =
-                serde_json::from_slice(&serde_json::to_vec(branch).unwrap()).unwrap();
-            assert_eq!(*branch, restored);
             native::action(branch, engine::Action::FinishEffectSelection);
             native::finish(branch);
             let facts = public::capture(branch, actor).unwrap();

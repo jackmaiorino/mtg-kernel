@@ -267,7 +267,7 @@ pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Option<ActionV
                 source: native,
                 candidate,
                 remaining: 1,
-                cost_kind: crate::engine::CostKind::SacrificeCreatures,
+                cost_kind: crate::engine::CostKind::SacrificePermanents,
                 ..
             },
         ) if binds(source, native) && legal.iter().any(|card| binds(card, candidate)) => {
