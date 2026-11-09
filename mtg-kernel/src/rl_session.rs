@@ -8624,10 +8624,16 @@ impl FastActorSessionV1 {
         }) {
             return Err("unknown face-down identity".into());
         }
+        let sampled_history = if typed_full_pool {
+            crate::sampled_history_v1::capture(&self.state)?
+        } else {
+            Default::default()
+        };
         let mut pinned = pending_selection_hidden_objects_v1(&self.state, actor);
         pinned.extend(flat_action_v4::limited_public_source_pins_v3(
             &self.state,
             actor,
+            &sampled_history,
         )?);
         if pinned
             .iter()
@@ -8648,9 +8654,7 @@ impl FastActorSessionV1 {
             known_names,
             library_minima,
             typed_full_pool,
-            sampled_history: if typed_full_pool {
-                crate::sampled_history_v1::capture(&self.state)?
-            } else { Default::default() },
+            sampled_history,
         })
     }
 
@@ -8673,8 +8677,8 @@ impl FastActorSessionV1 {
         }
         let mut sampled = self.clone();
         sampled.state.sampled_history_v1 = root.sampled_history.clone();
+        let opening = crate::leyline_axe_v1::sampling::prepare(&mut sampled.state, root.actor)?;
         if typed_full_pool {
-            let opening = crate::leyline_axe_v1::sampling::prepare(&mut sampled.state, root.actor)?;
             crate::limited_match_v1::curator_sampling_v1::rewrite(
                 &mut sampled.state,
                 root.actor,
@@ -8684,9 +8688,6 @@ impl FastActorSessionV1 {
                 root.known_names.clone(),
                 &root.library_minima,
             )?;
-            if let Some(future) = opening {
-                future.rebind(&mut sampled.state)?;
-            }
         } else {
             closed_list_v2::rewrite_names(
                 &mut sampled.state,
@@ -8696,6 +8697,9 @@ impl FastActorSessionV1 {
                 seed,
                 root.known_names.clone(),
             )?;
+        }
+        if let Some(future) = opening {
+            future.rebind(&mut sampled.state)?;
         }
         let mut viewers = [Default::default(), Default::default()];
         viewers[root.actor.index()] = root.knowledge.clone();

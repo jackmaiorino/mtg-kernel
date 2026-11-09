@@ -319,3 +319,87 @@ fn paid_equipment_ability_keeps_its_stale_target_and_fizzles_after_hidden_sampli
         }
     }
 }
+
+#[test]
+fn paid_drakuseth_uses_its_published_source_after_hidden_hand_sampling() {
+    use crate::standard_cards_v1::drakuseth_tests as drakuseth;
+
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        let viewer = caster.opponent();
+        let mut state = setup(caster);
+        let source = native::cast(&mut state, caster, "Drakuseth, Maw of Flames", &[], 7);
+        native::finish(&mut state);
+        drakuseth::attack(&mut state, source, caster);
+        drakuseth::choose(&mut state, source, &[Target::Player(viewer)]);
+        let original = state.stack.last().unwrap().clone();
+        let contract = original.v4.ability_source_contract.unwrap();
+
+        let companion = put(&mut state, viewer, "Llanowar Elves", Zone::Battlefield);
+        let bounce = native::cast(
+            &mut state,
+            viewer,
+            "Run Away Together",
+            &[Target::Object(source), Target::Object(companion)],
+            2,
+        );
+        for _ in 0..8 {
+            if state.objects.get(bounce).zone == Zone::Graveyard {
+                break;
+            }
+            assert!(matches!(native::next(&mut state), Decision::CastSpellOrPass { .. }));
+            native::action(&mut state, Action::Pass);
+        }
+        assert_eq!(state.objects.get(source).zone, Zone::Hand);
+        assert!(state.objects.get(source).zone_change_count > contract.zone_change_count);
+        assert_eq!(state.stack.as_slice(), std::slice::from_ref(&original));
+        let hidden = put(&mut state, caster, "Island", Zone::Hand);
+        put(&mut state, caster, "Forest", Zone::Hand);
+        priority(&mut state, viewer);
+
+        let live = owner(&state);
+        let paired = owner(&alternate_hidden(&state, hidden));
+        let root = decision(&live);
+        let other_root = decision(&paired);
+        assert_eq!(root.packet(), other_root.packet());
+        let mut rebound = false;
+        for seed in 552_476..552_484 {
+            let mut sampled = live.sampled_full_pool_closed_list_v1(&root, seed, &corpus()).unwrap();
+            let other = paired
+                .sampled_full_pool_closed_list_v1(&other_root, seed, &corpus())
+                .unwrap();
+            let fresh = decision(&sampled);
+            assert_eq!(fresh.packet(), root.packet());
+            assert_eq!(fresh.packet(), decision(&other).packet());
+            let world = sampled.fixture_state();
+            assert_eq!(world.stack.as_slice(), std::slice::from_ref(&original));
+            if world.objects.get(source).card_def != contract.card_def {
+                rebound = true;
+                assert!(crate::engine::validated_stack_item_target_spec(&original, world).is_ok());
+                let mut missing = world.clone();
+                missing.sampled_history_v1 = Default::default();
+                assert!(crate::engine::validated_stack_item_target_spec(&original, &missing).is_err());
+                let mut changed = original.clone();
+                changed.v4.stack_item_id.0 += 1;
+                assert!(world.sampled_history_v1.ability_source_face(world, &changed, contract).is_none());
+                assert!(crate::engine::validated_stack_item_target_spec(&changed, world).is_err());
+            }
+            let life = world.players[viewer.index()].life;
+            let saved = sampled.snapshot();
+            for _ in 0..4 {
+                if sampled.fixture_state().stack.is_empty() {
+                    break;
+                }
+                let current = decision(&sampled);
+                pass_with_native_parity(&mut sampled, &current);
+            }
+            let settled = sampled.fixture_state();
+            assert!(settled.stack.is_empty());
+            assert_eq!(settled.players[viewer.index()].life, life - 4);
+            assert!(settled.sampled_history_v1.ability_source_face(settled, &original, contract).is_none());
+            sampled.restore(&saved).unwrap();
+            assert_eq!(decision(&sampled).packet(), root.packet());
+        }
+        assert!(rebound, "Drakuseth's old physical hand slot was never resampled");
+        assert_eq!(live.fixture_state(), &state);
+    }
+}

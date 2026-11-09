@@ -2787,7 +2787,11 @@ fn validated_ability_source_contract(
         .v4
         .ability_source_contract
         .ok_or("ability stack item lost its exact source contract")?;
-    validate_historical_ability_source_contract(state, contract)?;
+    if let Err(error) = validate_historical_ability_source_contract(state, contract) {
+        if state.sampled_history_v1.ability_source_face(state, item, contract).is_none() {
+            return Err(error);
+        }
+    }
     if contract.source != item.source || contract.controller != item.controller {
         return Err("ability source contract disagrees with its stack item".to_string());
     }
@@ -3354,7 +3358,13 @@ fn validate_ability_source_contract(
         && effect::thousand_year_storm_v1::selected(state, item);
     if historical_storm { effect::thousand_year_storm_v1::validate_item(state, item)?; }
     if contract.source != item.source
-        || (!historical_sphinx && !historical_storm && !source_card_def_matches(state, contract, source.card_def))
+        || (!historical_sphinx
+            && !historical_storm
+            && !source_card_def_matches(state, contract, source.card_def)
+            && state
+                .sampled_history_v1
+                .ability_source_face(state, item, contract)
+                .is_none())
         || contract.owner != source.owner
         || contract.controller != item.controller
         || contract.zone == Zone::Stack
