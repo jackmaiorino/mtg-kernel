@@ -489,6 +489,86 @@ fn rows_checked_per_step_stay_bounded_after_drake_hatcher_is_cast() {
 }
 
 #[test]
+fn collection_tail_matches_full_scan_on_append_divergence_and_tamper() {
+    use std::sync::Arc;
+
+    let mut found = None;
+    play(&PAIR_29, &mut |state| {
+        if found.is_none() && rows(state) > 50 {
+            found = Some(state.clone());
+        }
+    });
+    let base = found.expect("recorded Drake history");
+    custody::validate(&base).unwrap();
+    let history = &base.engine.event_history;
+    let covered = history.len();
+    assert_eq!(history.prefix_memo_v1().unwrap().0, covered);
+    let (capture, marker) = history
+        .iter()
+        .filter_map(custody::journal)
+        .find_map(|row| match &row.value {
+            JournalV1::Captured { marker, .. } => Some((row.clone(), *marker)),
+            _ => None,
+        })
+        .expect("recorded capture");
+    let collected = history
+        .iter()
+        .position(|event| {
+            matches!(custody::journal(event).map(|row| &row.value),
+                Some(JournalV1::Collected { capture: index, .. }) if *index == capture.index)
+        })
+        .expect("checked capture was collected");
+    let events = [history.get(marker as usize).unwrap().clone()];
+    let compare = |mut fast: GameState, expected: Result<usize, &str>| {
+        let mut full = fast.clone();
+        let result = custody::collect(&mut fast, &events);
+        let reference =
+            custody::without_prefix_memo_for_test(|| custody::collect(&mut full, &events));
+        assert_eq!(result, reference);
+        assert!(fast == full);
+        assert_eq!(
+            result.as_ref().map(Vec::len).map_err(String::as_str),
+            expected
+        );
+        fast
+    };
+    let append = |record| {
+        let mut branch = base.clone();
+        branch
+            .engine
+            .event_history
+            .push(CommittedEvent::DrakeJournalV1 {
+                record: Arc::new(record),
+            });
+        branch.engine.drake_ledger_v1.issued += 1;
+        assert_eq!(
+            branch.engine.event_history.prefix_memo_v1().unwrap().0,
+            covered
+        );
+        branch
+    };
+
+    compare(base.clone(), Ok(0));
+    let mut new_capture = capture.clone();
+    new_capture.index = covered as u64;
+    let with_collection = compare(append(new_capture.clone()), Ok(1));
+    compare(with_collection, Ok(0));
+
+    let JournalV1::Captured { marker, .. } = &mut new_capture.value else {
+        unreachable!()
+    };
+    *marker = u64::MAX;
+    compare(append(new_capture), Err("Drake marker erased"));
+    // A duplicate using its old index must still see the old collection.
+    compare(append(capture), Ok(0));
+
+    let mut tampered = base;
+    *tampered.engine.event_history.get_mut(collected).unwrap() = events[0].clone();
+    assert!(tampered.engine.event_history.prefix_memo_v1().is_none());
+    compare(tampered, Ok(1));
+}
+
+#[test]
 fn a_copy_adopts_the_longer_prefix_another_copy_accepted() {
     // Two public states of one game, the later with more journal rows.
     let (mut earlier, mut later) = (None, None);

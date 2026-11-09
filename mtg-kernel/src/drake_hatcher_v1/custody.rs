@@ -1315,28 +1315,42 @@ pub(crate) fn collect(
     state: &mut GameState,
     events: &[CommittedEvent],
 ) -> Result<Vec<PendingTrigger>, String> {
+    let history = &state.engine.event_history;
+    // A checked prefix was accepted outside an operation, so every capture
+    // in it already has its collection. A prefix collection can only name
+    // an earlier capture. Only the unvalidated tail can supply new work.
+    let covered = own_checked_prefix(history).map_or(0, |prefix| prefix.covered);
+    // Preserve full-scan behavior if a malformed appended capture claims a
+    // prefix index. Its suppressing collection may be outside the tail.
+    let covered = if covered != 0
+        && history
+            .range_v2(covered..)
+            .iter()
+            .filter_map(journal)
+            .any(|row| {
+                row.index < covered as u64 && matches!(row.value, JournalV1::Captured { .. })
+            }) {
+        0
+    } else {
+        covered
+    };
+    let tail = history.range_v2(covered..);
     let mut ready = Vec::new();
     // One pass for the collected captures, not one per capture.
-    let collected = state
-        .engine
-        .event_history
+    let collected = tail
         .iter()
         .filter_map(|e| match journal(e).map(|r| &r.value) {
             Some(JournalV1::Collected { capture, .. }) => Some(*capture),
             _ => None,
         })
         .collect::<std::collections::BTreeSet<_>>();
-    for e in &state.engine.event_history {
+    for e in tail {
         let Some(row) = journal(e) else { continue };
         if let JournalV1::Captured { marker, .. } = &row.value {
             if collected.contains(&row.index) {
                 continue;
             }
-            let committed = state
-                .engine
-                .event_history
-                .get(*marker as usize)
-                .ok_or("Drake marker erased")?;
+            let committed = history.get(*marker as usize).ok_or("Drake marker erased")?;
             if events.contains(committed) {
                 ready.push(row.index);
             }
@@ -1892,20 +1906,25 @@ fn prefix_memo_applies() -> bool {
     !crate::linked_aura_operation_v1::origin_v1_active()
 }
 
+/// The checked prefix already attached to these unchanged events.
+fn own_checked_prefix(
+    history: &crate::event_history_v1::EventHistoryV1,
+) -> Option<Arc<CheckedPrefixV1>> {
+    if !prefix_memo_applies() {
+        return None;
+    }
+    let (covered, memo) = history.prefix_memo_v1()?;
+    let memo = memo.downcast::<CheckedPrefixV1>().ok()?;
+    (memo.covered == covered).then_some(memo)
+}
+
 /// The checked prefix of `history`, extended by any longer prefix another
 /// copy accepted that `history` also starts with, and whether it was so
 /// extended.
 fn checked_prefix(
     history: &crate::event_history_v1::EventHistoryV1,
 ) -> Option<(Arc<CheckedPrefixV1>, bool)> {
-    if !prefix_memo_applies() {
-        return None;
-    }
-    let (covered, memo) = history.prefix_memo_v1()?;
-    let mut memo = memo.downcast::<CheckedPrefixV1>().ok()?;
-    if memo.covered != covered {
-        return None;
-    }
+    let mut memo = own_checked_prefix(history)?;
     let mut extended = false;
     loop {
         let longer = memo
