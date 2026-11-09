@@ -2958,7 +2958,11 @@ impl GameState {
         starting_player: PlayerId,
     ) -> GameState {
         let mut state = Self::new_from_libraries_with_starting_player_v1(
-            lib0, lib1, names, seed, starting_player,
+            lib0,
+            lib1,
+            names,
+            seed,
+            starting_player,
         );
         state.engine.runtime_rules = crate::engine::RuntimeRulesV1::OWNER_ORDERED_GRAVEYARD_V1;
         state

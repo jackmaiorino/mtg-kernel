@@ -8157,7 +8157,9 @@ impl FastActorSessionV1 {
         &mut self,
         rules: crate::engine::RuntimeRulesV1,
     ) -> Result<(), String> {
-        if rules.order_graveyard_batches_v1 || self.state.engine.runtime_rules.order_graveyard_batches_v1 {
+        if rules.order_graveyard_batches_v1
+            || self.state.engine.runtime_rules.order_graveyard_batches_v1
+        {
             return Err("native graveyard ordering requires its own session consumer".into());
         }
         if rules.auto_unobservable_graveyard_order

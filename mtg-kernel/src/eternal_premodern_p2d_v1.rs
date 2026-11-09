@@ -308,7 +308,11 @@ pub(crate) fn execute(op: &P2dOpV1, ctx: &ExecCtx, state: &mut GameState) {
         }
         P2dOpV1::EchoSacrificeV1 => echo_sacrifice(ctx, state),
         P2dOpV1::DonatedGuideEchoPayV1 => {
-            pay_or_sacrifice(ctx, state, echo_cost(crate::eternal_premodern_p2c_v1::KARMIC_GUIDE));
+            pay_or_sacrifice(
+                ctx,
+                state,
+                echo_cost(crate::eternal_premodern_p2c_v1::KARMIC_GUIDE),
+            );
         }
     }
 }

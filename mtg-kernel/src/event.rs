@@ -6394,7 +6394,9 @@ fn commit_batch_survivors(
     use crate::graveyard_order_v1 as graveyard_order;
     let ordered_scene = if graveyard_order::needs_ordered_entry_scene(state, &survivors) {
         match graveyard_order::PreparedBatchV1::capture(
-            state, &survivors, graveyard_order::BatchV1::Effect,
+            state,
+            &survivors,
+            graveyard_order::BatchV1::Effect,
         ) {
             Ok(Some(batch)) => {
                 let Ok(mut quote) = graveyard_order::quote_scene(state) else {
@@ -6402,8 +6404,12 @@ fn commit_batch_survivors(
                     return;
                 };
                 commit_batch_survivors_native(
-                    &mut quote, survivors.clone(), authority_batch.clone(), context.clone(),
-                    prepared_zone_plan.clone(), None,
+                    &mut quote,
+                    survivors.clone(),
+                    authority_batch.clone(),
+                    context.clone(),
+                    prepared_zone_plan.clone(),
+                    None,
                 );
                 match batch.prepare_ordered_entry(state, quote) {
                     Ok(Some(scene)) => Some(scene),
@@ -6424,7 +6430,12 @@ fn commit_batch_survivors(
         None
     };
     commit_batch_survivors_native(
-        state, survivors, authority_batch, context, prepared_zone_plan, ordered_scene,
+        state,
+        survivors,
+        authority_batch,
+        context,
+        prepared_zone_plan,
+        ordered_scene,
     );
 }
 
@@ -6581,7 +6592,9 @@ fn commit_batch_survivors_native(
     let mut progenitus_completions = Vec::new();
     let mut counter_inputs = planned_counter_inputs.into_iter();
     let graveyard_batch = match crate::graveyard_order_v1::PreparedBatchV1::capture(
-        state, &survivors, crate::graveyard_order_v1::BatchV1::Effect,
+        state,
+        &survivors,
+        crate::graveyard_order_v1::BatchV1::Effect,
     ) {
         Ok(batch) => batch,
         Err(_) => {
@@ -6589,7 +6602,10 @@ fn commit_batch_survivors_native(
             return;
         }
     };
-    if graveyard_batch.as_ref().is_some_and(|batch| batch.begin(state, ordered_scene.as_ref()).is_err()) {
+    if graveyard_batch
+        .as_ref()
+        .is_some_and(|batch| batch.begin(state, ordered_scene.as_ref()).is_err())
+    {
         crate::graveyard_order_v1::halt(state);
         return;
     }
@@ -6843,7 +6859,9 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
         }
     };
     let graveyard_batch = match crate::graveyard_order_v1::PreparedBatchV1::capture(
-        state, &planned_events, crate::graveyard_order_v1::BatchV1::SacrificeCost,
+        state,
+        &planned_events,
+        crate::graveyard_order_v1::BatchV1::SacrificeCost,
     ) {
         Ok(batch) => batch,
         Err(_) => {
@@ -6851,7 +6869,10 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
             return;
         }
     };
-    if graveyard_batch.as_ref().is_some_and(|batch| batch.begin(state, None).is_err()) {
+    if graveyard_batch
+        .as_ref()
+        .is_some_and(|batch| batch.begin(state, None).is_err())
+    {
         crate::graveyard_order_v1::halt(state);
         return;
     }
@@ -6900,7 +6921,9 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         }
     };
     let graveyard_batch = match crate::graveyard_order_v1::PreparedBatchV1::capture(
-        state, &planned_events, crate::graveyard_order_v1::BatchV1::StateBasedDeaths,
+        state,
+        &planned_events,
+        crate::graveyard_order_v1::BatchV1::StateBasedDeaths,
     ) {
         Ok(batch) => batch,
         Err(_) => {
@@ -6908,7 +6931,10 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
             return;
         }
     };
-    if graveyard_batch.as_ref().is_some_and(|batch| batch.begin(state, None).is_err()) {
+    if graveyard_batch
+        .as_ref()
+        .is_some_and(|batch| batch.begin(state, None).is_err())
+    {
         crate::graveyard_order_v1::halt(state);
         return;
     }

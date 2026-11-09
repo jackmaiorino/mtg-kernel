@@ -309,7 +309,10 @@ pub struct EngineState {
     /// engine; omitted from snapshots and ignored by `Hash` while default.
     #[serde(default, skip_serializing_if = "RuntimeRulesV1::is_default")]
     pub runtime_rules: RuntimeRulesV1,
-    #[serde(default, skip_serializing_if = "crate::graveyard_order_v1::StateV1::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::graveyard_order_v1::StateV1::is_empty"
+    )]
     pub(crate) graveyard_order_v1: crate::graveyard_order_v1::StateV1,
     /// Genuine immediate owner operation; absent legacy bytes and hashes are unchanged.
     #[serde(
@@ -7635,8 +7638,9 @@ fn commit_cost_components_from_plan_v1(
 /// has already decided *which* permanents (`PendingCast::sacrifice_chosen`).
 fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
     crate::linked_aura_operation_v1::begin_batch(state);
-    if chosen.len() > 1 && (crate::creature_death_capture_v1::enabled()
-        || crate::graveyard_order_v1::enabled(state))
+    if chosen.len() > 1
+        && (crate::creature_death_capture_v1::enabled()
+            || crate::graveyard_order_v1::enabled(state))
     {
         event::commit_sacrifice_death_group_v1(state, chosen);
         crate::linked_aura_operation_v1::end_batch(state);
@@ -11325,8 +11329,8 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
     }
     let card_def = state.objects.get(source).card_def;
     let chosen_color = state.objects.get(source).v4.chosen_color;
-    let donated_wall = crate::full_text_v1::mana_text(state, source)
-        .filter(|text| text.is_wall_mana());
+    let donated_wall =
+        crate::full_text_v1::mana_text(state, source).filter(|text| text.is_wall_mana());
     let definition = crate::full_text_v1::mana_definition(state, source)
         .ok_or("mana source definition is missing")?;
     if crate::continuous_characteristics_v1::land_grants_colorless_mana(state, source) {
@@ -11768,7 +11772,11 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                 continue;
             }
             let full_text = crate::full_text_v1::active_text(state, id);
-            let printed = if full_text.is_some() { &[] } else { def.activated_abilities };
+            let printed = if full_text.is_some() {
+                &[]
+            } else {
+                def.activated_abilities
+            };
             // Printed activated abilities belong to the front face; no
             // back face in the pool has its own.
             for (i, ability) in printed.iter().enumerate() {
@@ -16300,9 +16308,7 @@ pub(crate) fn validate_pending_activation(
     state: &GameState,
     pending: &PendingActivation,
 ) -> Result<(), String> {
-    pending
-        .full_text_activation_v1
-        .require_current(state)?;
+    pending.full_text_activation_v1.require_current(state)?;
     effect::chandra_flameshaper_v1::validate_distribution(state, pending)?;
     if pending.target_spec == TargetSpec::KickerControlledCreatures {
         return Err(
@@ -16335,12 +16341,15 @@ pub(crate) fn validate_pending_activation(
         );
     }
     let expected_cauldron = if pending.full_text_activation_v1.is_empty() {
-        crate::standard_cards_v1::capture_cauldron_grant(state, pending.source, pending.ability_index)
+        crate::standard_cards_v1::capture_cauldron_grant(
+            state,
+            pending.source,
+            pending.ability_index,
+        )
     } else {
         Default::default()
     };
-    if pending.cauldron_grant != expected_cauldron
-    {
+    if pending.cauldron_grant != expected_cauldron {
         return Err("pending Cauldron grant changed".into());
     }
     if let Some(grant) = pending.cauldron_grant.0 {
@@ -16353,7 +16362,8 @@ pub(crate) fn validate_pending_activation(
             return Err("Cauldron activation condition is not met".into());
         }
     }
-    if pending.cauldron_grant.0.is_none() && pending.full_text_activation_v1.is_empty()
+    if pending.cauldron_grant.0.is_none()
+        && pending.full_text_activation_v1.is_empty()
         && !crate::standard_creatures_v1::activation_allowed(
             state,
             pending.source,
@@ -21346,8 +21356,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             // `TriggerCondition::BeginningOfUpkeep` (Delver of Secrets).
             let upkeep_index = state.engine.event_history.len();
             event::log_upkeep_began(state, p);
-            if let Err(source) = crate::full_text_v1::queue_upkeep_triggers(state, p, upkeep_index) {
-                state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+            if let Err(source) = crate::full_text_v1::queue_upkeep_triggers(state, p, upkeep_index)
+            {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, source));
                 return;
             }
             if state.initiative == Some(p) {
@@ -28096,7 +28108,8 @@ fn full_text_activation_selector(
         return None;
     }
     let selector = crate::full_text_v1::FullTextAbilityV1::from_action_index(
-        index, text.first_donated_slot(state),
+        index,
+        text.first_donated_slot(state),
     )?;
     let definition = text.definition();
     let exists = match selector {
@@ -28145,7 +28158,9 @@ pub(crate) fn stage_full_text_activation(
     {
         return Err("full-text activation is not available in this state".into());
     }
-    let frozen = text.freeze_activated(state, selector).map_err(str::to_owned)?;
+    let frozen = text
+        .freeze_activated(state, selector)
+        .map_err(str::to_owned)?;
     let index = frozen.action_index();
     let ability = frozen.ability();
     if !can_pay_activation_components(ability.cost, host.controller, host.source, state)
@@ -28180,7 +28195,11 @@ pub(crate) fn activate_full_text_retained_discard(
     state: &mut GameState,
     text: crate::full_text_v1::FullTextV1,
 ) -> Result<(), String> {
-    stage_full_text_activation(state, text, crate::full_text_v1::FullTextAbilityV1::RetainedDiscard)?;
+    stage_full_text_activation(
+        state,
+        text,
+        crate::full_text_v1::FullTextAbilityV1::RetainedDiscard,
+    )?;
     finalize_activation(state);
     if state.engine.halted.is_some() {
         return Err("full-text retained activation failed during native payment".into());
@@ -29492,7 +29511,9 @@ fn push_paid_activation(
     // incarnation (or any sacrificed/exiled source); the stack provenance
     // above owns that historical fact instead.
     if !pending.full_text_activation_v1.is_empty() {
-        pending.full_text_activation_v1.record_restricted_use(state, *ability);
+        pending
+            .full_text_activation_v1
+            .record_restricted_use(state, *ability);
     } else if !ajani_paid
         && state.objects.get(pending.source).zone_change_count == pending.source_zone_change_count
     {

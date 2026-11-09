@@ -777,7 +777,9 @@ impl CommittedEvent {
             Self::FullTextTriggerCapturedV1 { .. } => EventKindV1::FullTextTriggerCapturedV1,
             Self::FullTextBatchEntryV1 { .. } => EventKindV1::FullTextBatchEntryV1,
             Self::FullTextRestrictedUseV1 { .. } => EventKindV1::FullTextRestrictedUseV1,
-            Self::OrderedGraveyardControlGainedV1 { .. } => EventKindV1::OrderedGraveyardControlGainedV1,
+            Self::OrderedGraveyardControlGainedV1 { .. } => {
+                EventKindV1::OrderedGraveyardControlGainedV1
+            }
         }
     }
 }

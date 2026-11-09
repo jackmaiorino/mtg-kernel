@@ -4865,28 +4865,20 @@ pub(crate) fn invalid_sba_aura(
                 link.object,
                 crate::engine::object_color_mask(state, id),
             )
-    }) && (definition.attachment.is_some()
-        || crate::standard_cards_v1::is_aura(definition))
+    }) && (definition.attachment.is_some() || crate::standard_cards_v1::is_aura(definition))
     {
         return true;
     }
     #[cfg(feature = "eternal-fixtures")]
     if aura.v4.attached_to.is_some_and(|link| {
-        crate::eternal_pauper_e6b_v1::protection_removes_attachment(
-            state,
-            id,
-            link.object,
-        )
-    }) && (definition.attachment.is_some()
-        || crate::standard_cards_v1::is_aura(definition))
+        crate::eternal_pauper_e6b_v1::protection_removes_attachment(state, id, link.object)
+    }) && (definition.attachment.is_some() || crate::standard_cards_v1::is_aura(definition))
     {
         return true;
     }
     // Animate Dead enchants a creature card in a graveyard until
     // its entry trigger returns the card.
-    if cfg!(feature = "eternal-fixtures")
-        && crate::eternal_legacy_e7a_v1::aura_waiting(state, id)
-    {
+    if cfg!(feature = "eternal-fixtures") && crate::eternal_legacy_e7a_v1::aura_waiting(state, id) {
         return false;
     }
     if crate::standard_cards_v1::is_aura(definition) {
@@ -4894,8 +4886,7 @@ pub(crate) fn invalid_sba_aura(
         // control ("enchant creature you control").
         let valid = aura.v4.attached_to.is_some_and(|link| {
             state.objects.try_get(link.object).is_some_and(|host| {
-                host.zone_change_count == link.zone_change_count
-                    && host.attachments.contains(&id)
+                host.zone_change_count == link.zone_change_count && host.attachments.contains(&id)
             }) && crate::standard_cards_v1::aura_host_legal(
                 definition,
                 aura.controller,
@@ -5009,9 +5000,10 @@ fn sba_fixed_point_with_protected_triggers(
             // All moves already required by this pass are simultaneous.
             // An Aura made illegal by these deaths belongs to a later pass.
             dying.extend(
-                state.objects.iter().filter_map(|(id, aura)| {
-                    invalid_sba_aura(state, id, aura).then_some(id)
-                }),
+                state
+                    .objects
+                    .iter()
+                    .filter_map(|(id, aura)| invalid_sba_aura(state, id, aura).then_some(id)),
             );
             dying.sort_unstable();
             dying.dedup();

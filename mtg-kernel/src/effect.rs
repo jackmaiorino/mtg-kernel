@@ -7907,7 +7907,9 @@ fn validated_definition_owned_root_effect(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Result<Box<EffectOp>, String> {
-    if let Some((program, _)) = crate::full_text_v1::trigger_program(state, &pending.resolving_item)? {
+    if let Some((program, _)) =
+        crate::full_text_v1::trigger_program(state, &pending.resolving_item)?
+    {
         return Ok(Box::new(program));
     }
     if thousand_year_storm_v1::selected(state, &pending.resolving_item) {
@@ -27623,7 +27625,9 @@ fn validated_native_execution_root_v1(
     // Native stack validation includes genuine Ward and granted abilities,
     // whose roots need not occur in the source's printed trigger table.
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)?;
-    if let Some((program, _)) = crate::full_text_v1::trigger_program(state, &pending.resolving_item)? {
+    if let Some((program, _)) =
+        crate::full_text_v1::trigger_program(state, &pending.resolving_item)?
+    {
         return Ok(Box::new(program));
     }
     if let Some(root) = &pending.resolving_item.inline_effect {

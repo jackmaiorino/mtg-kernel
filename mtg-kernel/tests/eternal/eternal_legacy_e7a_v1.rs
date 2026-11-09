@@ -1421,7 +1421,10 @@ fn cabal_therapy_orders_all_matching_discards_by_their_owner() {
             panic!("matching discards must open the owner's ordering prompt");
         };
         assert_eq!(player, owner);
-        assert_eq!(legal_targets, [Target::Object(first), Target::Object(second)]);
+        assert_eq!(
+            legal_targets,
+            [Target::Object(first), Target::Object(second)]
+        );
         assert!(!can_finish);
         assert_eq!(state.players[owner.index()].hand, [other]);
         assert!(state
@@ -1432,9 +1435,15 @@ fn cabal_therapy_orders_all_matching_discards_by_their_owner() {
         let bytes = serde_json::to_vec(&state).unwrap();
         let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(state.state_hash(), restored.state_hash());
-        act(&mut restored, Action::ChooseEffectTarget(Target::Object(second)));
+        act(
+            &mut restored,
+            Action::ChooseEffectTarget(Target::Object(second)),
+        );
         settled(&mut restored);
-        assert_eq!(restored.players[owner.index()].graveyard, [old, second, first]);
+        assert_eq!(
+            restored.players[owner.index()].graveyard,
+            [old, second, first]
+        );
         assert_eq!(restored.players[owner.index()].hand, [other]);
         assert_eq!(zone(&restored, therapy), Zone::Graveyard);
         let moved = restored
