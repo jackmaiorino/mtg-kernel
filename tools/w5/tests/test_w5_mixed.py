@@ -2,7 +2,7 @@
 `throughput-compare`, mtg-kernel#600 milestone 4) on any OS with the stand-in trainer: serial phases per arm and
 mixed phases on the named slots, identity parity within each arm (never across arms), per-arm and total durable
 numbers, a record no guard reads, and comparisons that hold the workload fixed, let only the code differ, check
-every chain's outputs and call a speed difference only when the ranges separate."""
+every chain's outputs and require a counterbalanced run order before calling a speed difference."""
 import contextlib
 import copy
 import io
@@ -166,13 +166,16 @@ class CompareTests(MixedBase):
     def test_a_code_only_candidate_is_compared_chain_by_chain(self):
         base_plan, cand_plan = self.target('base'), self.target('cand', trainer=self.candidate_trainer())
         ok_b, base = self.homogeneous(base_plan, 'tb')
-        ok_c, cand = self.homogeneous(cand_plan, 'tc')
+        # A deterministic separation in CPU cost with identical chain outputs.
+        with mock.patch.dict(os.environ, {'FAKE_CPU_STEP': str(2 * STEP_C)}):
+            ok_c, cand = self.homogeneous(cand_plan, 'tc')
         self.assertTrue(ok_b and ok_c, (base.get('why'), cand.get('why')))
         b, c = self.node.t / 'tb.json', self.node.t / 'tc.json'
         passed, report = chains.compare_records([b], [c])
         self.assertTrue(passed, report.get('why'))
         self.assertEqual(report['schema'], chains.COMPARE_SCHEMA)
         self.assertEqual((report['order'], report['code']['differs']), ('AB', ['trainer']))
+        self.assertFalse(report['schedule_valid'])
         self.assertEqual(report['parity'], {'pass': True, 'differences': []})
         self.assertEqual(sorted(report['metrics']), ['C.cpu_seconds_per_update', 'C.durable_updates_per_hour',
                                                      'cpu_seconds_per_update', 'durable_updates_per_hour'])
@@ -180,17 +183,60 @@ class CompareTests(MixedBase):
         self.assertEqual(rate['baseline'], [base['phases'][-1]['durable']['updates_per_hour']])
         self.assertEqual(rate['candidate'], [cand['phases'][-1]['durable']['updates_per_hour']])
         self.assertEqual(rate['verdict'], 'too few samples')
-        self.assertAlmostEqual(report['metrics']['cpu_seconds_per_update']['candidate_over_baseline'], 1.0)
+        self.assertIsNone(rate['separation_p'])
+        self.assertAlmostEqual(report['metrics']['cpu_seconds_per_update']['candidate_over_baseline'], 2.0)
         # Balanced order needs two actual runs per side, each with fresh phase plans and chains.
-        ok_c2, cand2 = self.homogeneous(cand_plan, 'tc2')
+        with mock.patch.dict(os.environ, {'FAKE_CPU_STEP': str(2 * STEP_C)}):
+            ok_c2, cand2 = self.homogeneous(cand_plan, 'tc2')
         ok_b2, base2 = self.homogeneous(base_plan, 'tb2')
         self.assertTrue(ok_c2 and ok_b2, (base2.get('why'), cand2.get('why')))
         b2, c2 = self.node.t / 'tb2.json', self.node.t / 'tc2.json'
         passed, report = chains.compare_records([b, b2], [c, c2])
         self.assertTrue(passed)
         self.assertEqual(report['order'], 'ABBA')
+        self.assertTrue(report['schedule_valid'])
         rate = report['metrics']['durable_updates_per_hour']
         self.assertEqual(rate['verdict'], chains.spread_verdict(rate['baseline'], rate['candidate']))
+        cpu = report['metrics']['cpu_seconds_per_update']
+        self.assertEqual(cpu['verdict'], 'higher')
+        self.assertAlmostEqual(cpu['separation_p'], 1 / 3)
+        _, reversed_report = chains.compare_records([c, c2], [b, b2])
+        self.assertEqual(reversed_report['order'], 'BAAB')
+        self.assertTrue(reversed_report['schedule_valid'])
+        self.assertEqual(reversed_report['metrics']['cpu_seconds_per_update']['verdict'], 'lower')
+
+        # Each case still references the four distinct measured phase plans.
+        # Swap two intervals to obtain AABB without overlap.
+        def retime(record, name, start, finish):
+            return self.copy_record(record, name, lambda d: d['qualification'].update(
+                started_unix=start, finished_unix=finish))
+
+        def interval(record):
+            q = record['qualification']
+            return q['started_unix'], q['finished_unix']
+
+        start_b, _ = interval(base)
+        start_c, finish_c = interval(cand)
+        early_base = retime(base2, 'early-base.json', start_c, finish_c)
+        late_cand = retime(cand, 'late-cand.json', *interval(base2))
+        overlap = retime(base, 'overlap.json', start_b, finish_c)
+        reversed_interval = retime(base, 'reversed.json', start_b, start_b - 1)
+        nonfinite = retime(base, 'nonfinite.json', start_b, float('inf'))
+        for name, baseline, candidate, order in (
+                ('grouped', [b, early_base], [late_cand, c2], 'AABB'),
+                ('overlap', [overlap, b2], [c, c2], 'ABBA'),
+                ('reversed interval', [reversed_interval, b2], [c, c2], 'ABBA'),
+                ('nonfinite finish', [nonfinite, b2], [c, c2], 'ABBA')):
+            with self.subTest(name=name):
+                passed, invalid = chains.compare_records(baseline, candidate)
+                self.assertTrue(passed)
+                self.assertEqual(invalid['order'], order)
+                self.assertFalse(invalid['schedule_valid'])
+                metric = invalid['metrics']['cpu_seconds_per_update']
+                self.assertEqual(metric['verdict'], 'inconclusive')
+                self.assertIsNone(metric['separation_p'])
+                for key in ('baseline_median', 'candidate_median', 'candidate_over_baseline'):
+                    self.assertEqual(metric[key], cpu[key])
         # Repeated paths, byte copies, and changed timestamps still represent the same measured phase plans.
         copied = self.copy_record(base, 'copy.json', lambda d: None)
         retimed = self.copy_record(base, 'retimed.json', lambda d: d['qualification'].update(

@@ -180,10 +180,10 @@ extra independent samples. Otherwise it stops. Every chain's identity rows must 
 same phase and slot; a candidate that differs fails the report and is not compared for speed. A passing report
 gives, for the full-layout phase, each record's total and per-arm durable updates/hour and CPU-seconds per update,
 the medians, the ranges and the candidate/baseline median ratio. It calls a metric higher or lower only when the
-two sides' ranges separate and their medians differ by more than the larger range, with at least two records a
-side (else inconclusive, or too few samples), and reports the chance that noise alone separates them that
-completely (2 / C(n_b + n_c, n_b): one A-B-B-A leaves 1/3). The run order (A for baseline, B for candidate, by start
-time) is reported, not enforced.
+two sides' ranges separate, their medians differ by more than the larger range, and finite, nonoverlapping run
+intervals form complete ABBA or BAAB blocks in start-time order. It reports the chance that noise alone separates
+them that completely (2 / C(n_b + n_c, n_b): one ABBA leaves 1/3) only for those schedules. Other schedules keep
+the descriptive statistics, with an inconclusive verdict or too few samples.
 """
 import argparse
 import copy
@@ -3279,15 +3279,36 @@ def spread_verdict(base, cand):
     return 'inconclusive'
 
 
-def compare_metric(base, cand):
+def compare_metric(base, cand, *, schedule_valid=True):
     """One metric's samples, medians, ranges and verdict. `separation_p` is the chance that run-to-run noise alone
     separates the two sides this completely (exchangeable records: 2 / C(n_b + n_c, n_b); 1/3 for one A-B-B-A)."""
     bm, cm = statistics.median(base), statistics.median(cand)
+    verdict = spread_verdict(base, cand)
+    if not schedule_valid and verdict != 'too few samples':
+        verdict = 'inconclusive'
     return {'baseline': base, 'candidate': cand, 'baseline_median': bm, 'candidate_median': cm,
             'candidate_over_baseline': cm / bm if bm else None, 'baseline_range': [min(base), max(base)],
             'candidate_range': [min(cand), max(cand)],
-            'separation_p': 2 / math.comb(len(base) + len(cand), len(base)) if separated(base, cand) else None,
-            'verdict': spread_verdict(base, cand)}
+            'separation_p': 2 / math.comb(len(base) + len(cand), len(base))
+            if schedule_valid and separated(base, cand) else None,
+            'verdict': verdict}
+
+
+def comparison_timestamp(value):
+    return value if type(value) is int or (type(value) is float and math.isfinite(value)) else None
+
+
+def comparison_schedule(records):
+    """Chronological order and whether the runs form complete counterbalanced blocks."""
+    if any(r['started_unix'] is None for r in records):
+        return None, False
+    ordered = sorted(records, key=lambda r: r['started_unix'])
+    order = ''.join('A' if r['side'] == 'baseline' else 'B' for r in ordered)
+    valid = (bool(order) and len(order) % 4 == 0
+             and all(order[i:i + 4] in ('ABBA', 'BAAB') for i in range(0, len(order), 4))
+             and all(r['finished_unix'] is not None and r['finished_unix'] >= r['started_unix'] for r in ordered)
+             and all(a['finished_unix'] <= b['started_unix'] for a, b in zip(ordered, ordered[1:])))
+    return order, valid
 
 
 def compare_records(baselines, candidates):
@@ -3320,12 +3341,14 @@ def compare_records(baselines, candidates):
     parity = []
     for (_, path), m in zip(sides[1:], maps[1:]):
         parity += parity_differences(maps[0], m, str(path))
-    order = ''.join('A' if side == 'baseline' else 'B'
-                    for (side, _), _r in sorted(zip(sides, recs), key=lambda x: x[1]['qualification']['started_unix']))
+    records = [{'side': side, 'record': pin(path), 'label': r['qualification']['label'],
+                'started_unix': comparison_timestamp(r['qualification'].get('started_unix')),
+                'finished_unix': comparison_timestamp(r['qualification'].get('finished_unix'))}
+               for (side, path), r in zip(sides, recs)]
+    order, schedule_valid = comparison_schedule(records)
     report = {'schema': COMPARE_SCHEMA,
-              'records': [{'side': side, 'record': pin(path), 'label': r['qualification']['label'],
-                           'started_unix': r['qualification']['started_unix']} for (side, path), r in zip(sides, recs)],
-              'order': order, 'workload': {k: works[0][0][k] for k in ('schema', 'environment', 'run', 'layout')},
+              'records': records, 'order': order, 'schedule_valid': schedule_valid,
+              'workload': {k: works[0][0][k] for k in ('schema', 'environment', 'run', 'layout')},
               'code': dict(code, differs=diff_paths(code['baseline'], code['candidate'])),
               'parity': {'pass': not parity, 'differences': parity}, 'metrics': None}
     if parity:
@@ -3333,7 +3356,8 @@ def compare_records(baselines, candidates):
         return False, report
     rates = [record_rates(r) for r in recs]
     report['metrics'] = {n: compare_metric([x[n] for (s, _), x in zip(sides, rates) if s == 'baseline'],
-                                           [x[n] for (s, _), x in zip(sides, rates) if s == 'candidate'])
+                                           [x[n] for (s, _), x in zip(sides, rates) if s == 'candidate'],
+                                           schedule_valid=schedule_valid)
                          for n in rates[0]}
     report['pass'] = True
     return True, report
@@ -3342,7 +3366,8 @@ def compare_records(baselines, candidates):
 def throughput_compare(a):
     passed, report = compare_records(a.baseline, a.candidate)
     write(a.out, report)
-    print(json.dumps({'pass': passed, 'order': report['order'], 'code_differs': report['code']['differs'],
+    print(json.dumps({'pass': passed, 'order': report['order'], 'schedule_valid': report['schedule_valid'],
+                      'code_differs': report['code']['differs'],
                       'parity': report['parity']['pass'], 'why': report.get('why'),
                       'verdicts': {n: m['verdict'] for n, m in (report['metrics'] or {}).items()}, 'out': a.out},
                      indent=1))
