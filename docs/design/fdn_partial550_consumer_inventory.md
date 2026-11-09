@@ -1,20 +1,43 @@
 # Partial Foundations consumer inventory
 
-## Current candidate, 2026-11-08
+## Current candidate, 2026-11-09
 
-Commit `d39419792` composes consumer source for all 36 original Partial
-printings, with 24 optional family appendices and 26 complete schema shapes.
-The prior Mixed profile still admits its original 20 printings. A separate
-full-pool composition is the next integration task; source coverage does not
-change the catalog's 250 Full / 36 Partial / 0 Missing status.
+The separate FullPool owner composes the 36 original Partial printings and the
+ordinary Foundations pool. The prior Mixed profile still admits its original
+20 printings. Catalog admission remains 250 Full / 36 Partial / 0 Missing.
+Source implementation does not establish all-286 consumer qualification.
 
-The combined 33-printing checkpoint passed the guarded native library and
-test-target type check, including Sphinx, Greatwurm and Harvester binary
-metadata, in 475.96 seconds with no Rust warnings. It did not execute those
-fixtures. The 36-printing candidate still needs pinned formatting, compilation,
-the affected paid-game fixtures and genuine new event samples. Shared fair
-search, the bounded DraftZero learner/evaluation and Drake's #474 timing
-acceptance remain separate unfinished requirements.
+The guarded native run at `1eee5416d3d3f9c395bcdb6cc5ec2da1e2b4e8b1`
+finished 47 selected cases: **36 passed, 10 failed and one timed out**.
+The all-286 sealed-learner case stopped on Dwynen. The older Legacy census
+passed its explicit known-gap contract, not all-286 coverage. Six failures
+rejected legitimate sampled hidden-hand assignments in redundant family
+projections; Storm rejected an authentic resolving-item mirror. Lathril and
+Curator fixtures confused sorted Human ordinals with native indices. The
+PIMC fixture exceeded 450 seconds with 160 unrelated battlefield lands.
+
+Source repairs retain exact native commands, indices, public reveal minima and
+complete normalized packet equality. The PIMC fixture now uses a bounded
+paid-spell board and retains both-seat hidden-pair, visit, zero-fallback and
+natural-terminal assertions. The all-286 fixture reports every failed batch
+and individually failing printing. Additional exact ordinary printing roots
+and public trigger program facts are being integrated; affected native
+qualification remains pending.
+
+| Evidence | Observed result |
+| --- | --- |
+| Archived FullPool native binary | SHA-256 `b315034c3589cbd6854a2d7e59703996d26eab3230a91ef98f8d0bc242c9eca4`, 36 pass / 10 fail / 1 timeout |
+| Seven missing event producers | All seven harvested from passing native tests; original 316 samples retained |
+| Completed 323-event fixture | Kind order and plain-Vec digest/record/compare/print checks pass; archived regret guard reproduces the Fiend predicate defect |
+| `47da2eac` metadata check | Pass after the Greatwurm source alias repair |
+| `666f7ab2` metadata check | Found unsupported native Supertype serialization in a new printing descriptor; `185ac22c` emits the exact empty list required by its existing definition guard |
+
+The archived run manifest is
+`D:/codex-mixed21-52f25-20261108/fixtures-limited-fullpool-1eee/manifest.json`,
+SHA-256 `4832239d0f8630f786a4731394ab14d7379dc25e51daf44bab902c7718514df8`.
+Event sample provenance and the archived consumer results are recorded in
+`data/event_history_v1/README.md`. Shared fair search, the bounded DraftZero
+learner/evaluation and Drake's #474 timing acceptance remain unfinished.
 
 The hosted Limited test build at `5c08b3eeb` received a runner shutdown signal
 and exited 143 before producing a test artifact. Its log is retained at
