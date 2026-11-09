@@ -1,7 +1,9 @@
 use super::*;
 use crate::{
-    effect::thousand_year_storm_v1_tests as paid, policy_observation_v6::tests::put,
-    policy_surface_v5::LimitedAppendixV1, rl::ActionSemanticV1,
+    effect::thousand_year_storm_v1_tests as paid,
+    policy_observation_v6::tests::put,
+    policy_surface_v5::LimitedAppendixV1,
+    rl::ActionSemanticV1,
     state::{GameState, Step, Target},
 };
 
