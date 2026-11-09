@@ -3,6 +3,7 @@
 //! original order. No model/RNG state is mutated by these workers.
 
 use super::*;
+use crate::s_transformer_v1::profile as s_update_profile;
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -84,7 +85,9 @@ struct GroupJobV1 {
     opponent: Option<usize>,
 }
 
-fn decoded_payload_bytes(t: &TensorBitsV1) -> Result<usize, String> {
+/// The decoded numeric payload of one row, as the preparation bound counts
+/// it; the saved-batch fixture (`s_update_fixture_v1`) reports a batch's sum.
+pub(super) fn decoded_payload_bytes(t: &TensorBitsV1) -> Result<usize, String> {
     let mut bytes = 0usize;
     for values in [
         &t.state,
@@ -190,6 +193,7 @@ fn ordered_jobs_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
     )?;
     let next = AtomicUsize::new(0);
     let first_error = AtomicUsize::new(job_count);
+    let profile = s_update_profile::current_v1();
     thread::scope(|scope| {
         let mut handles = Vec::new();
         let mut spawn_error = None;
@@ -197,10 +201,12 @@ fn ordered_jobs_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
             let next = &next;
             let first_error = &first_error;
             let work = &work;
+            let profile = &profile;
             match thread::Builder::new()
                 .name(format!("expanded-preparation-{worker}"))
                 .stack_size(WORKER_STACK_BYTES)
                 .spawn_scoped(scope, move || {
+                    s_update_profile::adopt_v1(profile);
                     let mut values = Vec::new();
                     let mut busy = 0.0;
                     loop {
@@ -601,14 +607,22 @@ where
         let contract = trajectory_contract_v1(trajectory)?;
         contract.require_policy_contract_v1(policy)?;
         let generation = contract.generation;
+        let stage = if first.actor == trajectory.episode.learner_seat {
+            s_update_profile::StageV1::ReplayLearnerRow
+        } else {
+            s_update_profile::StageV1::ReplayOtherRow
+        };
         let mut rows = Vec::new();
         for row in &trajectory.decisions[job.start..job.end] {
             let common = row.tensor.tensor();
+            let input = common.clone();
+            let span = s_update_profile::span_v1(stage);
             let output = acting.score_replay_tensor_v1(
                 generation,
-                common.clone(),
+                input,
                 &row.tensor.pairing_node_indices,
             )?;
+            span.finish_v1(&output.logits, output.value);
             ensure(
                 bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
                 "stored tensor does not reproduce rollout outputs",
