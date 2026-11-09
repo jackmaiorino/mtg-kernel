@@ -85,7 +85,9 @@ record!(HumanVisibleStateKaitoV75 {
     #[serde(skip_serializing_if = "Option::is_none")]
     etali: Option<super::etali_primal_storm_consumer_v1::HumanFactsV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    thousand_year_storm: Option<super::thousand_year_storm_consumer_v1::HumanFactsV1>
+    thousand_year_storm: Option<super::thousand_year_storm_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    life_triggers: Option<crate::limited_full_pool_consumer_v1::life_triggers::FactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -1341,6 +1343,7 @@ pub(super) fn project_with_handles(
                 fiend_artisan,
                 etali,
                 thousand_year_storm,
+                life_triggers: obs.life_triggers.clone(),
             },
             actions,
             action_meanings,

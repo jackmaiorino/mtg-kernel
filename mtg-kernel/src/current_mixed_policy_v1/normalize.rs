@@ -793,6 +793,14 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         collect_cards(action, &mut cards)?;
     }
     let mut meanings = Vec::new();
+    if full_pool {
+        for &id in &cards {
+            if let Some(printing) = roots::full_pool_life_printing(id)? {
+                covered.insert(id);
+                meanings.push(printing);
+            }
+        }
+    }
     for id in cards.difference(&covered) {
         if source == Source::KaitoV75 && super::kaito::printing(*id)?.is_some() {
             continue;

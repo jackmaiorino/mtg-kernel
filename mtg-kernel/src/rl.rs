@@ -12103,7 +12103,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                         crate::chandra_observation_v74::pending_source_reference(state, p)?
                     }
                     Some(CommonProjectionScopeV42::KaitoV75) => {
-                        crate::kaito_observation_v75::pending_source_reference(state, p)?
+                        crate::kaito_observation_v75::pending_source_reference(state, p, appendix)?
                     }
                     Some(CommonProjectionScopeV42::VivienV70) => {
                         crate::vivien_observation_v70::pending_source_reference(state, p)?

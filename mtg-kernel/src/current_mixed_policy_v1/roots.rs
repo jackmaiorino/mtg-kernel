@@ -34,6 +34,8 @@ pub(super) mod early_activation_printing;
 pub(super) mod eaten_printing;
 #[path = "elf_lord_printing.rs"]
 pub(super) mod elf_lord_printing;
+#[path = "full_pool_life_printing.rs"]
+mod full_pool_life_printing;
 #[path = "enchantment_hunter_printing.rs"]
 pub(super) mod enchantment_hunter_printing;
 #[path = "entry_branch_printing.rs"]
@@ -512,6 +514,24 @@ pub(super) fn is_paladin_permanent(id: u16) -> bool {
 }
 
 pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
+    baseline_recipe_with_life_printing(id, d, None)
+}
+
+pub(super) fn full_pool_life_printing(id: u16) -> Result<Option<Value>> {
+    let d = CARD_DEFS
+        .get(usize::from(id))
+        .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    let Some(printing) = full_pool_life_printing::printing(id, d)? else {
+        return Ok(None);
+    };
+    baseline_recipe_with_life_printing(id, d, Some(printing)).map(Some)
+}
+
+fn baseline_recipe_with_life_printing(
+    id: u16,
+    d: &CardDef,
+    life_printing: Option<Value>,
+) -> Result<Value> {
     if d.name == "Divine Resilience" {
         return divine_printing::baseline(id, d);
     }
@@ -896,6 +916,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || threshold_loot.is_some()
             || attack_trigger.is_some()
             || elf_lord.is_some()
+            || life_printing.is_some()
             || ward_discount_creature.is_some()
             || observer_trigger.is_some()))
     {
@@ -973,6 +994,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = elf_lord {
+        return Ok(printing);
+    }
+    if let Some(printing) = life_printing {
         return Ok(printing);
     }
     if let Some(printing) = triggered_enchantment {
