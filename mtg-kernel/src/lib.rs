@@ -1024,6 +1024,7 @@ pub mod quandary_public_v55;
 pub mod rules_meaning_drake_hatcher_v53;
 pub mod rules_meaning_quandary_v55;
 pub mod rules_meaning_spinner_v54;
+pub mod scrawling_crawler_public_v1;
 pub mod spinner_public_v54;
 
 pub mod alesha_v1;
