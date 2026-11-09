@@ -185,6 +185,13 @@ native producer cases passed afterward; their receipt SHA-256 is
 These rows test event serialization and guarded scans. They do not qualify the
 remaining failed cases, full-pool gameplay, training, or playing strength.
 
+Against fixture-only commit `28a6f3f81966ddfecbaa19c79661212b51419f6f`, the
+archived binary passed both event-history consumers: all 323 kinds in order,
+and record/digest/compare/print parity with the plain event vector. The guarded-scan
+consumer failed on the original Fiend Artisan refusal under a forced-open scan;
+the production repair still requires a fresh binary. This consumer receipt has
+SHA-256 `25dd7a46c36a01c5dc92eaccddbc58479a4e7d4753aa4becf010c2ddc233f8e5`.
+
 | Kind | Passing producer | Payload SHA-256 |
 | --- | --- | --- |
 | LathrilReceiptV1 | lathril_consumer_v1::tests::declared_forty_card_v3_reset_pays_lathril_and_real_combat_creates_two_elves_both_seats | 0aa8be2c8d1f7e016091001edde94f9d2c89e82e6b6b0fde1e38f489724e771c |
