@@ -9,7 +9,7 @@ use crate::{
     optional_trigger_public_v1 as public,
     rl::PlayerSeatV1,
     standard_cards_v1::StandardTargetV1,
-    state::{CastMethodV4, GameState, StackItemKind, StackTargetContractV4, Target, Zone},
+    state::{CastMethodV4, GameState, StackItem, StackItemKind, StackTargetContractV4, Target, Zone},
     tinybones_public_v72::{CountersV72, IncarnationV72},
 };
 use serde::{Deserialize, Serialize};
@@ -217,6 +217,7 @@ fn target(
     target: Target,
     contract: StackTargetContractV4,
     currently_legal: bool,
+    published: Option<&StackItem>,
 ) -> Result<TargetV1, String> {
     let StackTargetContractV4::Object {
         object,
@@ -229,11 +230,14 @@ fn target(
     else {
         return Err("Moon original target is not an object".into());
     };
-    if zone != Zone::Battlefield
-        || !crate::state::stack_target_contract_is_structurally_valid(
-            state, TARGET, 0, target, contract,
+    let structurally_valid = crate::state::stack_target_contract_is_structurally_valid(
+        state, TARGET, 0, target, contract,
+    ) || published.is_some_and(|item| {
+        crate::state::stack_target_contract_for_sampled_snapshot(
+            state, item, TARGET, 0, target, contract,
         )
-    {
+    });
+    if zone != Zone::Battlefield || !structurally_valid {
         return Err("Moon original target incarnation changed".into());
     }
     Ok(TargetV1 {
@@ -308,6 +312,7 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                             &pending.targets_chosen,
                             0,
                         ),
+                    None,
                 )?),
                 _ => return Err("Moon pending target prefix changed".into()),
             };
@@ -327,6 +332,7 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                 *selected,
                 *contract,
                 engine::stack_targets_still_legal(item, state)?,
+                Some(item),
             )?;
             (
                 if item.is_copy {
