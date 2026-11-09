@@ -522,15 +522,17 @@ New, each built once in the first wave that needs it:
   Island and loses its other land types and abilities); Navigator's Compass adds
   a land type and its mana ability until end of turn, the way Yavimaya does for
   Forests. Waterbend is an option list (tap an artifact or creature, or pay the
-  rest with mana) that offers only completable branches. Martyr of Sands is one
-  ability per X from 1 to 10, offered when the hand holds X white cards, which are
-  revealed as the ability is put on the stack. Call Damage Control is one spell
+  rest with mana) that offers only completable branches. Martyr of Sands has one
+  native activation with a private selection of any number of white cards from
+  the payer's hand. Finishing reveals the selected cards, pays {1}, and
+  sacrifices the source. The paid reveal count sets the life gain on resolution.
+  Call Damage Control is one spell
   with up to two target cards of different types from the graveyard (artifact,
   creature, enchantment or land), each returned independently. New target shapes
   are `StandardTargetV1::S1dV1`. Rhino and Flagbearer use new stable ids 361 and 362;
   Nylea's Disciple uses Centaur's existing stable id 281 from P2c.
-  Partial: Martyr of Sands offers only X from 1 to 10 and reveals the first X white
-  cards instead of a chosen set. Standard Bearer and Coalition Honor Guard apply the
+  Partial: Martyr of Sands awaits native payment, disclosure, restore and consumer
+  qualification. Standard Bearer and Coalition Honor Guard apply the
   Flagbearer restriction only to the last slot, so a multi-target spell that can
   finish early can bypass it. Vandalblast and Electrickery omit overload on the normal
   graveyard permission path. The shared free-resolution path can offer the overload

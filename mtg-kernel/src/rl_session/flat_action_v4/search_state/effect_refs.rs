@@ -1392,7 +1392,8 @@ fn conflicts_in_scope(
     scope: ReferenceScopeV68,
 ) -> bool {
     let s = Scan { state, pool, scope };
-    if crate::controlled_creature_grants_v1::validate_color_history(state).is_err()
+    if crate::engine::pending_martyr_reveal_v1(state)
+        || crate::controlled_creature_grants_v1::validate_color_history(state).is_err()
         || state
             .engine
             .event_history
@@ -1641,10 +1642,12 @@ fn conflicts_in_scope(
             EventKindV1::PlusCounterInputV48,
             EventKindV1::DrakusethDamageSourceV76,
             EventKindV1::NishobaDamageSourceV1,
+            EventKindV1::MartyrRevealPaidV1,
         ])
         .iter()
         .any(|event| match event {
-            crate::event::CommittedEvent::NishobaDamageSourceV1 { source, .. } => {
+            crate::event::CommittedEvent::NishobaDamageSourceV1 { source, .. }
+            | crate::event::CommittedEvent::MartyrRevealPaidV1 { source, .. } => {
                 s.historical_ability(source)
             }
             crate::event::CommittedEvent::TimeStopJournalV1 { .. } => !matches!(
@@ -1833,7 +1836,9 @@ fn conflicts_in_scope(
     state.engine.event_log.iter().any(|event| {
         use crate::event::CommittedEvent::*;
         let conflict = match event {
-            NishobaDamageSourceV1 { source, .. } => s.historical_ability(source),
+            NishobaDamageSourceV1 { source, .. } | MartyrRevealPaidV1 { source, .. } => {
+                s.historical_ability(source)
+            }
             // Future native owning histories are not sampler permissions.
             // Refuse them until their complete retained-reference walk exists.
             LathrilCombatDamageV1 { .. }

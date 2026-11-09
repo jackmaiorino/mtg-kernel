@@ -57,30 +57,13 @@ const NAVIGATORS_COMPASS: [ActivatedAbilityRecipe; 1] = [instant(
 )];
 
 /// Martyr of Sands: "{1}, Reveal X white cards from your hand, Sacrifice
-/// this creature: You gain three times X life." Activations have no free X,
-/// so each X from 1 to 10 is its own ability; the reveal is the hooks
-/// `eternal_sideboard_s1d_v1::statics::activation_allowed` and
-/// `activation_paid`.
-const fn martyr(gain: u8) -> ActivatedAbilityRecipe {
-    instant(
-        &[ManaCost("{1}"), SacrificeSelf],
-        AbilityEffectRecipe::GainLife(gain),
-        "None",
-    )
-}
-
-const MARTYR_OF_SANDS: [ActivatedAbilityRecipe; 10] = [
-    martyr(3),
-    martyr(6),
-    martyr(9),
-    martyr(12),
-    martyr(15),
-    martyr(18),
-    martyr(21),
-    martyr(24),
-    martyr(27),
-    martyr(30),
-];
+/// this creature: You gain three times X life." The native marker owns the
+/// private reveal selection and derives X from the actual paid subset.
+const MARTYR_OF_SANDS: [ActivatedAbilityRecipe; 1] = [instant(
+    &[ManaCost("{1}"), SacrificeSelf],
+    program("crate::eternal_sideboard_s1d_v1::martyr_of_sands"),
+    "None",
+)];
 
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {

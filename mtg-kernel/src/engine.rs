@@ -15961,6 +15961,18 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
     )
     .expect("validate_pending_activation already confirmed this ability index resolves");
     let ability = &ability;
+    if crate::eternal_sideboard_s1d_v1::martyr::ability(ability) {
+        return Some(match crate::eternal_sideboard_s1d_v1::martyr::decision(state, &pending) {
+            Ok(decision) => decision,
+            Err(_) => {
+                state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, pending.source));
+                Decision::Halted {
+                    mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                    source: pending.source,
+                }
+            }
+        });
+    }
     if effect::fiend_artisan_v1::ability(ability) && pending.mana_x_v1.is_none() {
         let maximum = maximum_activation_mana_x_v1(state, &pending, ability)
             .expect("validated mana-X activation has a payable zero");
@@ -16432,6 +16444,7 @@ pub(crate) fn validate_pending_activation(
     let returns_unblocked_attacker = has_unblocked_attacker_return_cost(ability.cost);
     let craft_material = has_craft_material_cost(ability.cost);
     let graveyard_exile = activation_graveyard_exile_needed(ability.cost);
+    let martyr_reveal = crate::eternal_sideboard_s1d_v1::martyr::ability(ability);
     let interactive_families = usize::from(return_filter.is_some())
         + usize::from(graveyard_exile.is_some())
         + usize::from(tap_cost_subtype.is_some())
@@ -16439,7 +16452,11 @@ pub(crate) fn validate_pending_activation(
         + usize::from(returns_unblocked_attacker)
         + usize::from(craft_material)
         + usize::from(crew_requirement(ability.cost).is_some())
+        + usize::from(martyr_reveal)
         + usize::from(counter_cost.is_some());
+    if martyr_reveal {
+        crate::eternal_sideboard_s1d_v1::martyr::validate(state, pending)?;
+    }
     if let Some(required) = crew_requirement(ability.cost) {
         let candidates = crew_candidates(state, pending.controller, pending.source, &[]);
         if pending
@@ -18579,15 +18596,17 @@ fn validated_stack_item_target_metadata(
             } else if item.v4.hidden_ability_source.is_some() {
                 return Err("non-ninjutsu activation carries hidden source provenance".to_string());
             }
-            let expected_x = if effect::fiend_artisan_v1::ability(ability) {
-                effect::fiend_artisan_v1::paid_x(state, item)?
+            let expected_x = if crate::eternal_sideboard_s1d_v1::martyr::ability(ability) {
+                crate::eternal_sideboard_s1d_v1::martyr::paid_count(state, item)?
+            } else if effect::fiend_artisan_v1::ability(ability) {
+                u16::from(effect::fiend_artisan_v1::paid_x(state, item)?)
             } else if ability.cost.contains(&CostComponent::LoyaltyX) {
-                crate::standard_cards_v1::paid_loyalty_x(state, item.v4.stack_item_id)
-                    .ok_or("variable loyalty payment lost its paid X")?
+                u16::from(crate::standard_cards_v1::paid_loyalty_x(state, item.v4.stack_item_id)
+                    .ok_or("variable loyalty payment lost its paid X")?)
             } else {
-                activation_x_value(ability, &item.targets, state)?
+                u16::from(activation_x_value(ability, &item.targets, state)?)
             };
-            if item.v4.x_value != u16::from(expected_x) {
+            if item.v4.x_value != expected_x {
                 return Err("activated stack item X value changed".to_string());
             }
             if source_contract.zone != ability.activation_zone {
@@ -24176,6 +24195,17 @@ enum PendingActivationActionStage {
     Crew,
     ChooseLoyaltyX,
     ChooseManaX,
+    MartyrReveal,
+}
+
+pub(crate) fn pending_martyr_reveal_v1(state: &GameState) -> bool {
+    state.engine.pending_activation.as_ref().is_some_and(|pending| {
+        state.objects.try_get(pending.source).is_some_and(|object| {
+            resolved_activated_ability(object.card_def, pending.ability_index, state, pending.source)
+                .as_ref()
+                .is_some_and(crate::eternal_sideboard_s1d_v1::martyr::ability)
+        })
+    })
 }
 
 /// Purely derives the one action family, if any, exposed by a staged cast.
@@ -24364,6 +24394,9 @@ fn pending_activation_action_stage(
         pending.source,
     )
     .ok_or("missing activation")?;
+    if crate::eternal_sideboard_s1d_v1::martyr::ability(&staged_ability) {
+        return Ok(PendingActivationActionStage::MartyrReveal);
+    }
     if effect::fiend_artisan_v1::ability(&staged_ability) && pending.mana_x_v1.is_none() {
         return Ok(PendingActivationActionStage::ChooseManaX);
     }
@@ -24425,10 +24458,9 @@ fn action_matches_pending_activation_stage(
             PendingActivationActionStage::ChooseTarget,
             Action::ChooseTarget(_)
         ) | (
-            PendingActivationActionStage::ChooseOptionalTarget,
-            Action::ChooseEffectTarget(_) | Action::FinishEffectSelection
-        ) | (
-            PendingActivationActionStage::Crew,
+            PendingActivationActionStage::ChooseOptionalTarget
+                | PendingActivationActionStage::Crew
+                | PendingActivationActionStage::MartyrReveal,
             Action::ChooseEffectTarget(_) | Action::FinishEffectSelection
         ) | (
             PendingActivationActionStage::ChooseLoyaltyX
@@ -24927,9 +24959,11 @@ pub(crate) fn step_without_linked_aura_v1(
             } else if state.engine.pending_cast.is_some() {
                 apply_choose_collect_evidence_target(state, target)
             } else if state.engine.pending_activation.is_some() {
-                if pending_activation_action_stage(state,state.engine.pending_activation.as_ref().unwrap())? == PendingActivationActionStage::Crew {
-                    choose_crew_member(state,target)
-                } else { apply_choose_optional_activation_target(state, target) }
+                match pending_activation_action_stage(state,state.engine.pending_activation.as_ref().unwrap())? {
+                    PendingActivationActionStage::Crew => choose_crew_member(state,target),
+                    PendingActivationActionStage::MartyrReveal => crate::eternal_sideboard_s1d_v1::martyr::choose(state, target),
+                    _ => apply_choose_optional_activation_target(state, target),
+                }
             } else {
                 effect::choose_resumable_target(state, target)
             }
@@ -24942,9 +24976,14 @@ pub(crate) fn step_without_linked_aura_v1(
             } else if state.engine.pending_cast.is_some() {
                 finish_optional_cast_or_collect_evidence(state)
             } else if state.engine.pending_activation.is_some() {
-                if pending_activation_action_stage(state,state.engine.pending_activation.as_ref().unwrap())? == PendingActivationActionStage::Crew {
-                    finish_crew(state)
-                } else { finish_optional_activation_targets(state) }
+                match pending_activation_action_stage(state,state.engine.pending_activation.as_ref().unwrap())? {
+                    PendingActivationActionStage::Crew => finish_crew(state),
+                    PendingActivationActionStage::MartyrReveal => {
+                        finalize_activation(state);
+                        Ok(())
+                    }
+                    _ => finish_optional_activation_targets(state),
+                }
             } else if state.engine.pending_effect.is_none() && !state.engine.pending_triggers.is_empty()
             {
                 finish_optional_trigger_targets(state)
@@ -28943,7 +28982,21 @@ fn finalize_activation(state: &mut GameState) {
                 .and_then(|id| crate::attack_target_v1::attacked_planeswalker(state, *id))
         })
         .flatten();
-    let paid = if effect::fiend_artisan_v1::ability(ability) {
+    let paid = if crate::eternal_sideboard_s1d_v1::martyr::ability(ability) {
+        let mut transaction = state.clone();
+        match crate::eternal_sideboard_s1d_v1::martyr::reveal(&mut transaction, &pending) {
+            Ok(revealed)
+                if pay_cost_components_with_x(
+                    &mut transaction, pending.controller, pending.source, ability.cost, &[], x_value,
+                ) && transaction.engine.halted.is_none() =>
+            {
+                frozen.martyr_revealed = Some(revealed);
+                *state = transaction;
+                true
+            }
+            _ => false,
+        }
+    } else if effect::fiend_artisan_v1::ability(ability) {
         // The new graveyard-count dependency can reject a final sacrifice
         // scene. Stage this one complete native payment, including real mana
         // abilities, before committing any mana, tap or sacrifice to the world.
@@ -29052,6 +29105,7 @@ struct FrozenActivationSource {
     chandra_payment: Option<u64>,
     ravenous_payment: Option<crate::ravenous_amulet_v1::PaymentOwnerV1>,
     drake_payment: Option<crate::drake_hatcher_v1::custody::PaymentOwnerV1>,
+    martyr_revealed: Option<Vec<u16>>,
 }
 
 fn freeze_activation_source(
@@ -29108,6 +29162,7 @@ fn freeze_activation_source(
         chandra_payment: None,
         ravenous_payment: None,
         drake_payment: None,
+        martyr_revealed: None,
     }
 }
 
@@ -29151,12 +29206,6 @@ fn push_paid_activation(
             pending.source,
             pending.ability_index,
         );
-        crate::eternal_sideboard_s1d_v1::statics::activation_paid(
-            state,
-            pending.source,
-            pending.controller,
-            pending.ability_index,
-        );
     }
     let ability = &frozen.ability;
     let granted_by = frozen.granted_by;
@@ -29178,7 +29227,7 @@ fn push_paid_activation(
             paid_cost_objects.push(exiled);
         }
     }
-    if counter_removal_cost(ability.cost).is_none() {
+    if counter_removal_cost(ability.cost).is_none() && frozen.martyr_revealed.is_none() {
         paid_cost_objects.extend(
             pending
                 .object_cost_chosen
@@ -29263,6 +29312,9 @@ fn push_paid_activation(
     if ability.cost.contains(&CostComponent::LoyaltyX) {
         crate::standard_cards_v1::record_loyalty_x(state, stack_item_id, x_value);
     }
+    let x_value = frozen.martyr_revealed.as_ref().map_or(u16::from(x_value), |revealed| {
+        u16::try_from(revealed.len()).expect("validated Martyr reveal count")
+    });
     state.stack.push(StackItem {
         kind: StackItemKind::ActivatedAbility,
         source: pending.source,
@@ -29277,7 +29329,7 @@ fn push_paid_activation(
         kicked: false, // no activated ability in this pool has Kicker
         v4: StackStateV4 {
             stack_item_id,
-            x_value: u16::from(x_value),
+            x_value,
             paid_cost_refs,
             ability_source_contract: Some(ability_source_contract),
             target_spec: Some(pending.target_spec),
@@ -29294,6 +29346,11 @@ fn push_paid_activation(
             ..StackStateV4::default()
         },
     });
+    if let Some(revealed) = frozen.martyr_revealed {
+        state.engine.event_history.push(CommittedEvent::MartyrRevealPaidV1 {
+            item: stack_item_id, source: ability_source_contract, revealed,
+        });
+    }
     if effect::fiend_artisan_v1::record_paid(state, stack_item_id, frozen.fiend_input).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,

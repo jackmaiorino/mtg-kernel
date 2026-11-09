@@ -1187,12 +1187,6 @@ pub(crate) fn activation_allowed(
             name,
             ability_index,
         )
-        && crate::eternal_sideboard_s1d_v1::statics::activation_allowed(
-            state,
-            source,
-            name,
-            ability_index,
-        )
         && crate::eternal_sideboard_s1a_v1::statics::activation_allowed(state, source)
 }
 

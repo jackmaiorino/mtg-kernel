@@ -2081,6 +2081,11 @@ pub enum CommittedEvent {
         source: crate::state::AbilitySourceContractV4,
         damage_history_index: u64,
     },
+    MartyrRevealPaidV1 {
+        item: crate::ids::StackItemId,
+        source: crate::state::AbilitySourceContractV4,
+        revealed: Vec<u16>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

@@ -932,6 +932,13 @@ fn export_versioned(
         ));
     }
 
+    if crate::engine::pending_martyr_reveal_v1(state) {
+        return Err(refuse(
+            RefusalCodeV1::R3,
+            "Martyr of Sands's private reveal payment is unavailable",
+        ));
+    }
+
     // Step 2 (the projection feeds step 1's I1 and I4).
     if visibility_v2 {
         // Refuse before any name-sensitive invariant, seam or allocation.

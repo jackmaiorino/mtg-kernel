@@ -1256,61 +1256,101 @@ fn flagbearers_force_the_opponent_to_target_them() {
 // ---- Martyr of Sands -------------------------------------------------------------
 
 #[test]
-fn martyr_of_sands_gains_three_life_per_white_card_revealed() {
-    let mut state = plains();
-    let martyr = put(&mut state, P0, "Martyr of Sands", Zone::Battlefield);
-    put(&mut state, P0, "Thraben Inspector", Zone::Hand);
-    put(&mut state, P0, "Kor Skyfisher", Zone::Hand);
-    put(&mut state, P0, "Llanowar Elves", Zone::Hand);
-    pool(&mut state, P0, &[], 1);
-    // X = 3 needs three white cards; only two are in hand.
-    assert!(!activatable(&mut state, martyr, 2));
-    assert!(activatable(&mut state, martyr, 1));
-    activate(&mut state, martyr, 1, &[]);
-    settled(&mut state);
-    assert_eq!(life(&state, P0), 26);
-    assert_eq!(zone(&state, martyr), Zone::Graveyard);
-}
+fn martyr_of_sands_pays_zero_exact_subset_and_more_than_ten_both_seats() {
+    use mtg_kernel::{event::CommittedEvent, rl, surface_v2::HarnessSurfaceV2};
+    use std::collections::BTreeSet;
 
-#[test]
-fn martyr_of_sands_reveals_distinct_copies_from_the_activation_payer() {
-    let mut state = plains();
-    state.enable_hand_knowledge_by_name_v2();
-    let martyr = put(&mut state, P1, "Martyr of Sands", Zone::Battlefield);
-    state.players[P1.index()]
-        .battlefield
-        .retain(|&object| object != martyr);
-    state.players[P0.index()].battlefield.push(martyr);
-    state.objects.get_mut(martyr).controller = P0;
-    let first = put(&mut state, P0, "Thraben Inspector", Zone::Hand);
-    let second = put(&mut state, P0, "Thraben Inspector", Zone::Hand);
-    put(&mut state, P1, "Kor Skyfisher", Zone::Hand);
-    pool(&mut state, P0, &[], 1);
+    let library = [id("Plains"); 20];
+    for actor in [P0, P1] {
+        let other = actor.opponent();
+        for (white_count, picks) in [
+            (0, vec![]),
+            (3, vec![]),
+            (4, vec![1, 3]),
+            (12, (1..12).collect()),
+        ] {
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &library, &library, |id| CARD_DEFS[usize::from(id)].object_name.into(), 566, actor,
+            );
+            state.step = Step::Main1;
+            state.enable_hand_knowledge_by_name_v2();
+            let martyr = put(&mut state, other, "Martyr of Sands", Zone::Battlefield);
+            state.players[other.index()].battlefield.retain(|&object| object != martyr);
+            state.players[actor.index()].battlefield.push(martyr);
+            state.objects.get_mut(martyr).controller = actor;
+            let land = put(&mut state, actor, "Plains", Zone::Battlefield);
+            let white: Vec<_> = (0..white_count).map(|i| put(
+                &mut state, actor, if i == 0 { "Kor Skyfisher" } else { "Thraben Inspector" }, Zone::Hand,
+            )).collect();
+            let nonwhite = put(&mut state, actor, "Llanowar Elves", Zone::Hand);
+            let opponent_card = put(&mut state, other, "Kor Skyfisher", Zone::Hand);
+            assert_eq!(def("Martyr of Sands").activated_abilities.len(), 1);
+            assert!(!activatable(&mut state, martyr, 1));
+            activate(&mut state, martyr, 0, &[]);
+            let initial = next(&mut state);
+            assert!(matches!(initial, Decision::ChooseEffectTargets {
+                player, source, selected_count: 0, min_targets: 0, max_targets, legal_targets, can_finish: true,
+            } if player == actor && source == martyr && usize::from(max_targets) == white_count
+                && legal_targets == white.iter().copied().map(Target::Object).collect::<Vec<_>>()));
+            for illegal in [nonwhite, opponent_card] {
+                let before = state.state_hash();
+                assert!(engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(illegal))).is_err());
+                assert_eq!(state.state_hash(), before);
+            }
+            for &pick in &picks {
+                let selected = white[pick];
+                act(&mut state, Action::ChooseEffectTarget(Target::Object(selected)));
+                let before = state.state_hash();
+                assert!(engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(selected))).is_err());
+                assert_eq!(state.state_hash(), before);
+            }
+            assert!(state.known_hand_cards(other, actor).is_empty());
+            assert!(!state.objects.get(land).tapped);
+            assert_eq!(zone(&state, martyr), Zone::Battlefield);
+            assert!(state.stack.is_empty());
+            let surface = HarnessSurfaceV2::default();
+            let chosen = |state: &GameState, viewer| rl::observe_v2(state, &surface, viewer, 1)
+                .unwrap().projection.engine_context.pending_activation.unwrap().object_cost_chosen;
+            assert_eq!(chosen(&state, actor).iter().map(|row| row.arena_id).collect::<Vec<_>>(),
+                picks.iter().map(|&i| white[i].0).collect::<Vec<_>>());
+            assert!(chosen(&state, other).is_empty());
 
-    activate(&mut state, martyr, 1, &[]);
-    // The activation is staged until the engine advances through payment.
-    assert!(matches!(
-        next(&mut state),
-        Decision::CastSpellOrPass { player: P0, .. }
-    ));
-    let ability = state.stack.last().expect("Martyr's paid ability");
-    assert_eq!(ability.kind, StackItemKind::ActivatedAbility);
-    assert_eq!(ability.source, martyr);
-    assert_eq!(ability.controller, P0);
-    assert_eq!(ability.v4.activated_ability_index, Some(1));
-    let payer = &state.players[P0.index()];
-    assert_eq!(payer.mana_pool[ManaColor::C.pool_index()], 0);
-    assert!(state.players[P1.index()].graveyard.contains(&martyr));
-    assert_eq!(life(&state, P0), 20);
+            let mut restored: GameState = serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+            assert_eq!(next(&mut restored), next(&mut state));
+            if !picks.is_empty() {
+                let mut stale = restored.clone();
+                stale.engine.pending_activation.as_mut().unwrap().object_cost_chosen[0].expected_zone_change_count += 1;
+                let before = stale.state_hash();
+                assert!(engine::step(&mut stale, Action::FinishEffectSelection).is_err());
+                assert_eq!(stale.state_hash(), before);
+            }
+            act(&mut restored, Action::FinishEffectSelection);
+            let ability = restored.stack.last().expect("actual paid Martyr ability");
+            assert_eq!(ability.kind, StackItemKind::ActivatedAbility);
+            assert_eq!(ability.source, martyr);
+            assert_eq!(ability.controller, actor);
+            assert_eq!(ability.v4.activated_ability_index, Some(0));
+            assert_eq!(usize::from(ability.v4.x_value), picks.len());
+            assert!(restored.objects.get(land).tapped);
+            assert!(restored.players[other.index()].graveyard.contains(&martyr));
+            assert_eq!(life(&restored, actor), 20);
+            assert_eq!(restored.players[actor.index()].hand.len(), white_count + 1);
+            let actual: BTreeSet<_> = restored.known_hand_cards(other, actor).iter()
+                .map(|entry| entry.object).collect();
+            assert_eq!(actual, picks.iter().map(|&i| white[i]).collect());
+            assert!(restored.known_hand_cards(actor, other).is_empty());
+            assert!(restored.engine.event_history.iter().any(|event| matches!(event,
+                CommittedEvent::MartyrRevealPaidV1 { item, revealed, .. }
+                    if *item == ability.v4.stack_item_id && revealed == &vec![id("Thraben Inspector"); picks.len()])));
 
-    let known = state.known_hand_cards(P1, P0);
-    assert_eq!(
-        known.iter().map(|entry| entry.object).collect::<Vec<_>>(),
-        vec![first, second]
-    );
-    assert!(state.known_hand_cards(P0, P1).is_empty());
-    settled(&mut state);
-    assert_eq!(life(&state, P0), 26);
+            let mut paid: GameState = serde_json::from_value(serde_json::to_value(&restored).unwrap()).unwrap();
+            let mut forged = paid.clone();
+            forged.stack.last_mut().unwrap().v4.x_value += 1;
+            assert!(rl::observe_v2(&forged, &surface, other, 2).is_err());
+            settled(&mut paid);
+            assert_eq!(life(&paid, actor), 20 + 3 * i32::try_from(picks.len()).unwrap());
+        }
+    }
 }
 
 // ---- Foot Ninjas -------------------------------------------------------------------
