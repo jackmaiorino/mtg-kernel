@@ -12,7 +12,8 @@ use crate::{
     rl::PlayerSeatV1,
     standard_cards_v1::{StandardOpV1, StandardTargetV1},
     state::{
-        AbilitySourceContractV4, GameState, StackItemKind, StackTargetContractV4, Target, Zone,
+        AbilitySourceContractV4, GameState, StackItem, StackItemKind, StackTargetContractV4, Target,
+        Zone,
     },
     tinybones_public_v72::{self as counters, CountersV72, IncarnationV72},
     trigger::TriggerCondition,
@@ -276,6 +277,7 @@ fn project_ability(
     position: usize,
     targets: &[Target],
     contracts: &[StackTargetContractV4],
+    published: Option<&StackItem>,
 ) -> Result<AbilityV1, String> {
     if targets.len() != contracts.len() || targets.len() > 2 {
         return Err("Zimone target vectors changed".into());
@@ -294,12 +296,17 @@ fn project_ability(
         else {
             return Err("Zimone target was not a permanent".into());
         };
+        let structurally_valid = crate::state::stack_target_contract_is_structurally_valid(
+            state, spec, index, target, contract,
+        ) || published.is_some_and(|item| {
+            crate::state::stack_target_contract_for_sampled_snapshot(
+                state, item, spec, index, target, contract,
+            )
+        });
         if targets[..index].contains(&target)
             || zone != Zone::Battlefield
             || controller != source.controller
-            || !crate::state::stack_target_contract_is_structurally_valid(
-                state, spec, index, target, contract,
-            )
+            || !structurally_valid
         {
             return Err("Zimone original target contract changed".into());
         }
@@ -417,6 +424,7 @@ pub(crate) fn capture_scoped(
             position,
             &pending.targets,
             &pending.target_contracts,
+            None,
         )?);
     }
     if let Some(pending) = &state.engine.pending_activation {
@@ -437,6 +445,7 @@ pub(crate) fn capture_scoped(
                 0,
                 &pending.targets_chosen,
                 &pending.target_contracts,
+                None,
             )?);
         }
     }
@@ -471,6 +480,7 @@ pub(crate) fn capture_scoped(
             position,
             &item.targets,
             &item.v4.target_contracts,
+            Some(item),
         )?);
     }
     if state.engine.pending_effect.as_ref().is_some_and(|pending| {

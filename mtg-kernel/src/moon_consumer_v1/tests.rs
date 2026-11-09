@@ -203,6 +203,56 @@ fn paid_target_choice(actor: PlayerId, hidden: &str) -> (GameState, ObjectId, Ob
 }
 
 #[test]
+fn sampled_paid_moon_uses_exact_published_target_without_rebinding() {
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        let (mut original, host, moon) = paid_target_choice(caster, "Island");
+        let paid_before = native::tapped(&original, caster);
+        engine::step(
+            &mut original,
+            engine::Action::ChooseTarget(crate::state::Target::Object(host)),
+        )
+        .unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut original),
+            engine::Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(native::tapped(&original, caster) - paid_before, 3);
+        assert_eq!(original.objects.get(moon).zone, Zone::Stack);
+
+        // Use an actual zone move, then reproduce the sampler's later hidden
+        // printing rewrite while keeping the original published target intact.
+        crate::event::propose_and_commit(
+            &mut original,
+            crate::event::ProposedEvent::zone_change(host, Zone::Hand),
+        );
+        assert_eq!(original.objects.get(host).zone, Zone::Hand);
+        let mut sampled = original.clone();
+        sampled.sampled_history_v1 = crate::sampled_history_v1::capture(&original).unwrap();
+        let hidden = sampled.objects.get_mut(host);
+        hidden.card_def = card("Forest");
+        hidden.name = "Forest".into();
+
+        for viewer in [caster, caster.opponent()] {
+            let expected = public::capture(&original, viewer).unwrap();
+            let actual = public::capture(&sampled, viewer).unwrap();
+            assert_eq!(actual, expected);
+            let target = actual.casts[0].target.as_ref().unwrap();
+            assert_eq!(target.original.object, host.0);
+            assert!(target.current_original.is_none());
+            assert!(!target.currently_legal);
+        }
+
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&sampled).unwrap()).unwrap();
+        assert!(public::capture(&restored, caster.opponent()).is_err());
+        native::finish(&mut sampled);
+        assert_eq!(sampled.objects.get(moon).zone, Zone::Graveyard);
+        assert_eq!(sampled.objects.get(host).zone, Zone::Hand);
+        assert!(sampled.objects.get(host).attachments.is_empty());
+    }
+}
+
+#[test]
 fn paid_cast_target_hidden_pair_indices_restore_and_fizzle_on_new_incarnation_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (state, host, source) = paid_target_choice(actor, "Island");

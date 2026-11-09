@@ -7,7 +7,7 @@ use crate::{
     ids::PlayerId,
     optional_trigger_public_v1 as public,
     rl::PlayerSeatV1,
-    state::{AbilitySourceContractV4, GameState, StackTargetContractV4, Target, Zone},
+    state::{AbilitySourceContractV4, GameState, StackItem, StackTargetContractV4, Target, Zone},
     tinybones_public_v72::{CountersV72, IncarnationV72},
 };
 use serde::{Deserialize, Serialize};
@@ -211,6 +211,7 @@ fn ability(
     position: usize,
     targets: &[Target],
     contracts: &[StackTargetContractV4],
+    published: Option<&StackItem>,
 ) -> Result<AbilityV1, String> {
     if targets.len() != contracts.len()
         || targets.len() > 1
@@ -231,17 +232,19 @@ fn ability(
         else {
             return Err("Kykar exile target is not a permanent".into());
         };
+        let spec = card_def::TargetSpec::AnotherControlledCreature;
+        let structurally_valid = crate::state::stack_target_contract_is_structurally_valid(
+            state, spec, 0, *target, *contract,
+        ) || published.is_some_and(|item| {
+            crate::state::stack_target_contract_for_sampled_snapshot(
+                state, item, spec, 0, *target, *contract,
+            )
+        });
         if *target != Target::Object(object)
             || object == source.source
             || zone != Zone::Battlefield
             || controller != source.controller
-            || !crate::state::stack_target_contract_is_structurally_valid(
-                state,
-                card_def::TargetSpec::AnotherControlledCreature,
-                0,
-                *target,
-                *contract,
-            )
+            || !structurally_valid
         {
             return Err("Kykar original target contract changed".into());
         }
@@ -400,6 +403,7 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
             position,
             &pending.targets,
             &pending.target_contracts,
+            None,
         )?);
     }
     for (position, item) in state.stack.iter().enumerate() {
@@ -425,6 +429,7 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
             position,
             &item.targets,
             &item.v4.target_contracts,
+            Some(item),
         )?);
     }
     // The native modes execute atomically. The public schema never invents a
