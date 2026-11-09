@@ -1307,20 +1307,24 @@ pub fn stack_target_contract_is_structurally_valid(
     target: Target,
     contract: StackTargetContractV4,
 ) -> bool {
-    stack_target_contract_shape(state,spec,target_index,target,contract,false)
+    stack_target_contract_shape(state, spec, target_index, target, contract, false)
 }
 
 /// Only a full native Storm snapshot can retain historical targets without
 /// reading a later hidden printing. Owner, generation, kind and current stack
 /// identity still use the ordinary structural checks below.
 pub(crate) fn stack_target_contract_for_storm_snapshot(
-    state:&GameState,spell:&StackItem,spec:TargetSpec,target_index:usize,
-    target:Target,contract:StackTargetContractV4,
-)->bool {
-    crate::effect::thousand_year_storm_v1::owns_snapshot(state,spell)
-        && spell.targets.get(target_index)==Some(&target)
-        && spell.v4.target_contracts.get(target_index)==Some(&contract)
-        && stack_target_contract_shape(state,spec,target_index,target,contract,true)
+    state: &GameState,
+    spell: &StackItem,
+    spec: TargetSpec,
+    target_index: usize,
+    target: Target,
+    contract: StackTargetContractV4,
+) -> bool {
+    crate::effect::thousand_year_storm_v1::owns_snapshot(state, spell)
+        && spell.targets.get(target_index) == Some(&target)
+        && spell.v4.target_contracts.get(target_index) == Some(&contract)
+        && stack_target_contract_shape(state, spec, target_index, target, contract, true)
 }
 
 pub(crate) fn stack_target_contract_for_sampled_snapshot(
@@ -1332,9 +1336,13 @@ pub(crate) fn stack_target_contract_for_sampled_snapshot(
 }
 
 fn stack_target_contract_shape(
-    state:&GameState,spec:TargetSpec,target_index:usize,target:Target,
-    contract:StackTargetContractV4,historical_storm:bool,
-)->bool {
+    state: &GameState,
+    spec: TargetSpec,
+    target_index: usize,
+    target: Target,
+    contract: StackTargetContractV4,
+    historical_storm: bool,
+) -> bool {
     if contract.target() != target {
         return false;
     }
@@ -1365,7 +1373,8 @@ fn stack_target_contract_shape(
             && stack_item_id.0 > 0
             && stack_item_id.0 <= state.engine.next_stack_item_id
             && state.objects.try_get(source).is_some_and(|live| {
-                (live.card_def == card_def || historical_storm && live.zone_change_count > source_zone_change_count)
+                (live.card_def == card_def
+                    || historical_storm && live.zone_change_count > source_zone_change_count)
                     && live.owner == owner
                     && live.zone_change_count >= source_zone_change_count
             })
@@ -1583,7 +1592,8 @@ fn stack_target_contract_shape(
         return true;
     };
     state.objects.try_get(object).is_some_and(|live| {
-        (live.card_def == card_def || historical_storm && live.zone_change_count > zone_change_count)
+        (live.card_def == card_def
+            || historical_storm && live.zone_change_count > zone_change_count)
             && live.owner == owner
             && live.spell_copy_origin == spell_copy_origin
             && if spell_copy_origin.is_some() {

@@ -587,14 +587,27 @@ pub(super) fn start_batch(
         // One native batch, not a succession of player-specific transitions.
         if staged.etali_commit_receipts_v1 {
             let id = pending.resolving_item.v4.stack_item_id;
-            crate::etali_primal_storm_receipts_v1::record_batch_started(&mut staged, id, tops.len())?;
+            crate::etali_primal_storm_receipts_v1::record_batch_started(
+                &mut staged,
+                id,
+                tops.len(),
+            )?;
             for &top in &tops {
                 validate_effect_object_binding(&staged, top)?;
             }
-            event::propose_and_commit_batch(&mut staged, tops.iter().map(|top|
-                crate::etali_primal_storm_receipts_v1::exile_proposal(top.object, id)
-            ).collect());
-            crate::etali_primal_storm_receipts_v1::record_batch_committed(&mut staged, id, history_start)?;
+            event::propose_and_commit_batch(
+                &mut staged,
+                tops.iter()
+                    .map(|top| {
+                        crate::etali_primal_storm_receipts_v1::exile_proposal(top.object, id)
+                    })
+                    .collect(),
+            );
+            crate::etali_primal_storm_receipts_v1::record_batch_committed(
+                &mut staged,
+                id,
+                history_start,
+            )?;
         } else {
             commit_zone_change_batch(&mut staged, &tops, Zone::Exile, false)?;
         }
@@ -798,7 +811,11 @@ pub(super) fn offer_batch(
     let candidates = batch_candidates(state, pending, &choice);
     if candidates.is_empty() {
         finish_batch(state, &choice)?;
-        crate::etali_primal_storm_receipts_v1::record_finished(state, &pending.resolving_item, false);
+        crate::etali_primal_storm_receipts_v1::record_finished(
+            state,
+            &pending.resolving_item,
+            false,
+        );
         return Ok(false);
     }
     pending.choice = Some(PendingEffectChoice::SelectTargets {
@@ -848,7 +865,11 @@ pub(super) fn finish_batch_selection(
         });
     } else {
         finish_batch(state, &choice)?;
-        crate::etali_primal_storm_receipts_v1::record_finished(state, &pending.resolving_item, true);
+        crate::etali_primal_storm_receipts_v1::record_finished(
+            state,
+            &pending.resolving_item,
+            true,
+        );
     }
     Ok(())
 }

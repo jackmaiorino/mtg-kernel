@@ -3,8 +3,8 @@
 use super::*;
 mod casts;
 pub(crate) mod targets;
-pub use targets::FaceV1;
 pub use casts::CastFormV1;
+pub use targets::FaceV1;
 
 pub(crate) fn definition(id: u16) -> bool {
     cfg!(all(
@@ -179,7 +179,9 @@ pub(crate) fn definition(id: u16) -> bool {
 /// incarnation never authenticates its old name. This scope is absent from
 /// predecessor owners and does not accept an arbitrary caller's snapshot.
 pub(crate) fn owns_snapshot(state: &GameState, spell: &StackItem) -> bool {
-    if !state.thousand_year_storm_consumer_v1 { return false; }
+    if !state.thousand_year_storm_consumer_v1 {
+        return false;
+    }
     let mut matches = state.engine.event_history.iter().enumerate().filter(|(at, e)| {
         match e {
             event::CommittedEvent::ThousandYearStormV1 { journal: JournalV1::Cast { event, spell: captured, .. } } => {
@@ -195,31 +197,59 @@ pub(crate) fn owns_snapshot(state: &GameState, spell: &StackItem) -> bool {
             _ => false,
         }
     });
-    matches.next().is_some() && matches.next().is_none() && targets::for_snapshot(state, spell).is_ok()
+    matches.next().is_some()
+        && matches.next().is_none()
+        && targets::for_snapshot(state, spell).is_ok()
 }
 
-pub(crate) fn historical_parent_cast(state:&GameState,origin:crate::state::SpellCopyOriginV4)->Result<Option<crate::state::CastMethodV4>,String> {
-    if !state.thousand_year_storm_consumer_v1 || origin.parent_was_copy {return Ok(None);}
-    let Some(live)=state.objects.try_get(origin.parent) else{return Ok(None)};
-    if live.zone_change_count<=origin.parent_stack_zone_change_count {return Ok(None);}
-    let mut found=None;
-    for (at,event) in state.engine.event_history.iter().enumerate() {
-        let event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Cast{spell,..}}=event else{continue};
-        let Some(source)=spell.v4.source_contract else{continue};
-        if source.source==origin.parent && source.zone_change_count==origin.parent_stack_zone_change_count {
-            if found.is_some()||source.card_def!=origin.parent_card_def||source.owner!=origin.parent_owner||source.controller!=origin.parent_controller {
+pub(crate) fn historical_parent_cast(
+    state: &GameState,
+    origin: crate::state::SpellCopyOriginV4,
+) -> Result<Option<crate::state::CastMethodV4>, String> {
+    if !state.thousand_year_storm_consumer_v1 || origin.parent_was_copy {
+        return Ok(None);
+    }
+    let Some(live) = state.objects.try_get(origin.parent) else {
+        return Ok(None);
+    };
+    if live.zone_change_count <= origin.parent_stack_zone_change_count {
+        return Ok(None);
+    }
+    let mut found = None;
+    for (at, event) in state.engine.event_history.iter().enumerate() {
+        let event::CommittedEvent::ThousandYearStormV1 {
+            journal: JournalV1::Cast { spell, .. },
+        } = event
+        else {
+            continue;
+        };
+        let Some(source) = spell.v4.source_contract else {
+            continue;
+        };
+        if source.source == origin.parent
+            && source.zone_change_count == origin.parent_stack_zone_change_count
+        {
+            if found.is_some()
+                || source.card_def != origin.parent_card_def
+                || source.owner != origin.parent_owner
+                || source.controller != origin.parent_controller
+            {
                 return Err("Storm copy original parent changed".into());
             }
-            cast_at(state,at as u64)?;
-            found=Some(source.cast_method);
+            cast_at(state, at as u64)?;
+            found = Some(source.cast_method);
         }
     }
     Ok(found)
 }
 
 fn validate_observer(state: &GameState, source: AbilitySourceContractV4) -> Result<(), String> {
-    let live = state.objects.try_get(source.source).ok_or("Storm original source absent")?;
-    if !state.thousand_year_storm_consumer_v1 || live.zone_change_count == source.zone_change_count {
+    let live = state
+        .objects
+        .try_get(source.source)
+        .ok_or("Storm original source absent")?;
+    if !state.thousand_year_storm_consumer_v1 || live.zone_change_count == source.zone_change_count
+    {
         return crate::engine::validate_historical_ability_source_contract(state, source);
     }
     if live.zone_change_count < source.zone_change_count || live.owner != source.owner {
@@ -252,7 +282,10 @@ pub enum JournalV1 {
     CastForm {
         form: CastFormV1,
     },
-    TargetFaces { item: StackItemId, faces: Vec<FaceV1> },
+    TargetFaces {
+        item: StackItemId,
+        faces: Vec<FaceV1>,
+    },
 }
 fn enabled() -> bool {
     card_def::card_id_by_name("Thousand-Year Storm").is_some_and(definition)
@@ -292,7 +325,12 @@ pub(crate) fn record_cast(state: &mut GameState, spell: ObjectId) -> Result<(), 
         .ok_or("Storm finalized cast row absent")?
         .clone();
     let form = if state.thousand_year_storm_consumer_v1 {
-        let event = state.engine.event_history.len().checked_sub(1).ok_or("Storm cast event absent")?;
+        let event = state
+            .engine
+            .event_history
+            .len()
+            .checked_sub(1)
+            .ok_or("Storm cast event absent")?;
         let (form, eligible) = casts::capture_form(state, event, &row)?;
         if !eligible {
             casts::record_form(state, form);

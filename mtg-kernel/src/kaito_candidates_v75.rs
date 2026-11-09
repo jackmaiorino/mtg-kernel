@@ -599,12 +599,26 @@ fn visible_action(value: &KaitoObservationV75, mut action: A) -> Result<A, RlCon
     // A Fiend activation can have a genuine singleton X=0 menu.
     // Publish it as the existing numeric semantic, retaining the original
     // ChooseEffectOption(0) transition in the private candidate map.
-    if let A::ChooseEffectOption { actor, source, option_index: 0, option_count: 1 } = &action {
-        if matches!(value.fiend_artisan.as_ref().and_then(|facts| facts.chooser.as_ref()),
-            Some(crate::fiend_artisan_public_v1::ChoiceV1::PayX { maximum: 0, .. }))
+    if let A::ChooseEffectOption {
+        actor,
+        source,
+        option_index: 0,
+        option_count: 1,
+    } = &action
         {
+        if matches!(
+            value
+                .fiend_artisan
+                .as_ref()
+                .and_then(|facts| facts.chooser.as_ref()),
+            Some(crate::fiend_artisan_public_v1::ChoiceV1::PayX { maximum: 0, .. })
+        ) {
             return Ok(A::ChooseEffectNumber {
-                actor: *actor, source: source.clone(), number: 0, minimum: 0, maximum: 0,
+                actor: *actor,
+                source: source.clone(),
+                number: 0,
+                minimum: 0,
+                maximum: 0,
             });
         }
     }
@@ -889,7 +903,11 @@ fn project_authenticated_parts_v75(
                     &action,
                 )
                 .map_err(error)?,
-                thousand_year_storm_action: crate::thousand_year_storm_consumer_v1::action(observation.thousand_year_storm.as_ref(),&action).map_err(error)?,
+                thousand_year_storm_action: crate::thousand_year_storm_consumer_v1::action(
+                    observation.thousand_year_storm.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
                 greatwurm_action: crate::greatwurm_consumer_v1::action(
                     observation.greatwurm.as_ref(),
                     &action,
@@ -903,10 +921,12 @@ fn project_authenticated_parts_v75(
                 kykar_action: crate::kykar_consumer_v1::action(observation.kykar.as_ref(), &action)
                     .map_err(error)?,
                 fiend_artisan_action: crate::fiend_artisan_consumer_v1::action(
-                    observation.fiend_artisan.as_ref(), &action,
+                    observation.fiend_artisan.as_ref(),
+                    &action,
                 ),
                 etali_action: crate::etali_primal_storm_consumer_v1::action(
-                    observation.etali.as_ref(), &action,
+                    observation.etali.as_ref(),
+                    &action,
                 ),
                 drakuseth_target: crate::drakuseth_consumer_v1::target_action(
                     observation.drakuseth.as_ref(),
@@ -1165,7 +1185,13 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
         )
         .map_err(error)?;
     }
-    if let Some(facts) = &value.observation.thousand_year_storm { crate::thousand_year_storm_consumer_v1::validate_candidate_order(facts,value.candidates.iter().map(|r|&r.action)).map_err(error)?; }
+    if let Some(facts) = &value.observation.thousand_year_storm {
+        crate::thousand_year_storm_consumer_v1::validate_candidate_order(
+            facts,
+            value.candidates.iter().map(|r| &r.action),
+        )
+        .map_err(error)?;
+    }
     if let Some(facts) = &value.observation.harvester {
         crate::harvester_consumer_v1::validate_candidate_order(
             facts,
@@ -1189,13 +1215,17 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
     }
     if let Some(facts) = &value.observation.fiend_artisan {
         crate::fiend_artisan_consumer_v1::validate_candidate_order(
-            facts, value.candidates.iter().map(|row| &row.action),
-        ).map_err(error)?;
+            facts,
+            value.candidates.iter().map(|row| &row.action),
+        )
+        .map_err(error)?;
     }
     if let Some(facts) = &value.observation.etali {
         crate::etali_primal_storm_consumer_v1::validate_candidate_order(
-            facts, value.candidates.iter().map(|row| &row.action),
-        ).map_err(error)?;
+            facts,
+            value.candidates.iter().map(|row| &row.action),
+        )
+        .map_err(error)?;
     }
     if let Some(active) = value
         .observation
@@ -1347,7 +1377,12 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                     &row.action,
                 )
                 .map_err(error)?
-            || row.thousand_year_storm_action != crate::thousand_year_storm_consumer_v1::action(value.observation.thousand_year_storm.as_ref(),&row.action).map_err(error)?
+            || row.thousand_year_storm_action
+                != crate::thousand_year_storm_consumer_v1::action(
+                    value.observation.thousand_year_storm.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
             || row.greatwurm_action
                 != crate::greatwurm_consumer_v1::action(
                     value.observation.greatwurm.as_ref(),
@@ -1375,11 +1410,15 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                     &row.action,
                 )
                 .map_err(error)?
-            || row.fiend_artisan_action != crate::fiend_artisan_consumer_v1::action(
-                value.observation.fiend_artisan.as_ref(), &row.action,
+            || row.fiend_artisan_action
+                != crate::fiend_artisan_consumer_v1::action(
+                    value.observation.fiend_artisan.as_ref(),
+                    &row.action,
             )
-            || row.etali_action != crate::etali_primal_storm_consumer_v1::action(
-                value.observation.etali.as_ref(), &row.action,
+            || row.etali_action
+                != crate::etali_primal_storm_consumer_v1::action(
+                    value.observation.etali.as_ref(),
+                    &row.action,
             )
             || row.chosen_type_answer
                 != chosen_type::answer(value.observation.chosen_type.as_ref(), &row.action)

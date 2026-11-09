@@ -47,8 +47,15 @@ struct HumanActivationV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 enum HumanChoiceV1 {
-    PayX { source: HumanCardRefV1, maximum: u8 },
-    Sacrifice { source: HumanCardRefV1, x: u8, legal: Vec<HumanCardRefV1> },
+    PayX {
+        source: HumanCardRefV1,
+        maximum: u8,
+    },
+    Sacrifice {
+        source: HumanCardRefV1,
+        x: u8,
+        legal: Vec<HumanCardRefV1>,
+    },
     Search {
         source: HumanCardRefV1,
         paid_x: u8,
@@ -62,46 +69,77 @@ fn refs(cards: &[ReferenceV1], handles: &mut Handles) -> Result<Vec<HumanCardRef
 }
 
 pub(super) fn project(facts: &FactsV1, handles: &mut Handles) -> Result<HumanFactsV1, Error> {
-    let battlefield = facts.battlefield.iter().map(|row| {
-        let card = &row.current;
-        Ok(HumanPermanentV1 {
-            card: href(&card.card, handles)?,
-            is_token: card.is_token,
-            tapped: card.tapped,
-            summoning_sick: card.summoning_sick,
-            marked_damage: card.marked_damage,
-            form: card.form.clone(),
-            counters: card.counters.clone(),
-            graveyard_creature_bonus: row.graveyard_creature_bonus,
+    let battlefield = facts
+        .battlefield
+        .iter()
+        .map(|row| {
+            let card = &row.current;
+            Ok(HumanPermanentV1 {
+                card: href(&card.card, handles)?,
+                is_token: card.is_token,
+                tapped: card.tapped,
+                summoning_sick: card.summoning_sick,
+                marked_damage: card.marked_damage,
+                form: card.form.clone(),
+                counters: card.counters.clone(),
+                graveyard_creature_bonus: row.graveyard_creature_bonus,
+            })
         })
-    }).collect::<Result<_, Error>>()?;
-    let activations = facts.activations.iter().map(|row| {
-        Ok(HumanActivationV1 {
-            source: root(&row.source, handles)?,
-            stack_position: row.stack_position,
-            paid_x: row.paid_x,
-            original_sacrifice: href(&row.original_sacrifice, handles)?,
-            searching: row.searching,
-            shuffled: row.shuffled,
-            countered: row.countered,
-            actual_public_arrival: row.actual_public_arrival.as_ref()
-                .map(|card| href(card, handles)).transpose()?,
+        .collect::<Result<_, Error>>()?;
+    let activations = facts
+        .activations
+        .iter()
+        .map(|row| {
+            Ok(HumanActivationV1 {
+                source: root(&row.source, handles)?,
+                stack_position: row.stack_position,
+                paid_x: row.paid_x,
+                original_sacrifice: href(&row.original_sacrifice, handles)?,
+                searching: row.searching,
+                shuffled: row.shuffled,
+                countered: row.countered,
+                actual_public_arrival: row
+                    .actual_public_arrival
+                    .as_ref()
+                    .map(|card| href(card, handles))
+                    .transpose()?,
+            })
         })
-    }).collect::<Result<_, Error>>()?;
-    let chooser = facts.chooser.as_ref().map(|choice| {
-        Ok::<_, Error>(match choice {
-            ChoiceV1::PayX { source, maximum } =>
-                HumanChoiceV1::PayX { source: href(source, handles)?, maximum: *maximum },
-            ChoiceV1::Sacrifice { source, x, legal } => HumanChoiceV1::Sacrifice {
-                source: href(source, handles)?, x: *x, legal: refs(legal, handles)?,
-            },
-            ChoiceV1::Search { source, paid_x, selected, legal } => HumanChoiceV1::Search {
-                source: href(source, handles)?, paid_x: *paid_x,
-                selected: refs(selected, handles)?, legal: refs(legal, handles)?,
-            },
+        .collect::<Result<_, Error>>()?;
+    let chooser = facts
+        .chooser
+        .as_ref()
+        .map(|choice| {
+            Ok::<_, Error>(match choice {
+                ChoiceV1::PayX { source, maximum } => HumanChoiceV1::PayX {
+                    source: href(source, handles)?,
+                    maximum: *maximum,
+                },
+                ChoiceV1::Sacrifice { source, x, legal } => HumanChoiceV1::Sacrifice {
+                    source: href(source, handles)?,
+                    x: *x,
+                    legal: refs(legal, handles)?,
+                },
+                ChoiceV1::Search {
+                    source,
+                    paid_x,
+                    selected,
+                    legal,
+                } => HumanChoiceV1::Search {
+                    source: href(source, handles)?,
+                    paid_x: *paid_x,
+                    selected: refs(selected, handles)?,
+                    legal: refs(legal, handles)?,
+                },
+            })
         })
-    }).transpose()?;
-    Ok(HumanFactsV1 { meaning: facts.meaning.clone(), battlefield, activations, chooser })
+        .transpose()?;
+    Ok(HumanFactsV1 {
+        meaning: facts.meaning.clone(),
+        battlefield,
+        activations,
+        chooser,
+    })
 }
 
 pub(super) fn label(
@@ -112,15 +150,32 @@ pub(super) fn label(
     Ok(match (consumer::action(facts, action), action) {
         (Some(ActionV1::Activate), _) => Some("Activate Fiend Artisan".into()),
         (Some(ActionV1::PayX { x }), _) => Some(format!("Choose X = {x} for Fiend Artisan")),
-        (Some(ActionV1::Sacrifice), Action::ChooseCostTarget { candidate, .. }) =>
-            Some(format!("Sacrifice {} to Fiend Artisan", handles.name(candidate)?)),
-        (Some(ActionV1::ChooseCreature), Action::ChooseEffectTarget {
-            target: TargetRefV1::Object { object }, ..
-        }) => Some(format!("Choose {} for Fiend Artisan", handles.name(object)?)),
-        (Some(ActionV1::FinishSearch { selected_creature: true }), _) =>
-            Some("Put the chosen creature onto the battlefield, then shuffle".into()),
-        (Some(ActionV1::FinishSearch { selected_creature: false }), _) =>
-            Some("Find no creature and shuffle".into()),
+        (Some(ActionV1::Sacrifice), Action::ChooseCostTarget { candidate, .. }) => Some(format!(
+            "Sacrifice {} to Fiend Artisan",
+            handles.name(candidate)?
+        )),
+        (
+            Some(ActionV1::ChooseCreature),
+            Action::ChooseEffectTarget {
+                target: TargetRefV1::Object { object },
+                ..
+            },
+        ) => Some(format!(
+            "Choose {} for Fiend Artisan",
+            handles.name(object)?
+        )),
+        (
+            Some(ActionV1::FinishSearch {
+                selected_creature: true,
+            }),
+            _,
+        ) => Some("Put the chosen creature onto the battlefield, then shuffle".into()),
+        (
+            Some(ActionV1::FinishSearch {
+                selected_creature: false,
+            }),
+            _,
+        ) => Some("Find no creature and shuffle".into()),
         (None | Some(ActionV1::Cast), _) => None,
         _ => return Err(Error::InvalidVisibleReference),
     })

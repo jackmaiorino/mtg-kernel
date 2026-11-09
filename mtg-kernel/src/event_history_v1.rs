@@ -783,7 +783,9 @@ impl CommittedEvent {
             Self::CuratorReceiptV1 { .. } => EventKindV1::CuratorReceiptV1,
             Self::GreatwurmCommitReceiptV1 { .. } => EventKindV1::GreatwurmCommitReceiptV1,
             Self::HarvesterCommitReceiptV1 { .. } => EventKindV1::HarvesterCommitReceiptV1,
-            Self::FiendArtisanConsumerReceiptV1 { .. } => EventKindV1::FiendArtisanConsumerReceiptV1,
+            Self::FiendArtisanConsumerReceiptV1 { .. } => {
+                EventKindV1::FiendArtisanConsumerReceiptV1
+            }
             Self::EtaliPrimalStormReceiptV1 { .. } => EventKindV1::EtaliPrimalStormReceiptV1,
         }
     }

@@ -14307,7 +14307,10 @@ fn drive_resumable_inner_with_native_row_v1(
                                             Zone::Battlefield,
                                         )
                                     };
-                                    crate::fiend_artisan_receipts_v1::owned_move(proposal, fiend_owner)
+                                    crate::fiend_artisan_receipts_v1::owned_move(
+                                        proposal,
+                                        fiend_owner,
+                                    )
                                 })
                                 .collect();
                             event::propose_and_commit_batch(state, events);
@@ -29550,11 +29553,13 @@ pub(crate) mod fiend_artisan_v1 {
         })
     }
     pub(crate) fn paid_x(state: &GameState, item: &StackItem) -> Result<u8, String> {
-        if state.engine.event_history.iter().any(|event| matches!(
+        if state.engine.event_history.iter().any(|event| {
+            matches!(
             event,
             event::CommittedEvent::FiendArtisanSearchFinishedV1 { stack_item_id }
                 if *stack_item_id == item.v4.stack_item_id
-        )) {
+            )
+        }) {
             return Err("Fiend original activation was already finished".into());
         }
         authenticated_paid_x(state, item)

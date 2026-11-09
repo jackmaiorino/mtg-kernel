@@ -92,17 +92,25 @@ pub(super) fn stage(
             let mut staged = state.clone();
             let before = staged.stack.len();
             if staged.thousand_year_storm_consumer_v1 {
-                let owner = thousand_year_storm_v1::targets::copy_owner(&staged, pending, &choice.path)?;
-                crate::engine::materialize_storm_copy_snapshot(&mut staged, &choice.spell, pending.ctx.controller, choice.targets, choice.contracts, owner)?;
+                let owner =
+                    thousand_year_storm_v1::targets::copy_owner(&staged, pending, &choice.path)?;
+                crate::engine::materialize_storm_copy_snapshot(
+                    &mut staged,
+                    &choice.spell,
+                    pending.ctx.controller,
+                    choice.targets,
+                    choice.contracts,
+                    owner,
+                )?;
             } else {
-            crate::engine::materialize_copy_snapshot(
-                &mut staged,
-                &choice.spell,
-                pending.ctx.controller,
-                choice.targets,
-                choice.contracts,
-            )?;
-            thousand_year_storm_v1::note_copy(&mut staged, pending, &choice.path, before)?;
+                crate::engine::materialize_copy_snapshot(
+                    &mut staged,
+                    &choice.spell,
+                    pending.ctx.controller,
+                    choice.targets,
+                    choice.contracts,
+                )?;
+                thousand_year_storm_v1::note_copy(&mut staged, pending, &choice.path, before)?;
             }
             *state = staged;
         } else {

@@ -48,15 +48,23 @@ fn owner(state: &GameState) -> FastActorSessionV1 {
 
 fn body(wire: &mut JsonlServerV1, serial: u32, command: CommandV1) -> Body {
     let reply = wire.handle_request(RequestV1 {
-        profile: PROFILE_V1.into(), request_id: serial.to_string(), command,
+        profile: PROFILE_V1.into(),
+        request_id: serial.to_string(),
+        command,
     });
-    let ReplyBodyV1::State { payload } = reply.body else { panic!("{reply:?}") };
+    let ReplyBodyV1::State { payload } = reply.body else {
+        panic!("{reply:?}")
+    };
     payload.body
 }
 
 fn facts(state: &GameState, viewer: PlayerId, origin: Decision) -> FactsV1 {
-    public::capture(state, viewer, &PolicyDecisionV5::Surface(SurfaceDecision::Decision(origin)))
-        .unwrap()
+    public::capture(
+        state,
+        viewer,
+        &PolicyDecisionV5::Surface(SurfaceDecision::Decision(origin)),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -72,15 +80,34 @@ fn declared_forty_card_v3_reset_pays_six_for_etali_both_seats() {
         assert!(numeric.fixture_state().etali_commit_receipts_v1);
         assert!(numeric.fixture_state().reveal_knowledge_v4.is_some());
         let mut wire = JsonlServerV1::new();
-        let Body::State { state, .. } = body(&mut wire, 1, CommandV1::Reset { config: config.clone() })
-        else { panic!() };
-        let State::Decision { decision: opening, .. } = *state else { panic!() };
-        assert_eq!(opening.schema, "mtg-kernel-limited-etali-primal-storm-decision/v1");
+        let Body::State { state, .. } = body(
+            &mut wire,
+            1,
+            CommandV1::Reset {
+                config: config.clone(),
+            },
+        ) else {
+            panic!()
+        };
+        let State::Decision {
+            decision: opening, ..
+        } = *state
+        else {
+            panic!()
+        };
+        assert_eq!(
+            opening.schema,
+            "mtg-kernel-limited-etali-primal-storm-decision/v1"
+        );
         let expected = decision(&numeric).fixture_backend_v75().expected();
         let human = reset_human_v1(&config, expected.acting_player).unwrap();
         let prompt = HumanKaitoProjectorV75::new(expected.acting_player)
-            .project_current(&human, expected).unwrap();
-        assert_eq!(prompt.schema, "mtg-kernel-human-etali-primal-storm-decision/v1");
+            .project_current(&human, expected)
+            .unwrap();
+        assert_eq!(
+            prompt.schema,
+            "mtg-kernel-human-etali-primal-storm-decision/v1"
+        );
         assert_eq!(prompt.actions, opening.actions);
 
         let mut cast = None;
@@ -99,17 +126,36 @@ fn declared_forty_card_v3_reset_pays_six_for_etali_both_seats() {
                 }
             }
             let candidates = &backend.candidates_v75().candidates;
-            let chosen = candidates.iter().position(|row|
-                row.etali_action == Some(ActionV1::CastEtali) && cast.is_none()
-            ).or_else(|| candidates.iter().position(|row| matches!(row.action, Action::PlayLand { .. })))
-                .or_else(|| candidates.iter().position(|row| matches!(row.action,
-                    Action::ChooseLondonMulligan { mulligan: false, .. }
-                        | Action::Pass { .. } | Action::Discard { .. }
-                        | Action::ChooseAttackerInclusion { include: false, .. }
-                        | Action::ChooseBlockerInclusion { include: false, .. }
-                ))).expect("missing native reset action");
-            let tapped = |state: &GameState| state.players[actor.index()].battlefield.iter()
-                .filter(|&&id| state.objects.get(id).tapped).count();
+            let chosen = candidates
+                .iter()
+                .position(|row| row.etali_action == Some(ActionV1::CastEtali) && cast.is_none())
+                .or_else(|| {
+                    candidates
+                        .iter()
+                        .position(|row| matches!(row.action, Action::PlayLand { .. }))
+                })
+                .or_else(|| {
+                    candidates.iter().position(|row| {
+                        matches!(
+                            row.action,
+                            Action::ChooseLondonMulligan {
+                                mulligan: false,
+                                ..
+                            } | Action::Pass { .. }
+                                | Action::Discard { .. }
+                                | Action::ChooseAttackerInclusion { include: false, .. }
+                                | Action::ChooseBlockerInclusion { include: false, .. }
+                        )
+                    })
+                })
+                .expect("missing native reset action");
+            let tapped = |state: &GameState| {
+                state.players[actor.index()]
+                    .battlefield
+                    .iter()
+                    .filter(|&&id| state.objects.get(id).tapped)
+                    .count()
+            };
             let before = tapped(numeric.fixture_state());
             numeric.apply(&d, chosen as u32).unwrap();
             if let Action::CastSpell { source, .. } = &candidates[chosen].action {
@@ -123,16 +169,24 @@ fn declared_forty_card_v3_reset_pays_six_for_etali_both_seats() {
 
 fn two_hits(actor: PlayerId, hidden: &str) -> (GameState, ObjectId, [ObjectId; 2], Decision) {
     let (mut state, source) = native::paid(
-        actor, &["Forest", "Llanowar Elves", "Forest"],
+        actor,
+        &["Forest", "Llanowar Elves", "Forest"],
         &["Forest", "Juggernaut", hidden],
     );
     state.etali_commit_receipts_v1 = true;
     native::attack(&mut state, actor, source);
     // Explicit source-departure support operand after genuine declaration.
     // The existing native paid-response suite also removes it with a spell.
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Graveyard));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(source, Zone::Graveyard),
+    );
     let batch = native::batch(&mut state, actor);
-    let hits: Vec<_> = batch.scans.iter().filter_map(|scan| scan.hit.map(|card| card.object)).collect();
+    let hits: Vec<_> = batch
+        .scans
+        .iter()
+        .filter_map(|scan| scan.hit.map(|card| card.object))
+        .collect();
     let actual = native::next(&mut state);
     (state, source, hits.try_into().unwrap(), actual)
 }
@@ -149,7 +203,10 @@ fn paid_attack_repeated_free_casts_source_departure_hidden_pair_and_index_parity
         assert_eq!(other, facts(&pair, actor.opponent(), paired_origin));
         assert!(other.attacks[0].source.current_original_source.is_none());
         assert_eq!(other.attacks[0].source.original_source.object, source.0);
-        assert_eq!(other.attacks[0].original_exiles[1].owner, actor.opponent().into());
+        assert_eq!(
+            other.attacks[0].original_exiles[1].owner,
+            actor.opponent().into()
+        );
 
         let mut raw = owner(&state);
         let mut numeric = KaitoSession::from_session(owner(&state)).unwrap();
@@ -167,47 +224,101 @@ fn paid_attack_repeated_free_casts_source_departure_hidden_pair_and_index_parity
         let prompt = projector.project_current(&human, expected).unwrap();
         let human_snapshot = human.snapshot_v75();
         let mut wire = JsonlServerV1::new();
-        wire.0.install_fixture_core(KaitoSessionV75::from_session(owner(&state)).unwrap());
-        let Body::State { state: current, .. } = body(&mut wire, 1, CommandV1::Current) else { panic!() };
-        let State::Decision { episode_id, authority_generation, decision: wire_prompt } = *current
-        else { panic!() };
-        let (projected, indices) = project_limited_kaito_v16(backend, actor.into(), wire_prompt.prompt_seq)
-            .unwrap();
+        wire.0
+            .install_fixture_core(KaitoSessionV75::from_session(owner(&state)).unwrap());
+        let Body::State { state: current, .. } = body(&mut wire, 1, CommandV1::Current) else {
+            panic!()
+        };
+        let State::Decision {
+            episode_id,
+            authority_generation,
+            decision: wire_prompt,
+        } = *current
+        else {
+            panic!()
+        };
+        let (projected, indices) =
+            project_limited_kaito_v16(backend, actor.into(), wire_prompt.prompt_seq).unwrap();
         assert_eq!(*wire_prompt, projected);
         assert_eq!(prompt.state, wire_prompt.state);
         assert_eq!(prompt.actions, wire_prompt.actions);
         assert_eq!(prompt.action_meanings, wire_prompt.action_meanings);
-        let Decision::ChooseEffectTargets { legal_targets, .. } = actual else { panic!() };
-        let original = legal_targets.iter().position(|target| *target == Target::Object(second)).unwrap();
-        let ui = indices.iter().position(|&index|
-            backend.fixture_original_index_v75(index) == Some(original as u32)).unwrap();
-        let request = HumanActionRequestV1 { prompt_seq: prompt.prompt_seq, action_index: ui as u32 };
-        let step = CommandV1::Step { episode_id, authority_generation, actor: actor.into(),
-            prompt_seq: wire_prompt.prompt_seq, action_index: ui as u32 };
-        let Body::State { snapshot_id: Some(snapshot_id), .. } = body(&mut wire, 2, CommandV1::Snapshot)
-        else { panic!() };
-        let response = raw.step(expected.episode_id, expected.step, original as u32).unwrap();
+        let Decision::ChooseEffectTargets { legal_targets, .. } = actual else {
+            panic!()
+        };
+        let original = legal_targets
+            .iter()
+            .position(|target| *target == Target::Object(second))
+            .unwrap();
+        let ui = indices
+            .iter()
+            .position(|&index| backend.fixture_original_index_v75(index) == Some(original as u32))
+            .unwrap();
+        let request = HumanActionRequestV1 {
+            prompt_seq: prompt.prompt_seq,
+            action_index: ui as u32,
+        };
+        let step = CommandV1::Step {
+            episode_id,
+            authority_generation,
+            actor: actor.into(),
+            prompt_seq: wire_prompt.prompt_seq,
+            action_index: ui as u32,
+        };
+        let Body::State {
+            snapshot_id: Some(snapshot_id),
+            ..
+        } = body(&mut wire, 2, CommandV1::Snapshot)
+        else {
+            panic!()
+        };
+        let response = raw
+            .step(expected.episode_id, expected.step, original as u32)
+            .unwrap();
         assert_eq!(numeric.apply(&d, indices[ui]).unwrap(), response);
         projector.submit(&mut human, request.clone()).unwrap();
         assert_eq!(human.current_response(), response);
-        assert!(matches!(body(&mut wire, 3, step.clone()), Body::State { receipt: Some(_), .. }));
+        assert!(matches!(
+            body(&mut wire, 3, step.clone()),
+            Body::State {
+                receipt: Some(_),
+                ..
+            }
+        ));
 
         let mut actual = numeric.fixture_state().clone();
         let next = native::batch(&mut actual, actor);
         assert_eq!(next.cast[0].object, second);
-        native::answer(&mut actual, NativeAction::ChooseEffectTarget(Target::Object(first)));
+        native::answer(
+            &mut actual,
+            NativeAction::ChooseEffectTarget(Target::Object(first)),
+        );
         native::settle(&mut actual);
         let result = receipts::occurrences(&actual).unwrap().pop().unwrap();
-        assert_eq!(result.casts.iter().map(|row| row.source.source).collect::<Vec<_>>(), [second, first]);
+        assert_eq!(
+            result
+                .casts
+                .iter()
+                .map(|row| row.source.source)
+                .collect::<Vec<_>>(),
+            [second, first]
+        );
         assert_eq!(result.casts[0].source.owner, actor.opponent());
         assert_eq!(result.casts[0].source.controller, actor);
         assert_eq!(result.finished, Some(false));
-        let mut omitted_cast: GameState = serde_json::from_slice(&serde_json::to_vec(&actual).unwrap()).unwrap();
-        omitted_cast.engine.event_history.retain(|event| !matches!(event,
+        let mut omitted_cast: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&actual).unwrap()).unwrap();
+        omitted_cast.engine.event_history.retain(|event| {
+            !matches!(event,
             E::EtaliPrimalStormReceiptV1 { journal }
                 if matches!(journal.as_ref(), receipts::JournalV1::Cast { row, .. }
-                    if row.source.source == first)));
-        assert!(omitted_cast.engine.event_history.iter().any(|event| matches!(event,
+                    if row.source.source == first))
+        });
+        assert!(omitted_cast
+            .engine
+            .event_history
+            .iter()
+            .any(|event| matches!(event,
             E::SpellCast { spell, controller } if *spell == first && *controller == actor)));
         assert!(receipts::occurrences(&omitted_cast).is_err());
 
@@ -219,12 +330,15 @@ fn paid_attack_repeated_free_casts_source_departure_hidden_pair_and_index_parity
         assert!(result.casts.is_empty());
         assert_eq!(declined.objects.get(first).zone, Zone::Exile);
         assert_eq!(declined.objects.get(second).zone, Zone::Exile);
-        let mut missing: GameState = serde_json::from_slice(&serde_json::to_vec(&declined).unwrap()).unwrap();
-        missing.engine.event_history.retain(|event| !matches!(event,
+        let mut missing: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&declined).unwrap()).unwrap();
+        missing.engine.event_history.retain(|event| {
+            !matches!(event,
             E::EtaliPrimalStormReceiptV1 { journal } if matches!(journal.as_ref(),
                 receipts::JournalV1::TopExileVisibility { arrival, .. } if arrival.source == second)
                 || matches!(journal.as_ref(),
-                    receipts::JournalV1::TopExiled { row, .. } if row.arrival.source == second)));
+                    receipts::JournalV1::TopExiled { row, .. } if row.arrival.source == second))
+        });
         for event in missing.engine.event_history.iter_mut() {
             if let E::EtaliPrimalStormReceiptV1 { journal } = event {
                 if let receipts::JournalV1::Started { expected_moves, .. } = journal.as_mut() {
@@ -232,13 +346,22 @@ fn paid_attack_repeated_free_casts_source_departure_hidden_pair_and_index_parity
                 }
             }
         }
-        assert_eq!(missing.engine.event_history.iter().filter(|event| matches!(event,
+        assert_eq!(
+            missing
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| matches!(event,
             E::ZoneChange { object, from: Zone::Library, to: Zone::Exile, .. }
-                if *object == first || *object == second)).count(), 2);
+                if *object == first || *object == second))
+                .count(),
+            2
+        );
         assert!(receipts::occurrences(&missing).is_err());
 
         event::propose_and_commit(&mut declined, ProposedEvent::zone_change(first, Zone::Hand));
-        let mut relabeled: GameState = serde_json::from_slice(&serde_json::to_vec(&declined).unwrap()).unwrap();
+        let mut relabeled: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&declined).unwrap()).unwrap();
         assert!(receipts::occurrences(&relabeled).is_ok());
         let mut changed = false;
         for event in relabeled.engine.event_history.iter_mut() {
@@ -255,12 +378,18 @@ fn paid_attack_repeated_free_casts_source_departure_hidden_pair_and_index_parity
         assert!(changed);
         assert!(receipts::occurrences(&relabeled).is_err());
 
-        let mut altered: GameState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let mut altered: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         let Some(PendingEffectChoice::SelectTargets { legal, .. }) =
-            &mut altered.engine.pending_effect.as_mut().unwrap().choice else { panic!() };
+            &mut altered.engine.pending_effect.as_mut().unwrap().choice
+        else {
+            panic!()
+        };
         legal.reverse();
         let receipts = receipts::occurrences(&altered).unwrap();
-        assert!(crate::etali_primal_storm_receipts_v1::validate_current(&altered, &receipts).is_err());
+        assert!(
+            crate::etali_primal_storm_receipts_v1::validate_current(&altered, &receipts).is_err()
+        );
 
         numeric.restore(&snapshot).unwrap();
         human.restore_v75(&human_snapshot).unwrap();
@@ -276,7 +405,8 @@ fn paid_attack_repeated_free_casts_source_departure_hidden_pair_and_index_parity
 fn paid_etali_child_keeps_mandatory_discard_and_land_exiled_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, source) = native::paid(
-            actor, &["Forest", "Thrill of Possibility", "Forest", "Forest"],
+            actor,
+            &["Forest", "Thrill of Possibility", "Forest", "Forest"],
             &["Forest", "Mountain", "Forest", "Forest"],
         );
         state.etali_commit_receipts_v1 = true;
@@ -287,38 +417,62 @@ fn paid_etali_child_keeps_mandatory_discard_and_land_exiled_both_seats() {
         assert!(batch.scans[1].hit.is_none());
         let discard = state.players[actor.index()].hand[0];
         let kept = put(&mut state, actor, "Mountain", Zone::Hand);
-        native::answer(&mut state, NativeAction::ChooseEffectTarget(Target::Object(card)));
+        native::answer(
+            &mut state,
+            NativeAction::ChooseEffectTarget(Target::Object(card)),
+        );
         let actual = native::next(&mut state);
         assert!(matches!(actual, Decision::Discard { player, count: 1, .. } if player == actor));
-        assert!(facts(&state, actor.opponent(), actual.clone()).chooser.is_none());
+        assert!(facts(&state, actor.opponent(), actual.clone())
+            .chooser
+            .is_none());
 
         let mut numeric = KaitoSession::from_session(owner(&state)).unwrap();
         let d = decision(&numeric);
         let backend = d.fixture_backend_v75();
         let Some(ChoiceV1::ChildCast { original_exile, .. }) =
-            &backend.observation().etali.as_ref().unwrap().chooser else { panic!() };
+            &backend.observation().etali.as_ref().unwrap().chooser
+        else {
+            panic!()
+        };
         assert_eq!(original_exile.object, card.0);
         let index = backend.candidates_v75().candidates.iter().position(|row|
             matches!(&row.action, Action::Discard { cards, .. } if cards.iter().any(|r| r.arena_id == discard.0))
         ).unwrap();
-        assert_eq!(backend.candidates_v75().candidates[index].etali_action, Some(ActionV1::ChildCastStep));
+        assert_eq!(
+            backend.candidates_v75().candidates[index].etali_action,
+            Some(ActionV1::ChildCastStep)
+        );
         assert!(numeric.training_input_v1(&d).is_ok());
         numeric.apply(&d, index as u32).unwrap();
-        assert_eq!(numeric.fixture_state().objects.get(discard).zone, Zone::Graveyard);
+        assert_eq!(
+            numeric.fixture_state().objects.get(discard).zone,
+            Zone::Graveyard
+        );
         assert_eq!(numeric.fixture_state().objects.get(kept).zone, Zone::Hand);
         assert_eq!(numeric.fixture_state().objects.get(land).zone, Zone::Exile);
-        let result = receipts::occurrences(numeric.fixture_state()).unwrap().pop().unwrap();
+        let result = receipts::occurrences(numeric.fixture_state())
+            .unwrap()
+            .pop()
+            .unwrap();
         assert_eq!(result.casts.len(), 1);
-        assert_eq!(result.casts[0].source.finalized_cast_binding.unwrap().x_value, 0);
+        assert_eq!(
+            result.casts[0]
+                .source
+                .finalized_cast_binding
+                .unwrap()
+                .x_value,
+            0
+        );
     }
 }
-
 
 #[test]
 fn paid_etali_keeps_actual_zero_x_and_native_target_choice_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, source) = native::paid(
-            actor, &["Forest", "Wildwood Scourge", "Forest"],
+            actor,
+            &["Forest", "Wildwood Scourge", "Forest"],
             &["Forest", "Lightning Bolt", "Forest"],
         );
         state.etali_commit_receipts_v1 = true;
@@ -326,13 +480,28 @@ fn paid_etali_keeps_actual_zero_x_and_native_target_choice_both_seats() {
         let batch = native::batch(&mut state, actor);
         let hydra = batch.scans[0].hit.unwrap().object;
         let bolt = batch.scans[1].hit.unwrap().object;
-        native::answer(&mut state, NativeAction::ChooseEffectTarget(Target::Object(hydra)));
+        native::answer(
+            &mut state,
+            NativeAction::ChooseEffectTarget(Target::Object(hydra)),
+        );
         let result = receipts::occurrences(&state).unwrap().pop().unwrap();
         assert_eq!(result.casts[0].source.source, hydra);
-        assert_eq!(result.casts[0].source.finalized_cast_binding.unwrap().x_value, 0);
+        assert_eq!(
+            result.casts[0]
+                .source
+                .finalized_cast_binding
+                .unwrap()
+                .x_value,
+            0
+        );
 
-        native::answer(&mut state, NativeAction::ChooseEffectTarget(Target::Object(bolt)));
-        assert!(matches!(native::next(&mut state), Decision::ChooseTargets { player, .. } if player == actor));
+        native::answer(
+            &mut state,
+            NativeAction::ChooseEffectTarget(Target::Object(bolt)),
+        );
+        assert!(
+            matches!(native::next(&mut state), Decision::ChooseTargets { player, .. } if player == actor)
+        );
         let mut numeric = KaitoSession::from_session(owner(&state)).unwrap();
         let d = decision(&numeric);
         let backend = d.fixture_backend_v75();
@@ -340,17 +509,33 @@ fn paid_etali_keeps_actual_zero_x_and_native_target_choice_both_seats() {
             &row.action, Action::ChooseTarget { source, target: TargetRefV1::Player { player }, .. }
                 if source.arena_id == bolt.0 && *player == actor.opponent().into()
         )).unwrap();
-        assert_eq!(backend.candidates_v75().candidates[index].etali_action, Some(ActionV1::ChildCastStep));
-        assert_eq!(backend.fixture_original_index_v75(index as u32), Some(index as u32));
+        assert_eq!(
+            backend.candidates_v75().candidates[index].etali_action,
+            Some(ActionV1::ChildCastStep)
+        );
+        assert_eq!(
+            backend.fixture_original_index_v75(index as u32),
+            Some(index as u32)
+        );
         assert!(numeric.training_input_v1(&d).is_ok());
         numeric.apply(&d, index as u32).unwrap();
-        let spell = numeric.fixture_state().stack.iter().find(|row| row.source == bolt).unwrap();
+        let spell = numeric
+            .fixture_state()
+            .stack
+            .iter()
+            .find(|row| row.source == bolt)
+            .unwrap();
         assert_eq!(spell.targets, [Target::Player(actor.opponent())]);
         assert_eq!(spell.v4.source_contract.unwrap().owner, actor.opponent());
         assert_eq!(spell.controller, actor);
-        let result = receipts::occurrences(numeric.fixture_state()).unwrap().pop().unwrap();
+        let result = receipts::occurrences(numeric.fixture_state())
+            .unwrap()
+            .pop()
+            .unwrap();
         let bolt_receipt = result.casts.last().unwrap();
-        assert!(matches!(numeric.fixture_state().engine.event_history.get(bolt_receipt.cast_at as usize),
-            Some(E::SpellCast { spell, controller }) if *spell == bolt && *controller == actor));
+        assert!(
+            matches!(numeric.fixture_state().engine.event_history.get(bolt_receipt.cast_at as usize),
+            Some(E::SpellCast { spell, controller }) if *spell == bolt && *controller == actor)
+        );
     }
 }

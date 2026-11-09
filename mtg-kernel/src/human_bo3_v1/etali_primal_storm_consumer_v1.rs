@@ -42,7 +42,10 @@ struct HumanCastV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 enum HumanChoiceV1 {
-    CastOrDecline { source: HumanCardRefV1, legal: Vec<HumanCardRefV1> },
+    CastOrDecline {
+        source: HumanCardRefV1,
+        legal: Vec<HumanCardRefV1>,
+    },
     ChildCast {
         source: HumanCardRefV1,
         original_exile: HumanCardRefV1,
@@ -55,35 +58,65 @@ fn refs(cards: &[ReferenceV1], handles: &mut Handles) -> Result<Vec<HumanCardRef
 }
 
 pub(super) fn project(facts: &FactsV1, handles: &mut Handles) -> Result<HumanFactsV1, Error> {
-    let held = facts.held.iter().map(|source| root(source, handles)).collect::<Result<_, _>>()?;
-    let attacks = facts.attacks.iter().map(|row| {
-        let actual_casts = row.actual_casts.iter().map(|cast| {
-            Ok(HumanCastV1 {
-                original_exile: href(&cast.original_exile, handles)?,
-                spell: href(&cast.spell, handles)?,
-                method: cast.method,
-                x: cast.x,
+    let held = facts
+        .held
+        .iter()
+        .map(|source| root(source, handles))
+        .collect::<Result<_, _>>()?;
+    let attacks = facts
+        .attacks
+        .iter()
+        .map(|row| {
+            let actual_casts = row
+                .actual_casts
+                .iter()
+                .map(|cast| {
+                    Ok(HumanCastV1 {
+                        original_exile: href(&cast.original_exile, handles)?,
+                        spell: href(&cast.spell, handles)?,
+                        method: cast.method,
+                        x: cast.x,
+                    })
+                })
+                .collect::<Result<_, Error>>()?;
+            Ok(HumanAttackV1 {
+                source: root(&row.source, handles)?,
+                stack_position: row.stack_position,
+                batch_started: row.batch_started,
+                original_exiles: refs(&row.original_exiles, handles)?,
+                actual_casts,
+                finished: row.finished,
+                countered: row.countered,
             })
-        }).collect::<Result<_, Error>>()?;
-        Ok(HumanAttackV1 {
-            source: root(&row.source, handles)?, stack_position: row.stack_position,
-            batch_started: row.batch_started, original_exiles: refs(&row.original_exiles, handles)?,
-            actual_casts, finished: row.finished, countered: row.countered,
         })
-    }).collect::<Result<_, Error>>()?;
-    let chooser = facts.chooser.as_ref().map(|choice| {
-        Ok::<_, Error>(match choice {
-            ChoiceV1::CastOrDecline { source, legal } => HumanChoiceV1::CastOrDecline {
-                source: href(source, handles)?, legal: refs(legal, handles)?,
-            },
-            ChoiceV1::ChildCast { source, original_exile, placeholder } =>
-                HumanChoiceV1::ChildCast {
-                    source: href(source, handles)?, original_exile: href(original_exile, handles)?,
+        .collect::<Result<_, Error>>()?;
+    let chooser = facts
+        .chooser
+        .as_ref()
+        .map(|choice| {
+            Ok::<_, Error>(match choice {
+                ChoiceV1::CastOrDecline { source, legal } => HumanChoiceV1::CastOrDecline {
+                    source: href(source, handles)?,
+                    legal: refs(legal, handles)?,
+                },
+                ChoiceV1::ChildCast {
+                    source,
+                    original_exile,
+                    placeholder,
+                } => HumanChoiceV1::ChildCast {
+                    source: href(source, handles)?,
+                    original_exile: href(original_exile, handles)?,
                     placeholder: href(placeholder, handles)?,
                 },
+            })
         })
-    }).transpose()?;
-    Ok(HumanFactsV1 { meaning: facts.meaning.clone(), held, attacks, chooser })
+        .transpose()?;
+    Ok(HumanFactsV1 {
+        meaning: facts.meaning.clone(),
+        held,
+        attacks,
+        chooser,
+    })
 }
 
 pub(super) fn label(
@@ -92,9 +125,16 @@ pub(super) fn label(
     handles: &Handles,
 ) -> Result<Option<String>, Error> {
     Ok(match (consumer::action(facts, action), action) {
-        (Some(ActionV1::CastOriginalExile), Action::ChooseEffectTarget {
-            target: TargetRefV1::Object { object }, ..
-        }) => Some(format!("Cast {} without paying its mana cost", handles.name(object)?)),
+        (
+            Some(ActionV1::CastOriginalExile),
+            Action::ChooseEffectTarget {
+                target: TargetRefV1::Object { object },
+                ..
+            },
+        ) => Some(format!(
+            "Cast {} without paying its mana cost",
+            handles.name(object)?
+        )),
         (Some(ActionV1::DeclineRemaining), _) => Some("Leave the remaining cards in exile".into()),
         (None | Some(ActionV1::CastEtali | ActionV1::ChildCastStep), _) => None,
         _ => return Err(Error::InvalidVisibleReference),

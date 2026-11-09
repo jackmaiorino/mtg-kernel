@@ -4590,13 +4590,19 @@ fn commit_with_entry_batch_and_source_color(
     };
     let fiend_move = match &event {
         ProposedEvent::ZoneChange(change) => change.fiend_search_owner.map(|id| {
-            (id, crate::state::AbilitySourceContractV4::capture(state, change.object))
+            (
+                id,
+                crate::state::AbilitySourceContractV4::capture(state, change.object),
+            )
         }),
         _ => None,
     };
     let etali_move = match &event {
         ProposedEvent::ZoneChange(change) => change.etali_parent.map(|id| {
-            (id, crate::state::AbilitySourceContractV4::capture(state, change.object))
+            (
+                id,
+                crate::state::AbilitySourceContractV4::capture(state, change.object),
+            )
         }),
         _ => None,
     };
@@ -4747,16 +4753,25 @@ fn commit_with_entry_batch_and_source_color(
     }
     if let Some((id, original)) = fiend_move {
         crate::fiend_artisan_receipts_v1::observe_arrival_visibility(
-            state, id, original, entry_history_index,
+            state,
+            id,
+            original,
+            entry_history_index,
         );
         crate::fiend_artisan_receipts_v1::record_move(state, id, original, entry_history_index);
     }
     if let Some((parent, original)) = etali_move {
         crate::etali_primal_storm_receipts_v1::observe_exile_visibility(
-            state, parent, original.source, entry_history_index,
+            state,
+            parent,
+            original.source,
+            entry_history_index,
         );
         crate::etali_primal_storm_receipts_v1::record_exiled(
-            state, parent, original, entry_history_index,
+            state,
+            parent,
+            original,
+            entry_history_index,
         );
     }
     if let Some((cause, original)) = curator_move {
@@ -7104,7 +7119,11 @@ pub fn log_sacrifice(state: &mut GameState, object: ObjectId) {
     log_sacrifice_owned(state, object, None);
 }
 
-pub(crate) fn log_sacrifice_owned(state: &mut GameState, object: ObjectId, fiend_input: Option<u32>) {
+pub(crate) fn log_sacrifice_owned(
+    state: &mut GameState,
+    object: ObjectId,
+    fiend_input: Option<u32>,
+) {
     let live = state.objects.get(object);
     let committed = CommittedEvent::Sacrificed {
         object,

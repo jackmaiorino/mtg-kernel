@@ -45,13 +45,15 @@ pub fn producer_sha256_v1() -> String {
 
 pub(crate) fn preflight(config: &ResetV1) -> Result<(), String> {
     crate::limited_consumer_wire_v1::preflight_single_appendix(
-        config, PRINTING, public::selected_id, public::NAME,
+        config,
+        PRINTING,
+        public::selected_id,
+        public::NAME,
     )
 }
 
 fn native(config: &ResetV1) -> Result<FastActorSessionV1, String> {
-    FastActorSessionV1::reset_limited_etali_v1(config, false)
-        .map_err(|error| format!("{error:?}"))
+    FastActorSessionV1::reset_limited_etali_v1(config, false).map_err(|error| format!("{error:?}"))
 }
 
 pub fn reset_numeric_v1(config: &ResetV1) -> Result<KaitoSession, String> {
@@ -93,7 +95,6 @@ impl JsonlServerV1 {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ActionV1 {
@@ -105,8 +106,14 @@ pub enum ActionV1 {
 
 fn known(card: &ReferenceV1, zone: Zone) -> Option<u16> {
     match card.identity {
-        IdentityV1::Known { card_id } if card.zone == zone
-            && crate::card_def::CARD_DEFS.get(usize::from(card_id)).is_some() => Some(card_id),
+        IdentityV1::Known { card_id }
+            if card.zone == zone
+                && crate::card_def::CARD_DEFS
+                    .get(usize::from(card_id))
+                    .is_some() =>
+        {
+            Some(card_id)
+        }
         _ => None,
     }
 }
@@ -121,27 +128,35 @@ fn binds(card: &ReferenceV1, native: &CardStableRefV1) -> bool {
 }
 
 pub(crate) fn validate_facts(facts: &FactsV1, viewer: PlayerSeatV1) -> Result<(), String> {
-    if facts.viewer != viewer || facts.schema != public::SCHEMA
+    if facts.viewer != viewer
+        || facts.schema != public::SCHEMA
         || facts.meaning != public::printed_meaning()?
     {
         return Err("Etali facts changed exact printing or viewer".into());
     }
-    let exact_root = |root: &crate::optional_trigger_public_v1::RootV1|
+    let exact_root = |root: &crate::optional_trigger_public_v1::RootV1| {
         known(&root.original_source, Zone::Battlefield) == Some(PRINTING)
-            && root.original_source.controller == root.captured_controller;
+            && root.original_source.controller == root.captured_controller
+    };
     if facts.held.iter().any(|root| !exact_root(root)) {
         return Err("Etali held original attack changed".into());
     }
     for row in &facts.attacks {
         let mut owners = BTreeSet::new();
         let mut cast = BTreeSet::new();
-        if !exact_root(&row.source) || row.stack_position.is_some() == (row.finished.is_some() || row.countered)
+        if !exact_root(&row.source)
+            || row.stack_position.is_some() == (row.finished.is_some() || row.countered)
             || row.countered && (row.batch_started || row.finished.is_some())
-            || !row.batch_started && (!row.original_exiles.is_empty()
-                || !row.actual_casts.is_empty() || row.finished.is_some())
+            || !row.batch_started
+                && (!row.original_exiles.is_empty()
+                    || !row.actual_casts.is_empty()
+                    || row.finished.is_some())
             || row.original_exiles.len() > 2
-            || row.original_exiles.iter().any(|card| known(card, Zone::Exile).is_none()
-                || card.owner != card.controller || !owners.insert(card.owner))
+            || row.original_exiles.iter().any(|card| {
+                known(card, Zone::Exile).is_none()
+                    || card.owner != card.controller
+                    || !owners.insert(card.owner)
+            })
             || row.actual_casts.iter().any(|spell| {
                 !row.original_exiles.contains(&spell.original_exile)
                     || !cast.insert(spell.original_exile.object)
@@ -149,7 +164,8 @@ pub(crate) fn validate_facts(facts: &FactsV1, viewer: PlayerSeatV1) -> Result<()
                     || spell.spell.object != spell.original_exile.object
                     || spell.spell.owner != spell.original_exile.owner
                     || spell.spell.controller != row.source.captured_controller
-                    || spell.original_exile.generation.checked_add(1) != Some(spell.spell.generation)
+                    || spell.original_exile.generation.checked_add(1)
+                        != Some(spell.spell.generation)
                     || spell.x != 0
             })
         {
@@ -160,23 +176,47 @@ pub(crate) fn validate_facts(facts: &FactsV1, viewer: PlayerSeatV1) -> Result<()
         let source = match choice {
             ChoiceV1::CastOrDecline { source, .. } | ChoiceV1::ChildCast { source, .. } => source,
         };
-        let row = facts.attacks.iter().find(|row| row.source.original_source == *source
-            && row.batch_started && row.stack_position.is_some())
+        let row = facts
+            .attacks
+            .iter()
+            .find(|row| {
+                row.source.original_source == *source
+                    && row.batch_started
+                    && row.stack_position.is_some()
+            })
             .ok_or("Etali current choice lost its original native attack")?;
-        let uncast_nonland = |card: &ReferenceV1| row.original_exiles.contains(card)
-            && !row.actual_casts.iter().any(|spell| spell.original_exile == *card)
-            && known(card, Zone::Exile).is_some_and(|id|
-                !crate::card_def::CARD_DEFS[usize::from(id)].is_land);
+        let uncast_nonland = |card: &ReferenceV1| {
+            row.original_exiles.contains(card)
+                && !row
+                    .actual_casts
+                    .iter()
+                    .any(|spell| spell.original_exile == *card)
+                && known(card, Zone::Exile)
+                    .is_some_and(|id| !crate::card_def::CARD_DEFS[usize::from(id)].is_land)
+        };
         let valid = match choice {
-            ChoiceV1::CastOrDecline { legal, .. } => !legal.is_empty()
-                && legal.iter().all(uncast_nonland)
-                && legal.iter().map(|card| card.object).collect::<BTreeSet<_>>().len() == legal.len(),
-            ChoiceV1::ChildCast { original_exile, placeholder, .. } => uncast_nonland(original_exile)
-                && known(placeholder, Zone::Stack) == known(original_exile, Zone::Exile)
-                && placeholder.object == original_exile.object
-                && placeholder.owner == original_exile.owner
-                && placeholder.controller == viewer
-                && original_exile.generation.checked_add(1) == Some(placeholder.generation),
+            ChoiceV1::CastOrDecline { legal, .. } => {
+                !legal.is_empty()
+                    && legal.iter().all(uncast_nonland)
+                    && legal
+                        .iter()
+                        .map(|card| card.object)
+                        .collect::<BTreeSet<_>>()
+                        .len()
+                        == legal.len()
+            }
+            ChoiceV1::ChildCast {
+                original_exile,
+                placeholder,
+                ..
+            } => {
+                uncast_nonland(original_exile)
+                    && known(placeholder, Zone::Stack) == known(original_exile, Zone::Exile)
+                    && placeholder.object == original_exile.object
+                    && placeholder.owner == original_exile.owner
+                    && placeholder.controller == viewer
+                    && original_exile.generation.checked_add(1) == Some(placeholder.generation)
+            }
         };
         if !valid || source.controller != viewer {
             return Err("Etali private menu does not match original public exile bindings".into());
@@ -189,15 +229,30 @@ pub(crate) fn action(facts: Option<&FactsV1>, action: &Action) -> Option<ActionV
     let facts = facts?;
     match (&facts.chooser, action) {
         (Some(ChoiceV1::ChildCast { .. }), _) => Some(ActionV1::ChildCastStep),
-        (Some(ChoiceV1::CastOrDecline { source, legal }),
-            Action::ChooseEffectTarget { source: native, target: TargetRefV1::Object { object },
-                selected_count: 0, min_targets: 0, max_targets: 1, .. })
-            if binds(source, native) && legal.iter().any(|card| binds(card, object)) =>
-                Some(ActionV1::CastOriginalExile),
-        (Some(ChoiceV1::CastOrDecline { source, .. }),
-            Action::FinishEffectSelection { source: native, selected_count: 0, .. })
-            if binds(source, native) => Some(ActionV1::DeclineRemaining),
-        (None, Action::CastSpell { source, .. }) if source.card_db_id == PRINTING => Some(ActionV1::CastEtali),
+        (
+            Some(ChoiceV1::CastOrDecline { source, legal }),
+            Action::ChooseEffectTarget {
+                source: native,
+                target: TargetRefV1::Object { object },
+                selected_count: 0,
+                min_targets: 0,
+                max_targets: 1,
+                ..
+            },
+        ) if binds(source, native) && legal.iter().any(|card| binds(card, object)) => {
+            Some(ActionV1::CastOriginalExile)
+        }
+        (
+            Some(ChoiceV1::CastOrDecline { source, .. }),
+            Action::FinishEffectSelection {
+                source: native,
+                selected_count: 0,
+                ..
+            },
+        ) if binds(source, native) => Some(ActionV1::DeclineRemaining),
+        (None, Action::CastSpell { source, .. }) if source.card_db_id == PRINTING => {
+            Some(ActionV1::CastEtali)
+        }
         _ => None,
     }
 }
@@ -206,19 +261,28 @@ pub(crate) fn validate_candidate_order<'a>(
     facts: &FactsV1,
     actions: impl Iterator<Item = &'a Action>,
 ) -> Result<(), String> {
-    let Some(ChoiceV1::CastOrDecline { legal, .. }) = &facts.chooser else { return Ok(()) };
+    let Some(ChoiceV1::CastOrDecline { legal, .. }) = &facts.chooser else {
+        return Ok(());
+    };
     let actions: Vec<_> = actions.collect();
     if actions.len() != legal.len() + 1
-        || !actions.iter().zip(legal).all(|(row, expected)| matches!(
-            row, Action::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. }
-                if binds(expected, object)
-        ) && action(Some(facts), row) == Some(ActionV1::CastOriginalExile))
-        || actions.last().and_then(|row| action(Some(facts), row)) != Some(ActionV1::DeclineRemaining)
+        || !actions.iter().zip(legal).all(|(row, expected)| {
+            matches!(
+                row, Action::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. }
+                    if binds(expected, object)
+            ) && action(Some(facts), row) == Some(ActionV1::CastOriginalExile)
+        })
+        || actions.last().and_then(|row| action(Some(facts), row))
+            != Some(ActionV1::DeclineRemaining)
     {
         return Err("Etali candidate order changed exact native cast/decline menu".into());
     }
     Ok(())
 }
 
-#[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 mod tests;

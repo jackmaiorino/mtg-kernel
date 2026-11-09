@@ -257,9 +257,17 @@ impl FastActorSessionV1 {
         Self::initialize_limited_consumer_v1(config, reveal_facts, LimitedAppendixV1::Etali)
     }
 
-    pub(crate) fn reset_limited_thousand_year_storm_v1(config: &crate::thousand_year_storm_consumer_v1::ResetV1, reveal_facts: bool) -> Result<Self, RlSessionError> {
-        crate::thousand_year_storm_consumer_v1::preflight(config).map_err(|e|session_error(RlSessionErrorCode::UnsupportedDeck,&e))?;
-        Self::initialize_limited_consumer_v1(config,reveal_facts,LimitedAppendixV1::ThousandYearStorm)
+    pub(crate) fn reset_limited_thousand_year_storm_v1(
+        config: &crate::thousand_year_storm_consumer_v1::ResetV1,
+        reveal_facts: bool,
+    ) -> Result<Self, RlSessionError> {
+        crate::thousand_year_storm_consumer_v1::preflight(config)
+            .map_err(|e| session_error(RlSessionErrorCode::UnsupportedDeck, &e))?;
+        Self::initialize_limited_consumer_v1(
+            config,
+            reveal_facts,
+            LimitedAppendixV1::ThousandYearStorm,
+        )
     }
 
     pub(crate) fn reset_limited_full_pool_v1(
