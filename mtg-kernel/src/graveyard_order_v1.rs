@@ -42,7 +42,9 @@ impl ChoiceV1 {
             min_targets: count,
             max_targets: count,
             can_finish: false,
-            legal_targets: self.remaining.iter()
+            legal_targets: self
+                .remaining
+                .iter()
                 .map(|card| Target::Object(card.binding.object))
                 .collect(),
         }
@@ -144,12 +146,22 @@ pub(crate) fn owns_operation(state: &GameState) -> bool {
 }
 
 pub(crate) fn paused(state: &GameState) -> bool {
-    state.engine.graveyard_order_v1.runner.as_ref()
+    state
+        .engine
+        .graveyard_order_v1
+        .runner
+        .as_ref()
         .is_some_and(|runner| runner.checkpoint.is_some())
 }
 
 pub(crate) fn paused_decision(state: &GameState) -> Option<Decision> {
-    state.engine.graveyard_order_v1.runner.as_ref()?.checkpoint.as_ref()
+    state
+        .engine
+        .graveyard_order_v1
+        .runner
+        .as_ref()?
+        .checkpoint
+        .as_ref()
         .map(|(_, choice)| choice.decision())
 }
 
@@ -175,8 +187,9 @@ fn replay(
     }));
     let result = match operation {
         OperationV1::Advance => Ok(Some(crate::engine::advance_until_decision(&mut staged))),
-        OperationV1::Step(action) =>
-            crate::engine::step(&mut staged, action.clone()).map(|()| None),
+        OperationV1::Step(action) => {
+            crate::engine::step(&mut staged, action.clone()).map(|()| None)
+        }
         OperationV1::EffectBatch(events) => {
             crate::event::propose_and_commit_batch(&mut staged, events.clone());
             Ok(None)
@@ -186,7 +199,11 @@ fn replay(
             Ok(None)
         }
     };
-    let runner = staged.engine.graveyard_order_v1.runner.take()
+    let runner = staged
+        .engine
+        .graveyard_order_v1
+        .runner
+        .take()
         .ok_or("graveyard order lost its private operation owner")?;
     if runner.consumed != answers.len() {
         return Err("graveyard order replay did not consume every exact answer".into());
@@ -239,17 +256,32 @@ pub(crate) fn public_boundary(
         if arrivals.len() < 2 {
             return Vec::new();
         }
-        arrivals.iter().map(|card| ObjectLinkV4 {
-            object: card.binding.object,
-            zone_change_count: card.binding.expected_zone_change_count,
-        }).collect()
+        arrivals
+            .iter()
+            .map(|card| ObjectLinkV4 {
+                object: card.binding.object,
+                zone_change_count: card.binding.expected_zone_change_count,
+            })
+            .collect()
     });
-    let view = (choice.owner == viewer).then(|| crate::premodern_ordered_public_v1::OrderChoiceV1 {
-        batch: choice.batch,
-        chosen_bottom_first: choice.chosen.iter().map(|card| card.public_ref(viewer)).collect(),
-        native_candidates: choice.remaining.iter().map(|card| card.public_ref(viewer)).collect(),
-    });
-    Ok(Some(PublicBoundaryV1 { choice: view, unplaced }))
+    let view =
+        (choice.owner == viewer).then(|| crate::premodern_ordered_public_v1::OrderChoiceV1 {
+            batch: choice.batch,
+            chosen_bottom_first: choice
+                .chosen
+                .iter()
+                .map(|card| card.public_ref(viewer))
+                .collect(),
+            native_candidates: choice
+                .remaining
+                .iter()
+                .map(|card| card.public_ref(viewer))
+                .collect(),
+        });
+    Ok(Some(PublicBoundaryV1 {
+        choice: view,
+        unplaced,
+    }))
 }
 
 pub(crate) fn advance(state: &mut GameState) -> Decision {
@@ -273,10 +305,17 @@ pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> 
         let Action::ChooseEffectTarget(Target::Object(object)) = action else {
             return Err("only an exact graveyard ordering choice is available".into());
         };
-        let card = pending.choice.remaining.iter().find(|card| card.binding.object == object)
+        let card = pending
+            .choice
+            .remaining
+            .iter()
+            .find(|card| card.binding.object == object)
             .ok_or("graveyard order choice is not in the native batch")?;
         let mut answers = pending.answers.clone();
-        answers.push(AnswerV1 { choice: pending.choice.clone(), card: *card });
+        answers.push(AnswerV1 {
+            choice: pending.choice.clone(),
+            card: *card,
+        });
         replay(&pending.original, &pending.operation, &answers)?
     } else {
         replay(state, &OperationV1::Step(action), &[])?
@@ -315,7 +354,11 @@ pub(crate) fn state_based_actions(state: &mut GameState) {
 }
 
 fn pick(state: &mut GameState, choice: ChoiceV1) -> Result<Option<ArrivalCardV1>, String> {
-    let runner = state.engine.graveyard_order_v1.runner.as_ref()
+    let runner = state
+        .engine
+        .graveyard_order_v1
+        .runner
+        .as_ref()
         .ok_or("graveyard order batch has no native engine operation owner")?;
     if runner.checkpoint.is_some() {
         return Ok(None);
@@ -325,7 +368,13 @@ fn pick(state: &mut GameState, choice: ChoiceV1) -> Result<Option<ArrivalCardV1>
             return Err("graveyard order answer changed its actual owner or batch".into());
         }
         let card = answer.card;
-        state.engine.graveyard_order_v1.runner.as_mut().unwrap().consumed += 1;
+        state
+            .engine
+            .graveyard_order_v1
+            .runner
+            .as_mut()
+            .unwrap()
+            .consumed += 1;
         return Ok(Some(card));
     }
     // The original deck and the replay tail are private. Legacy projections
@@ -333,8 +382,13 @@ fn pick(state: &mut GameState, choice: ChoiceV1) -> Result<Option<ArrivalCardV1>
     let mut snapshot = state.clone();
     snapshot.engine.graveyard_order_v1 = StateV1::default();
     crate::linked_aura_operation_v1::clear_runtime_for_graveyard_checkpoint(&mut snapshot);
-    state.engine.graveyard_order_v1.runner.as_mut().unwrap().checkpoint =
-        Some((Box::new(snapshot), choice));
+    state
+        .engine
+        .graveyard_order_v1
+        .runner
+        .as_mut()
+        .unwrap()
+        .checkpoint = Some((Box::new(snapshot), choice));
     Ok(None)
 }
 
@@ -358,7 +412,13 @@ pub(crate) fn batch_text_top(
     host: ObjectLinkV4,
     owner: PlayerId,
 ) -> Option<Option<TextTopV1>> {
-    let scene = state.engine.graveyard_order_v1.runner.as_ref()?.text_scenes.last()?;
+    let scene = state
+        .engine
+        .graveyard_order_v1
+        .runner
+        .as_ref()?
+        .text_scenes
+        .last()?;
     Some(match &scene.entering {
         Some(entry) if entry.arrivals.contains(&host) => entry.final_top[owner.index()],
         _ => scene.before[owner.index()],
@@ -368,14 +428,23 @@ pub(crate) fn batch_text_top(
 /// When a donor itself is arriving later in this batch, a trigger can bind
 /// that donor's real public incarnation only after the last move.
 pub(crate) fn quoting_entry_scene(state: &GameState) -> bool {
-    state.engine.graveyard_order_v1.runner.as_ref().is_some_and(|runner| runner.quoting)
+    state
+        .engine
+        .graveyard_order_v1
+        .runner
+        .as_ref()
+        .is_some_and(|runner| runner.quoting)
 }
 
 pub(crate) fn defer_donated_entry(
     state: &mut GameState,
     marker: CommittedEvent,
 ) -> Result<bool, String> {
-    let Some(scene) = state.engine.graveyard_order_v1.runner.as_mut()
+    let Some(scene) = state
+        .engine
+        .graveyard_order_v1
+        .runner
+        .as_mut()
         .and_then(|runner| runner.text_scenes.last_mut())
         .filter(|scene| scene.entering.is_some())
     else {
@@ -399,32 +468,47 @@ pub(crate) struct OrderedEntrySceneV1 {
 pub(crate) fn needs_ordered_entry_scene(state: &GameState, events: &[ProposedEvent]) -> bool {
     enabled(state)
         && !quoting_entry_scene(state)
-        && events.iter().any(|event| matches!(event,
-            ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Graveyard))
-        && events.iter().any(|event| matches!(event,
+        && events.iter().any(|event| {
+            matches!(event,
+            ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Graveyard)
+        })
+        && events.iter().any(|event| {
+            matches!(event,
             ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Battlefield)
-            || matches!(event, ProposedEvent::CreateToken(_)))
-        && (state.players.iter().flat_map(|player| player.battlefield.iter().copied()).any(|id| {
-            crate::full_text_v1::owns_definition(
-                &crate::card_def::CARD_DEFS[usize::from(state.objects.get(id).card_def)],
-            )
-        }) || events.iter().any(|event| match event {
-            ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Battlefield =>
+                || matches!(event, ProposedEvent::CreateToken(_))
+        })
+        && (state
+            .players
+            .iter()
+            .flat_map(|player| player.battlefield.iter().copied())
+            .any(|id| {
                 crate::full_text_v1::owns_definition(
-                    &crate::card_def::CARD_DEFS[usize::from(state.objects.get(change.object).card_def)],
-                ),
-            ProposedEvent::CreateToken(token) =>
-                crate::full_text_v1::owns_definition(
+                    &crate::card_def::CARD_DEFS[usize::from(state.objects.get(id).card_def)],
+                )
+            })
+            || events.iter().any(|event| match event {
+                ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Battlefield => {
+                    crate::full_text_v1::owns_definition(
+                        &crate::card_def::CARD_DEFS
+                            [usize::from(state.objects.get(change.object).card_def)],
+                    )
+                }
+                ProposedEvent::CreateToken(token) => crate::full_text_v1::owns_definition(
                     &crate::card_def::CARD_DEFS[usize::from(token.token_def)],
                 ),
-            _ => false,
-        }))
+                _ => false,
+            }))
 }
 
 pub(crate) fn quote_scene(state: &GameState) -> Result<GameState, String> {
     let mut quote = state.clone();
-    quote.engine.graveyard_order_v1.runner.as_mut()
-        .ok_or("graveyard entry quote lost its native operation")?.quoting = true;
+    quote
+        .engine
+        .graveyard_order_v1
+        .runner
+        .as_mut()
+        .ok_or("graveyard entry quote lost its native operation")?
+        .quoting = true;
     Ok(quote)
 }
 
@@ -447,13 +531,19 @@ impl PreparedBatchV1 {
         }
         let mut possible_arrivals = Vec::new();
         for event in events {
-            let ProposedEvent::ZoneChange(change) = event else { continue };
+            let ProposedEvent::ZoneChange(change) = event else {
+                continue;
+            };
             if change.to_zone != Zone::Graveyard {
                 continue;
             }
-            let live = state.objects.try_get(change.object)
+            let live = state
+                .objects
+                .try_get(change.object)
                 .ok_or("graveyard batch member does not exist")?;
-            if live.zone == Zone::Graveyard || live.v4.is_token || live.spell_copy_origin.is_some()
+            if live.zone == Zone::Graveyard
+                || live.v4.is_token
+                || live.spell_copy_origin.is_some()
                 || crate::card_def::CARD_DEFS[usize::from(live.card_def)].is_token
             {
                 continue;
@@ -484,14 +574,23 @@ impl PreparedBatchV1 {
         ordered_scene: Option<&OrderedEntrySceneV1>,
     ) -> Result<(), String> {
         let text = [PlayerId::P0, PlayerId::P1].map(|owner| {
-            state.engine.graveyard_order_v1.runner.as_ref()
+            state
+                .engine
+                .graveyard_order_v1
+                .runner
+                .as_ref()
                 .and_then(|runner| runner.text_scenes.last())
                 .map(|scene| scene.before[owner.index()])
                 .unwrap_or_else(|| crate::full_text_v1::graveyard_text_top(state, owner))
         });
-        state.engine.graveyard_order_v1.runner.as_mut()
+        state
+            .engine
+            .graveyard_order_v1
+            .runner
+            .as_mut()
             .ok_or("graveyard order batch lost its native operation")?
-            .text_scenes.push(TextSceneV1 {
+            .text_scenes
+            .push(TextSceneV1 {
                 before: text,
                 entering: ordered_scene.map(|scene| scene.text.clone()),
                 deferred_triggers: Vec::new(),
@@ -503,27 +602,44 @@ impl PreparedBatchV1 {
         let mut actual: ArrivalsV1 = Default::default();
         for owner in [PlayerId::P0, PlayerId::P1] {
             for (slot, &object) in state.players[owner.index()].graveyard.iter().enumerate() {
-                let Some(before) = self.possible_arrivals.iter().find(|member| member.object == object)
-                    else { continue };
+                let Some(before) = self
+                    .possible_arrivals
+                    .iter()
+                    .find(|member| member.object == object)
+                else {
+                    continue;
+                };
                 let live = state.objects.get(object);
                 if before.expected_zone_change_count.checked_add(1) != Some(live.zone_change_count)
-                    || !state.engine.event_history.iter().skip(self.history_start).any(|event| {
-                        matches!(event, CommittedEvent::ZoneChange {
+                    || !state
+                        .engine
+                        .event_history
+                        .iter()
+                        .skip(self.history_start)
+                        .any(|event| {
+                            matches!(event, CommittedEvent::ZoneChange {
                             object: moved, from, to: Zone::Graveyard, ..
                         } if *moved == object && *from == before.expected_zone)
-                    })
+                        })
                 {
                     return Err("graveyard arrival lost its native zone-change occurrence".into());
                 }
-                actual[owner.index()].push((slot, ArrivalCardV1 {
-                    binding: EffectObjectBinding {
-                        object,
-                        expected_zone: Zone::Graveyard,
-                        expected_zone_change_count: live.zone_change_count,
+                actual[owner.index()].push((
+                    slot,
+                    ArrivalCardV1 {
+                        binding: EffectObjectBinding {
+                            object,
+                            expected_zone: Zone::Graveyard,
+                            expected_zone_change_count: live.zone_change_count,
+                        },
+                        printing: crate::rl::projected_card_def(
+                            state,
+                            object,
+                            live.zone_change_count,
+                        ),
+                        controller: live.controller,
                     },
-                    printing: crate::rl::projected_card_def(state, object, live.zone_change_count),
-                    controller: live.controller,
-                }));
+                ));
             }
         }
         Ok(actual)
@@ -536,13 +652,15 @@ impl PreparedBatchV1 {
     ) -> Result<Option<ArrivalsV1>, String> {
         let active = state.active_player;
         let mut ordered: ArrivalsV1 = Default::default();
-        let arrivals: [Vec<_>; 2] = actual.each_ref()
+        let arrivals: [Vec<_>; 2] = actual
+            .each_ref()
             .map(|rows| rows.iter().map(|(_, card)| *card).collect());
         for owner in [active, active.opponent()] {
             let rows = &actual[owner.index()];
             let mut remaining = arrivals[owner.index()].clone();
             let mut chosen = Vec::new();
-            u16::try_from(remaining.len()).map_err(|_| "graveyard order exceeds native action width")?;
+            u16::try_from(remaining.len())
+                .map_err(|_| "graveyard order exceeds native action width")?;
             while remaining.len() > 1 {
                 let choice = ChoiceV1 {
                     batch: self.batch,
@@ -552,7 +670,9 @@ impl PreparedBatchV1 {
                     chosen: chosen.clone(),
                     remaining: remaining.clone(),
                 };
-                let Some(card) = pick(state, choice)? else { return Ok(None) };
+                let Some(card) = pick(state, choice)? else {
+                    return Ok(None);
+                };
                 remaining.retain(|candidate| *candidate != card);
                 chosen.push(card);
             }
@@ -567,9 +687,7 @@ impl PreparedBatchV1 {
         state: &mut GameState,
         mut quote: GameState,
     ) -> Result<Option<OrderedEntrySceneV1>, String> {
-        if quote.engine.halted.is_some()
-            || crate::linked_aura_operation_v1::has_pending(&quote)
-        {
+        if quote.engine.halted.is_some() || crate::linked_aura_operation_v1::has_pending(&quote) {
             return Err("graveyard entry quote could not complete its native batch".into());
         }
         let original = self.actual_arrivals(&quote)?;
@@ -581,17 +699,27 @@ impl PreparedBatchV1 {
             .map(|owner| crate::full_text_v1::graveyard_text_top(&quote, owner));
         let arrivals = self.battlefield_arrivals(&quote);
         Ok(Some(OrderedEntrySceneV1 {
-            original, ordered, text: EntryTextV1 { final_top, arrivals },
+            original,
+            ordered,
+            text: EntryTextV1 {
+                final_top,
+                arrivals,
+            },
         }))
     }
 
     fn battlefield_arrivals(&self, state: &GameState) -> Vec<ObjectLinkV4> {
-        state.engine.event_history.iter().skip(self.history_start)
+        state
+            .engine
+            .event_history
+            .iter()
+            .skip(self.history_start)
             .filter_map(crate::trigger::battlefield_entry_object)
             .filter_map(|object| {
                 let live = state.objects.try_get(object)?;
                 (live.zone == Zone::Battlefield).then_some(ObjectLinkV4 {
-                    object, zone_change_count: live.zone_change_count,
+                    object,
+                    zone_change_count: live.zone_change_count,
                 })
             })
             .collect()
@@ -602,9 +730,15 @@ impl PreparedBatchV1 {
         state: &mut GameState,
         ordered_scene: Option<OrderedEntrySceneV1>,
     ) -> Result<(), String> {
-        let runner = state.engine.graveyard_order_v1.runner.as_mut()
+        let runner = state
+            .engine
+            .graveyard_order_v1
+            .runner
+            .as_mut()
             .ok_or("graveyard order batch lost its native operation")?;
-        let scene = runner.text_scenes.pop()
+        let scene = runner
+            .text_scenes
+            .pop()
             .ok_or("graveyard order batch lost its frozen departure scene")?;
         if runner.quoting || state.engine.halted.is_some() || paused(state) {
             return Ok(());
@@ -617,13 +751,16 @@ impl PreparedBatchV1 {
             }
             plan.ordered
         } else {
-            let Some(ordered) = self.choose_order(state, &actual)? else { return Ok(()) };
+            let Some(ordered) = self.choose_order(state, &actual)? else {
+                return Ok(());
+            };
             ordered
         };
         apply_order(state, &ordered);
         if expected_top.is_some_and(|expected| {
             [PlayerId::P0, PlayerId::P1]
-                .map(|owner| crate::full_text_v1::graveyard_text_top(state, owner)) != expected
+                .map(|owner| crate::full_text_v1::graveyard_text_top(state, owner))
+                != expected
         }) {
             return Err("graveyard entry quote lost its selected final text".into());
         }
@@ -660,20 +797,31 @@ mod tests {
 
     fn ready(active: PlayerId) -> GameState {
         let mut state = GameState::new_from_libraries_with_graveyard_order_v1(
-            &[], &[], crate::rl::card_name, 60_011, active,
+            &[],
+            &[],
+            crate::rl::card_name,
+            60_011,
+            active,
         );
         state.step = Step::Main1;
         state
     }
 
     fn pick_next(state: &mut GameState, owner: PlayerId, ids: &[ObjectId], pick: ObjectId) {
-        let Decision::ChooseEffectTargets { player, legal_targets, can_finish, .. } =
-            advance_until_decision(state)
+        let Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            can_finish,
+            ..
+        } = advance_until_decision(state)
         else {
             panic!("owner order must suspend the native batch");
         };
         assert_eq!(player, owner);
-        assert_eq!(legal_targets, ids.iter().copied().map(Target::Object).collect::<Vec<_>>());
+        assert_eq!(
+            legal_targets,
+            ids.iter().copied().map(Target::Object).collect::<Vec<_>>()
+        );
         assert!(!can_finish);
         step(state, Action::ChooseEffectTarget(Target::Object(pick))).unwrap();
     }
@@ -700,19 +848,37 @@ mod tests {
             assert!(crate::eternal_e9b_v1::has_void_counter(&state, replaced));
             let json = serde_json::to_vec(&state).unwrap();
             assert!(refuse_legacy(&state).is_err());
-            assert!(step(&mut state, Action::ChooseEffectTarget(Target::Object(replaced))).is_err());
+            assert!(step(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(replaced))
+            )
+            .is_err());
             assert_eq!(serde_json::to_vec(&state).unwrap(), json);
             let mut restored: GameState = serde_json::from_slice(&json).unwrap();
             assert_eq!(state.state_hash(), restored.state_hash());
             pick_next(&mut restored, owner, &[first, second], second);
-            assert_eq!(restored.players[owner.index()].graveyard, [old, second, first]);
-            let moved = restored.engine.event_history.iter().skip(history_start).filter_map(|row| {
-                match row {
+            assert_eq!(
+                restored.players[owner.index()].graveyard,
+                [old, second, first]
+            );
+            let moved = restored
+                .engine
+                .event_history
+                .iter()
+                .skip(history_start)
+                .filter_map(|row| match row {
                     CommittedEvent::ZoneChange { object, to, .. } => Some((*object, *to)),
                     _ => None,
-                }
-            }).collect::<Vec<_>>();
-            assert_eq!(moved, [(first, Zone::Graveyard), (replaced, Zone::Exile), (second, Zone::Graveyard)]);
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                moved,
+                [
+                    (first, Zone::Graveyard),
+                    (replaced, Zone::Exile),
+                    (second, Zone::Graveyard)
+                ]
+            );
         }
     }
 
@@ -749,22 +915,37 @@ mod tests {
         let attached = put(&mut state, owner, "Ethereal Armor", Zone::Battlefield);
         let victim_generation = state.objects.get(victim).zone_change_count;
         let aura_generation = state.objects.get(attached).zone_change_count;
-        state.attach_object_exact(attached, aura_generation, victim, victim_generation).unwrap();
+        state
+            .attach_object_exact(attached, aura_generation, victim, victim_generation)
+            .unwrap();
         state.objects.get_mut(victim).damage = 100;
 
         crate::trigger::sba_fixed_point(&mut state);
         assert_eq!(state.objects.get(attached).zone, Zone::Battlefield);
         pick_next(&mut state, owner, &[victim, invalid], invalid);
         assert!(state.engine.graveyard_order_v1.is_empty());
-        assert_eq!(state.players[owner.index()].graveyard, [invalid, victim, attached]);
+        assert_eq!(
+            state.players[owner.index()].graveyard,
+            [invalid, victim, attached]
+        );
     }
 
     #[test]
     fn legend_choice_and_current_deaths_resume_one_ordered_sba_pass() {
         let owner = PlayerId::P1;
         let mut state = ready(owner);
-        let keep = put(&mut state, owner, "Akroma, Angel of Wrath", Zone::Battlefield);
-        let lose = put(&mut state, owner, "Akroma, Angel of Wrath", Zone::Battlefield);
+        let keep = put(
+            &mut state,
+            owner,
+            "Akroma, Angel of Wrath",
+            Zone::Battlefield,
+        );
+        let lose = put(
+            &mut state,
+            owner,
+            "Akroma, Angel of Wrath",
+            Zone::Battlefield,
+        );
         let dying = put(&mut state, owner, "Llanowar Elves", Zone::Battlefield);
         state.objects.get_mut(dying).damage = 100;
 
@@ -798,7 +979,11 @@ mod tests {
         let mut ordered = false;
         for _ in 0..6 {
             match advance_until_decision(&mut state) {
-                Decision::ChooseTargets { spell, legal_targets, .. } => {
+                Decision::ChooseTargets {
+                    spell,
+                    legal_targets,
+                    ..
+                } => {
                     assert_eq!(spell, fireblast);
                     assert!(legal_targets.contains(&target));
                     step(&mut state, Action::ChooseTarget(target)).unwrap();
@@ -807,7 +992,11 @@ mod tests {
                     assert!(options.contains(&CastMode::Alternative));
                     step(&mut state, Action::ChooseCastMode(CastMode::Alternative)).unwrap();
                 }
-                Decision::ChooseCostTargets { cost_kind: CostKind::SacrificeLands, candidates, .. } => {
+                Decision::ChooseCostTargets {
+                    cost_kind: CostKind::SacrificeLands,
+                    candidates,
+                    ..
+                } => {
                     step(&mut state, Action::ChooseCostTarget(candidates[0])).unwrap();
                 }
                 Decision::ChooseEffectTargets { .. } => {
@@ -821,12 +1010,21 @@ mod tests {
         assert!(ordered);
         assert_eq!(state.players[owner.index()].graveyard, [second, first]);
         assert_eq!(state.stack.last().unwrap().source, fireblast);
-        assert_eq!(state.stack.last().unwrap().v4.cast_method, Some(CastMethodV4::Alternative));
+        assert_eq!(
+            state.stack.last().unwrap().v4.cast_method,
+            Some(CastMethodV4::Alternative)
+        );
         for _ in 0..2 {
-            assert!(matches!(advance_until_decision(&mut state), Decision::CastSpellOrPass { .. }));
+            assert!(matches!(
+                advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
             step(&mut state, Action::Pass).unwrap();
         }
-        assert!(matches!(advance_until_decision(&mut state), Decision::CastSpellOrPass { .. }));
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
         assert_eq!(state.players[owner.opponent().index()].life, 16);
     }
 

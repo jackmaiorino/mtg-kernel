@@ -120,42 +120,64 @@ fn graveyard(
     owner: PlayerId,
     unplaced: &[ObjectLinkV4],
 ) -> Result<GraveyardV1, String> {
-    let mut view = GraveyardV1 { bottom_to_top: Vec::new(), unplaced: Vec::new() };
+    let mut view = GraveyardV1 {
+        bottom_to_top: Vec::new(),
+        unplaced: Vec::new(),
+    };
     for &object in &state.players[owner.index()].graveyard {
-        let live = state.objects.try_get(object).ok_or("graveyard card absent")?;
+        let live = state
+            .objects
+            .try_get(object)
+            .ok_or("graveyard card absent")?;
         if live.owner != owner || live.zone != Zone::Graveyard {
             return Err("ordered graveyard lost its public card".into());
         }
         let card = rl::card_ref(state, object).map_err(|error| error.to_string())?;
-        let link = ObjectLinkV4 { object, zone_change_count: live.zone_change_count };
+        let link = ObjectLinkV4 {
+            object,
+            zone_change_count: live.zone_change_count,
+        };
         if unplaced.contains(&link) {
             view.unplaced.push(card);
         } else {
             view.bottom_to_top.push(card);
         }
     }
-    view.unplaced.sort_by_key(|card| (card.card_db_id, card.arena_id));
+    view.unplaced
+        .sort_by_key(|card| (card.card_db_id, card.arena_id));
     Ok(view)
 }
 
 fn form(state: &GameState, object: ObjectId) -> Result<Option<FullTextFormV1>, String> {
-    let live = state.objects.try_get(object).ok_or("full-text permanent absent")?;
+    let live = state
+        .objects
+        .try_get(object)
+        .ok_or("full-text permanent absent")?;
     if live.v4.face_down_v1.is_some() {
         return Ok(None);
     }
-    let physical = CARD_DEFS.get(usize::from(live.card_def))
+    let physical = CARD_DEFS
+        .get(usize::from(live.card_def))
         .ok_or("full-text physical printing absent")?;
     if !full_text_v1::owns_definition(physical) {
         return Ok(None);
     }
     let text = full_text_v1::active_text(state, object);
-    let text_donor = text.map(|text| {
-        rl::card_ref(state, text.donor().object).map_err(|error| error.to_string())
-    }).transpose()?;
+    let text_donor = text
+        .map(|text| rl::card_ref(state, text.donor().object).map_err(|error| error.to_string()))
+        .transpose()?;
     let types: Vec<_> = [
-        CardType::Land, CardType::Creature, CardType::Instant, CardType::Sorcery,
-        CardType::Artifact, CardType::Enchantment, CardType::Planeswalker,
-    ].into_iter().filter(|kind| engine::object_has_type(state, object, *kind)).collect();
+        CardType::Land,
+        CardType::Creature,
+        CardType::Instant,
+        CardType::Sorcery,
+        CardType::Artifact,
+        CardType::Enchantment,
+        CardType::Planeswalker,
+    ]
+    .into_iter()
+    .filter(|kind| engine::object_has_type(state, object, *kind))
+    .collect();
     let power_toughness = if types.contains(&CardType::Creature) {
         Some(engine::checked_effective_pt(state, object)?)
     } else {
@@ -171,7 +193,9 @@ fn form(state: &GameState, object: ObjectId) -> Result<Option<FullTextFormV1>, S
         subtype_ids: engine::effective_subtype_ids(state, object),
         keyword_bits: engine::effective_keywords(state, object, Keywords(u32::MAX)).0,
         power_toughness,
-        printed_abilities_active: continuous_characteristics_v1::printed_abilities_active(state, object),
+        printed_abilities_active: continuous_characteristics_v1::printed_abilities_active(
+            state, object,
+        ),
     }))
 }
 
@@ -221,29 +245,42 @@ pub fn choose_order(
     if actual != *expected {
         return Err("graveyard order observation is stale".into());
     }
-    let card = actual.native_candidates.get(ordinal)
+    let card = actual
+        .native_candidates
+        .get(ordinal)
         .ok_or("graveyard order ordinal is outside its native menu")?;
-    engine::step(state, engine::Action::ChooseEffectTarget(Target::Object(ObjectId(card.arena_id))))
+    engine::step(
+        state,
+        engine::Action::ChooseEffectTarget(Target::Object(ObjectId(card.arena_id))),
+    )
 }
 
 pub fn observe_human_order(
     state: &GameState,
     viewer: PlayerId,
 ) -> Result<Option<HumanOrderPromptV1>, String> {
-    let Some(expected) = graveyard_order_v1::public_boundary(state, viewer)?
-        .and_then(|row| row.choice)
+    let Some(expected) =
+        graveyard_order_v1::public_boundary(state, viewer)?.and_then(|row| row.choice)
     else {
         return Ok(None);
     };
     let name = |card: &CardStableRefV1| {
-        CARD_DEFS.get(usize::from(card.card_db_id)).map(|definition| definition.name)
+        CARD_DEFS
+            .get(usize::from(card.card_db_id))
+            .map(|definition| definition.name)
             .ok_or_else(|| "graveyard order printing absent".to_string())
     };
-    let chosen_bottom_first = expected.chosen_bottom_first.iter().map(name)
+    let chosen_bottom_first = expected
+        .chosen_bottom_first
+        .iter()
+        .map(name)
         .collect::<Result<Vec<_>, _>>()?;
-    let action_labels = expected.native_candidates.iter().enumerate().map(|(index, card)| {
-        Ok(format!("Place {} next (choice {})", name(card)?, index + 1))
-    }).collect::<Result<Vec<_>, String>>()?;
+    let action_labels = expected
+        .native_candidates
+        .iter()
+        .enumerate()
+        .map(|(index, card)| Ok(format!("Place {} next (choice {})", name(card)?, index + 1)))
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(Some(HumanOrderPromptV1 {
         schema: HUMAN_ORDER_SCHEMA_V1,
         viewer: viewer.into(),
@@ -277,16 +314,23 @@ mod tests {
         for owner in [PlayerId::P0, PlayerId::P1] {
             let build = |hidden: &str| {
                 let mut state = GameState::new_from_libraries_with_graveyard_order_v1(
-                    &[], &[], rl::card_name, 0x460_121, owner,
+                    &[],
+                    &[],
+                    rl::card_name,
+                    0x460_121,
+                    owner,
                 );
                 state.step = Step::Main1;
                 put(&mut state, owner.opponent(), hidden, Zone::Library);
                 let first = put(&mut state, owner, "Palinchron", Zone::Library);
                 let second = put(&mut state, owner, "Triskelion", Zone::Library);
-                event::propose_and_commit_batch(&mut state, vec![
-                    event::ProposedEvent::zone_change(first, Zone::Graveyard),
-                    event::ProposedEvent::zone_change(second, Zone::Graveyard),
-                ]);
+                event::propose_and_commit_batch(
+                    &mut state,
+                    vec![
+                        event::ProposedEvent::zone_change(first, Zone::Graveyard),
+                        event::ProposedEvent::zone_change(second, Zone::Graveyard),
+                    ],
+                );
                 (state, first, second)
             };
             let (mut a, first, second) = build("Island");
@@ -294,14 +338,20 @@ mod tests {
             assert_ne!(a.state_hash(), b.state_hash());
             for viewer in [owner, owner.opponent()] {
                 assert_eq!(observe(&a, viewer).unwrap(), observe(&b, viewer).unwrap());
-                assert_eq!(observe_human_order(&a, viewer).unwrap(),
-                    observe_human_order(&b, viewer).unwrap());
+                assert_eq!(
+                    observe_human_order(&a, viewer).unwrap(),
+                    observe_human_order(&b, viewer).unwrap()
+                );
             }
             assert!(observe_human_order(&a, owner.opponent()).unwrap().is_none());
             let prompt = observe_human_order(&a, owner).unwrap().unwrap();
-            assert_eq!(prompt.action_labels, [
-                "Place Palinchron next (choice 1)", "Place Triskelion next (choice 2)",
-            ]);
+            assert_eq!(
+                prompt.action_labels,
+                [
+                    "Place Palinchron next (choice 1)",
+                    "Place Triskelion next (choice 2)",
+                ]
+            );
             let human = serde_json::to_value(&prompt).unwrap();
             assert!(human.get("expected").is_none());
             assert!(!human.to_string().contains("arena_id"));
@@ -311,8 +361,10 @@ mod tests {
             for state in [&a, &b] {
                 assert_eq!(state.players[owner.index()].graveyard, [second, first]);
             }
-            assert_eq!(observe(&a, owner.opponent()).unwrap(),
-                observe(&b, owner.opponent()).unwrap());
+            assert_eq!(
+                observe(&a, owner.opponent()).unwrap(),
+                observe(&b, owner.opponent()).unwrap()
+            );
         }
     }
 }

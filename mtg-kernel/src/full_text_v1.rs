@@ -20,7 +20,9 @@ use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::Cost;
 use crate::standard_cards_v1::StandardOpV1;
-use crate::state::{AbilityKindV4, AbilitySourceContractV4, GameState, ObjectLinkV4, StackItem, StackItemKind, Zone};
+use crate::state::{
+    AbilityKindV4, AbilitySourceContractV4, GameState, ObjectLinkV4, StackItem, StackItemKind, Zone,
+};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
@@ -50,14 +52,20 @@ pub(crate) fn top_creature_text(
     {
         return None;
     }
-    let (donor, text_definition) =
-        crate::graveyard_order_v1::batch_text_top(
-            state,
-            ObjectLinkV4 { object: host.source, zone_change_count: host.zone_change_count },
-            live.controller,
-        )
-            .unwrap_or_else(|| graveyard_text_top(state, live.controller))?;
-    Some(FullTextV1 { host, donor, text_definition })
+    let (donor, text_definition) = crate::graveyard_order_v1::batch_text_top(
+        state,
+        ObjectLinkV4 {
+            object: host.source,
+            zone_change_count: host.zone_change_count,
+        },
+        live.controller,
+    )
+    .unwrap_or_else(|| graveyard_text_top(state, live.controller))?;
+    Some(FullTextV1 {
+        host,
+        donor,
+        text_definition,
+    })
 }
 
 pub(crate) fn graveyard_text_top(
@@ -74,7 +82,10 @@ pub(crate) fn graveyard_text_top(
             continue;
         }
         return definition.types.contains(&CardType::Creature).then_some((
-            ObjectLinkV4 { object: donor, zone_change_count: card.zone_change_count },
+            ObjectLinkV4 {
+                object: donor,
+                zone_change_count: card.zone_change_count,
+            },
             card.card_def,
         ));
     }
@@ -89,20 +100,23 @@ pub(crate) fn active_definition(state: &GameState, source: ObjectId) -> Option<&
 
 /// Select the donated mana recipe where its exact printed action can use
 /// the ordinary physical-host tap and payment paths.
-pub(crate) fn mana_definition(
-    state: &GameState,
-    source: ObjectId,
-) -> Option<&'static CardDef> {
+pub(crate) fn mana_definition(state: &GameState, source: ObjectId) -> Option<&'static CardDef> {
     let live = state.objects.try_get(source)?;
     let physical = CARD_DEFS.get(usize::from(live.card_def))?;
-    Some(mana_text(state, source)
-        .map(FullTextV1::definition)
-        .unwrap_or(physical))
+    Some(
+        mana_text(state, source)
+            .map(FullTextV1::definition)
+            .unwrap_or(physical),
+    )
 }
 
 pub(crate) fn mana_text(state: &GameState, source: ObjectId) -> Option<FullTextV1> {
-    active_text(state, source)
-        .filter(|text| matches!(text.definition().name, "Birds of Paradise" | "Wall of Roots"))
+    active_text(state, source).filter(|text| {
+        matches!(
+            text.definition().name,
+            "Birds of Paradise" | "Wall of Roots"
+        )
+    })
 }
 
 pub(crate) fn active_text(state: &GameState, source: ObjectId) -> Option<FullTextV1> {
@@ -156,9 +170,11 @@ impl FullTextV1 {
 
     fn restricted_use(self, state: &GameState, kind: AbilityKindV4, index: u8) -> bool {
         let used = restricted_use_event(state, self.host, self.donor, kind, index);
-        state.engine.event_history.scan_for_v1(&[
-            crate::event_history_v1::EventKindV1::FullTextRestrictedUseV1,
-        ]).contains(&used)
+        state
+            .engine
+            .event_history
+            .scan_for_v1(&[crate::event_history_v1::EventKindV1::FullTextRestrictedUseV1])
+            .contains(&used)
     }
 
     pub(crate) fn activation_allowed(
@@ -171,7 +187,10 @@ impl FullTextV1 {
             return true;
         };
         p2c::statics::activation_allowed(
-            state, self.host.source, self.definition().name, usize::from(printed),
+            state,
+            self.host.source,
+            self.definition().name,
+            usize::from(printed),
         ) && (ability.max_activations_per_turn.is_none()
             || !self.restricted_use(state, AbilityKindV4::Activated, printed))
     }
@@ -243,7 +262,9 @@ impl FullTextV1 {
 }
 
 fn first_slot_after_equipment(physical_definition: u16) -> u8 {
-    let printed = CARD_DEFS[usize::from(physical_definition)].activated_abilities.len();
+    let printed = CARD_DEFS[usize::from(physical_definition)]
+        .activated_abilities
+        .len();
     u8::try_from(printed.saturating_add(2)).unwrap_or(u8::MAX)
 }
 
@@ -255,7 +276,10 @@ fn restricted_use_event(
     index: u8,
 ) -> CommittedEvent {
     CommittedEvent::FullTextRestrictedUseV1 {
-        host: ObjectLinkV4 { object: host.source, zone_change_count: host.zone_change_count },
+        host: ObjectLinkV4 {
+            object: host.source,
+            zone_change_count: host.zone_change_count,
+        },
         donor,
         turn: state.turn_key_v1(),
         active: state.active_player,
@@ -279,17 +303,22 @@ impl DonatedTriggerKindV1 {
     fn entry(text: FullTextV1, entry: u64, marker: Option<u64>) -> Option<Self> {
         match (text.definition().name, marker) {
             (p2c::PALINCHRON, None) => Some(Self::PalinchronEntered { entry }),
-            (p2c::PALINCHRON, Some(marker)) => Some(Self::PalinchronEnteredAfterBatch { entry, marker }),
+            (p2c::PALINCHRON, Some(marker)) => {
+                Some(Self::PalinchronEnteredAfterBatch { entry, marker })
+            }
             (p2c::KARMIC_GUIDE, None) => Some(Self::KarmicGuideEntered { entry }),
-            (p2c::KARMIC_GUIDE, Some(marker)) => Some(Self::KarmicGuideEnteredAfterBatch { entry, marker }),
+            (p2c::KARMIC_GUIDE, Some(marker)) => {
+                Some(Self::KarmicGuideEnteredAfterBatch { entry, marker })
+            }
             _ => None,
         }
     }
 
     fn target_spec(self) -> TargetSpec {
         match self {
-            Self::KarmicGuideEntered { .. } | Self::KarmicGuideEnteredAfterBatch { .. } =>
-                TargetSpec::CreatureCardInOwnGraveyard,
+            Self::KarmicGuideEntered { .. } | Self::KarmicGuideEnteredAfterBatch { .. } => {
+                TargetSpec::CreatureCardInOwnGraveyard
+            }
             _ => TargetSpec::None,
         }
     }
@@ -358,8 +387,12 @@ impl DonatedTriggerCaptureV1 {
 
 fn entry_source(state: &GameState, index: usize) -> Option<ObjectId> {
     match state.engine.event_history.get(index)? {
-        CommittedEvent::ZoneChange { object, from, to: Zone::Battlefield, .. }
-            if *from != Zone::Battlefield => Some(*object),
+        CommittedEvent::ZoneChange {
+            object,
+            from,
+            to: Zone::Battlefield,
+            ..
+        } if *from != Zone::Battlefield => Some(*object),
         CommittedEvent::CreateToken { object, .. } => Some(*object),
         _ => None,
     }
@@ -373,10 +406,16 @@ pub(crate) fn record_control_gained(state: &mut GameState, object: ObjectId) {
         return;
     }
     let live = state.objects.get(object);
-    state.engine.event_history.push(CommittedEvent::OrderedGraveyardControlGainedV1 {
-        permanent: ObjectLinkV4 { object, zone_change_count: live.zone_change_count },
-        controller: live.controller,
-    });
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::OrderedGraveyardControlGainedV1 {
+            permanent: ObjectLinkV4 {
+                object,
+                zone_change_count: live.zone_change_count,
+            },
+            controller: live.controller,
+        });
 }
 
 fn echo_custody(state: &GameState, host: AbilitySourceContractV4, upkeep: u64) -> Option<u64> {
@@ -386,21 +425,30 @@ fn echo_custody(state: &GameState, host: AbilitySourceContractV4, upkeep: u64) -
     if history.get(upkeep) != Some(&CommittedEvent::UpkeepBegan { player }) {
         return None;
     }
-    let link = ObjectLinkV4 { object: host.source, zone_change_count: host.zone_change_count };
+    let link = ObjectLinkV4 {
+        object: host.source,
+        zone_change_count: host.zone_change_count,
+    };
     for (index, event) in history[..upkeep].iter().enumerate().rev() {
         match *event {
             CommittedEvent::UpkeepBegan { player: previous } if previous == player => break,
-            CommittedEvent::OrderedGraveyardControlGainedV1 { permanent, controller }
-                if permanent.object == host.source =>
-            {
+            CommittedEvent::OrderedGraveyardControlGainedV1 {
+                permanent,
+                controller,
+            } if permanent.object == host.source => {
                 return (permanent == link && controller == player).then_some(index as u64);
             }
-            CommittedEvent::ZoneChange { object, from, to, .. } if object == host.source => {
+            CommittedEvent::ZoneChange {
+                object, from, to, ..
+            } if object == host.source => {
                 return (from != Zone::Battlefield && to == Zone::Battlefield)
                     .then_some(index as u64);
             }
-            CommittedEvent::CreateToken { object, controller, .. } if object == host.source => {
-                return (host.zone_change_count == 0 && controller == player).then_some(index as u64);
+            CommittedEvent::CreateToken {
+                object, controller, ..
+            } if object == host.source => {
+                return (host.zone_change_count == 0 && controller == player)
+                    .then_some(index as u64);
             }
             _ => {}
         }
@@ -421,10 +469,16 @@ pub(crate) fn queue_upkeep_triggers(
         let Some(text) = active_text(state, source).filter(|text| {
             text.definition().name == p2c::KARMIC_GUIDE
                 && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
-        }) else { continue };
+        }) else {
+            continue;
+        };
         if let Some(control) = echo_custody(state, text.host, upkeep) {
-            queue_donated_trigger(state, text, DonatedTriggerKindV1::KarmicGuideEcho { upkeep, control })
-                .map_err(|_| source)?;
+            queue_donated_trigger(
+                state,
+                text,
+                DonatedTriggerKindV1::KarmicGuideEcho { upkeep, control },
+            )
+            .map_err(|_| source)?;
         }
     }
     Ok(())
@@ -438,9 +492,12 @@ fn queue_donated_trigger(
     let captured = text.freeze_trigger(state, kind)?;
     let capture = u64::try_from(state.engine.event_history.len())
         .map_err(|_| "full-text trigger capture exceeds u64")?;
-    state.engine.event_history.push(CommittedEvent::FullTextTriggerCapturedV1 {
-        capture: Box::new(captured),
-    });
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::FullTextTriggerCapturedV1 {
+            capture: Box::new(captured),
+        });
     let target = kind.target_spec();
     crate::eternal_premodern_p1a_v1::queue_trigger(
         state,
@@ -471,7 +528,9 @@ pub(crate) fn record_entry_trigger(state: &mut GameState, index: usize) -> Resul
         return Ok(());
     }
     let entry = u64::try_from(index).map_err(|_| source)?;
-    let Some(kind) = DonatedTriggerKindV1::entry(text, entry, None) else { return Ok(()) };
+    let Some(kind) = DonatedTriggerKindV1::entry(text, entry, None) else {
+        return Ok(());
+    };
     if crate::graveyard_order_v1::defer_donated_entry(
         state,
         CommittedEvent::FullTextBatchEntryV1 {
@@ -480,7 +539,9 @@ pub(crate) fn record_entry_trigger(state: &mut GameState, index: usize) -> Resul
             donor: text.donor,
             text_definition: text.text_definition,
         },
-    ).map_err(|_| source)? {
+    )
+    .map_err(|_| source)?
+    {
         return Ok(());
     }
     queue_donated_trigger(state, text, kind).map_err(|_| source)
@@ -498,13 +559,24 @@ pub(crate) fn record_batch_entry_trigger(state: &mut GameState, marker: u64) -> 
 
 fn batch_entry(state: &GameState, marker: u64) -> Result<(u64, FullTextV1), String> {
     let position = usize::try_from(marker).map_err(|_| "batch entry marker index overflow")?;
-    let Some(&CommittedEvent::FullTextBatchEntryV1 { entry_history_index: entry, host, donor, text_definition }) =
-        state.engine.event_history.get(position)
+    let Some(&CommittedEvent::FullTextBatchEntryV1 {
+        entry_history_index: entry,
+        host,
+        donor,
+        text_definition,
+    }) = state.engine.event_history.get(position)
     else {
         return Err("donated entry lost its original native batch marker".into());
     };
     validate_entry_adjacency(state, entry, marker, host)?;
-    Ok((entry, FullTextV1 { host, donor, text_definition }))
+    Ok((
+        entry,
+        FullTextV1 {
+            host,
+            donor,
+            text_definition,
+        },
+    ))
 }
 
 fn validate_entry_adjacency(
@@ -532,7 +604,11 @@ pub(crate) fn queue_devourer_trigger(
     observed_power: i32,
 ) -> Result<(), String> {
     let text = active_text(state, source).ok_or("Devourer trigger lost its text donor")?;
-    queue_donated_trigger(state, text, DonatedTriggerKindV1::DevourerPower { observed_power })
+    queue_donated_trigger(
+        state,
+        text,
+        DonatedTriggerKindV1::DevourerPower { observed_power },
+    )
 }
 
 pub(crate) fn is_devourer_trigger(state: &GameState, source: ObjectId, effect: &EffectOp) -> bool {
@@ -554,7 +630,10 @@ fn trigger_index(effect: &EffectOp) -> Option<u64> {
 }
 
 pub(crate) fn is_donated_trigger(item: &StackItem) -> bool {
-    item.inline_effect.as_ref().and_then(trigger_index).is_some()
+    item.inline_effect
+        .as_ref()
+        .and_then(trigger_index)
+        .is_some()
 }
 
 fn trigger_record(state: &GameState, index: u64) -> Result<DonatedTriggerCaptureV1, String> {
@@ -563,8 +642,9 @@ fn trigger_record(state: &GameState, index: u64) -> Result<DonatedTriggerCapture
         Some(CommittedEvent::FullTextTriggerCapturedV1 { capture }) => {
             match capture.kind {
                 DonatedTriggerKindV1::PalinchronEntered { entry }
-                | DonatedTriggerKindV1::KarmicGuideEntered { entry } =>
-                    validate_entry_adjacency(state, entry, index, capture.host)?,
+                | DonatedTriggerKindV1::KarmicGuideEntered { entry } => {
+                    validate_entry_adjacency(state, entry, index, capture.host)?
+                }
                 DonatedTriggerKindV1::PalinchronEnteredAfterBatch { entry, marker }
                 | DonatedTriggerKindV1::KarmicGuideEnteredAfterBatch { entry, marker } => {
                     let (original_entry, text) = batch_entry(state, marker)?;
@@ -595,7 +675,10 @@ fn trigger_record(state: &GameState, index: u64) -> Result<DonatedTriggerCapture
     }
 }
 
-pub(crate) fn trigger_target_spec(state: &GameState, effect: &EffectOp) -> Result<Option<TargetSpec>, String> {
+pub(crate) fn trigger_target_spec(
+    state: &GameState,
+    effect: &EffectOp,
+) -> Result<Option<TargetSpec>, String> {
     trigger_index(effect)
         .map(|index| trigger_record(state, index).map(|capture| capture.kind.target_spec()))
         .transpose()
@@ -630,11 +713,15 @@ pub(crate) fn trigger_program(
         || item.kicked
         || item.mode_chosen != 0
         || !item.discarded.is_empty()
-        || !CARD_DEFS.get(usize::from(captured.host.card_def)).is_some_and(owns_definition)
+        || !CARD_DEFS
+            .get(usize::from(captured.host.card_def))
+            .is_some_and(owns_definition)
     {
         return Err("full-text stack trigger changed its native producer".into());
     }
-    captured.program(state).map(|program| Some((program, target)))
+    captured
+        .program(state)
+        .map(|program| Some((program, target)))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -667,8 +754,12 @@ impl FullTextAbilityV1 {
             Self::RetainedDiscard => true,
             Self::Printed(_) => matches!(
                 definition.name,
-                p2c::PALINCHRON | p2c::PHYREXIAN_DEVOURER | p2c::TRISKELION | p2c::BATTLEFIELD_SCROUNGER
-                    | "Hermit Druid" | "Psychatog"
+                p2c::PALINCHRON
+                    | p2c::PHYREXIAN_DEVOURER
+                    | p2c::TRISKELION
+                    | p2c::BATTLEFIELD_SCROUNGER
+                    | "Hermit Druid"
+                    | "Psychatog"
             ),
         }
     }
@@ -743,7 +834,8 @@ impl FrozenFullTextActivationV1 {
         }))
     }
     pub(crate) fn action_index(self) -> u8 {
-        self.selector.action_index(self.first_donated_slot)
+        self.selector
+            .action_index(self.first_donated_slot)
             .expect("frozen full-text selector has a native action slot")
     }
     pub(crate) fn host(self) -> AbilitySourceContractV4 {
@@ -797,7 +889,8 @@ impl FullTextActivationRecordV1 {
         if !record.selector.owns_payment(text.definition()) {
             return Err("full-text activation has no exact native payment owner".into());
         }
-        let current = text.freeze_activated(state, record.selector)
+        let current = text
+            .freeze_activated(state, record.selector)
             .map_err(str::to_owned)?;
         if current.stack_record() != self
             || !text.activation_allowed(state, record.selector, current.ability())
@@ -808,15 +901,19 @@ impl FullTextActivationRecordV1 {
     }
 
     pub(crate) fn record_restricted_use(self, state: &mut GameState, ability: ActivatedAbilityDef) {
-        if let Some(record) = self.0.filter(|_| ability.max_activations_per_turn.is_some()) {
-            let FullTextAbilityV1::Printed(printed) = record.selector else { return };
+        if let Some(record) = self
+            .0
+            .filter(|_| ability.max_activations_per_turn.is_some())
+        {
+            let FullTextAbilityV1::Printed(printed) = record.selector else {
+                return;
+            };
             let donor = ObjectLinkV4 {
                 object: record.donor.source,
                 zone_change_count: record.donor.zone_change_count,
             };
-            let event = restricted_use_event(
-                state, record.host, donor, AbilityKindV4::Activated, printed,
-            );
+            let event =
+                restricted_use_event(state, record.host, donor, AbilityKindV4::Activated, printed);
             state.engine.event_history.push(event);
         }
     }
@@ -889,7 +986,11 @@ pub(crate) fn public_producers(
     if let Some(pending) = &state.engine.pending_activation {
         if let Some(record) = pending.full_text_activation_v1.0 {
             crate::engine::validate_pending_activation(state, pending)?;
-            rows.push(activation_producer(record, Stage::ActivationAnnouncing, pending.ability_index));
+            rows.push(activation_producer(
+                record,
+                Stage::ActivationAnnouncing,
+                pending.ability_index,
+            ));
         }
     }
     for (ordinal, pending) in state.engine.pending_triggers.iter().enumerate() {
@@ -920,11 +1021,15 @@ fn activation_producer(
     stage: crate::premodern_ordered_public_v1::ProducerStageV1,
     action_index: u8,
 ) -> crate::premodern_ordered_public_v1::FullTextProducerV1 {
-    use crate::premodern_ordered_public_v1::{captured_card, FullTextProducerV1, FullTextProgramV1};
+    use crate::premodern_ordered_public_v1::{
+        captured_card, FullTextProducerV1, FullTextProgramV1,
+    };
 
     let program = match record.selector {
         FullTextAbilityV1::RetainedDiscard => FullTextProgramV1::RetainedDiscard,
-        FullTextAbilityV1::Printed(printed_index) => FullTextProgramV1::DonatedActivation { printed_index },
+        FullTextAbilityV1::Printed(printed_index) => {
+            FullTextProgramV1::DonatedActivation { printed_index }
+        }
     };
     FullTextProducerV1 {
         stage,
@@ -939,15 +1044,19 @@ fn trigger_producer(
     record: DonatedTriggerCaptureV1,
     stage: crate::premodern_ordered_public_v1::ProducerStageV1,
 ) -> crate::premodern_ordered_public_v1::FullTextProducerV1 {
-    use crate::premodern_ordered_public_v1::{captured_card, FullTextProducerV1, FullTextProgramV1};
+    use crate::premodern_ordered_public_v1::{
+        captured_card, FullTextProducerV1, FullTextProgramV1,
+    };
 
     let program = match record.kind {
         DonatedTriggerKindV1::PalinchronEntered { .. }
-        | DonatedTriggerKindV1::PalinchronEnteredAfterBatch { .. } =>
-            FullTextProgramV1::PalinchronUntapLands,
+        | DonatedTriggerKindV1::PalinchronEnteredAfterBatch { .. } => {
+            FullTextProgramV1::PalinchronUntapLands
+        }
         DonatedTriggerKindV1::KarmicGuideEntered { .. }
-        | DonatedTriggerKindV1::KarmicGuideEnteredAfterBatch { .. } =>
-            FullTextProgramV1::KarmicGuideReturnCreature,
+        | DonatedTriggerKindV1::KarmicGuideEnteredAfterBatch { .. } => {
+            FullTextProgramV1::KarmicGuideReturnCreature
+        }
         DonatedTriggerKindV1::KarmicGuideEcho { .. } => FullTextProgramV1::KarmicGuideEcho,
         DonatedTriggerKindV1::DevourerPower { .. } => FullTextProgramV1::DevourerSacrifice,
     };
@@ -966,27 +1075,31 @@ fn stack_producer(
     stage: crate::premodern_ordered_public_v1::ProducerStageV1,
 ) -> Result<crate::premodern_ordered_public_v1::FullTextProducerV1, String> {
     if let Some(record) = item.v4.full_text_activation_v1.0 {
-        let index = item.v4.activated_ability_index.ok_or("full-text stack ability index absent")?;
+        let index = item
+            .v4
+            .activated_ability_index
+            .ok_or("full-text stack ability index absent")?;
         return Ok(activation_producer(record, stage, index));
     }
-    let index = item.inline_effect.as_ref().and_then(trigger_index)
+    let index = item
+        .inline_effect
+        .as_ref()
+        .and_then(trigger_index)
         .ok_or("full-text stack trigger capture absent")?;
     Ok(trigger_producer(trigger_record(state, index)?, stage))
 }
 
 pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
     crate::graveyard_order_v1::refuse_legacy(state)?;
-    if state
-        .engine
-        .event_history
-        .has_any(&[
-            crate::event_history_v1::EventKindV1::FullTextTriggerCapturedV1,
-            crate::event_history_v1::EventKindV1::FullTextBatchEntryV1,
-            crate::event_history_v1::EventKindV1::FullTextRestrictedUseV1,
-            crate::event_history_v1::EventKindV1::OrderedGraveyardControlGainedV1,
-        ])
-    {
-        return Err("full-text trigger producers require a complete public consumer successor".into());
+    if state.engine.event_history.has_any(&[
+        crate::event_history_v1::EventKindV1::FullTextTriggerCapturedV1,
+        crate::event_history_v1::EventKindV1::FullTextBatchEntryV1,
+        crate::event_history_v1::EventKindV1::FullTextRestrictedUseV1,
+        crate::event_history_v1::EventKindV1::OrderedGraveyardControlGainedV1,
+    ]) {
+        return Err(
+            "full-text trigger producers require a complete public consumer successor".into(),
+        );
     }
     if cfg!(feature = "eternal-fixtures")
         && state
@@ -996,11 +1109,15 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
             .any(|source| {
                 state.objects.try_get(source).is_some_and(|object| {
                     object.v4.face_down_v1.is_none()
-                        && CARD_DEFS.get(usize::from(object.card_def)).is_some_and(owns_definition)
+                        && CARD_DEFS
+                            .get(usize::from(object.card_def))
+                            .is_some_and(owns_definition)
                 })
             })
     {
-        return Err("full-text characteristics require a complete public consumer successor".into());
+        return Err(
+            "full-text characteristics require a complete public consumer successor".into(),
+        );
     }
     let selected = state
         .stack
