@@ -322,7 +322,7 @@ pub(crate) fn end(
             recipient: Some((controller, before)),
         } => {
             let mut placements =
-                history[dispatched + 1..at]
+                state.engine.event_history[dispatched + 1..at]
                     .iter()
                     .enumerate()
                     .filter_map(|(offset, event)| match event {
