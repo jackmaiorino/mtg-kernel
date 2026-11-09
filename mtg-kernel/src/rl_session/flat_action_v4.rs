@@ -57,33 +57,44 @@ pub(super) fn census_hidden_source_conflicts_v1(
 ) -> bool {
     // A frozen source can survive its move into a hidden zone. Relabeling
     // that physical object is unsafe even after its generation has advanced.
-    retained_source_conflicts(state, |id, _| changed.contains(&id))
+    retained_source_conflicts(state, |id, _| changed.contains(&id), |_, _| false)
 }
 
 #[cfg(feature = "limited-fdn-fixtures")]
 pub(super) fn limited_public_source_pins_v3(
     state: &crate::state::GameState,
     viewer: crate::ids::PlayerId,
+    sampled_history: &crate::sampled_history_v1::CustodyV1,
 ) -> Result<Vec<ObjectId>, String> {
     let projection = std::cell::OnceCell::new();
     let pins = std::cell::RefCell::new(Vec::new());
-    let conflict = retained_source_conflicts(state, |id, generation| {
-        let projection = projection.get_or_init(|| {
-            crate::infoset_v1::projection::project_v2(
-                state,
-                state.observation_journal.notes(),
-                viewer,
-            )
-        });
-        let continuous = projection.tracked(id)
-            && matches!((projection.current_span(id), projection.span_of(id, generation)),
-                (Some(current), Some(observed)) if current.start_pos != u32::MAX
-                    && generation >= current.start_gen && std::ptr::eq(current, observed));
-        if continuous {
-            pins.borrow_mut().push(id);
-        }
-        !continuous
-    });
+    let conflict = retained_source_conflicts(
+        state,
+        |id, generation| {
+            let projection = projection.get_or_init(|| {
+                crate::infoset_v1::projection::project_v2(
+                    state,
+                    state.observation_journal.notes(),
+                    viewer,
+                )
+            });
+            let continuous = projection.tracked(id)
+                && matches!((projection.current_span(id), projection.span_of(id, generation)),
+                    (Some(current), Some(observed)) if current.start_pos != u32::MAX
+                        && generation >= current.start_gen && std::ptr::eq(current, observed));
+            if continuous {
+                pins.borrow_mut().push(id);
+            }
+            !continuous
+        },
+        |item, source| {
+            // Named reveals and known library positions retain their usual
+            // constraints. An old ability does not pin a hidden copy to a slot.
+            state.objects.try_get(source.source).is_some_and(|live| {
+                live.zone == Zone::Library || (live.zone == Zone::Hand && live.owner != viewer)
+            }) && sampled_history.ability_source_face(state, item, *source).is_some()
+        },
+    );
     if conflict {
         return Err("source lacks continuous public provenance".into());
     }
@@ -137,7 +148,7 @@ fn closed_list_v3_source_guard_ignores_a_hidden_alias_after_a_visible_departure(
         let mut continuous = state.clone();
         keep_source(&mut continuous);
         assert_eq!(
-            limited_public_source_pins_v3(&continuous, viewer).unwrap(),
+            limited_public_source_pins_v3(&continuous, viewer, &Default::default()).unwrap(),
             vec![source]
         );
         propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
@@ -173,7 +184,7 @@ fn closed_list_v3_source_guard_ignores_a_hidden_alias_after_a_visible_departure(
         ));
         for world in [&a, &b] {
             assert_eq!(
-                limited_public_source_pins_v3(world, viewer),
+                limited_public_source_pins_v3(world, viewer, &Default::default()),
                 Err("source lacks continuous public provenance".into())
             );
         }
@@ -183,18 +194,24 @@ fn closed_list_v3_source_guard_ignores_a_hidden_alias_after_a_visible_departure(
 fn retained_source_conflicts(
     state: &crate::state::GameState,
     same: impl Fn(ObjectId, u32) -> bool,
+    release_primary: impl Fn(&crate::state::StackItem, &crate::state::AbilitySourceContractV4) -> bool,
 ) -> bool {
+    let attachment = |source: &crate::state::AbilitySourceContractV4| {
+        source
+            .attached_to
+            .is_some_and(|x| same(x.object, x.zone_change_count))
+    };
     let ability = |source: &crate::state::AbilitySourceContractV4| {
-        same(source.source, source.zone_change_count)
-            || source
-                .attached_to
-                .is_some_and(|x| same(x.object, x.zone_change_count))
+        same(source.source, source.zone_change_count) || attachment(source)
     };
     let stack = |item: &crate::state::StackItem| {
         item.v4
             .ability_source_contract
             .as_ref()
-            .is_some_and(&ability)
+            .is_some_and(|source| {
+                (!release_primary(item, source) && same(source.source, source.zone_change_count))
+                    || attachment(source)
+            })
             || item.v4.granted_by.as_ref().is_some_and(&ability)
             || item
                 .v4

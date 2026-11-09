@@ -10,6 +10,9 @@ use crate::{
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+mod ability_sources;
+use ability_sources::AbilitySourceProofV1;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ProofV1 {
     at: usize,
@@ -20,7 +23,11 @@ struct ProofV1 {
 /// Private constructors and skipped serialization prevent raw snapshots from
 /// manufacturing a historical exception. Opaque owner snapshots retain it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct CustodyV1(Arc<Vec<ProofV1>>, Arc<Vec<TargetProofV1>>);
+pub(crate) struct CustodyV1(
+    Arc<Vec<ProofV1>>,
+    Arc<Vec<TargetProofV1>>,
+    Arc<Vec<AbilitySourceProofV1>>,
+);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct TargetProofV1 {
@@ -38,6 +45,10 @@ impl CustodyV1 {
             "sampled-native-history/v1".hash(h);
             self.0.hash(h);
             self.1.hash(h);
+        }
+        if !self.2.is_empty() {
+            "sampled-active-ability-source/v1".hash(h);
+            self.2.hash(h);
         }
     }
 }
@@ -157,7 +168,11 @@ pub(crate) fn capture(state: &GameState) -> Result<CustodyV1, String> {
             }
         }
     }
-    Ok(CustodyV1(Arc::new(proofs), Arc::new(targets)))
+    Ok(CustodyV1(
+        Arc::new(proofs),
+        Arc::new(targets),
+        Arc::new(ability_sources::capture(state)?),
+    ))
 }
 
 /// This is a historical face only. It does not make a stale incarnation legal

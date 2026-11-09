@@ -14086,14 +14086,19 @@ fn frozen_stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardSt
                 zone_change_count,
                 card_def,
             ));
-    if !same_card || historical.owner != owner {
+    let sampled_face = item.v4.ability_source_contract.and_then(|contract| {
+        state.sampled_history_v1.ability_source_face(state, item, contract)
+    });
+    if (!same_card && sampled_face.is_none()) || historical.owner != owner {
         return Err(RlContractError(
             "ability stack source changed stable arena identity".to_string(),
         ));
     }
     Ok(CardStableRefV1 {
         arena_id: item.source.0,
-        card_db_id: projected_card_def(state, item.source, zone_change_count),
+        card_db_id: sampled_face.unwrap_or_else(|| {
+            projected_card_def(state, item.source, zone_change_count)
+        }),
         owner: owner.into(),
         controller: controller.into(),
         zone,
