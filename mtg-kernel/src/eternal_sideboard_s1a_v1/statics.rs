@@ -249,12 +249,14 @@ pub(crate) fn islands_controlled_by(state: &GameState, player: PlayerId) -> u8 {
 
 /// Lavinia, Azorius Renegade: "Each opponent can't cast noncreature spells
 /// with mana value greater than the number of lands that player controls."
-/// Whether `player` may not cast `card` by `method` (X is judged as 0).
+/// Whether `player` may not cast the selected spell form with announced X.
+/// Alternative costs and additional payments do not change mana value.
 pub(crate) fn cast_prohibited(
     state: &GameState,
     player: PlayerId,
     card: ObjectId,
     method: CastMethodV4,
+    x: u16,
 ) -> bool {
     if active_controlled_by(state, LAVINIA, player.opponent()).is_empty() {
         return false;
@@ -266,19 +268,29 @@ pub(crate) fn cast_prohibited(
     else {
         return false;
     };
-    // A split card's half and an Adventure are judged by their own cost.
-    let cost = match (method, def.adventure.as_ref()) {
-        (CastMethodV4::Omen, Some(half)) => half.cost,
-        _ => def.cost,
+    let Ok(types) = crate::source_type_hexproof_v1::spell_types(def, method) else {
+        return true;
     };
-    let types = match (method, def.adventure.as_ref()) {
-        (CastMethodV4::Omen, Some(half)) => half.types,
-        _ => def.types,
-    };
-    if types.contains(&CardType::Creature) {
+    if types.contains(CardType::Creature) {
         return false;
     }
-    let mana_value = usize::from(cost.generic) + cost.pips.len();
+    // Overload uses the second-form machinery, but its printed mana cost
+    // stays unchanged. Genuine split halves and Omen/Adventure use their own.
+    let (base, x_count) = if crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name) {
+        (usize::from(def.mana_value), def.cost.x_count)
+    } else if let Some(value) = crate::standard_cards_v1::room_cast_mana_value(def, method) {
+        (usize::from(value), 0)
+    } else if method == CastMethodV4::Omen {
+        let Some((cost, _)) = def.omen_spell_form() else {
+            return true;
+        };
+        (usize::from(cost.generic) + cost.pips.len(), cost.x_count)
+    } else if crate::eternal_premodern_p1a_v1::statics::split_card(def.name) {
+        (usize::from(def.cost.generic) + def.cost.pips.len(), def.cost.x_count)
+    } else {
+        (usize::from(def.mana_value), def.cost.x_count)
+    };
+    let mana_value = base + usize::from(x) * usize::from(x_count);
     mana_value > lands_controlled_by(state, player)
 }
 

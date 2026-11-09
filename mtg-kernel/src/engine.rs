@@ -10202,11 +10202,6 @@ fn is_castable_now(
     if crate::eternal_legacy_e7a_v1::cast_prohibited(state, player, id) {
         return false;
     }
-    // Lavinia, Azorius Renegade (eternal wave S1a).
-    #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_sideboard_s1a_v1::statics::cast_prohibited(state, player, id, cast_method) {
-        return false;
-    }
     // Teferi, Time Raveler: an opponent casts spells only at sorcery speed.
     #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_legacy_e8a_v1::statics::sorcery_timing_only(state, player)

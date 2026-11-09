@@ -429,8 +429,12 @@ New, each built once in the first wave that needs it:
 
   Partial: Surgical Extraction remains unqualified for ordinary Full-deck admission while
   its native choice, restore, disclosure and transport checks are pending. Frozen infoset
-  and search consumers refuse its active search. Lavinia judges X as 0 and does not restrict casts made
-  during resolution. Leyline of the Void's opening action goes on the stack during the
+  and search consumers refuse its active search. Lavinia's source repair checks selected X and spell
+  characteristics in the shared payment quote, including casts made during resolution. Its paid
+  both-seat X, Bestow, split, overload, Room, cascade and graveyard-cast checks remain unqualified;
+  Lavinia stays Partial. Mana value ignores alternative payments and includes announced X, as stated
+  in the [Ravnica Remastered rulings](https://media.wizards.com/2023/downloads/RVR_Release_Notes_XrN0zlJaFn/EN_MTGRVR_ReleaseNotes_20231120.pdf).
+  Leyline of the Void's opening action goes on the stack during the
   first upkeep. The opening action belongs before the first turn under rule 103.6.
   [Comprehensive Rules](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
 

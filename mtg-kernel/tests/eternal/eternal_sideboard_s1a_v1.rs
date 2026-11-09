@@ -15,6 +15,9 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
+#[path = "eternal_sideboard_s1a_v1/lavinia.rs"]
+mod lavinia;
+
 const S1A_CARDS: [&str; 24] = [
     "Brotherhood's End",
     "Carpet of Flowers",
