@@ -94,14 +94,15 @@ The checkpoint record must equal the reference's outside the container's own
 path, and the run driver's continuation read of the new checkpoint must bind
 the update's inputs and reach the reference state.
 
-Episode files embed absolute paths
-([#475](https://github.com/jackmaiorino/mtg-kernel/issues/475)), so trajectory
-pins differ between roots. A batch's `games_sha256` hashes each episode's id,
-seed, behavior state, deck configurations, decision rows and terminal instead,
-and the manifest's `identity_sha256` covers every batch identity. A fixture is
-used where it was generated; readers refuse a moved one. To move it, generate
-it again with the recorded options: the same build gives the same
-`identity_sha256`, which the tests check across two roots.
+Ordinary episode files embed absolute paths
+([#475](https://github.com/jackmaiorino/mtg-kernel/issues/475); #590's
+content-addressed export packages native run chains, not this layout), so
+trajectory pins differ between roots. A batch's `games_sha256` hashes each
+episode's id, seed, behavior state, deck configurations, decision rows and
+terminal instead, and the manifest's `identity_sha256` covers every batch
+identity. A fixture is used where it was generated; readers refuse a moved
+one. To move it, generate it again with the recorded options: the same build
+gives the same `identity_sha256`, which the tests check across two roots.
 
 ## Forward counts
 
