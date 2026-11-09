@@ -936,7 +936,12 @@ fn thornscape_pays_each_kicker_separately_and_only_triggers_what_it_paid() {
                 Decision::ChooseEffectOption { source, option_count: 2, .. } if source == battlemage
             ));
             let observation = observe_policy_v5(&state, &surface, P0, 0, 0, 0, 1).unwrap();
-            let visible = observation.projection.surface.engine_context.pending_cast.unwrap();
+            let visible = observation
+                .projection
+                .surface
+                .engine_context
+                .pending_cast
+                .unwrap();
             assert_eq!(visible.kicked, Some(red));
             assert_eq!(visible.thornscape_white_kicker_v1, None);
             act(&mut state, Action::ChooseEffectOption(u16::from(white)));
@@ -944,7 +949,12 @@ fn thornscape_pays_each_kicker_separately_and_only_triggers_what_it_paid() {
             {
                 assert!(free);
                 let observation = observe_policy_v5(&state, &surface, P0, 0, 0, 0, 1).unwrap();
-                let visible = observation.projection.surface.engine_context.pending_cast.unwrap();
+                let visible = observation
+                    .projection
+                    .surface
+                    .engine_context
+                    .pending_cast
+                    .unwrap();
                 assert_eq!(visible.thornscape_white_kicker_v1, Some(white));
                 act(&mut state, Action::ChooseEffectOption(1));
             }
@@ -952,11 +962,18 @@ fn thornscape_pays_each_kicker_separately_and_only_triggers_what_it_paid() {
                 panic!("expected priority after Thornscape Battlemage was published");
             };
             let observation = observe_policy_v5(&state, &surface, player, 0, 0, 0, 1).unwrap();
-            let visible = observation.projection.surface.stack.iter().find(|row| {
-                row.source.arena_id == battlemage.0
-            }).unwrap();
+            let visible = observation
+                .projection
+                .surface
+                .stack
+                .iter()
+                .find(|row| row.source.arena_id == battlemage.0)
+                .unwrap();
             let kickers = u8::from(red) | (u8::from(white) << 1);
-            assert_eq!(visible.thornscape_kickers_v1, (kickers != 0).then_some(kickers));
+            assert_eq!(
+                visible.thornscape_kickers_v1,
+                (kickers != 0).then_some(kickers)
+            );
 
             settle_with(&mut state, |_, decision| match decision {
                 Decision::ChooseTargets { legal_targets, .. } => {
@@ -1007,18 +1024,24 @@ fn birchlore_funds_both_thornscape_kickers_through_original_bindings() {
         let spell = put(&mut state, actor, "Thornscape Battlemage", Zone::Hand);
         let opponent = actor.opponent();
         let artifact = put(&mut state, opponent, "Mishra's Bauble", Zone::Battlefield);
-        for (color, pair) in [(ManaColor::R, [elves[0], elves[1]]), (ManaColor::W, [elves[2], elves[3]])] {
+        for (color, pair) in [
+            (ManaColor::R, [elves[0], elves[1]]),
+            (ManaColor::W, [elves[2], elves[3]]),
+        ] {
             let decision = SurfaceDecision::Decision(next(&mut state));
             let rows = legal_action_candidates_v1(&decision, &state).unwrap();
-            let row = rows.iter().find(|row| {
-                matches!(&row.record.semantic,
-                    ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 {
-                        actor: seat, source, mana_choice, cost_targets
-                    } if *seat == actor.into() && source.arena_id == ranger.0
-                        && *mana_choice == color
-                        && cost_targets.iter().map(|card| card.arena_id).eq(pair.map(|id| id.0))
-                )
-            }).expect("actual pair and mana color in the public action menu");
+            let row = rows
+                .iter()
+                .find(|row| {
+                    matches!(&row.record.semantic,
+                        ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 {
+                            actor: seat, source, mana_choice, cost_targets
+                        } if *seat == actor.into() && source.arena_id == ranger.0
+                            && *mana_choice == color
+                            && cost_targets.iter().map(|card| card.arena_id).eq(pair.map(|id| id.0))
+                    )
+                })
+                .expect("actual pair and mana color in the public action menu");
             assert_eq!(
                 row.surface_action,
                 SurfaceAction::Action(Action::ActivateManaAbilityWithTwoCostTargetsV1(
@@ -1034,12 +1057,16 @@ fn birchlore_funds_both_thornscape_kickers_through_original_bindings() {
         assert!(elves.iter().all(|id| state.objects.get(*id).tapped));
 
         act(&mut state, Action::CastSpell(spell));
-        assert!(matches!(next(&mut state), Decision::ChooseKicker { player, spell: source }
-            if player == actor && source == spell));
+        assert!(
+            matches!(next(&mut state), Decision::ChooseKicker { player, spell: source }
+            if player == actor && source == spell)
+        );
         act(&mut state, Action::ChooseKicker(true));
         let white = next(&mut state);
-        assert!(matches!(white, Decision::ChooseEffectOption {player, source, option_count: 2}
-            if player == actor && source == spell));
+        assert!(
+            matches!(white, Decision::ChooseEffectOption {player, source, option_count: 2}
+            if player == actor && source == spell)
+        );
         let checkpoint = serde_json::to_vec(&state).unwrap();
         let mut restored: GameState = serde_json::from_slice(&checkpoint).unwrap();
         assert_eq!(next(&mut restored), white);
@@ -1047,9 +1074,13 @@ fn birchlore_funds_both_thornscape_kickers_through_original_bindings() {
             act(branch, Action::ChooseEffectOption(1));
             assert!(matches!(next(branch), Decision::CastSpellOrPass { .. }));
             let observation = observe_policy_v5(branch, &surface, opponent, 0, 0, 0, 1).unwrap();
-            let visible = observation.projection.surface.stack.iter().find(|row| {
-                row.source.arena_id == spell.0
-            }).unwrap();
+            let visible = observation
+                .projection
+                .surface
+                .stack
+                .iter()
+                .find(|row| row.source.arena_id == spell.0)
+                .unwrap();
             assert_eq!(visible.thornscape_kickers_v1, Some(3));
             assert!(forests.iter().all(|id| branch.objects.get(*id).tapped));
             assert_eq!(mana(branch, actor, ManaColor::R), 0);

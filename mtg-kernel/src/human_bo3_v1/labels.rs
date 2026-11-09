@@ -582,19 +582,27 @@ fn birchlore_pair_has_a_fixed_seat_human_prompt() {
         let mut state = ready_state_for(actor);
         let ranger = put(&mut state, actor, "Birchlore Rangers", Zone::Battlefield);
         let elf = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
-        put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Battlefield);
+        put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
         for object in [ranger, elf] {
             state.objects.get_mut(object).summoning_sick = true;
         }
         let decision = SurfaceDecision::Decision(engine::advance_until_decision(&mut state));
         let rows = legal_action_candidates_v1(&decision, &state).unwrap();
-        let actions = rows.iter().map(|row| row.record.semantic.clone()).collect::<Vec<_>>();
-        let expected = Action::ActivateManaAbilityWithTwoCostTargetsV1(
-            ranger, ManaColor::R, [ranger, elf],
-        );
-        let original = rows.iter().position(|row| {
-            row.surface_action == SurfaceAction::Action(expected.clone())
-        }).unwrap() as u32;
+        let actions = rows
+            .iter()
+            .map(|row| row.record.semantic.clone())
+            .collect::<Vec<_>>();
+        let expected =
+            Action::ActivateManaAbilityWithTwoCostTargetsV1(ranger, ManaColor::R, [ranger, elf]);
+        let original = rows
+            .iter()
+            .position(|row| row.surface_action == SurfaceAction::Action(expected.clone()))
+            .unwrap() as u32;
         let observation =
             observe_policy_v6(&state, &PolicySurfaceV5::new(), actor, 0, 0, 0, 1).unwrap();
         let (prompt, indices) =
@@ -615,7 +623,10 @@ fn birchlore_pair_has_a_fixed_seat_human_prompt() {
         };
         engine::step(&mut state, action).unwrap();
         assert!(state.objects.get(ranger).tapped && state.objects.get(elf).tapped);
-        assert_eq!(state.players[actor.index()].mana_pool[ManaColor::R.pool_index()], 1);
+        assert_eq!(
+            state.players[actor.index()].mana_pool[ManaColor::R.pool_index()],
+            1
+        );
         assert!(state.stack.is_empty());
     }
 }
@@ -673,7 +684,12 @@ fn thornscape_white_kicker_has_a_fixed_seat_human_prompt() {
             Decision::ChooseEffectOption { source, option_count: 2, .. } if source == spell
         ));
         assert_eq!(
-            state.engine.pending_cast.as_ref().unwrap().thornscape_white_kicker_v1,
+            state
+                .engine
+                .pending_cast
+                .as_ref()
+                .unwrap()
+                .thornscape_white_kicker_v1,
             Some(true)
         );
         engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
@@ -2025,7 +2041,8 @@ fn label_common(
                     handles.name(source)?
                 ));
             }
-            let pending = context.pending_effect
+            let pending = context
+                .pending_effect
                 .as_ref()
                 .ok_or(Error::UnsupportedPrompt)?;
             let Some(PendingEffectChoiceSemanticV4::Options {

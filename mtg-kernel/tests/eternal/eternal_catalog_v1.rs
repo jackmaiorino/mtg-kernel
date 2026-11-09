@@ -707,9 +707,12 @@ last actions:
 fn premodern_elves_snapshot_finishes_and_replays_in_both_seats() {
     let decks = snapshot_decks();
     let lookup = |archetype| {
-        decks.iter().find(|deck| deck.format == "premodern" && deck.archetype == archetype)
+        decks
+            .iter()
+            .find(|deck| deck.format == "premodern" && deck.archetype == archetype)
             .unwrap_or_else(|| panic!("missing Premodern snapshot {archetype}"))
-            .deck.clone()
+            .deck
+            .clone()
     };
     let elves = lookup("premodern-elves");
     let goblins = lookup("premodern-goblins");
@@ -731,7 +734,10 @@ fn premodern_elves_snapshot_finishes_and_replays_in_both_seats() {
         let seed = 0x454c_5645_5300 + elves_seat as u64;
         let game = play(decks.clone(), seed, Policy::Ranked);
         let replay = play(decks, seed, Policy::Ranked);
-        assert!(game.casts_by_seat[elves_seat] > 0, "Elves must cast a spell");
+        assert!(
+            game.casts_by_seat[elves_seat] > 0,
+            "Elves must cast a spell"
+        );
         assert_eq!(game.transcript_sha256, replay.transcript_sha256);
     }
 }
