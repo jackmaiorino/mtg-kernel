@@ -1348,7 +1348,47 @@ impl Roles {
         let mut c = Counters::default();
         let mut vl_census = super::value_leaf::Census::default();
         let mut i = 0u64;
+        // SD1 world lifecycle (opt-in; `Fresh` is the formal sampler, draw
+        // for draw). A pinned tree takes the first accepted lawful sample
+        // among its own seed ordinals; none accepted ends the search
+        // incomplete before any simulation.
+        // Only an explicit caller setting selects a diagnostic world; nothing
+        // here reads the environment (`S4A_WORLD` is parsed by the s4a-budget
+        // runner alone), so ordinary collection and deployment stay `Fresh`.
+        let world_mode = options.world.unwrap_or_default();
+        let mut world_receipt = Value::Null;
+        let mut pinned: Option<FastActorSessionV1> = None;
+        let mut world_ok = true;
+        if world_mode == super::world::WorldMode::PinnedV1 {
+            let mut attempts = 0u64;
+            for j in 0..MAX_CONSECUTIVE_REJECTIONS {
+                attempts += 1;
+                let seed = ctx
+                    .seeds
+                    .get(Purpose::Select, "pinned-v1", j, b"pinned-world");
+                if let Ok(w) = sample_world(ctx, ctx.root, seed, &mut sel.sampler) {
+                    pinned = Some(w);
+                    world_receipt = json!({"mode":"pinned-v1","pinned_ordinal":j,
+                        "pinned_seed":seed,"pinned_attempts":attempts});
+                    break;
+                }
+            }
+            if pinned.is_none() {
+                sel.incomplete = true;
+                sel.faults.push(format!(
+                    "pinned-v1: no lawful sample accepted in {attempts} attempts"
+                ));
+                world_receipt = json!({"mode":"pinned-v1","pinned_ordinal":null,
+                    "pinned_attempts":attempts});
+                world_ok = false;
+            }
+        } else if world_mode == super::world::WorldMode::TrueV1 {
+            world_receipt = json!({"mode":"true-v1"});
+        }
         loop {
+            if !world_ok {
+                break;
+            }
             if options.work_limit.is_some_and(|limit| i >= limit) {
                 stop_reason = Some("work_limit");
                 break;
@@ -1376,7 +1416,15 @@ impl Roles {
             i += 1;
             sel.attempted += 1;
             let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Sample);
-            let world = sample_world(ctx, ctx.root, seed, &mut sel.sampler);
+            let world = match (world_mode, &pinned) {
+                (super::world::WorldMode::TrueV1, _) => {
+                    Ok(super::world::fresh_future_world(ctx.root, seed))
+                }
+                (super::world::WorldMode::PinnedV1, Some(base)) => {
+                    Ok(super::world::fresh_future_world(base, seed))
+                }
+                _ => sample_world(ctx, ctx.root, seed, &mut sel.sampler),
+            };
             drop(span);
             let world = match world {
                 Ok(w) => w,
@@ -1548,6 +1596,9 @@ impl Roles {
             }
         }
         sel.extra = json!({"tree":tree_stats(&tree)});
+        if !world_receipt.is_null() {
+            sel.extra["world"] = world_receipt;
+        }
         if let Some(vl) = &options.value_leaf {
             let mut v = vl.json();
             v["census"] = vl_census.json();

@@ -1636,9 +1636,13 @@ fn conflicts_in_scope(
             EventKindV1::BaitTransferAppliedV48,
             EventKindV1::PlusCounterInputV48,
             EventKindV1::DrakusethDamageSourceV76,
+            EventKindV1::NishobaDamageSourceV1,
         ])
         .iter()
         .any(|event| match event {
+            crate::event::CommittedEvent::NishobaDamageSourceV1 { source, .. } => {
+                s.historical_ability(source)
+            }
             crate::event::CommittedEvent::TimeStopJournalV1 { .. } => !matches!(
                 scope,
                 ReferenceScopeV68::EndTurn
@@ -1825,6 +1829,7 @@ fn conflicts_in_scope(
     state.engine.event_log.iter().any(|event| {
         use crate::event::CommittedEvent::*;
         let conflict = match event {
+            NishobaDamageSourceV1 { source, .. } => s.historical_ability(source),
             // Future native owning histories are not sampler permissions.
             // Refuse them until their complete retained-reference walk exists.
             LathrilCombatDamageV1 { .. }

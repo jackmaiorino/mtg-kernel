@@ -847,6 +847,7 @@ pub(crate) use flat_action_v3::{
     shuffle_trigger_source_into_library_v1,
 };
 pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3};
+pub(crate) use flat_action_v4::future_chance_seed_v3;
 #[cfg(test)]
 pub(crate) use flat_action_v4::search_library_fixture_v3;
 pub(crate) use flat_action_v4::V4BoundaryEncodingFailureV1;
