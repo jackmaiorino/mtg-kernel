@@ -297,7 +297,8 @@ mod tests {
                 counter_distribution: None,
                 counter_transfer: None,
             };
-            let baseline = capture_pending_v1(&state, viewer, &[observed.clone()]).unwrap();
+            let baseline =
+                capture_pending_v1(&state, viewer, std::slice::from_ref(&observed)).unwrap();
             assert_eq!(
                 baseline[0].meaning.origin,
                 ProgramOriginV1::PrintedTrigger { trigger_index: 0 }
@@ -306,7 +307,7 @@ mod tests {
                 state.objects.get_mut(hidden).card_def =
                     crate::card_def::card_id_by_name(name).unwrap();
                 assert_eq!(
-                    capture_pending_v1(&state, viewer, &[observed.clone()]).unwrap(),
+                    capture_pending_v1(&state, viewer, std::slice::from_ref(&observed)).unwrap(),
                     baseline
                 );
             }
@@ -404,7 +405,7 @@ mod tests {
                 counter_transfer: None,
                 granted_ability: None,
             };
-            let projected = capture_v1(&state, &[view.clone()]).unwrap();
+            let projected = capture_v1(&state, std::slice::from_ref(&view)).unwrap();
             assert_eq!(
                 projected[0].origin,
                 ProgramOriginV1::PrintedTrigger {
