@@ -338,6 +338,9 @@ pub mod extra_turn_v1;
 mod fdn_raid_v1;
 mod fixed_source_damage_v3;
 pub mod frenzied_public_v1;
+// Unregistered layer-3 source preparation; no card or schema admission.
+pub mod full_text_v1;
+mod graveyard_order_v1;
 pub mod garruk_public_v1;
 mod gorehorn_damage_v1;
 pub mod rules_meaning_divine_v44;

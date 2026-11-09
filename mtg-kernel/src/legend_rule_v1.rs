@@ -136,18 +136,22 @@ fn prepare(state: &GameState, waiting: &[PendingTrigger]) -> PreparedPassV1 {
                 object.v4.deathtouch_damage,
                 engine::has_effective_keyword(state, id, Keywords::INDESTRUCTIBLE),
             );
-        let invalid_aura = definition.attachment.is_some()
-            && !object.v4.attached_to.is_some_and(|host_link| {
-                state.objects.try_get(host_link.object).is_some_and(|host| {
-                    host.zone == Zone::Battlefield
-                        && host.zone_change_count == host_link.zone_change_count
-                        && definition
-                            .attachment
-                            .unwrap()
-                            .host_matches(state, host_link.object)
-                        && host.attachments.contains(&id)
+        let invalid_aura = if crate::graveyard_order_v1::enabled(state) {
+            trigger::invalid_sba_aura(state, id, object)
+        } else {
+            definition.attachment.is_some()
+                && !object.v4.attached_to.is_some_and(|host_link| {
+                    state.objects.try_get(host_link.object).is_some_and(|host| {
+                        host.zone == Zone::Battlefield
+                            && host.zone_change_count == host_link.zone_change_count
+                            && definition
+                                .attachment
+                                .unwrap()
+                                .host_matches(state, host_link.object)
+                            && host.attachments.contains(&id)
+                    })
                 })
-            });
+        };
         let completed_saga = object.v4.face_index == 0
             && definition.saga.as_ref().is_some_and(|saga| {
                 object.counters.lore >= saga.chapter_effects.len() as i16
@@ -282,6 +286,11 @@ pub(crate) fn drain_or_decide(state: &mut GameState) -> Result<Option<Decision>,
             .map(|binding| ProposedEvent::zone_change(binding.object, Zone::Graveyard))
             .collect(),
     );
+    if crate::graveyard_order_v1::paused(state)
+        || (crate::graveyard_order_v1::enabled(state) && state.engine.halted.is_some())
+    {
+        return Ok(None);
+    }
     for player in pending.pass.losses {
         state.players[player.index()].has_lost = true;
     }

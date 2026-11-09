@@ -1968,6 +1968,7 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::full_text_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::continuous_characteristics_v1::refuse_land_override_consumer(state, acting_player)
         .map_err(RlContractError)?;
     crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
@@ -2337,6 +2338,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     accept_fake: bool,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<ObservationV2> {
+    crate::full_text_v1::refuse_legacy(state).map_err(RlContractError)?;
     if !matches!(
         text_mode,
         ObservationTextModeV2::NextFiveV59Artifact
@@ -5164,6 +5166,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
     accept_fake: bool,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<PolicyObservationStorageV6> {
+    crate::full_text_v1::refuse_legacy(request.0.state).map_err(RlContractError)?;
     if let Some(proof) = conqueror_proof {
         proof.require_state(request.0.state)?;
     }

@@ -12704,6 +12704,7 @@ pub(crate) mod tests {
                 RuntimeRulesV1 {
                     auto_unobservable_graveyard_order: true,
                     loss_ends_game: true,
+                    order_graveyard_batches_v1: false,
                 },
             ),
         ] {

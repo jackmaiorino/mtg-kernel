@@ -118,6 +118,8 @@ pub enum P2dOpV1 {
     EchoPayV1,
     /// Echo: sacrifice the source (the unpaid option).
     EchoSacrificeV1,
+    /// The borrowed Karmic Guide trigger retains the cost after text changes.
+    DonatedGuideEchoPayV1,
 }
 
 impl P2dOpV1 {
@@ -181,9 +183,17 @@ fn riders_enters() -> EffectOp {
 /// Echo {3}{R}: "sacrifice it unless you pay its echo cost." Paying is the
 /// first option; an unpayable cost sacrifices the creature.
 fn echo_trigger() -> EffectOp {
+    echo_choice(P2dOpV1::EchoPayV1)
+}
+
+pub(crate) fn donated_guide_echo_trigger() -> EffectOp {
+    echo_choice(P2dOpV1::DonatedGuideEchoPayV1)
+}
+
+fn echo_choice(payment: P2dOpV1) -> EffectOp {
     EffectOp::Choice {
         controller: PlayerRef::Controller,
-        options: vec![p2d(P2dOpV1::EchoPayV1), p2d(P2dOpV1::EchoSacrificeV1)],
+        options: vec![p2d(payment), p2d(P2dOpV1::EchoSacrificeV1)],
     }
 }
 
@@ -294,14 +304,20 @@ pub(crate) fn execute(op: &P2dOpV1, ctx: &ExecCtx, state: &mut GameState) {
             let cost = live_ability_source(ctx, state)
                 .and_then(|source| definition_name(state, source))
                 .and_then(echo_cost);
-            let paid = cost.is_some_and(|(colors, generic)| {
-                crate::engine::pay_effect_mana(ctx.controller, colors, generic, state)
-            });
-            if !paid {
-                echo_sacrifice(ctx, state);
-            }
+            pay_or_sacrifice(ctx, state, cost);
         }
         P2dOpV1::EchoSacrificeV1 => echo_sacrifice(ctx, state),
+        P2dOpV1::DonatedGuideEchoPayV1 => {
+            pay_or_sacrifice(ctx, state, echo_cost(crate::eternal_premodern_p2c_v1::KARMIC_GUIDE));
+        }
+    }
+}
+
+fn pay_or_sacrifice(ctx: &ExecCtx, state: &mut GameState, cost: Option<(&[ManaColor], u8)>) {
+    if !cost.is_some_and(|(colors, generic)| {
+        crate::engine::pay_effect_mana(ctx.controller, colors, generic, state)
+    }) {
+        echo_sacrifice(ctx, state);
     }
 }
 

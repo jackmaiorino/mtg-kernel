@@ -1384,6 +1384,78 @@ fn cabal_therapy_discards_every_copy_of_the_named_card_and_flashes_back() {
 }
 
 #[test]
+fn cabal_therapy_orders_all_matching_discards_by_their_owner() {
+    for caster in [P0, P1] {
+        let library = [id("Island"); 20];
+        let mut state = GameState::new_from_libraries_with_graveyard_order_v1(
+            &library,
+            &library,
+            |id| CARD_DEFS[id as usize].object_name.into(),
+            0x5031_4121_0002,
+            caster,
+        );
+        state.step = Step::Main1;
+        let owner = caster.opponent();
+        let old = put(&mut state, owner, "Swamp", Zone::Graveyard);
+        let first = put(&mut state, owner, "Lightning Bolt", Zone::Hand);
+        let other = put(&mut state, owner, "Island", Zone::Hand);
+        let second = put(&mut state, owner, "Lightning Bolt", Zone::Hand);
+        let therapy = put(&mut state, caster, "Cabal Therapy", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::B], 0);
+        cast(&mut state, therapy, &[Target::Player(owner)]);
+        let (group, within) = therapy_name_options("Lightning Bolt");
+        for choice in [group, within] {
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectOption { player, .. }) if player == caster
+            ));
+            act(&mut state, Action::ChooseEffectOption(choice));
+        }
+        let Some(Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            can_finish,
+            ..
+        }) = settle(&mut state)
+        else {
+            panic!("matching discards must open the owner's ordering prompt");
+        };
+        assert_eq!(player, owner);
+        assert_eq!(legal_targets, [Target::Object(first), Target::Object(second)]);
+        assert!(!can_finish);
+        assert_eq!(state.players[owner.index()].hand, [other]);
+        assert!(state
+            .known_hand_cards(caster, owner)
+            .iter()
+            .any(|entry| entry.object == other));
+        assert_eq!(zone(&state, therapy), Zone::Stack);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(state.state_hash(), restored.state_hash());
+        act(&mut restored, Action::ChooseEffectTarget(Target::Object(second)));
+        settled(&mut restored);
+        assert_eq!(restored.players[owner.index()].graveyard, [old, second, first]);
+        assert_eq!(restored.players[owner.index()].hand, [other]);
+        assert_eq!(zone(&restored, therapy), Zone::Graveyard);
+        let moved = restored
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                event::CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Hand,
+                    to: Zone::Graveyard,
+                    ..
+                } if [first, second].contains(object) => Some(*object),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(moved, [first, second]);
+    }
+}
+
+#[test]
 fn unmask_exiles_a_black_card_instead_of_mana_and_takes_a_nonland_card() {
     let mut state = islands();
     let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
