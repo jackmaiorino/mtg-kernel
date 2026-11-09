@@ -168,6 +168,7 @@ import signal
 import subprocess
 import sys
 import time
+from hashlib import sha256
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -941,13 +942,19 @@ def reap(native):
     return n
 
 
-def scratch_kept_pins(newest, read_record):
-    """The newest complete receipt and its update name the full retained state."""
+def scratch_kept_pins(newest, path_at=Path):
+    """The newest complete receipt and its pinned update name the full retained state."""
     if newest is None:
         return {}
-    complete = read_record(newest / 'complete.json', None)
+    complete = read(path_at(newest / 'complete.json'))
     update = attempt_dir(newest, complete) / 'update'
-    doc = read_record(update / 'update.json', complete['update'])
+    update_record = path_at(update / 'update.json')
+    digest = complete['update'].get('sha256')
+    require(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest),
+            f'{update_record} is missing a valid update SHA-256 pin')
+    data = update_record.read_bytes()
+    require(sha256(data).hexdigest() == digest, f'{update_record} differs from its pin')
+    doc = json.loads(data.decode('utf-8'))
     keep = {update / 'checkpoint.json': complete['output_identity']['checkpoint_sha256']}
     state = retention.state_pin(doc)
     if state is not None:
@@ -965,15 +972,8 @@ def validate_scratch_stage(stage):
                 f'{path} leaves the scratch stage or uses a link')
         return path
 
-    def read_record(path, pin=None):
-        path = staged(path)
-        require(path.is_file(), f'{path} is missing from the scratch stage')
-        if pin is not None and 'sha256' in pin:
-            require(sha(path) == pin['sha256'], f'{path} differs from its pin')
-        return read(path)
-
     try:
-        marker = read_record(stage / PERSIST_MARKER)
+        marker = read(staged(stage / PERSIST_MARKER))
         its = staged(stage / 'iterations')
         done = []
         if its.exists():
@@ -984,7 +984,7 @@ def validate_scratch_stage(stage):
                     done.append(iteration)
         require([p.name for p in done] == [f'{i:06d}' for i in range(len(done))],
                 f'{stage} has a noncontiguous completed iteration prefix')
-        keep = scratch_kept_pins(done[-1] if done else None, read_record)
+        keep = scratch_kept_pins(done[-1] if done else None, staged)
         expected = {staged(path).relative_to(stage).as_posix(): digest for path, digest in keep.items()}
         require(isinstance(marker, dict) and marker.get('kept') == expected,
                 f'{stage} marker kept pins differ from its newest completed state')
@@ -1000,10 +1000,10 @@ def persist(arm, native, cdir):
     native = Path(native)
     require(mounted(native), f'{native} is not a mounted scratch segment')
     target = scratch_dir(arm, cdir, native)
-    reap(native)
     its = target / 'iterations'
     done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists()) if its.exists() else []
-    keep = scratch_kept_pins(done[-1] if done else None, lambda path, _: read(path))
+    keep = scratch_kept_pins(done[-1] if done else None)
+    reap(native)
     tmp = Path(cdir) / f'.{native.name}.persist'
     shutil.rmtree(tmp, ignore_errors=True)
     copied, files = 0, []

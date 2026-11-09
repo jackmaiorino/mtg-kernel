@@ -116,7 +116,8 @@ def main():
         u.write_text(json.dumps({'after_state_sha256': h(ck), 'checkpoint': {'path': ck.as_posix(),
                                                                              'sha256': h(ck)}}))
         record, stop = ledger(cfg, knob(cfg, 'cpu_step', x))
-        receipt = {'iteration': i, 'collection': {'path': c.as_posix()}, 'update': {'path': u.as_posix()},
+        receipt = {'iteration': i, 'collection': {'path': c.as_posix()},
+                   'update': {'path': u.as_posix(), 'sha256': h(u)},
                    'source': source, 'output_identity': {'checkpoint_sha256': h(ck)}}
         if record is not None:
             receipt['chain_ledger'] = record

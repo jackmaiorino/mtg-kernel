@@ -460,10 +460,12 @@ class Segment:
         digest = self.put(checkpoint, self.blob(f'{i}/checkpoint', self.p['checkpoint_bytes']), keep=False)
         self.bulk[i].append(checkpoint)
         update = f'{it}/update/update.json'  # segment-relative (a run's are absolute): the bytes are location-free
-        self.put(update, doc(f'{self.seed}/{i}/update', self.p['records']['attempt-000000/update/update.json'],
-                             {'after_state_sha256': digest, 'checkpoint': {'path': checkpoint, 'sha256': digest}}))
+        update_hash = self.put(
+            update, doc(f'{self.seed}/{i}/update', self.p['records']['attempt-000000/update/update.json'],
+                        {'after_state_sha256': digest, 'checkpoint': {'path': checkpoint, 'sha256': digest}}))
         self.put(f'iterations/{i:06d}/complete.json', doc(f'{self.seed}/{i}/complete', self.p['complete_bytes'], {
-            'iteration': i, 'update': {'path': update}, 'output_identity': {'checkpoint_sha256': digest}}))
+            'iteration': i, 'update': {'path': update, 'sha256': update_hash},
+            'output_identity': {'checkpoint_sha256': digest}}))
         if self.done:
             self.expected.pop(f'iterations/{self.done - 1:06d}/attempt-000000/update/checkpoint.json', None)
         self.expected[checkpoint] = digest

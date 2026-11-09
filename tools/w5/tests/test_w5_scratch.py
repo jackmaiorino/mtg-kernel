@@ -31,11 +31,12 @@ def iteration(seg, i, done=True, s_state=False):
         write(att / 'collect' / f'episode-{j:04d}.json', b'traj' * 100)
     write(att / 'collect' / 'collection.json', b'{}')
     digest = write(att / 'update' / 'checkpoint.json', f'ckpt-{i}'.encode() * 50)
-    write(att / 'update' / 'update.json', b'{}' if not s_state else json.dumps(
+    update = att / 'update' / 'update.json'
+    update_hash = write(update, b'{}' if not s_state else json.dumps(
         {'s_learner': {'state': {'path': (att / 'update' / 's-train-state.bin').as_posix(),
                                  'sha256': write(att / 'update' / 's-train-state.bin', f'S{i}'.encode() * 9)}}}).encode())
     if done:
-        write(it / 'complete.json', json.dumps({'update': {'path': (att / 'update' / 'update.json').as_posix()},
+        write(it / 'complete.json', json.dumps({'update': {'path': update.as_posix(), 'sha256': update_hash},
                                                 'output_identity': {'checkpoint_sha256': digest}}).encode())
 
 
@@ -417,7 +418,7 @@ class ScratchBenchSupervisor(unittest.TestCase):
 class ScratchStagePinRecovery(unittest.TestCase):
     """Check real stage creation and restart with the bind mount and stage fsync simulated."""
 
-    def interrupted_swap(self, base, with_updates=True, complete=True):
+    def scratch_candidate(self, base, with_updates=True, complete=True):
         root = base / 'root'
         cdir = root / 'chains' / 'c1'
         previous, native = (cdir / f'seg-{i:05d}' for i in range(2))
@@ -435,12 +436,13 @@ class ScratchStagePinRecovery(unittest.TestCase):
         write(target / 'run.json', b'{}')
         if with_updates:
             iteration(target, 0, s_state=True)
-            done = target / 'iterations' / '000000' / 'complete.json'
-            receipt = chains.read(done)
-            receipt['update']['sha256'] = chains.sha(receipt['update']['path'])
-            done.write_text(json.dumps(receipt), encoding='utf-8')
             if complete:
                 write(target / 'completion.json', b'{}')
+        return (arm, root, cdir, man), native, target, retained
+
+    def interrupted_swap(self, base, with_updates=True, complete=True):
+        args, native, _, retained = self.scratch_candidate(base, with_updates, complete)
+        arm, _, cdir, _ = args
         with mock.patch.object(chains, 'mounted', return_value=True), \
                 mock.patch.object(chains, 'unmount', side_effect=KeyboardInterrupt('before swap')), \
                 mock.patch.object(chains, 'fsync_path'):
@@ -448,7 +450,7 @@ class ScratchStagePinRecovery(unittest.TestCase):
                 chains.persist(arm, native, cdir)
         stage = cdir / f'.{native.name}.persist'
         self.assertTrue((stage / chains.PERSIST_MARKER).is_file())
-        return (arm, root, cdir, man), native, stage, retained
+        return args, native, stage, retained
 
     def settle(self, args):
         with mock.patch.object(chains, 'mounted', return_value=False), \
@@ -483,6 +485,30 @@ class ScratchStagePinRecovery(unittest.TestCase):
                 self.assertIn('kept pins' if omit_pin else 'differs from its pin', error)
                 self.assertEqual({p: p.read_bytes() for p in stage.rglob('*') if p.is_file()}, expected_stage)
 
+    def test_corrupted_fresh_update_cannot_hide_the_s_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args, native, target, retained = self.scratch_candidate(Path(directory))
+            arm, _, cdir, _ = args
+            update = target / 'iterations' / '000000' / 'attempt-000000' / 'update' / 'update.json'
+            doc = chains.read(update)
+            del doc['s_learner']
+            update.write_text(json.dumps(doc), encoding='utf-8')
+            expected = {p: p.read_bytes() for p in target.rglob('*') if p.is_file()}
+            error = None
+            with mock.patch.object(chains, 'mounted', return_value=True), \
+                    mock.patch.object(chains, 'unmount'), mock.patch.object(chains, 'fsync_path'):
+                try:
+                    chains.persist(arm, native, cdir)
+                except chains.Stop as exc:
+                    error = str(exc)
+            self.assertFalse(native.exists(), 'corrupted fresh update was promoted')
+            self.assertFalse((cdir / f'.{native.name}.persist').exists())
+            self.assertIsNotNone(error)
+            self.assertIn('update.json', error)
+            self.assertIn('differs from its pin', error)
+            for p, data in (retained | expected).items():
+                self.assertEqual(p.read_bytes(), data)
+
     def test_corrupted_stage_update_cannot_hide_the_s_pin(self):
         with tempfile.TemporaryDirectory() as directory:
             args, native, stage, retained = self.interrupted_swap(Path(directory))
@@ -507,6 +533,25 @@ class ScratchStagePinRecovery(unittest.TestCase):
             self.assertIn('update.json', error)
             self.assertIn('differs from its pin', error)
             self.assertEqual(chains.read(update), doc)
+
+    def test_corrupted_stage_missing_update_pin_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args, native, stage, retained = self.interrupted_swap(Path(directory))
+            receipt = stage / 'iterations' / '000000' / 'complete.json'
+            doc = chains.read(receipt)
+            del doc['update']['sha256']
+            receipt.write_text(json.dumps(doc), encoding='utf-8')
+            error = None
+            try:
+                self.settle(args)
+            except chains.Stop as exc:
+                error = str(exc)
+            for p, expected in retained.items():
+                self.assertEqual(p.read_bytes(), expected, 'unpinned stage advanced durable state')
+            self.assertFalse(native.exists())
+            self.assertIsNotNone(error)
+            self.assertIn('missing a valid update SHA-256 pin', error)
+            self.assertEqual(chains.read(receipt), doc)
 
     def recover_promoted(self, args, complete):
         if complete:
