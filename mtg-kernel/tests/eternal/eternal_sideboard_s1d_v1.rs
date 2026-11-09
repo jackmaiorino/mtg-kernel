@@ -701,7 +701,9 @@ fn overload_uses_paid_graveyard_permission_and_restores_both_seats() {
             assert!(castable(&mut state, spell));
             act(&mut state, Action::CastSpell(spell));
             let prompt = next(&mut state);
-            assert!(matches!(&prompt, Decision::ChooseSpellMode { legal_modes, .. } if legal_modes == &[0, 1]));
+            assert!(
+                matches!(&prompt, Decision::ChooseSpellMode { legal_modes, .. } if legal_modes == &[0, 1])
+            );
             let mut restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             assert_eq!(prompt, next(&mut restored));
@@ -744,11 +746,23 @@ fn overload_with_retrace_pays_the_land_discard_and_mana_both_seats() {
         let spell = put(&mut state, actor, "Electrickery", Zone::Graveyard);
         let land = put(&mut state, actor, "Plains", Zone::Hand);
         put(&mut state, actor, "Lightning Bolt", Zone::Hand);
-        let first = put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Battlefield);
-        let second = put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Battlefield);
+        let first = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let second = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
         pool(&mut state, actor, &[ManaColor::R], 1);
         act(&mut state, Action::CastSpell(spell));
-        assert!(matches!(next(&mut state), Decision::ChooseSpellMode { legal_modes, .. } if legal_modes == [0, 1]));
+        assert!(
+            matches!(next(&mut state), Decision::ChooseSpellMode { legal_modes, .. } if legal_modes == [0, 1])
+        );
         act(&mut state, Action::ChooseSpellMode(1));
         assert!(matches!(
             next(&mut state),
@@ -778,13 +792,27 @@ fn free_cascade_cannot_offer_overload_both_seats() {
                 let other = actor.opponent();
                 let spell = state.players[actor.index()].library[1];
                 let victims = ordinary_targets.then(|| {
-                    (put(&mut state, other, victim, Zone::Battlefield), put(&mut state, other, victim, Zone::Battlefield))
+                    (
+                        put(&mut state, other, victim, Zone::Battlefield),
+                        put(&mut state, other, victim, Zone::Battlefield),
+                    )
                 });
                 let party = put(&mut state, actor, "Boarding Party", Zone::Hand);
-                pool(&mut state, actor, &[ManaColor::R, ManaColor::R], 5 + generic);
+                pool(
+                    &mut state,
+                    actor,
+                    &[ManaColor::R, ManaColor::R],
+                    5 + generic,
+                );
                 cast(&mut state, party, &[]);
                 if let Some((first, second)) = victims {
-                    assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { option_count: 2, .. })));
+                    assert!(matches!(
+                        settle(&mut state),
+                        Some(Decision::ChooseEffectOption {
+                            option_count: 2,
+                            ..
+                        })
+                    ));
                     let mut restored: GameState =
                         serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
                     act(&mut restored, Action::ChooseEffectOption(0));
@@ -796,11 +824,20 @@ fn free_cascade_cannot_offer_overload_both_seats() {
                     ));
                     let mut forged = restored.clone();
                     forged.engine.pending_cast.as_mut().unwrap().mode_chosen = Some(1);
-                    assert!(matches!(engine::advance_until_decision(&mut forged), Decision::Halted { .. }));
+                    assert!(matches!(
+                        engine::advance_until_decision(&mut forged),
+                        Decision::Halted { .. }
+                    ));
                     assert!(engine::step(&mut restored, Action::ChooseSpellMode(1)).is_err());
                     act(&mut restored, Action::ChooseTarget(Target::Object(first)));
-                    assert!(matches!(next(&mut restored), Decision::CastSpellOrPass { .. }));
-                    assert_eq!(restored.stack.last().unwrap().v4.cast_method, Some(CastMethodV4::Normal));
+                    assert!(matches!(
+                        next(&mut restored),
+                        Decision::CastSpellOrPass { .. }
+                    ));
+                    assert_eq!(
+                        restored.stack.last().unwrap().v4.cast_method,
+                        Some(CastMethodV4::Normal)
+                    );
                     settled(&mut restored);
                     assert_eq!(zone(&restored, spell), Zone::Graveyard);
                     assert_eq!(zone(&restored, first), Zone::Graveyard);
@@ -811,7 +848,10 @@ fn free_cascade_cannot_offer_overload_both_seats() {
                     assert_eq!(zone(&state, spell), Zone::Library);
                 }
                 assert_eq!(zone(&state, party), Zone::Battlefield);
-                assert_eq!(state.players[actor.index()].mana_pool.iter().sum::<u8>(), generic + 1);
+                assert_eq!(
+                    state.players[actor.index()].mana_pool.iter().sum::<u8>(),
+                    generic + 1
+                );
             }
         }
     }
