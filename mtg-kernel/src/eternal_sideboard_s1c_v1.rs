@@ -664,26 +664,21 @@ pub(crate) mod statics {
         state: &GameState,
         drawer: PlayerId,
     ) -> Option<PlayerId> {
+        if crate::eternal_cards_v1::is_first_draw_in_draw_step(state, drawer) {
+            return None;
+        }
+        hullbreacher_controller(state, drawer)
+    }
+
+    pub(crate) fn hullbreacher_controller(state: &GameState, drawer: PlayerId) -> Option<PlayerId> {
         let hullbreacher = card_id_by_name(HULLBREACHER)?;
-        let controller = battlefield(state).find_map(|object| {
+        battlefield(state).find_map(|object| {
             let live = state.objects.get(object);
             (live.card_def == hullbreacher
                 && live.controller != drawer
                 && active_named(state, object, HULLBREACHER))
             .then_some(live.controller)
-        })?;
-        // The first draw of the draw step is exempt; the marker records it
-        // once it has been made.
-        let first_in_draw_step = state.step == crate::state::Step::Draw
-            && state.active_player == drawer
-            && !state
-                .eternal_v1
-                .as_ref()
-                .and_then(|eternal| eternal.draw_step_draw)
-                .is_some_and(|marker| {
-                    marker.turn == state.turn_key_v1() && marker.player == drawer
-                });
-        (!first_in_draw_step).then_some(controller)
+        })
     }
 
     /// Ravenous Trap: how many cards `player` owns that were put into a

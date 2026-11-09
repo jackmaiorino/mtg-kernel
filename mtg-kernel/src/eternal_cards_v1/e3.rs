@@ -1362,13 +1362,21 @@ pub(crate) fn wins_instead_of_drawing_from_empty_library(
     player: PlayerId,
 ) -> bool {
     state.players[player.index()].library.is_empty()
-        && state.players[player.index()]
-            .battlefield
-            .iter()
-            .any(|&permanent| {
-                state.objects.get(permanent).controller == player
-                    && printed_battlefield_source(state, permanent, JACE)
-            })
+        && jace_draw_replacement_source(state, player).is_some()
+}
+
+pub(crate) fn jace_draw_replacement_source(
+    state: &GameState,
+    player: PlayerId,
+) -> Option<ObjectId> {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .find(|&permanent| {
+            state.objects.get(permanent).controller == player
+                && printed_battlefield_source(state, permanent, JACE)
+        })
 }
 
 /// Applies Jace's replacement for a draw `player` would make.

@@ -64,7 +64,7 @@ mod nonland_sacrifice_payment_v1 {
             .collect()
     }
 
-    fn remaining(root: &EffectOp, path: &[u16]) -> Result<Vec<EffectFrame>, String> {
+    pub(super) fn remaining(root: &EffectOp, path: &[u16]) -> Result<Vec<EffectFrame>, String> {
         let mut op = root;
         let mut prefix = Vec::new();
         let mut frames = Vec::new();
@@ -8061,6 +8061,76 @@ pub(crate) fn effect_op_at_structural_path<'a>(
     }
 }
 
+pub(crate) fn jace_draw_replacement_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    drawer: PlayerId,
+    path: &[u16],
+    remaining: &[EffectFrame],
+) -> bool {
+    let root = match pending.resolving_item.inline_effect.as_ref() {
+        Some(EffectOp::ResolveMonarchTrigger { binding }) => {
+            return path.is_empty()
+                && remaining.is_empty()
+                && drawer == binding.player
+                && validate_monarch_trigger_binding(state, *binding).is_ok();
+        }
+        Some(EffectOp::NivMizzetVisionaryDrawV1 {
+            damage_history_index,
+        }) => {
+            return path.is_empty()
+                && drawer == pending.ctx.controller
+                && event::resolve_niv_mizzet_visionary_draw_count_v1(
+                    state,
+                    &pending.ctx,
+                    *damage_history_index,
+                )
+                .is_ok_and(|count| {
+                    count > 0
+                        && draw_remainder_matches(
+                            remaining,
+                            &[],
+                            path,
+                            PlayerRef::Controller,
+                            count as u32,
+                        )
+                });
+        }
+        _ => match validated_definition_owned_root_effect(state, pending) {
+            Ok(root) => root,
+            Err(_) => return false,
+        },
+    };
+    let Some(EffectOp::DrawCards { player, count }) =
+        path.iter().try_fold(root.as_ref(), |op, ordinal| match op {
+            EffectOp::Sequence(steps) => steps.get(usize::from(*ordinal)),
+            _ => None,
+        })
+    else {
+        return false;
+    };
+    if *count == 0 || pending.ctx.resolve_player(*player, state) != drawer {
+        return false;
+    }
+    nonland_sacrifice_payment_v1::remaining(&root, path)
+        .is_ok_and(|siblings| draw_remainder_matches(remaining, &siblings, path, *player, *count))
+}
+
+fn draw_remainder_matches(
+    remaining: &[EffectFrame],
+    siblings: &[EffectFrame],
+    path: &[u16],
+    player: PlayerRef,
+    total: u32,
+) -> bool {
+    remaining == siblings
+        || matches!(
+            remaining.split_last(),
+            Some((EffectFrame::Program { op: EffectOp::DrawCards { player: found, count }, path: tail_path }, prefix))
+                if *found == player && *count > 0 && *count < total && tail_path.as_slice() == path && prefix == siblings
+        )
+}
+
 fn validate_exile_chosen_graveyard_frame(
     state: &GameState,
     pending: &EffectContinuation,
@@ -8882,10 +8952,15 @@ pub(crate) fn validate_monarch_trigger_binding(
     Ok(())
 }
 
-/// Draws one card for the monarch trigger's binding player -- 306.3's "the
-/// monarch draws a card." Synchronous: unlike the Initiative Undercity route,
-/// this trigger never needs a player choice, so it resolves through ordinary
-/// `execute` rather than the resumable interpreter.
+fn controls_definition(state: &GameState, player: PlayerId, card_def: u16) -> bool {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .any(|&id| state.objects.get(id).card_def == card_def)
+}
+
+/// Draws one card for the monarch trigger's binding player (726.2). The
+/// resumable interpreter owns this draw when that player has a dredge choice.
 fn resolve_monarch_trigger(
     state: &mut GameState,
     binding: MonarchTriggerBindingV1,
@@ -10614,6 +10689,14 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_sideboard_s1a_v1::surgical::validate_continuation(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_e7b_v1::dredge::validate_jace_or_hullbreacher(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(EffectOp::ResolveMonarchTrigger { binding }) =
+        pending.resolving_item.inline_effect.as_ref()
+    {
+        crate::eternal_vintage_e7b_v1::dredge::validate_monarch_draw(state, pending, *binding)?;
+    }
     thousand_year_storm_v1::validate_continuation(state, pending)?;
     blasphemous_edict_v1::validate(state, pending)?;
     liliana_dreadhorde_v1::validate_continuation(state, pending)?;
@@ -13066,7 +13149,7 @@ fn drive_resumable_inner_with_native_row_v1(
                     discard_payment_v1::finish(state, &mut continuation, &choice, &selected)?;
                 }
                 EffectFrame::DiscardDraw { choice, selected } => {
-                    standard_discard::finish(state, &continuation, &choice, &selected)?
+                    standard_discard::finish(state, &mut continuation, &choice, &selected)?
                 }
                 EffectFrame::ExileBatchSelect { choice, selected } => {
                     standard_exile::finish_batch_selection(
@@ -14954,7 +15037,20 @@ fn drive_resumable_inner_with_native_row_v1(
                     return Err("discard choice changed".to_string());
                 }
                 continuation.answered_choice_guard = None;
-                crate::standard_cards_v1::discard_chosen_then_draw(state, player, &cards);
+                let count = crate::standard_cards_v1::discard_chosen(state, player, &cards);
+                if count != 0 {
+                    continuation.frames.push(EffectFrame::Program {
+                        op: EffectOp::DrawCards {
+                            player: if player == continuation.ctx.controller {
+                                PlayerRef::Controller
+                            } else {
+                                PlayerRef::Opponent
+                            },
+                            count,
+                        },
+                        path,
+                    });
+                }
             }
             EffectOp::StandardV1(
                 crate::standard_cards_v1::StandardOpV1::PutCreatureOrPlaneswalkerFromEachGraveyard,
@@ -16929,9 +17025,77 @@ fn drive_resumable_inner_with_native_row_v1(
                 }
             }
             // Dredge (wave E7b): each card drawn may be dredged instead.
+            EffectOp::ResolveMonarchTrigger { binding }
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
+                        state,
+                        &continuation,
+                        PlayerRef::Controller,
+                    ) =>
+            {
+                validate_monarch_trigger_binding(state, binding)?;
+                if crate::eternal_vintage_e7b_v1::dredge::drive_draws(
+                    state,
+                    &mut continuation,
+                    PlayerRef::Controller,
+                    1,
+                    path,
+                )? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::NivMizzetVisionaryDrawV1 { damage_history_index }
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
+                        state,
+                        &continuation,
+                        PlayerRef::Controller,
+                    ) =>
+            {
+                let count = event::resolve_niv_mizzet_visionary_draw_count_v1(
+                    state,
+                    &continuation.ctx,
+                    damage_history_index,
+                )?;
+                continuation.frames.push(EffectFrame::Program {
+                    op: EffectOp::DrawCards {
+                        player: PlayerRef::Controller,
+                        count: u32::try_from(count.max(0)).unwrap_or(0),
+                    },
+                    path,
+                });
+            }
+            EffectOp::EachPlayerControllingDefinitionDrawsCard { card_def }
+                if cfg!(feature = "eternal-fixtures")
+                    && [PlayerId::P0, PlayerId::P1].into_iter().any(|drawer| {
+                        controls_definition(state, drawer, card_def)
+                            && !crate::eternal_vintage_e7b_v1::dredge::dredge_cards(state, drawer)
+                                .is_empty()
+                    }) =>
+            {
+                // Push in reverse APNAP order so the active player draws first.
+                for (drawer, ordinal) in [(state.active_player.opponent(), 1), (state.active_player, 0)] {
+                    if controls_definition(state, drawer, card_def) {
+                        let mut draw_path = path.clone();
+                        draw_path.push(ordinal);
+                        continuation.frames.push(EffectFrame::Program {
+                            op: EffectOp::DrawCards {
+                                player: if drawer == continuation.ctx.controller {
+                                    PlayerRef::Controller
+                                } else {
+                                    PlayerRef::Opponent
+                                },
+                                count: 1,
+                            },
+                            path: draw_path,
+                        });
+                    }
+                }
+            }
             EffectOp::DrawCards { player, count }
                 if cfg!(feature = "eternal-fixtures")
-                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_dredge(
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
                         state,
                         &continuation,
                         player,
@@ -16950,7 +17114,7 @@ fn drive_resumable_inner_with_native_row_v1(
             }
             EffectOp::DrawCardsDynamic { player, count }
                 if cfg!(feature = "eternal-fixtures")
-                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_dredge(
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
                         state,
                         &continuation,
                         player,
@@ -20958,11 +21122,7 @@ fn execute_with_native_row_v1(
             // deterministic outcome here (each player's draw depends only on
             // their own battlefield), so a fixed iteration order is safe.
             for player in [PlayerId::P0, PlayerId::P1] {
-                let controls_named = state.players[player.index()]
-                    .battlefield
-                    .iter()
-                    .any(|&id| state.objects.get(id).card_def == *card_def);
-                if controls_named {
+                if controls_definition(state, player, *card_def) {
                     event::propose_and_commit(state, event::ProposedEvent::draw(player));
                 }
             }

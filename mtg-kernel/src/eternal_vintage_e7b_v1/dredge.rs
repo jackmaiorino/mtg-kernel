@@ -13,11 +13,14 @@ use super::{
     binding_link, definition, definition_name, e7b_state, graveyard_cards, link_live_in,
     read_state, E7bChoiceV1, GOLGARI_GRAVE_TROLL, GOLGARI_THUG, SHAMBLING_SHELL, STINKWEED_IMP,
 };
-use crate::effect::{EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp, PlayerRef};
+use crate::effect::{
+    EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp, EffectTargetSelectionPurpose,
+    PendingEffectChoice, PlayerRef,
+};
 use crate::eternal_cards_v1::e3::{E3ChoiceKindV1, E3ChoiceV1};
 use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
-use crate::state::{GameState, Target, Zone};
+use crate::state::{GameState, MonarchTriggerBindingV1, Target, Zone};
 
 /// Life from the Loam (wave E7a): "Dredge 3".
 const LIFE_FROM_THE_LOAM: &str = "Life from the Loam";
@@ -48,17 +51,21 @@ pub(crate) fn dredge_cards(state: &GameState, player: PlayerId) -> Vec<ObjectId>
         .collect()
 }
 
-/// Whether some player has a dredge card they could dredge now.
-fn any_dredge(state: &GameState) -> bool {
-    [PlayerId::P0, PlayerId::P1]
-        .into_iter()
-        .any(|player| !dredge_cards(state, player).is_empty())
+pub(crate) fn may_need_draw_choice(state: &GameState, player: PlayerId) -> bool {
+    !dredge_cards(state, player).is_empty()
+        || (crate::eternal_cards_v1::e3::jace_draw_replacement_source(state, player).is_some()
+            && crate::eternal_sideboard_s1c_v1::statics::hullbreacher_controller(state, player)
+                .is_some())
 }
 
 /// Whether `op` draws cards anywhere in its tree.
 fn draws(op: &EffectOp) -> bool {
     match op {
-        EffectOp::DrawCards { .. } | EffectOp::DrawCardsDynamic { .. } => true,
+        EffectOp::DrawCards { .. }
+        | EffectOp::DrawCardsDynamic { .. }
+        | EffectOp::ResolveMonarchTrigger { .. }
+        | EffectOp::NivMizzetVisionaryDrawV1 { .. }
+        | EffectOp::EachPlayerControllingDefinitionDrawsCard { .. } => true,
         EffectOp::Sequence(ops) => ops.iter().any(draws),
         EffectOp::Conditional { then, else_, .. } => draws(then) || draws(else_),
         EffectOp::Choice { options, .. } => options.iter().any(draws),
@@ -72,75 +79,246 @@ fn draws(op: &EffectOp) -> bool {
 }
 
 /// Whether a synchronous program should run in the resumable interpreter
-/// so its draws can be dredged.
+/// so the affected player can choose a draw replacement.
 pub(crate) fn forces_resumable(state: &GameState, program: &EffectOp) -> bool {
     cfg!(feature = "eternal-fixtures")
         && draws(program)
-        && any_dredge(state)
+        && [PlayerId::P0, PlayerId::P1]
+            .into_iter()
+            .any(|player| may_need_draw_choice(state, player))
         && crate::effect::resumable_program_supported(program)
 }
 
-/// Whether a draw by `player` (resolved against the continuation) may be
-/// dredged.
-pub(crate) fn draw_may_dredge(
+pub(crate) fn draw_may_need_choice(
     state: &GameState,
     continuation: &EffectContinuation,
     player: PlayerRef,
 ) -> bool {
-    let player = continuation.ctx.resolve_player(player, state);
-    !dredge_cards(state, player).is_empty()
+    may_need_draw_choice(state, continuation.ctx.resolve_player(player, state))
 }
 
-/// Draws `count` cards for `player`, offering dredge for the first. The
-/// rest wait as a frame and are offered in turn. `Ok(true)` when a choice
-/// was staged.
+/// Draws one card at a time, suspending when the affected player has a
+/// replacement choice. A later draw may qualify after a prior draw or dredge.
 pub(crate) fn drive_draws(
     state: &mut GameState,
     continuation: &mut EffectContinuation,
     player: PlayerRef,
-    count: u32,
+    mut count: u32,
     path: Vec<u16>,
 ) -> Result<bool, String> {
-    if count == 0 {
-        return Ok(false);
-    }
     let drawer = continuation.ctx.resolve_player(player, state);
-    let cards = dredge_cards(state, drawer);
-    if cards.is_empty() {
-        for _ in 0..count {
+    while count != 0 {
+        let Some((kind, cards)) =
+            replacement_options(state, continuation, drawer, &path, &continuation.frames)
+        else {
             event::propose_and_commit(state, ProposedEvent::draw(drawer));
+            count -= 1;
+            continue;
+        };
+        if count > 1 {
+            continuation.frames.push(EffectFrame::Program {
+                op: EffectOp::DrawCards {
+                    player,
+                    count: count - 1,
+                },
+                path: path.clone(),
+            });
         }
-        return Ok(false);
-    }
-    if count > 1 {
-        continuation.frames.push(EffectFrame::Program {
-            op: EffectOp::DrawCards {
-                player,
-                count: count - 1,
-            },
-            path: path.clone(),
-        });
-    }
-    let bindings = cards
-        .iter()
-        .map(|&card| super::bind(state, card))
-        .collect::<Vec<_>>();
-    let remaining = continuation.frames.clone();
-    crate::eternal_cards_v1::e3::offer(
-        continuation,
-        E3ChoiceV1 {
-            kind: E3ChoiceKindV1::E7bV1(E7bChoiceV1::DredgeV1),
-            player: drawer,
-            candidates: cards.iter().map(|&card| Target::Object(card)).collect(),
-            bindings,
-            min: 0,
-            max: 1,
-            ordered: false,
+        let choice = choice(
+            state,
+            drawer,
+            kind,
+            &cards,
             path,
-            remaining,
-        },
+            continuation.frames.clone(),
+        );
+        crate::eternal_cards_v1::e3::offer(continuation, choice);
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn replacement_options(
+    state: &GameState,
+    pending: &EffectContinuation,
+    drawer: PlayerId,
+    path: &[u16],
+    remaining: &[EffectFrame],
+) -> Option<(E7bChoiceV1, Vec<ObjectId>)> {
+    let cards = dredge_cards(state, drawer);
+    if !cards.is_empty() {
+        return Some((E7bChoiceV1::DredgeV1, cards));
+    }
+    if !state.players[drawer.index()].library.is_empty()
+        || crate::eternal_sideboard_s1c_v1::statics::hullbreacher_replaces_draw(state, drawer)
+            .is_none()
+    {
+        return None;
+    }
+    let jace = crate::eternal_cards_v1::e3::jace_draw_replacement_source(state, drawer)?;
+    crate::effect::jace_draw_replacement_origin(state, pending, drawer, path, remaining)
+        .then(|| (E7bChoiceV1::JaceOrHullbreacherV1, vec![jace]))
+}
+
+fn choice(
+    state: &GameState,
+    drawer: PlayerId,
+    kind: E7bChoiceV1,
+    cards: &[ObjectId],
+    path: Vec<u16>,
+    remaining: Vec<EffectFrame>,
+) -> E3ChoiceV1 {
+    E3ChoiceV1 {
+        kind: E3ChoiceKindV1::E7bV1(kind),
+        player: drawer,
+        candidates: cards.iter().copied().map(Target::Object).collect(),
+        bindings: cards.iter().map(|&card| super::bind(state, card)).collect(),
+        min: 0,
+        max: 1,
+        ordered: false,
+        path,
+        remaining,
+    }
+}
+
+pub(crate) fn validate_monarch_draw(
+    state: &GameState,
+    pending: &EffectContinuation,
+    binding: MonarchTriggerBindingV1,
+) -> Result<(), String> {
+    let item = &pending.resolving_item;
+    if pending.ctx.controller != binding.player
+        || pending.ctx.source != item.source
+        || pending.ctx.ability_source_contract != Some(binding.source)
+        || pending.ctx.stack_item_id != Some(item.v4.stack_item_id)
+        || pending.ctx.targets != item.targets
+        || pending.ctx.target_contracts != item.v4.target_contracts
+    {
+        return Err("Monarch draw changed its original trigger".into());
+    }
+    if matches!((&pending.choice, pending.frames.as_slice()),
+        (None, [EffectFrame::Program { op: EffectOp::ResolveMonarchTrigger { binding: found }, path }])
+            if *found == binding && path.is_empty())
+    {
+        return Ok(());
+    }
+    let (kind, cards) = replacement_options(state, pending, binding.player, &[], &[])
+        .ok_or("Monarch draw lost its replacement choices")?;
+    let expected = choice(state, binding.player, kind, &cards, Vec::new(), Vec::new());
+    let valid = match (&pending.choice, pending.frames.as_slice()) {
+        (
+            Some(PendingEffectChoice::SelectTargets {
+                purpose: EffectTargetSelectionPurpose::EternalV1 { choice },
+                selected,
+                legal,
+                min_targets: 0,
+                ..
+            }),
+            [],
+        ) => {
+            **choice == expected
+                && selected.is_empty()
+                && legal
+                    .iter()
+                    .map(|candidate| candidate.target)
+                    .eq(expected.candidates)
+        }
+        (None, [EffectFrame::EternalSelectionV1 { choice, selected }]) => {
+            **choice == expected
+                && selected.len() <= 1
+                && selected
+                    .iter()
+                    .all(|target| expected.candidates.contains(target))
+        }
+        _ => false,
+    };
+    if !valid {
+        return Err("Monarch draw changed its native replacement choice".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_jace_or_hullbreacher(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    let (choice, remaining) = match (&pending.choice, pending.frames.split_last()) {
+        (
+            Some(PendingEffectChoice::SelectTargets {
+                purpose: EffectTargetSelectionPurpose::EternalV1 { choice },
+                selected,
+                min_targets,
+                ..
+            }),
+            _,
+        ) if jace_choice_kind(choice) => {
+            if !selected.is_empty() || *min_targets != 0 {
+                return Err("Jace draw replacement prompt changed shape".into());
+            }
+            (choice, pending.frames.as_slice())
+        }
+        (None, Some((EffectFrame::EternalSelectionV1 { choice, .. }, rest)))
+            if jace_choice_kind(choice) =>
+        {
+            (choice, rest)
+        }
+        _ => return Ok(()),
+    };
+    validate_jace_choice(state, pending, choice, remaining)
+}
+
+fn jace_choice_kind(choice: &E3ChoiceV1) -> bool {
+    matches!(
+        choice.kind,
+        E3ChoiceKindV1::E7bV1(E7bChoiceV1::JaceOrHullbreacherV1)
+    )
+}
+
+fn validate_jace_choice(
+    state: &GameState,
+    pending: &EffectContinuation,
+    offered: &E3ChoiceV1,
+    remaining: &[EffectFrame],
+) -> Result<(), String> {
+    let (kind, cards) =
+        replacement_options(state, pending, offered.player, &offered.path, remaining)
+            .ok_or("Jace draw replacement lost its original draw or source")?;
+    let expected = choice(
+        state,
+        offered.player,
+        kind,
+        &cards,
+        offered.path.clone(),
+        remaining.to_vec(),
     );
-    Ok(true)
+    if offered != &expected {
+        return Err("Jace draw replacement changed its native choices".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn finish_jace_or_hullbreacher(
+    state: &mut GameState,
+    pending: &mut EffectContinuation,
+    choice: &E3ChoiceV1,
+    chosen: Option<EffectObjectBinding>,
+) -> Result<(), String> {
+    validate_jace_choice(state, pending, choice, &pending.frames)?;
+    let player = choice.player;
+    if chosen.is_some() {
+        // The chooser selected the other replacement. The ordinary commit
+        // applies Jace instead of running Hullbreacher's proposal hook.
+        event::commit(state, ProposedEvent::draw(player));
+        let opponent = player.opponent();
+        if state.players[opponent.index()].has_lost
+            && !crate::game_outcome_protection_v1::cannot_lose(state, opponent)
+        {
+            pending.frames.clear();
+        }
+    } else {
+        event::propose_and_commit(state, ProposedEvent::draw(player));
+    }
+    Ok(())
 }
 
 /// Applies a dredge choice: no card draws, a card dredges.
@@ -232,7 +410,6 @@ pub(crate) fn answer_pending_decision(state: &mut GameState, option: u16) -> Res
     };
     if !dredged {
         event::propose_and_commit(state, ProposedEvent::draw(player));
-        crate::eternal_cards_v1::note_draw_step_draw(state, player);
     }
     Ok(true)
 }
