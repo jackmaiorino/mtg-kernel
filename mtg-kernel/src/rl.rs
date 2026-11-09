@@ -10565,19 +10565,24 @@ pub(crate) fn core_policy_action_candidates_kaito_scoped_v75(
                 }
             }
         }
-        if let PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseEffectOption {
-            player,
-            source,
-            ..
-        })) = decision
+        if let PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+            Decision::ChooseEffectOption { player, source, .. },
+        )) = decision
         {
-            let resolving = state.engine.pending_effect.as_ref().map(|p| &p.resolving_item);
+            let resolving = state
+                .engine
+                .pending_effect
+                .as_ref()
+                .map(|p| &p.resolving_item);
             if let Some(item) = resolving.filter(|item| {
                 item.kind == StackItemKind::TriggeredAbility
                     && item.source == *source
                     && item.controller == *player
                     && item.v4.granted_by.is_none()
-                    && item.v4.ability_source_contract.zip(item.inline_effect.as_ref())
+                    && item
+                        .v4
+                        .ability_source_contract
+                        .zip(item.inline_effect.as_ref())
                         .is_some_and(|(contract, effect)| {
                             trigger_programs::printed_program(contract, effect)
                                 == Some(ProgramV1::KioraThreshold)
