@@ -1,6 +1,7 @@
 //! Explicit consumer factories over the same preflighted V75 initialization.
 use super::*;
 use crate::policy_surface_v5::LimitedAppendixV1;
+use crate::state::GameState;
 
 impl FastActorSessionV1 {
     pub(crate) fn reset_limited_return_v1(

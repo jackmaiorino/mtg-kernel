@@ -153,6 +153,7 @@ fn full_pool_archives_paid_banner_entry_and_season_after_both_bounce() {
             .as_ref()
             .unwrap();
         let entry = before
+            .native
             .completed_entries
             .iter()
             .find(|entry| entry.source.original_source.object == banner.0)

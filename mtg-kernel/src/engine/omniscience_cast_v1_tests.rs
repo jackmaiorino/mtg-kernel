@@ -282,7 +282,7 @@ fn optional_paid_and_free_bolt_keep_actual_source_target_cost_and_response_resto
                 assert_eq!(stack_item_id, row.v4.stack_item_id);
                 assert_eq!(original.source, bolt);
                 assert_eq!(
-                    options(&s, choice.options_history_index)
+                    options(&s, choice.options_history_index, true)
                         .unwrap()
                         .source
                         .source,
@@ -841,7 +841,7 @@ fn genuine_paid_replication_copy_and_free_only_resource_window_restore_both_seat
                 panic!()
             };
             assert_eq!(
-                options(branch, choice.options_history_index)
+                options(branch, choice.options_history_index, true)
                     .unwrap()
                     .source
                     .source,
