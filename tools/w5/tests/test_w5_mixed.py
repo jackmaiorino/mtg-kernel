@@ -181,16 +181,29 @@ class CompareTests(MixedBase):
         self.assertEqual(rate['candidate'], [cand['phases'][-1]['durable']['updates_per_hour']])
         self.assertEqual(rate['verdict'], 'too few samples')
         self.assertAlmostEqual(report['metrics']['cpu_seconds_per_update']['candidate_over_baseline'], 1.0)
-        # Balanced order with two records a side: the order is reported and the ranges decide the verdict.
-        b2 = self.copy_record(base, 'tb2.json', lambda d: d['qualification'].update(
-            started_unix=cand['qualification']['started_unix'] + 2))
-        c2 = self.copy_record(cand, 'tc2.json', lambda d: d['qualification'].update(
-            started_unix=cand['qualification']['started_unix'] + 1))
+        # Balanced order needs two actual runs per side, each with fresh phase plans and chains.
+        ok_c2, cand2 = self.homogeneous(cand_plan, 'tc2')
+        ok_b2, base2 = self.homogeneous(base_plan, 'tb2')
+        self.assertTrue(ok_c2 and ok_b2, (base2.get('why'), cand2.get('why')))
+        b2, c2 = self.node.t / 'tb2.json', self.node.t / 'tc2.json'
         passed, report = chains.compare_records([b, b2], [c, c2])
         self.assertTrue(passed)
         self.assertEqual(report['order'], 'ABBA')
         rate = report['metrics']['durable_updates_per_hour']
         self.assertEqual(rate['verdict'], chains.spread_verdict(rate['baseline'], rate['candidate']))
+        # Repeated paths, byte copies, and changed timestamps still represent the same measured phase plans.
+        copied = self.copy_record(base, 'copy.json', lambda d: None)
+        retimed = self.copy_record(base, 'retimed.json', lambda d: d['qualification'].update(
+            started_unix=base2['qualification']['started_unix'] + 1))
+        for duplicate in (b, copied, retimed):
+            with self.subTest(duplicate=duplicate):
+                with self.assertRaisesRegex(chains.Stop, 'independent samples require distinct runs'):
+                    chains.compare_records([b, duplicate], [c, c2])
+        for field in ('hostname', 'kernel'):
+            changed_host = self.copy_record(cand, f'changed-{field}.json', lambda d: d['qualification'].update(
+                {field: 'another-environment'}))
+            with self.assertRaisesRegex(chains.Stop, f'environment\\.{field}'):
+                chains.compare_records([b], [changed_host])
         # A candidate whose outputs differ fails, with no speed metrics.
         bad = self.copy_record(cand, 'bad.json', lambda d: d['phases'][-1]['boxes'][2]['identity'].update(
             b000000005='0' * 64))

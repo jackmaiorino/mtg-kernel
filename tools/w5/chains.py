@@ -172,10 +172,11 @@ serial box (interference) and CPU-seconds per update. A mismatch within an arm, 
 fails the record (`<out>.failed.json`).
 
 **Comparisons** (`throughput-compare`): baseline and candidate records of one schema (box throughput or mixed) and
-one workload. The records must agree on the run parameters, the layout bindings, the phase plans' inputs (except
+one workload. The records must agree on the recorded host and kernel, run parameters, layout bindings, phase plans' inputs (except
 their label, chains, trainer and throughput records), the content pins of the files those name, and the arm files
 (except their trainer and tool pins); only the code (the trainer and the W5 tools) may differ, and the records of
-one side ran the same code. Otherwise it stops. Every chain's identity rows must equal the first baseline's at the
+one side ran the same code. Each retained phase plan may occur in only one record, so copied records cannot supply
+extra independent samples. Otherwise it stops. Every chain's identity rows must equal the first baseline's at the
 same phase and slot; a candidate that differs fails the report and is not compared for speed. A passing report
 gives, for the full-layout phase, each record's total and per-arm durable updates/hour and CPU-seconds per update,
 the medians, the ranges and the candidate/baseline median ratio. It calls a metric higher or lower only when the
@@ -3193,6 +3194,7 @@ def record_workload(record):
     q = record['qualification']
     bindings = record['bindings'] if record['schema'] == MIX_SCHEMA else {q['arm']: record['binding']}
     work = {'schema': record['schema'],
+            'environment': {k: q.get(k) for k in ('hostname', 'kernel')},
             'run': {k: q.get(k) for k in ('arm', 'slots', 'updates', 'seed_root', 'counts', 'segment_updates',
                                           'box_threads', 'host_class')},
             'layout': {a: {k: b.get(k) for k in ('host_class', 'positions_sha256', 'cores_per_box', 'boxes', 'arm',
@@ -3306,6 +3308,14 @@ def compare_records(baselines, candidates):
     code = {}
     for (side, path), (_, c) in zip(sides, works):
         require(code.setdefault(side, c) == c, f'{path}: the {side} records ran different code')
+    seen_plans = {}
+    for (_, path), record in zip(sides, recs):
+        for phase in record['phases']:
+            digest = phase['plan']['sha256']
+            require(digest not in seen_plans,
+                    f'{path}: phase {phase["label"]} reuses a measured phase plan from {seen_plans.get(digest)}; '
+                    'independent samples require distinct runs')
+            seen_plans[digest] = str(path)
     maps = [identity_map(r) for r in recs]
     parity = []
     for (_, path), m in zip(sides[1:], maps[1:]):
@@ -3315,7 +3325,7 @@ def compare_records(baselines, candidates):
     report = {'schema': COMPARE_SCHEMA,
               'records': [{'side': side, 'record': pin(path), 'label': r['qualification']['label'],
                            'started_unix': r['qualification']['started_unix']} for (side, path), r in zip(sides, recs)],
-              'order': order, 'workload': {k: works[0][0][k] for k in ('schema', 'run', 'layout')},
+              'order': order, 'workload': {k: works[0][0][k] for k in ('schema', 'environment', 'run', 'layout')},
               'code': dict(code, differs=diff_paths(code['baseline'], code['candidate'])),
               'parity': {'pass': not parity, 'differences': parity}, 'metrics': None}
     if parity:
