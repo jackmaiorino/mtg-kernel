@@ -25,6 +25,7 @@ pub(crate) struct CustodyV1(Arc<Vec<ProofV1>>, Arc<Vec<TargetProofV1>>);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct TargetProofV1 {
     item: [u8; 32],
+    archived: Option<(usize, [u8; 32])>,
     slot: usize,
     contract: StackTargetContractV4,
     public_face: u16,
@@ -82,6 +83,12 @@ fn sources(event: &E) -> Vec<AbilitySourceContractV4> {
         | E::CuratorEnteredV1 { source, .. }
         | E::NivMizzetVisionaryDamageSourceDepartureV1 { source, .. } => vec![*source],
         E::NivMizzetVisionaryDamageV1 { observer, damage_source, .. } => vec![*observer, *damage_source],
+        E::DrakusethDamageSourceV76 { journal } => match journal.as_ref() {
+            crate::drakuseth_damage_source_v76::JournalV76::Departure { facts, .. } => vec![facts.source],
+            crate::drakuseth_damage_source_v76::JournalV76::Published { item } =>
+                item.v4.ability_source_contract.into_iter().collect(),
+            _ => vec![],
+        },
         E::GreatwurmCombatCaptureV1 { capture } => std::iter::once(capture.creature)
             .chain(capture.observers.iter().copied()).collect(),
         E::FiendArtisanConsumerReceiptV1 { journal } => match journal.as_ref() {
@@ -115,11 +122,25 @@ pub(crate) fn capture(state: &GameState) -> Result<CustodyV1, String> {
         }
     }
     let mut targets = Vec::new();
-    for item in state.stack.iter().chain(state.engine.pending_effect.as_ref().map(|p| &p.resolving_item)) {
+    let mut items = state.stack.iter().chain(state.engine.pending_effect.as_ref().map(|p| &p.resolving_item))
+        .map(|item| (item, None)).collect::<Vec<_>>();
+    if state.engine.event_history.has_any(&[crate::event_history_v1::EventKindV1::DrakusethDamageSourceV76]) {
+        crate::drakuseth_damage_source_v76::validate_state(state)?;
+        for (at, event) in state.engine.event_history.iter().enumerate() {
+            if let E::DrakusethDamageSourceV76 { journal } = event {
+                if let crate::drakuseth_damage_source_v76::JournalV76::Published { item } = journal.as_ref() {
+                    items.push((item.as_ref(), Some((at, fingerprint(event)?))));
+                }
+            }
+        }
+    }
+    for (item, archived) in items {
         if item.targets.is_empty() {
             continue;
         }
-        crate::engine::validated_stack_item_target_spec(item, state)?;
+        if archived.is_none() {
+            crate::engine::validated_stack_item_target_spec(item, state)?;
+        }
         let item_hash = fingerprint(item)?;
         let refs = crate::rl::frozen_stack_target_refs(state, item).map_err(|e| e.to_string())?;
         for (slot, (&contract, projected)) in item.v4.target_contracts.iter().zip(refs).enumerate() {
@@ -130,7 +151,7 @@ pub(crate) fn capture(state: &GameState) -> Result<CustodyV1, String> {
             if matches!(zone, Zone::Hand | Zone::Library) {
                 continue;
             }
-            let proof = TargetProofV1 { item: item_hash, slot, contract, public_face: object.card_db_id };
+            let proof = TargetProofV1 { item: item_hash, archived, slot, contract, public_face: object.card_db_id };
             if !targets.contains(&proof) {
                 targets.push(proof);
             }
@@ -160,7 +181,9 @@ pub(crate) fn object_target_face(
     }
     let item_hash = fingerprint(item).ok()?;
     state.sampled_history_v1.1.iter().find(|proof|
-        proof.item == item_hash && proof.slot == slot && proof.contract == contract)
+        proof.item == item_hash && proof.slot == slot && proof.contract == contract
+            && proof.archived.is_none_or(|(at, digest)| state.engine.event_history.get(at)
+                .and_then(|event| fingerprint(event).ok()) == Some(digest)))
         .map(|proof| proof.public_face)
 }
 

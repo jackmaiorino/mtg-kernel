@@ -288,6 +288,7 @@ fn paid_equipment_ability_keeps_its_stale_target_and_fizzles_after_hidden_sampli
             let root = decision(&live);
             let other_root = decision(&paired);
             assert_eq!(root.packet(), other_root.packet());
+            let unchanged = live.fixture_state().clone();
             let mut rebound = false;
             for seed in [552_462, 552_463, 552_464, 552_465] {
                 let mut sampled = live.sampled_full_pool_closed_list_v1(&root, seed, &corpus()).unwrap();
@@ -314,7 +315,7 @@ fn paid_equipment_ability_keeps_its_stale_target_and_fizzles_after_hidden_sampli
                 assert_eq!(decision(&sampled).packet(), root.packet());
             }
             assert!(rebound, "sampled target never changed for {equipment}");
-            assert_eq!(live.fixture_state(), &state);
+            assert_eq!(live.fixture_state(), &unchanged);
         }
     }
 }
