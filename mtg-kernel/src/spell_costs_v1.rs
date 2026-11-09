@@ -913,7 +913,9 @@ fn selected_spell_mana_costs_for_source_grant_v1(
                 ));
         // Retrace (Wrenn and Six's emblem): discard a land card in addition
         // to the other costs.
-        if matches!(method, CastMethodV4::Normal | CastMethodV4::Alternative)
+        if (matches!(method, CastMethodV4::Normal | CastMethodV4::Alternative)
+            || (method == CastMethodV4::Omen
+                && crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name)))
             && crate::eternal_vintage_e7b_v1::retrace_quote(state, source, player)
         {
             selected.components(RETRACE_COST);

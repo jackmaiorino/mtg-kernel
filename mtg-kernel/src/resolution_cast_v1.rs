@@ -218,6 +218,9 @@ pub(super) fn form_allowed_for(
             value
         }
         CastMethodV4::Omen => {
+            if crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name) {
+                return false;
+            }
             let cost = if let Some(a) = supported_adventure(def) {
                 a.cost
             } else if let Some(o) = supported_omen(def) {

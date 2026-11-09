@@ -522,7 +522,7 @@ New, each built once in the first wave that needs it:
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
   S1c, S1a, S1b and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload
   (Vandalblast, Electrickery) is the Adventure form of the card that split cards
-  use, cast from hand with the overload cost, sending the card to the graveyard,
+  use to represent the paid overload cost from hand or a normal graveyard permission,
   with no targets and the printed mana value on the stack (118.9c). Circle of
   Protection: Blue offers a choice among the blue objects in the public zones and
   records a shield (source incarnation, player, turn) that the damage replacement
@@ -546,9 +546,10 @@ New, each built once in the first wave that needs it:
   Partial: Martyr of Sands awaits native payment, disclosure, restore and consumer
   qualification. Standard Bearer and Coalition Honor Guard apply the
   Flagbearer restriction only to the last slot, so a multi-target spell that can
-  finish early can bypass it. Vandalblast and Electrickery omit overload on the normal
-  graveyard permission path. The shared free-resolution path can offer the overload
-  form at zero cost, although free casting excludes other alternative costs.
+  finish early can bypass it. Vandalblast and Electrickery use the existing graveyard
+  permission for a paid overload and retain Retrace's land discard. A free-cast
+  permission offers the ordinary spell form with its original target requirement.
+  The affected overload fixtures and consumers still need qualification.
   Circle of Protection: Blue offers
   unrelated graveyard and exile cards as sources, excludes contextual sources outside
   its public-zone list and does not preserve a chosen permanent spell's shield when

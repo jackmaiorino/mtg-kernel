@@ -170,8 +170,8 @@ pub(super) fn mode3_for(name: &str) -> &'static str {
     super::build_eternal_s1a_v1::mode3_for(name)
 }
 
-/// Overload: the Adventure form of the card, cast from hand for the overload
-/// cost. Vandalblast {4}{R}; Electrickery {1}{R}.
+/// Overload: the shared second form uses the paid overload cost.
+/// Vandalblast {4}{R}; Electrickery {1}{R}.
 pub(super) fn adventure_for(name: &str) -> &'static str {
     match name {
         "Vandalblast" => "Some(AdventureDef { name: \"Vandalblast Overload\", cost: Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 4, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: ability_effect_program_eternal_sideboard_s1d_v1_vandalblast_overload })",
@@ -271,7 +271,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "static:opponents_must_choose_a_flagbearer_when_casting_or_activating_if_able"
         }
         "Sentinel's Eyes" => "static:plus_1_plus_1_vigilance;escape:{W}:exile_two_other_cards",
-        "Vandalblast" | "Electrickery" => "overload:alternative_form_cast_from_hand",
+        "Vandalblast" | "Electrickery" => "overload:paid_alternative_form_from_authorized_zone;free_cast_excludes_overload",
         "Martyr of Sands" => "ability:reveal_x_white_cards_from_hand_sacrifice:gain_three_times_x",
         "Circle of Protection: Blue" => {
             "ability:choose_blue_source:prevent_next_damage_to_you_from_it_this_turn"
