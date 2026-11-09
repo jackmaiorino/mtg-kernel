@@ -165,6 +165,38 @@ fn full_pool_closed_list_samples_revealed_names_without_physical_copy_or_multipl
 }
 
 #[test]
+fn full_pool_sampled_family_binding_rejects_changed_non_hand_meaning() {
+    use crate::akroma_family_public_v40::FamilyProjectionV40;
+
+    let (owner, belief) = scene(PlayerId::P0, true, false);
+    let before = decision(&owner);
+    let sampled = owner
+        .sampled_full_pool_closed_list_v1(&before, 552_003, &belief)
+        .unwrap();
+    let after = decision(&sampled);
+    let before = before.fixture_backend_v75().family_projections_v75();
+    let after = after.fixture_backend_v75().family_projections_v75();
+    assert!(FamilyProjectionV40::sampled_families_match(
+        before.to_vec(),
+        after.to_vec(),
+    ));
+
+    let mut changed = after.to_vec();
+    let cerberus = changed
+        .iter_mut()
+        .find_map(|family| match family {
+            FamilyProjectionV40::Cerberus(observation) => Some(observation),
+            _ => None,
+        })
+        .expect("FullPool binds Cerberus's public creature-death fact");
+    cerberus.creature_died_this_turn = !cerberus.creature_died_this_turn;
+    assert!(!FamilyProjectionV40::sampled_families_match(
+        before.to_vec(),
+        changed,
+    ));
+}
+
+#[test]
 fn full_pool_closed_list_rejects_bad_corpus_and_foreign_decisions_without_mutating_owner() {
     let (owner, _) = scene(PlayerId::P0, true, false);
     let (foreign, belief) = scene(PlayerId::P0, true, false);
