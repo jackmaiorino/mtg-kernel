@@ -293,6 +293,11 @@ pub enum E3ChoiceKindV1 {
     P2aV1(crate::eternal_premodern_p2a_v1::P2aChoiceV1),
     /// A Premodern wave P1a choice (`eternal_premodern_p1a_v1`).
     P1aV1(crate::eternal_premodern_p1a_v1::P1aChoiceV1),
+    /// A Premodern wave P2c choice. Appended to preserve existing hashes.
+    P2cV1(crate::eternal_premodern_p2c_v1::P2cChoiceV1),
+    /// A choice owned by the outside-the-game zone's module (Karn's exile
+    /// card, learn's discard).
+    OutsideGameV1(crate::eternal_outside_game_v1::OutsideGameChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -347,7 +352,13 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::P2aV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::P2cV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         if let E3ChoiceKindV1::P1aV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
+        if let E3ChoiceKindV1::OutsideGameV1(kind) = &self.kind {
             return kind.chooser_private();
         }
         matches!(
@@ -375,6 +386,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E9aV1(kind) => kind.library_search(),
             E3ChoiceKindV1::P1bV1(kind) => kind.library_search(),
             E3ChoiceKindV1::P2aV1(kind) => kind.library_search(),
+            E3ChoiceKindV1::P2cV1(kind) => kind.library_search(),
             E3ChoiceKindV1::P1aV1(kind) => kind.library_search(),
             _ => false,
         }
@@ -393,7 +405,9 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E9aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P1bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P2aV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::P2cV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P1aV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::OutsideGameV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::ImprintV1 { .. }
             | E3ChoiceKindV1::DoomsdayV1
             | E3ChoiceKindV1::OracleV1 { .. }
@@ -447,6 +461,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E9aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P2aV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::P2cV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1aV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
@@ -691,6 +706,13 @@ pub(crate) fn finish_selection(
             kind,
             bindings,
         ),
+        E3ChoiceKindV1::P2cV1(kind) => crate::eternal_premodern_p2c_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
         E3ChoiceKindV1::P2aV1(kind) => crate::eternal_premodern_p2a_v1::finish_selection(
             state,
             continuation,
@@ -699,6 +721,13 @@ pub(crate) fn finish_selection(
             bindings,
         ),
         E3ChoiceKindV1::P1aV1(kind) => crate::eternal_premodern_p1a_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::OutsideGameV1(kind) => crate::eternal_outside_game_v1::finish_selection(
             state,
             continuation,
             choice,
@@ -1049,11 +1078,17 @@ pub(crate) fn drive(
         EternalOpV1::P2aV1(op) => {
             crate::eternal_premodern_p2a_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::P2cV1(op) => {
+            crate::eternal_premodern_p2c_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::P1aV1(op) => {
             crate::eternal_premodern_p1a_v1::drive(state, continuation, op, path)
         }
         EternalOpV1::P2bV1(op) => {
             crate::eternal_premodern_p2b_v1::drive(state, continuation, op, path)
+        }
+        EternalOpV1::OutsideGameV1(op) => {
+            crate::eternal_outside_game_v1::drive(state, continuation, op, path)
         }
         other => {
             super::execute(other, &continuation.ctx, state);
@@ -1086,8 +1121,10 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
         || matches!(op, EternalOpV1::E9aV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::P1bV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::P2aV1(op) if op.contains_player_choice())
+        || matches!(op, EternalOpV1::P2cV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::P1aV1(op) if op.contains_player_choice())
         || matches!(op, EternalOpV1::P2bV1(op) if op.contains_player_choice())
+        || matches!(op, EternalOpV1::OutsideGameV1(op) if op.contains_player_choice())
 }
 
 /// The cards (not tokens or copies) in `player`'s graveyard, in order.

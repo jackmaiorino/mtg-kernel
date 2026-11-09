@@ -502,21 +502,12 @@ pub fn spliced_effects() -> EffectOp {
 
 /// First Day of Class: "Whenever a creature you control enters this turn,
 /// put a +1/+1 counter on it and it gains haste until end of turn. Learn."
-/// Learn finds no Lesson outside the game in a best-of-one mainboard game,
-/// so it is "you may discard a card. If you do, draw a card."
+/// Learn reads the outside-the-game zone (`eternal_outside_game_v1`), which
+/// has no Lesson in a best-of-one game.
 pub fn first_day_of_class() -> EffectOp {
     EffectOp::Sequence(vec![
         e8b(E8bOpV1::FirstDayOfClassV1),
-        EffectOp::MayPayCostThen {
-            discard: 1,
-            sacrifice_lands: 0,
-            return_permanent: None,
-            then: Box::new(EffectOp::DrawCards {
-                player: PlayerRef::Controller,
-                count: 1,
-            }),
-            otherwise: None,
-        },
+        crate::eternal_outside_game_v1::learn(),
     ])
 }
 

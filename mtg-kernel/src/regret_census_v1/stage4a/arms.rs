@@ -211,6 +211,43 @@ fn sample_world(
     }
 }
 
+/// SD1's TH and TL probes: one partial-information sample per simulation
+/// (`world::sample_partial_recorded`), counted like `sample_world`.
+fn sample_partial(
+    ctx: &RootCtx,
+    seed: u64,
+    filter: crate::rl_session::SlotFilterV1,
+    prior_on: bool,
+    stats: &mut SamplerStats,
+) -> Result<FastActorSessionV1, String> {
+    let t = Instant::now();
+    let mut encoding_failure = None;
+    let r = super::world::sample_partial_recorded(
+        ctx.root,
+        seed,
+        ctx.prior,
+        filter,
+        prior_on,
+        &mut encoding_failure,
+    );
+    stats.seconds += t.elapsed().as_secs_f64();
+    if let Some(f) = &encoding_failure {
+        stats.boundary_encoding.add(&f.kind, &f.detail);
+    }
+    match r {
+        Ok(world) => {
+            stats.ok += 1;
+            Ok(world)
+        }
+        Err(e) => {
+            stats.rejected += 1;
+            let kind: String = e.split(':').next().unwrap_or("").chars().take(60).collect();
+            *stats.kinds.entry(kind).or_default() += 1;
+            Err(e)
+        }
+    }
+}
+
 pub(crate) fn softmax(logits: &[f32]) -> Vec<f64> {
     let m = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max) as f64;
     let e: Vec<f64> = logits.iter().map(|&x| ((x as f64) - m).exp()).collect();
@@ -1382,8 +1419,8 @@ impl Roles {
                     "pinned_attempts":attempts});
                 world_ok = false;
             }
-        } else if world_mode == super::world::WorldMode::TrueV1 {
-            world_receipt = json!({"mode":"true-v1"});
+        } else if world_mode != super::world::WorldMode::Fresh {
+            world_receipt = json!({"mode":world_mode.label()});
         }
         loop {
             if !world_ok {
@@ -1423,6 +1460,20 @@ impl Roles {
                 (super::world::WorldMode::PinnedV1, Some(base)) => {
                     Ok(super::world::fresh_future_world(base, seed))
                 }
+                (super::world::WorldMode::TrueHandV1, _) => sample_partial(
+                    ctx,
+                    seed,
+                    crate::rl_session::SlotFilterV1::LibrariesOnly,
+                    false,
+                    &mut sel.sampler,
+                ),
+                (super::world::WorldMode::TrueOwnLibraryV1, _) => sample_partial(
+                    ctx,
+                    seed,
+                    crate::rl_session::SlotFilterV1::OpponentOnly,
+                    true,
+                    &mut sel.sampler,
+                ),
                 _ => sample_world(ctx, ctx.root, seed, &mut sel.sampler),
             };
             drop(span);
