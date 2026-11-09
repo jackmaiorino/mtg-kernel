@@ -601,7 +601,9 @@ fn hullbreacher_and_dredge_compete_for_the_monarchs_draw() {
             act(branch, Action::ChooseEffectTarget(Target::Object(thug)));
             settled(branch);
             assert_eq!(zone(branch, thug), Zone::Hand);
-            assert!(library[..4].iter().all(|&card| zone(branch, card) == Zone::Graveyard));
+            assert!(library[..4]
+                .iter()
+                .all(|&card| zone(branch, card) == Zone::Graveyard));
             assert_eq!(branch.players[actor.index()].library, library[4..]);
             assert_eq!(branch.players[actor.index()].draws_this_turn, 0);
             assert!(named(branch, opponent, "Treasure Token").is_empty());

@@ -672,8 +672,7 @@ pub(crate) mod statics {
                 && active_named(state, object, HULLBREACHER))
             .then_some(live.controller)
         })?;
-        (!crate::eternal_cards_v1::is_first_draw_in_draw_step(state, drawer))
-            .then_some(controller)
+        (!crate::eternal_cards_v1::is_first_draw_in_draw_step(state, drawer)).then_some(controller)
     }
 
     /// Ravenous Trap: how many cards `player` owns that were put into a

@@ -126,13 +126,7 @@ pub(crate) fn drive_draws(
             path: path.clone(),
         });
     }
-    let choice = choice(
-        state,
-        drawer,
-        &cards,
-        path,
-        continuation.frames.clone(),
-    );
+    let choice = choice(state, drawer, &cards, path, continuation.frames.clone());
     crate::eternal_cards_v1::e3::offer(continuation, choice);
     Ok(true)
 }
@@ -196,12 +190,17 @@ pub(crate) fn validate_monarch_draw(
         ) => {
             **choice == expected
                 && selected.is_empty()
-                && legal.iter().map(|candidate| candidate.target).eq(expected.candidates)
+                && legal
+                    .iter()
+                    .map(|candidate| candidate.target)
+                    .eq(expected.candidates)
         }
         (None, [EffectFrame::EternalSelectionV1 { choice, selected }]) => {
             **choice == expected
                 && selected.len() <= 1
-                && selected.iter().all(|target| expected.candidates.contains(target))
+                && selected
+                    .iter()
+                    .all(|target| expected.candidates.contains(target))
         }
         _ => false,
     };
