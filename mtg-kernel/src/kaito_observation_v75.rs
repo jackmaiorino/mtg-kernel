@@ -870,7 +870,8 @@ pub(crate) fn pending_source_reference(
         && source.zone == crate::state::Zone::Battlefield
         && crate::scrawling_crawler_public_v1::pending_printing(source.card_def)
         && (pending.granted_by.is_some()
-            || crate::scrawling_crawler_public_v1::TriggerV1::from_program(&pending.effect).is_some());
+            || crate::scrawling_crawler_public_v1::TriggerV1::from_program(&pending.effect)
+                .is_some());
     if !selected_source(source)
         && !kykar
         && !sphinx_lore
