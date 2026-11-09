@@ -56,6 +56,7 @@ enum Kind {
 fn kind_of(d: &Decision) -> Kind {
     match d {
         Decision::ChooseEntryCreatureTypeV1 { .. }
+        | Decision::ChooseMeddlingMageNameV1 { .. }
         | Decision::ChooseFullRangeCastXValueV59 { .. } => {
             unreachable!(
                 "this fixed script has no creature-type entry or full-range cast-X successor"
@@ -181,6 +182,7 @@ fn run_combat_game(state: &mut GameState) -> (Vec<Kind>, u32) {
 
         match decision {
             Decision::ChooseEntryCreatureTypeV1 { .. }
+            | Decision::ChooseMeddlingMageNameV1 { .. }
             | Decision::ChooseFullRangeCastXValueV59 { .. } => {
                 unreachable!(
                     "this fixed script has no creature-type entry or full-range cast-X successor"

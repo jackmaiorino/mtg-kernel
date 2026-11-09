@@ -2216,18 +2216,16 @@ pub(crate) fn finish_selection(
 /// Puts `card` onto the battlefield face down as a 2/2 creature under
 /// `player`'s control; only `player` may look at it.
 fn manifest(state: &mut GameState, player: PlayerId, card: ObjectId) {
-    put_onto_battlefield(state, card, player);
+    let ProposedEvent::ZoneChange(mut entry) =
+        ProposedEvent::zone_change_to_battlefield_under_controller(card, player)
+    else {
+        unreachable!("manifest uses a native zone change");
+    };
+    entry.battlefield_manifested_v1 = true;
+    event::propose_and_commit(state, ProposedEvent::ZoneChange(entry));
     if state.objects.get(card).zone != Zone::Battlefield {
         return;
     }
-    let live = state.objects.get_mut(card);
-    live.v4.face_down_v1 = Some(crate::state::FaceDownV1 {
-        disguised: true,
-        lookers: 1 << player.index(),
-        hidden_by: None,
-        hidden_by_source: None,
-    });
-    live.v4.ward_generic = 0;
     let link = live_link(state, card);
     e7a_state(state).manifested.push(link);
 }
@@ -2672,7 +2670,7 @@ pub(crate) fn extra_land_candidates(state: &GameState, player: PlayerId) -> Vec<
 /// paying one: from exile (suspend) or from a hand under a free-cast
 /// permission.
 pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId, card: ObjectId) -> bool {
-    // Deafening Silence, Gaddock Teeg and Meddling Mage (wave S1b).
+    // Deafening Silence and Gaddock Teeg (wave S1b).
     if crate::eternal_sideboard_s1b_v1::cast_prohibited(state, player, card) {
         return true;
     }
@@ -2760,10 +2758,6 @@ pub(crate) fn keyword_lost(state: &GameState, object: ObjectId, keyword: Keyword
 /// Dress Down: "Creatures lose all abilities." The timestamp of the latest
 /// Dress Down whose ability applies, for a creature.
 pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
-    let e7a = read_state(state)?;
-    if e7a.dress_downs.is_empty() {
-        return None;
-    }
     let live = state.objects.try_get(object)?;
     if live.zone != Zone::Battlefield
         || !CARD_DEFS.get(live.card_def as usize).is_some_and(|def| {
@@ -2773,10 +2767,20 @@ pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u
     {
         return None;
     }
-    e7a.dress_downs
+    active_dress_down_timestamp(state, Some(object))
+}
+
+/// Existing Dress Down effects also apply to a prospective creature entry
+/// when determining which as-enters abilities it has (614.12).
+pub(crate) fn active_dress_down_timestamp(
+    state: &GameState,
+    except: Option<ObjectId>,
+) -> Option<u64> {
+    read_state(state)?
+        .dress_downs
         .iter()
         .filter(|(link, _)| {
-            link.object != object
+            Some(link.object) != except
                 && state.objects.try_get(link.object).is_some_and(|dress| {
                     dress.zone == Zone::Battlefield
                         && dress.zone_change_count == link.zone_change_count

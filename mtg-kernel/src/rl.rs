@@ -1968,6 +1968,11 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state) {
+        return Err(RlContractError(
+            "Meddling Mage named entry requires its consumer successor".into(),
+        ));
+    }
     crate::continuous_characteristics_v1::refuse_land_override_consumer(state, acting_player)
         .map_err(RlContractError)?;
     crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
@@ -2337,6 +2342,11 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     accept_fake: bool,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<ObservationV2> {
+    if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state) {
+        return Err(RlContractError(
+            "Meddling Mage named entry requires its consumer successor".into(),
+        ));
+    }
     if !matches!(
         text_mode,
         ObservationTextModeV2::NextFiveV59Artifact
@@ -7107,7 +7117,8 @@ fn core_surface_action_candidates_fake_scoped_v50(
             | Decision::ChooseVariableCastTargets { .. }
             | Decision::ChooseVariableCastKicker { .. }
             | Decision::ChooseEntryColorV36 { .. }
-            | Decision::ChooseEntryCreatureTypeV1 { .. } => {
+            | Decision::ChooseEntryCreatureTypeV1 { .. }
+            | Decision::ChooseMeddlingMageNameV1 { .. } => {
                 return Err(RlContractError(
                     "variable cast targeting requires its legal-action successor".into(),
                 ))
@@ -7745,6 +7756,7 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseVariableCastKicker { player, .. }
             | Decision::ChooseEntryColorV36 { player, .. }
             | Decision::ChooseEntryCreatureTypeV1 { player, .. }
+            | Decision::ChooseMeddlingMageNameV1 { player, .. }
             | Decision::ChooseOptionalCost { player, .. }
             | Decision::ChooseSpellCopyPayment { player, .. }
             | Decision::ChooseSpellCopyRetarget { player, .. }

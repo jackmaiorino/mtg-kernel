@@ -470,8 +470,15 @@ New, each built once in the first wave that needs it:
   check reads it. New target filters: four-point divided damage among creatures (Pyrokinesis)
   and a creature or Vehicle you control (Perilous Snare); Stern Dismissal and Extirpate use
   S1c's and S1a's filters. Meddling Mage, Extirpate and Leyline of Sanctity are Partial.
-  Mage cannot name on other entry paths. Leyline has the same opening timing gap as
-  Leyline of the Void. Extirpate uses the shared extraction continuation to require all
+  The Meddling Mage candidate asks for a name before committing the actual entry.
+  A resumed entry checks the original operation, confirmed catalog choice, controller,
+  and native entry occurrence. The named-spell restriction uses the same quote and
+  payment gates for ordinary casts and resolution casts. The catalog name menu and
+  legacy observation paths still need a consumer successor. A save with a legacy
+  staged Mage choice or completed name tuple requires the historical engine because
+  the save lacks the choice evidence required by the new entry owner. Leyline has
+  the same opening timing gap as Leyline of the Void.
+  Extirpate uses the shared extraction continuation to require all
   public graveyard matches, offer any subset of the hidden matches, and provide the caster
   a private look at the full searched hand and library. Native qualification of this
   repair is pending. Rule 701.23 allows fail-to-find in the hidden zones.
@@ -520,7 +527,7 @@ New, each built once in the first wave that needs it:
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
   S1c, S1a, S1b and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload
   (Vandalblast, Electrickery) is the Adventure form of the card that split cards
-  use, cast from hand with the overload cost, sending the card to the graveyard,
+  use to represent the paid overload cost from hand or a normal graveyard permission,
   with no targets and the printed mana value on the stack (118.9c). Circle of
   Protection: Blue offers a choice among the blue objects in the public zones and
   records a shield (source incarnation, player, turn) that the damage replacement
@@ -546,9 +553,13 @@ New, each built once in the first wave that needs it:
   complete-assignment checks for optional target counts, including early Finish,
   restored selections and payable activations. Native qualification is pending.
   Fixed-slot dependencies such as Goblin Welder and separate damage-allocation
-  target paths still need qualification and repairs. Vandalblast and Electrickery omit overload on the normal
-  graveyard permission path. The shared free-resolution path can offer the overload
-  form at zero cost, although free casting excludes other alternative costs.
+  target paths still need qualification and repairs. Vandalblast and Electrickery use the existing graveyard
+  permission for a paid overload and retain Retrace's land discard. A free-cast
+  permission offers the ordinary spell form with its original target requirement.
+  Omniscience can still cast the ordinary form for free or let its controller pay
+  for overload. Bolas's Citadel offers the ordinary form with its life payment.
+  Normal library permission from Future Sight still needs overload support.
+  The affected overload fixtures and consumers still need qualification.
   Circle of Protection: Blue offers
   unrelated graveyard and exile cards as sources, excludes contextual sources outside
   its public-zone list and does not preserve a chosen permanent spell's shield when

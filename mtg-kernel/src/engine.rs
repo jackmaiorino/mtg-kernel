@@ -1780,6 +1780,13 @@ pub enum Decision {
         player: PlayerId,
         spell: ObjectId,
     },
+    /// Named nonland entry choice. Indices address this actual catalog menu.
+    ChooseMeddlingMageNameV1 {
+        player: PlayerId,
+        entry_ordinal: u32,
+        group: Option<u16>,
+        options: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2513,10 +2520,11 @@ fn validate_physical_spell_cast_origin(
                 && source.owner == caster
                 && holder == caster
                 && permission_zone_change_count == origin.origin_zone_change_count
-                && matches!(
+                && (matches!(
                     cast_method,
                     CastMethodV4::Normal | CastMethodV4::Alternative
-                )
+                ) || (cast_method == CastMethodV4::Omen
+                    && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)))
                 && crate::standard_cards_v1::graveyard_cast_granted(
                     state,
                     item.source,
@@ -2537,6 +2545,8 @@ fn validate_physical_spell_cast_origin(
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && (!matches!(origin.route, SpellCastRouteV4::ExileFreePermission { .. })
                     || (item.v4.x_value == 0
+                        && !(cast_method == CastMethodV4::Omen
+                            && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name))
                         && (matches!(cast_method, CastMethodV4::Normal | CastMethodV4::Omen)
                             || crate::standard_cards_v1::room_cast_mana_value(def, cast_method)
                                 .is_some())))
@@ -9742,6 +9752,8 @@ fn viable_pending_spell_forms(
     } else if let Some(adventure) = supported_adventure(def) {
         (pending.origin_zone == Zone::Hand
             || free
+            || (crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
+                && pending_has_ordinary_graveyard_permission(pending, state))
             || (pending.origin_zone == Zone::Exile
                 && !state.objects.get(pending.spell).v4.on_adventure)
             || pending
@@ -10191,6 +10203,13 @@ fn pending_has_graveyard_creature_permission(pending: &PendingCast, state: &Game
             })
 }
 
+fn pending_has_ordinary_graveyard_permission(pending: &PendingCast, state: &GameState) -> bool {
+    pending.source_contract.spell_cast_origin.is_some_and(|origin| {
+        matches!(origin.route, SpellCastRouteV4::GraveyardPermissionV1 { holder, permission_zone_change_count }
+            if holder == pending.controller && permission_zone_change_count == origin.origin_zone_change_count)
+    }) && pending_has_graveyard_creature_permission(pending, state)
+}
+
 fn unambiguous_graveyard_cast_method(def: &card_def::CardDef) -> Option<CastMethodV4> {
     match (def.flashback.is_some(), def.escape.is_some()) {
         (true, false) => Some(CastMethodV4::Flashback),
@@ -10570,8 +10589,9 @@ fn is_castable_now(
                 })
             };
             // Ordinary exile permission allows either form. Adventure's own
-            // exile permission allows only the permanent; Mosswood's graveyard
-            // permission allows only its Adventure.
+            // exile permission allows only the permanent. Mosswood's own
+            // graveyard permission allows its Adventure, and a general
+            // graveyard permission can pay the ordinary spell's overload.
             let adventure_ok = || {
                 supported_adventure(def).is_some_and(|adventure| {
                     (state.objects.get(id).zone == Zone::Hand
@@ -10581,7 +10601,9 @@ fn is_castable_now(
                                 || tinybones_v72::play_allowed(state, id, player)))
                         || crate::standard_creatures_v1::graveyard_adventure_allowed(
                             state, id, player,
-                        ))
+                        )
+                        || (crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
+                            && graveyard_permission_zone_change_count(player, id, state).is_some()))
                         && cast_form_timing_ok(adventure.types, Keywords::NONE, player, state)
                         && target_prefix_can_complete_for_controller_and_source(
                             adventure.target_spec,
@@ -14616,9 +14638,17 @@ pub(crate) fn validate_pending_cast(
                 })
             && !(cfg!(feature = "eternal-fixtures")
                 && resolution_cast_v1::graveyard_resolution_cast(state, pending.spell))
+            && !(crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
+                && pending_has_ordinary_graveyard_permission(pending, state))
         {
             return Err("graveyard creature permission cannot cast the Adventure form".to_string());
         }
+    }
+    if pending.mode_chosen == Some(1)
+        && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
+        && !resolution_cast_v1::form_allowed(state, pending.spell, CastMethodV4::Omen)
+    {
+        return Err("overload cannot replace an already selected alternative cost".into());
     }
     if !mode_shape_valid {
         return Err("pending cast mode selection is noncanonical".to_string());
@@ -15466,11 +15496,18 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         && pending.hand_free_cast_v1 == Some(HandFreeCastV1::Undecided)
     {
         let kicked = pending.kicked == Some(true);
-        let mut paying = pending.clone();
-        paying.hand_free_cast_v1 = Some(HandFreeCastV1::PayManaCost);
-        let pay = free_cast_projection_quote(def, &paying, kicked, state);
-        let free =
-            pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, kicked, 0, state).is_some();
+        let overload = pending.mode_chosen == Some(1)
+            && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name);
+        let pay = if overload {
+            pending_cast_quote_v1(def, &pending, CastMethodV4::Omen, kicked, 0, state).is_some()
+        } else {
+            let mut paying = pending.clone();
+            paying.hand_free_cast_v1 = Some(HandFreeCastV1::PayManaCost);
+            free_cast_projection_quote(def, &paying, kicked, state)
+        };
+        let free = !overload
+            && pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, kicked, 0, state)
+                .is_some();
         let choice = match (pay, free) {
             (true, true) => {
                 return Some(Decision::ChooseEffectOption {
@@ -24376,6 +24413,8 @@ fn pending_cast_action_stage(
     }
     if pending.cast_mode == Some(CastMode::Normal)
         && pending.hand_free_cast_v1 == Some(HandFreeCastV1::Undecided)
+        && !(pending.mode_chosen == Some(1)
+            && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name))
     {
         return Ok(PendingCastActionStage::ChooseFreeCastV1);
     }

@@ -315,6 +315,9 @@ pub struct ZoneChangeProposed {
     /// Installs a resolving-entry flying grant on the new incarnation.
     #[serde(default, skip_serializing_if = "is_false")]
     pub battlefield_grant_flying_v1: bool,
+    /// The native Manifest Dread entry is face down before entry observers.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub battlefield_manifested_v1: bool,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -434,6 +437,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            battlefield_manifested_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -453,6 +457,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            battlefield_manifested_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -472,6 +477,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            battlefield_manifested_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -494,6 +500,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            battlefield_manifested_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -526,6 +533,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            battlefield_manifested_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -561,6 +569,7 @@ impl ProposedEvent {
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
+            battlefield_manifested_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -2085,6 +2094,9 @@ pub enum CommittedEvent {
         item: crate::ids::StackItemId,
         source: crate::state::AbilitySourceContractV4,
         revealed: Vec<u16>,
+    },
+    MeddlingMageEntryV1 {
+        journal: Box<crate::eternal_sideboard_s1b_v1::meddling_mage_entry::JournalV1>,
     },
 }
 
@@ -4107,6 +4119,21 @@ fn prepare_zone_entry_characteristics_v1(
         // A destination rewrite that does not enter the battlefield must not
         // install the entry-only characteristic on the card in another zone.
         if change.to_zone == Zone::Battlefield {
+            if change.battlefield_manifested_v1 {
+                let controller = change.battlefield_controller.ok_or(change.object)?;
+                let entry = entry_characteristics
+                    .get_or_insert_with(|| (change.object, Default::default()));
+                if entry.0 != change.object || entry.1.face_down.is_some() {
+                    return Err(change.object);
+                }
+                entry.1.face_down = Some(crate::state::FaceDownV1 {
+                    disguised: true,
+                    lookers: 1 << controller.index(),
+                    hidden_by: None,
+                    hidden_by_source: None,
+                });
+                entry.1.manifested_v1 = true;
+            }
             if let Some(subtype) = change.battlefield_added_subtype_v1 {
                 let entry = entry_characteristics
                     .get_or_insert_with(|| (change.object, Default::default()));
@@ -4800,6 +4827,14 @@ fn commit_with_entry_batch_and_source_color(
                 entry_history_index,
             )
         })
+        .and_then(|_| {
+            crate::linked_aura_operation_v1::commit_mage_entry(
+                state,
+                &entry_color_proposal,
+                object,
+                entry_history_index,
+            )
+        })
         .is_err()
         {
             state.engine.halted = Some((
@@ -5161,6 +5196,14 @@ impl FinalZonePtPlanV1 {
                 )
                 .and_then(|_| {
                     crate::linked_aura_operation_v1::commit_kinship_entry(
+                        &mut scene,
+                        event,
+                        object,
+                        entry_index,
+                    )
+                })
+                .and_then(|_| {
+                    crate::linked_aura_operation_v1::commit_mage_entry(
                         &mut scene,
                         event,
                         object,
@@ -7388,7 +7431,12 @@ fn materialize_zone_change_v1(
         if to_zone == Zone::Battlefield {
             if let Some(face_down) = entering_face_down {
                 obj.v4.face_down_v1 = Some(face_down);
-                obj.v4.ward_generic = 2;
+                obj.v4.ward_generic =
+                    if entering_characteristics.is_some_and(|entry| entry.manifested_v1) {
+                        0
+                    } else {
+                        2
+                    };
             }
         }
         obj.name = crate::card_def::CARD_DEFS[obj.card_def as usize]
