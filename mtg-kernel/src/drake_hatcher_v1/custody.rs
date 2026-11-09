@@ -1311,10 +1311,10 @@ pub(crate) fn finish_combat(state: &mut GameState) -> Result<(), String> {
     emit(state, JournalV1::CombatFinished { input })?;
     Ok(())
 }
-pub(crate) fn collect(
-    state: &mut GameState,
+pub(super) fn captures_for_collection(
+    state: &GameState,
     events: &[CommittedEvent],
-) -> Result<Vec<PendingTrigger>, String> {
+) -> Result<Vec<u64>, String> {
     let history = &state.engine.event_history;
     // A checked prefix was accepted outside an operation, so every capture
     // in it already has its collection. A prefix collection can only name
@@ -1356,8 +1356,15 @@ pub(crate) fn collect(
             }
         }
     }
+    Ok(ready)
+}
+
+pub(crate) fn collect(
+    state: &mut GameState,
+    events: &[CommittedEvent],
+) -> Result<Vec<PendingTrigger>, String> {
     let mut result = Vec::new();
-    for capture in ready {
+    for capture in captures_for_collection(state, events)? {
         let (original, _) = source(state, capture)?;
         let p = pending(original, capture);
         emit(

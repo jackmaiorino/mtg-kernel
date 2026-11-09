@@ -438,11 +438,15 @@ fn rows_checked_per_step_stay_bounded_after_drake_hatcher_is_cast() {
         let mut marks = Vec::<WorkV1>::new();
         let mut first = None;
         let mut decision = 0_u64;
+        let mut final_bytes = None;
         let mut run = || {
             custody::reset_replay_memo_for_test();
             let start = custody::local_row_checks_for_test();
             play(&PAIR_29, &mut |state| {
                 decision += 1;
+                if decision == PAIR_29.decisions + 1 {
+                    final_bytes = Some(serde_json::to_vec(state).unwrap());
+                }
                 let rows = rows(state);
                 if rows == 0 {
                     return;
@@ -462,7 +466,7 @@ fn rows_checked_per_step_stay_bounded_after_drake_hatcher_is_cast() {
         } else {
             custody::without_prefix_memo_for_test(run);
         }
-        marks
+        let windows = marks
             .windows(2)
             .map(|pair| {
                 let rows = (pair[1].rows - pair[0].rows).max(1) as f64;
@@ -471,10 +475,15 @@ fn rows_checked_per_step_stay_bounded_after_drake_hatcher_is_cast() {
                     (pair[1].replays - pair[0].replays) as f64 / rows,
                 )
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        (windows, final_bytes.unwrap())
     };
-    let checked = work(true);
-    let every = work(false);
+    let (checked, with_memo) = work(true);
+    let (every, full_scan) = work(false);
+    assert!(
+        with_memo == full_scan,
+        "collection changed native final state"
+    );
     assert!(checked.len() >= 3, "{checked:?}");
     // With the memo each new row is checked a bounded number of times however
     // long the game, while checking every row grows with the game.
@@ -494,7 +503,15 @@ fn collection_tail_matches_full_scan_on_append_divergence_and_tamper() {
 
     let mut found = None;
     play(&PAIR_29, &mut |state| {
-        if found.is_none() && rows(state) > 50 {
+        if found.is_none()
+            && rows(state) > 50
+            && state
+                .engine
+                .event_history
+                .iter()
+                .filter_map(custody::journal)
+                .any(|row| matches!(row.value, JournalV1::Collected { .. }))
+        {
             found = Some(state.clone());
         }
     });
@@ -513,24 +530,20 @@ fn collection_tail_matches_full_scan_on_append_divergence_and_tamper() {
         .expect("recorded capture");
     let collected = history
         .iter()
-        .position(|event| {
-            matches!(custody::journal(event).map(|row| &row.value),
-                Some(JournalV1::Collected { capture: index, .. }) if *index == capture.index)
+        .filter_map(custody::journal)
+        .find(|row| {
+            matches!(&row.value,
+            JournalV1::Collected { capture: index, .. } if *index == capture.index)
         })
         .expect("checked capture was collected");
     let events = [history.get(marker as usize).unwrap().clone()];
-    let compare = |mut fast: GameState, expected: Result<usize, &str>| {
-        let mut full = fast.clone();
-        let result = custody::collect(&mut fast, &events);
-        let reference =
-            custody::without_prefix_memo_for_test(|| custody::collect(&mut full, &events));
+    let compare = |state: &GameState, expected: Result<&[u64], &str>| {
+        let result = custody::captures_for_collection(state, &events);
+        let reference = custody::without_prefix_memo_for_test(|| {
+            custody::captures_for_collection(state, &events)
+        });
         assert_eq!(result, reference);
-        assert!(fast == full);
-        assert_eq!(
-            result.as_ref().map(Vec::len).map_err(String::as_str),
-            expected
-        );
-        fast
+        assert_eq!(result.as_deref().map_err(String::as_str), expected);
     };
     let append = |record| {
         let mut branch = base.clone();
@@ -548,24 +561,39 @@ fn collection_tail_matches_full_scan_on_append_divergence_and_tamper() {
         branch
     };
 
-    compare(base.clone(), Ok(0));
+    compare(&base, Ok(&[]));
     let mut new_capture = capture.clone();
     new_capture.index = covered as u64;
-    let with_collection = compare(append(new_capture.clone()), Ok(1));
-    compare(with_collection, Ok(0));
+    let mut branch = append(new_capture.clone());
+    compare(&branch, Ok(&[new_capture.index]));
+    let mut collection = collected.clone();
+    collection.index = (covered + 1) as u64;
+    let JournalV1::Collected { capture: index, .. } = &mut collection.value else {
+        unreachable!()
+    };
+    *index = new_capture.index;
+    branch
+        .engine
+        .event_history
+        .push(CommittedEvent::DrakeJournalV1 {
+            record: Arc::new(collection),
+        });
+    branch.engine.drake_ledger_v1.issued += 1;
+    compare(&branch, Ok(&[]));
 
     let JournalV1::Captured { marker, .. } = &mut new_capture.value else {
         unreachable!()
     };
     *marker = u64::MAX;
-    compare(append(new_capture), Err("Drake marker erased"));
+    compare(&append(new_capture), Err("Drake marker erased"));
     // A duplicate using its old index must still see the old collection.
-    compare(append(capture), Ok(0));
+    compare(&append(capture.clone()), Ok(&[]));
 
+    let collected = collected.index as usize;
     let mut tampered = base;
     *tampered.engine.event_history.get_mut(collected).unwrap() = events[0].clone();
     assert!(tampered.engine.event_history.prefix_memo_v1().is_none());
-    compare(tampered, Ok(1));
+    compare(&tampered, Ok(&[capture.index]));
 }
 
 #[test]
