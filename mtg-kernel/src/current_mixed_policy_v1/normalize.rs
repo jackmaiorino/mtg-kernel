@@ -451,9 +451,17 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         }
     }
     let mut covered = BTreeSet::new();
-    if source == Source::KaitoV75 && state["schema"] == crate::thousand_year_storm_consumer_v1::CANDIDATES_SCHEMA {
-        let meaning: crate::thousand_year_storm_public_v1::MeaningV1 = serde_json::from_value(state["observation"]["thousand_year_storm"]["meaning"].clone()).map_err(|e|Error::Projection(e.to_string()))?;
-        if meaning != crate::thousand_year_storm_public_v1::printed_meaning().map_err(Error::Projection)? { return Err(Error::Projection("Storm exact meaning changed".into())); }
+    if source == Source::KaitoV75
+        && state["schema"] == crate::thousand_year_storm_consumer_v1::CANDIDATES_SCHEMA
+    {
+        let meaning: crate::thousand_year_storm_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["thousand_year_storm"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        if meaning
+            != crate::thousand_year_storm_public_v1::printed_meaning().map_err(Error::Projection)?
+        {
+            return Err(Error::Projection("Storm exact meaning changed".into()));
+        }
         covered.insert(meaning.card_id);
     }
     if source == Source::KaitoV75
@@ -462,8 +470,12 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         let meaning: crate::etali_primal_storm_public_v1::MeaningV1 =
             serde_json::from_value(state["observation"]["etali"]["meaning"].clone())
                 .map_err(|error| Error::Projection(error.to_string()))?;
-        if meaning != crate::etali_primal_storm_public_v1::printed_meaning().map_err(Error::Projection)? {
-            return Err(Error::Projection("Etali meaning differs from exact printing".into()));
+        if meaning
+            != crate::etali_primal_storm_public_v1::printed_meaning().map_err(Error::Projection)?
+        {
+            return Err(Error::Projection(
+                "Etali meaning differs from exact printing".into(),
+            ));
         }
         covered.insert(meaning.card_id);
     }
@@ -499,8 +511,12 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         let meaning: crate::fiend_artisan_public_v1::MeaningV1 =
             serde_json::from_value(state["observation"]["fiend_artisan"]["meaning"].clone())
                 .map_err(|error| Error::Projection(error.to_string()))?;
-        if meaning != crate::fiend_artisan_public_v1::printed_meaning().map_err(Error::Projection)? {
-            return Err(Error::Projection("Fiend Artisan meaning differs from exact printing".into()));
+        if meaning
+            != crate::fiend_artisan_public_v1::printed_meaning().map_err(Error::Projection)?
+        {
+            return Err(Error::Projection(
+                "Fiend Artisan meaning differs from exact printing".into(),
+            ));
         }
         covered.insert(meaning.card_id);
     }

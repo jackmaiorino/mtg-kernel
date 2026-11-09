@@ -92,7 +92,13 @@ fn taps(s: &GameState, p: PlayerId) -> usize {
         })
         .count()
 }
-pub(crate) fn cast(s: &mut GameState, p: PlayerId, name: &str, targets: &[Target], cost: usize) -> ObjectId {
+pub(crate) fn cast(
+    s: &mut GameState,
+    p: PlayerId,
+    name: &str,
+    targets: &[Target],
+    cost: usize,
+) -> ObjectId {
     cast_choices(s, p, name, targets, cost, false, 0)
 }
 pub(crate) fn cast_choices(

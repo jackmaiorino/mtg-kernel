@@ -358,8 +358,11 @@ pub(crate) fn validate_state_scoped(
     } else if crate::etali_primal_storm_receipts_v1::has_receipts(state) {
         return Err("Etali native receipts require its distinct complete consumer".into());
     }
-    if appendix == LimitedAppendixV1::ThousandYearStorm { crate::thousand_year_storm_public_v1::validate_native(state)?; }
-    else if state.thousand_year_storm_consumer_v1 { return Err("Storm native mode requires its distinct owning profile".into()); }
+    if appendix == LimitedAppendixV1::ThousandYearStorm {
+        crate::thousand_year_storm_public_v1::validate_native(state)?;
+    } else if state.thousand_year_storm_consumer_v1 {
+        return Err("Storm native mode requires its distinct owning profile".into());
+    }
     crate::ravenous_observation_v51::validate_state_complete_recipient_scope(
         state,
         crate::planeswalker_v1::RecipientScopeV1::KaitoV75,
@@ -418,7 +421,9 @@ fn require_supported(
         LimitedAppendixV1::Harvester => Some(crate::harvester_public_v1::selected_id()?),
         LimitedAppendixV1::FiendArtisan => Some(crate::fiend_artisan_public_v1::selected_id()?),
         LimitedAppendixV1::Etali => Some(crate::etali_primal_storm_public_v1::selected_id()?),
-        LimitedAppendixV1::ThousandYearStorm => Some(crate::thousand_year_storm_public_v1::selected_id()?),
+        LimitedAppendixV1::ThousandYearStorm => {
+            Some(crate::thousand_year_storm_public_v1::selected_id()?)
+        }
     };
     let unsupported = |id: u16| {
         id >= 460
@@ -521,7 +526,9 @@ fn require_supported(
             | E::FiendArtisanPaidV1 { .. }
             | E::FiendArtisanSearchStartedV1 { .. }
             | E::FiendArtisanSearchFinishedV1 { .. }
-            | E::FiendArtisanConsumerReceiptV1 { .. } => appendix != LimitedAppendixV1::FiendArtisan,
+            | E::FiendArtisanConsumerReceiptV1 { .. } => {
+                appendix != LimitedAppendixV1::FiendArtisan
+            }
             E::EtaliPrimalStormReceiptV1 { .. } => appendix != LimitedAppendixV1::Etali,
             E::CuratorEnteredV1 { .. }
             | E::CuratorCollectedV1 { .. }
@@ -544,8 +551,16 @@ fn require_supported(
             | E::HarvesterResolvedV1 { .. }
             | E::NightmareCopyEnteredV1 { .. }
             | E::NightmareCopyLayerV1 { .. } => appendix != LimitedAppendixV1::Harvester,
-            E::ThousandYearStormV1 { journal: crate::effect::thousand_year_storm_v1::JournalV1::Cast { observers, .. } } => !observers.is_empty() && appendix != LimitedAppendixV1::ThousandYearStorm,
-            E::ThousandYearStormV1 { journal: crate::effect::thousand_year_storm_v1::JournalV1::Published { .. } | crate::effect::thousand_year_storm_v1::JournalV1::Copy { .. } | crate::effect::thousand_year_storm_v1::JournalV1::CastForm { .. } | crate::effect::thousand_year_storm_v1::JournalV1::TargetFaces { .. } } => appendix != LimitedAppendixV1::ThousandYearStorm,
+            E::ThousandYearStormV1 {
+                journal: crate::effect::thousand_year_storm_v1::JournalV1::Cast { observers, .. },
+            } => !observers.is_empty() && appendix != LimitedAppendixV1::ThousandYearStorm,
+            E::ThousandYearStormV1 {
+                journal:
+                    crate::effect::thousand_year_storm_v1::JournalV1::Published { .. }
+                    | crate::effect::thousand_year_storm_v1::JournalV1::Copy { .. }
+                    | crate::effect::thousand_year_storm_v1::JournalV1::CastForm { .. }
+                    | crate::effect::thousand_year_storm_v1::JournalV1::TargetFaces { .. },
+            } => appendix != LimitedAppendixV1::ThousandYearStorm,
             E::KykarExiledV1 { .. } | E::KykarDelayedCollectedV1 { .. } => {
                 appendix != LimitedAppendixV1::Kykar
             }
@@ -608,7 +623,8 @@ fn captured_reference(
                 && source.card_def == crate::greatwurm_public_v1::PRINTING
             || state.harvester_commit_receipts_v1
                 && source.card_def == crate::harvester_public_v1::PRINTING
-            || state.thousand_year_storm_consumer_v1 && source.card_def == crate::thousand_year_storm_public_v1::PRINTING
+            || state.thousand_year_storm_consumer_v1
+                && source.card_def == crate::thousand_year_storm_public_v1::PRINTING
         {
             source.card_def
         } else {
@@ -722,7 +738,8 @@ pub(crate) fn stack_source_reference(
         && source.card_def == crate::etali_primal_storm_public_v1::PRINTING
         && crate::etali_primal_storm_receipts_v1::selected(item);
     let kykar = crate::effect::kykar_v1::item_selected(state, item);
-    let thousand_year_storm = state.thousand_year_storm_consumer_v1 && crate::effect::thousand_year_storm_v1::selected(state,item);
+    let thousand_year_storm = state.thousand_year_storm_consumer_v1
+        && crate::effect::thousand_year_storm_v1::selected(state, item);
     let sphinx_lore = crate::effect::sphinx_lore_v1::selected(state, item);
     if !selected_source(source)
         && !kykar
@@ -802,7 +819,9 @@ pub(crate) fn pending_source_reference(
             pending.effect,
             crate::effect::EffectOp::CuratorDestiniesV1 { .. }
         );
-    let thousand_year_storm = state.thousand_year_storm_consumer_v1 && crate::effect::thousand_year_storm_v1::definition(source.card_def) && crate::effect::thousand_year_storm_v1::recipe(&pending.effect);
+    let thousand_year_storm = state.thousand_year_storm_consumer_v1
+        && crate::effect::thousand_year_storm_v1::definition(source.card_def)
+        && crate::effect::thousand_year_storm_v1::recipe(&pending.effect);
     let sphinx_lore = crate::effect::sphinx_lore_v1::definition(source.card_def)
         && crate::effect::sphinx_lore_v1::recipe(&pending.effect);
     let greatwurm = state.greatwurm_commit_receipts_v1
@@ -930,7 +949,9 @@ pub(crate) fn observe_parts_v75(
             LimitedAppendixV1::Harvester => crate::harvester_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::FiendArtisan => crate::fiend_artisan_consumer_v1::OBSERVATION_SCHEMA,
             LimitedAppendixV1::Etali => crate::etali_primal_storm_consumer_v1::OBSERVATION_SCHEMA,
-            LimitedAppendixV1::ThousandYearStorm => crate::thousand_year_storm_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::ThousandYearStorm => {
+                crate::thousand_year_storm_consumer_v1::OBSERVATION_SCHEMA
+            }
         }
         .into(),
         producer_sha256: producer_sha256(),
@@ -1114,14 +1135,29 @@ pub(crate) fn observe_parts_v75(
             .transpose()
             .map_err(RlContractError)?,
         fiend_artisan: (appendix == LimitedAppendixV1::FiendArtisan)
-            .then(|| crate::fiend_artisan_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1))
+            .then(|| {
+                crate::fiend_artisan_public_v1::capture(
+                    state,
+                    actor_and_origin.0,
+                    actor_and_origin.1,
+                )
+            })
             .transpose()
             .map_err(RlContractError)?,
         etali: (appendix == LimitedAppendixV1::Etali)
-            .then(|| crate::etali_primal_storm_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1))
+            .then(|| {
+                crate::etali_primal_storm_public_v1::capture(
+                    state,
+                    actor_and_origin.0,
+                    actor_and_origin.1,
+                )
+            })
             .transpose()
             .map_err(RlContractError)?,
-        thousand_year_storm: (appendix == LimitedAppendixV1::ThousandYearStorm).then(||crate::thousand_year_storm_public_v1::capture(state,actor_and_origin.0)).transpose().map_err(RlContractError)?,
+        thousand_year_storm: (appendix == LimitedAppendixV1::ThousandYearStorm)
+            .then(|| crate::thousand_year_storm_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
         complete_ordinary_observation: true,
         owning_consumer_admitted: false,
         projection_sha256: String::new(),
@@ -1880,7 +1916,8 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             None,
         ) => {
-            crate::fiend_artisan_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::fiend_artisan_consumer_v1::validate_facts(facts, actor)
+                .map_err(RlContractError)?;
             crate::fiend_artisan_consumer_v1::OBSERVATION_SCHEMA
         }
         (
@@ -1909,7 +1946,8 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             Some(facts),
             None,
         ) => {
-            crate::etali_primal_storm_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::etali_primal_storm_consumer_v1::validate_facts(facts, actor)
+                .map_err(RlContractError)?;
             crate::etali_primal_storm_consumer_v1::OBSERVATION_SCHEMA
         }
         (
@@ -1938,7 +1976,8 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             None,
             Some(facts),
         ) => {
-            crate::thousand_year_storm_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::thousand_year_storm_consumer_v1::validate_facts(facts, actor)
+                .map_err(RlContractError)?;
             crate::thousand_year_storm_consumer_v1::OBSERVATION_SCHEMA
         }
         _ => return Err(RlContractError("mixed appendix profiles".into())),

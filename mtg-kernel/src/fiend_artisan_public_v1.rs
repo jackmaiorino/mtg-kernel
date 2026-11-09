@@ -124,8 +124,15 @@ pub struct ActivationV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ChoiceV1 {
-    PayX { source: ReferenceV1, maximum: u8 },
-    Sacrifice { source: ReferenceV1, x: u8, legal: Vec<ReferenceV1> },
+    PayX {
+        source: ReferenceV1,
+        maximum: u8,
+    },
+    Sacrifice {
+        source: ReferenceV1,
+        x: u8,
+        legal: Vec<ReferenceV1>,
+    },
     Search {
         source: ReferenceV1,
         paid_x: u8,
@@ -146,13 +153,17 @@ pub struct FactsV1 {
 }
 
 pub(crate) fn pending_activation_selected(state: &GameState, pending: &PendingActivation) -> bool {
-    pending.ability_index == 0 && pending.cauldron_grant.0.is_none()
-        && state.objects.try_get(pending.source).is_some_and(|o|
-            o.v4.face_down_v1.is_none() && native::definition(o.card_def))
+    pending.ability_index == 0
+        && pending.cauldron_grant.0.is_none()
+        && state
+            .objects
+            .try_get(pending.source)
+            .is_some_and(|o| o.v4.face_down_v1.is_none() && native::definition(o.card_def))
 }
 
 fn battlefield_ref(state: &GameState, id: ObjectId) -> Result<ReferenceV1, String> {
-    public::reference(state, id, None).filter(|card| card.zone == Zone::Battlefield)
+    public::reference(state, id, None)
+        .filter(|card| card.zone == Zone::Battlefield)
         .ok_or_else(|| "Fiend Artisan original battlefield reference absent".into())
 }
 
@@ -161,20 +172,31 @@ fn private_search_ref(
     chooser: PlayerId,
     candidate: &EffectTargetCandidate,
 ) -> Result<ReferenceV1, String> {
-    let (Target::Object(id), Some(binding)) = (candidate.target, candidate.expected_object)
-    else { return Err("Fiend Artisan search candidate changed physical object".into()) };
-    let live = state.objects.try_get(id).ok_or("Fiend Artisan search candidate absent")?;
-    if binding.object != id || binding.expected_zone != Zone::Library
-        || live.zone != Zone::Library || live.owner != chooser
+    let (Target::Object(id), Some(binding)) = (candidate.target, candidate.expected_object) else {
+        return Err("Fiend Artisan search candidate changed physical object".into());
+    };
+    let live = state
+        .objects
+        .try_get(id)
+        .ok_or("Fiend Artisan search candidate absent")?;
+    if binding.object != id
+        || binding.expected_zone != Zone::Library
+        || live.zone != Zone::Library
+        || live.owner != chooser
         || live.zone_change_count != binding.expected_zone_change_count
         || live.v4.face_down_v1.is_some()
     {
         return Err("Fiend Artisan search candidate lost original private incarnation".into());
     }
     Ok(ReferenceV1 {
-        object: id.0, generation: live.zone_change_count, owner: chooser.into(),
-        controller: live.controller.into(), zone: Zone::Library,
-        identity: IdentityV1::Known { card_id: live.card_def },
+        object: id.0,
+        generation: live.zone_change_count,
+        owner: chooser.into(),
+        controller: live.controller.into(),
+        zone: Zone::Library,
+        identity: IdentityV1::Known {
+            card_id: live.card_def,
+        },
     })
 }
 
@@ -197,37 +219,56 @@ fn choose(
     if origin.actor(state) != Some(viewer) {
         return Ok(None);
     }
-    if let Some(pending) = state.engine.pending_activation.as_ref().filter(|pending|
-        pending.controller == viewer && pending_activation_selected(state, pending))
-    {
+    if let Some(pending) = state.engine.pending_activation.as_ref().filter(|pending| {
+        pending.controller == viewer && pending_activation_selected(state, pending)
+    }) {
         engine::validate_pending_activation(state, pending)?;
         let source = battlefield_ref(state, pending.source)?;
         return match origin {
             PolicyDecisionV5::Surface(SurfaceDecision::Decision(
-                Decision::ChooseEffectOption { source: id, option_count, .. },
-            )) if *id == pending.source && pending.mana_x_v1.is_none() =>
+                Decision::ChooseEffectOption {
+                    source: id,
+                    option_count,
+                    ..
+                },
+            )) if *id == pending.source && pending.mana_x_v1.is_none() => {
                 Ok(Some(ChoiceV1::PayX {
                     source,
-                    maximum: option_count.checked_sub(1).and_then(|n| u8::try_from(n).ok())
+                    maximum: option_count
+                        .checked_sub(1)
+                        .and_then(|n| u8::try_from(n).ok())
                         .ok_or("Fiend Artisan quoted X exceeds native range")?,
-                })),
-            PolicyDecisionV5::Surface(SurfaceDecision::Decision(
-                Decision::ChooseCostTargets { source: id, candidates, remaining: 1, .. },
-            )) if *id == pending.source =>
-                Ok(Some(ChoiceV1::Sacrifice {
-                    source,
-                    x: pending.mana_x_v1.ok_or("Fiend Artisan sacrifice has no selected X")?,
-                    legal: candidates.iter().map(|&id| battlefield_ref(state, id))
-                        .collect::<Result<_, _>>()?,
-                })),
+                }))
+            }
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseCostTargets {
+                source: id,
+                candidates,
+                remaining: 1,
+                ..
+            })) if *id == pending.source => Ok(Some(ChoiceV1::Sacrifice {
+                source,
+                x: pending
+                    .mana_x_v1
+                    .ok_or("Fiend Artisan sacrifice has no selected X")?,
+                legal: candidates
+                    .iter()
+                    .map(|&id| battlefield_ref(state, id))
+                    .collect::<Result<_, _>>()?,
+            })),
             _ => Err("Fiend Artisan activation changed native menu".into()),
         };
     }
-    let Some(pending) = state.engine.pending_effect.as_ref().filter(|pending|
-        pending.ctx.controller == viewer && native::selected(state, &pending.resolving_item))
-    else { return Ok(None) };
-    let Some(PendingEffectChoice::SelectTargets { legal, selected, .. }) = &pending.choice
-    else { return Ok(None) };
+    let Some(pending) = state.engine.pending_effect.as_ref().filter(|pending| {
+        pending.ctx.controller == viewer && native::selected(state, &pending.resolving_item)
+    }) else {
+        return Ok(None);
+    };
+    let Some(PendingEffectChoice::SelectTargets {
+        legal, selected, ..
+    }) = &pending.choice
+    else {
+        return Ok(None);
+    };
     if !matches!(origin, PolicyDecisionV5::Surface(SurfaceDecision::Decision(
         Decision::ChooseEffectTargets { source, .. }
     )) if *source == pending.resolving_item.source)
@@ -235,14 +276,28 @@ fn choose(
         return Err("Fiend Artisan search changed native choice origin".into());
     }
     let item = &pending.resolving_item;
-    let source = item.v4.ability_source_contract.ok_or("Fiend Artisan search source absent")?;
-    let mut legal = legal.iter().map(|candidate| private_search_ref(state, viewer, candidate))
+    let source = item
+        .v4
+        .ability_source_contract
+        .ok_or("Fiend Artisan search source absent")?;
+    let mut legal = legal
+        .iter()
+        .map(|candidate| private_search_ref(state, viewer, candidate))
         .collect::<Result<Vec<_>, _>>()?;
     legal.sort_by_key(|card| {
-        let IdentityV1::Known { card_id } = card.identity else { unreachable!() };
-        (card_id, card.owner as u8, card.controller as u8, card.object)
+        let IdentityV1::Known { card_id } = card.identity else {
+            unreachable!()
+        };
+        (
+            card_id,
+            card.owner as u8,
+            card.controller as u8,
+            card.object,
+        )
     });
-    let selected = selected.iter().map(|candidate| private_search_ref(state, viewer, candidate))
+    let selected = selected
+        .iter()
+        .map(|candidate| private_search_ref(state, viewer, candidate))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Some(ChoiceV1::Search {
         source: paid_root(state, source)?.original_source,
@@ -260,7 +315,8 @@ pub(crate) fn capture(
     let meaning = printed_meaning()?;
     let mut battlefield = Vec::new();
     for (id, live) in state.objects.iter() {
-        if live.zone != Zone::Battlefield || live.v4.face_down_v1.is_some()
+        if live.zone != Zone::Battlefield
+            || live.v4.face_down_v1.is_some()
             || live.card_def != PRINTING
         {
             continue;
@@ -281,21 +337,32 @@ pub(crate) fn capture(
                 .map_err(|_| "Fiend Artisan graveyard bonus exceeds object index width")?,
         });
     }
-    let activations = receipts::activations(state)?.into_iter().map(|row| {
-        let source = row.item.v4.ability_source_contract.ok_or("Fiend Artisan paid source absent")?;
-        Ok(ActivationV1 {
-            source: paid_root(state, source)?,
-            stack_position: row.stack_position,
-            paid_x: row.x,
-            original_sacrifice: row.sacrifice.clone(),
-            searching: row.searching,
-            shuffled: row.shuffled,
-            countered: row.countered,
-            actual_public_arrival: row.arrival.cloned(),
+    let activations = receipts::activations(state)?
+        .into_iter()
+        .map(|row| {
+            let source = row
+                .item
+                .v4
+                .ability_source_contract
+                .ok_or("Fiend Artisan paid source absent")?;
+            Ok(ActivationV1 {
+                source: paid_root(state, source)?,
+                stack_position: row.stack_position,
+                paid_x: row.x,
+                original_sacrifice: row.sacrifice.clone(),
+                searching: row.searching,
+                shuffled: row.shuffled,
+                countered: row.countered,
+                actual_public_arrival: row.arrival.cloned(),
+            })
         })
-    }).collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(FactsV1 {
-        schema: SCHEMA.into(), viewer: viewer.into(), meaning, battlefield, activations,
+        schema: SCHEMA.into(),
+        viewer: viewer.into(),
+        meaning,
+        battlefield,
+        activations,
         chooser: choose(state, viewer, origin)?,
     })
 }

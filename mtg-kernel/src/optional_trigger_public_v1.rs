@@ -397,7 +397,7 @@ pub(crate) fn validate_state_for_consumer(
     checked: bool,
     consumer: ConsumerV1,
 ) -> Result<(), String> {
-    if !matches!(consumer,ConsumerV1::KaitoThousandYearStormV1) {
+    if !matches!(consumer, ConsumerV1::KaitoThousandYearStormV1) {
         crate::effect::thousand_year_storm_v1::refuse_legacy(state)?;
     }
     if !matches!(consumer, ConsumerV1::KaitoCuratorV1) {

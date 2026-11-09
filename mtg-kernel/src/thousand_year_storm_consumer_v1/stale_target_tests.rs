@@ -89,27 +89,43 @@ fn paid_stale_creature_target(
         1,
     );
     native::waiting(&mut state);
-    assert!(engine::has_effective_keyword(&state, creature, Keywords::HEXPROOF));
+    assert!(engine::has_effective_keyword(
+        &state,
+        creature,
+        Keywords::HEXPROOF
+    ));
     let before = native::next(&mut state);
     assert!(matches!(&before,
         engine::Decision::ChooseEffectTargets { player, legal_targets, can_finish: true, .. }
             if *player == actor && !legal_targets.contains(&Target::Object(creature))));
 
     // Exercise the real zone commit after the copy menu has already opened.
-    event::propose_and_commit(&mut state, ProposedEvent::private_bottom_library_insert(creature));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::private_bottom_library_insert(creature),
+    );
     assert_eq!(state.objects.get(creature).zone, Zone::Library);
     assert_eq!(native::next(&mut state), before);
     for viewer in [PlayerId::P0, PlayerId::P1] {
-        assert!(state.known_library_cards(viewer, actor.opponent())
-            .iter().all(|entry| entry.object != creature));
+        assert!(state
+            .known_library_cards(viewer, actor.opponent())
+            .iter()
+            .all(|entry| entry.object != creature));
     }
     (state, bolt, creature, original_target)
 }
 
 fn assert_retained_face_required(state: &GameState, copy: crate::ids::StackItemId) {
-    let index = state.engine.event_history.iter().position(|event| matches!(event,
+    let index = state
+        .engine
+        .event_history
+        .iter()
+        .position(|event| {
+            matches!(event,
         CommittedEvent::ThousandYearStormV1 { journal: JournalV1::TargetFaces { item, .. } }
-            if *item == copy)).unwrap();
+            if *item == copy)
+        })
+        .unwrap();
     let original_event = state.engine.event_history.get(index).unwrap();
     let mut altered = serde_json::to_value(original_event).unwrap();
     let face = &mut altered["ThousandYearStormV1"]["journal"]["TargetFaces"]["faces"][0]
@@ -117,18 +133,21 @@ fn assert_retained_face_required(state: &GameState, copy: crate::ids::StackItemI
     assert_eq!(face.as_u64(), Some(u64::from(id("Llanowar Elves"))));
     *face = serde_json::Value::from(id("Mountain"));
 
-    let restored = || -> GameState {
-        serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap()
-    };
+    let restored =
+        || -> GameState { serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap() };
     let mut relabeled = restored();
     relabeled.engine.event_history[index] = serde_json::from_value(altered).unwrap();
-    assert_eq!(public::validate_native(&relabeled).unwrap_err(),
-        "Storm retained target face changed printing");
+    assert_eq!(
+        public::validate_native(&relabeled).unwrap_err(),
+        "Storm retained target face changed printing"
+    );
 
     let mut missing = restored();
     missing.engine.event_history.remove(index);
-    assert_eq!(public::validate_native(&missing).unwrap_err(),
-        "Storm native target faces absent");
+    assert_eq!(
+        public::validate_native(&missing).unwrap_err(),
+        "Storm native target faces absent"
+    );
 }
 
 #[test]
@@ -148,9 +167,9 @@ fn stale_creature_copy_target_ignores_later_hidden_printing_both_seats() {
         });
         assert_paired_views(&states[0], &states[1]);
 
-        let mut owners = states.each_ref().map(|state| {
-            KaitoSession::from_session(raw_owner(state)).unwrap()
-        });
+        let mut owners = states
+            .each_ref()
+            .map(|state| KaitoSession::from_session(raw_owner(state)).unwrap());
         let decisions = owners.each_ref().map(decision);
         assert_eq!(decisions[0].packet(), decisions[1].packet());
         assert_eq!(
@@ -158,15 +177,25 @@ fn stale_creature_copy_target_ignores_later_hidden_printing_both_seats() {
             decisions[1].fixture_backend_v75().observation()
         );
 
-        let StackTargetContractV4::Object { zone_change_count, card_def, .. } = original_target
-        else { panic!("expected actual creature target") };
+        let StackTargetContractV4::Object {
+            zone_change_count,
+            card_def,
+            ..
+        } = original_target
+        else {
+            panic!("expected actual creature target")
+        };
         let mut copy_sources = Vec::new();
         let mut paired_native = None;
         let mut paired_mapping = None;
         for ((state, owner), current) in states.iter_mut().zip(&mut owners).zip(&decisions) {
             let backend = current.fixture_backend_v75();
             let facts = backend.observation().thousand_year_storm.as_ref().unwrap();
-            let choice = facts.triggers.iter().find_map(|row| row.choice.as_ref()).unwrap();
+            let choice = facts
+                .triggers
+                .iter()
+                .find_map(|row| row.choice.as_ref())
+                .unwrap();
             assert!(choice.can_keep_original);
             assert!(matches!(&choice.original_target,
                 public::TargetV1::Object { original, current_original: None, .. }
@@ -174,9 +203,12 @@ fn stale_creature_copy_target_ignores_later_hidden_printing_both_seats() {
                         && original.generation == zone_change_count));
             let (surface, origin) = current_surface(state);
             let native = rl_session::kaito_candidates_v75(&origin, state, &surface).unwrap();
-            let mapping = backend.candidates_v75().candidates.iter().map(|row|
-                backend.fixture_original_index_v75(row.ordinal).unwrap()
-            ).collect::<Vec<_>>();
+            let mapping = backend
+                .candidates_v75()
+                .candidates
+                .iter()
+                .map(|row| backend.fixture_original_index_v75(row.ordinal).unwrap())
+                .collect::<Vec<_>>();
             if let Some(expected) = &paired_native {
                 assert_eq!(&native, expected);
                 assert_eq!(Some(&mapping), paired_mapping.as_ref());
@@ -184,31 +216,57 @@ fn stale_creature_copy_target_ignores_later_hidden_printing_both_seats() {
                 paired_native = Some(native.clone());
                 paired_mapping = Some(mapping);
             }
-            let public_bolt = &backend.observation().common.common.projection.surface.stack
-                .iter().find(|row| row.source.arena_id == bolt.0).unwrap();
-            assert!(matches!(public_bolt.targets.as_slice(), [TargetRefV1::Object { object }]
+            let public_bolt = &backend
+                .observation()
+                .common
+                .common
+                .projection
+                .surface
+                .stack
+                .iter()
+                .find(|row| row.source.arena_id == bolt.0)
+                .unwrap();
+            assert!(
+                matches!(public_bolt.targets.as_slice(), [TargetRefV1::Object { object }]
                 if object.arena_id == creature.0 && object.zone == Zone::Battlefield
-                    && object.zone_change_count == zone_change_count && object.card_db_id == card_def));
-            let keep = backend.candidates_v75().candidates.iter().position(|row| {
-                row.thousand_year_storm_action == Some(ActionV1::KeepOriginalTarget { copy: 1, slot: 0 })
-            }).unwrap() as u32;
+                    && object.zone_change_count == zone_change_count && object.card_db_id == card_def)
+            );
+            let keep = backend
+                .candidates_v75()
+                .candidates
+                .iter()
+                .position(|row| {
+                    row.thousand_year_storm_action
+                        == Some(ActionV1::KeepOriginalTarget { copy: 1, slot: 0 })
+                })
+                .unwrap() as u32;
             let original_index = backend.fixture_original_index_v75(keep).unwrap();
             assert_eq!(
                 native[original_index as usize].policy_action,
-                PolicyActionV5::Surface(SurfaceAction::Action(engine::Action::FinishEffectSelection))
+                PolicyActionV5::Surface(SurfaceAction::Action(
+                    engine::Action::FinishEffectSelection
+                ))
             );
             let mut raw = raw_owner(state);
             let expected = backend.expected();
-            let applied = raw.step(expected.episode_id, expected.step, original_index).unwrap();
+            let applied = raw
+                .step(expected.episode_id, expected.step, original_index)
+                .unwrap();
             assert_eq!(owner.apply(current, keep).unwrap(), applied);
             assert_eq!(owner.fixture_state(), raw.kaito_fixture_state());
             *state = owner.fixture_state().clone();
 
-            let copy = state.engine.event_history.iter().find_map(|event| match event {
-                CommittedEvent::ThousandYearStormV1 { journal: JournalV1::Copy { item, .. } } =>
-                    Some(item.as_ref()),
-                _ => None,
-            }).unwrap();
+            let copy = state
+                .engine
+                .event_history
+                .iter()
+                .find_map(|event| match event {
+                    CommittedEvent::ThousandYearStormV1 {
+                        journal: JournalV1::Copy { item, .. },
+                    } => Some(item.as_ref()),
+                    _ => None,
+                })
+                .unwrap();
             assert!(copy.is_copy);
             assert!(state.stack.iter().any(|row| row == copy));
             assert_eq!(copy.targets, [Target::Object(creature)]);

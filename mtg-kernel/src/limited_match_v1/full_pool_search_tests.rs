@@ -6,9 +6,14 @@ use crate::effect::thousand_year_storm_v1_tests as paid;
 fn names() -> Vec<String> {
     let manifest: serde_json::Value = serde_json::from_str(include_str!(
         "../../../data/limited/fdn_v1/booster_pool_v1.json"
-    )).unwrap();
-    let names = manifest["card_names"].as_array().unwrap().iter()
-        .map(|value| value.as_str().unwrap().to_owned()).collect::<Vec<_>>();
+    ))
+    .unwrap();
+    let names = manifest["card_names"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
     assert_eq!(names.len(), 286);
     names
 }
@@ -27,15 +32,26 @@ fn hidden_pair(session: &FastActorSessionV1, actor: PlayerId) -> FastActorSessio
     })
 }
 
-fn compare_worlds(session: &FastActorSessionV1, actor: PlayerId, belief: &LimitedBeliefV1, seed: u64) {
+fn compare_worlds(
+    session: &FastActorSessionV1,
+    actor: PlayerId,
+    belief: &LimitedBeliefV1,
+    seed: u64,
+) {
     let variant = hidden_pair(session, actor);
     let before = session.game_state().clone();
     let mode = WorldModeV1::ClosedListV3;
     let a = sample_world_v1(session, mode, Some(belief), seed).unwrap();
     let b = sample_world_v1(&variant, mode, Some(belief), seed).unwrap();
     assert_eq!(a.game_state(), b.game_state());
-    assert_eq!(a.diagnostic_current_action_semantics().unwrap(), session.diagnostic_current_action_semantics().unwrap());
-    assert_eq!(b.diagnostic_current_action_semantics().unwrap(), a.diagnostic_current_action_semantics().unwrap());
+    assert_eq!(
+        a.diagnostic_current_action_semantics().unwrap(),
+        session.diagnostic_current_action_semantics().unwrap()
+    );
+    assert_eq!(
+        b.diagnostic_current_action_semantics().unwrap(),
+        a.diagnostic_current_action_semantics().unwrap()
+    );
     let left = pimc_choose_v1(session, 2, 1, mode, Some(belief), seed).unwrap();
     let right = pimc_choose_v1(&variant, 2, 1, mode, Some(belief), seed).unwrap();
     assert_eq!(left, right);
@@ -59,9 +75,14 @@ fn closed_list_v3_frozen_286_opening_roots_ignore_hidden_composition_both_seats(
             corpus[..4].fill(id);
             let belief = LimitedBeliefV1::new([corpus]);
             let session = rules_only_closed_list_game(decks, actor);
-            assert!(session.game_state().players[actor.index()].hand.iter().all(|&object| session.game_state().objects.get(object).card_def == id));
+            assert!(session.game_state().players[actor.index()]
+                .hand
+                .iter()
+                .all(|&object| session.game_state().objects.get(object).card_def == id));
             assert!(!session.game_state().players[actor.index()].hand.is_empty());
-            let FastActorResponseV1::Decision(decision) = session.current_response() else { panic!("{name}: no opening decision") };
+            let FastActorResponseV1::Decision(decision) = session.current_response() else {
+                panic!("{name}: no opening decision")
+            };
             assert_eq!(seat(decision.acting_player), actor);
             compare_worlds(&session, actor, &belief, 552_286 + u64::from(id));
         }
@@ -71,9 +92,13 @@ fn closed_list_v3_frozen_286_opening_roots_ignore_hidden_composition_both_seats(
 #[test]
 fn closed_list_v3_paid_partial_roots_ignore_hidden_composition_both_seats() {
     let forest = card_id_by_name("Forest").unwrap();
-    let partial = names().into_iter().filter(|name| {
-        CARD_DEFS[card_id_by_name(name).unwrap() as usize].capability == crate::card_def::CardCapability::Partial
-    }).collect::<Vec<_>>();
+    let partial = names()
+        .into_iter()
+        .filter(|name| {
+            CARD_DEFS[card_id_by_name(name).unwrap() as usize].capability
+                == crate::card_def::CardCapability::Partial
+        })
+        .collect::<Vec<_>>();
     assert_eq!(partial.len(), 36);
     for name in partial {
         let printing = card_id_by_name(&name).unwrap();
@@ -84,32 +109,54 @@ fn closed_list_v3_paid_partial_roots_ignore_hidden_composition_both_seats() {
             state.reveal_meaning_v3.enable();
             let creature = paid::cast(&mut state, actor, "Llanowar Elves", &[], 1);
             paid::finish(&mut state);
-            let targets = if matches!(name.as_str(), "Electroduplicate" | "Imprisoned in the Moon") {
+            let targets = if matches!(name.as_str(), "Electroduplicate" | "Imprisoned in the Moon")
+            {
                 vec![crate::state::Target::Object(creature)]
-            } else { vec![] };
+            } else {
+                vec![]
+            };
             let definition = &CARD_DEFS[printing as usize];
             if definition.is_land {
                 assert_eq!(name, "Secluded Courtyard");
-                let land = crate::policy_observation_v6::tests::put(&mut state, actor, &name, Zone::Hand);
+                let land =
+                    crate::policy_observation_v6::tests::put(&mut state, actor, &name, Zone::Hand);
                 paid::action(&mut state, crate::engine::Action::PlayLand(land));
             } else {
                 let cost = usize::from(definition.cost.generic) + definition.cost.pips.len();
                 let spell = paid::cast(&mut state, actor, &name, &targets, cost);
-                assert!(state.stack.iter().any(|item| item.source == spell && !item.is_copy));
+                assert!(state
+                    .stack
+                    .iter()
+                    .any(|item| item.source == spell && !item.is_copy));
                 // A real playable instant gives these priority windows a
                 // second action, so this checks actual PIMC visits as well
                 // as explicit world sampling.
-                crate::policy_observation_v6::tests::put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+                crate::policy_observation_v6::tests::put(
+                    &mut state,
+                    actor,
+                    "Lightning Bolt",
+                    Zone::Hand,
+                );
             }
-            let mut corpus = state.objects.iter().filter(|(_, card)| card.owner == actor.opponent() && !card.v4.is_token)
-                .map(|(_, card)| card.card_def).collect::<Vec<_>>();
+            let mut corpus = state
+                .objects
+                .iter()
+                .filter(|(_, card)| card.owner == actor.opponent() && !card.v4.is_token)
+                .map(|(_, card)| card.card_def)
+                .collect::<Vec<_>>();
             corpus.sort_unstable();
             let belief = LimitedBeliefV1::new([corpus]);
-            let mut session = rules_only_closed_list_game([vec![forest; 40], vec![forest; 40]], actor);
+            let mut session =
+                rules_only_closed_list_game([vec![forest; 40], vec![forest; 40]], actor);
             session.install_rules_only_test_state_v1(state);
-            let FastActorResponseV1::Decision(decision) = session.current_response() else { panic!("{name}: paid root did not surface") };
+            let FastActorResponseV1::Decision(decision) = session.current_response() else {
+                panic!("{name}: paid root did not surface")
+            };
             assert_eq!(seat(decision.acting_player), actor, "{name}: root actor");
-            assert!(decision.legal_action_count > 1, "{name}: search needs a real alternative");
+            assert!(
+                decision.legal_action_count > 1,
+                "{name}: search needs a real alternative"
+            );
             compare_worlds(&session, actor, &belief, 552_360 + u64::from(printing));
         }
     }

@@ -2429,8 +2429,10 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
-    if text_mode != ObservationTextModeV2::KaitoV75Artifact || private_scope != LimitedAppendixV1::ThousandYearStorm {
-    crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact
+        || private_scope != LimitedAppendixV1::ThousandYearStorm
+    {
+        crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if text_mode != ObservationTextModeV2::KaitoV75Artifact
         || private_scope != LimitedAppendixV1::Curator
@@ -3079,8 +3081,10 @@ fn public_restricted_mana_v1(
     ) {
         crate::effect::genesis_wave_v1::refuse_legacy(state, None).map_err(RlContractError)?;
     }
-    if text_mode != ObservationTextModeV2::KaitoV75Artifact || appendix != LimitedAppendixV1::ThousandYearStorm {
-    crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact
+        || appendix != LimitedAppendixV1::ThousandYearStorm
+    {
+        crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if text_mode != ObservationTextModeV2::KaitoV75Artifact
         || appendix != LimitedAppendixV1::Curator
@@ -5971,8 +5975,10 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
         crate::effect::genesis_wave_v1::refuse_legacy(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
-    if text_mode != ObservationTextModeV2::KaitoV75Artifact || private_scope != LimitedAppendixV1::ThousandYearStorm {
-    crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
+    if text_mode != ObservationTextModeV2::KaitoV75Artifact
+        || private_scope != LimitedAppendixV1::ThousandYearStorm
+    {
+        crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if text_mode != ObservationTextModeV2::KaitoV75Artifact
         || private_scope != LimitedAppendixV1::Curator
@@ -10692,7 +10698,8 @@ fn private_card(
                 && crate::progenitus_v1::definition(o.card_def))
                 || (appendix != LimitedAppendixV1::LeylineAxe
                     && crate::leyline_axe_v1::definition(o.card_def))
-                || (appendix != LimitedAppendixV1::ThousandYearStorm && crate::effect::thousand_year_storm_v1::definition(o.card_def))
+                || (appendix != LimitedAppendixV1::ThousandYearStorm
+                    && crate::effect::thousand_year_storm_v1::definition(o.card_def))
                 || (appendix != LimitedAppendixV1::Harvester
                     && crate::effect::harvester_v1::definition(o.card_def))
                 || (!appendix.includes(LimitedAppendixV1::Omniscience)
@@ -10719,16 +10726,23 @@ fn private_card(
         ));
     }
     if appendix != LimitedAppendixV1::FiendArtisan
-        && state.objects.try_get(id).is_some_and(|o| o.v4.face_down_v1.is_none()
-            && crate::effect::fiend_artisan_v1::definition(o.card_def))
+        && state.objects.try_get(id).is_some_and(|o| {
+            o.v4.face_down_v1.is_none() && crate::effect::fiend_artisan_v1::definition(o.card_def)
+        })
     {
-        return Err(RlContractError("Fiend Artisan requires its distinct complete consumer".into()));
+        return Err(RlContractError(
+            "Fiend Artisan requires its distinct complete consumer".into(),
+        ));
     }
     if appendix != LimitedAppendixV1::Etali
-        && state.objects.try_get(id).is_some_and(|o| o.v4.face_down_v1.is_none()
-            && crate::etali_primal_storm_public_v1::definition(o.card_def))
+        && state.objects.try_get(id).is_some_and(|o| {
+            o.v4.face_down_v1.is_none()
+                && crate::etali_primal_storm_public_v1::definition(o.card_def)
+        })
     {
-        return Err(RlContractError("Etali requires its distinct complete consumer".into()));
+        return Err(RlContractError(
+            "Etali requires its distinct complete consumer".into(),
+        ));
     }
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
@@ -12851,11 +12865,10 @@ fn pending_activation_semantic_v2(
 ) -> Result<PendingActivationSemanticV2> {
     engine::validate_pending_activation(state, p)
         .map_err(|error| RlContractError(format!("invalid pending activation: {error}")))?;
-    let hide_object_cost =
-        acting_player != p.controller
-            && (crate::lathril_receipts_v1::pending_selected(state, p)
-                || state.fiend_artisan_receipts_v1
-                    && crate::fiend_artisan_public_v1::pending_activation_selected(state, p));
+    let hide_object_cost = acting_player != p.controller
+        && (crate::lathril_receipts_v1::pending_selected(state, p)
+            || state.fiend_artisan_receipts_v1
+                && crate::fiend_artisan_public_v1::pending_activation_selected(state, p));
     let object_cost_chosen = p
         .object_cost_chosen
         .iter()
@@ -14109,7 +14122,8 @@ fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRe
 
 fn frozen_stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRefV1>> {
     if crate::effect::thousand_year_storm_v1::owns_snapshot(state, item) {
-        return crate::effect::thousand_year_storm_v1::targets::public_refs(state, item).map_err(RlContractError);
+        return crate::effect::thousand_year_storm_v1::targets::public_refs(state, item)
+            .map_err(RlContractError);
     }
     if item.targets.len() != item.v4.target_contracts.len() {
         return Err(RlContractError(

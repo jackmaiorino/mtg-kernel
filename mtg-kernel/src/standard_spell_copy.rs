@@ -141,8 +141,12 @@ pub(crate) fn validate_copy_snapshot(state: &GameState, spell: &StackItem) -> Re
             contract
         };
         let valid = if storm_history {
-            crate::state::stack_target_contract_for_storm_snapshot(state,spell,spec,index,target,contract)
-        } else { stack_target_contract_is_structurally_valid(state,spec,index,target,contract) };
+            crate::state::stack_target_contract_for_storm_snapshot(
+                state, spell, spec, index, target, contract,
+            )
+        } else {
+            stack_target_contract_is_structurally_valid(state, spec, index, target, contract)
+        };
         if !valid {
             return Err("copy snapshot target contract is structurally malformed".into());
         }
@@ -449,16 +453,22 @@ pub(crate) fn materialize_copy_snapshot(
 }
 
 pub(crate) fn materialize_storm_copy_snapshot(
-    state: &mut GameState, spell: &StackItem, controller: PlayerId,
-    targets: Vec<Target>, contracts: Vec<StackTargetContractV4>,
+    state: &mut GameState,
+    spell: &StackItem,
+    controller: PlayerId,
+    targets: Vec<Target>,
+    contracts: Vec<StackTargetContractV4>,
     owner: effect::thousand_year_storm_v1::targets::CopyOwnerV1,
 ) -> Result<(), String> {
     materialize_copy_snapshot_owned(state, spell, controller, targets, contracts, Some(owner))
 }
 
 fn materialize_copy_snapshot_owned(
-    state: &mut GameState, spell: &StackItem, controller: PlayerId,
-    targets: Vec<Target>, contracts: Vec<StackTargetContractV4>,
+    state: &mut GameState,
+    spell: &StackItem,
+    controller: PlayerId,
+    targets: Vec<Target>,
+    contracts: Vec<StackTargetContractV4>,
     owner: Option<effect::thousand_year_storm_v1::targets::CopyOwnerV1>,
 ) -> Result<(), String> {
     validate_copy_snapshot(state, spell)?;
@@ -496,7 +506,9 @@ fn materialize_validated_copy_snapshot(
         card_def: origin.card_def,
         name: if effect::thousand_year_storm_v1::owns_snapshot(state, spell) {
             card_def::CARD_DEFS[origin.card_def as usize].name.into()
-        } else { state.objects.get(origin.source).name.clone() },
+        } else {
+            state.objects.get(origin.source).name.clone()
+        },
         owner: controller,
         controller,
         zone: Zone::Stack,

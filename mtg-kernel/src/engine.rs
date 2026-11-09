@@ -2245,7 +2245,9 @@ fn validate_spell_copy_origin_chain(
         }
         validate_spell_copy_origin_chain(state, origin.parent, parent.card_def, parent_origin)?;
     } else if let Some(method) = storm_parent {
-        if origin.source_types_v1 != crate::source_type_hexproof_v1::copy_projection(origin.parent_card_def,method) {
+        if origin.source_types_v1
+            != crate::source_type_hexproof_v1::copy_projection(origin.parent_card_def, method)
+        {
             return Err("Storm copy changed original parent source types".into());
         }
     } else if crate::source_type_hexproof_v1::enabled() {
@@ -3352,9 +3354,13 @@ fn validate_ability_source_contract(
         && item.kind == StackItemKind::TriggeredAbility
         && source.zone_change_count > contract.zone_change_count
         && effect::thousand_year_storm_v1::selected(state, item);
-    if historical_storm { effect::thousand_year_storm_v1::validate_item(state, item)?; }
+    if historical_storm {
+        effect::thousand_year_storm_v1::validate_item(state, item)?;
+    }
     if contract.source != item.source
-        || (!historical_sphinx && !historical_storm && !source_card_def_matches(state, contract, source.card_def))
+        || (!historical_sphinx
+            && !historical_storm
+            && !source_card_def_matches(state, contract, source.card_def))
         || contract.owner != source.owner
         || contract.controller != item.controller
         || contract.zone == Zone::Stack
@@ -18675,7 +18681,14 @@ fn validated_stack_item_target_metadata(
             contract
         };
         if !stack_target_contract_is_structurally_valid(state, spec, target_index, target, contract)
-            && !crate::state::stack_target_contract_for_storm_snapshot(state, item, spec, target_index, target, contract)
+            && !crate::state::stack_target_contract_for_storm_snapshot(
+                state,
+                item,
+                spec,
+                target_index,
+                target,
+                contract,
+            )
             && !crate::fiendish_panda_v1::custody::authenticates_stale_target(
                 state,
                 item,
@@ -28469,7 +28482,10 @@ fn finalize_owned_cast(
     let cast_at = state.engine.event_history.len();
     event::log_spell_cast(state, pending.spell, pending.controller);
     crate::etali_primal_storm_receipts_v1::record_cast(
-        state, stack_item_id, finalized_source_contract, cast_at,
+        state,
+        stack_item_id,
+        finalized_source_contract,
+        cast_at,
     )?;
     if let Some((creatures_before, _)) = edict_input {
         crate::edict_receipts_v1::record_paid(

@@ -377,7 +377,11 @@ pub(super) fn choice_label(
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
-    if let Some(label)=super::thousand_year_storm_consumer_v1::label(obs.thousand_year_storm.as_ref(),a,h)? {return Ok(Some(label));}
+    if let Some(label) =
+        super::thousand_year_storm_consumer_v1::label(obs.thousand_year_storm.as_ref(), a, h)?
+    {
+        return Ok(Some(label));
+    }
     if let Some(label) = super::etali_primal_storm_consumer_v1::label(obs.etali.as_ref(), a, h)? {
         return Ok(Some(label));
     }
@@ -390,7 +394,8 @@ pub(super) fn choice_label(
     if let Some(label) = super::sphinx_lore_consumer_v1::label(obs.sphinx_lore.as_ref(), a, h)? {
         return Ok(Some(label));
     }
-    if let Some(label) = super::fiend_artisan_consumer_v1::label(obs.fiend_artisan.as_ref(), a, h)? {
+    if let Some(label) = super::fiend_artisan_consumer_v1::label(obs.fiend_artisan.as_ref(), a, h)?
+    {
         return Ok(Some(label));
     }
     if let Some(label) = super::kykar_consumer_v1::label(obs.kykar.as_ref(), a, h)? {
@@ -951,13 +956,21 @@ pub(super) fn project_with_handles(
         .as_ref()
         .map(|facts| super::harvester_consumer_v1::project(facts, &mut handles, &mut roles))
         .transpose()?;
-    let fiend_artisan = obs.fiend_artisan.as_ref()
+    let fiend_artisan = obs
+        .fiend_artisan
+        .as_ref()
         .map(|facts| super::fiend_artisan_consumer_v1::project(facts, &mut handles))
         .transpose()?;
-    let etali = obs.etali.as_ref()
+    let etali = obs
+        .etali
+        .as_ref()
         .map(|facts| super::etali_primal_storm_consumer_v1::project(facts, &mut handles))
         .transpose()?;
-    let thousand_year_storm=obs.thousand_year_storm.as_ref().map(|f|super::thousand_year_storm_consumer_v1::project(f,&mut handles,&mut roles)).transpose()?;
+    let thousand_year_storm = obs
+        .thousand_year_storm
+        .as_ref()
+        .map(|f| super::thousand_year_storm_consumer_v1::project(f, &mut handles, &mut roles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
