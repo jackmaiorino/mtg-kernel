@@ -36,6 +36,10 @@ impl KaitoDecision {
     pub fn packet(&self) -> &Packet {
         &self.packet
     }
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn public_turn(&self) -> u32 {
+        self.backend.observation().common.common.projection.surface.turn
+    }
     #[cfg(all(
         test,
         feature = "limited-fdn-fixtures",

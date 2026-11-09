@@ -143,10 +143,12 @@ fn read_deck(dir: &Path, name: &str) -> Result<DeckFileV1, String> {
 
 /// `-session prepared` (default: Full cards, every consumer contract),
 /// `rules-only` (Full plus admitted Partial cards, no consumer contract) or
-/// `rules-only-all` (every executable card; diagnostics only).
+/// `rules-only-all` (every executable card; diagnostics only) or the sealed
+/// Foundations `full-pool` owner.
 fn session_kind(flags: &Flags) -> Result<SessionKindV1, String> {
     match flags.opt("session").unwrap_or("prepared") {
         "prepared" => Ok(SessionKindV1::PreparedV57),
+        "full-pool" => Ok(SessionKindV1::FullPoolV1),
         "rules-only" => Ok(SessionKindV1::RulesOnly(RulesAdmissionV1::Admitted)),
         "rules-only-all" => Ok(SessionKindV1::RulesOnly(RulesAdmissionV1::AllExecutable)),
         other => Err(format!("unknown -session {other:?}")),
@@ -259,6 +261,9 @@ fn play(flags: &Flags) -> Result<(), String> {
         full_validation: flags.switches.contains("full-validation"),
         session: session_kind(flags)?,
     };
+    for policy in &policies {
+        policy.validate_full_pool_session_v1(limits.session)?;
+    }
     let uses_closed_list = policies
         .iter()
         .any(PolicySpecV1::uses_versioned_closed_list);
@@ -273,6 +278,7 @@ fn play(flags: &Flags) -> Result<(), String> {
             "{version} requires -session rules-only or rules-only-all"
         ));
     }
+    let uses_conditioned_belief = uses_closed_list || limits.session == SessionKindV1::FullPoolV1;
     let out = PathBuf::from(flags.get("out")?);
     let legs: u64 = if spec_a == spec_b || flags.switches.contains("single") {
         1
@@ -303,7 +309,7 @@ fn play(flags: &Flags) -> Result<(), String> {
         }
         // A held-out deck stays held out when its file is renamed or reordered.
         let names: BTreeSet<&str> = decks.iter().map(|(name, _)| name.as_str()).collect();
-        let game_multisets: BTreeSet<_> = if uses_closed_list {
+        let game_multisets: BTreeSet<_> = if uses_conditioned_belief {
             decks
                 .iter()
                 .map(|(_, cards)| deck_multiset(cards))
@@ -315,7 +321,7 @@ fn play(flags: &Flags) -> Result<(), String> {
             .iter()
             .filter(|(name, cards)| {
                 names.contains(name.as_str())
-                    || (uses_closed_list && game_multisets.contains(&deck_multiset(cards)))
+                    || (uses_conditioned_belief && game_multisets.contains(&deck_multiset(cards)))
             })
             .count();
         if belief_overlap > 0 && split != "train" {
@@ -323,7 +329,7 @@ fn play(flags: &Flags) -> Result<(), String> {
                 "{belief_overlap} belief decks are games' {split:?} decks: the belief would hold the opponents' real decks"
             ));
         }
-        if uses_closed_list {
+        if uses_conditioned_belief {
             belief_deck_contents_sha256 = Some(deck_contents_sha256(&corpus));
         }
         Some(LimitedBeliefV1::new(

@@ -34,6 +34,7 @@ use std::collections::{BTreeMap, HashSet};
 
 pub(crate) mod closed_list_v2;
 pub(crate) mod curator_sampling_v1;
+mod full_pool_match_v1;
 pub(crate) mod library_minima_v1;
 
 pub const LIMITED_MATCH_SCHEMA_V1: &str = "mtg-kernel-limited-match/v1";
@@ -62,6 +63,8 @@ pub enum SessionKindV1 {
     /// Rules-only self-play (`rl_session::rules_only_v1`): Full cards plus
     /// admitted executable Partial cards, no consumer contract.
     RulesOnly(RulesAdmissionV1),
+    /// Authenticated numeric owner for the exact 286 Foundations printings.
+    FullPoolV1,
 }
 
 /// Which executable Partial cards a rules-only game admits.
@@ -76,6 +79,13 @@ pub enum RulesAdmissionV1 {
 impl SessionKindV1 {
     /// `None` when `id` may play in this session, else why not.
     pub fn refusal(self, id: u16) -> Option<&'static str> {
+        if self == Self::FullPoolV1 {
+            return match crate::limited_full_pool_consumer_v1::declared_printings_v1() {
+                Ok(printings) if printings.contains(&id) => None,
+                Ok(_) => Some("outside the frozen Foundations pool"),
+                Err(_) => Some("full-pool registry unavailable"),
+            };
+        }
         let card = &CARD_DEFS[id as usize];
         if card.is_token {
             return Some("token");
@@ -85,6 +95,7 @@ impl SessionKindV1 {
         }
         match self {
             Self::PreparedV57 => Some("not full"),
+            Self::FullPoolV1 => unreachable!("full pool checked before catalog capability"),
             Self::RulesOnly(_) if !card.is_executable() => Some("not executable"),
             Self::RulesOnly(RulesAdmissionV1::AllExecutable) => None,
             Self::RulesOnly(RulesAdmissionV1::Admitted) => {
@@ -414,6 +425,7 @@ pub enum WorldModeV1 {
     ClosedList,
     ClosedListV2,
     ClosedListV3,
+    FullPoolClosedListV1,
     TrueList,
     Peek,
 }
@@ -466,6 +478,9 @@ pub fn sample_world_v1(
             let root = session.limited_closed_list_root_v3()?;
             session.limited_closed_list_clone_v3(&root, seed, belief)
         }
+        WorldModeV1::FullPoolClosedListV1 => Err(
+            "closedlist-full-pool-v1 requires the sealed numeric owner".into(),
+        ),
     }
 }
 
@@ -513,6 +528,9 @@ impl PolicySpecV1 {
                         None if part == "closedlist-v3" => {
                             set_world(WorldModeV1::ClosedListV3, &mut world)?
                         }
+                        None if part == "closedlist-full-pool-v1" => {
+                            set_world(WorldModeV1::FullPoolClosedListV1, &mut world)?
+                        }
                         None if part == "truelist" => set_world(WorldModeV1::TrueList, &mut world)?,
                         None if part == "peek" => set_world(WorldModeV1::Peek, &mut world)?,
                         _ => return Err(format!("{spec:?}: unknown field {part:?}")),
@@ -525,7 +543,7 @@ impl PolicySpecV1 {
                     sims,
                     depth,
                     world: world.ok_or_else(|| {
-                        format!("{spec:?}: name a world mode (closedlist, closedlist-v2, closedlist-v3, truelist or peek)")
+                        format!("{spec:?}: name a world mode (closedlist, closedlist-v2, closedlist-v3, closedlist-full-pool-v1, truelist or peek)")
                     })?,
                 })
             }
@@ -539,7 +557,8 @@ impl PolicySpecV1 {
             Self::Pimc {
                 world: WorldModeV1::ClosedList
                     | WorldModeV1::ClosedListV2
-                    | WorldModeV1::ClosedListV3,
+                    | WorldModeV1::ClosedListV3
+                    | WorldModeV1::FullPoolClosedListV1,
                 ..
             }
         )
@@ -567,6 +586,21 @@ impl PolicySpecV1 {
 
     pub fn uses_versioned_closed_list(&self) -> bool {
         self.uses_closed_list_v2() || self.uses_closed_list_v3()
+    }
+
+    /// Keep the sealed FullPool policy and raw match policies on their own sessions.
+    pub fn validate_full_pool_session_v1(&self, session: SessionKindV1) -> Result<(), String> {
+        match (session, self) {
+            (SessionKindV1::FullPoolV1, Self::Random)
+            | (SessionKindV1::FullPoolV1, Self::Pimc { world: WorldModeV1::FullPoolClosedListV1, .. }) => Ok(()),
+            (_, Self::Pimc { world: WorldModeV1::FullPoolClosedListV1, .. }) => {
+                Err("closedlist-full-pool-v1 requires -session full-pool".into())
+            }
+            (SessionKindV1::FullPoolV1, _) => {
+                Err("full-pool requires random or closedlist-full-pool-v1".into())
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -648,11 +682,55 @@ pub fn pimc_choose_v1(
     belief: Option<&LimitedBeliefV1>,
     seed: u64,
 ) -> Result<(u32, PimcStatsV1), String> {
+    if world == WorldModeV1::FullPoolClosedListV1 {
+        return Err("closedlist-full-pool-v1 requires the sealed numeric owner".into());
+    }
     session.refuse_curator_sampling_v1()?;
     let FastActorResponseV1::Decision(decision) = session.current_response() else {
         return Err("no current decision".into());
     };
     let legal = decision.legal_action_count;
+    let root = seat(decision.acting_player);
+    let prepared_v3 = (legal > 1 && world == WorldModeV1::ClosedListV3).then(|| {
+        let belief = executable_belief_v2(belief)?;
+        let public_root = session.limited_closed_list_root_v3()?;
+        Ok::<_, String>((public_root, belief))
+    });
+    Ok(pimc_choose_with_v1(
+        legal,
+        sims,
+        seed,
+        matches!(world, WorldModeV1::ClosedListV2 | WorldModeV1::ClosedListV3),
+        |world_seed| match &prepared_v3 {
+            Some(Ok((public_root, corpus))) => {
+                session.limited_closed_list_clone_v3(public_root, world_seed, corpus)
+            }
+            Some(Err(error)) => Err(error.clone()),
+            None => sample_world_v1(session, world, belief, world_seed),
+        },
+        |mut sampled, action, rng| {
+            // The world was redetermined: its root step revalidates.
+            step_index(&mut sampled, action, false)?;
+            for _ in 0..depth {
+                let FastActorResponseV1::Decision(d) = sampled.current_response() else {
+                    break;
+                };
+                let pick = random_index(rng, d.legal_action_count);
+                step_index(&mut sampled, pick, true)?;
+            }
+            rollout_value(&sampled, root)
+        },
+    ))
+}
+
+fn pimc_choose_with_v1<W>(
+    legal: u32,
+    sims: u32,
+    seed: u64,
+    record_rejections: bool,
+    mut sample: impl FnMut(u64) -> Result<W, String>,
+    mut rollout: impl FnMut(W, u32, &mut SplitMix64) -> Result<f64, String>,
+) -> (u32, PimcStatsV1) {
     let n = legal as usize;
     let mut stats = PimcStatsV1 {
         visits: vec![0; n],
@@ -660,14 +738,8 @@ pub fn pimc_choose_v1(
         ..Default::default()
     };
     if legal <= 1 {
-        return Ok((0, stats));
+        return (0, stats);
     }
-    let root = seat(decision.acting_player);
-    let prepared_v3 = (world == WorldModeV1::ClosedListV3).then(|| {
-        let belief = executable_belief_v2(belief)?;
-        let public_root = session.limited_closed_list_root_v3()?;
-        Ok::<_, String>((public_root, belief))
-    });
     for sim in 0..sims {
         let total: u32 = stats.visits.iter().sum();
         let action = match stats.visits.iter().position(|&v| v == 0) {
@@ -686,18 +758,11 @@ pub fn pimc_choose_v1(
             b"mtg-kernel/limited-pimc-world/v1\0",
             &[seed, u64::from(sim)],
         );
-        let sampled = match &prepared_v3 {
-            Some(Ok((public_root, corpus))) => {
-                session.limited_closed_list_clone_v3(public_root, world_seed, corpus)
-            }
-            Some(Err(error)) => Err(error.clone()),
-            None => sample_world_v1(session, world, belief, world_seed),
-        };
-        let mut world_session = match sampled {
+        let world_session = match sample(world_seed) {
             Ok(w) => w,
             Err(error) => {
                 stats.rejected += 1;
-                if matches!(world, WorldModeV1::ClosedListV2 | WorldModeV1::ClosedListV3) {
+                if record_rejections {
                     *stats.rejection_reasons.entry(error).or_default() += 1;
                 }
                 continue;
@@ -707,19 +772,7 @@ pub fn pimc_choose_v1(
             b"mtg-kernel/limited-pimc-rollout/v1\0",
             &[world_seed],
         ));
-        let value = (|| {
-            // The world was redeterminized: its root step revalidates.
-            step_index(&mut world_session, action as u32, false)?;
-            for _ in 0..depth {
-                let FastActorResponseV1::Decision(d) = world_session.current_response() else {
-                    break;
-                };
-                let pick = random_index(&mut rng, d.legal_action_count);
-                step_index(&mut world_session, pick, true)?;
-            }
-            rollout_value(&world_session, root)
-        })();
-        let value = value.unwrap_or_else(|error| {
+        let value = rollout(world_session, action as u32, &mut rng).unwrap_or_else(|error| {
             stats.rollout_errors += 1;
             stats.first_rollout_error.get_or_insert(error);
             0.0
@@ -733,7 +786,7 @@ pub fn pimc_choose_v1(
             b"mtg-kernel/limited-pimc-fallback/v1\0",
             &[seed],
         ));
-        return Ok((random_index(&mut rng, legal), stats));
+        return (random_index(&mut rng, legal), stats);
     }
     let best = (1..n).fold(0, |best, a| {
         if stats.visits[a] > stats.visits[best] {
@@ -742,7 +795,7 @@ pub fn pimc_choose_v1(
             best
         }
     });
-    Ok((best as u32, stats))
+    (best as u32, stats)
 }
 
 // ---------------------------------------------------------------------------
@@ -782,6 +835,22 @@ pub struct GameResultV1 {
     pub rejection_reasons: BTreeMap<String, u64>,
 }
 
+impl GameResultV1 {
+    fn empty() -> Self {
+        Self {
+            outcome: GameOutcomeV1::Stall,
+            turns: 0,
+            decisions: 0,
+            rejected_worlds: 0,
+            rollout_errors: 0,
+            first_rollout_error: None,
+            searched_decisions: 0,
+            search_fallbacks: 0,
+            rejection_reasons: BTreeMap::new(),
+        }
+    }
+}
+
 /// `MTG_LIMITED_MATCH_TRACE` set: every step of `play_game_v1` prints its
 /// chosen action to stderr first.
 fn trace_enabled_v1() -> bool {
@@ -799,6 +868,11 @@ pub fn play_game_v1(
     starting_player: PlayerId,
     limits: GameLimitsV1,
 ) -> GameResultV1 {
+    if limits.session == SessionKindV1::FullPoolV1 {
+        return full_pool_match_v1::play_game(
+            decks, policies, beliefs, env_seed, starting_player, limits,
+        );
+    }
     play_game_observed_v1(
         decks,
         policies,
@@ -821,17 +895,13 @@ pub(crate) fn play_game_observed_v1(
     limits: GameLimitsV1,
     observe: &mut dyn FnMut(&FastActorSessionV1),
 ) -> GameResultV1 {
-    let mut result = GameResultV1 {
-        outcome: GameOutcomeV1::Stall,
-        turns: 0,
-        decisions: 0,
-        rejected_worlds: 0,
-        rollout_errors: 0,
-        first_rollout_error: None,
-        searched_decisions: 0,
-        search_fallbacks: 0,
-        rejection_reasons: BTreeMap::new(),
-    };
+    let mut result = GameResultV1::empty();
+    for policy in policies {
+        if let Err(error) = policy.validate_full_pool_session_v1(limits.session) {
+            result.outcome = GameOutcomeV1::Error(error);
+            return result;
+        }
+    }
     let uses_closed_list_v2 = policies.iter().any(|policy| policy.uses_closed_list_v2());
     let uses_closed_list_v3 = policies.iter().any(|policy| policy.uses_closed_list_v3());
     if (uses_closed_list_v2 || uses_closed_list_v3)
@@ -862,6 +932,10 @@ pub(crate) fn play_game_observed_v1(
     );
     let mainboards = [decks[0].to_vec(), decks[1].to_vec()];
     let reset = match limits.session {
+        SessionKindV1::FullPoolV1 => {
+            result.outcome = GameOutcomeV1::Error("raw session observer does not own full-pool matches".into());
+            return result;
+        }
         SessionKindV1::PreparedV57 => FastActorSessionV1::reset_prepared_v57(
             env_seed,
             env_seed,

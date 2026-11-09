@@ -94,6 +94,28 @@ positions from the pending choice. Unrelated private library knowledge of the ot
 discarded. A paired active Curator fixture exercises the order decision with and without that
 extra private knowledge.
 
+### Closed-list FullPool terminal search
+
+Select `-session full-pool` and
+`pimc:sims=N:depth=D:closedlist-full-pool-v1` in the match binary. The session
+admits the exact 286 Foundations printings and starts the numeric FullPool
+owner with V3 reveal minima. Both seats use either this search policy or
+`random`. The same sealed numeric actions drive live play and all rollout
+steps. The sampler draws from the supplied public belief corpus and
+authenticates each rebuilt root before applying its action index. The
+match output records the resolved belief deck hash and checks held-out
+overlap by both deck name and card multiset.
+
+UCB1 uses the existing seeded action selection. A natural rollout win or
+loss scores +1 or -1 for the search root. Draws and depth, turn or session
+cutoffs score zero. The match rows retain separate counts for rejected
+worlds, rollout errors and uniform fallbacks. A capped live game is a
+`stall`, distinct from a natural `draw`. Its reported turn is the most
+recent turn visible in an authenticated decision.
+
+The FullPool match mode is separate from the rules-only search probes and
+the pinned DraftZero training and fixed-opponent evaluation.
+
 ### Closed-list v3 for rules-only search
 
 The successor reduces the acting viewer's event-time reveal stream once per

@@ -70,6 +70,56 @@ fn closed_list_v3_frozen_286_opening_roots_ignore_hidden_composition_both_seats(
 }
 
 #[test]
+fn closed_list_v3_rules_only_leyline_opponent_uses_sampled_kept_hand() {
+    use crate::rl::ActionSemanticV1;
+    let axe = card_id_by_name("Leyline Axe").unwrap();
+    let forest = card_id_by_name("Forest").unwrap();
+    let belief = LimitedBeliefV1::new([vec![axe; 40]]);
+    let apply = |session: &mut FastActorSessionV1, select: fn(&ActionSemanticV1) -> bool| {
+        let menu = session.diagnostic_current_action_semantics().unwrap();
+        let index = menu.iter().position(select).expect("actual opening choice");
+        step_index(session, index as u32, false).unwrap();
+    };
+    for starting in [PlayerId::P0, PlayerId::P1] {
+        let opponent = starting.opponent();
+        let mut decks = [vec![forest; 40], vec![forest; 40]];
+        decks[starting.index()].fill(axe);
+        let mut live = rules_only_closed_list_game(decks, starting);
+        live.enable_limited_reveals_v3().unwrap();
+        for _ in 0..2 {
+            apply(&mut live, |action| matches!(
+                action, ActionSemanticV1::ChooseLondonMulligan { mulligan: false, .. }
+            ));
+        }
+        let before = live.game_state().clone();
+        assert!(before.players[opponent.index()].hand.iter().all(|&object|
+            before.objects.get(object).card_def == forest));
+        let mut sampled = sample_world_v1(
+            &live, WorldModeV1::ClosedListV3, Some(&belief), 552_482,
+        ).unwrap();
+        assert_eq!(
+            sampled.diagnostic_current_action_semantics().unwrap(),
+            live.diagnostic_current_action_semantics().unwrap()
+        );
+        for _ in 0..before.players[starting.index()].hand.len() {
+            apply(&mut sampled, |action| matches!(
+                action, ActionSemanticV1::ChooseEffectOption { option_index: 0, .. }
+            ));
+        }
+        let FastActorResponseV1::Decision(current) = sampled.current_response() else {
+            panic!("sampled future Leyline chooser did not surface")
+        };
+        assert_eq!(seat(current.acting_player), opponent);
+        apply(&mut sampled, |action| matches!(
+            action, ActionSemanticV1::ChooseEffectOption { option_index: 1, .. }
+        ));
+        assert!(sampled.game_state().players[opponent.index()].battlefield.iter().any(|&object|
+            sampled.game_state().objects.get(object).card_def == axe));
+        assert_eq!(live.game_state(), &before);
+    }
+}
+
+#[test]
 fn closed_list_v3_paid_partial_roots_ignore_hidden_composition_both_seats() {
     let forest = card_id_by_name("Forest").unwrap();
     let partial = names().into_iter().filter(|name| {
