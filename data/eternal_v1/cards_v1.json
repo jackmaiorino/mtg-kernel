@@ -24088,7 +24088,7 @@
   },
     {
    "name": "Vandalblast",
-   "engine_capability": "full",
+   "engine_capability": "partial",
    "mana_cost": "{R}",
    "mana_value": 1,
    "colors": [
@@ -24160,7 +24160,7 @@
   },
     {
    "name": "Circle of Protection: Blue",
-   "engine_capability": "full",
+   "engine_capability": "partial",
    "mana_cost": "{1}{W}",
    "mana_value": 2,
    "colors": [
@@ -24342,7 +24342,7 @@
   },
     {
    "name": "Standard Bearer",
-   "engine_capability": "full",
+   "engine_capability": "partial",
    "mana_cost": "{1}{W}",
    "mana_value": 2,
    "colors": [
@@ -24618,7 +24618,7 @@
   },
     {
    "name": "Martyr of Sands",
-   "engine_capability": "full",
+   "engine_capability": "partial",
    "mana_cost": "{W}",
    "mana_value": 1,
    "colors": [
@@ -24709,7 +24709,7 @@
   },
     {
    "name": "Electrickery",
-   "engine_capability": "full",
+   "engine_capability": "partial",
    "mana_cost": "{R}",
    "mana_value": 1,
    "colors": [
@@ -24881,7 +24881,7 @@
   },
     {
    "name": "Coalition Honor Guard",
-   "engine_capability": "full",
+   "engine_capability": "partial",
    "mana_cost": "{3}{W}",
    "mana_value": 4,
    "colors": [
@@ -25185,7 +25185,7 @@
   },
     {
    "name": "Hullbreacher",
-   "engine_capability": "full",
+   "engine_capability": "partial",
    "mana_cost": "{2}{U}",
    "mana_value": 3,
    "colors": [
@@ -26352,7 +26352,7 @@
   },
     {
    "name": "Surgical Extraction",
-   "engine_capability": "full",
+   "engine_capability": "partial",
    "mana_cost": "{B/P}",
    "mana_value": 1,
    "colors": [
@@ -26394,7 +26394,7 @@
   },
     {
    "name": "Lavinia, Azorius Renegade",
-   "engine_capability": "full",
+   "engine_capability": "partial",
    "mana_cost": "{W}{U}",
    "mana_value": 2,
    "colors": [
@@ -26913,7 +26913,7 @@
   },
     {
    "name": "Meddling Mage",
-   "engine_capability": "full",
+   "engine_capability": "partial",
    "mana_cost": "{W}{U}",
    "mana_value": 2,
    "colors": [
@@ -27067,7 +27067,7 @@
   },
     {
    "name": "Extirpate",
-   "engine_capability": "full",
+   "engine_capability": "partial",
    "mana_cost": "{B}",
    "mana_value": 1,
    "colors": [
