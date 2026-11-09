@@ -1,0 +1,103 @@
+name: Pinned release build
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/pinned-release-build.yml'
+      - 'tools/pinned-release-build/**'
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact public source commit using Rust 1.94.1 and release thin LTO
+        required: true
+        default: c5719e1cf81769f4f30f9e91ae1079d4ee3cbfcf
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pinned-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Build artifacts only. Native qualification runs separately on an admitted host.
+    if: >-
+      github.repository == 'jackmaiorino/mtg-kernel' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      BUILD_SOURCE: ${{ inputs.source_commit || 'c5719e1cf81769f4f30f9e91ae1079d4ee3cbfcf' }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - name: Check build helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n tools/pinned-release-build/build.sh
+          python3 -B -m unittest discover -s tools/pinned-release-build -p 'test_*.py' -v
+      - name: Admit actual runner capacity
+        id: capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, shutil
+          from pathlib import Path
+          paths = ('/mnt', os.environ['RUNNER_TEMP'])
+          volumes = [{
+              'path': p, 'device': os.stat(p).st_dev,
+              'total_bytes': shutil.disk_usage(p).total,
+              'free_bytes': shutil.disk_usage(p).free,
+          } for p in paths]
+          receipt = {
+              'runner_image': os.environ.get('ImageVersion'),
+              'cpus': os.cpu_count(),
+              'memory': open('/proc/meminfo').read().splitlines()[:3],
+              'required_free_bytes': int(81.5 * 1024**3),
+              'volumes': volumes,
+          }
+          selected = max(volumes, key=lambda v: v['free_bytes'])
+          receipt['admitted'] = selected['free_bytes'] >= receipt['required_free_bytes']
+          text = json.dumps(receipt, indent=2) + '\n'
+          Path(os.environ['RUNNER_TEMP'], 'pinned-release-capacity.json').write_text(text)
+          print(text)
+          if not receipt['admitted']:
+              raise SystemExit('No volume can preserve the 60 GiB reserve and declared build allowance')
+          root = Path(selected['path']) / ('pinned-release-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
+          if root.exists() or root.is_symlink():
+              raise SystemExit('Build root must be fresh')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              print('root=' + str(root), file=stream)
+          PY
+      - name: Build exact release pair under resource guards
+        env:
+          BUILD_ROOT: ${{ steps.capacity.outputs.root }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo python3 -B tools/pinned-release-build/hosted.py \
+            --work-root "$BUILD_ROOT" --source-commit "$BUILD_SOURCE"
+      - name: Preserve capacity evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pinned-release-capacity-${{ github.run_id }}
+          path: ${{ runner.temp }}/pinned-release-capacity.json
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Preserve build outputs and failed-attempt logs
+        if: always() && steps.capacity.outputs.root != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pinned-release-${{ github.run_id }}
+          path: |
+            ${{ steps.capacity.outputs.root }}/*.json
+            ${{ steps.capacity.outputs.root }}/*.log
+            ${{ steps.capacity.outputs.root }}/work/out/
+          retention-days: 7
+          if-no-files-found: error

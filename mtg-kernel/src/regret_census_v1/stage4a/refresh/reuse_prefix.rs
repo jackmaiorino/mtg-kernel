@@ -321,6 +321,7 @@ pub(super) fn execute(
             reuse_witnesses: Recording::Enabled,
             executor: ExecutionMode::Persistent,
             node_stats: false,
+            world: super::super::world::WorldMode::Fresh,
         },
         Some(&mut control),
         #[cfg(feature = "viewer-recording-v1")]

@@ -2963,6 +2963,7 @@ fn retention_run_config_v1(
         iterations,
         record_format: Default::default(),
         record_envelope: Default::default(),
+        verified_reads: Default::default(),
         learning_rate: 0.0001,
         value_coefficient: 0.5,
         update_backend: ExpandedUpdateBackendV1::Cpu,
