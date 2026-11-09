@@ -792,7 +792,7 @@ def stopped(root, cdir):
     return (Path(root) / 'STOP').exists() or (Path(cdir) / 'STOP').exists()
 
 
-def latest(man, persisted=False):
+def latest(man, persisted=False, *, read_receipt=True):
     """(latest boundary, its receipt or None) from the manifest's segments; with `persisted`, an in-flight
     (mounted) scratch segment is skipped, so the boundary survives a reboot."""
     segs = man['segments']
@@ -801,7 +801,8 @@ def latest(man, persisted=False):
             continue
         n = completed(seg['root'])
         if n:
-            return seg['offset'] + n, read(Path(seg['root']) / 'iterations' / f'{n - 1:06d}' / 'complete.json')
+            receipt = read(Path(seg['root']) / 'iterations' / f'{n - 1:06d}' / 'complete.json') if read_receipt else None
+            return seg['offset'] + n, receipt
     return 0, None
 
 
@@ -944,9 +945,9 @@ def scratch_kept_pins(newest, read_record):
     """The newest complete receipt and its update name the full retained state."""
     if newest is None:
         return {}
-    complete = read_record(newest / 'complete.json')
+    complete = read_record(newest / 'complete.json', None)
     update = attempt_dir(newest, complete) / 'update'
-    doc = read_record(update / 'update.json')
+    doc = read_record(update / 'update.json', complete['update'])
     keep = {update / 'checkpoint.json': complete['output_identity']['checkpoint_sha256']}
     state = retention.state_pin(doc)
     if state is not None:
@@ -964,9 +965,11 @@ def validate_scratch_stage(stage):
                 f'{path} leaves the scratch stage or uses a link')
         return path
 
-    def read_record(path):
+    def read_record(path, pin=None):
         path = staged(path)
         require(path.is_file(), f'{path} is missing from the scratch stage')
+        if pin is not None and 'sha256' in pin:
+            require(sha(path) == pin['sha256'], f'{path} differs from its pin')
         return read(path)
 
     try:
@@ -1000,7 +1003,7 @@ def persist(arm, native, cdir):
     reap(native)
     its = target / 'iterations'
     done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists()) if its.exists() else []
-    keep = scratch_kept_pins(done[-1] if done else None, read)
+    keep = scratch_kept_pins(done[-1] if done else None, lambda path, _: read(path))
     tmp = Path(cdir) / f'.{native.name}.persist'
     shutil.rmtree(tmp, ignore_errors=True)
     copied, files = 0, []
@@ -1131,10 +1134,13 @@ def scratch_settle(arm, root, cdir, man, instance=None):
             log(root, chain=cdir.name, event='scratch-persist', segment=native.name, bytes=n, late=True,
                 config_gz_bytes=z)
     if man['segments']:
-        native = Path(man['segments'][-1]['root'])
-        if not mounted(native) and (native / PERSIST_MARKER).exists() and \
+        s = len(man['segments']) - 1
+        native = Path(man['segments'][s]['root'])
+        marker = native / PERSIST_MARKER
+        if not mounted(native) and (marker.exists() or is_link(marker)) and \
                 not (native / 'completion.json').exists():
-            # a persisted wall cut whose END was not written (the driver stopped in between)
+            # A driver can stop after the rename but before its commit or END.
+            commit_recovered(cdir, man, instance, segment=s)
             boundary, receipt = latest(man, persisted=True)
             write_once(cdir / 'END.json', end_doc(cdir.name, arm['arm'], 'c-wall', boundary, receipt, 'driver',
                                                   recovered=True))
@@ -1283,7 +1289,22 @@ def committed_through(cdir):
     return prefix[-1]['boundary'] if prefix else 0
 
 
-def commit_recovered(cdir, man, instance=None):
+def verify_unlogged_scratch_boundary(cdir, man, boundary):
+    """Check only the selected persisted scratch segment before an external END."""
+    if not boundary:
+        return
+    s, seg = next((s, seg) for s, seg in reversed(list(enumerate(man['segments']))) if seg['offset'] < boundary)
+    root = Path(seg['root'])
+    marker = root / PERSIST_MARKER
+    if not (marker.exists() or is_link(marker)):
+        return
+    require(not mounted(root), f'{root} is still mounted, not a persisted boundary')
+    rows, _ = read_commits(cdir)
+    if not any(row['event'] == 'commit' and row['segment'] == s for row in rows):
+        validate_scratch_stage(root)
+
+
+def commit_recovered(cdir, man, instance=None, *, segment=None):
     """A driver start's safety net: a durable segment among the manifest's last two (a native segment with
     completion.json, or a persisted scratch copy) without a commit line, left by a driver that stopped between the
     promotion and its line, is committed now as `recovered`. Its time is this driver's, later than the real one, so
@@ -1291,12 +1312,18 @@ def commit_recovered(cdir, man, instance=None):
     rows, _ = read_commits(cdir)
     have = {r['segment'] for r in rows if r.get('event') == 'commit'}
     segs = man['segments']
-    for s in range(max(0, len(segs) - 2), len(segs)):
+    indexes = (segment,) if segment is not None else range(max(0, len(segs) - 2), len(segs))
+    for s in indexes:
         root = Path(segs[s]['root'])
         if s in have or mounted(root):
             continue
-        if (root / 'completion.json').exists() or (root / PERSIST_MARKER).exists():
-            record_commit(cdir, man, s, 'recovered', instance)
+        marker = root / PERSIST_MARKER
+        if marker.exists() or is_link(marker):
+            validate_scratch_stage(root)
+            fsync_path(root.parent)  # recovery may have interrupted the sync after rename
+        elif not (root / 'completion.json').exists():
+            continue
+        record_commit(cdir, man, s, 'recovered', instance)
 
 
 def drive(a):
@@ -1472,9 +1499,11 @@ def run(a):
         release_scratch(plan, a.chain, read(chain_dir(root, a.chain) / 'chain.json'))  # the box's driver is gone
         return 0
     if code == w5box.EXIT_OOM and c['arm'] in MEASURED:
-        man = read(chain_dir(root, a.chain) / 'chain.json')
+        cdir = chain_dir(root, a.chain)
+        man = read(cdir / 'chain.json')
         boundary, receipt = latest(man, persisted=True)
-        write_once(chain_dir(root, a.chain) / 'END.json',
+        verify_unlogged_scratch_boundary(cdir, man, boundary)
+        write_once(cdir / 'END.json',
                    end_doc(a.chain, c['arm'], 'chain-failure', boundary, receipt, 'run', cause='oom kill'))
         release_scratch(plan, a.chain, man)
     return code
@@ -1506,14 +1535,23 @@ def end_cmd(a):
     plan = load_plan(a.plan, check=False)
     require(a.chain in plan['chains'] and plan['chains'][a.chain]['arm'] in MEASURED, 'not a measured chain')
     root = Path(plan['root'])
-    man = read(chain_dir(root, a.chain) / 'chain.json')
-    top, _ = latest(man, persisted=True)  # receipts only (persisted ones for a scratch arm)
-    boundary = top if a.boundary is None else a.boundary
-    require(0 <= boundary <= top, f'boundary must be 0 to {top}')
-    receipt = receipt_at(man, boundary) if boundary else None
+    cdir = chain_dir(root, a.chain)
+    existing = read_end(root, a.chain)
+    if existing is not None:
+        print(json.dumps(existing, indent=1))
+        return 1
+    man = read(cdir / 'chain.json')
+    if a.boundary is None:
+        boundary, receipt = latest(man, persisted=True)
+    else:
+        top, _ = latest(man, persisted=True, read_receipt=False)
+        boundary = a.boundary
+        require(0 <= boundary <= top, f'boundary must be 0 to {top}')
+        receipt = receipt_at(man, boundary) if boundary else None
+    verify_unlogged_scratch_boundary(cdir, man, boundary)
     doc = end_doc(a.chain, plan['chains'][a.chain]['arm'], 'operator', boundary, receipt, 'operator',
                   note=a.reason)
-    if not write_once(chain_dir(root, a.chain) / 'END.json', doc):
+    if not write_once(cdir / 'END.json', doc):
         print(json.dumps(read_end(root, a.chain), indent=1))
         return 1
     if live(root, a.chain):
@@ -2084,9 +2122,11 @@ def end_oom_failures(plan, root):
     ended = []
     for n, c in sorted(plan['chains'].items()):
         if c['arm'] in MEASURED and read_end(root, n) is None and oom_closed(root, n):
-            man = read(chain_dir(root, n) / 'chain.json')
+            cdir = chain_dir(root, n)
+            man = read(cdir / 'chain.json')
             boundary, receipt = latest(man, persisted=True)
-            if write_once(chain_dir(root, n) / 'END.json',
+            verify_unlogged_scratch_boundary(cdir, man, boundary)
+            if write_once(cdir / 'END.json',
                           end_doc(n, c['arm'], 'chain-failure', boundary, receipt, 'supervise', cause='oom kill')):
                 log(root, chain=n, event='end', reason='chain-failure', cause='oom kill', boundary=boundary)
                 ended.append(n)
