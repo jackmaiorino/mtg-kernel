@@ -1323,6 +1323,14 @@ pub(crate) fn stack_target_contract_for_storm_snapshot(
         && stack_target_contract_shape(state,spec,target_index,target,contract,true)
 }
 
+pub(crate) fn stack_target_contract_for_sampled_snapshot(
+    state: &GameState, item: &StackItem, spec: TargetSpec, slot: usize,
+    target: Target, contract: StackTargetContractV4,
+) -> bool {
+    crate::sampled_history_v1::object_target_face(state, item, slot, contract).is_some()
+        && stack_target_contract_shape(state, spec, slot, target, contract, true)
+}
+
 fn stack_target_contract_shape(
     state:&GameState,spec:TargetSpec,target_index:usize,target:Target,
     contract:StackTargetContractV4,historical_storm:bool,

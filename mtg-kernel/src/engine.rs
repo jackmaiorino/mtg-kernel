@@ -18676,6 +18676,7 @@ fn validated_stack_item_target_metadata(
         };
         if !stack_target_contract_is_structurally_valid(state, spec, target_index, target, contract)
             && !crate::state::stack_target_contract_for_storm_snapshot(state, item, spec, target_index, target, contract)
+            && !crate::state::stack_target_contract_for_sampled_snapshot(state, item, spec, target_index, target, contract)
             && !crate::fiendish_panda_v1::custody::authenticates_stale_target(
                 state,
                 item,

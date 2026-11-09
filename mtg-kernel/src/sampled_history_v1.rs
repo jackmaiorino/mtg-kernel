@@ -5,7 +5,7 @@
 //! occurrences may use this custody; live source validation remains unchanged.
 use crate::{
     event::CommittedEvent as E,
-    state::{AbilitySourceContractV4, GameState, Zone},
+    state::{AbilitySourceContractV4, GameState, StackItem, StackTargetContractV4, Zone},
 };
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -20,19 +20,28 @@ struct ProofV1 {
 /// Private constructors and skipped serialization prevent raw snapshots from
 /// manufacturing a historical exception. Opaque owner snapshots retain it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct CustodyV1(Arc<Vec<ProofV1>>);
+pub(crate) struct CustodyV1(Arc<Vec<ProofV1>>, Arc<Vec<TargetProofV1>>);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TargetProofV1 {
+    item: [u8; 32],
+    slot: usize,
+    contract: StackTargetContractV4,
+    public_face: u16,
+}
 
 impl CustodyV1 {
     pub(crate) fn hash_if_sampled<H: std::hash::Hasher>(&self, h: &mut H) {
         use std::hash::Hash;
-        if !self.0.is_empty() {
+        if !self.0.is_empty() || !self.1.is_empty() {
             "sampled-native-history/v1".hash(h);
             self.0.hash(h);
+            self.1.hash(h);
         }
     }
 }
 
-fn fingerprint(event: &E) -> Result<[u8; 32], String> {
+fn fingerprint(event: &impl serde::Serialize) -> Result<[u8; 32], String> {
     let bytes = serde_json::to_vec(event).map_err(|e| format!("native source receipt: {e}"))?;
     Ok(Sha256::digest(bytes).into())
 }
@@ -105,7 +114,54 @@ pub(crate) fn capture(state: &GameState) -> Result<CustodyV1, String> {
             proofs.push(ProofV1 { at, source, event: event_hash });
         }
     }
-    Ok(CustodyV1(Arc::new(proofs)))
+    let mut targets = Vec::new();
+    for item in state.stack.iter().chain(state.engine.pending_effect.as_ref().map(|p| &p.resolving_item)) {
+        if item.targets.is_empty() {
+            continue;
+        }
+        crate::engine::validated_stack_item_target_spec(item, state)?;
+        let item_hash = fingerprint(item)?;
+        let refs = crate::rl::frozen_stack_target_refs(state, item).map_err(|e| e.to_string())?;
+        for (slot, (&contract, projected)) in item.v4.target_contracts.iter().zip(refs).enumerate() {
+            let (StackTargetContractV4::Object { zone, .. }, crate::rl::TargetRefV1::Object { object }) =
+                (contract, projected) else { continue };
+            // A private chooser's hand/library target must never become an
+            // actor-independent frozen reference in a later opponent rollout.
+            if matches!(zone, Zone::Hand | Zone::Library) {
+                continue;
+            }
+            let proof = TargetProofV1 { item: item_hash, slot, contract, public_face: object.card_db_id };
+            if !targets.contains(&proof) {
+                targets.push(proof);
+            }
+        }
+    }
+    Ok(CustodyV1(Arc::new(proofs), Arc::new(targets)))
+}
+
+/// This is a historical face only. It does not make a stale incarnation legal
+/// as a current target and never changes native resolution/fizzle checks.
+pub(crate) fn object_target_face(
+    state: &GameState,
+    item: &StackItem,
+    slot: usize,
+    contract: StackTargetContractV4,
+) -> Option<u16> {
+    let StackTargetContractV4::Object { object, owner, zone, zone_change_count, spell_copy_origin, .. } = contract
+        else { return None };
+    let live = state.objects.try_get(object)?;
+    if matches!(zone, Zone::Hand | Zone::Library)
+        || live.owner != owner || live.zone_change_count <= zone_change_count
+        || spell_copy_origin.is_some() || live.spell_copy_origin != spell_copy_origin
+        || item.v4.target_contracts.get(slot) != Some(&contract)
+        || item.targets.get(slot) != Some(&contract.target())
+    {
+        return None;
+    }
+    let item_hash = fingerprint(item).ok()?;
+    state.sampled_history_v1.1.iter().find(|proof|
+        proof.item == item_hash && proof.slot == slot && proof.contract == contract)
+        .map(|proof| proof.public_face)
 }
 
 pub(crate) fn validate_source(

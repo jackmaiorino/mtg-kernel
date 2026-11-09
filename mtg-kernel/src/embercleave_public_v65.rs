@@ -235,6 +235,7 @@ fn ability(
     targets: &[Target],
     contracts: &[StackTargetContractV4],
     payment_complete: bool,
+    published: Option<&crate::state::StackItem>,
 ) -> Result<AbilityV65, String> {
     if source.card_def != meaning::selected_id()?
         || source.zone != Zone::Battlefield
@@ -252,7 +253,9 @@ fn ability(
             index,
             target,
             contract,
-        ) {
+        ) && !published.is_some_and(|item| crate::state::stack_target_contract_for_sampled_snapshot(
+            state, item, TargetSpec::ControlledCreature, index, target, contract,
+        )) {
             return Err("V65 original target contract changed".into());
         }
         let StackTargetContractV4::Object {
@@ -440,6 +443,7 @@ pub(crate) fn capture_scoped(
                 &p.targets,
                 &p.target_contracts,
                 true,
+                None,
             )?);
         }
     }
@@ -458,6 +462,7 @@ pub(crate) fn capture_scoped(
                 &p.targets_chosen,
                 &p.target_contracts,
                 false,
+                None,
             )?);
         }
     }
@@ -504,6 +509,7 @@ pub(crate) fn capture_scoped(
                 &item.targets,
                 &item.v4.target_contracts,
                 true,
+                Some(item),
             )?);
         }
     }

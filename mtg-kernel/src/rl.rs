@@ -14107,7 +14107,7 @@ fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRe
     frozen_stack_target_refs(state, item)
 }
 
-fn frozen_stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRefV1>> {
+pub(crate) fn frozen_stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRefV1>> {
     if crate::effect::thousand_year_storm_v1::owns_snapshot(state, item) {
         return crate::effect::thousand_year_storm_v1::targets::public_refs(state, item).map_err(RlContractError);
     }
@@ -14120,7 +14120,8 @@ fn frozen_stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<T
         .iter()
         .copied()
         .zip(item.v4.target_contracts.iter().copied())
-        .map(|(target, contract)| {
+        .enumerate()
+        .map(|(slot, (target, contract))| {
             if contract.target() != target {
                 return Err(RlContractError(
                     "stack target vector/contract identity mismatch".to_string(),
@@ -14153,7 +14154,8 @@ fn frozen_stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<T
                             "stack target contract references an unknown arena object".to_string(),
                         )
                     })?;
-                    let same_card = historical.card_def == card_def
+                    let sampled_face = crate::sampled_history_v1::object_target_face(state, item, slot, contract);
+                    let same_card = historical.card_def == card_def || sampled_face.is_some()
                         || (cfg!(feature = "eternal-fixtures")
                             && crate::standard_cards_v1::had_card_def(
                                 state,
@@ -14169,7 +14171,7 @@ fn frozen_stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<T
                     TargetRefV1::Object {
                         object: CardStableRefV1 {
                             arena_id: object.0,
-                            card_db_id: projected_card_def(state, object, zone_change_count),
+                            card_db_id: sampled_face.unwrap_or_else(|| projected_card_def(state, object, zone_change_count)),
                             owner: owner.into(),
                             controller: controller.into(),
                             zone,
