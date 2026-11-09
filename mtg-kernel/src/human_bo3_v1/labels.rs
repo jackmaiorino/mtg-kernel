@@ -1889,11 +1889,26 @@ fn label_common(
             option_count,
             ..
         } => {
-            let pending = observation
-                .projection
-                .surface
-                .engine_context
-                .pending_effect
+            let context = &observation.projection.surface.engine_context;
+            if context.pending_effect.is_none()
+                && *option_count == 2
+                && *option_index < *option_count
+                && crate::eternal_premodern_p2b_v1::is_thornscape(definition(source)?)
+                && context.pending_cast.as_ref().is_some_and(|pending| {
+                    pending.source.as_ref() == Some(source)
+                        && pending.controller == human
+                        && pending.kicked.is_some()
+                        && pending.thornscape_white_kicker_v1.is_none()
+                })
+            {
+                let payment = if *option_index == 1 { "Pay" } else { "Decline" };
+                return Ok(format!(
+                    "{payment} the additional kicker cost {} for {}",
+                    mana(crate::eternal_premodern_p2b_v1::THORNSCAPE_WHITE_KICKER),
+                    handles.name(source)?
+                ));
+            }
+            let pending = context.pending_effect
                 .as_ref()
                 .ok_or(Error::UnsupportedPrompt)?;
             let Some(PendingEffectChoiceSemanticV4::Options {

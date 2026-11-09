@@ -11,7 +11,8 @@ use mtg_kernel::eternal_premodern_p2b_v1 as p2b;
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
-use mtg_kernel::rl::{legal_action_candidates_v1, ActionSemanticV1};
+use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
+use mtg_kernel::rl::{legal_action_candidates_v1, observe_policy_v5, ActionSemanticV1};
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 use mtg_kernel::surface::{SurfaceAction, SurfaceDecision};
 
@@ -909,6 +910,7 @@ fn birchlore_casts_face_down_and_turns_up_for_one_green() {
 
 #[test]
 fn thornscape_pays_each_kicker_separately_and_only_triggers_what_it_paid() {
+    let surface = PolicySurfaceV5::new();
     for free in [false, true] {
         for (red, white) in [(false, false), (true, false), (false, true), (true, true)] {
             let mut state = islands();
@@ -926,20 +928,38 @@ fn thornscape_pays_each_kicker_separately_and_only_triggers_what_it_paid() {
                 );
             }
             act(&mut state, Action::CastSpell(battlemage));
-            settle_with(&mut state, |current, decision| match decision {
-                Decision::ChooseKicker { spell, .. } if spell == battlemage => {
-                    Action::ChooseKicker(red)
-                }
-                Decision::ChooseEffectOption { source, .. } if source == battlemage => {
-                    let pending = current.engine.pending_cast.as_ref().unwrap();
-                    let choice = if pending.thornscape_white_kicker_v1.is_some() {
-                        assert!(free);
-                        true
-                    } else {
-                        white
-                    };
-                    Action::ChooseEffectOption(u16::from(choice))
-                }
+            assert!(matches!(
+                next(&mut state), Decision::ChooseKicker { spell, .. } if spell == battlemage
+            ));
+            act(&mut state, Action::ChooseKicker(red));
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseEffectOption { source, option_count: 2, .. } if source == battlemage
+            ));
+            let observation = observe_policy_v5(&state, &surface, P0, 0, 0, 0, 1).unwrap();
+            let visible = observation.projection.surface.engine_context.pending_cast.unwrap();
+            assert_eq!(visible.kicked, Some(red));
+            assert_eq!(visible.thornscape_white_kicker_v1, None);
+            act(&mut state, Action::ChooseEffectOption(u16::from(white)));
+            if matches!(next(&mut state), Decision::ChooseEffectOption { source, .. } if source == battlemage)
+            {
+                assert!(free);
+                let observation = observe_policy_v5(&state, &surface, P0, 0, 0, 0, 1).unwrap();
+                let visible = observation.projection.surface.engine_context.pending_cast.unwrap();
+                assert_eq!(visible.thornscape_white_kicker_v1, Some(white));
+                act(&mut state, Action::ChooseEffectOption(1));
+            }
+            let Decision::CastSpellOrPass { player, .. } = next(&mut state) else {
+                panic!("expected priority after Thornscape Battlemage was published");
+            };
+            let observation = observe_policy_v5(&state, &surface, player, 0, 0, 0, 1).unwrap();
+            let visible = observation.projection.surface.stack.iter().find(|row| {
+                row.source.arena_id == battlemage.0
+            }).unwrap();
+            let kickers = u8::from(red) | (u8::from(white) << 1);
+            assert_eq!(visible.thornscape_kickers_v1, (kickers != 0).then_some(kickers));
+
+            settle_with(&mut state, |_, decision| match decision {
                 Decision::ChooseTargets { legal_targets, .. } => {
                     let target = if legal_targets.contains(&Target::Player(P1)) {
                         Target::Player(P1)

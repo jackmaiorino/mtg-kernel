@@ -429,6 +429,9 @@ pub struct StackItemPublicV2 {
     pub counter_transfer: Option<crate::standard_creatures_v1::CounterTransferV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub granted_ability: Option<(CardStableRefV1, u16)>,
+    /// Paid Thornscape Battlemage kickers. Bit 0 is red and bit 1 is white.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thornscape_kickers_v1: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -558,7 +561,7 @@ pub enum EngineDecisionStageV2 {
     Halted,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingCastSemanticV2 {
     pub source: Option<CardStableRefV1>,
     pub controller: PlayerSeatV1,
@@ -574,6 +577,8 @@ pub struct PendingCastSemanticV2 {
     /// Escape deck can be admitted to training.
     pub sacrifice_chosen: Vec<CardStableRefV1>,
     pub kicked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thornscape_white_kicker_v1: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -12539,6 +12544,7 @@ fn pending_cast_semantic_v2(
         origin_zone: p.origin_zone,
         sacrifice_chosen,
         kicked: p.kicked,
+        thornscape_white_kicker_v1: p.thornscape_white_kicker_v1,
     })
 }
 
@@ -13128,6 +13134,7 @@ fn stack_item_public_v2_from_frozen(
         mode_chosen: item.mode_chosen,
         madness_offer: item.madness_offer,
         kicked: item.kicked,
+        thornscape_kickers_v1: public_thornscape_kickers_v1(item),
         cast_method: item.v4.cast_method,
         face_index: item.v4.face_index,
         x_value: item.v4.x_value,
@@ -13231,6 +13238,7 @@ fn stack_item_public_conqueror_v49_fake_v50(
         mode_chosen: item.mode_chosen,
         madness_offer: item.madness_offer,
         kicked: item.kicked,
+        thornscape_kickers_v1: public_thornscape_kickers_v1(item),
         cast_method: item.v4.cast_method,
         face_index: item.v4.face_index,
         x_value: item.v4.x_value,
@@ -13243,6 +13251,11 @@ fn stack_item_public_conqueror_v49_fake_v50(
         ),
         counter_distribution,
     })
+}
+
+fn public_thornscape_kickers_v1(item: &StackItem) -> Option<u8> {
+    let kickers = item.v4.battlemage_kickers_v1;
+    (!kickers.is_empty()).then_some(kickers.0)
 }
 
 /// Selected Crystal transport: derive the resolving identity from the real
