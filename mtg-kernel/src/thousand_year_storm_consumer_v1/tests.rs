@@ -169,7 +169,7 @@ fn paid_copy_slot_hidden_pairs_native_index_human_wire_numeric_and_restore_both_
             .all(|r| r.choice.is_none()));
         let mut raw = raw_owner(&state);
         let mut numeric = KaitoSession::from_session(raw_owner(&state)).unwrap();
-        let mut paired = KaitoSession::from_session(raw_owner(&other)).unwrap();
+        let paired = KaitoSession::from_session(raw_owner(&other)).unwrap();
         let d = decision(&numeric);
         let save = numeric.snapshot();
         assert_eq!(d.packet(), decision(&paired).packet());
