@@ -832,7 +832,12 @@ pub fn verify_v1(
     let actual = serde_json::to_value(&identity).map_err(err)?;
     let expected = serde_json::to_value(&batch.identity).map_err(err)?;
     for (field, value) in expected.as_object().ok_or("identity is an object")? {
-        // JSON float equality treats both signed zeros as equal.
+        // JSON float equality treats both signed zeros as equal, so compare
+        // the serialized forms, which keep the sign.
+        #[allow(
+            clippy::cmp_owned,
+            reason = "`Value` equality ignores the sign of zero"
+        )]
         check(
             actual[field].to_string() == value.to_string(),
             field.as_str(),
