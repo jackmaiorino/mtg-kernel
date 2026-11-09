@@ -178,8 +178,10 @@ fn private_search_ref(
     })
 }
 
-fn paid_root(state: &GameState, source: AbilitySourceContractV4) -> Result<RootV1, String> {
-    let mut root = public::root(state, source, None)?;
+fn paid_root(state: &GameState, source: AbilitySourceContractV4, archived: Option<usize>) -> Result<RootV1, String> {
+    let mut root = if let Some(at) = archived {
+        public::archived_root(state, at, source, None)?
+    } else { public::root(state, source, None)? };
     if source.card_def != PRINTING {
         return Err("Fiend Artisan paid row changed exact printing".into());
     }
@@ -245,7 +247,7 @@ fn choose(
     let selected = selected.iter().map(|candidate| private_search_ref(state, viewer, candidate))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Some(ChoiceV1::Search {
-        source: paid_root(state, source)?.original_source,
+        source: paid_root(state, source, None)?.original_source,
         paid_x: native::paid_x(state, item)?,
         selected,
         legal,
@@ -284,7 +286,7 @@ pub(crate) fn capture(
     let activations = receipts::activations(state)?.into_iter().map(|row| {
         let source = row.item.v4.ability_source_contract.ok_or("Fiend Artisan paid source absent")?;
         Ok(ActivationV1 {
-            source: paid_root(state, source)?,
+            source: paid_root(state, source, Some(row.paid_at))?,
             stack_position: row.stack_position,
             paid_x: row.x,
             original_sacrifice: row.sacrifice.clone(),

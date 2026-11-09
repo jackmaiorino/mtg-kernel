@@ -177,6 +177,7 @@ struct Movement<'a> {
 }
 
 pub(crate) struct Activation<'a> {
+    pub paid_at: usize,
     pub item: &'a StackItem,
     pub x: u8,
     pub sacrifice: &'a ReferenceV1,
@@ -244,7 +245,7 @@ pub(crate) fn activations(state: &GameState) -> Result<Vec<Activation<'_>>, Stri
         else { return Err("Fiend Artisan original payment absent".into()) };
         let [binding] = input.pending.object_cost_chosen.as_slice()
         else { return Err("Fiend Artisan original sacrifice absent".into()) };
-        crate::engine::validate_historical_ability_source_contract(state, paid_source)?;
+        crate::sampled_history_v1::validate_source(state, sacrifice_at, paid_source)?;
         let paid_identity = face_down.map_or(
             IdentityV1::Known { card_id: paid_source.card_def },
             |disguised| IdentityV1::FaceDown { disguised },
@@ -341,6 +342,7 @@ pub(crate) fn activations(state: &GameState) -> Result<Vec<Activation<'_>>, Stri
             _ => return Err("Fiend Artisan original native lifecycle changed".into()),
         };
         result.push(Activation {
+            paid_at,
             item, x, sacrifice, stack_position, searching: pending,
             shuffled: row.finished.is_some(), countered: row.countered.is_some(), arrival,
         });

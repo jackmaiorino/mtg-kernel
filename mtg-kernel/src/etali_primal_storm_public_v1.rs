@@ -329,8 +329,10 @@ fn captured(source: AbilitySourceContractV4) -> ReferenceV1 {
     }
 }
 
-fn attack_root(state: &GameState, source: AbilitySourceContractV4) -> Result<RootV1, String> {
-    let mut root = public::root(state, source, None)?;
+fn attack_root(state: &GameState, source: AbilitySourceContractV4, archived: Option<usize>) -> Result<RootV1, String> {
+    let mut root = if let Some(at) = archived {
+        public::archived_root(state, at, source, None)?
+    } else { public::root(state, source, None)? };
     if source.card_def != PRINTING {
         return Err("Etali native source is not the exact attack printing".into());
     }
@@ -408,7 +410,7 @@ pub(crate) fn capture(
         if !receipts::observed_attack(state, source) {
             return Err("Etali held trigger lacks native attack witness".into());
         }
-        held.push(attack_root(state, source)?);
+        held.push(attack_root(state, source, None)?);
     }
     let attacks = rows.into_iter().map(|row| {
         let actual_casts = row.casts.iter().map(|cast| {
@@ -427,7 +429,7 @@ pub(crate) fn capture(
             })
         }).collect::<Result<_, String>>()?;
         Ok(AttackV1 {
-            source: attack_root(state, row.source)?, stack_position: row.stack_position,
+            source: attack_root(state, row.source, Some(row.published_at))?, stack_position: row.stack_position,
             batch_started: row.started, original_exiles: row.exiled.iter().map(|row| captured(row.arrival)).collect(),
             actual_casts, finished: row.finished, countered: row.countered,
         })

@@ -2559,6 +2559,8 @@ pub struct GameState {
     /// Compact public name ledger carried only in reveal-v4 search worlds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) reveal_knowledge_v4: Option<[RevealKnowledgeV3; 2]>,
+    #[serde(skip)]
+    pub(crate) sampled_history_v1: crate::sampled_history_v1::CustodyV1,
     /// The declared Curator profile reveals the pile by name, without assigning
     /// its publicly shown cards to the controller's private library positions.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -2858,6 +2860,7 @@ impl Hash for GameState {
             "curator-unordered-reveal/v1".hash(state);
         }
         self.curator_sampled_hand_arrivals_v1.hash_if_sampled(state);
+        self.sampled_history_v1.hash_if_sampled(state);
         if self.harvester_commit_receipts_v1 {
             "harvester-commit-receipts/v1".hash(state);
         }
@@ -3091,6 +3094,7 @@ impl GameState {
             observation_journal: ObservationJournalV1::default(),
             reveal_meaning_v3: Default::default(),
             reveal_knowledge_v4: None,
+            sampled_history_v1: Default::default(),
             curator_unordered_reveal_v1: false,
             curator_sampled_hand_arrivals_v1: Default::default(),
             greatwurm_commit_receipts_v1: false,

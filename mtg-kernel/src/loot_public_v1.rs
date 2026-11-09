@@ -243,18 +243,19 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
     let mut tracked = std::collections::BTreeMap::new();
     // Only source-owned boundary status is public. Never serialize the private
     // native continuation, prefix, RNG, random bottom order, or receipt ordinal.
-    for event in state
+    for (at, event) in state
         .engine
         .event_history
         .scan_for_v1(&[crate::event_history_v1::EventKindV1::SquadRallierResolutionBoundaryV1])
+        .iter().enumerate()
     {
         if let CommittedEvent::SquadRallierResolutionBoundaryV1 { receipt } = event {
             if native::definition(receipt.source.card_def) {
-                tracked.insert(receipt.stack_item_id, receipt);
+                tracked.insert(receipt.stack_item_id, (at, receipt));
             }
         }
     }
-    for (id, receipt) in &tracked {
+    for (id, (at, receipt)) in &tracked {
         let mut choice = None;
         if let Some(pending) = state
             .engine
@@ -292,7 +293,7 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
             }
         }
         abilities.push(AbilityV1 {
-            source: public::root(state, receipt.source, Some(viewer))?,
+            source: public::archived_root(state, *at, receipt.source, Some(viewer))?,
             stage: if receipt.pending.is_none() {
                 StageV1::Completed
             } else {

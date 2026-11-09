@@ -520,6 +520,7 @@ pub fn feature_identity() -> String {
             include_str!("curator_receipts_v1.rs"),
             include_str!("limited_match_v1/curator_sampling_v1.rs"),
             include_str!("limited_match_v1/library_minima_v1.rs"),
+            include_str!("sampled_history_v1.rs"),
             include_str!("limited_match_v1/closed_list_v2.rs"),
             include_str!("fiend_artisan_consumer_v1.rs"),
             include_str!("fiend_artisan_public_v1.rs"),

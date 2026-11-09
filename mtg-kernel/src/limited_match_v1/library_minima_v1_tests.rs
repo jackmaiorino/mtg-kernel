@@ -200,3 +200,56 @@ fn library_minima_preserve_ordinary_mill_and_reduce_anonymous_draws_both_seats()
         assert_eq!(paired.objects.get(original).zone, Zone::Library);
     }
 }
+
+#[test]
+fn paid_shuffle_archive_custody_requires_the_exact_old_native_occurrence() {
+    for owner in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, original) = genuine_replacement(owner);
+        // A second genuine replacement occurs within Library and does not
+        // change this incarnation. It needs the narrowly scoped same-generation
+        // exception after that private position receives a sampled printing.
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(original, Zone::Graveyard));
+        give_priority(&mut state, owner.opponent());
+        let live = numeric(&state);
+        let _ = decision(&live);
+        let mut sampled = live.fixture_state().clone();
+        sampled.sampled_history_v1 = crate::sampled_history_v1::capture(&sampled).unwrap();
+        let (at, source) = sampled.engine.event_history.iter().enumerate().rev().find_map(|(at, e)| {
+            if let crate::event::CommittedEvent::ProgenitusShuffledV1 { source, move_history_index: None, .. } = e {
+                Some((at, *source))
+            } else { None }
+        }).unwrap();
+        assert_eq!(source.zone, Zone::Library);
+        assert_eq!(source.zone_change_count, sampled.objects.get(original).zone_change_count);
+        let object = sampled.objects.get_mut(original);
+        object.card_def = card("Forest");
+        object.name = CARD_DEFS[usize::from(object.card_def)].name.into();
+        object.v4 = ObjectStateV4::from_card_def(object.card_def);
+        assert!(crate::engine::validate_historical_ability_source_contract(&sampled, source).is_err());
+        crate::progenitus_v1::validate(&sampled).unwrap();
+        assert!(crate::sampled_history_v1::allows_rebound_source(&sampled, at, source));
+        // Recursive worlds retain only still-authenticated old occurrences.
+        sampled.sampled_history_v1 = crate::sampled_history_v1::capture(&sampled).unwrap();
+        crate::progenitus_v1::validate(&sampled).unwrap();
+
+        let restored: GameState = serde_json::from_slice(&serde_json::to_vec(&sampled).unwrap()).unwrap();
+        assert!(!crate::sampled_history_v1::allows_rebound_source(&restored, at, source));
+        assert!(crate::progenitus_v1::validate(&restored).is_err());
+        let mut appended = sampled.clone();
+        let copied = appended.engine.event_history[at].clone();
+        let new_at = appended.engine.event_history.len();
+        appended.engine.event_history.push(copied);
+        assert!(!crate::sampled_history_v1::allows_rebound_source(&appended, new_at, source));
+        assert!(crate::sampled_history_v1::capture(&appended).is_err());
+
+        let mut changed = sampled.clone();
+        let crate::event::CommittedEvent::ProgenitusShuffledV1 { input_history_index, .. } =
+            &mut changed.engine.event_history[at] else { unreachable!() };
+        *input_history_index += 1;
+        assert!(!crate::sampled_history_v1::allows_rebound_source(&changed, at, source));
+        assert!(crate::sampled_history_v1::capture(&changed).is_err());
+        let mut foreign = source;
+        foreign.controller = foreign.controller.opponent();
+        assert!(!crate::sampled_history_v1::allows_rebound_source(&sampled, at, foreign));
+    }
+}

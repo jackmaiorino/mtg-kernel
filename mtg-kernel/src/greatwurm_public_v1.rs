@@ -459,7 +459,7 @@ fn combat(state: &GameState, viewer: PlayerId) -> Result<Vec<CombatV1>, String> 
                         && live.zone_change_count == creature.zone_change_count
                 })
                 .and_then(|_| public::reference(state, creature.source, Some(viewer)));
-            let mut observer = public::root(state, *source, Some(viewer))?;
+            let mut observer = public::archived_root(state, index as usize, *source, Some(viewer))?;
             observer.original_source.identity = IdentityV1::Known { card_id: PRINTING };
             output.push(CombatV1 {
                 observer,

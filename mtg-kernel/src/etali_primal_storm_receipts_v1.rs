@@ -80,7 +80,7 @@ pub(crate) fn record_published(state: &mut GameState) -> Result<(), String> {
         return Ok(());
     }
     let Some(item) = state.stack.last().filter(|item| selected(item)).cloned() else { return Ok(()) };
-    let source = original_source(state, &item)?;
+    let source = original_source(state, &item, None)?;
     let attack_at = state.engine.event_history.iter().rposition(|event| matches!(
         event,
         E::EtaliPrimalStormReceiptV1 { journal }
@@ -200,7 +200,7 @@ pub(crate) fn has_receipts(state: &GameState) -> bool {
         || state.engine.event_history.has_any(&[EventKindV1::EtaliPrimalStormReceiptV1])
 }
 
-fn original_source(state: &GameState, item: &StackItem) -> Result<AbilitySourceContractV4, String> {
+fn original_source(state: &GameState, item: &StackItem, archived: Option<usize>) -> Result<AbilitySourceContractV4, String> {
     let source = item.v4.ability_source_contract.ok_or("Etali original native source absent")?;
     if !selected(item) || item.kind != StackItemKind::TriggeredAbility || item.is_copy
         || item.v4.granted_by.is_some() || !item.targets.is_empty()
@@ -211,7 +211,11 @@ fn original_source(state: &GameState, item: &StackItem) -> Result<AbilitySourceC
     {
         return Err("Etali actual trigger changed exact printed source".into());
     }
-    crate::engine::validate_historical_ability_source_contract(state, source)?;
+    if let Some(at) = archived {
+        crate::sampled_history_v1::validate_source(state, at, source)?;
+    } else {
+        crate::engine::validate_historical_ability_source_contract(state, source)?;
+    }
     Ok(source)
 }
 
@@ -228,6 +232,7 @@ struct Operations<'a> {
 }
 
 pub(crate) struct Occurrence {
+    pub published_at: usize,
     pub source: AbilitySourceContractV4,
     pub stack_position: Option<u32>,
     pub id: StackItemId,
@@ -280,7 +285,7 @@ pub(crate) fn occurrences(state: &GameState) -> Result<Vec<Occurrence>, String> 
     let mut result = Vec::with_capacity(rows.len());
     for (id, ops) in rows {
         let (published, attack_at, item) = ops.published.ok_or("Etali original publication absent")?;
-        let source = original_source(state, item)?;
+        let source = original_source(state, item, Some(published))?;
         let attack = usize::try_from(attack_at).map_err(|_| "Etali attack index width")?;
         if attack == 0 || attack >= published || !attacks.insert(attack)
             || !matches!(history.get(attack),
@@ -415,6 +420,7 @@ pub(crate) fn occurrences(state: &GameState) -> Result<Vec<Occurrence>, String> 
             }
         }
         result.push(Occurrence {
+            published_at: published,
             source, stack_position, id, exiled, casts, started: ops.started.is_some(),
             batch_range: ops.started.zip(batch_end).map(|((start, _), end)| (start, end + 1)),
             finished: ops.finished.map(|(_, declined)| declined), countered: ops.countered.is_some(),

@@ -168,10 +168,28 @@ pub(crate) fn root(
     s: AbilitySourceContractV4,
     viewer: Option<PlayerId>,
 ) -> Result<RootV1, String> {
+    crate::engine::validate_historical_ability_source_contract(state, s)?;
+    root_after_validation(state, s, viewer)
+}
+
+pub(crate) fn archived_root(
+    state: &GameState,
+    at: usize,
+    s: AbilitySourceContractV4,
+    viewer: Option<PlayerId>,
+) -> Result<RootV1, String> {
+    crate::sampled_history_v1::validate_source(state, at, s)?;
+    root_after_validation(state, s, viewer)
+}
+
+fn root_after_validation(
+    state: &GameState,
+    s: AbilitySourceContractV4,
+    viewer: Option<PlayerId>,
+) -> Result<RootV1, String> {
     if s.zone != Zone::Battlefield {
         return Err("optional root original source is not battlefield".into());
     }
-    crate::engine::validate_historical_ability_source_contract(state, s)?;
     // This definition-owned trigger was public when captured. Current hidden zones
     // and a later incarnation do not become a new identity or generation oracle.
     let original_source = ReferenceV1 {

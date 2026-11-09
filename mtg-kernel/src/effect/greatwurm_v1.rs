@@ -380,7 +380,8 @@ pub(crate) fn capture(state: &GameState, index: u64) -> Result<&CaptureV1, Strin
             || state.objects.try_get(s.source).is_none_or(|o| {
                 o.owner != s.owner
                     || o.zone_change_count < s.zone_change_count
-                    || !crate::engine::source_card_def_matches(state, *s, o.card_def)
+                    || (!crate::engine::source_card_def_matches(state, *s, o.card_def)
+                        && !crate::sampled_history_v1::allows_rebound_source(state, i, *s))
                     || o.zone_change_count == s.zone_change_count && o.zone != s.zone
             })
         {

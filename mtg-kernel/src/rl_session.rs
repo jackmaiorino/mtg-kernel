@@ -1169,6 +1169,7 @@ pub(crate) struct LimitedClosedListRootV3 {
     known_names: Vec<u16>,
     library_minima: Vec<u16>,
     typed_full_pool: bool,
+    sampled_history: crate::sampled_history_v1::CustodyV1,
 }
 
 fn flat_player_id_v1(seat: PlayerSeatV1) -> PlayerId {
@@ -8647,6 +8648,9 @@ impl FastActorSessionV1 {
             known_names,
             library_minima,
             typed_full_pool,
+            sampled_history: if typed_full_pool {
+                crate::sampled_history_v1::capture(&self.state)?
+            } else { Default::default() },
         })
     }
 
@@ -8668,6 +8672,7 @@ impl FastActorSessionV1 {
             return Err("sampled root actor or owning profile differs".into());
         }
         let mut sampled = self.clone();
+        sampled.state.sampled_history_v1 = root.sampled_history.clone();
         if typed_full_pool {
             crate::limited_match_v1::curator_sampling_v1::rewrite(
                 &mut sampled.state,

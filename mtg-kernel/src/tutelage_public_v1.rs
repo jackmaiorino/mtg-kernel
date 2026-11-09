@@ -284,7 +284,7 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
                         return Err("Tutelage exact draw observer changed".into());
                     }
                     observers.push(TriggerV1 {
-                        source: public::root(state, source, Some(viewer))?,
+                        source: public::archived_root(state, index, source, Some(viewer))?,
                         stage: StageV1::Captured,
                         native_position: None,
                         original_target: None,

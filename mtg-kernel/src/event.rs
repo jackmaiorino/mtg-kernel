@@ -10246,7 +10246,8 @@ pub(crate) fn tutelage_observers_v1(
             || source.zone != Zone::Battlefield
             || source.controller != *player
             || source.owner != object.owner
-            || !crate::engine::source_card_def_matches(state, *source, object.card_def)
+            || (!crate::engine::source_card_def_matches(state, *source, object.card_def)
+                && !crate::sampled_history_v1::allows_rebound_source(state, index, *source))
             || object.zone_change_count < source.zone_change_count
             || (object.zone_change_count == source.zone_change_count && object.zone != source.zone)
         {

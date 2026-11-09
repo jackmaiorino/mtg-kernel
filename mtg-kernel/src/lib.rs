@@ -326,6 +326,7 @@ pub mod eternal_vintage_e7b_v1;
 pub mod eternal_vintage_v1;
 pub mod event;
 pub mod event_history_v1;
+mod sampled_history_v1;
 pub mod expanded_deck_training_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod experimental_burn_net8_packed_v1;
