@@ -12263,7 +12263,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                     ) || matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::EternalV1 { choice }
-                            if choice.is_surgical_extraction()
+                            if choice.is_extraction_search()
                     )) && acting_player != *player;
                     let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
                         if chooser_private {

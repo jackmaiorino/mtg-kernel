@@ -18,6 +18,32 @@ struct SearchV1 {
     matches: Vec<EffectObjectBinding>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExtractionV1 {
+    Surgical,
+    Extirpate,
+}
+
+impl ExtractionV1 {
+    fn choice(self) -> E3ChoiceKindV1 {
+        match self {
+            Self::Surgical => E3ChoiceKindV1::SurgicalExtractionV1,
+            Self::Extirpate => E3ChoiceKindV1::ExtirpateV1,
+        }
+    }
+
+    fn program(self) -> crate::effect::EffectOp {
+        match self {
+            Self::Surgical => surgical_extraction(),
+            Self::Extirpate => crate::eternal_sideboard_s1b_v1::extirpate(),
+        }
+    }
+
+    fn mandatory(self, binding: &EffectObjectBinding) -> bool {
+        self == Self::Extirpate && binding.expected_zone == Zone::Graveyard
+    }
+}
+
 /// Names the caster may inspect while searching the owner's hidden zones.
 /// A library search confers no position knowledge after the shuffle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,7 +63,7 @@ fn active_choice(state: &GameState) -> Option<(&EffectContinuation, &E3ChoiceV1)
     else {
         return None;
     };
-    choice.is_surgical_extraction().then_some((pending, choice))
+    choice.is_extraction_search().then_some((pending, choice))
 }
 
 pub(crate) fn search_active(state: &GameState) -> bool {
@@ -45,7 +71,7 @@ pub(crate) fn search_active(state: &GameState) -> bool {
         || state.engine.pending_effect.as_ref().is_some_and(|pending| {
             pending.frames.iter().any(|frame| {
                 matches!(frame, EffectFrame::EternalSelectionV1 { choice, .. }
-                    if choice.is_surgical_extraction())
+                    if choice.is_extraction_search())
             })
         })
 }
@@ -54,15 +80,33 @@ pub fn surgical_search_look_v1(
     state: &GameState,
     viewer: PlayerId,
 ) -> Result<Option<SurgicalSearchLookV1>, String> {
+    search_look(state, viewer, ExtractionV1::Surgical)
+}
+
+pub fn extirpate_search_look_v1(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<Option<SurgicalSearchLookV1>, String> {
+    search_look(state, viewer, ExtractionV1::Extirpate)
+}
+
+fn search_look(
+    state: &GameState,
+    viewer: PlayerId,
+    extraction: ExtractionV1,
+) -> Result<Option<SurgicalSearchLookV1>, String> {
     let Some((pending, choice)) = active_choice(state) else {
         return Ok(None);
     };
-    if choice.player != viewer || pending.resolving_item.controller != viewer {
+    if choice.kind != extraction.choice()
+        || choice.player != viewer
+        || pending.resolving_item.controller != viewer
+    {
         return Ok(None);
     }
     crate::effect::validate_pending_effect_choice(state)?;
     let SearchV1 { owner, .. } =
-        search(state, &pending.ctx)?.ok_or("Surgical search look lost its legal target")?;
+        search(state, &pending.ctx)?.ok_or("extraction search look lost its legal target")?;
     let seat = &state.players[owner.index()];
     let printings = |cards: &[crate::ids::ObjectId]| {
         let mut result: Vec<_> = cards
@@ -105,13 +149,13 @@ fn search(state: &GameState, ctx: &ExecCtx) -> Result<Option<SearchV1>, String> 
     }
     let name = CARD_DEFS
         .get(usize::from(live.card_def))
-        .ok_or("Surgical target has no registered printing")?
+        .ok_or("extraction target has no registered printing")?
         .object_name;
     let owner = live.owner;
     let seat = state
         .players
         .get(owner.index())
-        .ok_or("Surgical target has no valid owner")?;
+        .ok_or("extraction target has no valid owner")?;
     let mut visited = BTreeSet::new();
     let mut matches = Vec::new();
     for (zone, cards) in [
@@ -123,12 +167,12 @@ fn search(state: &GameState, ctx: &ExecCtx) -> Result<Option<SearchV1>, String> 
             let card = state
                 .objects
                 .try_get(object)
-                .ok_or("Surgical search lost an original card")?;
+                .ok_or("extraction search lost an original card")?;
             let printing = CARD_DEFS
                 .get(usize::from(card.card_def))
-                .ok_or("Surgical search has an unregistered printing")?;
+                .ok_or("extraction search has an unregistered printing")?;
             if !visited.insert(object) || card.owner != owner || card.zone != zone {
-                return Err("Surgical search changed original zone membership".into());
+                return Err("extraction search changed original zone membership".into());
             }
             if !card.v4.is_token && card.spell_copy_origin.is_none() && printing.object_name == name
             {
@@ -141,7 +185,7 @@ fn search(state: &GameState, ctx: &ExecCtx) -> Result<Option<SearchV1>, String> 
         }
     }
     if !matches.iter().any(|card| card.object == *target) {
-        return Err("Surgical search lost its original graveyard target".into());
+        return Err("extraction search lost its original graveyard target".into());
     }
     Ok(Some(SearchV1 { owner, matches }))
 }
@@ -149,24 +193,28 @@ fn search(state: &GameState, ctx: &ExecCtx) -> Result<Option<SearchV1>, String> 
 fn prompt(
     state: &GameState,
     continuation: &EffectContinuation,
+    extraction: ExtractionV1,
     path: Vec<u16>,
 ) -> Result<Option<(PlayerId, E3ChoiceV1)>, String> {
     let Some(SearchV1 { owner, matches }) = search(state, &continuation.ctx)? else {
         return Ok(None);
     };
-    let max = u16::try_from(matches.len()).map_err(|_| "Surgical search exceeds choice width")?;
+    let candidates: Vec<_> = matches
+        .iter()
+        .filter(|card| !extraction.mandatory(card))
+        .map(|card| Target::Object(card.object))
+        .collect();
+    let max =
+        u16::try_from(candidates.len()).map_err(|_| "extraction search exceeds choice width")?;
     state
         .preflight_library_shuffle(owner)
         .map_err(|e| e.to_string())?;
     Ok(Some((
         owner,
         E3ChoiceV1 {
-            kind: E3ChoiceKindV1::SurgicalExtractionV1,
+            kind: extraction.choice(),
             player: continuation.ctx.controller,
-            candidates: matches
-                .iter()
-                .map(|card| Target::Object(card.object))
-                .collect(),
+            candidates,
             bindings: matches,
             min: 0,
             max,
@@ -181,15 +229,16 @@ pub(crate) fn drive(
     state: &mut GameState,
     continuation: &mut EffectContinuation,
     path: Vec<u16>,
+    extraction: ExtractionV1,
 ) -> Result<bool, String> {
-    let Some((owner, choice)) = prompt(state, continuation, path)? else {
+    let Some((owner, choice)) = prompt(state, continuation, extraction, path)? else {
         return Ok(false);
     };
     if choice.player != owner {
         // The search shows the whole hand to the caster only. Keep the
         // surviving named copies through native hand-knowledge custody.
         for card in state.players[owner.index()].hand.clone() {
-            // spellbench-reviewed-look: Surgical searches the target owner's hand.
+            // spellbench-reviewed-look: the extraction searches the target owner's hand.
             state.reveal_distinct_hand_card(choice.player, owner, card)?;
         }
     }
@@ -202,28 +251,34 @@ pub(crate) fn validate_continuation(
     pending: &EffectContinuation,
 ) -> Result<(), String> {
     let item = &pending.resolving_item;
-    let selected = item.kind == StackItemKind::Spell
-        && item.v4.source_contract.is_some_and(|contract| {
-            CARD_DEFS
-                .get(usize::from(contract.card_def))
-                .is_some_and(|def| def.name == "Surgical Extraction")
+    let extraction = item
+        .v4
+        .source_contract
+        .filter(|_| item.kind == StackItemKind::Spell)
+        .and_then(|contract| CARD_DEFS.get(usize::from(contract.card_def)))
+        .and_then(|def| match def.name {
+            "Surgical Extraction" => Some(ExtractionV1::Surgical),
+            "Extirpate" => Some(ExtractionV1::Extirpate),
+            _ => None,
         });
-    let attached = search_active(state);
-    if !selected && !attached {
-        return Ok(());
-    }
-    if !selected
-        || pending.ctx.source != item.source
+    let Some(extraction) = extraction else {
+        return if search_active(state) {
+            Err("extraction search lost its original spell".into())
+        } else {
+            Ok(())
+        };
+    };
+    if pending.ctx.source != item.source
         || pending.ctx.controller != item.controller
         || pending.ctx.stack_item_id != Some(item.v4.stack_item_id)
         || pending.ctx.targets != item.targets
         || pending.ctx.target_contracts != item.v4.target_contracts
     {
-        return Err("Surgical search lost its original spell and target".into());
+        return Err("extraction search lost its original spell and target".into());
     }
     match (&pending.choice, pending.frames.as_slice()) {
         (None, [EffectFrame::Program { op, path }])
-            if path.is_empty() && *op == surgical_extraction() =>
+            if path.is_empty() && *op == extraction.program() =>
         {
             Ok(())
         }
@@ -237,8 +292,8 @@ pub(crate) fn validate_continuation(
             }),
             [],
         ) => {
-            let (_, expected) = prompt(state, pending, Vec::new())?
-                .ok_or("Surgical search lost its legal target")?;
+            let (_, expected) = prompt(state, pending, extraction, Vec::new())?
+                .ok_or("extraction search lost its legal target")?;
             if **choice != expected
                 || !legal.iter().map(|candidate| candidate.target).eq(expected
                     .candidates
@@ -246,19 +301,19 @@ pub(crate) fn validate_continuation(
                     .copied()
                     .filter(|target| !selected.iter().any(|candidate| candidate.target == *target)))
             {
-                return Err("Surgical search changed its matching roster or action order".into());
+                return Err("extraction search changed its matching roster or action order".into());
             }
             Ok(())
         }
         (None, [EffectFrame::EternalSelectionV1 { choice, .. }]) => {
-            let (_, expected) = prompt(state, pending, Vec::new())?
-                .ok_or("Surgical search lost its legal target")?;
+            let (_, expected) = prompt(state, pending, extraction, Vec::new())?
+                .ok_or("extraction search lost its legal target")?;
             if **choice != expected {
-                return Err("Surgical search answer changed its original roster".into());
+                return Err("extraction search answer changed its original roster".into());
             }
             Ok(())
         }
-        _ => Err("Surgical search lost its native resolution stage".into()),
+        _ => Err("extraction search lost its native resolution stage".into()),
     }
 }
 
@@ -267,11 +322,12 @@ pub(crate) fn finish(
     continuation: &EffectContinuation,
     choice: &E3ChoiceV1,
     picked: &[EffectObjectBinding],
+    extraction: ExtractionV1,
 ) -> Result<bool, String> {
-    let (owner, original) =
-        prompt(state, continuation, Vec::new())?.ok_or("Surgical search lost its legal target")?;
-    if original != *choice || picked.iter().any(|card| !original.bindings.contains(card)) {
-        return Err("Surgical search answer is outside its original roster".into());
+    let (owner, original) = prompt(state, continuation, extraction, Vec::new())?
+        .ok_or("extraction search lost its legal target")?;
+    if original != *choice {
+        return Err("extraction search answer is outside its original roster".into());
     }
     let shuffle = state
         .preflight_library_shuffle(owner)
@@ -281,7 +337,7 @@ pub(crate) fn finish(
         original
             .bindings
             .iter()
-            .filter(|card| picked.contains(card))
+            .filter(|card| extraction.mandatory(card) || picked.contains(card))
             .map(|card| ProposedEvent::zone_change(card.object, Zone::Exile))
             .collect(),
     );

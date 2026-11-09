@@ -1048,30 +1048,180 @@ fn stern_dismissal_returns_an_opponents_creature_or_enchantment_only() {
 }
 
 #[test]
-fn extirpate_exiles_every_copy_from_the_graveyard_hand_and_library() {
-    let mut state = islands();
-    let gy_bolt = put(&mut state, P1, "Lightning Bolt", Zone::Graveyard);
-    let hand_bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
-    let lib_bolt = put(&mut state, P1, "Lightning Bolt", Zone::Library);
-    let other = put(&mut state, P1, "Fireblast", Zone::Graveyard);
-    let mountain = put(&mut state, P1, "Mountain", Zone::Graveyard);
-    let extirpate = put(&mut state, P0, "Extirpate", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::B], 0);
-    let legal = cast_targets(&state, extirpate);
-    assert!(legal.contains(&Target::Object(gy_bolt)));
-    assert!(!legal.contains(&Target::Object(mountain)), "basic land");
-    cast(&mut state, extirpate, &[Target::Object(gy_bolt)]);
-    // Split second: the opponent cannot respond with a spell.
-    state.priority_player = P1;
-    let response = put(&mut state, P1, "Fireblast", Zone::Hand);
-    pool(&mut state, P1, &[ManaColor::R], 0);
-    assert!(!castable(&mut state, response), "split second");
-    state.priority_player = P0;
-    settled(&mut state);
-    for card in [gy_bolt, hand_bolt, lib_bolt] {
-        assert_eq!(zone(&state, card), Zone::Exile);
+fn extirpate_requires_graveyard_matches_and_allows_any_hidden_subset() {
+    use mtg_kernel::eternal_sideboard_s1a_v1::surgical_search_look_v1;
+    use mtg_kernel::eternal_sideboard_s1b_v1::extirpate_search_look_v1;
+    use mtg_kernel::rl::{legal_action_candidates_v1, ActionSemanticV1, PlayerSeatV1, TargetRefV1};
+    use mtg_kernel::state::ObservationNoteKindV1;
+    use mtg_kernel::surface::{SurfaceAction, SurfaceDecision};
+
+    for actor in [P0, P1] {
+        let owner = actor.opponent();
+        let mut state = game(&["Island"; 4]);
+        state.active_player = actor;
+        state.enable_hand_knowledge_by_name_v2();
+        let target = put(&mut state, owner, "Lightning Bolt", Zone::Graveyard);
+        let graveyard = put(&mut state, owner, "Lightning Bolt", Zone::Graveyard);
+        let hand = put(&mut state, owner, "Lightning Bolt", Zone::Hand);
+        let library = put(&mut state, owner, "Lightning Bolt", Zone::Library);
+        let other_hand = put(&mut state, owner, "Fireblast", Zone::Hand);
+        let other_graveyard = put(&mut state, owner, "Mountain", Zone::Graveyard);
+        let own_match = put(&mut state, actor, "Lightning Bolt", Zone::Graveyard);
+        let spell = put(&mut state, actor, "Extirpate", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::B], 0);
+        pool(&mut state, owner, &[ManaColor::R], 0);
+        state.priority_player = owner;
+        assert!(castable(&mut state, hand), "the response is payable");
+        state.priority_player = actor;
+        let legal = cast_targets(&state, spell);
+        assert!(legal.contains(&Target::Object(target)));
+        assert!(
+            !legal.contains(&Target::Object(other_graveyard)),
+            "basic land"
+        );
+        cast(&mut state, spell, &[Target::Object(target)]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == actor
+        ));
+        assert_eq!(zone(&state, spell), Zone::Stack);
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        act(&mut state, Action::Pass);
+        assert!(
+            matches!(
+                next(&mut state),
+                Decision::CastSpellOrPass { player, castable_spells, .. }
+                    if player == owner && !castable_spells.contains(&hand)
+            ),
+            "split second"
+        );
+
+        let prompt = settle(&mut state).expect("native Extirpate search");
+        assert!(matches!(
+            &prompt,
+            Decision::ChooseEffectTargets {
+                player, legal_targets, min_targets: 0, max_targets: 2, can_finish: true, ..
+            } if *player == actor
+                && legal_targets.as_slice() == [Target::Object(hand), Target::Object(library)]
+        ));
+        assert_eq!(zone(&state, target), Zone::Graveyard);
+        assert_eq!(zone(&state, graveyard), Zone::Graveyard);
+        let look = extirpate_search_look_v1(&state, actor).unwrap().unwrap();
+        assert_eq!(look.owner, PlayerSeatV1::from(owner));
+        assert_eq!(look.hand_printings, ["Fireblast", "Lightning Bolt"]);
+        assert_eq!(
+            look.library_printings,
+            ["Island", "Island", "Island", "Island", "Lightning Bolt"]
+        );
+        assert!(extirpate_search_look_v1(&state, owner).unwrap().is_none());
+        assert!(surgical_search_look_v1(&state, actor).unwrap().is_none());
+
+        let rows = legal_action_candidates_v1(&SurfaceDecision::Decision(prompt), &state).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(matches!(
+            &rows[0].record.semantic,
+            ActionSemanticV1::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. }
+                if object.arena_id == hand.0 && object.card_db_id == id("Lightning Bolt")
+        ));
+        assert_eq!(
+            rows[1].surface_action,
+            SurfaceAction::Action(Action::ChooseEffectTarget(Target::Object(library)))
+        );
+        assert_eq!(
+            rows[2].surface_action,
+            SurfaceAction::Action(Action::FinishEffectSelection)
+        );
+
+        let check_outcome = |branch: &mut GameState, expected_hand, expected_library| {
+            settled(branch);
+            for card in [target, graveyard] {
+                assert_eq!(zone(branch, card), Zone::Exile);
+            }
+            assert_eq!(zone(branch, hand), expected_hand);
+            assert_eq!(zone(branch, library), expected_library);
+            assert_eq!(zone(branch, other_hand), Zone::Hand);
+            assert_eq!(zone(branch, other_graveyard), Zone::Graveyard);
+            assert_eq!(zone(branch, own_match), Zone::Graveyard);
+            assert_eq!(zone(branch, spell), Zone::Graveyard);
+            assert!(extirpate_search_look_v1(branch, actor).unwrap().is_none());
+            assert!(branch.observation_journal.notes().iter().any(|note| matches!(
+                note.kind,
+                ObservationNoteKindV1::LibraryRandomized { owner: shuffled } if shuffled == owner
+            )));
+        };
+        let mut zero = state.clone();
+        act(&mut zero, Action::FinishEffectSelection);
+        check_outcome(&mut zero, Zone::Hand, Zone::Library);
+        assert!(zero
+            .known_hand_cards(actor, owner)
+            .iter()
+            .any(|entry| entry.object == other_hand));
+        assert!(zero.known_hand_cards(owner, actor).is_empty());
+
+        choose_target(&mut state, Target::Object(hand));
+        let mut subset = state.clone();
+        act(&mut subset, Action::FinishEffectSelection);
+        check_outcome(&mut subset, Zone::Exile, Zone::Library);
+
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut state), next(&mut restored));
+        for changed in [graveyard, library] {
+            let mut stale = restored.clone();
+            stale.objects.get_mut(changed).zone_change_count += 1;
+            assert!(mtg_kernel::effect::validate_pending_effect_choice(&stale).is_err());
+        }
+        for branch in [&mut state, &mut restored] {
+            choose_target(branch, Target::Object(library));
+            check_outcome(branch, Zone::Exile, Zone::Exile);
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
     }
-    assert_eq!(zone(&state, other), Zone::Graveyard);
+}
+
+#[test]
+fn extirpate_hides_the_search_look_and_matching_width_from_the_nonchooser() {
+    use mtg_kernel::eternal_sideboard_s1b_v1::extirpate_search_look_v1;
+    use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
+    use mtg_kernel::rl::{observe_policy_v5, PendingEffectChoiceSemanticV4};
+
+    for actor in [P0, P1] {
+        let viewer = actor.opponent();
+        let observe = |hidden, width| {
+            let mut state = game(&["Island"; 4]);
+            state.active_player = actor;
+            state.priority_player = actor;
+            let target = put(&mut state, actor, "Lightning Bolt", Zone::Graveyard);
+            put(&mut state, actor, hidden, Zone::Library);
+            let spell = put(&mut state, actor, "Extirpate", Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::B], 0);
+            cast(&mut state, spell, &[Target::Object(target)]);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { max_targets, can_finish: true, .. })
+                    if max_targets == width
+            ));
+            let look = extirpate_search_look_v1(&state, actor).unwrap().unwrap();
+            assert!(look.library_printings.iter().any(|name| name == hidden));
+            assert!(extirpate_search_look_v1(&state, viewer).unwrap().is_none());
+            let observation =
+                observe_policy_v5(&state, &PolicySurfaceV5::new(), viewer, 0, 0, 0, 1).unwrap();
+            assert!(matches!(
+                observation.projection.surface.engine_context.pending_effect.as_ref()
+                    .and_then(|pending| pending.choice.as_ref()),
+                Some(PendingEffectChoiceSemanticV4::Targets {
+                    selected_targets, legal_targets, min_targets: 0, max_targets: 0, ..
+                }) if selected_targets.is_empty() && legal_targets.is_empty()
+            ));
+            if width == 0 {
+                act(&mut state, Action::FinishEffectSelection);
+                settled(&mut state);
+                assert_eq!(zone(&state, target), Zone::Exile);
+            }
+            observation
+        };
+        assert_eq!(observe("Lightning Bolt", 1), observe("Forest", 0));
+    }
 }
 
 #[test]

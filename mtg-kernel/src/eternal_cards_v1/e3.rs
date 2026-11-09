@@ -304,10 +304,13 @@ pub enum E3ChoiceKindV1 {
     S1cV1(crate::eternal_sideboard_s1c_v1::S1cChoiceV1),
     /// Surgical Extraction's optional subset of the target owner's matches.
     SurgicalExtractionV1,
+    /// Extirpate's optional hidden matches. Public graveyard matches are mandatory.
+    ExtirpateV1,
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
-/// order; `bindings` binds every object candidate to its incarnation.
+/// order; `bindings` binds every object candidate and any mandatory Extirpate
+/// graveyard match to its incarnation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct E3ChoiceV1 {
     pub kind: E3ChoiceKindV1,
@@ -322,8 +325,11 @@ pub struct E3ChoiceV1 {
 }
 
 impl E3ChoiceV1 {
-    pub(crate) fn is_surgical_extraction(&self) -> bool {
-        self.kind == E3ChoiceKindV1::SurgicalExtractionV1
+    pub(crate) fn is_extraction_search(&self) -> bool {
+        matches!(
+            self.kind,
+            E3ChoiceKindV1::SurgicalExtractionV1 | E3ChoiceKindV1::ExtirpateV1
+        )
     }
 
     /// Whether the candidates are hidden from the other player (hand or
@@ -386,6 +392,7 @@ impl E3ChoiceV1 {
                 | E3ChoiceKindV1::OublietteV1 { stage: 0, .. }
                 | E3ChoiceKindV1::E5aV1(_)
                 | E3ChoiceKindV1::SurgicalExtractionV1
+                | E3ChoiceKindV1::ExtirpateV1
         )
     }
 
@@ -393,7 +400,9 @@ impl E3ChoiceV1 {
     /// (a search).
     pub(crate) fn library_search(&self) -> bool {
         match &self.kind {
-            E3ChoiceKindV1::DoomsdayV1 | E3ChoiceKindV1::SurgicalExtractionV1 => true,
+            E3ChoiceKindV1::DoomsdayV1
+            | E3ChoiceKindV1::SurgicalExtractionV1
+            | E3ChoiceKindV1::ExtirpateV1 => true,
             E3ChoiceKindV1::E5aV1(kind) => kind.library_search(),
             E3ChoiceKindV1::E7aV1(kind) => kind.library_search(),
             E3ChoiceKindV1::E8aV1(kind) => kind.library_search(),
@@ -433,6 +442,7 @@ impl E3ChoiceV1 {
             | E3ChoiceKindV1::OublietteV1 { stage: 0, .. }
             | E3ChoiceKindV1::MadWizardV1 { .. }
             | E3ChoiceKindV1::SurgicalExtractionV1
+            | E3ChoiceKindV1::ExtirpateV1
             | E3ChoiceKindV1::E5aV1(_) => crate::rl::TargetSelectionPurposeV4::CardSelection,
             E3ChoiceKindV1::AnnihilatorV1
             | E3ChoiceKindV1::PunisherV1 { .. }
@@ -797,6 +807,14 @@ pub(crate) fn finish_selection(
             continuation,
             choice,
             &bindings,
+            crate::eternal_sideboard_s1a_v1::surgical::ExtractionV1::Surgical,
+        ),
+        E3ChoiceKindV1::ExtirpateV1 => crate::eternal_sideboard_s1a_v1::surgical::finish(
+            state,
+            continuation,
+            choice,
+            &bindings,
+            crate::eternal_sideboard_s1a_v1::surgical::ExtractionV1::Extirpate,
         ),
     }
 }
@@ -1106,7 +1124,12 @@ pub(crate) fn drive(
             crate::eternal_sideboard_s1c_v1::drive(state, continuation, op, path)
         }
         EternalOpV1::S1aV1(crate::eternal_sideboard_s1a_v1::S1aOpV1::SurgicalExtractionV1) => {
-            crate::eternal_sideboard_s1a_v1::surgical::drive(state, continuation, path)
+            crate::eternal_sideboard_s1a_v1::surgical::drive(
+                state,
+                continuation,
+                path,
+                crate::eternal_sideboard_s1a_v1::surgical::ExtractionV1::Surgical,
+            )
         }
         EternalOpV1::S1bV1(op) => {
             crate::eternal_sideboard_s1b_v1::drive(state, continuation, op, path)
