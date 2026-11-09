@@ -463,6 +463,24 @@ def is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def without_timing(value):
+    """A diagnostics value without its timing leaves (see TIMING_SUFFIXES)."""
+    if isinstance(value, dict):
+        return {key: without_timing(item) for key, item in value.items()
+                if not (key.endswith(TIMING_SUFFIXES) and is_number(item))}
+    return value
+
+
+def timing_leaves(value, path=""):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            name = f"{path}/{key}" if path else key
+            if key.endswith(TIMING_SUFFIXES) and is_number(item):
+                yield name, item
+            else:
+                yield from timing_leaves(item, name)
+
+
 class TreeComparison:
     """Compares a sample's run tree with the reference sample's, file by file."""
 
@@ -661,10 +679,18 @@ def compare_case(case: str, samples: list[dict], arms: dict) -> dict:
     counters = {}
     for letter in "AB":
         finals = [s["diagnostics"]["final"] for s in by_arm[letter] if s.get("diagnostics")]
+        counts = [without_timing(final) for final in finals]
+        timings: dict[str, list] = {}
+        for final in finals:
+            for path, value in timing_leaves(final):
+                timings.setdefault(path, []).append(value)
         counters[arms[letter]["name"]] = {
             "available": bool(finals),
-            "equal_across_samples": all(f == finals[0] for f in finals) if finals else None,
-            "final": finals[0] if finals else None}
+            # Counts are deterministic; their timing leaves are not compared.
+            "equal_across_samples": all(c == counts[0] for c in counts) if counts else None,
+            "counts": counts[0] if counts else None,
+            "timing_medians": {path: statistics.median(values)
+                               for path, values in sorted(timings.items())}}
     cold = [s for s in samples if s["kind"] == "cold_resume"]
     failures = [{"ordinal": s["ordinal"], "arm": s["arm"], "kind": s["kind"], "error": s.get("error")}
                 for s in samples if not s["ok"]]
@@ -825,26 +851,50 @@ def run(args) -> int:
         print(f"[{entry['ordinal'] + 1}/{len(plan)}] {entry['case']} {entry['kind']} "
               f"{entry['position']} {arm['name']}: {sample['process']['wall_seconds']:.2f} s, "
               f"{sample['process']['max_rss_mib']:.0f} MiB, {status}", flush=True)
-    changed = [arm["name"] for arm in arms.values() if sha256_file(Path(arm["binary"])) != arm["sha256"]]
+    manifest["binaries_unchanged"] = all(
+        sha256_file(Path(arm["binary"])) == arm["sha256"] for arm in arms.values())
+    manifest.update(status="complete", completed_utc=utc_now())
+    return finish(out, manifest, samples)
+
+
+def finish(out: Path, manifest: dict, samples: list[dict]) -> int:
+    """Writes comparison.json from the samples and the manifest's outputs."""
+    arms = {"A": manifest["arms"]["baseline"], "B": manifest["arms"]["candidate"]}
+    unchanged = manifest.get("binaries_unchanged")
     comparison = {
         "schema": COMPARISON_SCHEMA,
         "created_utc": utc_now(),
-        "label": args.label,
+        "label": manifest["label"],
         "baseline": arms["A"]["name"],
         "candidate": arms["B"]["name"],
         "rule": verdict.__doc__.strip(),
-        "binaries_unchanged": not changed,
+        "binaries_unchanged": unchanged,
         "cases": {case: compare_case(case, [s for s in samples if s["case"] == case], arms)
-                  for case in cases},
+                  for case in manifest["fixture"]["cases"]},
     }
-    comparison["ok"] = not changed and all(c["parity_ok"] for c in comparison["cases"].values())
+    comparison["ok"] = unchanged is True and all(
+        c["parity_ok"] for c in comparison["cases"].values())
     write_json(out / "comparison.json", comparison)
-    manifest.update(status="complete", completed_utc=utc_now(),
-                    outputs={"samples.jsonl": sha256_file(samples_path),
-                             "comparison.json": sha256_file(out / "comparison.json")})
+    manifest["outputs"] = {"samples.jsonl": sha256_file(out / "samples.jsonl"),
+                           "comparison.json": sha256_file(out / "comparison.json")}
     write_json(out / "bench.json", manifest)
     print_summary(comparison)
     return 0 if comparison["ok"] else 1
+
+
+def compare(args) -> int:
+    """Recomputes comparison.json from a finished run's samples, unchanged."""
+    out = Path(args.out).resolve()
+    manifest = read_json(out / "bench.json")
+    if manifest.get("schema") != BENCH_SCHEMA or manifest.get("status") != "complete":
+        raise BenchError(f"{out} holds no complete {BENCH_SCHEMA} run")
+    if manifest.get("outputs", {}).get("samples.jsonl") != sha256_file(out / "samples.jsonl"):
+        raise BenchError("samples.jsonl changed since the run")
+    samples = [json.loads(line) for line in (out / "samples.jsonl").read_text().splitlines()]
+    if "binaries_unchanged" not in manifest and (out / "comparison.json").is_file():
+        # A run from before the manifest recorded it.
+        manifest["binaries_unchanged"] = read_json(out / "comparison.json").get("binaries_unchanged")
+    return finish(out, manifest, samples)
 
 
 def run_sample(entry: dict, arm: dict, case: dict, out: Path, shared_env: dict,
@@ -968,11 +1018,13 @@ def main(argv: list[str] | None = None) -> int:
     bench.add_argument("--build-profile", default="unspecified",
                        help="how both arms were built (they must match)")
     bench.add_argument("--plan-only", action="store_true", help="print the sample order and exit")
+    again = commands.add_parser("compare", help="recompute comparison.json from a run's samples")
+    again.add_argument("--out", required=True, help="a finished run's output directory")
     args = parser.parse_args(argv)
     if args.command == "run" and (args.blocks < 1 or args.warmup_runs < 0):
         parser.error("--blocks must be positive and --warmup-runs nonnegative")
     try:
-        return generate(args) if args.command == "generate" else run(args)
+        return {"generate": generate, "run": run, "compare": compare}[args.command](args)
     except BenchError as error:
         print(f"bench: {error}", file=sys.stderr)
         return 2

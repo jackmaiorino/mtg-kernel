@@ -86,7 +86,9 @@ for index, iteration in enumerate(config["iterations"]):
             handle.write(json.dumps({"schema": "mtg-kernel-cache-diagnostics/v1",
                                      "completed_iteration": index, "newly_completed": True,
                                      "process_id": os.getpid(),
-                                     "loaded_source": {"total": {"cache_lookups": lookups}}}) + "\n")
+                                     "loaded_source": {"total": {"cache_lookups": lookups,
+                                                                 "scoped_nanos": random.randrange(1, 10**6)}}})
+                         + "\n")
     print(json.dumps({"completed_iteration": index, "adam_step": step, "scheduler_timing": {
         "iteration_wall_seconds": 0.01, "collection_execution_seconds": 0.004,
         "update_execution_seconds": 0.005, "collection_validation_seconds": 0.0005,
@@ -251,9 +253,10 @@ class DriverTest(unittest.TestCase):
                       ("inconclusive", "improvement", "regression"))
         self.assertEqual(fresh["metrics"]["wall_seconds"]["baseline"]["n"], 2)
         self.assertEqual(len(fresh["metrics"]["wall_seconds"]["block_ratios"]), 1)
-        self.assertEqual(fresh["counters"]["branch"]["final"],
-                         {"loaded_source": {"total": {"cache_lookups": 6}}})
-        self.assertTrue(fresh["counters"]["branch"]["equal_across_samples"])
+        counters = fresh["counters"]["branch"]
+        self.assertEqual(counters["counts"], {"loaded_source": {"total": {"cache_lookups": 6}}})
+        self.assertTrue(counters["equal_across_samples"], "timing leaves are not compared")
+        self.assertIn("loaded_source/total/scoped_nanos", counters["timing_medians"])
         self.assertEqual([c["status"] for c in fresh["cold_resume"]],
                          ["equal_up_to_accounted_fields"] * 2)
         manifest = json.loads((self.out / "bench.json").read_text())
@@ -263,6 +266,16 @@ class DriverTest(unittest.TestCase):
         self.assertEqual(manifest["outputs"]["samples.jsonl"],
                          bench.sha256_file(self.out / "samples.jsonl"))
         self.assertEqual(len(manifest["plan"]), len(samples))
+        self.assertTrue(manifest["binaries_unchanged"])
+        # compare recomputes the same comparison from the retained samples.
+        before = comparison["cases"]
+        with redirect_stdout(StringIO()):
+            self.assertEqual(bench.main(["compare", "--out", str(self.out)]), 0)
+        self.assertEqual(json.loads((self.out / "comparison.json").read_text())["cases"], before)
+        with open(self.out / "samples.jsonl", "a") as handle:
+            handle.write("{}\n")
+        with redirect_stderr(StringIO()):
+            self.assertEqual(bench.main(["compare", "--out", str(self.out)]), 2)
 
     def test_a_changed_state_or_a_failed_sample_fails_the_comparison(self):
         code = self.bench("--warmup-runs", "0", "--cases", "fresh",
