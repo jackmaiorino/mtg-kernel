@@ -137,7 +137,11 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         || !exact_triggers
         || ((armor || gear)
             && crate::trigger::trigger_target_spec(id)
-                != if armor { TargetSpec::ControlledCreature } else { TargetSpec::None })
+                != if armor {
+                    TargetSpec::ControlledCreature
+                } else {
+                    TargetSpec::None
+                })
         || equipment.power_delta != if katana || armor { 2 } else { 0 }
         || equipment.toughness_delta != 0
         || equipment.pt_controller_turn_only != katana
