@@ -10,9 +10,11 @@ use super::{
 };
 use crate::card_def::{CardType, CARD_DEFS};
 use crate::event::{self, CommittedEvent, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{
-    AbilitySourceContractV4, CastMethodV4, GameState, ObjectLinkV4, SpellCastRouteV4, Zone,
+    AbilitySourceContractV4, CastMethodV4, GameState, ObjectLinkV4, SpellCastRouteV4, StackItemKind,
+    Zone,
 };
 
 /// Whether `card` is the top card of `player`'s own library.
@@ -226,6 +228,105 @@ pub(crate) fn library_overload_allowed(
                     }
             })
     })
+}
+
+/// Freeze the exact original paid permission before committing costs. Other
+/// library spells keep the original cast-identity receipt shape.
+pub(crate) fn prepare_library_overload_publication(
+    state: &GameState,
+    card: ObjectId,
+    player: PlayerId,
+    method: CastMethodV4,
+) -> Result<Option<FutureSightOverloadV1>, String> {
+    let live = state.objects.get(card);
+    let Some(origin) = live.v4.spell_cast_origin else {
+        return Ok(None);
+    };
+    if method != CastMethodV4::Omen
+        || origin.origin_zone != Zone::Library
+        || !crate::eternal_sideboard_s1d_v1::statics::is_overload(
+            CARD_DEFS[usize::from(live.card_def)].name,
+        )
+    {
+        return Ok(None);
+    }
+    if !library_overload_allowed(state, player, card) {
+        return Err("missing original paid Future Sight permission".into());
+    }
+    recorded_cast(state, ObjectLinkV4 {
+        object: card,
+        zone_change_count: origin.origin_zone_change_count,
+    })
+    .and_then(|cast| cast.future_sight_overload)
+    .map(Some)
+    .ok_or_else(|| "missing Future Sight announcement binding".into())
+}
+
+/// The serialized announcement may still be read by ordinary target checks
+/// before publication. At native entry points every completed overload on
+/// the stack must also match its independently published paid cast.
+pub(crate) fn validate_published_library_overloads(state: &GameState) -> Result<(), String> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return Ok(());
+    }
+    let history = &state.engine.event_history;
+    for item in &state.stack {
+        if item.kind != StackItemKind::Spell
+            || item.is_copy
+            || item.v4.cast_method != Some(CastMethodV4::Omen)
+        {
+            continue;
+        }
+        let live = state.objects.try_get(item.source).ok_or("library spell source is missing")?;
+        let Some(origin) = live.v4.spell_cast_origin else { continue };
+        let definition = CARD_DEFS.get(usize::from(live.card_def))
+            .ok_or("library spell printing is missing")?;
+        if origin.origin_zone != Zone::Library
+            || !crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name)
+        {
+            continue;
+        }
+        let caster = crate::eternal_vintage_e7b_v1::spell_caster(state, item)
+            .unwrap_or(item.controller);
+        let Some(permit) = prepare_library_overload_publication(
+            state, item.source, caster, CastMethodV4::Omen,
+        )? else {
+            return Err("library overload lost its paid permission".into());
+        };
+        let mut publications = history.scan_for_v1(&[EventKindV1::PublishedCastIdentityV1])
+            .iter()
+            .enumerate()
+            .filter_map(|(at, event)| match event {
+                CommittedEvent::PublishedCastIdentityV1 { receipt }
+                    if receipt.stack_item_id == item.v4.stack_item_id => Some((at, receipt)),
+                _ => None,
+            });
+        let Some((at, receipt)) = publications.next() else {
+            return Err("library overload lost its finalized cast publication".into());
+        };
+        let identity = crate::cast_identity_v1::PublicIdentityV1::Known { card_def: live.card_def };
+        if publications.next().is_some()
+            || origin.finalized_method != Some(CastMethodV4::Omen)
+            || item.v4.stack_item_id.0 == 0
+            || receipt.future_sight_overload != Some(permit)
+            || permit.announced_at > at
+            || receipt.spell != item.source
+            || receipt.owner != live.owner
+            || receipt.controller != caster
+            || receipt.origin_zone != Zone::Library
+            || receipt.origin_zone_change_count != origin.origin_zone_change_count
+            || receipt.stack_zone_change_count != live.zone_change_count
+            || receipt.public_identity != identity
+            || receipt.spell_cast_history_index != (at + 1) as u64
+            || history.get(at + 1) != Some(&CommittedEvent::SpellCast {
+                spell: item.source,
+                controller: caster,
+            })
+        {
+            return Err("library overload publication disagrees with its paid permission".into());
+        }
+    }
+    Ok(())
 }
 
 /// `SpellCastRouteV4::LibraryPermissionV1`'s authority: the library

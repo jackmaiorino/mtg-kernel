@@ -554,6 +554,9 @@ New, each built once in the first wave that needs it:
   for overload. Bolas's Citadel offers the ordinary form with its life payment.
   If both Future Sight and Bolas's Citadel grant the library cast, the ordinary
   form can still pay life and the overloaded form pays only its mana cost.
+  The paid overload retains its exact Future Sight permission in the finalized
+  cast publication. The current pending cast menu has no interleaved mana
+  activation action and these overload payments use the ordinary mana plan.
   The affected overload fixtures and consumers still need qualification.
   Circle of Protection: Blue offers
   unrelated graveyard and exile cards as sources, excludes contextual sources outside

@@ -941,6 +941,13 @@ fn overload_uses_future_sight_paid_library_permission_and_restores_both_seats() 
                 state.active_player = actor;
                 state.priority_player = actor;
                 let other = actor.opponent();
+                let earlier = put(&mut state, actor, "Future Sight", Zone::Battlefield);
+                let earlier_generation = state.objects.get(earlier).zone_change_count;
+                let earlier_at = state.engine.event_history.len();
+                mtg_kernel::event::propose_and_commit(
+                    &mut state,
+                    mtg_kernel::event::ProposedEvent::zone_change(earlier, Zone::Graveyard),
+                );
                 let sight = put(&mut state, actor, "Future Sight", Zone::Hand);
                 pool(&mut state, actor, &[ManaColor::U; 3], 2);
                 cast(&mut state, sight, &[]);
@@ -1041,6 +1048,20 @@ fn overload_uses_future_sight_paid_library_permission_and_restores_both_seats() 
                     );
                     *continued =
                         serde_json::from_slice(&serde_json::to_vec(continued).unwrap()).unwrap();
+                    let mut forged = serde_json::to_value(&*continued).unwrap();
+                    let permit = &mut forged["eternal_v1"]["e5a"]["library_casts"]
+                        .as_array_mut()
+                        .unwrap()
+                        .last_mut()
+                        .unwrap()["future_sight_overload"];
+                    permit["source"]["source"] = serde_json::json!(earlier);
+                    permit["source"]["zone_change_count"] = serde_json::json!(earlier_generation);
+                    permit["announced_at"] = serde_json::json!(earlier_at);
+                    let mut forged: GameState = serde_json::from_value(forged).unwrap();
+                    assert!(matches!(
+                        engine::advance_until_decision(&mut forged),
+                        Decision::Halted { .. }
+                    ));
                     settled(continued);
                     assert_eq!(zone(continued, spell), Zone::Graveyard);
                     assert_eq!(zone(continued, mine), Zone::Battlefield);
