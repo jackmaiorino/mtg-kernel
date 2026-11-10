@@ -1952,6 +1952,15 @@ impl FlatDecisionEncoderV2 {
                         || card.characteristics.legend_return_sources.is_some()
                 })
         {
+            #[cfg(test)]
+            eprintln!(
+                "flat globals rejected fields: creatures_attacked_this_turn={:?}, poison_counters={}, ninja_emblems={}, poison_prevention={}, restricted_mana={}",
+                observation.projection.creatures_attacked_this_turn,
+                observation.projection.poison_counters.is_some(),
+                observation.projection.ninja_emblems.is_some(),
+                observation.projection.poison_prevention.is_some(),
+                observation.projection.restricted_mana.is_some(),
+            );
             return Err(FlatDecisionErrorV2::ObservationContract);
         }
         let actor = observation.acting_player;
@@ -5421,6 +5430,16 @@ impl FlatDecisionEncoderV2 {
         expected: FastActorDecisionV1,
         buffers: &mut FlatScoringOwnedBuffersV2<'_>,
     ) -> Result<crate::flat_policy_v4::FlatDecisionV4, FlatDecisionErrorV2> {
+        macro_rules! check {
+            ($name:literal, $result:expr) => {{
+                let result = $result;
+                #[cfg(test)]
+                if let Err(error) = &result {
+                    eprintln!("V4 scorer {} rejected: {error:?}", $name);
+                }
+                result
+            }};
+        }
         self.clear_typed_cache(session.game_state());
         let action_count = usize::try_from(expected.legal_action_count)
             .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;
@@ -5461,7 +5480,7 @@ impl FlatDecisionEncoderV2 {
         // V3-only layer this module never calls). See
         // `rl_session::flat_action_v4::flat_policy_observation_v4`'s doc
         // comment for the full explanation.
-        let observation = session.flat_policy_observation_v4(expected)?;
+        let observation = check!("observation", session.flat_policy_observation_v4(expected))?;
         if observation.schema_version != 6
             || observation.acting_player != expected.acting_player
             || observation.step_index != expected.step
@@ -5472,17 +5491,22 @@ impl FlatDecisionEncoderV2 {
         {
             return Err(FlatDecisionErrorV2::ObservationContract);
         }
-        self.build_globals(&observation)?;
-        self.register_objects(&observation)?;
-        let extensions_v7 = crate::policy_observation_v7::policy_observation_extensions_v7(
-            session.game_state(),
-            crate::kernel_native_search_opponent_v1::player_id_v1(observation.acting_player),
+        check!("globals", self.build_globals(&observation))?;
+        check!("objects", self.register_objects(&observation))?;
+        let extensions_v7 = check!(
+            "V7 extensions",
+            crate::policy_observation_v7::policy_observation_extensions_v7(
+                session.game_state(),
+                crate::kernel_native_search_opponent_v1::player_id_v1(observation.acting_player),
+            )
         )
         .map_err(|_| FlatDecisionErrorV2::ObservationContract)?;
-        let extensions =
-            self.register_extensions_v4(&observation, &extensions_v7, session.game_state())?;
-        self.build_relations(&observation)?;
-        self.validate_cached_tables()?;
+        let extensions = check!(
+            "register extensions",
+            self.register_extensions_v4(&observation, &extensions_v7, session.game_state())
+        )?;
+        check!("relations", self.build_relations(&observation))?;
+        check!("cached tables", self.validate_cached_tables())?;
         if self.scorer_actions.len() != self.actions.len()
             || self.scorer_action_refs.len() != self.action_refs.len()
         {
