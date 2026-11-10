@@ -115,7 +115,8 @@ fn cast_player(state: &GameState, cast_at: usize) -> Option<PlayerId> {
     let CommittedEvent::SpellCast { spell, controller } = history.get(cast_at)? else {
         return None;
     };
-    let CommittedEvent::PublishedCastIdentityV1 { receipt } = history.get(cast_at.checked_sub(1)?)?
+    let CommittedEvent::PublishedCastIdentityV1 { receipt } =
+        history.get(cast_at.checked_sub(1)?)?
     else {
         return None;
     };
@@ -190,7 +191,8 @@ fn processed_first_spells(
         else {
             continue;
         };
-        let caster = cast_player(state, *cast_at).ok_or("invalid Eternal first spell occurrence")?;
+        let caster =
+            cast_player(state, *cast_at).ok_or("invalid Eternal first spell occurrence")?;
         if *cast_at >= at
             || expected[caster.index()] != Some(*cast_at)
             || processed[caster.index()].replace(*cast_at).is_some()
@@ -474,8 +476,7 @@ fn validate_window(state: &GameState, opening: OpeningV1) -> Result<Window<'_>, 
     };
     let vintage = state.eternal_v1.as_ref().map(|eternal| &eternal.vintage);
     if vintage.is_some_and(|vintage| {
-        vintage.opening_hand_offered == revealed.is_empty()
-            || vintage.cast_a_spell != processed
+        vintage.opening_hand_offered == revealed.is_empty() || vintage.cast_a_spell != processed
     }) {
         return Err("invalid Eternal opening first-spell state".into());
     }

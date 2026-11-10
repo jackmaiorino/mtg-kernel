@@ -363,11 +363,15 @@ pub(crate) fn retained_eternal_keeps_v1(
         || opening.starting_player != state.starting_player
         || opening.kept != [true; 2]
         || opening.mulligan_this_round != [false; 2]
-        || opening.counts.iter().zip(&opening.hands).any(|(&count, hand)| {
-            HAND_SIZE
-                .checked_sub(count)
-                .is_none_or(|size| hand.len() != usize::from(size))
-        })
+        || opening
+            .counts
+            .iter()
+            .zip(&opening.hands)
+            .any(|(&count, hand)| {
+                HAND_SIZE
+                    .checked_sub(count)
+                    .is_none_or(|size| hand.len() != usize::from(size))
+            })
     {
         return Err("invalid completed Eternal London keeps".into());
     }
