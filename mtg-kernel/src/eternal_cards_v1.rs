@@ -443,7 +443,11 @@ pub enum EternalOpV1 {
     /// Internal completion of one native draw attempt in an owned instruction.
     OwnedDrawCompletedV1 { ordinal: u32 },
     /// Room trigger bound to the exact native venture occurrence.
-    RoomBoundV1 { entered_at: usize, dungeon: u16, room: u16 },
+    RoomBoundV1 {
+        entered_at: usize,
+        dungeon: u16,
+        room: u16,
+    },
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it

@@ -1774,8 +1774,10 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
                 .iter()
                 .enumerate()
                 .find_map(|(at, row)| {
-                    row.get("EternalOwnedDrawV1")?.get("journal")?
-                        .get("EchoShuffledV1").map(|marker| (at, marker))
+                    row.get("EternalOwnedDrawV1")?
+                        .get("journal")?
+                        .get("EchoShuffledV1")
+                        .map(|marker| (at, marker))
                 })
                 .expect("Echo's native shuffle marker");
             let shuffles = [
@@ -1834,7 +1836,9 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
                 assert_eq!(*extra, serde_json::json!(1));
                 *extra = serde_json::json!(0);
                 let changed_count: GameState = serde_json::from_value(changed_count).unwrap();
-                assert!(mtg_kernel::effect::validate_pending_effect_choice(&changed_count).is_err());
+                assert!(
+                    mtg_kernel::effect::validate_pending_effect_choice(&changed_count).is_err()
+                );
 
                 let mut skipped = saved.clone();
                 let completed = skipped["engine"]["event_history"]

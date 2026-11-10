@@ -30,7 +30,10 @@ pub struct RoomEntryV1 {
 #[serde(deny_unknown_fields)]
 pub enum RoomJournalV1 {
     Entered(RoomEntryV1),
-    Published { entered_at: usize, item: StackItemId },
+    Published {
+        entered_at: usize,
+        item: StackItemId,
+    },
 }
 
 fn journal(event: &CommittedEvent) -> Option<RoomJournalV1> {
@@ -53,7 +56,9 @@ fn entry_at(state: &GameState, at: usize) -> Option<RoomEntryV1> {
 fn active_entry(state: &GameState, player: PlayerId) -> Option<RoomEntryV1> {
     let marker = &state.players[player.index()].dungeon;
     let (dungeon, room) = (marker.dungeon_id?, marker.room_id?);
-    let (at, entry) = state.engine.event_history
+    let (at, entry) = state
+        .engine
+        .event_history
         .scan_for_v1(&[EventKindV1::EternalOwnedDrawV1])
         .iter()
         .enumerate()
@@ -61,7 +66,10 @@ fn active_entry(state: &GameState, player: PlayerId) -> Option<RoomEntryV1> {
         .find_map(|(at, event)| match event {
             CommittedEvent::EternalOwnedDrawV1 { journal } => match **journal {
                 JournalV1::DungeonRoomV1(RoomJournalV1::Entered(entry))
-                    if entry.player == player => Some((at, entry)),
+                    if entry.player == player =>
+                {
+                    Some((at, entry))
+                }
                 _ => None,
             },
             _ => None,
@@ -78,18 +86,31 @@ pub(super) fn entered(
 ) -> Result<usize, String> {
     let entered_at = state.engine.event_history.len();
     let occurrence = active_entry(state, player).map_or(entered_at, |entry| entry.occurrence);
-    let entry = RoomEntryV1 { player, source, dungeon, room, entered_at, occurrence };
+    let entry = RoomEntryV1 {
+        player,
+        source,
+        dungeon,
+        room,
+        entered_at,
+        occurrence,
+    };
     if source.controller != player || !DUNGEONS.contains(&dungeon) {
         return Err("venture room lost its native controller or dungeon".into());
     }
-    record(state, JournalV1::DungeonRoomV1(RoomJournalV1::Entered(entry)));
+    record(
+        state,
+        JournalV1::DungeonRoomV1(RoomJournalV1::Entered(entry)),
+    );
     Ok(entered_at)
 }
 
 fn bound_entry(state: &GameState, op: &EffectOp) -> Option<RoomEntryV1> {
     let EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::RoomBoundV1 {
-        entered_at, dungeon, room,
-    })) = op else {
+        entered_at,
+        dungeon,
+        room,
+    })) = op
+    else {
         return None;
     };
     let entry = entry_at(state, *entered_at)?;
@@ -104,7 +125,10 @@ fn bound_entry(state: &GameState, op: &EffectOp) -> Option<RoomEntryV1> {
 }
 
 fn is_bound(op: &EffectOp) -> bool {
-    matches!(op, EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::RoomBoundV1 { .. })))
+    matches!(
+        op,
+        EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::RoomBoundV1 { .. }))
+    )
 }
 
 fn for_item(state: &GameState, item: &StackItem) -> Option<RoomEntryV1> {
@@ -116,7 +140,7 @@ fn for_item(state: &GameState, item: &StackItem) -> Option<RoomEntryV1> {
         && item.v4.ability_source_contract == Some(entry.source)
         && item.v4.target_spec == (spec != TargetSpec::None).then_some(spec)
         && item.v4.stack_item_id != StackItemId::default())
-        .then_some(entry)
+    .then_some(entry)
 }
 
 fn published_rows(
@@ -124,14 +148,18 @@ fn published_rows(
     item: StackItemId,
     entered_at: usize,
 ) -> impl Iterator<Item = (usize, usize, StackItemId)> + '_ {
-    state.engine.event_history
+    state
+        .engine
+        .event_history
         .scan_for_v1(&[EventKindV1::EternalOwnedDrawV1])
         .iter()
         .enumerate()
         .filter_map(move |(at, event)| match event {
             CommittedEvent::EternalOwnedDrawV1 { journal } => match **journal {
-                JournalV1::DungeonRoomV1(RoomJournalV1::Published { entered_at: entry, item: id })
-                    if id == item || entry == entered_at => Some((at, entry, id)),
+                JournalV1::DungeonRoomV1(RoomJournalV1::Published {
+                    entered_at: entry,
+                    item: id,
+                }) if id == item || entry == entered_at => Some((at, entry, id)),
                 _ => None,
             },
             _ => None,
@@ -147,7 +175,9 @@ pub(crate) fn validate_pending(state: &GameState, pending: &PendingTrigger) -> R
         || pending.source != entry.source.source
         || pending.source_contract != Some(entry.source)
         || pending.target_spec != room_target_spec(entry.dungeon, entry.room)
-        || published_rows(state, StackItemId::default(), entry.entered_at).next().is_some()
+        || published_rows(state, StackItemId::default(), entry.entered_at)
+            .next()
+            .is_some()
     {
         return Err("room trigger does not match its unpublished entry".into());
     }
@@ -160,13 +190,19 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
     }
     let entry = for_item(state, item).ok_or("room publication lost its native entry")?;
     let item = item.v4.stack_item_id;
-    if published_rows(state, item, entry.entered_at).next().is_some() {
+    if published_rows(state, item, entry.entered_at)
+        .next()
+        .is_some()
+    {
         return Err("room entry has already published its trigger".into());
     }
-    record(state, JournalV1::DungeonRoomV1(RoomJournalV1::Published {
-        entered_at: entry.entered_at,
-        item,
-    }));
+    record(
+        state,
+        JournalV1::DungeonRoomV1(RoomJournalV1::Published {
+            entered_at: entry.entered_at,
+            item,
+        }),
+    );
     Ok(())
 }
 
@@ -175,15 +211,23 @@ pub(crate) fn published(state: &GameState, item: &StackItem) -> Option<RoomEntry
     let id = item.v4.stack_item_id;
     let mut rows = published_rows(state, id, entry.entered_at);
     let (at, entered_at, published_id) = rows.next()?;
-    (at > entered_at && entered_at == entry.entered_at && published_id == id && rows.next().is_none())
-        .then_some(entry)
+    (at > entered_at
+        && entered_at == entry.entered_at
+        && published_id == id
+        && rows.next().is_none())
+    .then_some(entry)
 }
 
 pub(crate) fn validate_resolving(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Result<(), String> {
-    if !pending.resolving_item.inline_effect.as_ref().is_some_and(is_bound) {
+    if !pending
+        .resolving_item
+        .inline_effect
+        .as_ref()
+        .is_some_and(is_bound)
+    {
         return Ok(());
     }
     let entry = published(state, &pending.resolving_item)
@@ -199,22 +243,34 @@ pub(crate) fn validate_resolving(
 }
 
 enum BottommostV1 {
-    ForgottenRealms { entry: RoomEntryV1, includes_legacy_rooms: bool },
-    Undercity { player: PlayerId, first: u32, bottom: u32 },
+    ForgottenRealms {
+        entry: RoomEntryV1,
+        includes_legacy_rooms: bool,
+    },
+    Undercity {
+        player: PlayerId,
+        first: u32,
+        bottom: u32,
+    },
 }
 
 fn undercity_bottommost(state: &GameState, player: PlayerId) -> Option<BottommostV1> {
-    let mut rooms = state.engine.event_history
+    let mut rooms = state
+        .engine
+        .event_history
         .scan_for_v1(&[EventKindV1::InitiativeTrigger])
         .iter()
         .enumerate()
         .rev()
         .filter_map(|(at, event)| match event {
             CommittedEvent::InitiativeTrigger { binding }
-                if binding.player == player && usize::try_from(binding.history_index).ok() == Some(at) =>
+                if binding.player == player
+                    && usize::try_from(binding.history_index).ok() == Some(at) =>
             {
                 match binding.kind {
-                    InitiativeTriggerKindV1::UndercityRoom(room) => Some((binding.history_index, room)),
+                    InitiativeTriggerKindV1::UndercityRoom(room) => {
+                        Some((binding.history_index, room))
+                    }
                     _ => None,
                 }
             }
@@ -224,8 +280,13 @@ fn undercity_bottommost(state: &GameState, player: PlayerId) -> Option<Bottommos
     if room != UndercityRoomV1::ThroneOfTheDeadThree {
         return None;
     }
-    let first = rooms.find_map(|(at, room)| (room == UndercityRoomV1::SecretEntrance).then_some(at));
-    Some(BottommostV1::Undercity { player, first: first.unwrap_or(bottom), bottom })
+    let first =
+        rooms.find_map(|(at, room)| (room == UndercityRoomV1::SecretEntrance).then_some(at));
+    Some(BottommostV1::Undercity {
+        player,
+        first: first.unwrap_or(bottom),
+        bottom,
+    })
 }
 
 fn bottommost(state: &GameState, player: PlayerId) -> Option<BottommostV1> {
@@ -246,7 +307,10 @@ fn bottommost(state: &GameState, player: PlayerId) -> Option<BottommostV1> {
     if first.player != player || first.dungeon != dungeon || first.occurrence != first.entered_at {
         return None;
     }
-    Some(BottommostV1::ForgottenRealms { entry, includes_legacy_rooms: first.room != 1 })
+    Some(BottommostV1::ForgottenRealms {
+        entry,
+        includes_legacy_rooms: first.room != 1,
+    })
 }
 
 fn remove(state: &mut GameState, player: PlayerId, dungeon: u16) {
@@ -267,15 +331,23 @@ impl BottommostV1 {
     }
 
     fn waits_for_initiative(&self, state: &GameState, binding: InitiativeTriggerBindingV1) -> bool {
-        let Self::Undercity { player, first, bottom } = self else {
+        let Self::Undercity {
+            player,
+            first,
+            bottom,
+        } = self
+        else {
             return false;
         };
         binding.player == *player
             && (*first..=*bottom).contains(&binding.history_index)
             && matches!(binding.kind, InitiativeTriggerKindV1::UndercityRoom(_))
-            && usize::try_from(binding.history_index).ok().is_some_and(|at| {
-                state.engine.event_history.get(at) == Some(&CommittedEvent::InitiativeTrigger { binding })
-            })
+            && usize::try_from(binding.history_index)
+                .ok()
+                .is_some_and(|at| {
+                    state.engine.event_history.get(at)
+                        == Some(&CommittedEvent::InitiativeTrigger { binding })
+                })
     }
 
     fn waits_for(
@@ -286,7 +358,10 @@ impl BottommostV1 {
         source: Option<AbilitySourceContractV4>,
     ) -> bool {
         match self {
-            Self::ForgottenRealms { entry, includes_legacy_rooms } => {
+            Self::ForgottenRealms {
+                entry,
+                includes_legacy_rooms,
+            } => {
                 if let Some(room) = bound_entry(state, effect) {
                     return room.occurrence == entry.occurrence
                         && room.player == entry.player
@@ -313,19 +388,42 @@ impl BottommostV1 {
         let waiting_stack = |item: &StackItem| {
             item.kind == StackItemKind::TriggeredAbility
                 && item.inline_effect.as_ref().is_some_and(|effect| {
-                    self.waits_for(state, item.controller, effect, item.v4.ability_source_contract)
+                    self.waits_for(
+                        state,
+                        item.controller,
+                        effect,
+                        item.v4.ability_source_contract,
+                    )
                 })
         };
-        protected.iter().chain(&state.engine.pending_triggers).any(|trigger| {
-            self.waits_for(state, trigger.controller, &trigger.effect, trigger.source_contract)
-        }) || state.stack.iter().any(waiting_stack)
-            || state.engine.pending_effect.as_ref().is_some_and(|pending| waiting_stack(&pending.resolving_item))
+        protected
+            .iter()
+            .chain(&state.engine.pending_triggers)
+            .any(|trigger| {
+                self.waits_for(
+                    state,
+                    trigger.controller,
+                    &trigger.effect,
+                    trigger.source_contract,
+                )
+            })
+            || state.stack.iter().any(waiting_stack)
+            || state
+                .engine
+                .pending_effect
+                .as_ref()
+                .is_some_and(|pending| waiting_stack(&pending.resolving_item))
             || match self {
-                Self::ForgottenRealms { entry, includes_legacy_rooms } => super::super::e3(state).is_some_and(|e3| {
+                Self::ForgottenRealms {
+                    entry,
+                    includes_legacy_rooms,
+                } => super::super::e3(state).is_some_and(|e3| {
                     e3.room_triggers.iter().any(|room| {
-                        room.player == entry.player && room.dungeon == entry.dungeon
+                        room.player == entry.player
+                            && room.dungeon == entry.dungeon
                             && room.entered_at.map_or(*includes_legacy_rooms, |at| {
-                                entry_at(state, at).is_some_and(|room| room.occurrence == entry.occurrence)
+                                entry_at(state, at)
+                                    .is_some_and(|room| room.occurrence == entry.occurrence)
                             })
                     })
                 }),

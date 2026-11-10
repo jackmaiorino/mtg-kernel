@@ -63,7 +63,10 @@ enum InstructionV1 {
         shuffled_at: usize,
         drawer: PlayerId,
     },
-    Room { kind: rooms::KindV1, entered_at: usize },
+    Room {
+        kind: rooms::KindV1,
+        entered_at: usize,
+    },
 }
 
 impl InstructionV1 {
@@ -105,9 +108,16 @@ impl InstructionV1 {
             EternalOpV1::E7bV1(E7bOpV1::MinscDamageBoundV1 { sacrifice }) => Some(Self::Minsc {
                 sacrifice: *sacrifice,
             }),
-            EternalOpV1::RoomBoundV1 { dungeon, room, entered_at } => {
+            EternalOpV1::RoomBoundV1 {
+                dungeon,
+                room,
+                entered_at,
+            } => {
                 let kind = rooms::KindV1::from_room(*dungeon, *room)?;
-                Some(Self::Room { kind, entered_at: *entered_at })
+                Some(Self::Room {
+                    kind,
+                    entered_at: *entered_at,
+                })
             }
             _ => None,
         }
@@ -344,7 +354,11 @@ pub enum JournalV1 {
         card: crate::effect::EffectObjectBinding,
         card_def: u16,
     },
-    RoomDrawFinishedV1 { item: StackItemId, started_at: usize, draws_end: usize },
+    RoomDrawFinishedV1 {
+        item: StackItemId,
+        started_at: usize,
+        draws_end: usize,
+    },
     RoomDrawAnsweredV1 {
         item: StackItemId,
         finished_at: usize,
@@ -376,9 +390,7 @@ impl JournalV1 {
             Self::CurieDrawCount { item, .. }
             | Self::MinscDamageCompleted { item, .. }
             | Self::EchoShuffledV1 { item, .. }
-            | Self::EchoShuffleCommittedV1 { item, .. } => {
-                Some(item)
-            }
+            | Self::EchoShuffleCommittedV1 { item, .. } => Some(item),
             _ => self.room_tail_item(),
         }
     }
@@ -743,7 +755,10 @@ pub(crate) fn complete(
                         started.source,
                     );
                 }
-                InstructionV1::Room { kind: rooms::KindV1::MadWizard, .. } => {
+                InstructionV1::Room {
+                    kind: rooms::KindV1::MadWizard,
+                    ..
+                } => {
                     rooms::finish(state, pending, progress.started_at)?;
                 }
                 _ => finish_instruction(state, pending, started.instruction),
@@ -822,8 +837,13 @@ fn validate_native_progress(
     started: StartedV1,
     attempts: u32,
 ) -> Result<(), String> {
-    if matches!(started.instruction, InstructionV1::Room { kind: rooms::KindV1::MadWizard, .. })
-        && rooms::tail_started(state, started.item)
+    if matches!(
+        started.instruction,
+        InstructionV1::Room {
+            kind: rooms::KindV1::MadWizard,
+            ..
+        }
+    ) && rooms::tail_started(state, started.item)
     {
         return Err("Mad Wizard cannot resume drawing after its cast stage".into());
     }

@@ -2163,7 +2163,12 @@ fn circle_of_protection_blue_uses_departed_minsc_from_waiting_reflexive_trigger_
         let mut state = plains();
         state.active_player = defender;
         state.priority_player = defender;
-        let circle = put(&mut state, defender, "Circle of Protection: Blue", Zone::Hand);
+        let circle = put(
+            &mut state,
+            defender,
+            "Circle of Protection: Blue",
+            Zone::Hand,
+        );
         pool(&mut state, defender, &[ManaColor::W], 1);
         cast(&mut state, circle, &[]);
         settled(&mut state);
@@ -2177,9 +2182,17 @@ fn circle_of_protection_blue_uses_departed_minsc_from_waiting_reflexive_trigger_
         pool(&mut state, caster, &[], 2);
         cast(&mut state, painter, &[]);
         settle_option(&mut state, 1);
-        assert_eq!(state.objects.get(painter).v4.chosen_color, Some(ManaColor::U));
+        assert_eq!(
+            state.objects.get(painter).v4.chosen_color,
+            Some(ManaColor::U)
+        );
 
-        let minsc = put(&mut state, caster, "Minsc & Boo, Timeless Heroes", Zone::Hand);
+        let minsc = put(
+            &mut state,
+            caster,
+            "Minsc & Boo, Timeless Heroes",
+            Zone::Hand,
+        );
         pool(&mut state, caster, &[ManaColor::R, ManaColor::G], 2);
         cast(&mut state, minsc, &[]);
         settle_option(&mut state, 1);
@@ -2222,7 +2235,14 @@ fn circle_of_protection_blue_uses_departed_minsc_from_waiting_reflexive_trigger_
         assert_eq!(waiting.kind, StackItemKind::TriggeredAbility);
         assert_eq!(waiting.source, minsc);
         assert_eq!(waiting.targets.as_slice(), [Target::Player(defender)]);
-        assert_eq!(waiting.v4.ability_source_contract.unwrap().zone_change_count, original);
+        assert_eq!(
+            waiting
+                .v4
+                .ability_source_contract
+                .unwrap()
+                .zone_change_count,
+            original
+        );
 
         let hand = state.players[caster.index()].hand.len();
         let mut unprotected = state.clone();
@@ -2247,15 +2267,21 @@ fn circle_of_protection_blue_uses_departed_minsc_from_waiting_reflexive_trigger_
         else {
             panic!("Circle source options missing");
         };
-        let links: Vec<_> = options.iter().map(|option| match option {
-            EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
-                S1dOpV1::CopShieldV1 { source },
-            ))) => (source.object, source.zone_change_count),
-            other => panic!("unexpected Circle option: {other:?}"),
-        }).collect();
+        let links: Vec<_> = options
+            .iter()
+            .map(|option| match option {
+                EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
+                    S1dOpV1::CopShieldV1 { source },
+                ))) => (source.object, source.zone_change_count),
+                other => panic!("unexpected Circle option: {other:?}"),
+            })
+            .collect();
         assert_eq!(
             links,
-            [(minsc, original), (other_blue, state.objects.get(other_blue).zone_change_count)]
+            [
+                (minsc, original),
+                (other_blue, state.objects.get(other_blue).zone_change_count)
+            ]
         );
 
         let snapshot = serde_json::to_value(&state).unwrap();
@@ -2264,15 +2290,30 @@ fn circle_of_protection_blue_uses_departed_minsc_from_waiting_reflexive_trigger_
             let history = forged["engine"]["event_history"].as_array_mut().unwrap();
             if missing_publication {
                 // Keep later native history indices unchanged.
-                let draw = history.iter().find(|event| event.get("Draw").is_some()).unwrap().clone();
-                let publication = history.iter_mut().find(|event| {
-                    event["EternalOwnedDrawV1"]["journal"].get("MinscTarget").is_some()
-                }).unwrap();
+                let draw = history
+                    .iter()
+                    .find(|event| event.get("Draw").is_some())
+                    .unwrap()
+                    .clone();
+                let publication = history
+                    .iter_mut()
+                    .find(|event| {
+                        event["EternalOwnedDrawV1"]["journal"]
+                            .get("MinscTarget")
+                            .is_some()
+                    })
+                    .unwrap();
                 *publication = draw;
             } else {
-                let departure = history.iter_mut().find_map(|event| {
-                    event.get_mut("EternalOwnedDrawV1")?.get_mut("journal")?.get_mut("MinscDeparture")
-                }).unwrap();
+                let departure = history
+                    .iter_mut()
+                    .find_map(|event| {
+                        event
+                            .get_mut("EternalOwnedDrawV1")?
+                            .get_mut("journal")?
+                            .get_mut("MinscDeparture")
+                    })
+                    .unwrap();
                 departure["departure"]["facts"]["source"]["zone_change_count"] =
                     serde_json::json!(original + 1);
             }
@@ -2289,7 +2330,13 @@ fn circle_of_protection_blue_uses_departed_minsc_from_waiting_reflexive_trigger_
         settled(&mut restored);
         assert_eq!(life(&restored, defender), 20);
         assert_eq!(restored.players[caster.index()].hand.len(), hand + 1);
-        assert!(restored.eternal_v1.as_ref().unwrap().s1d.cop_shields.is_empty());
+        assert!(restored
+            .eternal_v1
+            .as_ref()
+            .unwrap()
+            .s1d
+            .cop_shields
+            .is_empty());
     }
 }
 

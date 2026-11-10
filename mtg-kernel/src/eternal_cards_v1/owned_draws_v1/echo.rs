@@ -40,7 +40,9 @@ pub(crate) fn commit_shuffle(
     player: PlayerId,
     moves_start: usize,
 ) -> Result<ShuffleCommitV1, String> {
-    state.shuffle_library(player).map_err(|error| error.to_string())?;
+    state
+        .shuffle_library(player)
+        .map_err(|error| error.to_string())?;
     Ok(ShuffleCommitV1 {
         player,
         moves_start,
@@ -137,7 +139,10 @@ pub(crate) fn begin(
     start_instruction(
         state,
         pending,
-        InstructionV1::Echo { shuffled_at, drawer: first },
+        InstructionV1::Echo {
+            shuffled_at,
+            drawer: first,
+        },
         SourceV1::Spell(source),
         7,
         first_extra,
@@ -210,9 +215,13 @@ pub(super) fn matches_start(
     {
         return false;
     }
-    let [Some(JournalV1::EchoShuffleCommittedV1 { item: first_item, commit: first_commit }),
-         Some(JournalV1::EchoShuffleCommittedV1 { item: second_item, commit: second_commit })] =
-        shuffles.map(|at| journal(state, at))
+    let [Some(JournalV1::EchoShuffleCommittedV1 {
+        item: first_item,
+        commit: first_commit,
+    }), Some(JournalV1::EchoShuffleCommittedV1 {
+        item: second_item,
+        commit: second_commit,
+    })] = shuffles.map(|at| journal(state, at))
     else {
         return false;
     };
@@ -235,7 +244,9 @@ pub(super) fn matches_start(
     };
     if drawer == first {
         return started_at == first_at
-            && journal(state, first_at).and_then(JournalV1::start).map(|(_, count)| count)
+            && journal(state, first_at)
+                .and_then(JournalV1::start)
+                .map(|(_, count)| count)
                 == Some(expected_first_count);
     }
     if drawer != first.opponent() || started_at <= first_at {

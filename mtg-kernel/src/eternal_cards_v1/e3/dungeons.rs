@@ -6,8 +6,8 @@
 //! engine's proxy source. Native room occurrences retain the dungeon
 //! identity independently, including while a room ability is resolving.
 
-use super::super::{eternal, EternalOpV1};
 use super::super::owned_draws_v1::rooms;
+use super::super::{eternal, EternalOpV1};
 use super::{
     bind, binding_live, e3_mut, link, offer, printed, E3ChoiceKindV1, E3ChoiceV1, UntilNextTurnV1,
 };
@@ -697,16 +697,16 @@ pub(crate) fn mad_wizard_choice(
         })
         .collect::<Vec<_>>();
     (!castable.is_empty()).then(|| E3ChoiceV1 {
-            kind: E3ChoiceKindV1::MadWizardV1 { drawn },
-            player,
-            candidates: targets(&castable),
-            bindings: castable,
-            min: 0,
-            max: 1,
-            ordered: false,
-            path,
-            remaining: continuation.frames.clone(),
-        })
+        kind: E3ChoiceKindV1::MadWizardV1 { drawn },
+        player,
+        candidates: targets(&castable),
+        bindings: castable,
+        min: 0,
+        max: 1,
+        ordered: false,
+        path,
+        remaining: continuation.frames.clone(),
+    })
 }
 
 /// The card a Mad Wizard's Lair answer casts, if any.

@@ -1563,7 +1563,11 @@ fn completing_tomb_of_annihilation_makes_the_atropal_and_stops_acererak() {
 fn lost_mine_completion_waits_for_all_room_triggers_both_seats() {
     let marker = |state: &GameState, player: PlayerId| {
         let dungeon = &state.players[player.index()].dungeon;
-        (dungeon.dungeon_id, dungeon.room_id, dungeon.completed_dungeons.clone())
+        (
+            dungeon.dungeon_id,
+            dungeon.room_id,
+            dungeon.completed_dungeons.clone(),
+        )
     };
     let bottom = (Some(LOST_MINE), Some(7), Vec::new());
     let completed = (None, None, vec![LOST_MINE]);
@@ -1589,15 +1593,30 @@ fn lost_mine_completion_waits_for_all_room_triggers_both_seats() {
             Some(Decision::ChooseEffectTargets { player, ref legal_targets, .. })
                 if player == actor && legal_targets.as_slice() == [Target::Object(cave_top)]
         ));
-        act(&mut state, Action::ChooseEffectTarget(Target::Object(cave_top)));
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(cave_top)),
+        );
         settled(&mut state);
 
         cast(&mut state, acererak, &[]);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { option_count: 2, .. })));
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            })
+        ));
         act(&mut state, Action::ChooseEffectOption(0)); // Goblin Lair.
         settled(&mut state);
         cast(&mut state, acererak, &[]);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { option_count: 2, .. })));
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            })
+        ));
         act(&mut state, Action::ChooseEffectOption(1)); // Dark Pool.
         pass_until(&mut state, |state| {
             marker(state, actor).1 == Some(5) && state.stack.len() == 1
@@ -1605,14 +1624,19 @@ fn lost_mine_completion_waits_for_all_room_triggers_both_seats() {
 
         // Aluren lets the same Acererak advance again above the older room.
         cast(&mut state, acererak, &[]);
-        pass_until(&mut state, |state| marker(state, actor) == bottom && state.stack.len() == 2);
+        pass_until(&mut state, |state| {
+            marker(state, actor) == bottom && state.stack.len() == 2
+        });
         assert_eq!(state.players[actor.opponent().index()].life, 20);
         let before_draw = state.players[actor.index()].library.len();
         let snapshot = serde_json::to_vec(&state).unwrap();
         let mut resolved: GameState = serde_json::from_slice(&snapshot).unwrap();
         pass_until(&mut resolved, |state| state.stack.len() == 1);
         assert_eq!(marker(&resolved, actor), bottom);
-        assert_eq!(resolved.players[actor.index()].library.len(), before_draw - 1);
+        assert_eq!(
+            resolved.players[actor.index()].library.len(),
+            before_draw - 1
+        );
         settled(&mut resolved);
         assert_eq!(marker(&resolved, actor), completed);
         assert_eq!(resolved.players[actor.opponent().index()].life, 19);
@@ -1637,11 +1661,23 @@ fn lost_mine_completion_waits_for_all_room_triggers_both_seats() {
         ));
         assert_eq!(marker(&state, actor), completed);
         act(&mut state, Action::ChooseEffectOption(0));
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { .. })));
-        assert_eq!(marker(&state, actor), (Some(LOST_MINE), Some(1), vec![LOST_MINE]));
-        act(&mut state, Action::ChooseEffectTarget(Target::Object(cave_top)));
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
+        assert_eq!(
+            marker(&state, actor),
+            (Some(LOST_MINE), Some(1), vec![LOST_MINE])
+        );
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(cave_top)),
+        );
         settled(&mut state);
-        assert_eq!(marker(&state, actor), (Some(LOST_MINE), Some(1), vec![LOST_MINE]));
+        assert_eq!(
+            marker(&state, actor),
+            (Some(LOST_MINE), Some(1), vec![LOST_MINE])
+        );
         assert_eq!(state.players[actor.index()].library.len(), before_draw - 1);
         assert_eq!(state.players[actor.opponent().index()].life, 19);
     }
@@ -1671,22 +1707,32 @@ fn a_departed_acererak_still_publishes_its_room_before_priority_both_seats() {
         let enter = state.stack[0].v4.stack_item_id;
         let library = state.players[actor.index()].library.len();
         for seat in [actor, opponent] {
-            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == seat));
+            assert!(
+                matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == seat)
+            );
             act(&mut state, Action::Pass);
         }
 
-        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor));
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
         let [room] = state.stack.as_slice() else {
             panic!("the room must be published before priority returns");
         };
         assert_eq!(room.source, acererak);
         assert_ne!(room.v4.stack_item_id, enter);
         let marker = &state.players[actor.index()].dungeon;
-        assert_eq!((marker.dungeon_id, marker.room_id), (Some(LOST_MINE), Some(7)));
+        assert_eq!(
+            (marker.dungeon_id, marker.room_id),
+            (Some(LOST_MINE), Some(7))
+        );
         assert!(marker.completed_dungeons.is_empty());
         settled(&mut state);
         assert_eq!(state.players[actor.index()].library.len(), library - 1);
-        assert_eq!(state.players[actor.index()].dungeon.completed_dungeons, vec![LOST_MINE]);
+        assert_eq!(
+            state.players[actor.index()].dungeon.completed_dungeons,
+            vec![LOST_MINE]
+        );
     }
 }
 
@@ -1795,7 +1841,10 @@ fn mad_wizards_lair_casts_a_drawn_card_for_free_and_completes_the_dungeon() {
     cast_acererak(&mut state);
     let decision = settle(&mut state).expect("Mad Wizard's Lair choice");
     let marker = &state.players[0].dungeon;
-    assert_eq!((marker.dungeon_id, marker.room_id), (Some(MAD_MAGE), Some(9)));
+    assert_eq!(
+        (marker.dungeon_id, marker.room_id),
+        (Some(MAD_MAGE), Some(9))
+    );
     assert!(marker.completed_dungeons.is_empty());
     state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
     assert_eq!(next(&mut state), decision);
@@ -1851,16 +1900,23 @@ fn approach_draw_room(state: &mut GameState, player: PlayerId, dungeon: u16) -> 
         assert!(room.is_none());
     }
     assert_eq!(state.objects.get(acererak).zone, Zone::Hand);
-    assert_eq!(state.players[player.index()].dungeon.dungeon_id, Some(dungeon));
-    assert_eq!(state.players[player.index()].dungeon.room_id,
-        Some(if dungeon == LOST_MINE { 5 } else { 8 }));
+    assert_eq!(
+        state.players[player.index()].dungeon.dungeon_id,
+        Some(dungeon)
+    );
+    assert_eq!(
+        state.players[player.index()].dungeon.room_id,
+        Some(if dungeon == LOST_MINE { 5 } else { 8 })
+    );
     acererak
 }
 
 fn treasure_count(state: &GameState, player: PlayerId) -> usize {
-    state.players[player.index()].battlefield.iter().filter(|&&object|
-        state.objects.get(object).name == "Treasure Token"
-    ).count()
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .filter(|&&object| state.objects.get(object).name == "Treasure Token")
+        .count()
 }
 
 #[test]
@@ -1873,7 +1929,12 @@ fn paid_temple_room_owns_each_replacement_and_stops_after_jace_both_seats() {
             put(&mut state, player, "Quantum Riddler", Zone::Battlefield);
             put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
             let alternative = if terminal {
-                put(&mut state, player, "Jace, Wielder of Mysteries", Zone::Battlefield)
+                put(
+                    &mut state,
+                    player,
+                    "Jace, Wielder of Mysteries",
+                    Zone::Battlefield,
+                )
             } else {
                 put(&mut state, player, "Golgari Thug", Zone::Graveyard)
             };
@@ -1888,18 +1949,26 @@ fn paid_temple_room_owns_each_replacement_and_stops_after_jace_both_seats() {
             let mut restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             assert_eq!(next(&mut restored), first);
-            act(&mut restored, Action::ChooseEffectTarget(Target::Object(alternative)));
+            act(
+                &mut restored,
+                Action::ChooseEffectTarget(Target::Object(alternative)),
+            );
             let mut answered: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
             for branch in [&mut restored, &mut answered] {
                 if terminal {
-                    assert!(matches!(next(branch), Decision::GameOver { winner: Some(winner) }
-                        if winner == player));
+                    assert!(
+                        matches!(next(branch), Decision::GameOver { winner: Some(winner) }
+                        if winner == player)
+                    );
                     assert_eq!(treasure_count(branch, opponent), 0);
                 } else {
                     settled(branch);
                     assert_eq!(branch.objects.get(alternative).zone, Zone::Hand);
-                    assert_eq!(branch.players[player.index()].library.len(), library_before - 4);
+                    assert_eq!(
+                        branch.players[player.index()].library.len(),
+                        library_before - 4
+                    );
                     assert_eq!(treasure_count(branch, opponent), 1);
                 }
             }
@@ -1918,7 +1987,14 @@ fn paid_mad_wizard_room_reveals_and_casts_only_actual_draws_both_seats() {
     for player in [P0, P1] {
         let opponent = player.opponent();
         let mut state = game(&[
-            "Island", "Island", "Island", "Island", "Lightning Bolt", "Island", "Island", "Island",
+            "Island",
+            "Island",
+            "Island",
+            "Island",
+            "Lightning Bolt",
+            "Island",
+            "Island",
+            "Island",
         ]);
         let acererak = approach_draw_room(&mut state, player, MAD_MAGE);
         put(&mut state, player, "Quantum Riddler", Zone::Battlefield);
@@ -1936,37 +2012,66 @@ fn paid_mad_wizard_room_reveals_and_casts_only_actual_draws_both_seats() {
         let mut terminal = state.clone();
         mtg_kernel::event::propose_and_commit_batch(
             &mut terminal,
-            library.iter().copied().filter(|&card| card != bolt).map(|card| {
-                mtg_kernel::event::ProposedEvent::zone_change(card, Zone::Exile)
-            }).collect(),
+            library
+                .iter()
+                .copied()
+                .filter(|&card| card != bolt)
+                .map(|card| mtg_kernel::event::ProposedEvent::zone_change(card, Zone::Exile))
+                .collect(),
         );
-        put(&mut terminal, player, "Jace, Wielder of Mysteries", Zone::Battlefield);
+        put(
+            &mut terminal,
+            player,
+            "Jace, Wielder of Mysteries",
+            Zone::Battlefield,
+        );
         pay_for_acererak(&mut terminal, player, acererak);
-        assert_eq!(settle(&mut terminal), Some(Decision::GameOver { winner: Some(player) }));
+        assert_eq!(
+            settle(&mut terminal),
+            Some(Decision::GameOver {
+                winner: Some(player)
+            })
+        );
         assert_eq!(terminal.objects.get(bolt).zone, Zone::Hand);
-        assert!(!terminal.known_hand_cards(opponent, player).iter().any(|entry| entry.object == bolt));
+        assert!(!terminal
+            .known_hand_cards(opponent, player)
+            .iter()
+            .any(|entry| entry.object == bolt));
 
         let thug = put(&mut state, player, "Golgari Thug", Zone::Graveyard);
         pay_for_acererak(&mut state, player, acererak);
         let first = settle(&mut state).expect("Lair's actual Dredge menu");
-        assert!(matches!(first, Decision::ChooseEffectTargets { legal_targets, .. }
-            if legal_targets == [Target::Object(thug)]));
+        assert!(
+            matches!(first, Decision::ChooseEffectTargets { legal_targets, .. }
+            if legal_targets == [Target::Object(thug)])
+        );
         let mut rewind = serde_json::to_value(&state).unwrap();
         act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
         let cast_menu = settle(&mut state).expect("Lair's actual drawn spell is castable");
-        assert!(matches!(&cast_menu, Decision::ChooseEffectTargets { legal_targets, .. }
-            if legal_targets.as_slice() == [Target::Object(bolt)]));
+        assert!(
+            matches!(&cast_menu, Decision::ChooseEffectTargets { legal_targets, .. }
+            if legal_targets.as_slice() == [Target::Object(bolt)])
+        );
         assert_eq!(state.objects.get(thug).zone, Zone::Hand);
         assert_eq!(state.players[player.index()].library, library[7..]);
-        assert!(library[4..7].iter().all(|drawn| state.known_hand_cards(opponent, player)
-            .iter().any(|entry| entry.object == *drawn)));
+        assert!(library[4..7].iter().all(|drawn| state
+            .known_hand_cards(opponent, player)
+            .iter()
+            .any(|entry| entry.object == *drawn)));
 
         let saved = serde_json::to_value(&state).unwrap();
         let early_history = rewind["engine"]["event_history"].as_array_mut().unwrap();
         let later_history = saved["engine"]["event_history"].as_array().unwrap();
-        early_history.extend(later_history[early_history.len()..].iter().filter(|row| {
-            row["EternalOwnedDrawV1"]["journal"].get("Completed").is_none()
-        }).cloned());
+        early_history.extend(
+            later_history[early_history.len()..]
+                .iter()
+                .filter(|row| {
+                    row["EternalOwnedDrawV1"]["journal"]
+                        .get("Completed")
+                        .is_none()
+                })
+                .cloned(),
+        );
         let rewind: GameState = serde_json::from_value(rewind).unwrap();
         assert_eq!(
             mtg_kernel::effect::validate_pending_effect_choice(&rewind),
@@ -1974,9 +2079,17 @@ fn paid_mad_wizard_room_reveals_and_casts_only_actual_draws_both_seats() {
         );
 
         let mut forged = saved.clone();
-        let card = forged["engine"]["event_history"].as_array_mut().unwrap().iter_mut()
-            .find_map(|row| row.get_mut("EternalOwnedDrawV1")?.get_mut("journal")?
-                .get_mut("RoomDrawRevealedV1")?.get_mut("card")?.get_mut("object"))
+        let card = forged["engine"]["event_history"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find_map(|row| {
+                row.get_mut("EternalOwnedDrawV1")?
+                    .get_mut("journal")?
+                    .get_mut("RoomDrawRevealedV1")?
+                    .get_mut("card")?
+                    .get_mut("object")
+            })
             .expect("native Lair reveal receipt");
         *card = serde_json::json!(thug);
         let forged: GameState = serde_json::from_value(forged).unwrap();
@@ -1984,7 +2097,10 @@ fn paid_mad_wizard_room_reveals_and_casts_only_actual_draws_both_seats() {
 
         let mut restored: GameState = serde_json::from_value(saved).unwrap();
         assert_eq!(next(&mut restored), cast_menu);
-        act(&mut restored, Action::ChooseEffectTarget(Target::Object(bolt)));
+        act(
+            &mut restored,
+            Action::ChooseEffectTarget(Target::Object(bolt)),
+        );
         let mut answered: GameState =
             serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
         for branch in [&mut restored, &mut answered] {

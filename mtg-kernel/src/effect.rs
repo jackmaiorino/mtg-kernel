@@ -12943,7 +12943,10 @@ pub(crate) fn validate_resolution_play_authorization(
 ) -> Result<(), String> {
     if let EffectFrame::EternalSelectionV1 { choice, selected } = answer {
         crate::eternal_cards_v1::owned_draws_v1::rooms::validate_child(
-            state, suspended, choice, permission.card,
+            state,
+            suspended,
+            choice,
+            permission.card,
         )?;
         return crate::eternal_cards_v1::e3::dungeons::validate_resolution_cast(
             suspended, choice, selected, permission,
@@ -13124,7 +13127,10 @@ fn drive_resumable_inner_with_native_row_v1(
                         crate::eternal_cards_v1::e3::E3ChoiceKindV1::MadWizardV1 { .. }
                     ) {
                         crate::eternal_cards_v1::owned_draws_v1::rooms::record_answer(
-                            state, &continuation, &choice, &selected,
+                            state,
+                            &continuation,
+                            &choice,
+                            &selected,
                         )?;
                     }
                     // Mad Wizard's Lair: a chosen card is cast during this
