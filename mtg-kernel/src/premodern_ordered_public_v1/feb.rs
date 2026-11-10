@@ -1,6 +1,6 @@
 //! In-process owner for the exact frozen Full English Breakfast mainboard.
 use super::{
-    decision::{bind_next, BoundBoundaryV1},
+    decision::{bind_next, BoundBoundaryV1, BoundDecisionV1},
     FullTextProgramV1, NumericDecisionViewV1, NumericMenuV1, NumericNativeActionV1,
 };
 use crate::{
@@ -300,13 +300,8 @@ impl FebSessionV1 {
             Ok(BoundBoundaryV1::Halted) => return Ok(FebCurrentV1::NativeHalt),
             Err(_) => return Ok(FebCurrentV1::UnsupportedDecision),
         };
-        let state = binding
-            .view(
-                &self.inner.game,
-                &self.inner.surface,
-                viewer,
-                self.inner.step,
-            )
+        let (state, _) = self
+            .decision_view(binding, viewer)
             .map_err(|_| "FEB ordered observation is unsupported")?;
         let (observed, actions) = visible_numeric_input(&self.inner.game, &state)?;
         let (observation, actions) = visible_numeric_parts_v1(observed, &actions)
@@ -326,6 +321,23 @@ impl FebSessionV1 {
                 actor: viewer,
             }),
         })
+    }
+
+    fn decision_view(
+        &self,
+        binding: &BoundDecisionV1,
+        viewer: PlayerId,
+    ) -> Result<(NumericDecisionViewV1, Option<human::NativeEffectOptionMenu>), String> {
+        let state = &self.inner.game;
+        let mut view = binding.view(state, &self.inner.surface, viewer, self.inner.step)?;
+        // The echo decision names its original public permanent. Only change
+        // the presentation copy, keeping the bound native actions intact.
+        let echo = match &mut view.menu {
+            Some(NumericMenuV1::Native { actions }) => human::guide_echo_menu(state, viewer)
+                .inspect(|echo| echo.bind_guide_echo_source(actions)),
+            _ => None,
+        };
+        Ok((view, echo))
     }
 
     pub fn step(&mut self, decision: &FebDecisionV1, native_ordinal: usize) -> Result<(), String> {

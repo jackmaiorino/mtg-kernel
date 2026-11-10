@@ -495,7 +495,7 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
 
     for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
         let player = native_seat(seat);
-        for donated in [false, true] {
+        for (donated, departed) in [(false, false), (true, false), (false, true), (true, true)] {
             let mut owner = main_phase_owner(460_622, seat);
             let source_name = if donated {
                 "Volrath's Shapeshifter"
@@ -545,10 +545,55 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
             assert_eq!(state.objects.get(wall).zone, Zone::Battlefield);
             assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
             assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
-            if let Some(donor) = donor {
-                propose_and_commit(state, ProposedEvent::zone_change(donor, Zone::Exile));
-                assert!(full_text_v1::active_text(state, source).is_none());
+            match (donor, departed) {
+                (Some(donor), true) => {
+                    let palinchron = stage_deck_card(state, player, "Palinchron", Zone::Hand);
+                    let mana = &mut state.players[player.index()].mana_pool;
+                    mana[ManaColor::C.pool_index()] = 4;
+                    mana[ManaColor::U.pool_index()] = 2;
+                    owner.inner.current =
+                        bind_next(state, &mut owner.inner.surface, owner.inner.step);
+                    choose_label(&mut owner, seat, "Volrath's Shapeshifter: Pay {2} to discard");
+                    for _ in 0..8 {
+                        if owner.inner.game.engine.pending_discard.is_some() {
+                            break;
+                        }
+                        let viewer = acting(&owner);
+                        choose_label(&mut owner, viewer, "Pass priority");
+                    }
+                    choose_label(&mut owner, seat, "Discard Palinchron");
+                    assert_eq!(
+                        full_text_v1::active_text(&owner.inner.game, source).unwrap().donor().object,
+                        palinchron
+                    );
+                    choose_label(
+                        &mut owner,
+                        seat,
+                        "Volrath's Shapeshifter: Pay {2}{U}{U} to return this creature",
+                    );
+                    for _ in 0..8 {
+                        if owner.inner.game.objects.get(source).zone == Zone::Hand {
+                            break;
+                        }
+                        let viewer = acting(&owner);
+                        choose_label(&mut owner, viewer, "Pass priority");
+                    }
+                    let state = &owner.inner.game;
+                    assert_eq!(state.objects.get(source).zone, Zone::Hand);
+                    assert_eq!(state.objects.get(donor).zone, Zone::Graveyard);
+                    assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
+                    assert!(echo_published(state));
+                }
+                (Some(donor), false) => {
+                    propose_and_commit(state, ProposedEvent::zone_change(donor, Zone::Exile));
+                    assert!(full_text_v1::active_text(state, source).is_none());
+                }
+                (None, true) => {
+                    propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Hand));
+                }
+                (None, false) => {}
             }
+            let state = &mut owner.inner.game;
             let mana = &mut state.players[player.index()].mana_pool;
             mana[ManaColor::W.pool_index()] = 2;
             mana[ManaColor::C.pool_index()] = 3;
@@ -563,17 +608,48 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
             }
 
             let human = owner.human_current(seat).unwrap().unwrap();
+            let (pay_label, decline_label) = if departed {
+                let pay = if donated {
+                    format!("Pay {{3}}{{W}}{{W}} for Karmic Guide echo from {source_name} (original source left)")
+                } else {
+                    format!("Choose payment for Karmic Guide echo from {source_name} (original source left, no mana due)")
+                };
+                (pay, format!("Decline Karmic Guide echo from {source_name} (original source left)"))
+            } else {
+                (
+                    format!("Pay {{3}}{{W}}{{W}} to keep {source_name} (Karmic Guide echo, sacrifice if unpaid)"),
+                    format!("Sacrifice {source_name} (Karmic Guide echo)"),
+                )
+            };
             assert_eq!(human.actions, [
                 FebHumanActionV1::Supported {
                     native_ordinal: 0,
-                    label: format!("Pay {{3}}{{W}}{{W}} to keep {source_name} (Karmic Guide echo, sacrifice if unpaid)"),
+                    label: pay_label,
                 },
                 FebHumanActionV1::Supported {
                     native_ordinal: 1,
-                    label: format!("Sacrifice {source_name} (Karmic Guide echo)"),
+                    label: decline_label,
                 },
             ]);
             assert!(owner.human_current(player.opponent().into()).unwrap().unwrap().actions.is_empty());
+            if departed {
+                let Ok(BoundBoundaryV1::Decision(binding)) = &owner.inner.current else {
+                    panic!("departed echo must remain a native decision");
+                };
+                let (view, _) = owner.decision_view(binding, player).unwrap();
+                let projection = &view.observation.stable.as_ref().unwrap().projection;
+                let historical = &projection.stack.last().unwrap().source;
+                assert_eq!(historical.zone, Zone::Battlefield);
+                assert_ne!(historical.zone_change_count, owner.inner.game.objects.get(source).zone_change_count);
+                let Some(NumericMenuV1::Native { actions }) = view.menu else {
+                    panic!("departed echo must have numeric native actions");
+                };
+                assert_eq!(actions.len(), 2);
+                assert!(actions.iter().all(|row| matches!(
+                    &row.action.semantic,
+                    ActionSemanticV1::ChooseEffectOption { source, .. } if source == historical
+                )));
+            }
             let (numeric, stale) = issued(&owner, seat);
             let stale = stale.unwrap();
             let snapshot = owner.snapshot();
@@ -594,9 +670,24 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
                 FebHumanActionV1::Unsupported { action_kind, .. } if action_kind == "choose_effect_option")));
             assert!(owner.step_human(&stale, 0).is_err());
 
+            if departed {
+                owner.restore(&snapshot).unwrap();
+                let (_, token) = issued(&owner, seat);
+                let state = &mut owner.inner.game;
+                let pending = state.engine.pending_effect.as_mut().unwrap();
+                let mut forged = pending.resolving_item.v4.ability_source_contract.unwrap();
+                forged.zone = Zone::Hand;
+                forged.zone_change_count = state.objects.get(source).zone_change_count;
+                pending.resolving_item.v4.ability_source_contract = Some(forged);
+                pending.ctx.ability_source_contract = Some(forged);
+                state.stack.last_mut().unwrap().v4.ability_source_contract = Some(forged);
+                assert!(owner.step_human(&token.unwrap(), 0).is_err());
+            }
+
             for (ordinal, zone, mana) in [
-                (0, Zone::Battlefield, [0; 6]),
-                (1, Zone::Graveyard, unpaid_pool),
+                (0, if departed { Zone::Hand } else { Zone::Battlefield },
+                    if departed && !donated { unpaid_pool } else { [0; 6] }),
+                (1, if departed { Zone::Hand } else { Zone::Graveyard }, unpaid_pool),
             ] {
                 owner.restore(&snapshot).unwrap();
                 assert!(owner.step_human(&stale, ordinal).is_err());
