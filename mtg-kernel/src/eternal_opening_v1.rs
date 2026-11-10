@@ -9,8 +9,6 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-const KINDS: [EventKindV1; 1] = [EventKindV1::EternalOpeningV1];
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OpeningV1 {
@@ -107,9 +105,8 @@ fn first_cast(state: &GameState, after: usize, player: PlayerId) -> Option<(usiz
         .scan_for_v1(&[EventKindV1::SpellCast])
         .iter()
         .enumerate()
-        .skip(after)
         .find_map(|(at, event)| match event {
-            CommittedEvent::SpellCast { spell, controller } if *controller == player => {
+            CommittedEvent::SpellCast { spell, controller } if at >= after && *controller == player => {
                 Some((at, *spell))
             }
             _ => None,
@@ -252,7 +249,7 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         || state
             .engine
             .event_history
-            .scan_for_v1(&KINDS)
+            .scan_for_v1(&[EventKindV1::EternalOpeningV1])
             .iter()
             .any(|event| matches!(event, CommittedEvent::EternalOpeningV1 { .. }))
 }
