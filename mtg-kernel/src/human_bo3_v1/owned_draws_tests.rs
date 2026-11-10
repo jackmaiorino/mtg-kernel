@@ -283,10 +283,25 @@ fn paid_knowledge_ordinary_human_pass_both_seats_restore_and_retry() {
         let mut state = plains();
         state.active_player = actor;
         state.priority_player = actor;
-        put(&mut state, actor.opponent(), "Accumulated Knowledge", Zone::Graveyard);
-        cast(&mut state, actor, "Accumulated Knowledge", None, &[ManaColor::U], 1);
+        put(
+            &mut state,
+            actor.opponent(),
+            "Accumulated Knowledge",
+            Zone::Graveyard,
+        );
+        cast(
+            &mut state,
+            actor,
+            "Accumulated Knowledge",
+            None,
+            &[ManaColor::U],
+            1,
+        );
         for resolved in [false, true] {
-            if resolved { settled(&mut state); assert_eq!(state.players[actor.index()].hand.len(), 2); }
+            if resolved {
+                settled(&mut state);
+                assert_eq!(state.players[actor.index()].hand.len(), 2);
+            }
             let mut replay = None;
             for state in [state.clone(), restored(&state)] {
                 let mut session = FastActorSessionV1::from_v3_fixture_state(state);
@@ -297,16 +312,32 @@ fn paid_knowledge_ordinary_human_pass_both_seats_restore_and_retry() {
                 let mut projector = HumanDecisionProjectorV1::new_v4(expected.acting_player);
                 let before = session.privileged_core_environment_hash();
                 let visible = projector.project_current(&session, expected).unwrap();
-                assert_eq!(visible, projector.project_current(&session, expected).unwrap());
+                assert_eq!(
+                    visible,
+                    projector.project_current(&session, expected).unwrap()
+                );
                 assert_eq!(before, session.privileged_core_environment_hash());
-                let pass = visible.actions.iter().find(|action| action.label == "Pass priority").unwrap_or_else(|| panic!("{visible:?}"));
-                let request = HumanActionRequestV1 { prompt_seq: visible.prompt_seq, action_index: pass.action_index };
+                let pass = visible
+                    .actions
+                    .iter()
+                    .find(|action| action.label == "Pass priority")
+                    .unwrap_or_else(|| panic!("{visible:?}"));
+                let request = HumanActionRequestV1 {
+                    prompt_seq: visible.prompt_seq,
+                    action_index: pass.action_index,
+                };
                 let receipt = projector.submit(&mut session, request.clone()).unwrap();
                 let after = session.privileged_core_environment_hash();
                 assert_eq!(projector.submit(&mut session, request).unwrap(), receipt);
                 assert_eq!(after, session.privileged_core_environment_hash());
-                let result = (serde_json::to_vec(&visible).unwrap(), serde_json::to_vec(&receipt).unwrap(), after);
-                if let Some(previous) = &replay { assert_eq!(&result, previous); }
+                let result = (
+                    serde_json::to_vec(&visible).unwrap(),
+                    serde_json::to_vec(&receipt).unwrap(),
+                    after,
+                );
+                if let Some(previous) = &replay {
+                    assert_eq!(&result, previous);
+                }
                 replay = Some(result);
             }
         }
@@ -316,38 +347,78 @@ fn paid_knowledge_ordinary_human_pass_both_seats_restore_and_retry() {
 fn paid_denial_optional_human_labels_both_seats_restore_and_retry() {
     for actor in [P0, P1] {
         let other = actor.opponent();
-        let mut state = plains(); state.active_player = other; state.priority_player = other;
-        let target = cast(&mut state, other, "Lightning Bolt", Some(actor), &[ManaColor::R], 0);
+        let mut state = plains();
+        state.active_player = other;
+        state.priority_player = other;
+        let target = cast(
+            &mut state,
+            other,
+            "Lightning Bolt",
+            Some(actor),
+            &[ManaColor::R],
+            0,
+        );
         act(&mut state, Action::Pass);
-        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor));
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
         let source = put(&mut state, actor, "Arcane Denial", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::U], 1);
         act(&mut state, Action::CastSpell(source));
-        assert!(matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(target))));
-        act(&mut state, Action::ChooseTarget(Target::Object(target))); settled(&mut state);
+        assert!(
+            matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(target)))
+        );
+        act(&mut state, Action::ChooseTarget(Target::Object(target)));
+        settled(&mut state);
         next_upkeep(&mut state, other);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { player, option_count: 3, .. }) if player == other));
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseEffectOption { player, option_count: 3, .. }) if player == other)
+        );
         let mut replay = None;
         for state in [state.clone(), restored(&state)] {
             let mut session = FastActorSessionV1::from_v3_fixture_state(state);
-            let expected = match session.current_response() { FastActorResponseV1::Decision(decision) => decision, other => panic!("ordinary Denial: {other:?}") };
+            let expected = match session.current_response() {
+                FastActorResponseV1::Decision(decision) => decision,
+                other => panic!("ordinary Denial: {other:?}"),
+            };
             let mut projector = HumanDecisionProjectorV1::new_v4(expected.acting_player);
             let before = session.privileged_core_environment_hash();
             let visible = projector.project_current(&session, expected).unwrap();
-            assert_eq!(visible, projector.project_current(&session, expected).unwrap());
+            assert_eq!(
+                visible,
+                projector.project_current(&session, expected).unwrap()
+            );
             assert_eq!(before, session.privileged_core_environment_hash());
             assert_eq!(visible.actions.len(), 3);
             for (count, action) in visible.actions.iter().enumerate() {
-                assert!(action.label.starts_with("For Arcane Denial ["), "{}", action.label);
-                assert!(action.label.ends_with(&format!("], draw {count} cards")), "{}", action.label);
+                assert!(
+                    action.label.starts_with("For Arcane Denial ["),
+                    "{}",
+                    action.label
+                );
+                assert!(
+                    action.label.ends_with(&format!("], draw {count} cards")),
+                    "{}",
+                    action.label
+                );
             }
-            let request = HumanActionRequestV1 { prompt_seq: visible.prompt_seq, action_index: visible.actions[2].action_index };
+            let request = HumanActionRequestV1 {
+                prompt_seq: visible.prompt_seq,
+                action_index: visible.actions[2].action_index,
+            };
             let receipt = projector.submit(&mut session, request.clone()).unwrap();
             let after = session.privileged_core_environment_hash();
             assert_eq!(projector.submit(&mut session, request).unwrap(), receipt);
             assert_eq!(after, session.privileged_core_environment_hash());
-            let result = (serde_json::to_vec(&visible).unwrap(), serde_json::to_vec(&receipt).unwrap(), after);
-            if let Some(previous) = &replay { assert_eq!(&result, previous); } replay = Some(result);
+            let result = (
+                serde_json::to_vec(&visible).unwrap(),
+                serde_json::to_vec(&receipt).unwrap(),
+                after,
+            );
+            if let Some(previous) = &replay {
+                assert_eq!(&result, previous);
+            }
+            replay = Some(result);
         }
     }
 }

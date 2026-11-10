@@ -5068,7 +5068,11 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                         .push(EffectFrame::Program { op: selected, path });
                 }
                 EffectOptionChoicePurpose::Generic => {
-                    crate::eternal_cards_v1::owned_draws_v1::denial::record_answer(state, &continuation, option_index)?;
+                    crate::eternal_cards_v1::owned_draws_v1::denial::record_answer(
+                        state,
+                        &continuation,
+                        option_index,
+                    )?;
                     path.push(option_index);
                     continuation
                         .frames
@@ -20731,10 +20735,17 @@ fn execute_with_native_row_v1(
                 ));
             }
         }
-        EffectOp::Sequence(ops) if crate::eternal_cards_v1::owned_draws_v1::knowledge::recipe(&EffectOp::Sequence(ops.clone())) => {
+        EffectOp::Sequence(ops)
+            if crate::eternal_cards_v1::owned_draws_v1::knowledge::recipe(&EffectOp::Sequence(
+                ops.clone(),
+            )) =>
+        {
             // Actual casts, including native copies, enter the resumable root.
             // A raw recipe/context cannot manufacture the paid draw owner.
-            state.engine.halted = Some((crate::engine::UnsupportedMechanic::InvalidEffectContinuation, ctx.source));
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::Sequence(ops) => {
             for inner in ops {

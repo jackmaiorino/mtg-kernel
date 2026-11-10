@@ -1227,7 +1227,13 @@ pub(crate) fn drive(
             Ok(false)
         }
         E9bOpV1::DenialDrawBoundV1 { queued_at, count } => {
-            crate::eternal_cards_v1::owned_draws_v1::denial::begin_draw(state, continuation, *queued_at, *count, &path)?;
+            crate::eternal_cards_v1::owned_draws_v1::denial::begin_draw(
+                state,
+                continuation,
+                *queued_at,
+                *count,
+                &path,
+            )?;
             Ok(false)
         }
         E9bOpV1::DenialMayDrawV1 { player } => {

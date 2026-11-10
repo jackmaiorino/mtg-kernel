@@ -26898,7 +26898,9 @@ pub(crate) fn gain_control_of_spell_v1(
             contract.controller = player;
         }
         state.objects.get_mut(spell).controller = player;
-        if crate::eternal_cards_v1::owned_draws_v1::denial::record_rebind(state, &denial_before).is_err() {
+        if crate::eternal_cards_v1::owned_draws_v1::denial::record_rebind(state, &denial_before)
+            .is_err()
+        {
             state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, spell));
             return None;
         }

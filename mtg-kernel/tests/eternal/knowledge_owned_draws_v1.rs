@@ -228,29 +228,60 @@ fn alter(
 }
 
 fn knowledge(state: &mut GameState, actor: PlayerId) -> ObjectId {
-    cast(state, actor, "Accumulated Knowledge", None, &[ManaColor::U], 1)
+    cast(
+        state,
+        actor,
+        "Accumulated Knowledge",
+        None,
+        &[ManaColor::U],
+        1,
+    )
 }
 #[test]
 fn paid_knowledge_ordinary_both_seats_zero_and_two_graveyards_restore_v5() {
     for actor in [P0, P1] {
         for previous in [0, 2] {
             let mut state = plains();
-            state.active_player = actor; state.priority_player = actor;
+            state.active_player = actor;
+            state.priority_player = actor;
             if previous > 0 {
                 put(&mut state, actor, "Accumulated Knowledge", Zone::Graveyard);
-                put(&mut state, actor.opponent(), "Accumulated Knowledge", Zone::Graveyard);
+                put(
+                    &mut state,
+                    actor.opponent(),
+                    "Accumulated Knowledge",
+                    Zone::Graveyard,
+                );
             }
             let source = knowledge(&mut state, actor);
             assert_eq!(receipt_count(&state, "KnowledgeV1"), 1);
             let mut replay = restored(&state);
             for branch in [&mut state, &mut replay] {
-                mtg_kernel::rl::observe_policy_v5(branch, &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(), actor, 0, 0, 0, 1).unwrap();
+                mtg_kernel::rl::observe_policy_v5(
+                    branch,
+                    &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                    actor,
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .unwrap();
                 settled(branch);
                 assert_eq!(branch.players[actor.index()].hand.len(), 1 + previous);
                 assert_eq!(zone(branch, source), Zone::Graveyard);
                 assert_eq!(receipt_count(branch, "Completed"), 1 + previous);
                 assert_eq!(receipt_count(branch, "Second"), 1);
-                mtg_kernel::rl::observe_policy_v5(branch, &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(), actor, 0, 0, 0, 1).unwrap();
+                mtg_kernel::rl::observe_policy_v5(
+                    branch,
+                    &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                    actor,
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .unwrap();
             }
             assert_eq!(state.state_hash(), replay.state_hash());
         }
@@ -259,18 +290,44 @@ fn paid_knowledge_ordinary_both_seats_zero_and_two_graveyards_restore_v5() {
 #[test]
 fn paid_knowledge_first_dredge_changes_second_count_later_dredge_does_not() {
     for actor in [P0, P1] {
-        let mut state = game(&["Accumulated Knowledge", "Plains", "Plains", "Plains", "Accumulated Knowledge", "Plains", "Plains", "Plains", "Plains", "Plains"]);
-        state.active_player = actor; state.priority_player = actor;
-        put(&mut state, actor.opponent(), "Hullbreacher", Zone::Battlefield);
-        put(&mut state, actor.opponent(), "Accumulated Knowledge", Zone::Graveyard);
+        let mut state = game(&[
+            "Accumulated Knowledge",
+            "Plains",
+            "Plains",
+            "Plains",
+            "Accumulated Knowledge",
+            "Plains",
+            "Plains",
+            "Plains",
+            "Plains",
+            "Plains",
+        ]);
+        state.active_player = actor;
+        state.priority_player = actor;
+        put(
+            &mut state,
+            actor.opponent(),
+            "Hullbreacher",
+            Zone::Battlefield,
+        );
+        put(
+            &mut state,
+            actor.opponent(),
+            "Accumulated Knowledge",
+            Zone::Graveyard,
+        );
         let first = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
         let second = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
         knowledge(&mut state, actor);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(first))));
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(first)))
+        );
         let mut before_first = restored(&state);
         for branch in [&mut state, &mut before_first] {
             act(branch, Action::ChooseEffectTarget(Target::Object(first)));
-            assert!(matches!(settle(branch), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets == [Target::Object(second)]));
+            assert!(
+                matches!(settle(branch), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets == [Target::Object(second)])
+            );
             assert_eq!(receipt_count(branch, "Completed"), 1);
             assert_eq!(receipt_count(branch, "Second"), 1);
         }
@@ -282,7 +339,11 @@ fn paid_knowledge_first_dredge_changes_second_count_later_dredge_does_not() {
             assert_eq!(branch.players[actor.index()].library.len(), 2);
             assert_eq!(branch.players[actor.index()].hand, vec![first, second]);
             assert_eq!(named(branch, actor.opponent(), "Treasure Token").len(), 1);
-            assert_eq!(receipt_count(branch, "Completed"), 3, "one then exactly two, even after the second dredge mills another Knowledge");
+            assert_eq!(
+                receipt_count(branch, "Completed"),
+                3,
+                "one then exactly two, even after the second dredge mills another Knowledge"
+            );
         }
         assert_eq!(state.state_hash(), replay.state_hash());
     }
@@ -290,14 +351,35 @@ fn paid_knowledge_first_dredge_changes_second_count_later_dredge_does_not() {
 #[test]
 fn paid_knowledge_riddler_expands_each_instruction_once_with_dredge_and_hull() {
     for actor in [P0, P1] {
-        let mut state = game(&["Accumulated Knowledge", "Plains", "Plains", "Plains", "Plains", "Plains"]);
-        state.active_player = actor; state.priority_player = actor;
-        put(&mut state, actor.opponent(), "Hullbreacher", Zone::Battlefield);
+        let mut state = game(&[
+            "Accumulated Knowledge",
+            "Plains",
+            "Plains",
+            "Plains",
+            "Plains",
+            "Plains",
+        ]);
+        state.active_player = actor;
+        state.priority_player = actor;
+        put(
+            &mut state,
+            actor.opponent(),
+            "Hullbreacher",
+            Zone::Battlefield,
+        );
         put(&mut state, actor, "Quantum Riddler", Zone::Battlefield);
-        put(&mut state, actor.opponent(), "Accumulated Knowledge", Zone::Graveyard);
+        put(
+            &mut state,
+            actor.opponent(),
+            "Accumulated Knowledge",
+            Zone::Graveyard,
+        );
         let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
         knowledge(&mut state, actor);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { .. })));
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
         let mut replay = restored(&state);
         for branch in [&mut state, &mut replay] {
             act(branch, Action::ChooseEffectTarget(Target::Object(thug)));
@@ -316,29 +398,57 @@ fn paid_knowledge_jace_hull_no_dredge_stops_in_either_instruction() {
         for win_at in [None, Some(0), Some(2)] {
             let mut state = game(&[]);
             let jace = cast_jace(&mut state, actor);
-            put(&mut state, actor.opponent(), "Hullbreacher", Zone::Battlefield);
+            put(
+                &mut state,
+                actor.opponent(),
+                "Hullbreacher",
+                Zone::Battlefield,
+            );
             put(&mut state, actor, "Quantum Riddler", Zone::Battlefield);
             put(&mut state, actor, "Accumulated Knowledge", Zone::Graveyard);
-            put(&mut state, actor.opponent(), "Accumulated Knowledge", Zone::Graveyard);
+            put(
+                &mut state,
+                actor.opponent(),
+                "Accumulated Knowledge",
+                Zone::Graveyard,
+            );
             knowledge(&mut state, actor);
-            assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { .. })));
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { .. })
+            ));
             let mut replay = restored(&state);
             for branch in [&mut state, &mut replay] {
                 for ordinal in 0..5 {
-                    assert!(matches!(next(branch), Decision::ChooseEffectTargets { player, legal_targets, .. } if player == actor && legal_targets == [Target::Object(jace)]));
+                    assert!(
+                        matches!(next(branch), Decision::ChooseEffectTargets { player, legal_targets, .. } if player == actor && legal_targets == [Target::Object(jace)])
+                    );
                     *branch = restored(branch);
                     if win_at == Some(ordinal) {
                         act(branch, Action::ChooseEffectTarget(Target::Object(jace)));
-                        assert!(matches!(next(branch), Decision::GameOver { winner: Some(winner) } if winner == actor));
+                        assert!(
+                            matches!(next(branch), Decision::GameOver { winner: Some(winner) } if winner == actor)
+                        );
                         assert_eq!(receipt_count(branch, "Completed"), ordinal + 1);
                         assert_eq!(receipt_count(branch, "Second"), usize::from(ordinal > 0));
                         break;
                     }
                     act(branch, Action::FinishEffectSelection);
-                    if ordinal < 4 { assert!(matches!(settle(branch), Some(Decision::ChooseEffectTargets { .. }))); }
+                    if ordinal < 4 {
+                        assert!(matches!(
+                            settle(branch),
+                            Some(Decision::ChooseEffectTargets { .. })
+                        ));
+                    }
                 }
-                if win_at.is_none() { settled(branch); assert_eq!(receipt_count(branch, "Completed"), 5); }
-                assert_eq!(named(branch, actor.opponent(), "Treasure Token").len(), win_at.unwrap_or(5));
+                if win_at.is_none() {
+                    settled(branch);
+                    assert_eq!(receipt_count(branch, "Completed"), 5);
+                }
+                assert_eq!(
+                    named(branch, actor.opponent(), "Treasure Token").len(),
+                    win_at.unwrap_or(5)
+                );
             }
             assert_eq!(state.state_hash(), replay.state_hash());
         }
@@ -349,39 +459,95 @@ fn paid_knowledge_restore_refuses_source_phase_count_and_raw_borrowing() {
     use mtg_kernel::effect;
     for actor in [P0, P1] {
         let mut state = plains();
-        state.active_player = actor; state.priority_player = actor;
+        state.active_player = actor;
+        state.priority_player = actor;
         let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
-        put(&mut state, actor.opponent(), "Accumulated Knowledge", Zone::Graveyard);
+        put(
+            &mut state,
+            actor.opponent(),
+            "Accumulated Knowledge",
+            Zone::Graveyard,
+        );
         knowledge(&mut state, actor);
         let mut live = state.clone();
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { .. })));
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
         let original = state.engine.pending_effect.clone().unwrap();
-        assert!(mtg_kernel::rl::observe_policy_v5(&state, &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(), actor, 0, 0, 0, 1).unwrap_err().to_string().contains("Knowledge"));
+        assert!(mtg_kernel::rl::observe_policy_v5(
+            &state,
+            &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+            actor,
+            0,
+            0,
+            0,
+            1
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("Knowledge"));
         let root = mtg_kernel::eternal_premodern_p1b_v1::accumulated_knowledge();
-        assert!(effect::begin_resumable_resolution(&root, &original.ctx, original.resolving_item.clone(), &mut live).is_err());
+        assert!(effect::begin_resumable_resolution(
+            &root,
+            &original.ctx,
+            original.resolving_item.clone(),
+            &mut live
+        )
+        .is_err());
         assert_eq!(receipt_count(&live, "Started"), 0);
-        let mut raw = state.clone(); raw.engine.pending_effect = None;
+        let mut raw = state.clone();
+        raw.engine.pending_effect = None;
         effect::execute(&root, &original.ctx, &mut raw);
         assert!(raw.engine.halted.is_some());
         for mutation in 0..5 {
-            let mut forged = state.clone(); let pending = forged.engine.pending_effect.as_mut().unwrap();
+            let mut forged = state.clone();
+            let pending = forged.engine.pending_effect.as_mut().unwrap();
             match mutation {
                 0 => pending.frames.clear(),
                 1 => pending.ctx.controller = actor.opponent(),
                 2 => pending.ctx.stack_item_id = None,
-                3 => pending.resolving_item.v4.source_contract.as_mut().unwrap().zone_change_count += 1,
+                3 => {
+                    pending
+                        .resolving_item
+                        .v4
+                        .source_contract
+                        .as_mut()
+                        .unwrap()
+                        .zone_change_count += 1
+                }
                 _ => pending.resolving_item.is_copy = true,
             }
-            assert!(effect::validate_pending_effect_choice(&forged).is_err(), "mutation {mutation}");
+            assert!(
+                effect::validate_pending_effect_choice(&forged).is_err(),
+                "mutation {mutation}"
+            );
         }
         // Decline dredge once, then restore at the second instruction's real menu.
         act(&mut state, Action::FinishEffectSelection);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets == [Target::Object(thug)]));
-        for (variant, field) in [("Paid", "item"), ("Second", "first_at"), ("Second", "paid_at"), ("Second", "count"), ("Started", "total"), ("Completed", "ordinal")] {
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets == [Target::Object(thug)])
+        );
+        for (variant, field) in [
+            ("Paid", "item"),
+            ("Second", "first_at"),
+            ("Second", "paid_at"),
+            ("Second", "count"),
+            ("Started", "total"),
+            ("Completed", "ordinal"),
+        ] {
             let mut json = serde_json::to_value(&state).unwrap();
-            assert!(alter(&mut json["engine"]["event_history"], variant, field, 999999.into()));
+            assert!(alter(
+                &mut json["engine"]["event_history"],
+                variant,
+                field,
+                999999.into()
+            ));
             let forged: GameState = serde_json::from_value(json).unwrap();
-            assert!(effect::validate_pending_effect_choice(&forged).is_err(), "{variant}.{field}");
+            assert!(
+                effect::validate_pending_effect_choice(&forged).is_err(),
+                "{variant}.{field}"
+            );
         }
         let mut removed = serde_json::to_value(&state).unwrap();
         removed["eternal_owned_draw_progress_v1"] = serde_json::Value::Null;
@@ -392,24 +558,46 @@ fn paid_knowledge_restore_refuses_source_phase_count_and_raw_borrowing() {
         let forged: GameState = serde_json::from_value(forged).unwrap();
         assert!(effect::validate_pending_effect_choice(&forged).is_err());
         let original = state.engine.pending_effect.clone().unwrap();
-        let mut restart = state.clone(); restart.engine.pending_effect = None;
-        assert!(effect::begin_resumable_resolution(&root, &original.ctx, original.resolving_item.clone(), &mut restart).is_err());
-        act(&mut state, Action::FinishEffectSelection); settled(&mut state);
+        let mut restart = state.clone();
+        restart.engine.pending_effect = None;
+        assert!(effect::begin_resumable_resolution(
+            &root,
+            &original.ctx,
+            original.resolving_item.clone(),
+            &mut restart
+        )
+        .is_err());
+        act(&mut state, Action::FinishEffectSelection);
+        settled(&mut state);
         assert_eq!(receipt_count(&state, "Completed"), 2);
     }
 }
 #[test]
 fn native_chandra_knowledge_copy_keeps_ordinary_predecessor_route() {
     for actor in [P0, P1] {
-        let mut state = plains(); state.active_player = actor; state.priority_player = actor;
-        cast(&mut state, actor, "Chandra, Hope's Beacon", None, &[ManaColor::R, ManaColor::R], 4); settled(&mut state);
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        cast(
+            &mut state,
+            actor,
+            "Chandra, Hope's Beacon",
+            None,
+            &[ManaColor::R, ManaColor::R],
+            4,
+        );
+        settled(&mut state);
         put(&mut state, actor, "Accumulated Knowledge", Zone::Graveyard);
         knowledge(&mut state, actor);
         let mut replay = restored(&state);
         for branch in [&mut state, &mut replay] {
             settled(branch);
             assert_eq!(branch.players[actor.index()].hand.len(), 4);
-            assert_eq!(receipt_count(branch, "Paid"), 1, "only the actual paid original acquires this owner");
+            assert_eq!(
+                receipt_count(branch, "Paid"),
+                1,
+                "only the actual paid original acquires this owner"
+            );
             assert_eq!(receipt_count(branch, "Completed"), 2);
         }
         assert_eq!(state.state_hash(), replay.state_hash());

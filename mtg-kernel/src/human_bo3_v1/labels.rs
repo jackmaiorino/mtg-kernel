@@ -2102,10 +2102,16 @@ fn label_common(
             // Its program is intentionally absent from the public DTO.
             if observation.resolving_trigger_sources.contains(&source)
                 && definition(source)?.object_name == "Arcane Denial"
-                && (definition(source)?.spell_effect)() == Some(crate::eternal_e9b_v1::arcane_denial())
-                && structural_path.is_empty() && *option_count == 3 && *option_index < 3
+                && (definition(source)?.spell_effect)()
+                    == Some(crate::eternal_e9b_v1::arcane_denial())
+                && structural_path.is_empty()
+                && *option_count == 3
+                && *option_index < 3
             {
-                return Ok(format!("For {}, draw {option_index} cards", handles.name(source)?));
+                return Ok(format!(
+                    "For {}, draw {option_index} cards",
+                    handles.name(source)?
+                ));
             }
             let EffectOp::Choice { options, .. } =
                 pending_program(source, structural_path, observation)?

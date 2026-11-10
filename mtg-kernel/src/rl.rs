@@ -13927,7 +13927,10 @@ fn owned_draw_pending_source_ref(
     pending: &crate::trigger::PendingTrigger,
 ) -> Result<Option<CardStableRefV1>> {
     use crate::eternal_cards_v1::owned_draws_v1::{denial, portent, standstill};
-    if portent::bound(&pending.effect).is_none() && standstill::bound(&pending.effect).is_none() && denial::bound(&pending.effect).is_none() {
+    if portent::bound(&pending.effect).is_none()
+        && standstill::bound(&pending.effect).is_none()
+        && denial::bound(&pending.effect).is_none()
+    {
         return Ok(None);
     }
     crate::engine::validate_pending_trigger_identity(state, pending).map_err(RlContractError)?;
@@ -13963,7 +13966,14 @@ fn owned_draw_pending_source_ref(
         )
     } else if denial::bound(&pending.effect).is_some() {
         let source = denial::pending_source(state, &pending.effect).map_err(RlContractError)?;
-        (source.source, source.card_def, source.owner, source.controller, source.zone, source.zone_change_count)
+        (
+            source.source,
+            source.card_def,
+            source.owner,
+            source.controller,
+            source.zone,
+            source.zone_change_count,
+        )
     } else {
         let source = standstill::pending_source(state, &pending.effect).map_err(RlContractError)?;
         (

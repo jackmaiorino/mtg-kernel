@@ -23,8 +23,8 @@ use crate::state::{
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod bonder;
-pub(crate) mod echo;
 pub(crate) mod denial;
+pub(crate) mod echo;
 pub(crate) mod fixed;
 pub(crate) mod knowledge;
 pub(crate) mod portent;
@@ -83,8 +83,15 @@ enum InstructionV1 {
         triggered_at: usize,
         drawer: PlayerId,
     },
-    Knowledge { paid_at: usize, second_at: Option<usize> },
-    Denial { begun_at: usize, drawer: PlayerId, count: u8 },
+    Knowledge {
+        paid_at: usize,
+        second_at: Option<usize>,
+    },
+    Denial {
+        begun_at: usize,
+        drawer: PlayerId,
+        count: u8,
+    },
 }
 
 impl InstructionV1 {
@@ -836,8 +843,17 @@ pub(crate) fn complete(
         state.eternal_owned_draw_progress_v1 = None;
         if !terminal {
             match started.instruction {
-                InstructionV1::Knowledge { paid_at, second_at: None } => {
-                    knowledge::finish_first(state, pending, paid_at, progress.started_at, started.source)?;
+                InstructionV1::Knowledge {
+                    paid_at,
+                    second_at: None,
+                } => {
+                    knowledge::finish_first(
+                        state,
+                        pending,
+                        paid_at,
+                        progress.started_at,
+                        started.source,
+                    )?;
                 }
                 InstructionV1::Bonder {
                     resolution_at,
