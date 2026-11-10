@@ -417,6 +417,17 @@ fn progress(state: &GameState, pending: &EffectContinuation) -> Option<(Progress
         .then_some((progress, started))
 }
 
+pub(crate) fn completion_matches(
+    state: &GameState,
+    pending: &EffectContinuation,
+    ordinal: u32,
+    path: &[u16],
+) -> bool {
+    progress(state, pending).is_some_and(|(progress, started)| {
+        ordinal == progress.completed && path == started.instruction.completion_path()
+    })
+}
+
 pub(crate) fn complete(
     state: &mut GameState,
     pending: &mut EffectContinuation,
