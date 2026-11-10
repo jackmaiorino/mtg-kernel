@@ -713,6 +713,16 @@ pub enum InitiativeTriggerKindV1 {
     VentureAfterTaking,
     VentureAtUpkeep,
     UndercityRoom(UndercityRoomV1),
+    UndercityRoomBoundV1 { room: UndercityRoomV1, entered_at: usize },
+}
+
+impl InitiativeTriggerKindV1 {
+    pub(crate) fn undercity_room(self) -> Option<UndercityRoomV1> {
+        match self {
+            Self::UndercityRoom(room) | Self::UndercityRoomBoundV1 { room, .. } => Some(room),
+            _ => None,
+        }
+    }
 }
 
 /// Self-indexed provenance for one global Initiative or Undercity trigger.

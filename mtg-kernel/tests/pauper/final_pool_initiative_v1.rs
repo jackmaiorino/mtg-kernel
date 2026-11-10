@@ -98,7 +98,11 @@ fn advance_to_initiative_stack(
     for _ in 0..48 {
         let decision = engine::advance_until_decision(state);
         if let Some(binding) = stack_binding(state) {
-            if binding.kind == expected {
+            if binding.kind == expected || matches!(
+                (binding.kind, expected),
+                (InitiativeTriggerKindV1::UndercityRoomBoundV1 { room, .. },
+                 InitiativeTriggerKindV1::UndercityRoom(expected)) if room == expected
+            ) {
                 return binding;
             }
         }
@@ -190,7 +194,8 @@ fn latest_room_event(state: &GameState) -> Option<UndercityRoomV1> {
         .rev()
         .find_map(|event| match event {
             CommittedEvent::InitiativeTrigger { binding } => match binding.kind {
-                InitiativeTriggerKindV1::UndercityRoom(room) => Some(room),
+                InitiativeTriggerKindV1::UndercityRoom(room)
+                | InitiativeTriggerKindV1::UndercityRoomBoundV1 { room, .. } => Some(room),
                 _ => None,
             },
             _ => None,
@@ -245,10 +250,16 @@ fn avenging_hunter_definition_and_etb_make_separate_venture_and_room_stack_items
 
     resolve_top_until_choice(&mut state);
     let room = stack_binding(&state).expect("venture queues room ability separately");
-    assert_eq!(
-        room.kind,
-        InitiativeTriggerKindV1::UndercityRoom(UndercityRoomV1::SecretEntrance)
-    );
+    if cfg!(feature = "eternal-fixtures") {
+        assert!(matches!(room.kind, InitiativeTriggerKindV1::UndercityRoomBoundV1 {
+            room: UndercityRoomV1::SecretEntrance, ..
+        }));
+    } else {
+        assert_eq!(
+            room.kind,
+            InitiativeTriggerKindV1::UndercityRoom(UndercityRoomV1::SecretEntrance)
+        );
+    }
     assert_eq!(
         state.players[0].dungeon.room_id,
         Some(UndercityRoomV1::SecretEntrance.stable_id())

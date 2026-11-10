@@ -596,12 +596,13 @@ New, each built once in the first wave that needs it:
   the old dungeon before starting a new one, even while an old room waits.
   Restored snapshots that already marked completion keep their recorded result.
   Taking or keeping the initiative advances an active Forgotten Realms
-  dungeon. Acererak's ordinary venture still cannot advance an active
-  Undercity above its bottom room.
-  New Forgotten Realms room triggers use the dungeon's characteristics for
-  targeting. Painter's Servant can color the active dungeon. A room that
-  outlasts its dungeon uses the colors recorded when that dungeon left.
-  Undercity's older source adapter still needs the corresponding color proof.
+  dungeon. Acererak advances an active Undercity. Their next-dungeon menus
+  still follow the source's native venture instruction.
+  New Eternal room triggers use the dungeon's characteristics for targeting.
+  Painter's Servant can color the active dungeon. A room that outlasts its
+  dungeon uses the colors recorded at removal. New bound Undercity rooms
+  require a successor to the frozen observation profiles.
+  Serra's Emissary's existing type choices still omit Dungeon.
   Remaining specialized draws include the two drawing dungeon rooms. Generated
   draws from Bonder's Ornament, the Premodern draw leaves, Standstill, Arcane
   Denial and Accumulated Knowledge still need their Jace/Hullbreacher origins.

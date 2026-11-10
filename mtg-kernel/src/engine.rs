@@ -3714,18 +3714,18 @@ fn triggered_ability_targeting_source(
             original_source_incarnation_only: false,
         });
     }
-    if matches!(effect, EffectOp::ResolveInitiativeTrigger { .. }) {
+    let bound_room = crate::eternal_cards_v1::e3::dungeons::occurrences::is_bound(effect);
+    if matches!(effect, EffectOp::ResolveInitiativeTrigger { .. }) && !bound_room {
         return None;
     }
     let other_than = match effect {
         EffectOp::PutPlusOnePlusOneCounterOnTargetOtherThan { other_than } => Some(*other_than),
         _ => None,
     };
-    let dungeon_colors = crate::eternal_cards_v1::e3::dungeons::occurrences::is_bound(effect)
-        .then(|| {
-            crate::eternal_cards_v1::e3::dungeons::occurrences::source_colors(state, effect)
-                .map_err(|_| ())
-        });
+    let dungeon_colors = bound_room.then(|| {
+        crate::eternal_cards_v1::e3::dungeons::occurrences::source_colors(state, effect)
+            .map_err(|_| ())
+    });
     source_contract.map(|contract| TargetingSource {
         dungeon_colors,
         types_override: None,

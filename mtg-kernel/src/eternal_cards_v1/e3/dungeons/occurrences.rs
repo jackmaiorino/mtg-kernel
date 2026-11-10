@@ -1,6 +1,6 @@
 //! Native venture and publication identity for Forgotten Realms room abilities.
 
-use super::{leads_to, room_of, room_target_spec, DUNGEONS};
+use super::{leads_to, room_of, room_target_spec, ACERERAK};
 use crate::card_def::TargetSpec;
 use crate::effect::{EffectContinuation, EffectOp};
 use crate::eternal_cards_v1::owned_draws_v1::{record, JournalV1};
@@ -11,7 +11,7 @@ use crate::ids::{PlayerId, StackItemId};
 use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{
     AbilitySourceContractV4, GameState, InitiativeTriggerBindingV1, InitiativeTriggerKindV1,
-    StackItem, StackItemKind, UndercityRoomV1, UNDERCITY_DUNGEON_ID_V1,
+    StackItem, StackItemKind, UndercityRoomV1, Zone, UNDERCITY_DUNGEON_ID_V1,
 };
 use crate::trigger::PendingTrigger;
 
@@ -48,7 +48,23 @@ fn entry_at(state: &GameState, at: usize) -> Option<RoomEntryV1> {
     let RoomJournalV1::Entered(entry) = journal(state.engine.event_history.get(at)?)? else {
         return None;
     };
-    (entry.entered_at == at && DUNGEONS.contains(&entry.dungeon)).then_some(entry)
+    (entry.entered_at == at && supported_room(entry.dungeon, entry.room)).then_some(entry)
+}
+
+fn supported_room(dungeon: u16, room: u16) -> bool {
+    if dungeon == UNDERCITY_DUNGEON_ID_V1 {
+        UndercityRoomV1::from_stable_id(room).is_some()
+    } else {
+        leads_to(dungeon, room).is_some()
+    }
+}
+
+fn bottom_room(dungeon: u16, room: u16) -> bool {
+    if dungeon == UNDERCITY_DUNGEON_ID_V1 {
+        room == UndercityRoomV1::ThroneOfTheDeadThree.stable_id()
+    } else {
+        leads_to(dungeon, room).is_some_and(<[u16]>::is_empty)
+    }
 }
 
 fn active_entry(state: &GameState, player: PlayerId) -> Option<RoomEntryV1> {
@@ -80,39 +96,129 @@ pub(super) fn entered(
     let entered_at = state.engine.event_history.len();
     let occurrence = active_entry(state, player).map_or(entered_at, |entry| entry.occurrence);
     let entry = RoomEntryV1 { player, source, dungeon, room, entered_at, occurrence };
-    if source.controller != player || !DUNGEONS.contains(&dungeon) {
+    if source.controller != player || !supported_room(dungeon, room) {
         return Err("venture room lost its native controller or dungeon".into());
     }
     record(state, JournalV1::DungeonRoomV1(RoomJournalV1::Entered(entry)));
     Ok(entered_at)
 }
 
+pub(crate) fn enter_undercity(
+    state: &mut GameState,
+    player: PlayerId,
+    source: AbilitySourceContractV4,
+    room: UndercityRoomV1,
+) -> Result<(), String> {
+    if cfg!(feature = "eternal-fixtures") {
+        let next_index = state.engine.event_history.len().checked_add(1)
+            .and_then(|at| u32::try_from(at).ok())
+            .ok_or("Undercity room history exceeds u32")?;
+        if source.zone != Zone::Battlefield
+            || source.attached_to.is_some()
+            || crate::card_def::CARD_DEFS.get(usize::from(source.card_def)).is_none_or(|def| {
+                !def.is_executable()
+                    || !(def.name == ACERERAK || crate::eternal_vintage_v1::initiative_granter(def.name))
+            })
+        {
+            return Err("Undercity room lost its actual venture source".into());
+        }
+        let entered_at = entered(state, player, source, UNDERCITY_DUNGEON_ID_V1, room.stable_id())?;
+        let event = CommittedEvent::InitiativeTrigger {
+            binding: InitiativeTriggerBindingV1 {
+                history_index: next_index,
+                player,
+                source,
+                kind: InitiativeTriggerKindV1::UndercityRoomBoundV1 { room, entered_at },
+            },
+        };
+        state.engine.event_log.push(event.clone());
+        state.engine.event_history.push(event);
+    } else {
+        crate::event::log_initiative_trigger(state, player, source, InitiativeTriggerKindV1::UndercityRoom(room))?;
+    }
+    let marker = &mut state.players[player.index()].dungeon;
+    marker.dungeon_id = Some(UNDERCITY_DUNGEON_ID_V1);
+    marker.room_id = Some(room.stable_id());
+    Ok(())
+}
+
+pub(crate) fn bound_undercity_entry(
+    state: &GameState,
+    binding: InitiativeTriggerBindingV1,
+) -> Option<RoomEntryV1> {
+    let InitiativeTriggerKindV1::UndercityRoomBoundV1 { entered_at, .. } = binding.kind else {
+        return None;
+    };
+    let entry = entry_at(state, entered_at)?;
+    (undercity_entry_marker(state, entry) == Some(binding) && instance_matches(state, entry))
+        .then_some(entry)
+}
+
+fn undercity_entry_marker(
+    state: &GameState,
+    entry: RoomEntryV1,
+) -> Option<InitiativeTriggerBindingV1> {
+    if !cfg!(feature = "eternal-fixtures") || entry.dungeon != UNDERCITY_DUNGEON_ID_V1 {
+        return None;
+    }
+    let room = UndercityRoomV1::from_stable_id(entry.room)?;
+    let at = entry.entered_at.checked_add(1)?;
+    let CommittedEvent::InitiativeTrigger { binding } = state.engine.event_history.get(at)? else {
+        return None;
+    };
+    let expected = InitiativeTriggerBindingV1 {
+        history_index: u32::try_from(at).ok()?,
+        player: entry.player,
+        source: entry.source,
+        kind: InitiativeTriggerKindV1::UndercityRoomBoundV1 { room, entered_at: entry.entered_at },
+    };
+    (*binding == expected).then_some(expected)
+}
+
+fn instance_matches(state: &GameState, entry: RoomEntryV1) -> bool {
+    entry_at(state, entry.occurrence).is_some_and(|first| {
+        first.occurrence == entry.occurrence
+            && first.entered_at <= entry.entered_at
+            && first.player == entry.player
+            && first.dungeon == entry.dungeon
+            && (first.dungeon != UNDERCITY_DUNGEON_ID_V1 || undercity_entry_marker(state, first).is_some())
+    })
+}
+
 fn bound_entry(state: &GameState, op: &EffectOp) -> Option<RoomEntryV1> {
+    if let EffectOp::ResolveInitiativeTrigger { binding } = op {
+        return bound_undercity_entry(state, *binding);
+    }
     let EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::RoomBoundV1 {
         entered_at, dungeon, room,
     })) = op else {
         return None;
     };
     let entry = entry_at(state, *entered_at)?;
-    let first = entry_at(state, entry.occurrence)?;
     (entry.dungeon == *dungeon
+        && entry.dungeon != UNDERCITY_DUNGEON_ID_V1
         && entry.room == *room
-        && first.occurrence == entry.occurrence
-        && first.entered_at <= entry.entered_at
-        && first.player == entry.player
-        && first.dungeon == entry.dungeon)
+        && instance_matches(state, entry))
         .then_some(entry)
 }
 
 pub(crate) fn is_bound(op: &EffectOp) -> bool {
-    matches!(op, EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::RoomBoundV1 { .. })))
+    matches!(op,
+        EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::RoomBoundV1 { .. }))
+            | EffectOp::ResolveInitiativeTrigger { binding: InitiativeTriggerBindingV1 {
+                kind: InitiativeTriggerKindV1::UndercityRoomBoundV1 { .. }, ..
+            }}
+    )
 }
 
 /// The room belongs to the dungeon. The venturing card is only provenance.
 pub(crate) fn source_colors(state: &GameState, effect: &EffectOp) -> Result<u8, &'static str> {
     let entry = bound_entry(state, effect).ok_or("room source lost its native entry")?;
-    let active = active_entry(state, entry.player)
-        .is_some_and(|active| active.occurrence == entry.occurrence);
+    let active = active_entry(state, entry.player).is_some_and(|active| {
+        active.occurrence == entry.occurrence
+            && (active.dungeon != UNDERCITY_DUNGEON_ID_V1
+                || undercity_entry_marker(state, active).is_some())
+    });
     let start = entry.entered_at + 1;
     let mut departures = state.engine.event_history[start..]
         .iter()
@@ -137,7 +243,8 @@ pub(crate) fn source_colors(state: &GameState, effect: &EffectOp) -> Result<u8, 
         || !entry_at(state, last_room).is_some_and(|last| {
             last.occurrence == entry.occurrence && last.player == entry.player
                 && last.dungeon == entry.dungeon
-                && leads_to(last.dungeon, last.room).is_some_and(<[u16]>::is_empty)
+                && bottom_room(last.dungeon, last.room)
+                && (last.dungeon != UNDERCITY_DUNGEON_ID_V1 || undercity_entry_marker(state, last).is_some())
         })
     {
         return Err("room source has malformed dungeon removal");
@@ -199,10 +306,17 @@ pub(super) fn retained_room_entry(
         })
 }
 
+fn legacy_room_of(effect: &EffectOp) -> Option<(u16, u16)> {
+    if let EffectOp::ResolveInitiativeTrigger { binding } = effect {
+        return binding.kind.undercity_room().map(|room| (UNDERCITY_DUNGEON_ID_V1, room.stable_id()));
+    }
+    room_of(effect)
+}
+
 pub(crate) fn validate_pending(state: &GameState, pending: &PendingTrigger) -> Result<(), String> {
     if !is_bound(&pending.effect) {
         if let (Some((dungeon, room)), Some(source)) =
-            (room_of(&pending.effect), pending.source_contract)
+            (legacy_room_of(&pending.effect), pending.source_contract)
         {
             if retained_room_entry(state, pending.controller, source, dungeon, room).is_some() {
                 return Err("native room entry cannot use the legacy trigger".into());
@@ -285,7 +399,7 @@ pub(crate) fn validate_resolving(
 
 enum BottommostV1 {
     ForgottenRealms { entry: RoomEntryV1, includes_legacy_rooms: bool },
-    Undercity { player: PlayerId, first: u32, bottom: u32 },
+    Undercity { player: PlayerId, first: u32, bottom: u32, entry: Option<RoomEntryV1> },
 }
 
 fn undercity_bottommost(state: &GameState, player: PlayerId) -> Option<BottommostV1> {
@@ -298,33 +412,34 @@ fn undercity_bottommost(state: &GameState, player: PlayerId) -> Option<Bottommos
             CommittedEvent::InitiativeTrigger { binding }
                 if binding.player == player && usize::try_from(binding.history_index).ok() == Some(at) =>
             {
-                match binding.kind {
-                    InitiativeTriggerKindV1::UndercityRoom(room) => Some((binding.history_index, room)),
-                    _ => None,
-                }
+                binding.kind.undercity_room().map(|room| (*binding, room))
             }
             _ => None,
         });
-    let (bottom, room) = rooms.next()?;
+    let (binding, room) = rooms.next()?;
     if room != UndercityRoomV1::ThroneOfTheDeadThree {
         return None;
     }
-    let first = rooms.find_map(|(at, room)| (room == UndercityRoomV1::SecretEntrance).then_some(at));
-    Some(BottommostV1::Undercity { player, first: first.unwrap_or(bottom), bottom })
+    let entry = if matches!(binding.kind, InitiativeTriggerKindV1::UndercityRoomBoundV1 { .. }) {
+        Some(bound_undercity_entry(state, binding)?)
+    } else {
+        None
+    };
+    let bottom = binding.history_index;
+    let first = rooms.find_map(|(binding, room)| {
+        (room == UndercityRoomV1::SecretEntrance).then_some(binding.history_index)
+    }).unwrap_or(bottom);
+    Some(BottommostV1::Undercity { player, first, bottom, entry })
 }
 
 fn bottommost(state: &GameState, player: PlayerId) -> Option<BottommostV1> {
     let marker = &state.players[player.index()].dungeon;
     let (dungeon, room) = (marker.dungeon_id?, marker.room_id?);
-    if dungeon == UNDERCITY_DUNGEON_ID_V1 {
-        return if room == UndercityRoomV1::ThroneOfTheDeadThree.stable_id() {
-            undercity_bottommost(state, player)
-        } else {
-            None
-        };
-    }
-    if !leads_to(dungeon, room).is_some_and(<[u16]>::is_empty) {
+    if !bottom_room(dungeon, room) {
         return None;
+    }
+    if dungeon == UNDERCITY_DUNGEON_ID_V1 {
+        return undercity_bottommost(state, player);
     }
     let entry = active_entry(state, player)?;
     let first = entry_at(state, entry.occurrence)?;
@@ -336,7 +451,11 @@ fn bottommost(state: &GameState, player: PlayerId) -> Option<BottommostV1> {
 
 fn remove(state: &mut GameState, player: PlayerId, bottom: BottommostV1) {
     let dungeon = bottom.dungeon();
-    if let BottommostV1::ForgottenRealms { entry, .. } = bottom {
+    let entry = match bottom {
+        BottommostV1::ForgottenRealms { entry, .. } => Some(entry),
+        BottommostV1::Undercity { entry, .. } => entry,
+    };
+    if let Some(entry) = entry {
         let colors = crate::eternal_legacy_e9a_v1::statics::painter_mask(state);
         record(state, JournalV1::DungeonRoomV1(RoomJournalV1::Removed {
             last_room: entry.entered_at,
@@ -361,15 +480,23 @@ impl BottommostV1 {
     }
 
     fn waits_for_initiative(&self, state: &GameState, binding: InitiativeTriggerBindingV1) -> bool {
-        let Self::Undercity { player, first, bottom } = self else {
+        let Self::Undercity { player, first, bottom, entry } = self else {
             return false;
         };
-        binding.player == *player
-            && (*first..=*bottom).contains(&binding.history_index)
-            && matches!(binding.kind, InitiativeTriggerKindV1::UndercityRoom(_))
-            && usize::try_from(binding.history_index).ok().is_some_and(|at| {
-                state.engine.event_history.get(at) == Some(&CommittedEvent::InitiativeTrigger { binding })
-            })
+        if binding.player != *player || binding.history_index > *bottom {
+            return false;
+        }
+        match binding.kind {
+            InitiativeTriggerKindV1::UndercityRoomBoundV1 { .. } => entry.is_some_and(|active| {
+                bound_undercity_entry(state, binding)
+                    .is_some_and(|room| room.occurrence == active.occurrence)
+            }),
+            InitiativeTriggerKindV1::UndercityRoom(_) => binding.history_index >= *first
+                && usize::try_from(binding.history_index).ok().is_some_and(|at| {
+                    state.engine.event_history.get(at) == Some(&CommittedEvent::InitiativeTrigger { binding })
+                }),
+            _ => false,
+        }
     }
 
     fn waits_for(
@@ -443,6 +570,27 @@ pub(crate) fn complete_bottommost(state: &mut GameState, player: PlayerId) {
     if let Some(bottom) = bottommost(state, player) {
         remove(state, player, bottom);
     }
+}
+
+/// The legacy observation profiles cannot represent the bound room source.
+pub(crate) fn undercity_requires_successor(state: &GameState) -> bool {
+    let bound = |effect: &EffectOp| matches!(
+        effect,
+        EffectOp::ResolveInitiativeTrigger { binding: InitiativeTriggerBindingV1 {
+            kind: InitiativeTriggerKindV1::UndercityRoomBoundV1 { .. }, ..
+        }}
+    );
+    state.stack.iter().any(|item| item.inline_effect.as_ref().is_some_and(bound))
+        || state.engine.pending_triggers.iter().any(|trigger| bound(&trigger.effect))
+        || state.engine.pending_effect.as_ref().is_some_and(|pending| {
+            pending.resolving_item.inline_effect.as_ref().is_some_and(bound)
+        })
+        || state.engine.event_log.iter().any(|event| matches!(
+            event,
+            CommittedEvent::InitiativeTrigger { binding: InitiativeTriggerBindingV1 {
+                kind: InitiativeTriggerKindV1::UndercityRoomBoundV1 { .. }, ..
+            }}
+        ))
 }
 
 /// 704.5t. Protect triggered rooms before placement as well as published rooms

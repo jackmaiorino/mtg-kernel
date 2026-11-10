@@ -916,6 +916,14 @@ fn export_versioned(
     let opp = v.opponent();
     let mutant = options.mutant;
     let is = |m: MutantV1| mutant == Some(m);
+    if cfg!(feature = "eternal-fixtures")
+        && crate::eternal_cards_v1::e3::dungeons::occurrences::undercity_requires_successor(state)
+    {
+        return Err(refuse(
+            RefusalCodeV1::R3,
+            "Bound Undercity rooms are unavailable in this infoset export",
+        ));
+    }
     if crate::eternal_opening_v1::requires_successor(state) {
         return Err(refuse(
             RefusalCodeV1::R3,
