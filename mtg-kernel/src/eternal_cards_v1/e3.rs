@@ -570,18 +570,19 @@ pub(crate) fn validate_selection(
         crate::eternal_legacy_e8a_v1::validate_vial_hand_choice(state, pending, choice, *paid_at)?;
         if min != 0
             || selected.len() > 1
-            || !legal.iter().map(|candidate| candidate.target).eq(
-                choice.candidates.iter().copied().filter(|target| {
-                    !selected.iter().any(|candidate| candidate.target == *target)
-                }),
-            )
+            || !legal.iter().map(|candidate| candidate.target).eq(choice
+                .candidates
+                .iter()
+                .copied()
+                .filter(|target| !selected.iter().any(|candidate| candidate.target == *target)))
         {
             return Err("Aether Vial hand prompt changed its original menu order".into());
         }
     }
-    if matches!(&choice.kind, E3ChoiceKindV1::E8aV1(
-        crate::eternal_legacy_e8a_v1::E8aChoiceV1::HandToBattlefieldV1
-    )) {
+    if matches!(
+        &choice.kind,
+        E3ChoiceKindV1::E8aV1(crate::eternal_legacy_e8a_v1::E8aChoiceV1::HandToBattlefieldV1)
+    ) {
         crate::eternal_legacy_e8a_v1::validate_legacy_hand_choice(state, pending)?;
     }
     let mut offered = selected

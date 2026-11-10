@@ -492,9 +492,9 @@ New, each built once in the first wave that needs it:
   and entry window. The native runner authenticates its original graveyard
   target during execution. Under the public native Eternal opening profile,
   Aether Vial with four charge counters uses the same prospective copy owner.
-  The native replay retains the actual paid tap, the original live or
-  last-known charge count at resolution, and the controller's private hand
-  choice. Its supported face-up donors are Mage, Wall of Blossoms and the
+  The native replay binds the actual paid tap, reads the original live or
+  last-known charge count at resolution, and authenticates the controller's
+  private hand choice. Its supported face-up donors are Mage, Wall of Blossoms and the
   printed Aether Vial. A Vial copy enters with zero counters. Frozen viewers
   refuse the native profile from setup, independently of the hand or its
   choice. Other noncast copy-entry producers remain outside this path.

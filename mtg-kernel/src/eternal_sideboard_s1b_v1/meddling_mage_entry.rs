@@ -168,7 +168,8 @@ impl NoncastCopyChoiceV1 {
         controller: PlayerId,
         vial: bool,
     ) -> Result<Vec<AbilitySourceContractV4>, String> {
-        if crate::eternal_legacy_e7a_v1::active_dress_down_timestamp(state, Some(object)).is_some() {
+        if crate::eternal_legacy_e7a_v1::active_dress_down_timestamp(state, Some(object)).is_some()
+        {
             return Ok(Vec::new());
         }
         let mut candidates = Vec::new();
@@ -318,7 +319,13 @@ impl MetamorphCopyV1 {
             && entrant.source == self.physical.source
             && entrant.card_def == self.copied.card_def
             && entrant.zone == Zone::Battlefield
-            && entrant.controller == self.vial.map(|vial| vial.source).or(self.reanimated_by).unwrap_or(self.physical).controller
+            && entrant.controller
+                == self
+                    .vial
+                    .map(|vial| vial.source)
+                    .or(self.reanimated_by)
+                    .unwrap_or(self.physical)
+                    .controller
             && entrant.owner == self.physical.owner
             && self.physical.zone_change_count.checked_add(1) == Some(entrant.zone_change_count)
     }
@@ -657,10 +664,15 @@ fn copy_entry_matches(
     let anchor = match (copy.cast_at, copy.vial) {
         (Some(cast_at), None)
             if copy.cast_matches(state)
-                && reanimate_resolution_matches(state, copy, entry, archived) => cast_at,
+                && reanimate_resolution_matches(state, copy, entry, archived) =>
+        {
+            cast_at
+        }
         (None, Some(vial))
-            if copy.reanimated_by.is_none()
-                && vial::entry_origin_matches(state, copy, vial) => vial.chosen_at,
+            if copy.reanimated_by.is_none() && vial::entry_origin_matches(state, copy, vial) =>
+        {
+            vial.chosen_at
+        }
         _ => return false,
     };
     anchor < entry
@@ -972,7 +984,9 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
             } => {
                 if entry_history_index.checked_add(1) != Some(index as usize)
                     || !copy_entry_matches(state, *copy, *entrant, *entry_history_index, true)
-                    || copy.vial.is_some_and(|_| !vial_copies.insert(copy.stack_item))
+                    || copy
+                        .vial
+                        .is_some_and(|_| !vial_copies.insert(copy.stack_item))
                     || (owns_definition(entrant.card_def)
                         && !copies_needing_names.insert(*entry_history_index))
                 {

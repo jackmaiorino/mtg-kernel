@@ -660,8 +660,10 @@ pub(crate) fn validate_legacy_hand_choice(
     if continuation
         .ctx
         .ability_source_contract
-        .is_some_and(|source| card_id_by_name(AETHER_VIAL) == Some(source.card_def)
-            && statics::vial_charge(state, source) == 4)
+        .is_some_and(|source| {
+            card_id_by_name(AETHER_VIAL) == Some(source.card_def)
+                && statics::vial_charge(state, source) == 4
+        })
         && crate::eternal_sideboard_s1b_v1::meddling_mage_entry::vial::paid_at(state, continuation)?
             .is_some()
     {
@@ -676,10 +678,11 @@ pub(crate) fn validate_vial_hand_choice(
     choice: &E3ChoiceV1,
     paid_at: usize,
 ) -> Result<(), String> {
-    let source =
-        crate::eternal_sideboard_s1b_v1::meddling_mage_entry::vial::validate_hand_origin(
-            state, continuation, paid_at,
-        )?;
+    let source = crate::eternal_sideboard_s1b_v1::meddling_mage_entry::vial::validate_hand_origin(
+        state,
+        continuation,
+        paid_at,
+    )?;
     let cards = vial_hand_cards(state, source.controller, 4);
     if cards.is_empty()
         || choice.player != source.controller
@@ -2070,15 +2073,7 @@ pub(crate) fn drive(
             if cards.is_empty() {
                 return Ok(false);
             }
-            offer(
-                continuation,
-                kind,
-                controller,
-                cards,
-                0,
-                1,
-                path,
-            );
+            offer(continuation, kind, controller, cards, 0, 1, path);
             Ok(true)
         }
         E8aOpV1::WishclawSearchV1 => {

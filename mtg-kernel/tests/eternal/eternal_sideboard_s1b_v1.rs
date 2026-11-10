@@ -1752,13 +1752,19 @@ fn meddling_mage_names_before_aether_vial_puts_it_onto_the_battlefield() {
             if legal_targets == [Target::Object(mage)]
     ));
     assert!(!state.engine.event_history.iter().any(|event| matches!(
-        event, mtg_kernel::event::CommittedEvent::MeddlingMageEntryV1 { .. }
+        event,
+        mtg_kernel::event::CommittedEvent::MeddlingMageEntryV1 { .. }
     )));
     let projection = mtg_kernel::rl::observe_policy_v5(
         &state,
         &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
-        P1, 0, 0, 0, 1,
-    ).unwrap();
+        P1,
+        0,
+        0,
+        0,
+        1,
+    )
+    .unwrap();
     assert!(matches!(
         projection.projection.surface.engine_context.pending_effect.as_ref()
             .and_then(|pending| pending.choice.as_ref()),
@@ -1792,7 +1798,11 @@ fn vial_metamorph_opening(actor: PlayerId, hidden: &str) -> GameState {
         (&other, &own)
     };
     let mut state = GameState::new_from_libraries_with_starting_player_v1(
-        zero, one, mtg_kernel::rl::card_name, 196740, actor,
+        zero,
+        one,
+        mtg_kernel::rl::card_name,
+        196740,
+        actor,
     );
     for _ in 0..7 {
         for player in [P0, P1] {
@@ -1805,7 +1815,13 @@ fn vial_metamorph_opening(actor: PlayerId, hidden: &str) -> GameState {
 
 fn frozen_opening_refusal(state: &GameState, viewer: PlayerId) -> String {
     mtg_kernel::rl::observe_policy_v5(
-        state, &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(), viewer, 0, 0, 0, 1,
+        state,
+        &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+        viewer,
+        0,
+        0,
+        0,
+        1,
     )
     .err()
     .expect("public native opening profile refuses frozen V5")
@@ -1828,8 +1844,12 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
             let refusal = frozen_opening_refusal(&state, opponent);
             assert!(refusal.contains("Eternal opening actions"), "{refusal}");
             let hand = |state: &GameState, player: PlayerId, name| {
-                state.players[player.index()].hand.iter().copied()
-                    .find(|object| state.objects.get(*object).card_def == id(name)).unwrap()
+                state.players[player.index()]
+                    .hand
+                    .iter()
+                    .copied()
+                    .find(|object| state.objects.get(*object).card_def == id(name))
+                    .unwrap()
             };
             let vial = hand(&state, actor, "Aether Vial");
             let selected = hand(&state, actor, hidden);
@@ -1844,11 +1864,15 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
                 act(&mut state, Action::ChooseLondonMulligan { mulligan: false });
             }
             for player in [actor, opponent] {
-                assert!(matches!(next(&mut state), Decision::ChooseEternalOpeningV1 {
-                    player: chooser, legal_cards } if chooser == player && legal_cards.is_empty()));
+                assert!(
+                    matches!(next(&mut state), Decision::ChooseEternalOpeningV1 {
+                    player: chooser, legal_cards } if chooser == player && legal_cards.is_empty())
+                );
                 act(&mut state, Action::FinishEffectSelection);
             }
-            pass_until(&mut state, |state| state.active_player == actor && state.step == Step::Main1);
+            pass_until(&mut state, |state| {
+                state.active_player == actor && state.step == Step::Main1
+            });
             pool(&mut state, actor, &[], 1);
             cast(&mut state, vial, &[]);
             settled(&mut state);
@@ -1858,12 +1882,16 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
             settled(&mut state);
             assert!(state.objects.get(vial).tapped);
             let prior_paid_at = state.engine.event_history.len() - 1;
-            assert!(matches!(state.engine.event_history[prior_paid_at],
-                CommittedEvent::MeddlingMageEntryV1 { .. }));
+            assert!(matches!(
+                state.engine.event_history[prior_paid_at],
+                CommittedEvent::MeddlingMageEntryV1 { .. }
+            ));
             assert!(matches!(state.engine.event_history[prior_paid_at - 1],
                 CommittedEvent::Tap { object } if object == vial));
 
-            pass_until(&mut state, |state| state.active_player == opponent && state.step == Step::Main1);
+            pass_until(&mut state, |state| {
+                state.active_player == opponent && state.step == Step::Main1
+            });
             pool(&mut state, opponent, &[ManaColor::G], 1);
             cast(&mut state, wall, &[]);
             settled(&mut state);
@@ -1876,13 +1904,17 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
             }
             run_until(
                 &mut state,
-                |state| state.active_player == actor
-                    && state.step == Step::Main1
-                    && state.objects.get(vial).counters.charge == 4,
+                |state| {
+                    state.active_player == actor
+                        && state.step == Step::Main1
+                        && state.objects.get(vial).counters.charge == 4
+                },
                 |state, decision| match decision {
-                    Decision::ChooseEffectOption { player, option_count: 2, .. }
-                        if *player == actor && state.step == Step::Upkeep =>
-                    {
+                    Decision::ChooseEffectOption {
+                        player,
+                        option_count: 2,
+                        ..
+                    } if *player == actor && state.step == Step::Upkeep => {
                         Some(Action::ChooseEffectOption(1))
                     }
                     _ => None,
@@ -1898,11 +1930,22 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
             if hidden == "Phyrexian Metamorph" {
                 let mut missing_marker = serde_json::to_value(&state).unwrap();
                 let mut missing_receipt = missing_marker.clone();
-                let row = missing_marker["stack"].as_array_mut().unwrap().last_mut().unwrap();
-                let at = row["v4"].as_object_mut().unwrap()
-                    .remove("vial_metamorph_paid_v1").unwrap().as_u64().unwrap() as usize;
+                let row = missing_marker["stack"]
+                    .as_array_mut()
+                    .unwrap()
+                    .last_mut()
+                    .unwrap();
+                let at = row["v4"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("vial_metamorph_paid_v1")
+                    .unwrap()
+                    .as_u64()
+                    .unwrap() as usize;
                 assert!(at > prior_paid_at);
-                let history = missing_receipt["engine"]["event_history"].as_array_mut().unwrap();
+                let history = missing_receipt["engine"]["event_history"]
+                    .as_array_mut()
+                    .unwrap();
                 assert!(history[at].get("MeddlingMageEntryV1").is_some());
                 history.remove(at);
                 for missing in [missing_marker, missing_receipt] {
@@ -1929,12 +1972,22 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
                 player, source, legal_targets, min_targets: 0, max_targets: 1,
                 can_finish: true, ..
             } if *player == actor && *source == vial && legal_targets == &[Target::Object(selected)]));
-            assert_eq!(zone(&state, vial), if bounce_vial { Zone::Hand } else { Zone::Battlefield });
+            assert_eq!(
+                zone(&state, vial),
+                if bounce_vial {
+                    Zone::Hand
+                } else {
+                    Zone::Battlefield
+                }
+            );
             if bounce_vial {
                 assert_eq!(state.objects.get(vial).counters.charge, 0);
             }
             if hidden == "Lodestone Golem" {
-                act(&mut state, Action::ChooseEffectTarget(Target::Object(selected)));
+                act(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(selected)),
+                );
                 settled(&mut state);
                 assert_eq!(zone(&state, selected), Zone::Battlefield);
                 assert_eq!(frozen_opening_refusal(&state, opponent), refusal);
@@ -1949,7 +2002,8 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
             assert!(engine::step(
                 &mut declined,
                 Action::ChooseEffectTarget(Target::Object(wrong_value))
-            ).is_err());
+            )
+            .is_err());
             assert_eq!(declined.state_hash(), before);
             act(&mut declined, Action::FinishEffectSelection);
             settled(&mut declined);
@@ -1957,19 +2011,23 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
             assert_eq!(frozen_opening_refusal(&declined, opponent), refusal);
 
             let mut wrong_payment = serde_json::to_value(&state).unwrap();
-            let origin = &mut wrong_payment["engine"]["pending_effect"]["choice"]
-                ["SelectTargets"]["purpose"]["EternalV1"]["choice"]["kind"]["E8aV1"]
-                ["VialHandToBattlefieldV1"]["paid_at"];
+            let origin = &mut wrong_payment["engine"]["pending_effect"]["choice"]["SelectTargets"]
+                ["purpose"]["EternalV1"]["choice"]["kind"]["E8aV1"]["VialHandToBattlefieldV1"]
+                ["paid_at"];
             assert!(origin.as_u64().unwrap() > prior_paid_at as u64);
             *origin = serde_json::json!(prior_paid_at);
             let mut wrong_payment: GameState = serde_json::from_value(wrong_payment).unwrap();
             assert!(engine::step(
                 &mut wrong_payment,
                 Action::ChooseEffectTarget(Target::Object(metamorph))
-            ).is_err());
+            )
+            .is_err());
 
             state = serde_json::from_slice(&snapshot).unwrap();
-            act(&mut state, Action::ChooseEffectTarget(Target::Object(metamorph)));
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(metamorph)),
+            );
             let copy_choice = next(&mut state);
             let other_copy = mage.unwrap_or(vial);
             assert!(matches!(&copy_choice, Decision::ChooseEffectTargets {
@@ -1983,24 +2041,32 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
 
             let mut wrong_incarnation = serde_json::to_value(&state).unwrap();
             let physical = &mut wrong_incarnation["engine"]["linked_aura_operation_v1"]
-                ["pending_meddling_mage_v1"]["choice"]["VialMetamorphV1"]["choice"]
-                ["physical"]["zone_change_count"];
+                ["pending_meddling_mage_v1"]["choice"]["VialMetamorphV1"]["choice"]["physical"]
+                ["zone_change_count"];
             *physical = serde_json::json!(generation + 1);
-            let mut wrong_incarnation: GameState = serde_json::from_value(wrong_incarnation).unwrap();
+            let mut wrong_incarnation: GameState =
+                serde_json::from_value(wrong_incarnation).unwrap();
             assert!(engine::step(&mut wrong_incarnation, Action::FinishEffectSelection).is_err());
 
             let copy_snapshot = serde_json::to_vec(&state).unwrap();
             for donor in [None, Some(wall), Some(other_copy)] {
                 let mut restored: GameState = serde_json::from_slice(&copy_snapshot).unwrap();
                 assert_eq!(next(&mut restored), copy_choice);
-                act(&mut restored, donor.map_or(Action::FinishEffectSelection, |donor|
-                    Action::ChooseEffectTarget(Target::Object(donor))));
+                act(
+                    &mut restored,
+                    donor.map_or(Action::FinishEffectSelection, |donor| {
+                        Action::ChooseEffectTarget(Target::Object(donor))
+                    }),
+                );
                 if donor.is_some() && donor == mage {
-                    assert!(matches!(next(&mut restored), Decision::ChooseMeddlingMageNameV1 {
-                        player, group: None, .. } if player == actor));
+                    assert!(
+                        matches!(next(&mut restored), Decision::ChooseMeddlingMageNameV1 {
+                        player, group: None, .. } if player == actor)
+                    );
                     assert_eq!(zone(&restored, metamorph), Zone::Hand);
                     assert_eq!(frozen_opening_refusal(&restored, opponent), refusal);
-                    restored = serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
+                    restored =
+                        serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
                     choose_mage_name(&mut restored, actor, "Lightning Bolt");
                 }
                 let hand_before = restored.players[actor.index()].hand.len();
@@ -2012,7 +2078,11 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
                     assert_eq!(entered.controller, actor);
                     assert_eq!(entered.zone_change_count, generation + 1);
                     assert_eq!(entered.counters.charge, 0);
-                    assert!(engine::object_has_type(&restored, metamorph, CardType::Artifact));
+                    assert!(engine::object_has_type(
+                        &restored,
+                        metamorph,
+                        CardType::Artifact
+                    ));
                     if donor == wall {
                         // The actual Wall trigger draws after entry.
                         assert_eq!(restored.players[actor.index()].hand.len(), hand_before + 1);
@@ -2020,17 +2090,27 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
 
                     let mut wrong_source = serde_json::to_value(&restored).unwrap();
                     let copy = wrong_source["engine"]["event_history"]
-                        .as_array_mut().unwrap().iter_mut().find_map(|event| {
-                            event.get_mut("MeddlingMageEntryV1")?.get_mut("journal")?
-                                .get_mut("MetamorphCopied")?.get_mut("copy")
-                        }).unwrap();
+                        .as_array_mut()
+                        .unwrap()
+                        .iter_mut()
+                        .find_map(|event| {
+                            event
+                                .get_mut("MeddlingMageEntryV1")?
+                                .get_mut("journal")?
+                                .get_mut("MetamorphCopied")?
+                                .get_mut("copy")
+                        })
+                        .unwrap();
                     assert!(copy.get("cast_at").is_none());
                     copy["vial"]["paid_at"] = serde_json::json!(prior_paid_at);
                     let mut wrong_source: GameState = serde_json::from_value(wrong_source).unwrap();
                     assert!(engine::step(&mut wrong_source, Action::Pass).is_err());
                 } else {
                     assert_eq!(zone(&restored, metamorph), Zone::Graveyard);
-                    assert_eq!(restored.objects.get(metamorph).card_def, id("Phyrexian Metamorph"));
+                    assert_eq!(
+                        restored.objects.get(metamorph).card_def,
+                        id("Phyrexian Metamorph")
+                    );
                 }
                 assert!(restored.engine.event_history.iter().any(|event| matches!(event,
                     CommittedEvent::ZoneChange { object, from: Zone::Hand, to: Zone::Battlefield, .. }

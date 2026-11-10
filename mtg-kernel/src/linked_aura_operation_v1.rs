@@ -2314,8 +2314,7 @@ pub(crate) fn prepare_reanimated_metamorph(
         .original_stack
         .last()
         .ok_or("noncast Metamorph lost its original Reanimate stack row")?;
-    let Some(choice) = mage_entry::NoncastCopyChoiceV1::capture(state, ctx, object, parent)?
-    else {
+    let Some(choice) = mage_entry::NoncastCopyChoiceV1::capture(state, ctx, object, parent)? else {
         return Ok(true);
     };
     prepare_noncast_metamorph(state, choice, false)
@@ -3019,21 +3018,19 @@ fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String>
     match choice {
         GeneralChoiceV36::MeddlingMageV1 { choice, group } => mage_entry::decision(choice, *group),
         GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. }
-        | GeneralChoiceV36::VialMetamorphV1 { choice, .. } => {
-            Ok(Decision::ChooseEffectTargets {
-                player: choice.producer.controller,
-                source: choice.decision_source(),
-                selected_count: 0,
-                min_targets: 0,
-                max_targets: 1,
-                can_finish: true,
-                legal_targets: choice
-                    .candidates
-                    .iter()
-                    .map(|source| Target::Object(source.source))
-                    .collect(),
-            })
-        }
+        | GeneralChoiceV36::VialMetamorphV1 { choice, .. } => Ok(Decision::ChooseEffectTargets {
+            player: choice.producer.controller,
+            source: choice.decision_source(),
+            selected_count: 0,
+            min_targets: 0,
+            max_targets: 1,
+            can_finish: true,
+            legal_targets: choice
+                .candidates
+                .iter()
+                .map(|source| Target::Object(source.source))
+                .collect(),
+        }),
         GeneralChoiceV36::KinshipV1 { choice, .. } => Ok(Decision::ChooseEntryCreatureTypeV1 {
             player: choice.controller,
             entry_ordinal: choice.ordinal,
@@ -3092,7 +3089,7 @@ fn answer_equipment_checkpoint_v48(
     match (choice, action) {
         (
             GeneralChoiceV36::ReanimateMetamorphV1 { choice: copy, .. }
-                | GeneralChoiceV36::VialMetamorphV1 { choice: copy, .. },
+            | GeneralChoiceV36::VialMetamorphV1 { choice: copy, .. },
             action,
         ) => {
             let copied = match action {
@@ -3106,17 +3103,19 @@ fn answer_equipment_checkpoint_v48(
                 ),
                 _ => return Err("Metamorph copy needs a native choice answer".into()),
             };
-            Ok(if matches!(choice, GeneralChoiceV36::VialMetamorphV1 { .. }) {
-                GeneralAnswerV36::VialMetamorphV1 {
-                    choice: copy.clone(),
-                    copied,
-                }
-            } else {
-                GeneralAnswerV36::ReanimateMetamorphV1 {
-                    choice: copy.clone(),
-                    copied,
-                }
-            })
+            Ok(
+                if matches!(choice, GeneralChoiceV36::VialMetamorphV1 { .. }) {
+                    GeneralAnswerV36::VialMetamorphV1 {
+                        choice: copy.clone(),
+                        copied,
+                    }
+                } else {
+                    GeneralAnswerV36::ReanimateMetamorphV1 {
+                        choice: copy.clone(),
+                        copied,
+                    }
+                },
+            )
         }
         (GeneralChoiceV36::MeddlingMageV1 { choice, group }, Action::ChooseEffectOption(index))
             if mage_entry::valid_index(choice, *group, index) =>

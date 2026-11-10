@@ -35,7 +35,7 @@ fn printed_source(item: &StackItem) -> Option<AbilitySourceContractV4> {
         && item.targets.is_empty()
         && item.v4.target_contracts.is_empty()
         && item.inline_effect.as_ref() == Some(&e8a::aether_vial_put()))
-        .then_some(source)
+    .then_some(source)
 }
 
 pub(crate) fn record_paid(
@@ -58,7 +58,10 @@ pub(crate) fn record_paid(
         object.v4.is_token || object.v4.face_down_v1.is_some() || object.v4.face_index != 0
     }) || crate::eternal_vintage_v1::active_copy(state, source.source)
         || crate::standard_cards_v1::had_card_def(
-            state, source.source, source.zone_change_count, source.card_def,
+            state,
+            source.source,
+            source.zone_change_count,
+            source.card_def,
         )
     {
         return Ok(());
@@ -139,7 +142,10 @@ pub(crate) fn waiting(state: &GameState) -> bool {
     use crate::eternal_cards_v1::e3::E3ChoiceKindV1;
 
     let vial_choice = |kind: &E3ChoiceKindV1| {
-        matches!(kind, E3ChoiceKindV1::E8aV1(e8a::E8aChoiceV1::VialHandToBattlefieldV1 { .. }))
+        matches!(
+            kind,
+            E3ChoiceKindV1::E8aV1(e8a::E8aChoiceV1::VialHandToBattlefieldV1 { .. })
+        )
     };
     state.engine.pending_effect.as_ref().is_some_and(|pending| {
         matches!(&pending.choice, Some(PendingEffectChoice::SelectTargets {
