@@ -2583,6 +2583,16 @@ fn treasure_count(state: &GameState, player: PlayerId) -> usize {
         .count()
 }
 
+fn cast_dungeon_draw_jace(state: &mut GameState, player: PlayerId) -> ObjectId {
+    let jace = put(state, player, "Jace, Wielder of Mysteries", Zone::Hand);
+    pool(state, player, &[ManaColor::U; 3], 1);
+    cast(state, jace, &[]);
+    settled(state);
+    assert_eq!(state.objects.get(jace).zone, Zone::Battlefield);
+    assert_eq!(mtg_kernel::planeswalker_v1::loyalty(state, jace), Some(4));
+    jace
+}
+
 #[test]
 fn paid_temple_room_owns_each_replacement_and_stops_after_jace_both_seats() {
     for player in [P0, P1] {
@@ -2593,12 +2603,7 @@ fn paid_temple_room_owns_each_replacement_and_stops_after_jace_both_seats() {
             put(&mut state, player, "Quantum Riddler", Zone::Battlefield);
             put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
             let alternative = if terminal {
-                put(
-                    &mut state,
-                    player,
-                    "Jace, Wielder of Mysteries",
-                    Zone::Battlefield,
-                )
+                cast_dungeon_draw_jace(&mut state, player)
             } else {
                 put(&mut state, player, "Golgari Thug", Zone::Graveyard)
             };
@@ -2683,12 +2688,8 @@ fn paid_mad_wizard_room_reveals_and_casts_only_actual_draws_both_seats() {
                 .map(|card| mtg_kernel::event::ProposedEvent::zone_change(card, Zone::Exile))
                 .collect(),
         );
-        put(
-            &mut terminal,
-            player,
-            "Jace, Wielder of Mysteries",
-            Zone::Battlefield,
-        );
+        cast_dungeon_draw_jace(&mut terminal, player);
+        assert_eq!(terminal.players[player.index()].library.as_slice(), [bolt]);
         pay_for_acererak(&mut terminal, player, acererak);
         assert_eq!(
             settle(&mut terminal),
