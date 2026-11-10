@@ -85,14 +85,14 @@ mod seeds;
 mod serve;
 #[cfg(test)]
 pub(crate) use serve::worker_answer_v4 as qualify_worker_request_v4;
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+mod blunder_census;
 mod serve_ac2;
 mod sharing;
 mod tensor_dump;
 mod tree;
 mod utility_root;
 pub(crate) mod value_leaf;
-#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-mod blunder_census;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod w4_combat;
 mod win_check;
