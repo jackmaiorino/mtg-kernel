@@ -26,6 +26,8 @@ enum InstructionV1 {
     EndstoneLand,
     KishlaSkimmer,
     ChandraEmblem,
+    DiviningTop,
+    OneRing,
 }
 
 impl InstructionV1 {
@@ -44,6 +46,8 @@ impl InstructionV1 {
             EternalOpV1::E5aV1(E5aOpV1::EndstoneDrawV1) => Some(Self::EndstoneLand),
             EternalOpV1::E7bV1(E7bOpV1::DrawOneV1) => Some(Self::KishlaSkimmer),
             EternalOpV1::E8aV1(E8aOpV1::DrawOneV1) => Some(Self::ChandraEmblem),
+            EternalOpV1::E5aV1(E5aOpV1::DrawThenSourceOnTopV1) => Some(Self::DiviningTop),
+            EternalOpV1::BurdenCounterThenDrawV1 => Some(Self::OneRing),
             _ => None,
         }
     }
@@ -57,7 +61,11 @@ impl InstructionV1 {
 
     fn count(self, state: &GameState, ctx: &ExecCtx) -> u32 {
         match self {
-            Self::Frog | Self::EndstoneLand | Self::KishlaSkimmer | Self::ChandraEmblem => 1,
+            Self::Frog
+            | Self::EndstoneLand
+            | Self::KishlaSkimmer
+            | Self::ChandraEmblem
+            | Self::DiviningTop => 1,
             Self::Plunder {
                 normal,
                 from_graveyard,
@@ -66,6 +74,9 @@ impl InstructionV1 {
             Self::TwinnedVision => {
                 eternal_pauper_e8b_v1::twinned_vision_draw_count(state, ctx.source)
             }
+            Self::OneRing => ctx.ability_source_contract.map_or(0, |source| {
+                super::e3::quote_ring_draw_count(state, source)
+            }),
         }
     }
 }
@@ -100,6 +111,24 @@ pub(crate) fn graveyard_cast_count(
 
 pub(crate) fn half_library_count(library_len: usize) -> u32 {
     u32::try_from(library_len.div_ceil(2)).unwrap_or(u32::MAX)
+}
+
+fn draw_won_game(state: &GameState, player: PlayerId) -> bool {
+    let opponent = player.opponent();
+    state.players[opponent.index()].has_lost
+        && !crate::game_outcome_protection_v1::cannot_lose(state, opponent)
+}
+
+/// Draws with no pending replacement choice. A Jace win ends the game
+/// immediately, before another attempt or a following instruction.
+pub(crate) fn draw_uninterrupted(state: &mut GameState, player: PlayerId, count: u32) -> bool {
+    for _ in 0..count {
+        crate::event::propose_and_commit(state, crate::event::ProposedEvent::draw(player));
+        if draw_won_game(state, player) || state.engine.halted.is_some() {
+            return false;
+        }
+    }
+    true
 }
 
 pub(crate) fn remove_maximum_hand_size(state: &mut GameState, player: PlayerId) {
@@ -185,6 +214,12 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
                 StackItemKind::ActivatedAbility,
                 "Tamiyo, Inquisitive Student",
             ) => item.v4.activated_ability_index == Some(2),
+            (InstructionV1::DiviningTop, StackItemKind::ActivatedAbility, "Sensei's Divining Top") => {
+                item.v4.activated_ability_index == Some(1)
+            }
+            (InstructionV1::OneRing, StackItemKind::ActivatedAbility, "The One Ring") => {
+                item.v4.activated_ability_index == Some(0)
+            }
             (InstructionV1::KishlaSkimmer, StackItemKind::TriggeredAbility, "Kishla Skimmer") => {
                 let source_link = ObjectLinkV4 {
                     object: source.source,
@@ -271,7 +306,12 @@ pub(crate) fn begin(
     {
         return Err("Eternal draw lost its original instruction".into());
     }
-    let total = instruction.count(state, &pending.ctx);
+    let total = match (instruction, source) {
+        (InstructionV1::OneRing, SourceV1::Ability(source)) => {
+            super::e3::begin_ring_draws(state, source)
+        }
+        _ => instruction.count(state, &pending.ctx),
+    };
     if total == 0 {
         if instruction == InstructionV1::Tamiyo {
             remove_maximum_hand_size(state, pending.ctx.controller);
@@ -333,13 +373,17 @@ pub(crate) fn complete(
             ordinal,
         },
     );
-    let opponent = started.controller.opponent();
-    let terminal = state.players[opponent.index()].has_lost
-        && !crate::game_outcome_protection_v1::cannot_lose(state, opponent);
+    let terminal = draw_won_game(state, started.controller);
     if terminal || completed == started.total {
         state.eternal_owned_draw_progress_v1 = None;
-        if !terminal && started.instruction == InstructionV1::Tamiyo {
-            remove_maximum_hand_size(state, started.controller);
+        if !terminal {
+            match started.instruction {
+                InstructionV1::Tamiyo => remove_maximum_hand_size(state, started.controller),
+                InstructionV1::DiviningTop => {
+                    crate::eternal_e5a_v1::put_draw_source_on_top(&pending.ctx, state);
+                }
+                _ => {}
+            }
         }
     } else {
         state
@@ -398,6 +442,10 @@ fn validate_native_progress(
             Some(half_library_count(library_len))
         }
         (InstructionV1::Tamiyo, _) | (_, Some(_)) => None,
+        (InstructionV1::OneRing, None) => match started.source {
+            SourceV1::Ability(source) => Some(super::e3::ring_burden_count(state, source)),
+            SourceV1::Spell(_) => None,
+        },
         (instruction, None) => Some(instruction.count(state, ctx)),
     };
     if total != Some(started.total) {

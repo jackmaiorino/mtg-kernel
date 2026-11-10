@@ -1467,6 +1467,39 @@ fn burden_count(state: &GameState, ring: ObjectLinkV4) -> u32 {
         .unwrap_or(0)
 }
 
+fn ring_link(source: AbilitySourceContractV4) -> ObjectLinkV4 {
+    ObjectLinkV4 {
+        object: source.source,
+        zone_change_count: source.zone_change_count,
+    }
+}
+
+pub(super) fn ring_burden_count(state: &GameState, source: AbilitySourceContractV4) -> u32 {
+    burden_count(state, ring_link(source))
+}
+
+pub(super) fn quote_ring_draw_count(state: &GameState, source: AbilitySourceContractV4) -> u32 {
+    let ring = ring_link(source);
+    burden_count(state, ring).saturating_add(u32::from(link_live(state, ring, Zone::Battlefield)))
+}
+
+pub(super) fn begin_ring_draws(state: &mut GameState, source: AbilitySourceContractV4) -> u32 {
+    let ring = ring_link(source);
+    let count = burden_count(state, ring);
+    if !link_live(state, ring, Zone::Battlefield) {
+        // The original incarnation's counters survive its departure as LKI.
+        return count;
+    }
+    let total = count.saturating_add(1);
+    let counters = &mut e3_mut(state).burden_counters;
+    if let Some((_, count)) = counters.iter_mut().find(|(entry, _)| *entry == ring) {
+        *count = total;
+    } else {
+        counters.push((ring, total));
+    }
+    total
+}
+
 /// Whether `player` has protection from everything (The One Ring).
 pub(crate) fn player_protected(state: &GameState, player: PlayerId) -> bool {
     e3(state).is_some_and(|e3| e3.protected_players[player.index()])
@@ -2036,13 +2069,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
             let Some(contract) = ctx.ability_source_contract else {
                 return;
             };
-            let count = burden_count(
-                state,
-                ObjectLinkV4 {
-                    object: contract.source,
-                    zone_change_count: contract.zone_change_count,
-                },
-            );
+            let count = ring_burden_count(state, contract);
             if count > 0 {
                 event::propose_and_commit(
                     state,
@@ -2058,31 +2085,8 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 halt(state, ctx.source);
                 return;
             };
-            let ring = ObjectLinkV4 {
-                object: contract.source,
-                zone_change_count: contract.zone_change_count,
-            };
-            if link_live(state, ring, Zone::Battlefield) {
-                let e3 = e3_mut(state);
-                match e3
-                    .burden_counters
-                    .iter_mut()
-                    .find(|(entry, _)| *entry == ring)
-                {
-                    Some((_, count)) => *count = count.saturating_add(1),
-                    None => e3.burden_counters.push((ring, 1)),
-                }
-            }
-            // Last-known counters if the Ring has left the battlefield.
-            let count = burden_count(state, ring);
-            crate::effect::execute(
-                &EffectOp::DrawCards {
-                    player: PlayerRef::Controller,
-                    count,
-                },
-                ctx,
-                state,
-            );
+            let count = begin_ring_draws(state, contract);
+            super::owned_draws_v1::draw_uninterrupted(state, ctx.controller, count);
         }
         EternalOpV1::SacrificeSourceV1 => {
             let Some(contract) = ctx.ability_source_contract else {

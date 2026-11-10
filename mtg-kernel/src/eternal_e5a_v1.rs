@@ -31,7 +31,7 @@ pub mod phasing;
 pub(crate) mod statics;
 mod triggers;
 
-pub(crate) use execute::execute;
+pub(crate) use execute::{execute, put_draw_source_on_top};
 #[cfg_attr(not(feature = "eternal-fixtures"), allow(unused_imports))]
 pub(crate) use triggers::{
     begin_turn, delayed_effect_matches, delayed_triggers, note_land_played, note_tapped_for_mana,

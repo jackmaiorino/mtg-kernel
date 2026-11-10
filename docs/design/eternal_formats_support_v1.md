@@ -531,7 +531,12 @@ New, each built once in the first wave that needs it:
   Outcome, Psychic Frog, Plunder the Trollshaws, Tamiyo's -7, Twinned Vision,
   The Endstone's land-play draw, Kishla Skimmer's graveyard-departure draw,
   Chandra, Chill of Compliance's emblem draw, Bonder's Ornament, and both
-  selected-discard draw paths. The Jewel
+  selected-discard draw paths. Sensei's Divining Top moves only the original
+  permanent to its owner's library after its draw attempt, including when a
+  replacement prevents the draw. The One Ring counts its live burden increment
+  or the departed incarnation's retained burden once before its first attempt.
+  A terminal Jace win skips Top's move and any remaining Ring attempts, with
+  or without a replacement choice. The Jewel
   combat continuation binds draw progress to the original trigger and transfers
   only its original battlefield incarnation after the third attempt. Outcome
   returns its legal targets in one batch and derives draw progress from actual
