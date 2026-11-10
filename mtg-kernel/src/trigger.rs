@@ -5599,6 +5599,10 @@ fn triggers_from_events(
         new_triggers.extend(crate::eternal_premodern_p2a_v1::delayed_triggers(
             state, events,
         ));
+        // A resolving Acererak trigger can venture after its source left the
+        // battlefield, without returning anything to hand in this batch.
+        #[cfg(feature = "eternal-fixtures")]
+        new_triggers.extend(crate::eternal_cards_v1::e3::dungeons::room_triggers(state));
         // Coveted Jewel also queues its unblocked-attack trigger when
         // blockers are declared, without adding a committed event.
         #[cfg(feature = "eternal-fixtures")]

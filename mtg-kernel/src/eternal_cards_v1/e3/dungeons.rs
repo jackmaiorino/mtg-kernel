@@ -190,7 +190,7 @@ fn room_target_spec(dungeon: u16, room: u16) -> TargetSpec {
 }
 
 /// The room abilities set off since the last collection.
-pub(super) fn room_triggers(state: &mut GameState) -> Vec<crate::trigger::PendingTrigger> {
+pub(crate) fn room_triggers(state: &mut GameState) -> Vec<crate::trigger::PendingTrigger> {
     let Some(rooms) = state
         .eternal_v1
         .as_mut()
