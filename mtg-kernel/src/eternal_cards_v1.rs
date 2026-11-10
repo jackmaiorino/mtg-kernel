@@ -508,11 +508,12 @@ impl EternalOpV1 {
     }
 
     /// Whether the resumable interpreter runs this leaf through its own
-    /// driver: a leaf with a player decision, or a wave P1a leaf whose draws
-    /// are staged as frames so dredge can replace them (the program is only
-    /// moved there while a dredge choice exists).
+    /// driver: a leaf with a player decision or a draw with a replacement
+    /// choice.
     pub(crate) fn drives_in_resumable(&self) -> bool {
-        self.contains_player_choice() || matches!(self, EternalOpV1::P1aV1(op) if op.draws())
+        self.contains_player_choice()
+            || matches!(self, EternalOpV1::DelayedUpkeepDrawV1)
+            || matches!(self, EternalOpV1::P1aV1(op) if op.draws())
     }
 }
 
@@ -636,7 +637,7 @@ fn bowmasters_ping_then_amass() -> EffectOp {
     ])
 }
 
-fn delayed_upkeep_draw() -> EffectOp {
+pub(crate) fn delayed_upkeep_draw() -> EffectOp {
     eternal(EternalOpV1::DelayedUpkeepDrawV1)
 }
 

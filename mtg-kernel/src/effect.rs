@@ -8075,6 +8075,11 @@ pub(crate) fn jace_draw_replacement_origin(
                 && drawer == binding.player
                 && validate_monarch_trigger_binding(state, *binding).is_ok();
         }
+        Some(op) if *op == crate::eternal_cards_v1::delayed_upkeep_draw() => {
+            // The ordinary stack provenance check authenticates the exact
+            // Bauble trigger before an answer can use this single draw.
+            return path.is_empty() && remaining.is_empty() && drawer == pending.ctx.controller;
+        }
         Some(EffectOp::NivMizzetVisionaryDrawV1 {
             damage_history_index,
         }) => {
@@ -10693,6 +10698,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::eternal_sideboard_s1a_v1::surgical::validate_continuation(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_vintage_e7b_v1::dredge::validate_jace_or_hullbreacher(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_e7b_v1::dredge::validate_bauble_draw(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
     if let Some(EffectOp::ResolveMonarchTrigger { binding }) =
         pending.resolving_item.inline_effect.as_ref()
