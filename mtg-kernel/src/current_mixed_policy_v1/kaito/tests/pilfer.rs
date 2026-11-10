@@ -114,11 +114,11 @@ fn full_pool_paid_pilfer_uses_public_names_and_exact_native_answers_both_seats()
             let mut forged_wire = serde_json::to_value(d.backend.candidates_v75()).unwrap();
             forged_wire["observation"]["common"]["common"]["projection"]["engine_context"]
                 ["pending_effect"]["choice"]["legal_targets"][0] = serde_json::json!({
-                    "target_kind": "revealed_hand_name",
-                    "card_db_id": crate::card_def::card_id_by_name("Giant Growth").unwrap(),
-                    "card_name": "Giant Growth",
-                    "owner": PlayerSeatV1::from(opponent),
-                });
+                "target_kind": "revealed_hand_name",
+                "card_db_id": crate::card_def::card_id_by_name("Giant Growth").unwrap(),
+                "card_name": "Giant Growth",
+                "owner": PlayerSeatV1::from(opponent),
+            });
             let raw_actions = forged_wire["candidates"].as_array().unwrap().clone();
             assert!(matches!(
                 normalize::encode(Source::KaitoV75, forged_wire, raw_actions),

@@ -239,39 +239,40 @@ fn packet_from_current(
             .ok_or_else(|| Error::Projection("missing known hand facts".into()))? =
             serde_json::json!(counts);
     }
-    let (packet, name_order) = normalize::encode_with_action_rows(Source::KaitoV75, state, |state| {
-        let mut name_order = None;
-        if let HandFacts::RevealMinimaV3 {
-            minima,
-            discard_owner,
-        } = hand_facts
-        {
-            if let Some(owner) = *discard_owner {
-                let seat = usize::from(owner == PlayerSeatV1::P1);
-                name_order = Some(revealed_discard_by_name(
-                    candidates,
-                    actions,
-                    owner,
-                    &minima[seat],
-                    state,
-                )?);
+    let (packet, name_order) =
+        normalize::encode_with_action_rows(Source::KaitoV75, state, |state| {
+            let mut name_order = None;
+            if let HandFacts::RevealMinimaV3 {
+                minima,
+                discard_owner,
+            } = hand_facts
+            {
+                if let Some(owner) = *discard_owner {
+                    let seat = usize::from(owner == PlayerSeatV1::P1);
+                    name_order = Some(revealed_discard_by_name(
+                        candidates,
+                        actions,
+                        owner,
+                        &minima[seat],
+                        state,
+                    )?);
+                }
+                let opponent = match candidates.observation.common.common.acting_player {
+                    crate::rl::PlayerSeatV1::P0 => "p1",
+                    crate::rl::PlayerSeatV1::P1 => "p0",
+                };
+                if opponent_hand_binding(state, &Value::from(opponent)) {
+                    return Err(Error::Projection(
+                        "opponent hand binding requires a public name action".into(),
+                    ));
+                }
             }
-            let opponent = match candidates.observation.common.common.acting_player {
-                crate::rl::PlayerSeatV1::P0 => "p1",
-                crate::rl::PlayerSeatV1::P1 => "p0",
-            };
-            if opponent_hand_binding(state, &Value::from(opponent)) {
-                return Err(Error::Projection(
-                    "opponent hand binding requires a public name action".into(),
-                ));
-            }
-        }
-        let actions = state["candidates"]
-            .as_array()
-            .ok_or_else(|| Error::Projection("missing numeric candidate rows".into()))?
-            .clone();
-        Ok((actions, name_order))
-    })?;
+            let actions = state["candidates"]
+                .as_array()
+                .ok_or_else(|| Error::Projection("missing numeric candidate rows".into()))?
+                .clone();
+            Ok((actions, name_order))
+        })?;
     Ok(NumericCurrent { packet, name_order })
 }
 impl KaitoSession {
