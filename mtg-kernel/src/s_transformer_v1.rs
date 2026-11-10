@@ -51,6 +51,7 @@ pub mod profile;
 #[cfg(test)]
 mod tests;
 pub mod tools;
+pub(crate) mod update_profile_v1;
 
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::training_math_v1::TrainingMathV1;
@@ -1085,6 +1086,95 @@ impl STapeV1 {
     pub fn value_v1(&self) -> f32 {
         self.value
     }
+
+    /// The f32 bytes a forward of one decision with these counts leaves in
+    /// its tape: the lengths `reset_v1` gives every buffer. A reused tape
+    /// holds at least this much for the largest decision it has seen (its
+    /// vectors keep their capacity). The saved-batch fixture
+    /// (`s_update_fixture_v1`) reports it per row as the live-tape bound.
+    pub(crate) fn bytes_for_counts_v1(config: &SConfigV1, counts: CountsV1) -> usize {
+        let d = config.d_model;
+        let cd = config.card_dim;
+        let h = config.heads;
+        let dh = config.head_dim_v1();
+        let ffn = config.ffn;
+        let (n, e, a, r) = (counts.objects, counts.edges, counts.actions, counts.refs);
+        let l = 1 + n + a;
+        // x_in, ln1, attn, x_mid, ln2 and the three qkv blocks; both norms'
+        // stats; the attention probabilities; the feed-forward pair.
+        let per_layer = 8 * l * d + 4 * l + h * l * l + 2 * l * ffn;
+        let floats = n * (OBJECT_FEATURE_DIM_V1 + cd)
+            + 2 * n * d
+            + 2 * d
+            + 2 * a * d
+            + r * (REF_FEATURE_DIM_V1 + cd)
+            + 3 * r * d
+            + e * 2 * h
+            + h * l * l
+            + 3 * dh * l
+            + config.layers * per_layer
+            + l * d
+            + (1 + a) * d
+            + 2 * (1 + a)
+            + 4 * a * d
+            + a
+            + 2 * d;
+        floats * std::mem::size_of::<f32>()
+    }
+
+    /// The f32 bytes this tape's buffers hold at their current lengths.
+    #[cfg(test)]
+    pub(crate) fn live_bytes_v1(&self) -> usize {
+        let mut floats = [
+            &self.obj_inp,
+            &self.obj_pre,
+            &self.obj_act,
+            &self.state_pre,
+            &self.state_act,
+            &self.act_pre,
+            &self.act_act,
+            &self.ref_inp,
+            &self.ref_pre,
+            &self.ref_act,
+            &self.ref_out,
+            &self.edge_out,
+            &self.bias,
+            &self.key_t,
+            &self.value_h,
+            &self.head_out,
+            &self.x_out,
+            &self.fin,
+            &self.fin_stats,
+            &self.pol_inp,
+            &self.pol_pre,
+            &self.pol_act,
+            &self.logits,
+            &self.val_pre,
+            &self.val_act,
+        ]
+        .iter()
+        .map(|buffer| buffer.len())
+        .sum::<usize>();
+        for lt in &self.layers {
+            floats += [
+                &lt.x_in,
+                &lt.ln1,
+                &lt.ln1_stats,
+                &lt.qkv,
+                &lt.probs,
+                &lt.attn,
+                &lt.x_mid,
+                &lt.ln2,
+                &lt.ln2_stats,
+                &lt.ff_pre,
+                &lt.ff_act,
+            ]
+            .iter()
+            .map(|buffer| buffer.len())
+            .sum::<usize>();
+        }
+        floats * std::mem::size_of::<f32>()
+    }
 }
 
 /// Backward workspace.
@@ -1703,9 +1793,12 @@ impl SModelV1 {
             for (sub, substep) in group.substeps.iter().enumerate() {
                 let is_masked = masked.is_some_and(|m| m[sub]);
                 let d_joint = if is_masked { 0.0 } else { d_unmasked };
+                let update_forward =
+                    update_profile_v1::span_v1(update_profile_v1::StageV1::LearnerForward);
                 let forward = profile::span_v1(StageV1::Forward);
                 self.forward_into_v1(substep.input, &mut work.tape)?;
                 drop(forward);
+                update_forward.finish_v1(&work.tape.logits, work.tape.value);
                 let policy_row = profile::span_v1(StageV1::PolicyRow);
                 let (selected, dlogits) =
                     gae_policy_row_v1(&work.tape.logits, substep.selected, d_joint, index, sub)?;
@@ -1720,6 +1813,8 @@ impl SModelV1 {
                 } else {
                     0.0
                 };
+                let update_backward =
+                    update_profile_v1::span_v1(update_profile_v1::StageV1::LearnerBackward);
                 let backward = profile::span_v1(StageV1::Backward);
                 self.backward_v1(
                     substep.input,
@@ -1730,6 +1825,7 @@ impl SModelV1 {
                     &mut work.back,
                 )?;
                 drop(backward);
+                update_backward.finish_plain_v1();
             }
             policy_sum += match masked {
                 None => -joint * group.advantage,

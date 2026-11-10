@@ -285,15 +285,20 @@ fn drain_v1<T: Send, W: Send>(
     let (caller, helpers) = workspaces
         .split_first_mut()
         .expect("S learner needs a worker");
+    let profile = super::update_profile_v1::current_v1();
     thread::scope(|scope| {
         let drain = &drain;
+        let profile = &profile;
         let spawning = census.mark_v1();
         let helpers: Vec<_> = helpers
             .iter_mut()
             .enumerate()
             .filter_map(|(index, workspace)| {
                 let helper = thread::Builder::new()
-                    .spawn_scoped(scope, move || drain(workspace, 1 + index))
+                    .spawn_scoped(scope, move || {
+                        super::update_profile_v1::adopt_v1(profile);
+                        drain(workspace, 1 + index)
+                    })
                     .ok();
                 census.spawned_v1(helper.is_some());
                 helper
@@ -504,9 +509,12 @@ impl SModelV1 {
         work: &mut SWorkV1,
         terms: &mut SGradientTermsV1,
     ) -> Result<(f32, f32), String> {
+        let update_forward =
+            super::update_profile_v1::span_v1(super::update_profile_v1::StageV1::LearnerForward);
         let forward = profile::span_v1(StageV1::Forward);
         self.forward_into_v1(job.substep.input, &mut work.tape)?;
         drop(forward);
+        update_forward.finish_v1(&work.tape.logits, work.tape.value);
         let policy_row = profile::span_v1(StageV1::PolicyRow);
         let (selected, dlogits) = gae_policy_row_v1(
             &work.tape.logits,
@@ -522,6 +530,8 @@ impl SModelV1 {
         } else {
             (0.0, 0.0)
         };
+        let update_backward =
+            super::update_profile_v1::span_v1(super::update_profile_v1::StageV1::LearnerBackward);
         let backward = profile::span_v1(StageV1::Backward);
         self.backward_into_v1(
             job.substep.input,
@@ -532,6 +542,7 @@ impl SModelV1 {
             &mut work.back,
         )?;
         drop(backward);
+        update_backward.finish_plain_v1();
         Ok((selected, value_error))
     }
 }

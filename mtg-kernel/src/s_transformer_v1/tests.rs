@@ -456,3 +456,26 @@ fn parallel_gae_reports_first_batch_error_without_updating_adam() {
     assert_eq!(error(&mut state, 2), expected);
     assert_eq!(encode_checkpoint_v1(&state), before);
 }
+
+/// The tape-size bound the saved-batch fixture reports equals the lengths a
+/// forward actually leaves in its tape, for the S shape and the small test
+/// shape, after both larger and smaller decisions.
+#[test]
+fn tape_bytes_bound_matches_the_buffers_a_forward_sizes() {
+    let mut rng = SplitMixV1::new(91);
+    for (config, seed) in [(SConfigV1::s_v1(), 5), (TINY_V1, 6)] {
+        let model = SModelV1::init_parity_v1(config, seed).unwrap();
+        let mut tape = STapeV1::default();
+        for _ in 0..6 {
+            let t = synthetic_decision_v1(&mut rng, super::tools::PARITY_SHAPE_V1);
+            let input = SInputV1::of_tensor_v1(&t);
+            let counts = input.validate_v1(&config).unwrap();
+            model.forward_v1(input, &mut tape).unwrap();
+            assert_eq!(
+                STapeV1::bytes_for_counts_v1(&config, counts),
+                tape.live_bytes_v1(),
+                "{counts:?}"
+            );
+        }
+    }
+}
