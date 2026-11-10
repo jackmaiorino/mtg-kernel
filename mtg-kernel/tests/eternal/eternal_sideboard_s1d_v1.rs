@@ -931,6 +931,186 @@ fn overload_under_omniscience_keeps_paid_and_free_routes_distinct_both_seats() {
 }
 
 #[test]
+fn overload_uses_future_sight_paid_library_permission_and_restores_both_seats() {
+    use mtg_kernel::state::{CastMethodV4, SpellCastRouteV4};
+    for actor in [P0, P1] {
+        for (name, victim, mine, generic) in [
+            ("Vandalblast", "Sol Ring", "Prophetic Prism", 4),
+            ("Electrickery", "Llanowar Elves", "Kor Skyfisher", 1),
+        ] {
+            for with_citadel in [false, true] {
+                let mut state = plains();
+                state.active_player = actor;
+                state.priority_player = actor;
+                let other = actor.opponent();
+                let earlier = put(&mut state, actor, "Future Sight", Zone::Battlefield);
+                let earlier_generation = state.objects.get(earlier).zone_change_count;
+                let earlier_at = state.engine.event_history.len();
+                mtg_kernel::event::propose_and_commit(
+                    &mut state,
+                    mtg_kernel::event::ProposedEvent::zone_change(earlier, Zone::Graveyard),
+                );
+                let sight = put(&mut state, actor, "Future Sight", Zone::Hand);
+                pool(&mut state, actor, &[ManaColor::U; 3], 2);
+                cast(&mut state, sight, &[]);
+                settled(&mut state);
+                assert_eq!(zone(&state, sight), Zone::Battlefield);
+                if with_citadel {
+                    let citadel = put(&mut state, actor, "Bolas's Citadel", Zone::Hand);
+                    pool(&mut state, actor, &[ManaColor::B; 3], 3);
+                    cast(&mut state, citadel, &[]);
+                    settled(&mut state);
+                }
+                let mine = put(&mut state, actor, mine, Zone::Battlefield);
+                let first = put(&mut state, other, victim, Zone::Battlefield);
+                let second = put(&mut state, other, victim, Zone::Battlefield);
+                let spell = put(&mut state, actor, name, Zone::Library);
+                let generation = state.objects.get(spell).zone_change_count;
+                pool(&mut state, actor, &[ManaColor::R], generic);
+                assert!(castable(&mut state, spell));
+                assert!(state
+                    .known_library_cards(other, actor)
+                    .iter()
+                    .any(|known| { known.position == 0 && known.object == spell }));
+                act(&mut state, Action::CastSpell(spell));
+                let prompt = next(&mut state);
+                assert!(
+                    matches!(&prompt, Decision::ChooseSpellMode { legal_modes, .. }
+                    if legal_modes == &[0, 1])
+                );
+                let mut restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                assert_eq!(prompt, next(&mut restored));
+                let mut missing_grant = serde_json::to_value(&state).unwrap();
+                missing_grant["eternal_v1"]["e5a"]["library_casts"]
+                    .as_array_mut()
+                    .unwrap()
+                    .last_mut()
+                    .unwrap()
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("future_sight_overload")
+                    .unwrap();
+                let mut missing_grant: GameState = serde_json::from_value(missing_grant).unwrap();
+                missing_grant
+                    .engine
+                    .pending_cast
+                    .as_mut()
+                    .unwrap()
+                    .mode_chosen = Some(1);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut missing_grant),
+                    Decision::Halted { .. }
+                ));
+                assert_eq!(life(&missing_grant, actor), 20);
+                assert_eq!(
+                    missing_grant.players[actor.index()].mana_pool,
+                    state.players[actor.index()].mana_pool
+                );
+                if with_citadel {
+                    let mut ordinary = restored.clone();
+                    act(&mut ordinary, Action::ChooseSpellMode(0));
+                    assert!(matches!(
+                        next(&mut ordinary),
+                        Decision::ChooseTargets { .. }
+                    ));
+                    act(&mut ordinary, Action::ChooseTarget(Target::Object(first)));
+                    settled(&mut ordinary);
+                    assert_eq!(life(&ordinary, actor), 19);
+                    assert_eq!(
+                        ordinary.players[actor.index()].mana_pool,
+                        state.players[actor.index()].mana_pool
+                    );
+                    assert_eq!(zone(&ordinary, first), Zone::Graveyard);
+                    assert_eq!(zone(&ordinary, second), Zone::Battlefield);
+                }
+                for continued in [&mut state, &mut restored] {
+                    act(continued, Action::ChooseSpellMode(1));
+                    assert!(matches!(next(continued), Decision::CastSpellOrPass { .. }));
+                    let item = continued.stack.last().unwrap();
+                    assert_eq!(item.v4.cast_method, Some(CastMethodV4::Omen));
+                    assert!(item.targets.is_empty());
+                    assert_eq!(engine::object_mana_value(continued, spell), 1);
+                    let origin = item.v4.source_contract.unwrap().spell_cast_origin.unwrap();
+                    assert_eq!(origin.origin_zone, Zone::Library);
+                    assert_eq!(origin.origin_zone_change_count, generation);
+                    assert_eq!(origin.finalized_method, Some(CastMethodV4::Omen));
+                    assert_eq!(
+                        origin.route,
+                        SpellCastRouteV4::LibraryPermissionV1 {
+                            holder: actor,
+                            permission_zone_change_count: generation,
+                        }
+                    );
+                    assert_eq!(continued.players[actor.index()].mana_pool, [0; 6]);
+                    assert_eq!(life(continued, actor), 20);
+                    mtg_kernel::event::propose_and_commit(
+                        continued,
+                        mtg_kernel::event::ProposedEvent::zone_change(sight, Zone::Graveyard),
+                    );
+                    *continued =
+                        serde_json::from_slice(&serde_json::to_vec(continued).unwrap()).unwrap();
+                    let mut forged = serde_json::to_value(&*continued).unwrap();
+                    let permit = &mut forged["eternal_v1"]["e5a"]["library_casts"]
+                        .as_array_mut()
+                        .unwrap()
+                        .last_mut()
+                        .unwrap()["future_sight_overload"];
+                    permit["source"]["source"] = serde_json::json!(earlier);
+                    permit["source"]["zone_change_count"] = serde_json::json!(earlier_generation);
+                    permit["announced_at"] = serde_json::json!(earlier_at);
+                    let mut forged: GameState = serde_json::from_value(forged).unwrap();
+                    assert!(matches!(
+                        engine::advance_until_decision(&mut forged),
+                        Decision::Halted { .. }
+                    ));
+                    settled(continued);
+                    assert_eq!(zone(continued, spell), Zone::Graveyard);
+                    assert_eq!(zone(continued, mine), Zone::Battlefield);
+                    assert_eq!(zone(continued, first), Zone::Graveyard);
+                    assert_eq!(zone(continued, second), Zone::Graveyard);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn overload_from_future_sight_can_be_the_only_legal_form_both_seats() {
+    use mtg_kernel::state::CastMethodV4;
+    for actor in [P0, P1] {
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        put(&mut state, actor, "Future Sight", Zone::Battlefield);
+        let own_artifact = put(&mut state, actor, "Relic of Progenitus", Zone::Battlefield);
+        let spell = put(&mut state, actor, "Vandalblast", Zone::Library);
+        let other = actor.opponent();
+        let commandeer = put(&mut state, other, "Commandeer", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R], 3);
+        assert!(!castable(&mut state, spell));
+        pool(&mut state, actor, &[], 1);
+        assert!(castable(&mut state, spell));
+        act(&mut state, Action::CastSpell(spell));
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        let item = state.stack.last().unwrap();
+        assert_eq!(item.v4.cast_method, Some(CastMethodV4::Omen));
+        assert!(item.targets.is_empty());
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        act(&mut state, Action::Pass);
+        assert!(matches!(
+            next(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == other
+        ));
+        pool(&mut state, other, &[ManaColor::U; 2], 5);
+        cast(&mut state, commandeer, &[Target::Object(spell)]);
+        settled(&mut state);
+        assert_eq!(zone(&state, spell), Zone::Graveyard);
+        assert_eq!(zone(&state, own_artifact), Zone::Graveyard);
+    }
+}
+
+#[test]
 fn overload_cannot_use_bolas_citadel_life_payment_both_seats() {
     for actor in [P0, P1] {
         let mut state = plains();

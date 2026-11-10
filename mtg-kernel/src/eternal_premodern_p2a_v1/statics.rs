@@ -144,9 +144,11 @@ pub(crate) fn tainted_colors(state: &GameState, land: ObjectId) -> &'static [Man
 /// Future Sight: whether `player` controls one, so the top card of their
 /// library is revealed and may be played.
 pub(crate) fn future_sight(state: &GameState, player: PlayerId) -> bool {
-    active_with_id(state, static_ids().future_sight, FUTURE_SIGHT, Some(player))
-        .next()
-        .is_some()
+    future_sight_source(state, player).is_some()
+}
+
+pub(crate) fn future_sight_source(state: &GameState, player: PlayerId) -> Option<ObjectId> {
+    active_with_id(state, static_ids().future_sight, FUTURE_SIGHT, Some(player)).next()
 }
 
 // ---- Activations --------------------------------------------------------------------

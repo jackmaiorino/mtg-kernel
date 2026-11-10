@@ -528,7 +528,8 @@ New, each built once in the first wave that needs it:
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
   S1c, S1a, S1b and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload
   (Vandalblast, Electrickery) is the Adventure form of the card that split cards
-  use to represent the paid overload cost from hand or a normal graveyard permission,
+  use to represent the paid overload cost from hand, a normal graveyard permission, or
+  Future Sight's paid library permission,
   with no targets and the printed mana value on the stack (118.9c). Circle of
   Protection: Blue offers a choice among the blue objects in the public zones and
   records a shield (source incarnation, player, turn) that the damage replacement
@@ -565,7 +566,11 @@ New, each built once in the first wave that needs it:
   permission offers the ordinary spell form with its original target requirement.
   Omniscience can still cast the ordinary form for free or let its controller pay
   for overload. Bolas's Citadel offers the ordinary form with its life payment.
-  Normal library permission from Future Sight still needs overload support.
+  If both Future Sight and Bolas's Citadel grant the library cast, the ordinary
+  form can still pay life and the overloaded form pays only its mana cost.
+  The paid overload retains its exact Future Sight permission in the finalized
+  cast publication. The current pending cast menu has no interleaved mana
+  activation action and these overload payments use the ordinary mana plan.
   The affected overload fixtures and consumers still need qualification.
   Circle of Protection: Blue now rechecks blue at damage time and matches genuine
   historical damage to the chosen source incarnation. A native Stack-to-Battlefield
