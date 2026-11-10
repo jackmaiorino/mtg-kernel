@@ -240,13 +240,18 @@ fn drain_v1<T: Send, W: Send>(
     let (caller, helpers) = workspaces
         .split_first_mut()
         .expect("S learner needs a worker");
+    let profile = super::update_profile_v1::current_v1();
     thread::scope(|scope| {
         let drain = &drain;
+        let profile = &profile;
         let helpers: Vec<_> = helpers
             .iter_mut()
             .filter_map(|workspace| {
                 thread::Builder::new()
-                    .spawn_scoped(scope, move || drain(workspace))
+                    .spawn_scoped(scope, move || {
+                        super::update_profile_v1::adopt_v1(profile);
+                        drain(workspace)
+                    })
                     .ok()
             })
             .collect();
@@ -404,7 +409,10 @@ impl SModelV1 {
         work: &mut SWorkV1,
         terms: &mut SGradientTermsV1,
     ) -> Result<(f32, f32), String> {
+        let forward =
+            super::update_profile_v1::span_v1(super::update_profile_v1::StageV1::LearnerForward);
         self.forward_into_v1(job.substep.input, &mut work.tape)?;
+        forward.finish_v1(&work.tape.logits, work.tape.value);
         let (selected, dlogits) = gae_policy_row_v1(
             &work.tape.logits,
             job.substep.selected,
@@ -418,6 +426,8 @@ impl SModelV1 {
         } else {
             (0.0, 0.0)
         };
+        let backward =
+            super::update_profile_v1::span_v1(super::update_profile_v1::StageV1::LearnerBackward);
         self.backward_into_v1(
             job.substep.input,
             &work.tape,
@@ -426,6 +436,7 @@ impl SModelV1 {
             &mut SGradientSinkV1::Record(terms),
             &mut work.back,
         )?;
+        backward.finish_plain_v1();
         Ok((selected, value_error))
     }
 }
