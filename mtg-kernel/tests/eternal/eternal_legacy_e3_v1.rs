@@ -1171,11 +1171,11 @@ fn show_and_tell_puts_each_players_chosen_card_onto_the_battlefield() {
             assert_eq!(player, P1);
             assert_eq!(legal_targets, vec![Target::Object(diamond)]);
             assert!(
-                state
+                !state
                     .known_hand_cards(P1, P0)
                     .iter()
                     .any(|entry| entry.object == wraith),
-                "the second player sees the first choice"
+                "the second player chooses before the first card is revealed"
             );
             act(
                 &mut state,

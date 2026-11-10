@@ -680,12 +680,7 @@ pub(crate) fn finish_selection(
         }
         E3ChoiceKindV1::ShowAndTellV1 { chosen, later } => {
             let mut chosen = chosen.clone();
-            if let Some(card) = bindings.first() {
-                // The next player sees the choice before making theirs.
-                // spellbench-public-reveal: hand card revealed by the card rules.
-                state.reveal_hand_card(choice.player.opponent(), choice.player, card.object)?;
-                chosen.push(*card);
-            }
+            chosen.extend(bindings.first().copied());
             stage_show_and_tell(state, continuation, later, chosen, choice.path.clone())
         }
         E3ChoiceKindV1::SneakAttackV1 { source } => {
@@ -1093,6 +1088,13 @@ pub(crate) fn drive(
             )
         }
         EternalOpV1::ShowAndTellV1 => {
+            use crate::eternal_sideboard_s1b_v1::meddling_mage_entry::show_and_tell;
+            if show_and_tell::printed(&continuation.resolving_item) {
+                if !path.is_empty() {
+                    return Err("Show and Tell changed its native root".into());
+                }
+                return crate::linked_aura_operation_v1::resolve_show_and_tell(state, continuation);
+            }
             let first = state.active_player;
             stage_show_and_tell(
                 state,
@@ -2748,7 +2750,7 @@ pub(crate) fn set_free_quote(state: &mut GameState, card: Option<ObjectId>) {
 /// artifact, creature, enchantment or land card in their hand. An Aura
 /// would need a host chosen as it enters (303.4f), which the engine models
 /// only for Aura spells, so Auras are not offered.
-fn show_and_tell_cards(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
+pub(crate) fn show_and_tell_cards(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
     hand_bindings(state, player, |def| {
         [
             CardType::Artifact,
@@ -2809,10 +2811,27 @@ fn stage_show_and_tell(
     if chosen.iter().any(|binding| !binding_live(state, *binding)) {
         return Err("a Show and Tell card left its owner's hand".to_string());
     }
-    for binding in chosen {
-        event::propose_and_commit(
+    // Historical Show and Tell prompts and spell copies use this continuation.
+    // A Metamorph copy requires the physical paid producer and private answers.
+    if chosen.iter().any(|binding| {
+        crate::eternal_sideboard_s1b_v1::meddling_mage_entry::vial::is_physical_metamorph_in_hand(
             state,
-            ProposedEvent::zone_change(binding.object, Zone::Battlefield),
+            binding.object,
+        )
+    }) {
+        return Err("Show and Tell Metamorph requires its native paid resolution".into());
+    }
+    for binding in &chosen {
+        let owner = state.objects.get(binding.object).owner;
+        // spellbench-public-reveal: both players have now chosen their cards.
+        state.reveal_hand_card(owner.opponent(), owner, binding.object)?;
+    }
+    if !chosen.is_empty() {
+        event::propose_and_commit_batch(
+            state,
+            chosen.into_iter().map(|binding| {
+                ProposedEvent::zone_change(binding.object, Zone::Battlefield)
+            }).collect(),
         );
     }
     Ok(false)
