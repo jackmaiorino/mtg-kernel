@@ -491,6 +491,8 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
     replay.engine.linked_aura_operation_v1.runtime = Some(Box::new(RunnerV1 {
         kinship_start: None,
         kinship_plans: Vec::new(),
+        mage_start: None,
+        mage_plans: Vec::new(),
         original_stack: enclosing.original_stack.clone(),
         original_history_len: enclosing.original_history_len,
         batch_depth: 0,
@@ -522,6 +524,8 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
         || !runner.deferred_departures.is_empty()
         || runner.kinship_start.is_some()
         || !runner.kinship_plans.is_empty()
+        || runner.mage_start.is_some()
+        || !runner.mage_plans.is_empty()
         || runner.banner_start.is_some()
         || !runner.color_plans.is_empty()
         || runner.attachment_input_v48.is_some()
