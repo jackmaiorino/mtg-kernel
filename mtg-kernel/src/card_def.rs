@@ -2516,6 +2516,9 @@ pub enum ManaAbilityCostDef {
     /// this subtype, the source included, is the activation's cost target;
     /// no tap. Appended for the eternal catalog.
     SacrificeControlledWithSubtypeV1(Subtype),
+    /// Tap two untapped controlled permanents of this effective subtype.
+    /// Neither payment is the tap symbol, so either creature may be sick.
+    TapTwoControlledPermanentsWithSubtypeV1(Subtype),
 }
 
 /// Amount of the chosen color added by a mana ability.

@@ -410,7 +410,7 @@ jobs:
         if: matrix.group == 'eternal'
         run: |
           cargo clippy --release --locked -p mtg-kernel --all-targets --features eternal-fixtures -- -D warnings
-          python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_ full_text_v1::tests:: graveyard_order_v1::tests:: premodern_ordered_public_v1::
+          python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_ has_a_fixed_seat_human_prompt full_text_v1::tests:: graveyard_order_v1::tests:: premodern_ordered_public_v1::
           python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures
           python python/tools/run_rust_integration_tests.py standard_integration --features eternal-fixtures
 
