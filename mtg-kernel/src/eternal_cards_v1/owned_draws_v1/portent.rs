@@ -549,26 +549,15 @@ pub(super) fn selected_draw(
     original_context(pending) && owns(state, &pending.resolving_item, queued_at)
 }
 
+/// Ordinary pending and published triggers retain their existing public meaning.
+/// Only a suspended owned replacement instruction needs an observation successor.
 pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
-    if state
-        .stack
-        .iter()
-        .any(|item| item.inline_effect.as_ref().and_then(bound).is_some())
-        || state
-            .engine
-            .pending_triggers
-            .iter()
-            .any(|pending| bound(&pending.effect).is_some())
-        || state.engine.pending_effect.as_ref().is_some_and(|pending| {
-            pending
-                .resolving_item
-                .inline_effect
-                .as_ref()
-                .and_then(bound)
-                .is_some()
-        })
-    {
-        return Err("Portent bound delayed draws require an observation successor".into());
+    if state.eternal_owned_draw_progress_v1.is_some_and(|progress| {
+        matches!(state.engine.event_history.get(progress.started_at),
+            Some(CommittedEvent::EternalOwnedDrawV1 { journal })
+                if journal.start().is_some_and(|(started, _)| matches!(started.instruction, super::InstructionV1::Portent { .. })))
+    }) {
+        return Err("Portent owned draw choices require an observation successor".into());
     }
     Ok(())
 }

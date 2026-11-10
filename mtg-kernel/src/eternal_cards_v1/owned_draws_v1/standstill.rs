@@ -103,6 +103,12 @@ fn trigger(state: &GameState, triggered_at: usize) -> Option<(AbilitySourceContr
         && rows(state).filter(|(_, row)| matches!(row, JournalV1::Triggered { cast_at: previous, source: original, .. } if *previous == cast_at && original.source == source.source && original.zone_change_count == source.zone_change_count)).count() == 1)
         .then_some((source, cast.controller))
 }
+pub(crate) fn pending_source(state: &GameState, effect: &EffectOp) -> Result<AbilitySourceContractV4, String> {
+    let (triggered_at, caster) = bound(effect).ok_or("Standstill lost its pending recipe")?;
+    let (source, original_caster) = trigger(state, triggered_at).ok_or("Standstill lost its pending native ancestry")?;
+    if caster != original_caster { return Err("Standstill changed its pending caster".into()); }
+    Ok(source)
+}
 fn matches_trigger(state: &GameState, item: &StackItem, triggered_at: usize, caster: PlayerId) -> bool {
     trigger(state, triggered_at).is_some_and(|(source, original_caster)| {
         caster == original_caster && *item == StackItem {
@@ -210,10 +216,15 @@ pub(super) fn sacrifice_once(state: &mut GameState, pending: &EffectContinuation
     if !sacrifice_proof(state, item, triggered_at) { return Err("Standstill sacrifice lost its native event proof".into()); }
     Ok(true)
 }
+/// Ordinary pending and published triggers retain their existing public meaning.
+/// Only a suspended owned replacement instruction needs an observation successor.
 pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
-    if state.stack.iter().any(|item| item.inline_effect.as_ref().and_then(bound).is_some())
-        || state.engine.pending_triggers.iter().any(|pending| bound(&pending.effect).is_some())
-        || state.engine.pending_effect.as_ref().is_some_and(|pending| pending.resolving_item.inline_effect.as_ref().and_then(bound).is_some())
-    { return Err("Standstill bound draws require an observation successor".into()); }
+    if state.eternal_owned_draw_progress_v1.is_some_and(|progress| {
+        matches!(state.engine.event_history.get(progress.started_at),
+            Some(CommittedEvent::EternalOwnedDrawV1 { journal })
+                if journal.start().is_some_and(|(started, _)| matches!(started.instruction, super::InstructionV1::Standstill { .. })))
+    }) {
+        return Err("Standstill owned draw choices require an observation successor".into());
+    }
     Ok(())
 }

@@ -7740,7 +7740,10 @@ fn core_surface_action_candidates_fake_scoped_v50(
                 let actor = (*player).into();
                 let pending_sources = pending
                     .iter()
-                    .map(|p| card_ref(state, p.source))
+                    .map(|p| match owned_draw_pending_source_ref(state, p)? {
+                        Some(source) => Ok(source),
+                        None => card_ref(state, p.source),
+                    })
                     .collect::<Result<Vec<_>>>()?;
                 for order in permutations(pending.len())? {
                     push_action(
@@ -12048,7 +12051,9 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     None
                 };
                 Ok(PendingTriggerSemanticV2 {
-                    source: if let Some(source) = prepared_source
+                    source: if let Some(source) = owned_draw_pending_source_ref(state, p)? {
+                        Some(source)
+                    } else if let Some(source) = prepared_source
                         .or(fake_source)
                         .or(conqueror_source)
                         .or(panda_source)
@@ -13920,6 +13925,37 @@ pub(crate) fn public_pending_opponent_hand_source_v2(
         return stack_source_ref(state, item).map(Some);
     }
     Ok(None)
+}
+
+/// These two native draw producers carry public historical source contracts.
+/// Read the authenticated contract, never a returned card's current hidden zone.
+fn owned_draw_pending_source_ref(
+    state: &GameState,
+    pending: &crate::trigger::PendingTrigger,
+) -> Result<Option<CardStableRefV1>> {
+    use crate::eternal_cards_v1::owned_draws_v1::{portent, standstill};
+    if portent::bound(&pending.effect).is_none() && standstill::bound(&pending.effect).is_none() {
+        return Ok(None);
+    }
+    crate::engine::validate_pending_trigger_identity(state, pending).map_err(RlContractError)?;
+    if state.engine.pending_triggers.iter().chain(state.pending_legend_rule_v1.iter().flat_map(|legend| legend.waiting_triggers())).filter(|row| *row == pending).count() != 1 {
+        return Err(RlContractError("owned draw pending source lacks one native queue row".into()));
+    }
+    let (source, card_def, owner, controller, zone, generation) = if portent::bound(&pending.effect).is_some() {
+        let source = portent::pending_source(state, &pending.effect).map_err(RlContractError)?;
+        (source.source, source.card_def, source.owner, source.controller, source.zone, source.zone_change_count)
+    } else {
+        let source = standstill::pending_source(state, &pending.effect).map_err(RlContractError)?;
+        (source.source, source.card_def, source.owner, source.controller, source.zone, source.zone_change_count)
+    };
+    Ok(Some(CardStableRefV1 {
+        arena_id: source.0,
+        card_db_id: card_def,
+        owner: owner.into(),
+        controller: controller.into(),
+        zone,
+        zone_change_count: generation,
+    }))
 }
 
 fn frozen_stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {

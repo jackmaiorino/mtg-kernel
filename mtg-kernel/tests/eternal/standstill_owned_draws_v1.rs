@@ -267,6 +267,7 @@ fn paid_standstill_ordinary_caster_opponent_draws_both_seats_and_controllers() {
             assert_eq!(source_triggers(&state, source), 1);
             let mut replay = restored(&state);
             for branch in [&mut state, &mut replay] {
+                mtg_kernel::rl::observe_policy_v5(branch, &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(), caster, 0, 0, 0, 1).unwrap();
                 settled(branch);
                 assert_eq!(zone(branch, source), Zone::Graveyard);
                 assert_eq!(sacrifices(branch, source), 1);

@@ -637,9 +637,11 @@ New, each built once in the first wave that needs it:
   stop and restored progress validation. Raw or borrowed-ID scheduling cannot
   replace the completed native parent. Genuine native spell copies retain the
   historical Portent schedule and ordinary draw; their replacement ownership
-  remains outside this successor. Active bound delayed triggers require an
-  observation successor. Independent source review and pinned formatting passed;
-  native qualification of Portent remains pending.
+  remains outside this successor. Ordinary pending and published triggers retain
+  their public meaning through authenticated original source contracts; suspended
+  owned replacement choices require an observation successor. Native1330 exposed
+  start/resume guards and an unavailable copy fixture producer; both source fixes
+  are committed, with native requalification pending.
   The physical Standstill successor binds the exact finalized cast identity
   and SpellCast occurrence, original battlefield source, native trigger
   publication, and successful sacrifice marker plus source departure. The
@@ -649,9 +651,9 @@ New, each built once in the first wave that needs it:
   changed controller cannot be sacrificed by the old trigger. Native copied
   permanents retain the ordinary predecessor route. Generic copied triggered
   abilities have no shipped producer in this slice and are not authorized by
-  a copied bound receipt. Active bound Standstill states require an observation
-  successor; completed ordinary games retain existing observations. Source
-  review and native qualification of this Standstill successor are pending.
+  a copied bound receipt. Ordinary pending and published triggers retain existing
+  observations; suspended owned replacement choices require an observation
+  successor. Source review and native qualification remain pending.
   Generated draws from the remaining Premodern leaves, Arcane Denial and
   Accumulated Knowledge still need their Jace/Hullbreacher origins.
   Quantum Riddler adjusts the whole count once for uninterrupted fixed and
