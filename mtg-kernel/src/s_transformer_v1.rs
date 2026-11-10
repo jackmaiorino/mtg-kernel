@@ -51,6 +51,8 @@ mod policy_tests;
 mod tests;
 pub mod tools;
 pub(crate) mod update_profile_v1;
+#[cfg(test)]
+mod verified_row_v1;
 
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::training_math_v1::TrainingMathV1;
@@ -647,8 +649,19 @@ impl SModelV1 {
         tape: &mut STapeV1,
     ) -> Result<(), String> {
         ensure_mxcsr_v1()?;
+        let counts = input.validate_v1(&self.layout.config)?;
+        self.forward_validated_into_v1(input, tape, counts)
+    }
+
+    fn forward_validated_into_v1(
+        &self,
+        input: SInputV1<'_>,
+        tape: &mut STapeV1,
+        counts: CountsV1,
+    ) -> Result<(), String> {
+        #[cfg(test)]
+        verified_row_v1::note_forward_v1();
         let config = self.layout.config;
-        let counts = input.validate_v1(&config)?;
         let (n, e, a, r) = (counts.objects, counts.edges, counts.actions, counts.refs);
         let d = config.d_model;
         let h = config.heads;
@@ -985,6 +998,29 @@ pub(crate) struct LayerTapeV1 {
     ff_act: Vec<f32>,
 }
 
+impl LayerTapeV1 {
+    fn size_v1(
+        &mut self,
+        config: &SConfigV1,
+        counts: CountsV1,
+        mut size: impl FnMut(&mut Vec<f32>, usize),
+    ) {
+        let d = config.d_model;
+        let l = 1 + counts.objects + counts.actions;
+        size(&mut self.x_in, l * d);
+        size(&mut self.ln1, l * d);
+        size(&mut self.ln1_stats, 2 * l);
+        size(&mut self.qkv, l * 3 * d);
+        size(&mut self.probs, config.heads * l * l);
+        size(&mut self.attn, l * d);
+        size(&mut self.x_mid, l * d);
+        size(&mut self.ln2, l * d);
+        size(&mut self.ln2_stats, 2 * l);
+        size(&mut self.ff_pre, l * config.ffn);
+        size(&mut self.ff_act, l * config.ffn);
+    }
+}
+
 /// Forward workspace and tape. Buffers grow to the largest decision seen and
 /// are reused.
 #[derive(Clone, Debug, Default)]
@@ -1027,54 +1063,65 @@ fn sized_v1(buffer: &mut Vec<f32>, len: usize) {
 
 impl STapeV1 {
     fn reset_v1(&mut self, config: &SConfigV1, counts: CountsV1) {
+        self.counts = Some(counts);
+        self.size_prefix_v1(config, counts, sized_v1);
+        self.layers.resize_with(config.layers, LayerTapeV1::default);
+        for layer in &mut self.layers {
+            layer.size_v1(config, counts, sized_v1);
+        }
+        self.size_tail_v1(config, counts, sized_v1);
+        self.value_logit = 0.0;
+        self.value = 0.0;
+    }
+
+    fn size_prefix_v1(
+        &mut self,
+        config: &SConfigV1,
+        counts: CountsV1,
+        mut size: impl FnMut(&mut Vec<f32>, usize),
+    ) {
         let d = config.d_model;
         let cd = config.card_dim;
         let h = config.heads;
         let (n, e, a, r) = (counts.objects, counts.edges, counts.actions, counts.refs);
         let l = 1 + n + a;
-        self.counts = Some(counts);
-        sized_v1(&mut self.obj_inp, n * (OBJECT_FEATURE_DIM_V1 + cd));
-        sized_v1(&mut self.obj_pre, n * d);
-        sized_v1(&mut self.obj_act, n * d);
-        sized_v1(&mut self.state_pre, d);
-        sized_v1(&mut self.state_act, d);
-        sized_v1(&mut self.act_pre, a * d);
-        sized_v1(&mut self.act_act, a * d);
-        sized_v1(&mut self.ref_inp, r * (REF_FEATURE_DIM_V1 + cd));
-        sized_v1(&mut self.ref_pre, r * d);
-        sized_v1(&mut self.ref_act, r * d);
-        sized_v1(&mut self.ref_out, r * d);
-        sized_v1(&mut self.edge_out, e * 2 * h);
-        sized_v1(&mut self.bias, h * l * l);
+        size(&mut self.obj_inp, n * (OBJECT_FEATURE_DIM_V1 + cd));
+        size(&mut self.obj_pre, n * d);
+        size(&mut self.obj_act, n * d);
+        size(&mut self.state_pre, d);
+        size(&mut self.state_act, d);
+        size(&mut self.act_pre, a * d);
+        size(&mut self.act_act, a * d);
+        size(&mut self.ref_inp, r * (REF_FEATURE_DIM_V1 + cd));
+        size(&mut self.ref_pre, r * d);
+        size(&mut self.ref_act, r * d);
+        size(&mut self.ref_out, r * d);
+        size(&mut self.edge_out, e * 2 * h);
+        size(&mut self.bias, h * l * l);
         let dh = config.head_dim_v1();
-        sized_v1(&mut self.key_t, dh * l);
-        sized_v1(&mut self.value_h, l * dh);
-        sized_v1(&mut self.head_out, l * dh);
-        self.layers.resize_with(config.layers, LayerTapeV1::default);
-        for lt in &mut self.layers {
-            sized_v1(&mut lt.x_in, l * d);
-            sized_v1(&mut lt.ln1, l * d);
-            sized_v1(&mut lt.ln1_stats, 2 * l);
-            sized_v1(&mut lt.qkv, l * 3 * d);
-            sized_v1(&mut lt.probs, h * l * l);
-            sized_v1(&mut lt.attn, l * d);
-            sized_v1(&mut lt.x_mid, l * d);
-            sized_v1(&mut lt.ln2, l * d);
-            sized_v1(&mut lt.ln2_stats, 2 * l);
-            sized_v1(&mut lt.ff_pre, l * config.ffn);
-            sized_v1(&mut lt.ff_act, l * config.ffn);
-        }
-        sized_v1(&mut self.x_out, l * d);
-        sized_v1(&mut self.fin, (1 + a) * d);
-        sized_v1(&mut self.fin_stats, 2 * (1 + a));
-        sized_v1(&mut self.pol_inp, a * 2 * d);
-        sized_v1(&mut self.pol_pre, a * d);
-        sized_v1(&mut self.pol_act, a * d);
-        sized_v1(&mut self.logits, a);
-        sized_v1(&mut self.val_pre, d);
-        sized_v1(&mut self.val_act, d);
-        self.value_logit = 0.0;
-        self.value = 0.0;
+        size(&mut self.key_t, dh * l);
+        size(&mut self.value_h, l * dh);
+        size(&mut self.head_out, l * dh);
+    }
+
+    fn size_tail_v1(
+        &mut self,
+        config: &SConfigV1,
+        counts: CountsV1,
+        mut size: impl FnMut(&mut Vec<f32>, usize),
+    ) {
+        let d = config.d_model;
+        let a = counts.actions;
+        let l = 1 + counts.objects + a;
+        size(&mut self.x_out, l * d);
+        size(&mut self.fin, (1 + a) * d);
+        size(&mut self.fin_stats, 2 * (1 + a));
+        size(&mut self.pol_inp, a * 2 * d);
+        size(&mut self.pol_pre, a * d);
+        size(&mut self.pol_act, a * d);
+        size(&mut self.logits, a);
+        size(&mut self.val_pre, d);
+        size(&mut self.val_act, d);
     }
 
     pub fn logits_v1(&self) -> &[f32] {
