@@ -5,33 +5,93 @@
 //! mid-game states with one event of each kind added: a kind no fixture game
 //! produces is exactly where a guard that left it out would hide.
 
-use super::tests::{fixture, test_cfg};
-use super::*;
+use super::tests::test_cfg;
+use super::{game_setup, new_session};
+use crate::event::CommittedEvent;
 use crate::event_history_v1::guard_tests_v1::{
     every_kind_v1, recording_sites, with_scans_forced, SitesV1,
 };
-use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+use crate::rl::{ActionSemanticV1, TerminalClassificationV1};
+use crate::rl_session::{FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1};
 use crate::state::GameState;
+use sha2::{Digest, Sha256};
 
 fn state_digest(state: &GameState) -> String {
     let bytes = serde_json::to_vec(state).expect("state serializes");
     format!("{:x}", Sha256::digest(&bytes))
 }
 
-/// Each decision of a fixture game (both seats), the action taken and the
-/// state it was taken in, then how the game ended.
-fn game_record(game: u64) -> Vec<String> {
+/// Exercise the same native session on the pinned fixture deal. The frozen
+/// scorer has a narrower observation contract than this engine guard test.
+fn drive_native(
+    game: u64,
+    mut visit: impl FnMut(&FastActorSessionV1, FastActorDecisionV1, &[ActionSemanticV1], u32) -> bool,
+) -> FastActorSessionV1 {
     let setup = game_setup(&test_cfg(), 1, game);
-    let (mut focal, mut opponent) = (fixture(), fixture());
+    let mut session = new_session(&setup).expect("fixture game resets");
+    while let FastActorResponseV1::Decision(decision) = session.current_response() {
+        let actions = session
+            .diagnostic_current_action_semantics()
+            .expect("native fixture decision has a menu");
+        assert_eq!(actions.len(), decision.legal_action_count as usize);
+        // Play lands and spells, commit attackers and blockers, then take
+        // the first native ordinal within each priority. Avoid repeatedly
+        // activating optional abilities while a pass is available.
+        let (index, _) = actions
+            .iter()
+            .enumerate()
+            .min_by_key(|&(index, action)| {
+                let rank = match action {
+                    ActionSemanticV1::PlayLand { .. }
+                    | ActionSemanticV1::ChooseAttackerInclusion { include: true, .. }
+                    | ActionSemanticV1::ChooseBlockerInclusion { include: true, .. } => 0,
+                    ActionSemanticV1::CastSpell { .. } => 1,
+                    ActionSemanticV1::Pass { .. } => 3,
+                    ActionSemanticV1::ActivateManaAbility { .. }
+                    | ActionSemanticV1::ActivateAbility { .. } => 4,
+                    _ => 2,
+                };
+                (rank, index)
+            })
+            .expect("native fixture decision has a legal action");
+        let action = index as u32;
+        if visit(&session, decision, &actions, action) {
+            return session;
+        }
+        session.step(decision.episode_id, decision.step, action).unwrap_or_else(|error| {
+            panic!("fixture game {game} step {} action {action}: {error:?}", decision.step)
+        });
+    }
+    session
+}
+
+/// Each decision, its full native menu, selected ordinal and state digest,
+/// followed by the terminal result.
+fn game_record(game: u64) -> Vec<String> {
     let mut record = Vec::new();
-    let (session, finished) = drive(&setup, &mut focal, &mut opponent, |s, d, action| {
-        record.push(format!("{d:?} {action} {}", state_digest(s.game_state())));
-        Ok(false)
-    })
-    .expect("fixture game plays");
+    let session = drive_native(game, |s, decision, actions, action| {
+        record.push(format!(
+            "{decision:?} {actions:?} {action} {}",
+            state_digest(s.game_state()),
+        ));
+        false
+    });
+    let response = session.current_response();
+    assert!(
+        matches!(&response, FastActorResponseV1::Terminal(terminal)
+            if terminal.terminal_classification == TerminalClassificationV1::Natural),
+        "game {game} did not finish naturally: {response:?}",
+    );
+    // The original scorer refusal was after combat in game 0.
+    if game == 0 {
+        assert!(
+            session.game_state().engine.event_history.iter().any(|event|
+                matches!(event, CommittedEvent::CombatDamageToPlayer { .. })),
+            "game {game} produced no combat damage history",
+        );
+    }
     record.push(format!(
-        "{finished} {:?} {}",
-        session.current_response(),
+        "{response:?} {}",
         state_digest(session.game_state())
     ));
     record
@@ -174,7 +234,7 @@ fn caught(f: impl FnOnce() -> String) -> String {
 }
 
 /// What a state's checks return, and where one step from it leads.
-fn outcomes(session: &FastActorSessionV1, checks: &[StateCheck]) -> Vec<String> {
+fn outcomes(session: &FastActorSessionV1, action: u32, checks: &[StateCheck]) -> Vec<String> {
     let state = session.game_state();
     let mut outcomes: Vec<String> = checks
         .iter()
@@ -183,28 +243,34 @@ fn outcomes(session: &FastActorSessionV1, checks: &[StateCheck]) -> Vec<String> 
     if let FastActorResponseV1::Decision(d) = session.current_response() {
         outcomes.push(caught(|| {
             let mut next = session.clone();
-            let response = next.step(d.episode_id, d.step, 0);
-            format!("step: {response:?} {}", state_digest(next.game_state()))
+            let response = next.step(d.episode_id, d.step, action);
+            let menu = next.diagnostic_current_action_semantics();
+            format!("step: {response:?} {menu:?} {}", state_digest(next.game_state()))
         }));
     }
     outcomes
 }
 
-/// Mid-game sessions of fixture games, at spread decisions.
-fn base_sessions() -> Vec<FastActorSessionV1> {
+/// Independently sample early, combat and later decisions from each deal.
+fn base_sessions() -> Vec<(FastActorSessionV1, u32)> {
     let mut bases = Vec::new();
     for game in [0, 40] {
-        let setup = game_setup(&test_cfg(), 1, game);
-        let (mut focal, mut opponent) = (fixture(), fixture());
-        let mut seen = 0;
-        drive(&setup, &mut focal, &mut opponent, |s, _, _| {
-            if seen % 25 == 10 {
-                bases.push(s.clone());
+        let mut game_bases = Vec::new();
+        let mut last_step = 0;
+        drive_native(game, |session, decision, _, action| {
+            let take = match game_bases.len() {
+                0 => decision.step >= 10,
+                1 => session.game_state().creatures_attacked_this_turn_v1() > 0,
+                _ => decision.step >= last_step + 25,
+            };
+            if take {
+                game_bases.push((session.clone(), action));
+                last_step = decision.step;
             }
-            seen += 1;
-            Ok(bases.len() >= 6)
-        })
-        .expect("fixture game plays");
+            game_bases.len() == 3
+        });
+        assert!(game_bases.len() >= 2, "game {game} did not supply a combat base");
+        bases.extend(game_bases);
     }
     bases
 }
@@ -214,9 +280,8 @@ fn one_event_of_each_kind_changes_no_guarded_result() {
     let samples = every_kind_v1();
     let checks = state_checks();
     let bases = base_sessions();
-    assert!(bases.len() >= 4, "too few base states: {}", bases.len());
     let ((), sites) = recording_sites(|| {
-        for (base_index, base) in bases.iter().enumerate() {
+        for (base_index, (base, action)) in bases.iter().enumerate() {
             for sample in &samples {
                 let mut session = base.clone();
                 session
@@ -224,8 +289,8 @@ fn one_event_of_each_kind_changes_no_guarded_result() {
                     .engine
                     .event_history
                     .push(sample.clone());
-                let guarded = outcomes(&session, &checks);
-                let forced = with_scans_forced(|| outcomes(&session, &checks));
+                let guarded = outcomes(&session, *action, &checks);
+                let forced = with_scans_forced(|| outcomes(&session, *action, &checks));
                 for (guarded, forced) in guarded.iter().zip(&forced) {
                     assert_eq!(
                         guarded,
