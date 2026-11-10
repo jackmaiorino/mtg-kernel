@@ -1,5 +1,6 @@
 """Unit tests of the W5 launcher's pure parts (any OS). The cgroup sequence runs in cgroup_acceptance.py."""
 from contextlib import nullcontext
+import errno
 import json
 import sys
 import tempfile
@@ -194,6 +195,38 @@ class GuardTests(unittest.TestCase):
 
 
 class NodeStateTests(unittest.TestCase):
+    def test_enforcement_skips_cgroup_removed_during_kernfs_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_root, cgroup_root = root / "state", root / "cgroups"
+            chain = cgroup_root / "box0" / "chain"
+            chain.mkdir(parents=True)
+            (chain / "cgroup.procs").touch()
+            node = w5box.NodeLog(state_root)
+            node.append({"event": "node-freeze", "reason": "operator hold"})
+            plan = {"state_root": state_root, "cgroup_root": cgroup_root}
+
+            # The path was found, but Linux invalidated the open kernfs node.
+            with patch.object(node, "locked", nullcontext), patch.object(
+                    w5box.Cgroup, "read", side_effect=OSError(errno.ENODEV, "No such device")):
+                state = w5box.enforce_node(plan, node, "test")
+
+            self.assertTrue(state["frozen"])
+            records, _ = node.read()
+            self.assertEqual(records[-1]["event"], "enforced")
+            self.assertTrue(records[-1]["frozen"])
+            self.assertEqual(records[-1]["changed"], [])
+
+    def test_populated_propagates_other_io_errors(self):
+        cgroup = w5box.Cgroup("unused-cgroup")
+        for code in (errno.EACCES, errno.EIO):
+            with self.subTest(errno=code):
+                failure = OSError(code, "read failed")
+                with patch.object(cgroup, "read", side_effect=failure):
+                    with self.assertRaises(OSError) as raised:
+                        cgroup.populated()
+                self.assertIs(raised.exception, failure)
+
     def test_enforcement_skips_chain_that_vanishes_after_exists(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
