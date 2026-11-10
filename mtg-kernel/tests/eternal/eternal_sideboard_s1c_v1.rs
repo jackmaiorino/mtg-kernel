@@ -1047,13 +1047,23 @@ fn paid_gush_with_riddler_resumes_the_original_fixed_count_both_seats() {
             "Eternal draw changed its native completed attempts",
         );
 
-        let mut removed = first_snapshot;
-        removed.as_object_mut().unwrap().remove("eternal_owned_draw_progress_v1");
-        let removed: GameState = serde_json::from_value(removed).unwrap();
-        assert_eq!(
-            mtg_kernel::effect::validate_pending_effect_choice(&removed).unwrap_err(),
-            "Eternal draw already started its original instruction",
-        );
+        for corrupt_start in [false, true] {
+            let mut removed = first_snapshot.clone();
+            let progress = removed.as_object_mut().unwrap()
+                .remove("eternal_owned_draw_progress_v1").unwrap();
+            if corrupt_start {
+                let started_at = progress["started_at"].as_u64().unwrap() as usize;
+                let started = &mut removed["engine"]["event_history"][started_at]
+                    ["EternalOwnedDrawV1"]["journal"]["StartedWithRiddlerV1"];
+                assert_eq!(started["extra"], 1);
+                started["extra"] = serde_json::json!(0);
+            }
+            let removed: GameState = serde_json::from_value(removed).unwrap();
+            assert_eq!(
+                mtg_kernel::effect::validate_pending_effect_choice(&removed).unwrap_err(),
+                "Eternal draw already started its original instruction",
+            );
+        }
 
         let mut restored: GameState = serde_json::from_value(second_snapshot).unwrap();
         assert_eq!(next(&mut restored), second);

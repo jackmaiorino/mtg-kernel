@@ -22,7 +22,9 @@ pub(super) fn selected(
             }
             SourceV1::Spell(source)
         }
-        StackItemKind::TriggeredAbility => {
+        StackItemKind::TriggeredAbility
+            if matches!(item.inline_effect.as_ref(), Some(EffectOp::DrawCards { .. })) =>
+        {
             let source = item.v4.ability_source_contract?;
             if source.source != item.source || source.controller != item.controller {
                 return None;
@@ -36,6 +38,9 @@ pub(super) fn selected(
     else {
         return None;
     };
+    if count == 0 {
+        return None;
+    }
     let drawer = match player {
         PlayerRef::Controller => item.controller,
         PlayerRef::Opponent => item.controller.opponent(),

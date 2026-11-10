@@ -834,10 +834,13 @@ fn dragon_before_start(pending: &EffectContinuation) -> bool {
 
 pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Result<(), String> {
     if state.eternal_owned_draw_progress_v1.is_none() {
-        if has_started(state, pending.resolving_item.v4.stack_item_id) {
+        let named = selected(state, pending);
+        if (named.is_some() || fixed::selected(state, pending).is_some())
+            && has_started(state, pending.resolving_item.v4.stack_item_id)
+        {
             return Err("Eternal draw already started its original instruction".into());
         }
-        let Some((instruction, _)) = selected(state, pending) else {
+        let Some((instruction, _)) = named else {
             return Ok(());
         };
         let before_start = if instruction == InstructionV1::DragonEngine {
