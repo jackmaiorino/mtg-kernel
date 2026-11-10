@@ -160,7 +160,7 @@ fn revealed_discard_by_name(
             })
         })
         .collect();
-    *state.pointer_mut("/observation/common/common/projection/surface/engine_context/pending_effect/choice/legal_targets")
+    *state.pointer_mut("/observation/common/common/projection/engine_context/pending_effect/choice/legal_targets")
         .ok_or_else(invalid)? = serde_json::json!(name_rows);
     let rows = state["candidates"].as_array_mut().ok_or_else(invalid)?;
     let mut native_rows = std::mem::take(rows);
