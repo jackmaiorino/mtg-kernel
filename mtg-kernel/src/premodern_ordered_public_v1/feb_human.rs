@@ -7,7 +7,10 @@ use crate::premodern_ordered_public_v1::{
 };
 use crate::{
     card_def::{CostComponent, TargetSpec},
-    effect::{self, EffectContinuation, EffectOp, EffectOptionChoicePurpose, PendingEffectChoice, PlayerRef},
+    effect::{
+        self, EffectContinuation, EffectOp, EffectOptionChoicePurpose, PendingEffectChoice,
+        PlayerRef,
+    },
     eternal_cards_v1::EternalOpV1,
     eternal_legacy_e7a_v1::E7aOpV1,
     eternal_premodern_p2c_v1::KARMIC_GUIDE,
@@ -313,7 +316,10 @@ pub(super) fn guide_echo_menu(
             program
         }
         None if Some(captured.card_def) == card_id_by_name(KARMIC_GUIDE)
-            && echo::delayed_effect_matches(KARMIC_GUIDE, inline) => inline,
+            && echo::delayed_effect_matches(KARMIC_GUIDE, inline) =>
+        {
+            inline
+        }
         _ => return None,
     };
     let EffectOp::Choice {
@@ -332,7 +338,10 @@ pub(super) fn guide_echo_menu(
     let source = captured_card(captured);
     let name = public_name(&source).ok()?;
     let (colors, generic) = echo::echo_cost(KARMIC_GUIDE)?;
-    let colored_cost: String = colors.iter().map(|color| format!("{{{color:?}}}")).collect();
+    let colored_cost: String = colors
+        .iter()
+        .map(|color| format!("{{{color:?}}}"))
+        .collect();
     let payment = format!("{{{generic}}}{colored_cost}");
     let live = crate::eternal_premodern_p1a_v1::live_ability_source(&pending.ctx, state);
     let labels = match live {
@@ -571,7 +580,7 @@ impl FebSessionV1 {
                                 row,
                                 viewer,
                                 &view.observation.ordered.graveyards,
-                            effect_options.as_ref(),
+                                effect_options.as_ref(),
                             )? {
                                 Some(label) => FebHumanActionV1::Supported {
                                     native_ordinal,

@@ -451,8 +451,10 @@ fn frozen_feb_human_cycles_paid_unearth_both_seats() {
             .actions
             .iter()
             .find_map(|row| match row {
-                FebHumanActionV1::Supported { native_ordinal, label: meaning }
-                    if meaning == label => Some(*native_ordinal),
+                FebHumanActionV1::Supported {
+                    native_ordinal,
+                    label: meaning,
+                } if meaning == label => Some(*native_ordinal),
                 _ => None,
             })
             .expect("paid Unearth offers its printed cycling ability");
@@ -505,7 +507,8 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
             let state = &mut owner.inner.game;
             let source = stage_deck_card(state, player, source_name, Zone::Hand);
             let wall = stage_deck_card(state, player, "Wall of Roots", Zone::Graveyard);
-            let donor = donated.then(|| stage_deck_card(state, player, "Karmic Guide", Zone::Graveyard));
+            let donor =
+                donated.then(|| stage_deck_card(state, player, "Karmic Guide", Zone::Graveyard));
             let mana = &mut state.players[player.index()].mana_pool;
             if donated {
                 mana[ManaColor::U.pool_index()] = 2;
@@ -530,13 +533,27 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
                 }
                 let viewer = acting(&owner);
                 let human = owner.human_current(viewer).unwrap().unwrap();
-                let ordinal = human.actions.iter().find_map(|row| match row {
-                    FebHumanActionV1::Supported { native_ordinal, label }
-                        if ["Choose Wall of Roots", "Pass priority", "Attack with none", "Discard "]
-                            .iter()
-                            .any(|prefix| label.starts_with(prefix)) => Some(*native_ordinal),
-                    _ => None,
-                }).expect("native FEB cast, entry, or turn progression");
+                let ordinal = human
+                    .actions
+                    .iter()
+                    .find_map(|row| match row {
+                        FebHumanActionV1::Supported {
+                            native_ordinal,
+                            label,
+                        } if [
+                            "Choose Wall of Roots",
+                            "Pass priority",
+                            "Attack with none",
+                            "Discard ",
+                        ]
+                        .iter()
+                        .any(|prefix| label.starts_with(prefix)) =>
+                        {
+                            Some(*native_ordinal)
+                        }
+                        _ => None,
+                    })
+                    .expect("native FEB cast, entry, or turn progression");
                 let (_, token) = issued(&owner, viewer);
                 owner.step_human(&token.unwrap(), ordinal).unwrap();
             }
@@ -553,7 +570,11 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
                     mana[ManaColor::U.pool_index()] = 2;
                     owner.inner.current =
                         bind_next(state, &mut owner.inner.surface, owner.inner.step);
-                    choose_label(&mut owner, seat, "Volrath's Shapeshifter: Pay {2} to discard");
+                    choose_label(
+                        &mut owner,
+                        seat,
+                        "Volrath's Shapeshifter: Pay {2} to discard",
+                    );
                     for _ in 0..8 {
                         if owner.inner.game.engine.pending_discard.is_some() {
                             break;
@@ -563,7 +584,10 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
                     }
                     choose_label(&mut owner, seat, "Discard Palinchron");
                     assert_eq!(
-                        full_text_v1::active_text(&owner.inner.game, source).unwrap().donor().object,
+                        full_text_v1::active_text(&owner.inner.game, source)
+                            .unwrap()
+                            .donor()
+                            .object,
                         palinchron
                     );
                     choose_label(
@@ -614,24 +638,35 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
                 } else {
                     format!("Choose payment for Karmic Guide echo from {source_name} (original source left, no mana due)")
                 };
-                (pay, format!("Decline Karmic Guide echo from {source_name} (original source left)"))
+                (
+                    pay,
+                    format!("Decline Karmic Guide echo from {source_name} (original source left)"),
+                )
             } else {
                 (
                     format!("Pay {{3}}{{W}}{{W}} to keep {source_name} (Karmic Guide echo, sacrifice if unpaid)"),
                     format!("Sacrifice {source_name} (Karmic Guide echo)"),
                 )
             };
-            assert_eq!(human.actions, [
-                FebHumanActionV1::Supported {
-                    native_ordinal: 0,
-                    label: pay_label,
-                },
-                FebHumanActionV1::Supported {
-                    native_ordinal: 1,
-                    label: decline_label,
-                },
-            ]);
-            assert!(owner.human_current(player.opponent().into()).unwrap().unwrap().actions.is_empty());
+            assert_eq!(
+                human.actions,
+                [
+                    FebHumanActionV1::Supported {
+                        native_ordinal: 0,
+                        label: pay_label,
+                    },
+                    FebHumanActionV1::Supported {
+                        native_ordinal: 1,
+                        label: decline_label,
+                    },
+                ]
+            );
+            assert!(owner
+                .human_current(player.opponent().into())
+                .unwrap()
+                .unwrap()
+                .actions
+                .is_empty());
             if departed {
                 let Ok(BoundBoundaryV1::Decision(binding)) = &owner.inner.current else {
                     panic!("departed echo must remain a native decision");
@@ -640,7 +675,10 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
                 let projection = &view.observation.stable.as_ref().unwrap().projection;
                 let historical = &projection.stack.last().unwrap().source;
                 assert_eq!(historical.zone, Zone::Battlefield);
-                assert_ne!(historical.zone_change_count, owner.inner.game.objects.get(source).zone_change_count);
+                assert_ne!(
+                    historical.zone_change_count,
+                    owner.inner.game.objects.get(source).zone_change_count
+                );
                 let Some(NumericMenuV1::Native { actions }) = view.menu else {
                     panic!("departed echo must have numeric native actions");
                 };
@@ -685,9 +723,28 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
             }
 
             for (ordinal, zone, mana) in [
-                (0, if departed { Zone::Hand } else { Zone::Battlefield },
-                    if departed && !donated { unpaid_pool } else { [0; 6] }),
-                (1, if departed { Zone::Hand } else { Zone::Graveyard }, unpaid_pool),
+                (
+                    0,
+                    if departed {
+                        Zone::Hand
+                    } else {
+                        Zone::Battlefield
+                    },
+                    if departed && !donated {
+                        unpaid_pool
+                    } else {
+                        [0; 6]
+                    },
+                ),
+                (
+                    1,
+                    if departed {
+                        Zone::Hand
+                    } else {
+                        Zone::Graveyard
+                    },
+                    unpaid_pool,
+                ),
             ] {
                 owner.restore(&snapshot).unwrap();
                 assert!(owner.step_human(&stale, ordinal).is_err());
