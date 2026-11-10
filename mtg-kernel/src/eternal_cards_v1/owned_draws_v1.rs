@@ -715,6 +715,21 @@ fn validate_native_progress(
     if total != Some(started.total) {
         return Err("Eternal draw changed its original count".into());
     }
+    if progress.completed == 0 {
+        if let CommittedEvent::EternalOwnedDrawV1 { journal } =
+            &state.engine.event_history[progress.started_at]
+        {
+            if let JournalV1::StartedWithRiddlerV1 { extra, .. } = **journal {
+                let drawer = started
+                    .instruction
+                    .drawer(ctx)
+                    .ok_or("Eternal draw lost its original drawer")?;
+                if extra != crate::event::draw_instruction_extra(state, drawer, started.total) {
+                    return Err("Eternal draw changed its original Riddler adjustment".into());
+                }
+            }
+        }
+    }
     let completed = state.engine.event_history[tail..]
         .iter()
         .filter_map(|event| match event {

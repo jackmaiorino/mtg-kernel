@@ -3585,7 +3585,7 @@ pub(crate) fn draw_instruction(state: &mut GameState, player: PlayerId, count: u
     let count = count + draw_instruction_extra(state, player, count);
     for _ in 0..count {
         propose_draw_attempt(state, player);
-        if !draw_instruction_continues(state, player) {
+        if cfg!(feature = "eternal-fixtures") && !draw_instruction_continues(state, player) {
             return false;
         }
     }

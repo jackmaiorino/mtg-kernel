@@ -954,6 +954,131 @@ fn announce_flame(
     flame
 }
 
+fn paid_riddler(
+    state: &mut GameState,
+    drawer: PlayerId,
+    hullbreacher: bool,
+    copies: usize,
+) {
+    state.active_player = drawer;
+    state.priority_player = drawer;
+    if hullbreacher {
+        act(state, Action::Pass);
+        let opponent = drawer.opponent();
+        let hull = put(state, opponent, "Hullbreacher", Zone::Hand);
+        pool(state, opponent, &[ManaColor::U], 2);
+        cast(state, hull, &[]);
+        settled(state);
+        assert_eq!(zone(state, hull), Zone::Battlefield);
+    }
+    for _ in 0..copies {
+        let riddler = put(state, drawer, "Quantum Riddler", Zone::Hand);
+        pool(state, drawer, &[ManaColor::U], 1);
+        cast(state, riddler, &[]);
+        settled(state);
+        assert_eq!(zone(state, riddler), Zone::Battlefield);
+    }
+}
+
+#[test]
+fn paid_gush_applies_riddler_once_before_individual_draw_replacements_both_seats() {
+    for drawer in [P0, P1] {
+        for (hull, riddlers) in [(false, 1), (true, 1), (true, 2)] {
+            let mut state = plains();
+            paid_riddler(&mut state, drawer, hull, riddlers);
+            if !hull {
+                let plains = state.players[drawer.index()].hand[0];
+                act(&mut state, Action::PlayLand(plains));
+                settled(&mut state);
+            }
+            let hand_before = state.players[drawer.index()].hand.len();
+            assert_eq!(hand_before, if hull { 0 } else { 1 });
+            let treasures_before = named(&state, drawer.opponent(), "Treasure Token").len();
+            let library_before = state.players[drawer.index()].library.len();
+            let gush = put(&mut state, drawer, "Gush", Zone::Hand);
+            pool(&mut state, drawer, &[ManaColor::U], 4);
+            cast(&mut state, gush, &[]);
+            settled(&mut state);
+            assert_eq!(zone(&state, gush), Zone::Graveyard);
+            assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
+            let attempts = 2 + riddlers;
+            let drawn = if hull { 0 } else { attempts };
+            assert_eq!(state.players[drawer.index()].hand.len(), hand_before + drawn);
+            assert_eq!(state.players[drawer.index()].library.len(), library_before - drawn);
+            assert_eq!(
+                named(&state, drawer.opponent(), "Treasure Token").len(),
+                treasures_before + attempts - drawn
+            );
+        }
+    }
+}
+
+#[test]
+fn paid_flame_riddler_freezes_three_individual_attempts_across_restore_both_seats() {
+    use mtg_kernel::event::CommittedEvent;
+
+    for drawer in [P0, P1] {
+        let caster = drawer.opponent();
+        let mut state = plains();
+        paid_riddler(&mut state, drawer, true, 1);
+        let treasures_before = named(&state, caster, "Treasure Token").len();
+        assert_eq!(treasures_before, 2, "Riddler's paid entry draws one plus one");
+        let dredger = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+        let ring = put(&mut state, drawer, "Sol Ring", Zone::Battlefield);
+        act(&mut state, Action::Pass);
+        let flame = announce_flame(&mut state, caster, drawer, Some(ring), 3);
+        let first = settle(&mut state).expect("dredge before Flame's first draw");
+        assert!(matches!(&first, Decision::ChooseEffectTargets {
+            player, source, legal_targets, can_finish: true, ..
+        } if *player == drawer && *source == flame
+            && legal_targets.as_slice() == [Target::Object(dredger)]));
+
+        let mut forged = state.clone();
+        let changed = forged.engine.event_history.iter_mut().any(|event| {
+            if let CommittedEvent::EternalOwnedDrawV1 { journal } = event {
+                let mut row = serde_json::to_value(&**journal).unwrap();
+                if let Some(started) = row.get_mut("StartedWithRiddlerV1") {
+                    assert_eq!(started["extra"], 1);
+                    started["extra"] = serde_json::json!(2);
+                    **journal = serde_json::from_value(row).unwrap();
+                    return true;
+                }
+            }
+            false
+        });
+        assert!(changed);
+        assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged)
+            .unwrap_err()
+            .contains("original Riddler adjustment"));
+
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut restored), first);
+        act(
+            &mut restored,
+            Action::ChooseEffectTarget(Target::Object(dredger)),
+        );
+        let mut answered: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
+        for branch in [&mut restored, &mut answered] {
+            settled(branch);
+            assert_eq!(zone(branch, dredger), Zone::Hand);
+            assert_eq!(branch.players[drawer.index()].library.len(), 16);
+            assert_eq!(named(branch, caster, "Treasure Token").len(), treasures_before + 2);
+            assert_eq!(zone(branch, ring), Zone::Graveyard);
+        }
+        assert_eq!(restored.state_hash(), answered.state_hash());
+
+        for completed in 1..=3 {
+            act(&mut state, Action::FinishEffectSelection);
+            let prompt = settle(&mut state);
+            assert_eq!(prompt.as_ref(), (completed < 3).then_some(&first));
+            assert_eq!(named(&state, caster, "Treasure Token").len(), treasures_before + completed);
+            assert_eq!(zone(&state, ring), if completed < 3 { Zone::Battlefield } else { Zone::Graveyard });
+        }
+    }
+}
+
 #[test]
 fn paid_flame_of_anor_draws_for_its_target_then_resolves_other_mode_both_seats() {
     use mtg_kernel::state::StackTargetContractV4;
