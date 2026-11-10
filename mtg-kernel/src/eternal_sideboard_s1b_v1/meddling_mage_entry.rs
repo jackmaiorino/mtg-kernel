@@ -160,7 +160,8 @@ impl NoncastCopyChoiceV1 {
         {
             return Err("noncast Metamorph lost its actual paid Reanimate target".into());
         }
-        let candidates = Self::candidates(state, object, ctx.controller, NoncastProducer::Reanimate)?;
+        let candidates =
+            Self::candidates(state, object, ctx.controller, NoncastProducer::Reanimate)?;
         if candidates.is_empty() {
             return Ok(None);
         }
@@ -360,7 +361,6 @@ impl MetamorphCopyV1 {
             && entrant.owner == self.physical.owner
             && self.physical.zone_change_count.checked_add(1) == Some(entrant.zone_change_count)
     }
-
 }
 
 impl Hash for ChoiceV1 {
@@ -642,7 +642,10 @@ fn producer_resolution_matches(
     entry: usize,
     archived: bool,
 ) -> bool {
-    let Some(producer) = copy.reanimated_by.or(copy.show_and_tell.map(|show| show.producer)) else {
+    let Some(producer) = copy
+        .reanimated_by
+        .or(copy.show_and_tell.map(|show| show.producer))
+    else {
         return true;
     };
     let Some(after_cast) = copy.cast_at.and_then(|at| at.checked_add(1)) else {
@@ -711,7 +714,8 @@ fn copy_entry_matches(
             }
         }
         (None, Some(vial))
-            if copy.reanimated_by.is_none() && copy.show_and_tell.is_none()
+            if copy.reanimated_by.is_none()
+                && copy.show_and_tell.is_none()
                 && vial::entry_origin_matches(state, copy, vial) =>
         {
             vial.chosen_at
@@ -952,7 +956,9 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
             }
             JournalV1::VialMetamorphChosen { .. } => {}
             JournalV1::ShowAndTellMetamorphChosen { copy } => {
-                if !copy.show_and_tell.is_some_and(|show| show.chosen_at == index as usize)
+                if !copy
+                    .show_and_tell
+                    .is_some_and(|show| show.chosen_at == index as usize)
                     || !copy.cast_matches(state)
                     || !show_choices.insert((copy.stack_item, copy.physical.owner))
                 {
@@ -1080,9 +1086,10 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
     }
     for (item, _) in show_choices.difference(&show_copies) {
         if !owner::pending_original_operation(state).is_some_and(|(original, _)| {
-            original.stack.last().is_some_and(|row| {
-                show_and_tell::printed(row) && row.v4.stack_item_id == *item
-            })
+            original
+                .stack
+                .last()
+                .is_some_and(|row| show_and_tell::printed(row) && row.v4.stack_item_id == *item)
         }) {
             return Err("Show and Tell copy choice has no matching entry".into());
         }

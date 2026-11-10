@@ -213,7 +213,12 @@ pub(crate) fn capture(
     {
         return Err("Aether Vial copy choice changed its selected hand incarnation".into());
     }
-    let candidates = NoncastCopyChoiceV1::candidates(state, object, source.controller, super::NoncastProducer::Vial)?;
+    let candidates = NoncastCopyChoiceV1::candidates(
+        state,
+        object,
+        source.controller,
+        super::NoncastProducer::Vial,
+    )?;
     if candidates.is_empty() {
         return Ok(None);
     }

@@ -2829,9 +2829,10 @@ fn stage_show_and_tell(
     if !chosen.is_empty() {
         event::propose_and_commit_batch(
             state,
-            chosen.into_iter().map(|binding| {
-                ProposedEvent::zone_change(binding.object, Zone::Battlefield)
-            }).collect(),
+            chosen
+                .into_iter()
+                .map(|binding| ProposedEvent::zone_change(binding.object, Zone::Battlefield))
+                .collect(),
         );
     }
     Ok(false)

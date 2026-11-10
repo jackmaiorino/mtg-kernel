@@ -214,7 +214,10 @@ struct RunnerV1 {
     #[serde(skip)]
     metamorph_mage_copies: Vec<mage_entry::MetamorphCopyV1>,
     #[serde(skip)]
-    show_and_tell_entries: Vec<(crate::state::AbilitySourceContractV4, crate::event::ZoneChangeProposed)>,
+    show_and_tell_entries: Vec<(
+        crate::state::AbilitySourceContractV4,
+        crate::event::ZoneChangeProposed,
+    )>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -800,12 +803,9 @@ fn potential_operation(state: &GameState) -> bool {
     }
     mage_entry::vial::waiting(state)
         || crate::effect::needs_electroduplicate_entry_owner_v1(state)
-        || state
-            .stack
-            .last()
-            .is_some_and(|item| {
-                show_and_tell::printed(item) || mage_entry::reanimate_metamorph_waiting(state, item)
-            })
+        || state.stack.last().is_some_and(|item| {
+            show_and_tell::printed(item) || mage_entry::reanimate_metamorph_waiting(state, item)
+        })
         || ((!state.stack.is_empty() || state.engine.pending_effect.is_some())
             && mage_entry::potentially_enters(state))
         || crate::drake_hatcher_v1::custody::relevant(state)
@@ -2252,7 +2252,11 @@ pub(crate) fn stage_metamorph_mage_copy(
         .runtime
         .as_mut()
         .ok_or("Metamorph copy has no native entry replay owner")?;
-    if runner.metamorph_mage_copies.iter().any(|owned| owned.physical.source == copy.physical.source) {
+    if runner
+        .metamorph_mage_copies
+        .iter()
+        .any(|owned| owned.physical.source == copy.physical.source)
+    {
         return Err("Metamorph copy already owns a prospective entry".into());
     }
     runner.metamorph_mage_copies.push(copy);
@@ -2307,12 +2311,22 @@ pub(crate) fn resolve_show_and_tell(
 ) -> Result<bool, String> {
     use crate::state::AbilitySourceContractV4;
 
-    let runner = state.engine.linked_aura_operation_v1.runtime.as_ref()
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
         .ok_or("Show and Tell has no native resolution owner")?;
-    if !matches!(runner.operation, OperationV1::Advance | OperationV1::Step(_)) {
+    if !matches!(
+        runner.operation,
+        OperationV1::Advance | OperationV1::Step(_)
+    ) {
         return Err("Show and Tell requires an actual resolution operation".into());
     }
-    let original = runner.original_stack.last().ok_or("Show and Tell lost its original stack row")?;
+    let original = runner
+        .original_stack
+        .last()
+        .ok_or("Show and Tell lost its original stack row")?;
     let (producer, cast_at) = show_and_tell::capture_paid(state, pending, original)?;
     let item = pending.resolving_item.v4.stack_item_id;
     let mut entrants = Vec::new();
@@ -2324,12 +2338,16 @@ pub(crate) fn resolve_show_and_tell(
         if candidates.is_empty() {
             continue;
         }
-        let Some(answer) = show_and_tell_answer(state, show_and_tell::ChoiceV1 {
-            producer,
-            player,
-            physical: None,
-            candidates,
-        })? else {
+        let Some(answer) = show_and_tell_answer(
+            state,
+            show_and_tell::ChoiceV1 {
+                producer,
+                player,
+                physical: None,
+                candidates,
+            },
+        )?
+        else {
             return Ok(true);
         };
         entrants.extend(answer);
@@ -2345,9 +2363,11 @@ pub(crate) fn resolve_show_and_tell(
                 let Some(answer) = show_and_tell_answer(state, choice)? else {
                     return Ok(true);
                 };
-                answer.map(|copied| show_and_tell::prospective_copy(
-                    state, producer, cast_at, item, physical, copied,
-                ))
+                answer.map(|copied| {
+                    show_and_tell::prospective_copy(
+                        state, producer, cast_at, item, physical, copied,
+                    )
+                })
             } else {
                 None
             }
@@ -2357,25 +2377,41 @@ pub(crate) fn resolve_show_and_tell(
         if let Some(copy) = copy {
             stage_metamorph_mage_copy(state, copy)?;
         }
-        let ProposedEvent::ZoneChange(mut proposal) = ProposedEvent::zone_change(
-            physical.source,
-            Zone::Battlefield,
-        ) else {
+        let ProposedEvent::ZoneChange(mut proposal) =
+            ProposedEvent::zone_change(physical.source, Zone::Battlefield)
+        else {
             unreachable!("Show and Tell moves selected hand cards");
         };
         crate::eternal_sideboard_s1a_v1::statics::replace_zone_change(state, &mut proposal);
         if let Some(copy) = copy.filter(|_| proposal.to_zone == Zone::Battlefield) {
-            mage_entry::record(state, mage_entry::JournalV1::ShowAndTellMetamorphChosen { copy });
+            mage_entry::record(
+                state,
+                mage_entry::JournalV1::ShowAndTellMetamorphChosen { copy },
+            );
         }
         proposals.push((physical, proposal));
     }
     if !proposals.is_empty() {
-        let events = proposals.iter()
+        let events = proposals
+            .iter()
             .map(|(_, proposal)| ProposedEvent::ZoneChange(proposal.clone()))
             .collect();
-        state.engine.linked_aura_operation_v1.runtime.as_mut().unwrap().show_and_tell_entries = proposals;
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .show_and_tell_entries = proposals;
         crate::event::propose_and_commit_batch(state, events);
-        state.engine.linked_aura_operation_v1.runtime.as_mut().unwrap().show_and_tell_entries.clear();
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .show_and_tell_entries
+            .clear();
     }
     Ok(entry_checkpoint_in_flight_v1(state))
 }
@@ -2386,36 +2422,70 @@ pub(crate) fn show_and_tell_entry_prepared(
     state: &GameState,
     change: &crate::event::ZoneChangeProposed,
 ) -> bool {
-    state.engine.linked_aura_operation_v1.runtime.as_ref().is_some_and(|runner| {
-        runner.show_and_tell_entries.iter().any(|(physical, prepared)| {
-            prepared == change
-                && *physical == crate::state::AbilitySourceContractV4::capture(state, change.object)
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .is_some_and(|runner| {
+            runner
+                .show_and_tell_entries
+                .iter()
+                .any(|(physical, prepared)| {
+                    prepared == change
+                        && *physical
+                            == crate::state::AbilitySourceContractV4::capture(state, change.object)
+                })
         })
-    })
 }
 
 fn show_and_tell_answer(
     state: &mut GameState,
     choice: show_and_tell::ChoiceV1,
 ) -> Result<Option<Option<crate::state::AbilitySourceContractV4>>, String> {
-    let runner = state.engine.linked_aura_operation_v1.runtime.as_ref()
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
         .ok_or("Show and Tell answer lost its native owner")?;
     if let Some(answer) = runner.answers.get(runner.cursor) {
-        let GeneralAnswerV36::ShowAndTellV1 { choice: captured, selected } = answer else {
+        let GeneralAnswerV36::ShowAndTellV1 {
+            choice: captured,
+            selected,
+        } = answer
+        else {
             return Err("Show and Tell replay changed its answer kind".into());
         };
-        if **captured != choice || selected.is_some_and(|source| !choice.candidates.contains(&source)) {
+        if **captured != choice
+            || selected.is_some_and(|source| !choice.candidates.contains(&source))
+        {
             return Err("Show and Tell replay changed its actual answer".into());
         }
         let selected = *selected;
-        state.engine.linked_aura_operation_v1.runtime.as_mut().unwrap().cursor += 1;
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .cursor += 1;
         return Ok(Some(selected));
     }
     let snapshot = mage_checkpoint_world(state, runner);
     let original_sha256 = runner.original_sha256.clone();
-    state.engine.linked_aura_operation_v1.runtime.as_mut().unwrap().checkpoint = Some((
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .checkpoint = Some((
         Box::new(snapshot),
-        GeneralChoiceV36::ShowAndTellV1 { choice: Box::new(choice), original_sha256 },
+        GeneralChoiceV36::ShowAndTellV1 {
+            choice: Box::new(choice),
+            original_sha256,
+        },
     ));
     Ok(None)
 }
@@ -3166,7 +3236,11 @@ fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String>
             min_targets: 0,
             max_targets: 1,
             can_finish: true,
-            legal_targets: choice.candidates.iter().map(|source| Target::Object(source.source)).collect(),
+            legal_targets: choice
+                .candidates
+                .iter()
+                .map(|source| Target::Object(source.source))
+                .collect(),
         }),
         GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. }
         | GeneralChoiceV36::VialMetamorphV1 { choice, .. } => Ok(Decision::ChooseEffectTargets {
@@ -3242,12 +3316,19 @@ fn answer_equipment_checkpoint_v48(
             let selected = match action {
                 Action::FinishEffectSelection => None,
                 Action::ChooseEffectTarget(Target::Object(object)) => Some(
-                    choice.candidates.iter().find(|source| source.source == object).copied()
+                    choice
+                        .candidates
+                        .iter()
+                        .find(|source| source.source == object)
+                        .copied()
                         .ok_or("Show and Tell answer is outside its actual menu")?,
                 ),
                 _ => return Err("Show and Tell needs its actual choice answer".into()),
             };
-            Ok(GeneralAnswerV36::ShowAndTellV1 { choice: choice.clone(), selected })
+            Ok(GeneralAnswerV36::ShowAndTellV1 {
+                choice: choice.clone(),
+                selected,
+            })
         }
         (
             GeneralChoiceV36::ReanimateMetamorphV1 { choice: copy, .. }

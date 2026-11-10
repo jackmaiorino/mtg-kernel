@@ -1,5 +1,8 @@
 //! Show and Tell's paid resolution owns the private choices and simultaneous entry.
-use super::{paid_cast_index, AbilitySourceContractV4, GameState, JournalV1, MetamorphCopyV1, NoncastCopyChoiceV1, StackItemId, Zone};
+use super::{
+    paid_cast_index, AbilitySourceContractV4, GameState, JournalV1, MetamorphCopyV1,
+    NoncastCopyChoiceV1, StackItemId, Zone,
+};
 use crate::effect::EffectContinuation;
 use crate::ids::PlayerId;
 use crate::state::{StackItem, StackItemKind, StackSourceContractV4};
@@ -37,8 +40,14 @@ pub(crate) fn capture_paid(
     original: &StackItem,
 ) -> Result<(AbilitySourceContractV4, usize), String> {
     let item = &pending.resolving_item;
-    let source = item.v4.source_contract.ok_or("Show and Tell lost its cast source")?;
-    let method = item.v4.cast_method.ok_or("Show and Tell lost its finalized cast method")?;
+    let source = item
+        .v4
+        .source_contract
+        .ok_or("Show and Tell lost its cast source")?;
+    let method = item
+        .v4
+        .cast_method
+        .ok_or("Show and Tell lost its finalized cast method")?;
     let ctx = &pending.ctx;
     if !printed(item)
         || item != original
@@ -53,7 +62,10 @@ pub(crate) fn capture_paid(
         || ctx.controller != source.controller
         || !ctx.targets.is_empty()
         || !ctx.target_contracts.is_empty()
-        || state.stack.iter().any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        || state
+            .stack
+            .iter()
+            .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
         || state.objects.try_get(item.source).is_none_or(|live| {
             live.v4.is_token
                 || live.v4.face_down_v1.is_some()
@@ -61,9 +73,9 @@ pub(crate) fn capture_paid(
                 || live.spell_copy_origin.is_some()
         })
         || StackSourceContractV4::capture(state, item.source, method) != source
-        || source.spell_cast_origin.is_none_or(|origin| {
-            origin.finalized_method != Some(method)
-        })
+        || source
+            .spell_cast_origin
+            .is_none_or(|origin| origin.finalized_method != Some(method))
     {
         return Err("Show and Tell lost its actual paid resolution".into());
     }
@@ -80,7 +92,12 @@ pub(crate) fn copy_choice(
     producer: AbilitySourceContractV4,
     physical: AbilitySourceContractV4,
 ) -> Result<Option<ChoiceV1>, String> {
-    let candidates = NoncastCopyChoiceV1::candidates(state, physical.source, physical.owner, super::NoncastProducer::ShowAndTell)?;
+    let candidates = NoncastCopyChoiceV1::candidates(
+        state,
+        physical.source,
+        physical.owner,
+        super::NoncastProducer::ShowAndTell,
+    )?;
     Ok((!candidates.is_empty()).then_some(ChoiceV1 {
         producer,
         player: physical.owner,
