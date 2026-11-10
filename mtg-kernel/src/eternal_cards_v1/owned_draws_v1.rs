@@ -26,6 +26,7 @@ pub(crate) mod bonder;
 pub(crate) mod echo;
 pub(crate) mod fixed;
 pub(crate) mod rooms;
+pub(crate) mod portent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum InstructionV1 {
@@ -72,11 +73,13 @@ enum InstructionV1 {
         resolution_at: usize,
         drawer: PlayerId,
     },
+    Portent { queued_at: usize },
 }
 
 impl InstructionV1 {
     fn from_op(op: &EternalOpV1) -> Option<Self> {
         match op {
+            EternalOpV1::P1aV1(crate::eternal_premodern_p1a_v1::P1aOpV1::PortentUpkeepBoundV1 { queued_at }) => Some(Self::Portent { queued_at: *queued_at }),
             EternalOpV1::LurrusV1(LurrusOpV1::FrogDrawV1) => Some(Self::Frog),
             EternalOpV1::DrawCastFromGraveyardV1 {
                 normal,
@@ -160,7 +163,7 @@ impl InstructionV1 {
             Self::FixedRoot { count, .. } => count,
             Self::Minsc { sacrifice } => minsc::count(state, ctx, sacrifice).unwrap_or(0),
             Self::Echo { .. } => 7,
-            Self::Bonder { .. } => 1,
+            Self::Bonder { .. } | Self::Portent { .. } => 1,
             Self::Room { kind, .. } => kind.count(),
             Self::Curie { combat_at } => {
                 eternal_legacy_e7a_v1::curie::draw_count(state, ctx, combat_at).unwrap_or(0)
@@ -382,6 +385,7 @@ pub enum JournalV1 {
         eligible: [bool; 2],
         first_extra: u32,
     },
+    PortentV1(portent::JournalV1),
 }
 
 impl JournalV1 {
@@ -452,6 +456,10 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
             EffectOp::Choice { .. } => InstructionV1::DragonEngine,
             _ => InstructionV1::from_program(inline)?,
         };
+        if let InstructionV1::Portent { queued_at } = instruction {
+            return portent::owns(state, item, queued_at)
+                .then_some((instruction, SourceV1::Spell(item.v4.source_contract?)));
+        }
         let source = item.v4.ability_source_contract?;
         if source.source != item.source
             || source.controller != item.controller
@@ -1006,6 +1014,7 @@ fn dragon_before_start(pending: &EffectContinuation) -> bool {
 }
 
 pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Result<(), String> {
+    portent::validate_parent(state, pending)?;
     if state.eternal_owned_draw_progress_v1.is_none() {
         if rooms::validate_idle(state, pending)? {
             return Ok(());

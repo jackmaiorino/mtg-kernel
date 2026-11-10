@@ -63,3 +63,6 @@ mod eternal_vintage_e7b_v1;
 
 #[path = "eternal/bonder_owned_draws_v1.rs"]
 mod bonder_owned_draws_v1;
+
+#[path = "eternal/portent_owned_draws_v1.rs"]
+mod portent_owned_draws_v1;

@@ -3248,6 +3248,9 @@ fn validate_spell_sourced_trigger(
     {
         return Err("spell-sourced trigger carries incompatible producer metadata".to_string());
     }
+    if item.inline_effect.as_ref().and_then(crate::eternal_cards_v1::owned_draws_v1::portent::bound).is_some() {
+        return crate::eternal_cards_v1::owned_draws_v1::portent::validate_trigger(state, item, false);
+    }
     if let Some(expected) = casualty_trigger_source_contract(
         state,
         item.source,
@@ -17440,6 +17443,9 @@ fn pending_trigger_spell_source_contract(
     state: &GameState,
     pending: &PendingTrigger,
 ) -> Result<Option<StackSourceContractV4>, String> {
+    if crate::eternal_cards_v1::owned_draws_v1::portent::bound(&pending.effect).is_some() {
+        return crate::eternal_cards_v1::owned_draws_v1::portent::pending_source(state, &pending.effect).map(Some);
+    }
     if let Some(index) = crate::faebloom_trick_v43::capture_of(&pending.effect) {
         return crate::faebloom_trick_v43::source_at(state, index).map(Some);
     }
@@ -17903,6 +17909,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         let row = state.stack.last().unwrap().clone();
         effect::curator_v1::publish(state, &row)?;
     }
+    crate::eternal_cards_v1::owned_draws_v1::portent::publish(state, stack_item_id)?;
     crate::gorehorn_damage_v1::publish(state, stack_item_id)?;
     crate::equipment_damage_source_v4::publish(state, stack_item_id)?;
     crate::raid_entry_custody_v1::publish(state, stack_item_id)?;
@@ -18288,6 +18295,10 @@ fn triggered_stack_item_expected_target_spec(
                 )
             }
         };
+    if crate::eternal_cards_v1::owned_draws_v1::portent::bound(inline_effect).is_some() {
+        crate::eternal_cards_v1::owned_draws_v1::portent::validate_trigger(state, item, require_publication)?;
+        return Ok(None);
+    }
     if effect::curator_v1::selected(state, item) {
         effect::curator_v1::validate_item(state, item)?;
         if state
@@ -28893,6 +28904,7 @@ fn finalize_owned_cast(
         library_overload,
     );
     event::log_spell_cast(state, pending.spell, pending.controller);
+    crate::eternal_cards_v1::owned_draws_v1::portent::record_cast(state, stack_item_id)?;
     crate::extra_turn_v1::record_publication(state, stack_item_id);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::e3::note_cast(state, stack_item_id);
