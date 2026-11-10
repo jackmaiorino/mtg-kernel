@@ -1269,6 +1269,11 @@ impl EventHistoryV1 {
         prefix
     }
 
+    /// Whether unrestricted mutable access left the history in editable form.
+    pub(crate) fn is_editable_v2(&self) -> bool {
+        self.stale
+    }
+
     /// The memo a validator left about a prefix of these events, if those
     /// events are unchanged since: `(covered, memo)` with `covered` at most
     /// the current length.

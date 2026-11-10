@@ -587,6 +587,107 @@ fn collection_tail_matches_full_scan_on_append_divergence_and_tamper() {
 }
 
 #[test]
+fn checked_relations_skip_enclosing_rows_and_reject_backward_tamper() {
+    use super::tests::{cast, damage_three, finish};
+    use std::sync::Arc;
+
+    let actor = PlayerId::P0;
+    let (mut base, drake) = cast(actor);
+    damage_three(&mut base, drake, actor);
+    finish(&mut base);
+    custody::validate(&base).unwrap();
+    let history = &base.engine.event_history;
+    let covered = history.len();
+    assert_eq!(history.prefix_memo_v1().unwrap().0, covered);
+    let records = || history.iter().filter_map(custody::journal);
+    let total = records().count();
+    let non_enclosing = records()
+        .filter(|row| !matches!(row.value, JournalV1::Enclosing { .. }))
+        .count();
+    assert!(non_enclosing > 0 && non_enclosing < total);
+
+    let visits = custody::relation_row_visits_for_test;
+    let before = visits();
+    assert_eq!(custody::validate(&base), Ok(()));
+    assert_eq!(visits() - before, non_enclosing);
+    let before = visits();
+    assert_eq!(
+        custody::without_prefix_memo_for_test(|| custody::validate(&base)),
+        Ok(())
+    );
+    assert!(visits() - before >= total);
+
+    let mut editable = base.clone();
+    let _ = editable.engine.event_history.get_mut(0).unwrap();
+    custody::validate(&editable).unwrap();
+    assert!(editable.engine.event_history.prefix_memo_v1().is_some());
+    let before = visits();
+    assert_eq!(custody::validate(&editable), Ok(()));
+    assert_eq!(visits() - before, total);
+
+    let compare = |state: &GameState, error| {
+        assert_eq!(
+            state.engine.event_history.prefix_memo_v1().unwrap().0,
+            covered
+        );
+        let sparse = custody::validate(state);
+        let full = custody::without_prefix_memo_for_test(|| custody::validate(state));
+        assert_eq!(sparse, full);
+        assert_eq!(sparse.as_deref().map_err(String::as_str), Err(error));
+    };
+    let append = |mut row: custody::RecordV1| {
+        let mut branch = base.clone();
+        row.index = covered as u64;
+        branch
+            .engine
+            .event_history
+            .push(CommittedEvent::DrakeJournalV1 {
+                record: Arc::new(row),
+            });
+        branch.engine.drake_ledger_v1.issued += 1;
+        branch
+    };
+
+    let (publication, item) = records()
+        .find_map(|row| match &row.value {
+            JournalV1::Published { item, .. } => Some((row, item.as_ref())),
+            _ => None,
+        })
+        .expect("native trigger publication");
+    let enclosure = records()
+        .find(|row| {
+            matches!(row.value, JournalV1::Enclosing { start, .. }
+                if start <= publication.index && publication.index < row.index)
+        })
+        .expect("enclosing operation for publication");
+    compare(
+        &append(enclosure.clone()),
+        "Drake record lost its unique original enclosing operation",
+    );
+    compare(
+        &append(publication.clone()),
+        "Drake APNAP occurrence disappeared/replayed",
+    );
+
+    let mut live_again = base.clone();
+    live_again.stack.push(item.clone());
+    compare(
+        &live_again,
+        "Drake issued stack row lost/duplicated/replayed",
+    );
+
+    let pending = records()
+        .find_map(|row| match &row.value {
+            JournalV1::Collected { pending, .. } => Some(pending.as_ref()),
+            _ => None,
+        })
+        .expect("native trigger collection");
+    let mut held_again = base.clone();
+    held_again.engine.pending_triggers.push(pending.clone());
+    compare(&held_again, "Drake APNAP occurrence disappeared/replayed");
+}
+
+#[test]
 fn a_copy_adopts_the_longer_prefix_another_copy_accepted() {
     // Two public states of one game, the later with more journal rows.
     let (mut earlier, mut later) = (None, None);

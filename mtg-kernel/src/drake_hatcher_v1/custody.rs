@@ -1961,44 +1961,100 @@ fn locate(rows: &mut [RowV1], from: usize) {
     }
 }
 
-/// For each row, how many rows name it by each kind and the first of them,
-/// and the coverage change of the enclosing operations at it.
-struct RelationsV1 {
+/// Revisit checked non-enclosing rows and every unchecked row in journal order.
+/// Without a checked prefix this is the full journal.
+fn relation_positions(
+    non_enclosing: Option<&[usize]>,
+    unchecked: usize,
+    len: usize,
+) -> impl Iterator<Item = usize> + '_ {
+    let start = if non_enclosing.is_some() { unchecked } else { 0 };
+    non_enclosing
+        .unwrap_or_default()
+        .iter()
+        .copied()
+        .take_while(move |&position| position < start)
+        .chain(start..len)
+}
+
+/// For each row subject to relation checks, how many rows name it by each
+/// kind, the first of them, and how many enclosing operations cover it.
+struct RelationsV1<'a> {
+    non_enclosing: Option<&'a [usize]>,
     named: Vec<[(u32, u64); ROW_REFERENCE_KINDS_V1]>,
     covering: Vec<i64>,
 }
-impl RelationsV1 {
-    fn of(rows: &[RowV1]) -> Self {
-        let mut named = vec![[(0, 0); ROW_REFERENCE_KINDS_V1]; rows.len()];
-        let mut covering = vec![0_i64; rows.len() + 1];
-        for (position, row) in rows.iter().enumerate() {
-            if let Some((kind, _, Some(target))) = row.reference {
-                let slot = &mut named[target][kind as usize];
+impl<'a> RelationsV1<'a> {
+    fn of(rows: &[RowV1], unchecked: usize, non_enclosing: Option<&'a [usize]>) -> Self {
+        let len = non_enclosing.map_or(rows.len(), <[usize]>::len);
+        let mut relations = Self {
+            non_enclosing,
+            named: vec![[(0, 0); ROW_REFERENCE_KINDS_V1]; len],
+            covering: vec![0; len + 1],
+        };
+        if non_enclosing.is_some() {
+            // The accepted public prefix covered each of its non-enclosing
+            // rows exactly once. Old operations cannot cover new rows.
+            // Unchecked operations can reach backward and overlap that cover.
+            let boundary = relations.boundary(unchecked);
+            relations.covering[0] += 1;
+            relations.covering[boundary] -= 1;
+        }
+        for position in relation_positions(non_enclosing, unchecked, rows.len()) {
+            let row = &rows[position];
+            if let Some((_, from)) = row.enclosing {
+                let start = relations.boundary(from.min(position));
+                let end = relations.boundary(position);
+                relations.covering[start] += 1;
+                relations.covering[end] -= 1;
+            } else if let Some((kind, _, Some(target))) = row.reference {
+                let Some(target) = relations.slot(target) else {
+                    continue;
+                };
+                let slot = &mut relations.named[target][kind as usize];
                 if slot.0 == 0 {
                     slot.1 = row.index;
                 }
                 slot.0 += 1;
             }
-            if let Some((_, from)) = row.enclosing {
-                covering[from.min(position)] += 1;
-                covering[position] -= 1;
-            }
         }
-        Self { named, covering }
+        let mut coverage = 0;
+        for change in &mut relations.covering {
+            coverage += *change;
+            *change = coverage;
+        }
+        relations
     }
+
+    fn boundary(&self, position: usize) -> usize {
+        self.non_enclosing
+            .map_or(position, |rows| rows.partition_point(|&row| row < position))
+    }
+
+    fn slot(&self, position: usize) -> Option<usize> {
+        self.non_enclosing.map_or(Some(position), |rows| {
+            rows.binary_search(&position).ok()
+        })
+    }
+
+    fn coverage(&self, position: usize) -> i64 {
+        self.covering[self.boundary(position)]
+    }
+
     /// How many rows name the row at `position` by `kind`, and the first.
     fn named(&self, position: Option<usize>, kind: RowReferenceV1) -> (u32, u64) {
-        position.map_or((0, 0), |position| self.named[position][kind as usize])
+        position
+            .and_then(|position| self.slot(position))
+            .map_or((0, 0), |slot| self.named[slot][kind as usize])
     }
 }
 
 /// What a complete validation established about the first `covered` events
 /// of a history: every journal row among them passed the checks that read
 /// only those events (each enclosing replay included), and no reference
-/// escaped into them. A validation of the same events, or of a longer
-/// history that starts with them, checks only the later rows that way; the
-/// checks that read later rows or the rest of the state run in full each
-/// time. Only an acceleration: the verdicts are the same without it.
+/// escaped into them. Each non-enclosing row had exactly one enclosure.
+/// A later validation checks that coverage against any new intervals and
+/// reruns the other checks that read later rows or the rest of the state.
 ///
 /// A longer prefix owns the events it added past the shorter one it extends,
 /// and the shorter one holds the longer one only weakly. So every prefix a
@@ -2009,6 +2065,8 @@ impl RelationsV1 {
 struct CheckedPrefixV1 {
     covered: usize,
     rows: Arc<Vec<RowV1>>,
+    /// Positions in `rows` that need relation or live-state checks.
+    non_enclosing: Arc<Vec<usize>>,
     /// The events past the prefix this one extends, when one was extended.
     added: Vec<CommittedEvent>,
     /// The latest longer prefix a validation of another copy of these
@@ -2025,6 +2083,7 @@ struct CheckedPrefixV1 {
 thread_local! {
     static PREFIX_MEMO_OFF: Cell<bool> = const { Cell::new(false) };
     static LOCAL_ROW_CHECKS: Cell<u64> = const { Cell::new(0) };
+    static RELATION_ROW_VISITS: Cell<usize> = const { Cell::new(0) };
 }
 /// Runs `run` with every validation checking every row, as it did before
 /// the checked-prefix memo.
@@ -2051,6 +2110,15 @@ pub(crate) fn without_prefix_memo_for_test<T>(run: impl FnOnce() -> T) -> T {
 ))]
 pub(crate) fn local_row_checks_for_test() -> u64 {
     LOCAL_ROW_CHECKS.with(Cell::get)
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(super) fn relation_row_visits_for_test() -> usize {
+    RELATION_ROW_VISITS.with(Cell::get)
 }
 
 /// The memo applies to validations whose enclosing replays run as the memo's
@@ -2206,6 +2274,9 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
     let mut rows = memo
         .as_ref()
         .map_or_else(Arc::default, |(memo, _)| Arc::clone(&memo.rows));
+    let mut non_enclosing = memo
+        .as_ref()
+        .map_or_else(Arc::default, |(memo, _)| Arc::clone(&memo.non_enclosing));
     let unchecked = rows.len();
     // Kind-guarded scans: a history with no event of the kind gives no rows
     // either way, and otherwise every event past the checked prefix
@@ -2239,7 +2310,11 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
             if u64::try_from(position).ok() != Some(record.index) {
                 return Err("Drake record index differs from actual history position".to_string());
             }
-            Arc::make_mut(&mut rows).push(RowV1::of(record));
+            let row = RowV1::of(record);
+            if row.enclosing.is_none() {
+                Arc::make_mut(&mut non_enclosing).push(rows.len());
+            }
+            Arc::make_mut(&mut rows).push(row);
         }
     }
     if rows.len() > unchecked {
@@ -2284,18 +2359,26 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
         replay_keys(history)
     };
     let mut verified_keys = Vec::new();
-    // Indexed once: scanning every row again for each row made validation
-    // quadratic in the rows. Rows are in history order, so each enclosing
-    // operation covers one contiguous run of them.
-    let relations = RelationsV1::of(&rows);
-    let mut coverage = 0;
+    // A checked enclosing row has no live-state checks and names no other
+    // row. Reuse its proved coverage while rechecking every private row.
+    let sparse = memo
+        .as_ref()
+        .filter(|_| !history.is_editable_v2())
+        .map(|_| non_enclosing.as_slice());
+    let relations = RelationsV1::of(&rows, unchecked, sparse);
     let last_closed = rows
         .iter()
         .rev()
         .find(|row| row.enclosing.is_some())
         .map(|row| row.index);
-    for (position, compact) in rows.iter().enumerate() {
-        coverage += relations.covering[position];
+    for position in relation_positions(sparse, unchecked, rows.len()) {
+        #[cfg(all(
+            test,
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        RELATION_ROW_VISITS.with(|visits| visits.set(visits.get() + 1));
+        let compact = &rows[position];
         let Some(row) = history
             .get(compact.index as usize)
             .and_then(journal)
@@ -2304,7 +2387,7 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
             return Err("Drake record index moved".into());
         };
         if !matches!(row.value, JournalV1::Enclosing { .. })
-            && coverage != 1
+            && relations.coverage(position) != 1
             && !(local && last_closed.is_none_or(|last| row.index > last))
         {
             return Err("Drake record lost its unique original enclosing operation".into());
@@ -2359,7 +2442,7 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
                     history.set_prefix_memo_v1(covered, memo);
                 }
             }
-            memo => leave_prefix(history, memo.map(|(memo, _)| memo), rows),
+            memo => leave_prefix(history, memo.map(|(memo, _)| memo), rows, non_enclosing),
         }
     }
     Ok(())
@@ -2371,12 +2454,14 @@ fn leave_prefix(
     history: &crate::event_history_v1::EventHistoryV1,
     shorter: Option<Arc<CheckedPrefixV1>>,
     rows: Arc<Vec<RowV1>>,
+    non_enclosing: Arc<Vec<usize>>,
 ) {
     let covered = history.len();
     let shorter = shorter.filter(|shorter| shorter.covered < covered);
     let longer = Arc::new(CheckedPrefixV1 {
         covered,
         rows,
+        non_enclosing,
         added: shorter.as_ref().map_or_else(Vec::new, |shorter| {
             history.range_v2(shorter.covered..).to_vec()
         }),
@@ -2400,7 +2485,12 @@ fn leave_prefix(
 ))]
 pub(crate) fn extend_prefix_for_test(history: &crate::event_history_v1::EventHistoryV1) {
     let (memo, _) = checked_prefix(history).expect("a checked prefix");
-    leave_prefix(history, Some(Arc::clone(&memo)), Arc::clone(&memo.rows));
+    leave_prefix(
+        history,
+        Some(Arc::clone(&memo)),
+        Arc::clone(&memo.rows),
+        Arc::clone(&memo.non_enclosing),
+    );
 }
 
 /// The checks of one row that read only the history before the end of the
@@ -2671,7 +2761,7 @@ fn relate_row(
     row: &RecordV1,
     compact: &RowV1,
     position: usize,
-    relations: &RelationsV1,
+    relations: &RelationsV1<'_>,
     local: bool,
 ) -> Result<(), String> {
     // The checks above proved every row this one names is a journal row.
@@ -2721,22 +2811,20 @@ fn validate_listed_item(
     state: &GameState,
     item: &StackItem,
     rows: &[RowV1],
-    relations: &RelationsV1,
+    relations: &RelationsV1<'_>,
 ) -> Result<(), String> {
     if !tracked(item) {
         return Ok(());
     }
-    let mut listed = rows
-        .iter()
-        .enumerate()
-        .filter(|(_, row)| row.publication == Some(item.v4.stack_item_id));
-    let (Some((position, row)), None) = (listed.next(), listed.next()) else {
+    let mut listed = relation_positions(relations.non_enclosing, rows.len(), rows.len())
+        .filter(|&position| rows[position].publication == Some(item.v4.stack_item_id));
+    let (Some(position), None) = (listed.next(), listed.next()) else {
         return Err("Drake row lost unique actual publication/payment".into());
     };
     match state
         .engine
         .event_history
-        .get(row.index as usize)
+        .get(rows[position].index as usize)
         .and_then(journal)
         .map(|row| &row.value)
     {
