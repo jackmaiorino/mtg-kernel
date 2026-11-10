@@ -8,8 +8,11 @@ The guarded Rust 1.94.1 catalog generator at
 `0051f21f1049d7befe9250ea7f8b6eb3f26779ee` emitted Volrath as Partial at
 ID 1198 and catalog hash `b7272db8a877989e`. The generated source SHA-256 is
 `ff3cfba884d3d0d3fa5a00f1286470ec2080f2574a12721324b5582d47c2600b`.
-The generator receipt SHA-256 is
+The historical generator receipt SHA-256 is
 `25727e984f5d21006e6f6ce6d28ece47ce7ab7c8d77cebf9c43e5f66c6e8aae8`.
+The accepted Elves integration preserves Birchlore Rangers and Thornscape
+Battlemage at IDs 1198 and 1199, then appends the unchanged Partial Volrath
+record. The combined catalog fingerprint still awaits guarded generation.
 
 Full-text changes apply in layer 3 and copies use layer 1. The battlefield
 object retains its physical definition. The public top card in its current
@@ -129,7 +132,20 @@ Manifest: `E:/codex-eternal-feb-ea95-evidence/manifest.json`, SHA-256
 The unchanged frozen terminal/replay fixture passed for both starting seats,
 as did paid Cabal naming and exact discard order, all retained donor and
 producer cases, both history guards and every-kind consumers. Catalog
-fingerprint remains `b7272db8a877989e`. This establishes the scoped in-process
+fingerprint for that packet is `b7272db8a877989e`. This establishes the scoped in-process
 terminal and replay result. Transport, further donor compatibility, hosted
 checks and default-branch integration remain open. Volrath remains Partial
 and the FEB mainboard remains outside PLAYABLE.
+
+The subsequent source adds actor-only Human labels for Unearth's exact printed
+hand-cycling recipe and the original physical or donated Guide echo options.
+Echo presentation uses an authenticated historical public source even after
+the original permanent leaves. Only cloned view operands change; the native
+decision, sealed token and ordinal still execute the original bound action.
+Both-seat fixtures cover paid cycling, physical and donated echo, paid
+Palinchron bounce above echo, donor departure, restore, stale tokens and
+forged source or reordered-option refusal. Source review and pinned formatting
+passed; these new fixtures have not run. The inherited engine's controller-
+change sacrifice halt and differing physical/departed echo payment behavior
+remain under rules review. Neither this source nor the preceding terminal
+fixture establishes complete echo or transport qualification.
