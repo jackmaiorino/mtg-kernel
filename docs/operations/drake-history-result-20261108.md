@@ -104,8 +104,81 @@ Faebloom validation spans around decisions 301-400 in owned staging and
 markers. The journal scan now skips histories whose event index proves they
 have no Faebloom journal rows. Trigger-log, live-stack and pending checks
 still run. These small inclusive spans motivate the guard. The current
-candidate has no measured timing result.
+candidate had no measured timing result at that point.
 
 Diagnostic log: `timing-7b-qualification/diagnostic-train436-001/phase.stderr.log`
 under the logical qualification evidence directory above, SHA-256
 `a94e7697fa06bc5251b70df857842503706dc284affa8fce3f0fd618888d1c43`.
+
+## November 10 matched follow-up
+
+Candidate `be8611b12e4b3aaff29e95e0e6c444871e950eb8` preserved every
+outcome and final-state receipt against baseline
+`384c8a4e5103f40384928adb69720268e4ecd8cb`, but failed #474's flat-cost
+criterion. Summed decision time was 33.2203% higher, and all four cases
+continued to grow more expensive late in the game.
+
+![Matched cost by decision window](drake-be86-window-cost-20261110.svg)
+
+| Fixed case | Baseline seconds | Candidate seconds | Time increase |
+| --- | ---: | ---: | ---: |
+| train 241 | 10.866 | 15.327 | 41.1% |
+| train 436 | 11.170 | 13.325 | 19.3% |
+| train 597 | 14.382 | 20.047 | 39.4% |
+| eval 458 | 9.443 | 12.398 | 31.3% |
+| Sum of staging means | 45.862 | 61.097 | 33.2% |
+
+Each table row sums the actual decision windows and averages borrowed and
+owned staging. The unaveraged totals are 91.7237644 and 122.1946904 seconds.
+The plot uses all 244 windows, averaged only across the two staging modes.
+Hollow final points normalize a partial window to 100 decisions; they are
+not full-window observations. These are descriptive results from four fixed
+cases, with no confidence interval or general performance estimate. The
+earlier comparisons remain separate measurements, so their percentages
+cannot establish an improvement or regression between candidate revisions.
+
+Fresh completed-work qualification ran the same two cases with one worker
+and then two: 122.5279 versus 63.2160 seconds, with identical terminal hashes.
+The supported selector chose two desktop P cores, 0 and 2, reserving SMT
+siblings 0-3. The remaining comparison completed in 78.1844 seconds. The
+launcher enforced 61 GiB admission, a 60 GiB live floor, 128 MiB per stage,
+1800 seconds per job and 7200 seconds per batch. No other desktop native
+build or timing ran concurrently. Haley was checked and ineligible because
+its sole volume was below 60 GiB; its live T4 claim was preserved. RunPod's
+read-only census found no pods, and no paid allocation was authorized.
+
+Both executable files and timed outputs were on the same desktop SSD.
+Compile-time fixture paths were on D for the baseline and E for the candidate;
+all 81 input files matched byte for byte and were loaded before the reported
+inner decision windows. This path difference remains part of the record.
+The source-only collector fixture repair had passed 1/1, complementing the
+four compatible preceding native checks. No performance acceptance or
+production adoption follows from those correctness passes.
+
+Primary sealed evidence is
+`E:/codex-drake474-matched-be86-20261110`, with a verified second copy retained
+under the same directory name on D. Comparison SHA-256:
+`606b9a89b45238989d0bdc6fe471ee5130942b9ce0dc13b4e1d526c24d7173c2`.
+Plan SHA-256:
+`2a84963ddc90160e123b3d3e4c11968836f108193b24502cd60917907e300757`.
+Qualification SHA-256:
+`988a677fc0f56814781d51aeef47e96a66713ac85161cf79ee5281a18131a4fd`.
+Selection SHA-256:
+`a316d01950e6b9ef3faa8e37ee83e2ac036fe5f5fd7825ef3bc64f3f7f65cfaf`.
+The 69-file verified custody receipt SHA-256 is
+`b90c984cc5de4c757b03d64faf2a6386476babe4c6cf16c8468b28b1dac824bd`.
+The figure, calculation and renderer are retained separately under
+`E:/codex-drake474-report-20261110` with matching copies on D.
+
+The preceding six-file disposal removed only approved uncited Cargo
+intermediates, preserving every executable, log and evidence record.
+`drake474-20261110-PRUNE.json` records the planned paths and regeneration
+commands; `drake474-20261110-cleanup.json` records the observed removal.
+All failed attempts and earlier timing results remain retained.
+
+Next work targets a remaining whole-journal relation pass inside enclosing
+replay. The retained older profile identifies replay as a growing inclusive
+span; it does not isolate that loop's runtime in this candidate. Any sparse
+checked-prefix shortcut must preserve unchecked replay, overlap and duplicate
+refusal, live stack and held-trigger checks before another matched comparison.
+PR #583 and issue #474 remain open.
