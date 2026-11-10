@@ -9,11 +9,14 @@ gets a finish action.
 
 The native roster includes Leyline of the Void, Leyline of Sanctity and
 Chancellor of the Annex. A combined catalog that exposes the exact supported
-Leyline Axe definition includes it in the same window. Leylines use actual
-hand-to-battlefield moves. Chancellor uses the existing public reveal and
-first-spell delayed ability. Serum Powder remains in the preceding London
-window. The explicit mode suppresses the old first-upkeep offers and the
-separate Axe window. Historical modes retain their original behavior.
+Leyline Axe definition could include it in the same window. In the current
+builds the Eternal feature selects the Standard catalog and the exact FDN
+Axe profile is unavailable. Leylines use actual hand-to-battlefield moves.
+Chancellor uses the existing public reveal and first-spell delayed ability,
+with consumption bound to the original cast and its trigger collection.
+Serum Powder remains in the preceding London window. The explicit mode
+suppresses the old first-upkeep offers and the separate Axe window.
+Historical modes retain their original behavior.
 
 The native continuation stores the original kept-hand bindings, selected
 public outcomes and per-player finishes. Only the current player receives

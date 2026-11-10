@@ -44,6 +44,9 @@ pub enum RecordV1 {
     },
     Revealed(AbilitySourceContractV4),
     Finished(PlayerId),
+    FirstSpellProcessed {
+        cast_at: usize,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -89,6 +92,116 @@ fn record_at(state: &GameState, at: usize) -> Option<&RecordV1> {
         Some(CommittedEvent::EternalOpeningV1 { record }) => Some(record),
         _ => None,
     }
+}
+
+fn first_cast(state: &GameState, after: usize, player: PlayerId) -> Option<(usize, ObjectId)> {
+    state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::SpellCast])
+        .iter()
+        .enumerate()
+        .skip(after)
+        .find_map(|(at, event)| match event {
+            CommittedEvent::SpellCast { spell, controller } if *controller == player => {
+                Some((at, *spell))
+            }
+            _ => None,
+        })
+}
+
+fn cast_player(state: &GameState, cast_at: usize) -> Option<PlayerId> {
+    let history = &state.engine.event_history;
+    let CommittedEvent::SpellCast { spell, controller } = history.get(cast_at)? else {
+        return None;
+    };
+    let CommittedEvent::PublishedCastIdentityV1 { receipt } = history.get(cast_at.checked_sub(1)?)?
+    else {
+        return None;
+    };
+    (matches!(*controller, PlayerId::P0 | PlayerId::P1)
+        && receipt.spell == *spell
+        && receipt.controller == *controller
+        && receipt.spell_cast_history_index == cast_at as u64
+        && receipt.stack_item_id.0 != 0
+        && receipt.origin_zone_change_count.checked_add(1) == Some(receipt.stack_zone_change_count))
+    .then_some(*controller)
+}
+
+/// Only the actual native trigger collection consumes an armed opening
+/// reveal. The ordinary SpellCast trigger marker is retained unchanged.
+pub(crate) fn record_first_spell_processed(
+    state: &mut GameState,
+    player: PlayerId,
+    spell: ObjectId,
+) -> Result<(), String> {
+    let Some(opening) = state.eternal_opening_v1 else {
+        return Ok(());
+    };
+    let Phase::Complete { finished_at, .. } = opening.phase else {
+        return Err("spell processing preceded the Eternal opening finish".into());
+    };
+    let (cast_at, actual) =
+        first_cast(state, finished_at + 1, player).ok_or("first spell lost its native cast")?;
+    if actual != spell || cast_player(state, cast_at) != Some(player) {
+        return Err("first spell processing lost its exact published cast".into());
+    }
+    publish(state, RecordV1::FirstSpellProcessed { cast_at });
+    Ok(())
+}
+
+fn processed_first_spells(
+    state: &GameState,
+    end: usize,
+    has_reveal: bool,
+) -> Result<[bool; 2], String> {
+    let history = &state.engine.event_history;
+    // The trigger queue is a suffix of the native cast occurrence sequence.
+    // Use occurrence order, since one physical card can be cast twice.
+    let mut casts = history
+        .iter()
+        .enumerate()
+        .skip(end)
+        .rev()
+        .filter(|(_, event)| matches!(event, CommittedEvent::SpellCast { .. }));
+    let mut first_queued = history.len();
+    for pending in state.engine.event_log.iter().rev() {
+        if matches!(pending, CommittedEvent::SpellCast { .. }) {
+            let (at, _) = casts
+                .next()
+                .filter(|(_, event)| *event == pending)
+                .ok_or("Eternal opening cast queue differs from native history")?;
+            first_queued = at;
+        }
+    }
+    let expected = [PlayerId::P0, PlayerId::P1].map(|player| {
+        if !has_reveal {
+            return None;
+        }
+        first_cast(state, end, player)
+            .map(|(at, _)| at)
+            .filter(|at| *at < first_queued)
+    });
+    let mut processed = [None; 2];
+    for (at, event) in history.iter().enumerate().skip(end) {
+        let CommittedEvent::EternalOpeningV1 {
+            record: RecordV1::FirstSpellProcessed { cast_at },
+        } = event
+        else {
+            continue;
+        };
+        let caster = cast_player(state, *cast_at).ok_or("invalid Eternal first spell occurrence")?;
+        if *cast_at >= at
+            || expected[caster.index()] != Some(*cast_at)
+            || processed[caster.index()].replace(*cast_at).is_some()
+        {
+            return Err("invalid Eternal first spell processing receipt".into());
+        }
+    }
+    if processed != expected {
+        return Err("missing actual Eternal first spell processing receipt".into());
+    }
+    Ok(processed.map(|at| at.is_some()))
 }
 
 fn initial_deal_precedes(state: &GameState, at: usize) -> bool {
@@ -206,6 +319,7 @@ fn validate_window(state: &GameState, opening: OpeningV1) -> Result<Window<'_>, 
     if input_at <= opening.enabled_at
         || finished_at.is_some_and(|end| end <= input_at || end >= state.engine.event_history.len())
         || crate::leyline_axe_v1::history_kept_hands(state, input_at, true)? != input.hands
+        || crate::london_mulligan_v1::retained_eternal_keeps_v1(state)? != &input.hands
     {
         return Err("invalid Eternal kept-hand checkpoint".into());
     }
@@ -353,16 +467,22 @@ fn validate_window(state: &GameState, opening: OpeningV1) -> Result<Window<'_>, 
             return Err("Eternal opening candidate roster changed".into());
         }
     }
+    let processed = if finished_at.is_some() {
+        processed_first_spells(state, end, !revealed.is_empty())?
+    } else {
+        [false; 2]
+    };
     let vintage = state.eternal_v1.as_ref().map(|eternal| &eternal.vintage);
     if vintage.is_some_and(|vintage| {
         vintage.opening_hand_offered == revealed.is_empty()
-            || (current_player.is_some() && vintage.cast_a_spell != [false; 2])
+            || vintage.cast_a_spell != processed
     }) {
         return Err("invalid Eternal opening first-spell state".into());
     }
-    let still_armed = revealed.iter().copied().filter(|source| {
-        !vintage.is_some_and(|vintage| vintage.cast_a_spell[source.owner.opponent().index()])
-    });
+    let still_armed = revealed
+        .iter()
+        .copied()
+        .filter(|source| !processed[source.owner.opponent().index()]);
     if vintage
         .into_iter()
         .flat_map(|vintage| vintage.chancellor_reveals.iter().copied())
@@ -424,6 +544,7 @@ pub(crate) fn drain_or_decide(state: &mut GameState) -> Result<Option<Decision>,
     if opening.phase == Phase::London {
         let hands = crate::london_mulligan_v1::kept_hands_for_opening_v1(state)?
             .ok_or("Eternal opening requires the native London keeps")?;
+        crate::london_mulligan_v1::retained_eternal_keeps_v1(state)?;
         let candidates = capture_candidates(state, &hands);
         let input_at = publish(
             state,

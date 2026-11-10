@@ -348,3 +348,28 @@ pub(crate) fn kept_hands_for_opening_v1(
     }
     Ok(Some(opening.hands.clone()))
 }
+
+/// The Eternal opening owns the completed London record after selected
+/// permanents start leaving hand. Read the retained bindings without
+/// requiring already-entered cards to remain in hand.
+pub(crate) fn retained_eternal_keeps_v1(
+    state: &GameState,
+) -> Result<&[Vec<ObjectLinkV4>; 2], String> {
+    let opening = state
+        .london_mulligans_v1
+        .as_ref()
+        .ok_or("Eternal opening requires a London checkpoint")?;
+    if !opening.is_complete()
+        || opening.starting_player != state.starting_player
+        || opening.kept != [true; 2]
+        || opening.mulligan_this_round != [false; 2]
+        || opening.counts.iter().zip(&opening.hands).any(|(&count, hand)| {
+            HAND_SIZE
+                .checked_sub(count)
+                .is_none_or(|size| hand.len() != usize::from(size))
+        })
+    {
+        return Err("invalid completed Eternal London keeps".into());
+    }
+    Ok(&opening.hands)
+}

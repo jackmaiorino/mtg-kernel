@@ -83,6 +83,17 @@ fn restore(state: &GameState) -> GameState {
     serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap()
 }
 
+fn refuse_restored_first_spell(state: &GameState) {
+    let mut restored = restore(state);
+    let before = serde_json::to_value(&restored).unwrap();
+    assert!(engine::step(&mut restored, Action::Pass).is_err());
+    assert_eq!(serde_json::to_value(&restored).unwrap(), before);
+    assert!(matches!(
+        engine::advance_until_decision(&mut restored),
+        Decision::Halted { .. }
+    ));
+}
+
 #[test]
 fn native_leyline_and_chancellor_order_restore_and_first_spell_both_seats() {
     for start in SEATS {
@@ -154,6 +165,13 @@ fn native_leyline_and_chancellor_order_restore_and_first_spell_both_seats() {
             .event_history
             .iter()
             .any(|event| matches!(event, CommittedEvent::SpellCast { .. })));
+        let mut suppressed = state.clone();
+        let vintage = &mut suppressed.eternal_v1.as_mut().unwrap().vintage;
+        let original_reveals = vintage.chancellor_reveals.clone();
+        assert_eq!(original_reveals.len(), 1);
+        vintage.cast_a_spell[start.index()] = true;
+        vintage.chancellor_reveals.clear();
+        refuse_restored_first_spell(&suppressed);
         state = restore(&state);
         let mut cast = false;
         let mut countered = false;
@@ -171,6 +189,18 @@ fn native_leyline_and_chancellor_order_restore_and_first_spell_both_seats() {
                     {
                         state.players[start.index()].mana_pool[5] = 1;
                         engine::step(&mut state, Action::CastSpell(mox)).unwrap();
+                        assert!(matches!(
+                            engine::advance_until_decision(&mut state),
+                            Decision::CastSpellOrPass { .. }
+                        ));
+                        let mut rearmed = state.clone();
+                        let vintage = &mut rearmed.eternal_v1.as_mut().unwrap().vintage;
+                        assert!(vintage.cast_a_spell[start.index()]);
+                        assert!(vintage.chancellor_reveals.is_empty());
+                        vintage.cast_a_spell[start.index()] = false;
+                        vintage.chancellor_reveals.clone_from(&original_reveals);
+                        refuse_restored_first_spell(&rearmed);
+                        state = restore(&state);
                         cast = true;
                     } else {
                         if countered && state.stack.is_empty() {
@@ -202,6 +232,13 @@ fn native_opening_only_uses_kept_cards_and_refuses_tampered_owner_both_seats() {
     for start in SEATS {
         let other = start.opponent();
         let mut state = deal(start, &deck(&[], VOID), &deck(&[], "Island"));
+        let mut premature = serde_json::to_value(&state).unwrap();
+        premature["london_mulligans_v1"]["stage"] = serde_json::json!("Complete");
+        let mut premature: GameState = serde_json::from_value(premature).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut premature),
+            Decision::Halted { .. }
+        ));
         keep(&mut state, start, true);
         keep(&mut state, other, false);
         let Decision::ChooseLondonBottom {

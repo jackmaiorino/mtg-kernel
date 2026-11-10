@@ -1627,10 +1627,14 @@ fn first_spell_triggers(state: &mut GameState, events: &[CommittedEvent]) -> Vec
         };
         let caster = *controller;
         let stack_item = cast_stack_item(state, *spell);
-        let vintage = vintage_state(state);
-        if vintage.cast_a_spell[caster.index()] {
+        if vintage_state(state).cast_a_spell[caster.index()] {
             continue;
         }
+        if crate::eternal_opening_v1::record_first_spell_processed(state, caster, *spell).is_err() {
+            halt(state, *spell);
+            return Vec::new();
+        }
+        let vintage = vintage_state(state);
         vintage.cast_a_spell[caster.index()] = true;
         let (fired, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut vintage.chancellor_reveals)
             .into_iter()
