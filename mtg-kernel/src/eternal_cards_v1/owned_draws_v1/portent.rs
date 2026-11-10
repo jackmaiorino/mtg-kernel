@@ -548,12 +548,7 @@ pub(super) fn selected_draw(
     pending: &EffectContinuation,
     queued_at: usize,
 ) -> bool {
-    original_context(pending)
-        && !state
-            .stack
-            .iter()
-            .any(|row| row.v4.stack_item_id == pending.resolving_item.v4.stack_item_id)
-        && owns(state, &pending.resolving_item, queued_at)
+    original_context(pending) && owns(state, &pending.resolving_item, queued_at)
 }
 
 pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {

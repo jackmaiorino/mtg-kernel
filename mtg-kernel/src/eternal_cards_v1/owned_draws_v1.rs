@@ -617,6 +617,10 @@ pub(crate) fn begin(
         || !pending.frames.is_empty()
         || state.eternal_owned_draw_progress_v1.is_some()
         || has_started(state, pending.resolving_item.v4.stack_item_id)
+        || matches!(instruction, InstructionV1::Portent { .. })
+            && state.stack.iter().any(|row| {
+                row.v4.stack_item_id == pending.resolving_item.v4.stack_item_id
+            })
     {
         return Err("Eternal draw lost its original instruction".into());
     }
