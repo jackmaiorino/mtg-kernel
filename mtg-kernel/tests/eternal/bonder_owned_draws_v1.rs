@@ -150,7 +150,19 @@ fn activate(state: &mut GameState, source: ObjectId, actor: PlayerId, active: Pl
     assert!(
         matches!(next(state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(source, 0)))
     );
+    let stack_len = state.stack.len();
     act(state, Action::ActivateAbility(source, 0));
+    // Declaration stages the activation. Native advance pays and publishes it
+    // before returning priority; do not pass or resolve either draw here.
+    assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+    assert!(state.engine.pending_activation.is_none());
+    assert_eq!(state.stack.len(), stack_len + 1);
+    assert!(state.stack.last().is_some_and(|item| {
+        item.kind == mtg_kernel::state::StackItemKind::ActivatedAbility
+            && item.source == source
+            && item.controller == actor
+            && item.targets.is_empty()
+    }));
     assert!(state.objects.get(source).tapped);
     assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
 }
