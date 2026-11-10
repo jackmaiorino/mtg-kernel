@@ -6,7 +6,7 @@ a label job (panel.py), and replays the jobs through `regret_census_v1 mode=s4a-
 The evaluator and the census pass are run as plain processes inside the caller's host_slots claim (this tool takes
 no host reservation). Before a panel is played, `qualify` plays a fixed match sample serially and split over k
 processes, requires identical per-match hashes, and records completed matches per second; `play` refuses a plan
-without a receipt for the same evaluator and candidate and uses the fastest parity-clean k.
+without a receipt for the same evaluator, candidate model layout and opponent and uses the fastest parity-clean k.
 
 CLI:
   build    --id ID --candidate SRC.json --opponent OPP.json --decks DECKS.json --out DIR --namespace NS [--shards 16]
@@ -78,7 +78,8 @@ def qualify(plan_path: Path, executable: str, workers: list[int], sample: int, r
         golden = golden or hashes
         trials.append({"workers": k, "matches": len(hashes), "parity": hashes == golden, "seconds": seconds,
                        "matches_per_second": len(hashes) / seconds})
-    receipt = {"schema": RECEIPT, "evaluator_sha256": sha(executable), "candidate": plan["candidate"],
+    receipt = {"schema": RECEIPT, "evaluator_sha256": sha(executable),
+               "candidate_layout": npp.candidate_layout(plan["candidate"]),
                "opponent": plan["opponent"], "sample": sample, "trials": trials, "golden_match_sha256": golden,
                "selected_workers": max((t for t in trials if t["parity"]),
                                        key=lambda t: t["matches_per_second"])["workers"]}
@@ -90,9 +91,10 @@ def play(plan_path: Path, executable: str, receipt_path: Path) -> dict:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     if (receipt["schema"] != RECEIPT or receipt["evaluator_sha256"] != sha(executable)
-            or receipt["candidate"] != plan["candidate"] or receipt["opponent"] != plan["opponent"]
+            or receipt["candidate_layout"] != npp.candidate_layout(plan["candidate"])
+            or receipt["opponent"] != plan["opponent"]
             or receipt["trials"][0]["workers"] != 1 or not all(t["parity"] for t in receipt["trials"])):
-        raise SystemExit("the qualification receipt does not cover this evaluator, candidate and opponent")
+        raise SystemExit("the qualification receipt does not cover this evaluator, candidate layout and opponent")
     pending = []
     for item in plan["requests"]:
         path = npp.checked(item["request"])
