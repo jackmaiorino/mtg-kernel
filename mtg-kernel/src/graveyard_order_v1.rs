@@ -465,12 +465,19 @@ pub(crate) struct OrderedEntrySceneV1 {
     text: EntryTextV1,
 }
 
+fn leaves_graveyard(state: &GameState, event: &ProposedEvent) -> bool {
+    matches!(event, ProposedEvent::ZoneChange(change)
+        if change.to_zone != Zone::Graveyard && state.objects.try_get(change.object)
+            .is_some_and(|live| live.zone == Zone::Graveyard))
+}
+
 pub(crate) fn needs_ordered_entry_scene(state: &GameState, events: &[ProposedEvent]) -> bool {
     enabled(state)
         && !quoting_entry_scene(state)
         && events.iter().any(|event| {
-            matches!(event,
-            ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Graveyard)
+            matches!(event, ProposedEvent::ZoneChange(change)
+                if change.to_zone == Zone::Graveyard)
+                || leaves_graveyard(state, event)
         })
         && events.iter().any(|event| {
             matches!(event,
@@ -558,7 +565,12 @@ impl PreparedBatchV1 {
             }
             possible_arrivals.push(binding);
         }
-        if possible_arrivals.is_empty() {
+        // A departure-only batch can expose a different donor to a
+        // simultaneous entrant without creating an order choice.
+        if possible_arrivals.is_empty()
+            && !(events.iter().any(|event| leaves_graveyard(state, event))
+                && needs_ordered_entry_scene(state, events))
+        {
             return Ok(None);
         }
         Ok(Some(Self {

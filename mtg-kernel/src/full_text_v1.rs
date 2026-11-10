@@ -1129,15 +1129,15 @@ fn stack_producer(
 
 pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
     crate::graveyard_order_v1::refuse_legacy(state)?;
-    use crate::event_history_v1::EventKindV1 as Kind;
+    use crate::event_history_v1::EventKindV1;
     if state
         .engine
         .event_history
         .scan_for_v1(&[
-            Kind::FullTextTriggerCapturedV1,
-            Kind::FullTextBatchEntryV1,
-            Kind::FullTextRestrictedUseV1,
-            Kind::OrderedGraveyardControlGainedV1,
+            EventKindV1::FullTextTriggerCapturedV1,
+            EventKindV1::FullTextBatchEntryV1,
+            EventKindV1::FullTextRestrictedUseV1,
+            EventKindV1::OrderedGraveyardControlGainedV1,
         ])
         .iter()
         .any(|event| {

@@ -206,6 +206,48 @@ fn volrath_native_simultaneous_entry_obeys_final_suppressor_scene_both_seats() {
 }
 
 #[test]
+fn volrath_native_simultaneous_entry_uses_final_donor_after_departure_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for donor_first in [true, false] {
+            let mut state = ordered_game(player);
+            let source = put(&mut state, player, VOLRATH, Zone::Hand);
+            let target = put(&mut state, player, "Tireless Tribe", Zone::Graveyard);
+            let guide = put(&mut state, player, "Karmic Guide", Zone::Graveyard);
+            let palinchron = put(&mut state, player, "Palinchron", Zone::Graveyard);
+            let mut changes = vec![
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+                ProposedEvent::zone_change(palinchron, Zone::Exile),
+            ];
+            if donor_first {
+                changes.reverse();
+            }
+            event::propose_and_commit_batch(&mut state, changes);
+            assert_eq!(state.objects.get(palinchron).zone, Zone::Exile);
+            assert_eq!(active_text(&state, source).unwrap().donor().object, guide);
+            let capture = captured_entry(&state, source).unwrap();
+            assert_eq!(capture.host, AbilitySourceContractV4::capture(&state, source));
+            assert_eq!(capture.donor, AbilitySourceContractV4::capture(&state, guide));
+            assert!(matches!(capture.kind, DonatedTriggerKindV1::KarmicGuideEnteredAfterBatch { .. }));
+
+            let prompt = settle(&mut state).expect("the final donor offers a graveyard target");
+            assert!(matches!(&prompt,
+                Decision::ChooseTargets { player: chooser, spell, legal_targets, .. }
+                    if *chooser == player && *spell == source && legal_targets.contains(&Target::Object(target))));
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(next(&mut restored), prompt);
+            for branch in [&mut state, &mut restored] {
+                act(branch, Action::ChooseTarget(Target::Object(target)));
+                settled(branch);
+                assert_eq!(branch.objects.get(target).zone, Zone::Battlefield);
+                assert_eq!(branch.players[player.index()].graveyard, [guide]);
+            }
+            assert_eq!(state.state_hash(), restored.state_hash());
+        }
+    }
+}
+
+#[test]
 fn volrath_native_registration_retains_paid_discard_with_no_or_unsupported_text_both_seats() {
     for player in [PlayerId::P0, PlayerId::P1] {
         for donor_name in [None, Some(VOLRATH), Some("Abyssal Harvester")] {

@@ -30,10 +30,10 @@ action slot while donated abilities occupy distinct slots.
 The native reset selects owner-ordered graveyard batches independently of
 deck contents. Effects and SBA deaths retain separate native
 continuations. The owner orders actual post-replacement arrivals by exact
-native ordinal and incarnation. Mixed graveyard and battlefield arrivals use
-the selected final text before native entry capture. The legacy serialized
-state omits empty producer and ordering records, and their empty hashes add
-no bytes.
+native ordinal and incarnation. A battlefield entry in a batch that changes
+a graveyard uses its final text after both arrivals and departures. The legacy
+serialized state omits empty producer and ordering records, and their empty
+hashes add no bytes.
 
 The ordered public view exposes both graveyards bottom to top. While an order
 is pending, it separates unplaced public arrivals from the established order
@@ -64,6 +64,7 @@ history events even when the event-kind index is stale or forced open. Donated
 entry triggers check native suppression after all members of a simultaneous
 batch have entered or left. The fixtures cover paid Palinchron and Karmic Guide
 text with Torpor Orb, and an Orb entering or departing in the same batch.
+A separate fixture covers a departing top donor in both batch member orders.
 
 Donor support is finite. It omits, for example, Mogg Fanatic's donated
 activation and Ravenous Rats' donated entry trigger. Mainboard qualification
