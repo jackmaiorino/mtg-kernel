@@ -585,9 +585,16 @@ pub fn twinned_vision() -> EffectOp {
 pub(crate) fn twinned_vision_draw_count(state: &GameState, source: ObjectId) -> u32 {
     let from_hand = state.objects.try_get(source).is_some_and(|live| {
         live.spell_copy_origin.is_none()
-            && live.v4.spell_cast_origin.is_some_and(|origin| origin.origin_zone == Zone::Hand)
+            && live
+                .v4
+                .spell_cast_origin
+                .is_some_and(|origin| origin.origin_zone == Zone::Hand)
     });
-    if from_hand { 1 } else { 2 }
+    if from_hand {
+        1
+    } else {
+        2
+    }
 }
 
 /// Crypt Rats' ability for each X.

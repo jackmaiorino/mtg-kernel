@@ -9,7 +9,9 @@ use crate::eternal_vintage_e7b_v1::dredge;
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::standard_cards_v1::StandardOpV1;
-use crate::state::{AbilitySourceContractV4, GameState, StackItemKind, StackSourceContractV4, Zone};
+use crate::state::{
+    AbilitySourceContractV4, GameState, StackItemKind, StackSourceContractV4, Zone,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -24,9 +26,13 @@ impl InstructionV1 {
     fn from_op(op: &EternalOpV1) -> Option<Self> {
         match op {
             EternalOpV1::LurrusV1(LurrusOpV1::FrogDrawV1) => Some(Self::Frog),
-            EternalOpV1::DrawCastFromGraveyardV1 { normal, from_graveyard } => {
-                Some(Self::Plunder { normal: *normal, from_graveyard: *from_graveyard })
-            }
+            EternalOpV1::DrawCastFromGraveyardV1 {
+                normal,
+                from_graveyard,
+            } => Some(Self::Plunder {
+                normal: *normal,
+                from_graveyard: *from_graveyard,
+            }),
             EternalOpV1::DrawHalfLibraryThenNoMaximumHandSizeV1 => Some(Self::Tamiyo),
             EternalOpV1::E8bV1(E8bOpV1::TwinnedVisionV1) => Some(Self::TwinnedVision),
             _ => None,
@@ -43,11 +49,14 @@ impl InstructionV1 {
     fn count(self, state: &GameState, ctx: &ExecCtx) -> u32 {
         match self {
             Self::Frog => 1,
-            Self::Plunder { normal, from_graveyard } => {
-                graveyard_cast_count(state, ctx.source, normal, from_graveyard)
-            }
+            Self::Plunder {
+                normal,
+                from_graveyard,
+            } => graveyard_cast_count(state, ctx.source, normal, from_graveyard),
             Self::Tamiyo => half_library_count(state.players[ctx.controller.index()].library.len()),
-            Self::TwinnedVision => eternal_pauper_e8b_v1::twinned_vision_draw_count(state, ctx.source),
+            Self::TwinnedVision => {
+                eternal_pauper_e8b_v1::twinned_vision_draw_count(state, ctx.source)
+            }
         }
     }
 }
@@ -64,9 +73,16 @@ pub(crate) fn graveyard_cast_count(
 ) -> u32 {
     let from_graveyard_cast = state.objects.try_get(source).is_some_and(|source| {
         source.zone == Zone::Stack
-            && source.v4.spell_cast_origin.is_some_and(|origin| origin.origin_zone == Zone::Graveyard)
+            && source
+                .v4
+                .spell_cast_origin
+                .is_some_and(|origin| origin.origin_zone == Zone::Graveyard)
     });
-    u32::from(if from_graveyard_cast { from_graveyard } else { normal })
+    u32::from(if from_graveyard_cast {
+        from_graveyard
+    } else {
+        normal
+    })
 }
 
 pub(crate) fn half_library_count(library_len: usize) -> u32 {
@@ -74,7 +90,10 @@ pub(crate) fn half_library_count(library_len: usize) -> u32 {
 }
 
 pub(crate) fn remove_maximum_hand_size(state: &mut GameState, player: PlayerId) {
-    state.eternal_v1.get_or_insert_with(Default::default).no_maximum_hand_size[player.index()] = true;
+    state
+        .eternal_v1
+        .get_or_insert_with(Default::default)
+        .no_maximum_hand_size[player.index()] = true;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -109,7 +128,10 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
     if let Some(inline) = &item.inline_effect {
         let instruction = InstructionV1::from_program(inline)?;
         let source = item.v4.ability_source_contract?;
-        if source.source != item.source || source.controller != item.controller || source.zone != Zone::Battlefield {
+        if source.source != item.source
+            || source.controller != item.controller
+            || source.zone != Zone::Battlefield
+        {
             return None;
         }
         let name = CARD_DEFS.get(usize::from(source.card_def))?.object_name;
@@ -117,9 +139,11 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
             (InstructionV1::Frog, StackItemKind::TriggeredAbility, "Psychic Frog") => {
                 Some((instruction, SourceV1::Ability(source)))
             }
-            (InstructionV1::Tamiyo, StackItemKind::ActivatedAbility, "Tamiyo, Inquisitive Student")
-                if item.v4.activated_ability_index == Some(2) =>
-            {
+            (
+                InstructionV1::Tamiyo,
+                StackItemKind::ActivatedAbility,
+                "Tamiyo, Inquisitive Student",
+            ) if item.v4.activated_ability_index == Some(2) => {
                 Some((instruction, SourceV1::Ability(source)))
             }
             _ => None,
@@ -142,7 +166,9 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
     let instruction = InstructionV1::from_program(&def.printed_mode_effect(item.mode_chosen)?)?;
     match (instruction, def.object_name) {
         (InstructionV1::Plunder { .. }, "Plunder the Trollshaws")
-        | (InstructionV1::TwinnedVision, "Twinned Vision") => Some((instruction, SourceV1::Spell(source))),
+        | (InstructionV1::TwinnedVision, "Twinned Vision") => {
+            Some((instruction, SourceV1::Spell(source)))
+        }
         _ => None,
     }
 }
@@ -157,7 +183,10 @@ fn completion(ordinal: u32) -> EffectFrame {
 fn stage(pending: &mut EffectContinuation, ordinal: u32) {
     pending.frames.push(completion(ordinal));
     pending.frames.push(EffectFrame::Program {
-        op: EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 },
+        op: EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
         path: vec![0],
     });
 }
@@ -168,7 +197,8 @@ pub(crate) fn begin(
     op: &EternalOpV1,
     path: &[u16],
 ) -> Result<(), String> {
-    let (instruction, source) = selected(state, pending).ok_or("Eternal draw lost its original source")?;
+    let (instruction, source) =
+        selected(state, pending).ok_or("Eternal draw lost its original source")?;
     if InstructionV1::from_op(op) != Some(instruction)
         || !path.is_empty()
         || !pending.frames.is_empty()
@@ -190,7 +220,8 @@ pub(crate) fn begin(
         instruction,
         total,
         completed: 0,
-        library_history_start: (instruction == InstructionV1::Tamiyo).then_some(state.engine.event_history.len()),
+        library_history_start: (instruction == InstructionV1::Tamiyo)
+            .then_some(state.engine.event_history.len()),
     });
     stage(pending, 0);
     Ok(())
@@ -201,7 +232,8 @@ fn progress(state: &GameState, pending: &EffectContinuation) -> Option<ProgressV
     (Some((progress.instruction, progress.source)) == selected(state, pending)
         && progress.item == pending.resolving_item.v4.stack_item_id
         && progress.controller == pending.ctx.controller
-        && progress.completed < progress.total).then_some(progress)
+        && progress.completed < progress.total)
+        .then_some(progress)
 }
 
 pub(crate) fn complete(
@@ -221,39 +253,59 @@ pub(crate) fn complete(
             remove_maximum_hand_size(state, progress.controller);
         }
     } else {
-        state.eternal_owned_draw_progress_v1.as_mut().unwrap().completed = completed;
+        state
+            .eternal_owned_draw_progress_v1
+            .as_mut()
+            .unwrap()
+            .completed = completed;
         stage(pending, completed);
     }
     Ok(())
 }
 
 pub(crate) fn abandon(state: &mut GameState, ctx: &ExecCtx) {
-    if state.eternal_owned_draw_progress_v1.is_some_and(|progress| {
-        Some(progress.item) == ctx.stack_item_id
-            && progress.source.object() == ctx.source
-            && progress.controller == ctx.controller
-    }) {
+    if state
+        .eternal_owned_draw_progress_v1
+        .is_some_and(|progress| {
+            Some(progress.item) == ctx.stack_item_id
+                && progress.source.object() == ctx.source
+                && progress.controller == ctx.controller
+        })
+    {
         state.eternal_owned_draw_progress_v1 = None;
     }
 }
 
 fn initial_library_len(state: &GameState, player: PlayerId, start: usize) -> Option<usize> {
     let current = state.players[player.index()].library.len();
-    state.engine.event_history.get(start..)?.iter().rev().try_fold(current, |len, event| {
-        match event {
-            CommittedEvent::Draw { player: drawer, object: Some(_) } if *drawer == player => {
-                len.checked_add(1)
-            }
-            CommittedEvent::ZoneChange { object, from, to, .. }
-                if from != to
-                    && (*from == Zone::Library || *to == Zone::Library)
-                    && state.objects.try_get(*object).is_some_and(|card| card.owner == player) =>
+    state
+        .engine
+        .event_history
+        .get(start..)?
+        .iter()
+        .rev()
+        .try_fold(current, |len, event| match event {
+            CommittedEvent::Draw {
+                player: drawer,
+                object: Some(_),
+            } if *drawer == player => len.checked_add(1),
+            CommittedEvent::ZoneChange {
+                object, from, to, ..
+            } if from != to
+                && (*from == Zone::Library || *to == Zone::Library)
+                && state
+                    .objects
+                    .try_get(*object)
+                    .is_some_and(|card| card.owner == player) =>
             {
-                if *from == Zone::Library { len.checked_add(1) } else { len.checked_sub(1) }
+                if *from == Zone::Library {
+                    len.checked_add(1)
+                } else {
+                    len.checked_sub(1)
+                }
             }
             _ => Some(len),
-        }
-    })
+        })
 }
 
 fn expected_total(state: &GameState, ctx: &ExecCtx, progress: ProgressV1) -> Option<u32> {
@@ -298,9 +350,17 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
     if expected_total(state, &pending.ctx, progress) != Some(progress.total) {
         return Err("Eternal draw changed its original count".into());
     }
-    let (path, remaining) = dredge::draw_stage(pending).ok_or("Eternal draw lost its original stage")?;
+    let (path, remaining) =
+        dredge::draw_stage(pending).ok_or("Eternal draw lost its original stage")?;
     if !draw_stage_matches(state, pending, progress.controller, path, remaining) {
         return Err("Eternal draw changed its progress or remaining effects".into());
     }
-    dredge::validate_draw_choice(state, pending, progress.controller, path, remaining, "Eternal draw")
+    dredge::validate_draw_choice(
+        state,
+        pending,
+        progress.controller,
+        path,
+        remaining,
+        "Eternal draw",
+    )
 }

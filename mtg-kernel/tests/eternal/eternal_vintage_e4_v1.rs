@@ -1093,7 +1093,10 @@ fn paid_psychic_frog_combat_draw_offers_replacements_both_seats() {
         pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
         act(&mut state, Action::DeclareBlockers(vec![]));
         pass_until(&mut state, |s| {
-            s.engine.pending_effect.as_ref().is_some_and(|pending| pending.ctx.source == frog)
+            s.engine
+                .pending_effect
+                .as_ref()
+                .is_some_and(|pending| pending.ctx.source == frog)
         });
         assert_eq!(state.players[opponent.index()].life, 19);
         assert_draw_replacement_prompt(&next(&mut state), drawer, frog, thug);
@@ -1121,7 +1124,12 @@ fn paid_tamiyo_ultimate_keeps_its_starting_draw_count_and_tail_both_seats() {
         let mut state = islands();
         state.active_player = drawer;
         state.priority_player = drawer;
-        let tamiyo = put(&mut state, drawer, "Tamiyo, Inquisitive Student", Zone::Hand);
+        let tamiyo = put(
+            &mut state,
+            drawer,
+            "Tamiyo, Inquisitive Student",
+            Zone::Hand,
+        );
         let recall = put(&mut state, drawer, "Ancestral Recall", Zone::Hand);
         pool(&mut state, drawer, &[ManaColor::U, ManaColor::U], 0);
         cast(&mut state, tamiyo, &[]);
@@ -1139,8 +1147,10 @@ fn paid_tamiyo_ultimate_keeps_its_starting_draw_count_and_tail_both_seats() {
         assert_eq!(total, 9);
         activate(&mut state, tamiyo, 2, &[]);
         let first = settle(&mut state).expect("first draw of the actual -7 activation");
-        assert!(matches!(first, Decision::ChooseEffectTargets { player, source, legal_targets, .. }
-            if player == drawer && source == tamiyo && legal_targets.contains(&Target::Object(thug))));
+        assert!(
+            matches!(first, Decision::ChooseEffectTargets { player, source, legal_targets, .. }
+            if player == drawer && source == tamiyo && legal_targets.contains(&Target::Object(thug)))
+        );
         assert_eq!(state.objects.get(tamiyo).zone, Zone::Graveyard);
         act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
         let mut restored = restore_draw_answer(&state);
@@ -1172,9 +1182,10 @@ fn paid_tamiyo_ultimate_keeps_its_starting_draw_count_and_tail_both_seats() {
 
         for completed in 1..total {
             assert_eq!(treasure_count(&state, opponent), completed - 1);
-            assert!(!state.eternal_v1.as_ref().is_some_and(|eternal| {
-                eternal.no_maximum_hand_size[drawer.index()]
-            }));
+            assert!(!state
+                .eternal_v1
+                .as_ref()
+                .is_some_and(|eternal| { eternal.no_maximum_hand_size[drawer.index()] }));
             act(&mut state, Action::FinishEffectSelection);
             if completed + 1 < total {
                 assert!(settle(&mut state).is_some());
@@ -1184,7 +1195,10 @@ fn paid_tamiyo_ultimate_keeps_its_starting_draw_count_and_tail_both_seats() {
         assert_eq!(treasure_count(&state, opponent), total - 1);
         assert_eq!(state.players[drawer.index()].library, library[4..]);
         assert!(state.eternal_v1.as_ref().unwrap().no_maximum_hand_size[drawer.index()]);
-        assert!(serde_json::to_value(&state).unwrap().get("eternal_owned_draw_progress_v1").is_none());
+        assert!(serde_json::to_value(&state)
+            .unwrap()
+            .get("eternal_owned_draw_progress_v1")
+            .is_none());
     }
 }
 
@@ -1197,10 +1211,20 @@ fn paid_plunder_offers_jace_or_hullbreacher_and_stops_on_win_both_seats() {
         state.priority_player = drawer;
         put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
         let jace = put(&mut state, drawer, "Jace, Wielder of Mysteries", Zone::Hand);
-        pool(&mut state, drawer, &[ManaColor::U, ManaColor::U, ManaColor::U], 1);
+        pool(
+            &mut state,
+            drawer,
+            &[ManaColor::U, ManaColor::U, ManaColor::U],
+            1,
+        );
         cast(&mut state, jace, &[]);
         settled(&mut state);
-        let plunder = put(&mut state, drawer, "Plunder the Trollshaws", Zone::Graveyard);
+        let plunder = put(
+            &mut state,
+            drawer,
+            "Plunder the Trollshaws",
+            Zone::Graveyard,
+        );
         pool(&mut state, drawer, &[ManaColor::U], 3);
         cast(&mut state, plunder, &[]);
         let first = settle(&mut state).expect("Jace and Hullbreacher compete for the first draw");
@@ -1212,9 +1236,14 @@ fn paid_plunder_offers_jace_or_hullbreacher_and_stops_on_win_both_seats() {
         act(&mut state, Action::ChooseEffectTarget(Target::Object(jace)));
         let mut restored = restore_draw_answer(&state);
         for branch in [&mut state, &mut restored] {
-            assert!(matches!(next(branch), Decision::GameOver { winner: Some(player) } if player == drawer));
+            assert!(
+                matches!(next(branch), Decision::GameOver { winner: Some(player) } if player == drawer)
+            );
             assert_eq!(treasure_count(branch, opponent), 1);
-            assert!(serde_json::to_value(&*branch).unwrap().get("eternal_owned_draw_progress_v1").is_none());
+            assert!(serde_json::to_value(&*branch)
+                .unwrap()
+                .get("eternal_owned_draw_progress_v1")
+                .is_none());
         }
         assert_eq!(state.state_hash(), restored.state_hash());
     }

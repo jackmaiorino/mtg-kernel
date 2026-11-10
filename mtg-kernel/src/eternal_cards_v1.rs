@@ -1097,7 +1097,10 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 &EffectOp::DrawCards {
                     player: PlayerRef::Controller,
                     count: owned_draws_v1::graveyard_cast_count(
-                        state, ctx.source, *normal, *from_graveyard,
+                        state,
+                        ctx.source,
+                        *normal,
+                        *from_graveyard,
                     ),
                 },
                 ctx,
