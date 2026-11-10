@@ -62,8 +62,8 @@ use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4};
 use crate::s_transformer_v1::{
-    decode_checkpoint_v1, encode_checkpoint_v1, SGroupV1, SInputV1, SModelV1, SSubstepV1, STapeV1,
-    STrainStateV1, SWorkV1, S_ARCHITECTURE_V1,
+    decode_checkpoint_v1, encode_checkpoint_v1, SGroupV1, SInputV1, SModelV1, SStepV1, SSubstepV1,
+    STapeV1, STrainStateV1, SWorkV1, S_ARCHITECTURE_V1,
 };
 use crate::sideboard_play_policy_v1::{
     FrozenPlayPolicyV1, PlayPolicyOriginV1, FRESH_FEATURE_IDENTITY_V4,
@@ -75,6 +75,9 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+#[cfg(test)]
+mod verified_replay_v1;
 
 /// `SLearnerSourceV1::schema`.
 pub const S_LEARNER_SOURCE_SCHEMA_V1: &str = "w5-s-learner/v1";
@@ -358,6 +361,12 @@ pub(super) struct SUnsupportedOptionsV1 {
     pub(super) search_targets: bool,
 }
 
+#[cfg(test)]
+pub(super) struct VerifiedReplayTestV1 {
+    pub(super) tape_cap: usize,
+    pub(super) short_first_gradient: bool,
+}
+
 /// The update command's inputs.
 pub(super) struct SUpdateInputsV1 {
     pub(super) source: ExpandedModelSourceV1,
@@ -370,6 +379,8 @@ pub(super) struct SUpdateInputsV1 {
     pub(super) output_directory: PathBuf,
     pub(super) preparation_workers: Option<usize>,
     pub(super) max_prepared_tensor_mebibytes: usize,
+    #[cfg(test)]
+    pub(super) verified_replay: Option<VerifiedReplayTestV1>,
     pub(super) unsupported: SUnsupportedOptionsV1,
     /// EX1 or W5 (`Ex1Update`); the caller validated the options and their
     /// combination.
@@ -377,6 +388,19 @@ pub(super) struct SUpdateInputsV1 {
     pub(super) training_math: TrainingMathV1,
     pub(super) record_format: CheckpointRecordFormatV1,
     pub(super) started: std::time::Instant,
+}
+
+struct LearnedSV1 {
+    step: SStepV1,
+    gae_statistics: super::bootstrapped_advantage_v1::AdvantageStatisticsV1,
+    policy_substeps: usize,
+    learner_workers: usize,
+    preparation_telemetry: Option<ordered_update_preparation::PreparationTelemetryV1>,
+    teacher_receipt: Option<Value>,
+    ex1_exposure: Option<Value>,
+    teacher_seconds: f64,
+    behavior_replay_seconds: f64,
+    learner_update_seconds: f64,
 }
 
 /// The refusals of an S update, before any input is read.
@@ -435,6 +459,8 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         output_directory,
         preparation_workers,
         max_prepared_tensor_mebibytes,
+        #[cfg(test)]
+        verified_replay,
         ex1,
         training_math,
         started,
@@ -504,155 +530,263 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         )?;
     }
     let input_read_seconds = started.elapsed().as_secs_f64();
-    let replay_started = std::time::Instant::now();
-    // The replay recomputes every actor-visible row: the learner's with S,
-    // a net-8 opponent's with net-8 under the command's math.
-    let (tensor_groups, preparation_telemetry) = if let Some(workers) = preparation_workers {
-        let prepared = ordered_update_preparation::prepare_v1(
-            &episodes,
-            &policy,
-            &learner,
-            workers,
-            max_prepared_tensor_mebibytes,
-            training_math,
-        )?;
-        (prepared.groups, Some(prepared.telemetry))
-    } else {
-        let mut tensor_groups = Vec::new();
-        let mut opponent_cache = OpponentCacheV1::default().with_training_math_v1(training_math);
-        for (episode_ordinal, episode) in episodes.iter().enumerate() {
-            let opponent = episode
-                .episode
-                .opponent
-                .as_ref()
-                .map(|s| opponent_cache.load(s))
-                .transpose()?;
-            validate_actual_behaviors_v1(
-                episode,
-                &learner,
-                opponent.as_ref().map(|o| &o.behavior),
+    #[cfg(test)]
+    let (candidate, verified_replay) = match verified_replay {
+        Some(VerifiedReplayTestV1 {
+            tape_cap,
+            short_first_gradient,
+        }) => {
+            use crate::s_transformer_v1::verified_row_v1::ReplayErrorV1;
+
+            ensure(
+                preparation_workers.is_none() && ex1.is_none(),
+                "verified replay requires ordinary serial S",
             )?;
-            tensor_groups.extend(replay_learner_groups_v1(
-                episode_ordinal,
-                episode,
+            let started = std::time::Instant::now();
+            let candidate = verified_replay_v1::gradient_v1(
+                &episodes,
                 &policy,
-                opponent.as_ref().map(|o| &o.policy),
-            )?);
-        }
-        (tensor_groups, None)
-    };
-    ensure(!tensor_groups.is_empty(), "no learner decisions")?;
-    let mut values = Vec::with_capacity(tensor_groups.len());
-    for (index, (_, _, rows)) in tensor_groups.iter().enumerate() {
-        let (first, _) = rows
-            .first()
-            .ok_or_else(|| format!("gae group {index} has no substeps"))?;
-        values.push(f32::from_bits(first.value));
-    }
-    // EX1: the hook's rows, authenticated against S's training forward at
-    // the update-start parameters.
-    let teacher_started = std::time::Instant::now();
-    let ex1_teacher = ex1
-        .as_ref()
-        .map(|options| {
-            let model = state.model_v1();
-            let mut tape = STapeV1::default();
-            ex1_update_v1::ex1_teach_with_v1(options, &trajectories, &episodes, &mut |tensor| {
-                model
-                    .forward_v1(SInputV1::of_tensor_v1(tensor), &mut tape)
-                    .map(|output| output.logits)
-            })
-        })
-        .transpose()?;
-    let policy_mask = ex1_teacher
-        .as_ref()
-        .map(|(receipt, _)| ex1_update_v1::w5_policy_mask_v1(receipt, &tensor_groups))
-        .transpose()?
-        .unwrap_or_default();
-    let teacher_seconds = teacher_started.elapsed().as_secs_f64();
-    let terminal_returns: Vec<i8> = tensor_groups.iter().map(|group| group.0).collect();
-    let episode_ordinals: Vec<usize> = tensor_groups.iter().map(|group| group.1).collect();
-    let gae = compute_gae_targets_of_values_v1(
-        &values,
-        &terminal_returns,
-        &episode_ordinals,
-        gamma,
-        lambda,
-    )?;
-    let groups: Vec<SGroupV1<'_>> = tensor_groups
-        .iter()
-        .zip(gae.advantages.iter().zip(&gae.value_targets))
-        .map(|((_, _, rows), (advantage, value_target))| SGroupV1 {
-            substeps: rows
-                .iter()
-                .map(|(row, tensor)| SSubstepV1 {
-                    input: SInputV1::of_tensor_v1(tensor),
-                    selected: row.selected as usize,
-                })
-                .collect(),
-            advantage: *advantage,
-            value_target: *value_target,
-        })
-        .collect();
-    let policy_substeps: usize = groups.iter().map(|group| group.substeps.len()).sum();
-    let behavior_replay_seconds = replay_started.elapsed().as_secs_f64();
-    eprintln!(
-        "native S update: {} episodes, {} learner physical decisions",
-        episodes.len(),
-        groups.len()
-    );
-    let learner_started = std::time::Instant::now();
-    let learner_workers = if ex1.is_none() {
-        preparation_workers.unwrap_or(1)
-    } else {
-        1
-    };
-    let (step, ex1_exposure) = match (&ex1_teacher, &ex1) {
-        (Some((_, rows)), Some(options)) => {
-            let masked_rows = policy_mask.len();
-            let input = ex1_update_v1::ex1_s_auxiliary_input_v1(rows, options, policy_mask);
-            let (step, auxiliary) = state.train_step_gae_auxiliary_v1(
-                &groups,
-                value_coefficient,
-                learning_rate,
-                &input,
-                &mut SWorkV1::default(),
-            )?;
-            let movement = s_movement_v1(rows, state.model_v1(), auxiliary.ordinary_only.as_ref())?;
-            let mut exposure = json!({"rows":rows.len(),
-                "denominator":crate::ex1_v1::EX1_DENOMINATOR_V1,
-                "coefficient":options.coefficient,
-                "kl_before":auxiliary.divergences_before,
-                "auxiliary_loss":auxiliary.auxiliary_loss,
-                "total_loss":f64::from(step.loss.loss) + auxiliary.auxiliary_loss,
-                "gradient_components":auxiliary.gradient_components,
-                "auxiliary_head_l2":auxiliary.auxiliary_head_l2,
-                "ordinary_head_l2":auxiliary.ordinary_head_l2,
-                "auxiliary_bias_residual":auxiliary.auxiliary_bias_residual,
-                "cap":auxiliary.cap,"adam_steps":auxiliary.adam_steps,
-                "movement":movement,"thresholds":ex1_update_v1::ex1_thresholds_v1(),
-                "learner":S_ARCHITECTURE_V1});
-            if options.w5.is_some() {
-                exposure["pg_masked_rows"] = json!(masked_rows);
-                exposure["policy_groups"] = json!(auxiliary.policy_groups);
-                exposure["step_telemetry"] = json!(input.step_telemetry);
+                &learner,
+                state.model_v1(),
+                verified_replay_v1::OptionsV1 {
+                    gamma,
+                    lambda,
+                    coefficient: value_coefficient,
+                    tape_cap,
+                    short_first_gradient,
+                    training_math,
+                },
+            );
+            let replay_and_gradient_seconds = started.elapsed().as_secs_f64();
+            match candidate {
+                Ok(candidate) => {
+                    let learner_started = std::time::Instant::now();
+                    state.adam_step_with_gradient_v1(&candidate.gradient, learning_rate)?;
+                    let step = SStepV1 {
+                        loss: candidate.loss,
+                        adam_step: state.adam_step_v1(),
+                        after_state_sha256: state.state_sha256_v1(),
+                    };
+                    (
+                        Some(LearnedSV1 {
+                            step,
+                            gae_statistics: candidate.gae.statistics,
+                            policy_substeps: candidate.policy_substeps,
+                            learner_workers: 1,
+                            preparation_telemetry: None,
+                            teacher_receipt: None,
+                            ex1_exposure: None,
+                            teacher_seconds: 0.0,
+                            behavior_replay_seconds: replay_and_gradient_seconds,
+                            learner_update_seconds: learner_started.elapsed().as_secs_f64(),
+                        }),
+                        Some(json!({"used":true, "tape_cap_bytes":tape_cap,
+                            "peak_retained_tape_bytes":candidate.peak_retained_tape_bytes,
+                            "replay_and_gradient_seconds":replay_and_gradient_seconds})),
+                    )
+                }
+                Err(ReplayErrorV1::Replay(error)) => return Err(error),
+                Err(error) => {
+                    let reason = match error {
+                        ReplayErrorV1::Capacity => "tape_capacity",
+                        ReplayErrorV1::CallerMathState => "caller_math_state",
+                        ReplayErrorV1::UnsupportedGeneration => "unsupported_generation",
+                        ReplayErrorV1::Replay(_) => unreachable!(),
+                    };
+                    (
+                        None,
+                        Some(
+                            json!({"used":false, "fallback":reason, "tape_cap_bytes":tape_cap,
+                            "replay_and_gradient_seconds":replay_and_gradient_seconds}),
+                        ),
+                    )
+                }
             }
-            (step, Some(exposure))
         }
-        (None, None) => (
-            state.train_step_gae_with_workers_v1(
-                &groups,
-                value_coefficient,
-                learning_rate,
-                &mut SWorkV1::default(),
-                learner_workers,
-            )?,
-            None,
-        ),
-        _ => return Err("an EX1 update lacks its teacher".into()),
+        None => (None, None),
     };
-    let learner_update_seconds = learner_started.elapsed().as_secs_f64();
-    drop(groups);
+    #[cfg(not(test))]
+    let candidate = None;
+    let run_reference = |state: &mut STrainStateV1| -> Result<LearnedSV1, String> {
+        let replay_started = std::time::Instant::now();
+        // The replay recomputes every actor-visible row: the learner's with S,
+        // a net-8 opponent's with net-8 under the command's math.
+        let (tensor_groups, preparation_telemetry) = if let Some(workers) = preparation_workers {
+            let prepared = ordered_update_preparation::prepare_v1(
+                &episodes,
+                &policy,
+                &learner,
+                workers,
+                max_prepared_tensor_mebibytes,
+                training_math,
+            )?;
+            (prepared.groups, Some(prepared.telemetry))
+        } else {
+            let mut tensor_groups = Vec::new();
+            let mut opponent_cache =
+                OpponentCacheV1::default().with_training_math_v1(training_math);
+            for (episode_ordinal, episode) in episodes.iter().enumerate() {
+                let opponent = episode
+                    .episode
+                    .opponent
+                    .as_ref()
+                    .map(|s| opponent_cache.load(s))
+                    .transpose()?;
+                validate_actual_behaviors_v1(
+                    episode,
+                    &learner,
+                    opponent.as_ref().map(|o| &o.behavior),
+                )?;
+                tensor_groups.extend(replay_learner_groups_v1(
+                    episode_ordinal,
+                    episode,
+                    &policy,
+                    opponent.as_ref().map(|o| &o.policy),
+                )?);
+            }
+            (tensor_groups, None)
+        };
+        ensure(!tensor_groups.is_empty(), "no learner decisions")?;
+        let mut values = Vec::with_capacity(tensor_groups.len());
+        for (index, (_, _, rows)) in tensor_groups.iter().enumerate() {
+            let (first, _) = rows
+                .first()
+                .ok_or_else(|| format!("gae group {index} has no substeps"))?;
+            values.push(f32::from_bits(first.value));
+        }
+        // EX1: the hook's rows, authenticated against S's training forward at
+        // the update-start parameters.
+        let teacher_started = std::time::Instant::now();
+        let ex1_teacher = ex1
+            .as_ref()
+            .map(|options| {
+                let model = state.model_v1();
+                let mut tape = STapeV1::default();
+                ex1_update_v1::ex1_teach_with_v1(options, &trajectories, &episodes, &mut |tensor| {
+                    model
+                        .forward_v1(SInputV1::of_tensor_v1(tensor), &mut tape)
+                        .map(|output| output.logits)
+                })
+            })
+            .transpose()?;
+        let policy_mask = ex1_teacher
+            .as_ref()
+            .map(|(receipt, _)| ex1_update_v1::w5_policy_mask_v1(receipt, &tensor_groups))
+            .transpose()?
+            .unwrap_or_default();
+        let teacher_seconds = teacher_started.elapsed().as_secs_f64();
+        let terminal_returns: Vec<i8> = tensor_groups.iter().map(|group| group.0).collect();
+        let episode_ordinals: Vec<usize> = tensor_groups.iter().map(|group| group.1).collect();
+        let gae = compute_gae_targets_of_values_v1(
+            &values,
+            &terminal_returns,
+            &episode_ordinals,
+            gamma,
+            lambda,
+        )?;
+        let groups: Vec<SGroupV1<'_>> = tensor_groups
+            .iter()
+            .zip(gae.advantages.iter().zip(&gae.value_targets))
+            .map(|((_, _, rows), (advantage, value_target))| SGroupV1 {
+                substeps: rows
+                    .iter()
+                    .map(|(row, tensor)| SSubstepV1 {
+                        input: SInputV1::of_tensor_v1(tensor),
+                        selected: row.selected as usize,
+                    })
+                    .collect(),
+                advantage: *advantage,
+                value_target: *value_target,
+            })
+            .collect();
+        let policy_substeps: usize = groups.iter().map(|group| group.substeps.len()).sum();
+        let behavior_replay_seconds = replay_started.elapsed().as_secs_f64();
+        eprintln!(
+            "native S update: {} episodes, {} learner physical decisions",
+            episodes.len(),
+            groups.len()
+        );
+        let learner_started = std::time::Instant::now();
+        let learner_workers = if ex1.is_none() {
+            preparation_workers.unwrap_or(1)
+        } else {
+            1
+        };
+        let (step, ex1_exposure) = match (&ex1_teacher, &ex1) {
+            (Some((_, rows)), Some(options)) => {
+                let masked_rows = policy_mask.len();
+                let input = ex1_update_v1::ex1_s_auxiliary_input_v1(rows, options, policy_mask);
+                let (step, auxiliary) = state.train_step_gae_auxiliary_v1(
+                    &groups,
+                    value_coefficient,
+                    learning_rate,
+                    &input,
+                    &mut SWorkV1::default(),
+                )?;
+                let movement =
+                    s_movement_v1(rows, state.model_v1(), auxiliary.ordinary_only.as_ref())?;
+                let mut exposure = json!({"rows":rows.len(),
+                    "denominator":crate::ex1_v1::EX1_DENOMINATOR_V1,
+                    "coefficient":options.coefficient,
+                    "kl_before":auxiliary.divergences_before,
+                    "auxiliary_loss":auxiliary.auxiliary_loss,
+                    "total_loss":f64::from(step.loss.loss) + auxiliary.auxiliary_loss,
+                    "gradient_components":auxiliary.gradient_components,
+                    "auxiliary_head_l2":auxiliary.auxiliary_head_l2,
+                    "ordinary_head_l2":auxiliary.ordinary_head_l2,
+                    "auxiliary_bias_residual":auxiliary.auxiliary_bias_residual,
+                    "cap":auxiliary.cap,"adam_steps":auxiliary.adam_steps,
+                    "movement":movement,"thresholds":ex1_update_v1::ex1_thresholds_v1(),
+                    "learner":S_ARCHITECTURE_V1});
+                if options.w5.is_some() {
+                    exposure["pg_masked_rows"] = json!(masked_rows);
+                    exposure["policy_groups"] = json!(auxiliary.policy_groups);
+                    exposure["step_telemetry"] = json!(input.step_telemetry);
+                }
+                (step, Some(exposure))
+            }
+            (None, None) => (
+                state.train_step_gae_with_workers_v1(
+                    &groups,
+                    value_coefficient,
+                    learning_rate,
+                    &mut SWorkV1::default(),
+                    learner_workers,
+                )?,
+                None,
+            ),
+            _ => return Err("an EX1 update lacks its teacher".into()),
+        };
+        let learner_update_seconds = learner_started.elapsed().as_secs_f64();
+        drop(groups);
+        Ok(LearnedSV1 {
+            step,
+            gae_statistics: gae.statistics,
+            policy_substeps,
+            learner_workers,
+            preparation_telemetry,
+            teacher_receipt: ex1_teacher.map(|(receipt, _)| receipt),
+            ex1_exposure,
+            teacher_seconds,
+            behavior_replay_seconds,
+            learner_update_seconds,
+        })
+    };
+    let LearnedSV1 {
+        step,
+        gae_statistics,
+        policy_substeps,
+        learner_workers,
+        preparation_telemetry,
+        teacher_receipt,
+        ex1_exposure,
+        teacher_seconds,
+        behavior_replay_seconds,
+        learner_update_seconds,
+    } = match candidate {
+        Some(learned) => learned,
+        None => run_reference(&mut state)?,
+    };
     let checkpoint_started = std::time::Instant::now();
     fs::create_dir(&output_directory).map_err(err)?;
     let container = publish_json_bytes_v1(
@@ -660,8 +794,8 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         S_LEARNER_STATE_FILE_V1,
         &encode_checkpoint_v1(&state),
     )?;
-    let ex1_pin = match (&ex1_teacher, &ex1_exposure) {
-        (Some((receipt, _)), Some(exposure)) => {
+    let ex1_pin = match (&teacher_receipt, &ex1_exposure) {
+        (Some(receipt), Some(exposure)) => {
             let mut document = receipt.clone();
             document["schema"] = json!("ex1-update/v1");
             document["gradient_exposure"] = exposure.clone();
@@ -736,11 +870,11 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
             "parameter_sha256":model.parameter_sha256_v1(),"state":container,
             "policy_term":step.loss.policy_term,"value_term":step.loss.value_term}});
     training_math.record_v1(&mut result);
-    result["advantage_statistics"] = json!(gae.statistics);
+    result["advantage_statistics"] = json!(gae_statistics);
     if let Some(telemetry) = preparation_telemetry {
         result["update_preparation"] = serde_json::to_value(telemetry).map_err(err)?;
     }
-    if let (Some((receipt, _)), Some(options), Some(exposure)) = (&ex1_teacher, &ex1, &ex1_exposure)
+    if let (Some(receipt), Some(options), Some(exposure)) = (&teacher_receipt, &ex1, &ex1_exposure)
     {
         result["ex1"] = json!({"method":ex1_update_v1::EX1_METHOD_V1,"receipt":ex1_pin,
             "collection":options.collection,"rows":receipt["rows"],
@@ -753,6 +887,10 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
     result["learner_update_seconds"] = json!(learner_update_seconds);
     if learner_workers > 1 {
         record_parallel_update_execution_v1(&mut result, learner_workers);
+    }
+    #[cfg(test)]
+    if let Some(verified) = verified_replay {
+        result["verified_replay"] = verified;
     }
     result["checkpoint_io_seconds"] = json!(checkpoint_started.elapsed().as_secs_f64());
     result["update_elapsed_seconds"] = json!(started.elapsed().as_secs_f64());

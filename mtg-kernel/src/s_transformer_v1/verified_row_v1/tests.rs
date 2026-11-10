@@ -220,7 +220,7 @@ fn verified_rows_refuse_stale_model_input_and_output_bits() {
         let before = forwards();
         let result = tape.authenticate_v1(&generation, used_step, (0, 0), logits, value);
         assert!(
-            matches!(result, Err(error) if error == "stored tensor does not reproduce rollout outputs")
+            matches!(result, Err(ReplayErrorV1::Replay(error)) if error == "stored tensor does not reproduce rollout outputs")
         );
         assert_eq!(forwards(), before + 1);
     }
@@ -253,7 +253,7 @@ fn verified_tape_checks_reserved_capacity_before_forward() {
     let before = forwards();
     assert!(matches!(
         too_small.authenticate_v1(&generation, steps[0], (0, 0), &outputs[0].0, outputs[0].1),
-        Err(error) if error == CAP_ERROR
+        Err(ReplayErrorV1::Capacity)
     ));
     assert_eq!(forwards(), before);
     assert_eq!(
@@ -275,7 +275,7 @@ fn verified_tape_checks_reserved_capacity_before_forward() {
     let before = forwards();
     assert!(matches!(
         reused.authenticate_v1(&generation, steps[1], (0, 1), &outputs[1].0, outputs[1].1),
-        Err(error) if error == CAP_ERROR
+        Err(ReplayErrorV1::Capacity)
     ));
     assert_eq!(forwards(), before);
     assert_eq!(reused.bytes_v1(&TINY, counts[1], false), Some(sizes[0]));
