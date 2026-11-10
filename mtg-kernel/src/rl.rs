@@ -6124,8 +6124,14 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             })
             .transpose()
     };
+    let show_and_tell_hand = show_and_tell_hand_projection(state)?;
+    let pending_effect = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .or(show_and_tell_hand.as_ref());
     for (index, item) in state.stack.iter().enumerate() {
-        let resolving = state.engine.pending_effect.as_ref().is_some_and(|pending| {
+        let resolving = pending_effect.is_some_and(|pending| {
             pending.resolving_item.v4.stack_item_id == item.v4.stack_item_id
         });
         if let Some(payment) = if resolving { None } else { ward_payment(item)? } {
@@ -6191,7 +6197,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     }
     let mut decision_local_library = None;
     let mut pending_ward_payment = None;
-    if let Some(pending) = &state.engine.pending_effect {
+    if let Some(pending) = pending_effect {
         crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
         if matches!(
             pending.choice.as_ref(),
@@ -11705,6 +11711,12 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                 })
         })
         .collect::<Result<Vec<_>>>()?;
+    let show_and_tell_hand = show_and_tell_hand_projection(state)?;
+    let pending_effect = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .or(show_and_tell_hand.as_ref());
     let current_stage = if state.engine.halted.is_some() {
         EngineDecisionStageV2::Halted
     } else if state.pending_legend_rule_v1.is_some() {
@@ -11723,7 +11735,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
         EngineDecisionStageV2::PendingOptionalCostSacrifice
     } else if state.engine.pending_spell_copy.is_some() {
         EngineDecisionStageV2::PendingSpellCopy
-    } else if state.engine.pending_effect.is_some() || state.engine.pending_land_play.is_some() {
+    } else if pending_effect.is_some() || state.engine.pending_land_play.is_some() {
         EngineDecisionStageV2::PendingEffect
     } else if !state.engine.pending_triggers.is_empty() {
         EngineDecisionStageV2::PendingTriggers
@@ -11889,7 +11901,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
             .as_ref()
             .map(|p| pending_spell_copy_semantic_v2(state, acting_player, p))
             .transpose()?,
-        pending_effect: if let Some(pending) = state.engine.pending_effect.as_ref() {
+        pending_effect: if let Some(pending) = pending_effect {
             Some(if accept_akroma {
                 pending_effect_semantic_v4_akroma_inner_fake_v50(
                     state,
@@ -12066,6 +12078,73 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
             })
             .collect::<Result<Vec<_>>>()?,
     })
+}
+
+/// Reuse the historical hand-selection projection without putting a second
+/// executable continuation in the game or exposing earlier private answers.
+fn show_and_tell_hand_projection(
+    state: &GameState,
+) -> Result<Option<crate::effect::EffectContinuation>> {
+    use crate::effect::{EffectContinuation, EffectObjectBinding, ExecCtx};
+    use crate::eternal_cards_v1::e3::{self, E3ChoiceKindV1, E3ChoiceV1};
+    use crate::linked_aura_operation_v1::GeneralChoiceV36;
+
+    let Some(checkpoint) = state
+        .engine
+        .linked_aura_operation_v1
+        .pending_meddling_mage_v1
+        .as_ref()
+    else {
+        return Ok(None);
+    };
+    let GeneralChoiceV36::ShowAndTellV1 { choice, .. } = &checkpoint.choice else {
+        return Ok(None);
+    };
+    if choice.physical.is_some() {
+        return Ok(None);
+    }
+    let item = checkpoint.original.stack.last().ok_or_else(|| {
+        RlContractError("Show and Tell hand projection lost its original spell".into())
+    })?;
+    let mut ctx = ExecCtx::no_targets(item.source, item.controller);
+    ctx.stack_item_id = Some(item.v4.stack_item_id);
+    let mut projection = EffectContinuation {
+        resolving_item: item.clone(),
+        ctx,
+        frames: Vec::new(),
+        choice: None,
+        answered_choice_guard: None,
+    };
+    e3::offer(
+        &mut projection,
+        E3ChoiceV1 {
+            kind: E3ChoiceKindV1::ShowAndTellV1 {
+                chosen: Vec::new(),
+                later: Vec::new(),
+            },
+            player: choice.player,
+            candidates: choice
+                .candidates
+                .iter()
+                .map(|source| Target::Object(source.source))
+                .collect(),
+            bindings: choice
+                .candidates
+                .iter()
+                .map(|source| EffectObjectBinding {
+                    object: source.source,
+                    expected_zone: source.zone,
+                    expected_zone_change_count: source.zone_change_count,
+                })
+                .collect(),
+            min: 0,
+            max: 1,
+            ordered: false,
+            path: Vec::new(),
+            remaining: Vec::new(),
+        },
+    );
+    Ok(Some(projection))
 }
 
 fn pending_effect_semantic_v4(

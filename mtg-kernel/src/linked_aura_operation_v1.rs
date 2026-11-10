@@ -4,7 +4,7 @@
 //! speculative tails are never installed in the game or its committed journal.
 use crate::effect::EffectObjectBinding;
 use crate::engine::{Action, Decision};
-use crate::eternal_sideboard_s1b_v1::meddling_mage_entry as mage_entry;
+use crate::eternal_sideboard_s1b_v1::meddling_mage_entry::{self as mage_entry, show_and_tell};
 use crate::event::{CommittedEvent, ProposedEvent};
 use crate::linked_aura_return_v1::HostChoiceV1;
 use crate::state::{GameState, Target, Zone};
@@ -95,6 +95,10 @@ pub enum GeneralAnswerV36 {
         choice: Box<mage_entry::NoncastCopyChoiceV1>,
         copied: Option<crate::state::AbilitySourceContractV4>,
     },
+    ShowAndTellV1 {
+        choice: Box<show_and_tell::ChoiceV1>,
+        selected: Option<crate::state::AbilitySourceContractV4>,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GeneralChoiceV36 {
@@ -128,6 +132,10 @@ pub enum GeneralChoiceV36 {
     },
     VialMetamorphV1 {
         choice: Box<mage_entry::NoncastCopyChoiceV1>,
+        original_sha256: String,
+    },
+    ShowAndTellV1 {
+        choice: Box<show_and_tell::ChoiceV1>,
         original_sha256: String,
     },
 }
@@ -204,7 +212,12 @@ struct RunnerV1 {
     #[serde(skip)]
     mage_names_v2: bool,
     #[serde(skip)]
-    metamorph_mage_copy: Option<mage_entry::MetamorphCopyV1>,
+    metamorph_mage_copies: Vec<mage_entry::MetamorphCopyV1>,
+    #[serde(skip)]
+    show_and_tell_entries: Vec<(
+        crate::state::AbilitySourceContractV4,
+        crate::event::ZoneChangeProposed,
+    )>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -512,7 +525,8 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
         mage_start: None,
         mage_plans: Vec::new(),
         mage_names_v2: true,
-        metamorph_mage_copy: None,
+        metamorph_mage_copies: Vec::new(),
+        show_and_tell_entries: Vec::new(),
         original_stack: enclosing.original_stack.clone(),
         original_history_len: enclosing.original_history_len,
         batch_depth: 0,
@@ -546,7 +560,8 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
         || !runner.kinship_plans.is_empty()
         || runner.mage_start.is_some()
         || !runner.mage_plans.is_empty()
-        || runner.metamorph_mage_copy.is_some()
+        || !runner.metamorph_mage_copies.is_empty()
+        || !runner.show_and_tell_entries.is_empty()
         || runner.banner_start.is_some()
         || !runner.color_plans.is_empty()
         || runner.attachment_input_v48.is_some()
@@ -788,10 +803,9 @@ fn potential_operation(state: &GameState) -> bool {
     }
     mage_entry::vial::waiting(state)
         || crate::effect::needs_electroduplicate_entry_owner_v1(state)
-        || state
-            .stack
-            .last()
-            .is_some_and(|item| mage_entry::reanimate_metamorph_waiting(state, item))
+        || state.stack.last().is_some_and(|item| {
+            show_and_tell::printed(item) || mage_entry::reanimate_metamorph_waiting(state, item)
+        })
         || ((!state.stack.is_empty() || state.engine.pending_effect.is_some())
             && mage_entry::potentially_enters(state))
         || crate::drake_hatcher_v1::custody::relevant(state)
@@ -1013,7 +1027,8 @@ fn replay_general_current_slots_v69(
         active_fake_aura_entry_v50: None,
         mage_start: None,
         mage_plans: Vec::new(),
-        metamorph_mage_copy: None,
+        metamorph_mage_copies: Vec::new(),
+        show_and_tell_entries: Vec::new(),
         mage_names_v2: mage_names_v2
             .or_else(|| {
                 answers.iter().find_map(|answer| match answer {
@@ -1097,8 +1112,18 @@ fn replay_general_current_slots_v69(
                 choice,
                 GeneralChoiceV36::ReanimateMetamorphV1 { .. }
                     | GeneralChoiceV36::VialMetamorphV1 { .. }
+                    | GeneralChoiceV36::ShowAndTellV1 { .. }
             )
         {
+            let confirmed_show_answers_sha256 = (!answers.is_empty()
+                && matches!(&choice, GeneralChoiceV36::ShowAndTellV1 { choice, .. } if choice.physical.is_none()))
+                .then(|| {
+                    let mut digest = Sha256::new();
+                    digest.update(b"mtg-kernel/show-and-tell-private-answers/v1");
+                    digest.update(runner.original_sha256.as_bytes());
+                    stream_json(&mut digest, &answers);
+                    hex(&digest.finalize())
+                });
             checkpoint
                 .engine
                 .linked_aura_operation_v1
@@ -1106,6 +1131,7 @@ fn replay_general_current_slots_v69(
                 original: Box::new(original.clone()),
                 operation: operation.clone(),
                 answers: answers.to_vec(),
+                confirmed_show_answers_sha256,
                 choice,
                 operation_history_index: runner.mage_start,
                 used_banner: runner.used_banner,
@@ -1464,6 +1490,9 @@ pub fn validate(state: &GameState) -> Result<(), String> {
         }
         | GeneralChoiceV36::VialMetamorphV1 {
             original_sha256, ..
+        }
+        | GeneralChoiceV36::ShowAndTellV1 {
+            original_sha256, ..
         } = &pending.choice
         {
             if pending.operation_history_index.is_some()
@@ -1691,7 +1720,8 @@ fn decision(state: &GameState) -> Result<Decision, String> {
             | GeneralChoiceV36::KinshipV1 { .. }
             | GeneralChoiceV36::MeddlingMageV1 { .. }
             | GeneralChoiceV36::ReanimateMetamorphV1 { .. }
-            | GeneralChoiceV36::VialMetamorphV1 { .. } => {
+            | GeneralChoiceV36::VialMetamorphV1 { .. }
+            | GeneralChoiceV36::ShowAndTellV1 { .. } => {
                 return Err("successor choice cannot use frozen Banner checkpoint".into())
             }
             GeneralChoiceV36::Color { choice, .. } => Decision::ChooseEntryColorV36 {
@@ -2232,10 +2262,14 @@ pub(crate) fn stage_metamorph_mage_copy(
         .runtime
         .as_mut()
         .ok_or("Metamorph copy has no native entry replay owner")?;
-    if runner.metamorph_mage_copy.is_some() {
+    if runner
+        .metamorph_mage_copies
+        .iter()
+        .any(|owned| owned.physical.source == copy.physical.source)
+    {
         return Err("Metamorph copy already owns a prospective entry".into());
     }
-    runner.metamorph_mage_copy = Some(copy);
+    runner.metamorph_mage_copies.push(copy);
     Ok(())
 }
 
@@ -2243,15 +2277,18 @@ pub(crate) fn metamorph_mage_copy(
     state: &GameState,
     object: crate::ids::ObjectId,
 ) -> Option<mage_entry::MetamorphCopyV1> {
-    let copy = state
+    state
         .engine
         .linked_aura_operation_v1
         .runtime
         .as_ref()?
-        .metamorph_mage_copy?;
-    (copy.physical.source == object
-        && copy.physical == crate::state::AbilitySourceContractV4::capture(state, object))
-    .then_some(copy)
+        .metamorph_mage_copies
+        .iter()
+        .copied()
+        .find(|copy| {
+            copy.physical.source == object
+                && copy.physical == crate::state::AbilitySourceContractV4::capture(state, object)
+        })
 }
 
 fn mage_checkpoint_world(state: &GameState, runner: &RunnerV1) -> GameState {
@@ -2276,6 +2313,191 @@ fn mage_checkpoint_world(state: &GameState, runner: &RunnerV1) -> GameState {
     }
     snapshot.engine.linked_aura_operation_v1 = StateV1::default();
     snapshot
+}
+
+pub(crate) fn resolve_show_and_tell(
+    state: &mut GameState,
+    pending: &crate::effect::EffectContinuation,
+) -> Result<bool, String> {
+    use crate::state::AbilitySourceContractV4;
+
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("Show and Tell has no native resolution owner")?;
+    if !matches!(
+        runner.operation,
+        OperationV1::Advance | OperationV1::Step(_)
+    ) {
+        return Err("Show and Tell requires an actual resolution operation".into());
+    }
+    let original = runner
+        .original_stack
+        .last()
+        .ok_or("Show and Tell lost its original stack row")?;
+    let (producer, cast_at) = show_and_tell::capture_paid(state, pending, original)?;
+    let item = pending.resolving_item.v4.stack_item_id;
+    let mut entrants = Vec::new();
+    for player in [state.active_player, state.active_player.opponent()] {
+        let candidates = crate::eternal_cards_v1::e3::show_and_tell_cards(state, player)
+            .iter()
+            .map(|binding| AbilitySourceContractV4::capture(state, binding.object))
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            continue;
+        }
+        let Some(answer) = show_and_tell_answer(
+            state,
+            show_and_tell::ChoiceV1 {
+                producer,
+                player,
+                physical: None,
+                candidates,
+            },
+        )?
+        else {
+            return Ok(true);
+        };
+        entrants.extend(answer);
+    }
+    for entrant in &entrants {
+        // spellbench-public-reveal: reveal selected cards only after both hand answers.
+        state.reveal_hand_card(entrant.owner.opponent(), entrant.owner, entrant.source)?;
+    }
+    let mut proposals = Vec::new();
+    for physical in entrants {
+        let copy = if mage_entry::vial::is_physical_metamorph_in_hand(state, physical.source) {
+            if let Some(choice) = show_and_tell::copy_choice(state, producer, physical)? {
+                let Some(answer) = show_and_tell_answer(state, choice)? else {
+                    return Ok(true);
+                };
+                answer.map(|copied| {
+                    show_and_tell::prospective_copy(
+                        state, producer, cast_at, item, physical, copied,
+                    )
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(copy) = copy {
+            stage_metamorph_mage_copy(state, copy)?;
+        }
+        let ProposedEvent::ZoneChange(mut proposal) =
+            ProposedEvent::zone_change(physical.source, Zone::Battlefield)
+        else {
+            unreachable!("Show and Tell moves selected hand cards");
+        };
+        crate::eternal_sideboard_s1a_v1::statics::replace_zone_change(state, &mut proposal);
+        if let Some(copy) = copy.filter(|_| proposal.to_zone == Zone::Battlefield) {
+            mage_entry::record(
+                state,
+                mage_entry::JournalV1::ShowAndTellMetamorphChosen { copy },
+            );
+        }
+        proposals.push((physical, proposal));
+    }
+    if !proposals.is_empty() {
+        let events = proposals
+            .iter()
+            .map(|(_, proposal)| ProposedEvent::ZoneChange(proposal.clone()))
+            .collect();
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .show_and_tell_entries = proposals;
+        crate::event::propose_and_commit_batch(state, events);
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .show_and_tell_entries
+            .clear();
+    }
+    Ok(entry_checkpoint_in_flight_v1(state))
+}
+
+/// A Priest in the same batch cannot change the destination already
+/// determined from the common pre-entry battlefield.
+pub(crate) fn show_and_tell_entry_prepared(
+    state: &GameState,
+    change: &crate::event::ZoneChangeProposed,
+) -> bool {
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .is_some_and(|runner| {
+            runner
+                .show_and_tell_entries
+                .iter()
+                .any(|(physical, prepared)| {
+                    prepared == change
+                        && *physical
+                            == crate::state::AbilitySourceContractV4::capture(state, change.object)
+                })
+        })
+}
+
+fn show_and_tell_answer(
+    state: &mut GameState,
+    choice: show_and_tell::ChoiceV1,
+) -> Result<Option<Option<crate::state::AbilitySourceContractV4>>, String> {
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("Show and Tell answer lost its native owner")?;
+    if let Some(answer) = runner.answers.get(runner.cursor) {
+        let GeneralAnswerV36::ShowAndTellV1 {
+            choice: captured,
+            selected,
+        } = answer
+        else {
+            return Err("Show and Tell replay changed its answer kind".into());
+        };
+        if **captured != choice
+            || selected.is_some_and(|source| !choice.candidates.contains(&source))
+        {
+            return Err("Show and Tell replay changed its actual answer".into());
+        }
+        let selected = *selected;
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .cursor += 1;
+        return Ok(Some(selected));
+    }
+    let snapshot = mage_checkpoint_world(state, runner);
+    let original_sha256 = runner.original_sha256.clone();
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .checkpoint = Some((
+        Box::new(snapshot),
+        GeneralChoiceV36::ShowAndTellV1 {
+            choice: Box::new(choice),
+            original_sha256,
+        },
+    ));
+    Ok(None)
 }
 
 pub(crate) fn prepare_reanimated_metamorph(
@@ -3017,6 +3239,19 @@ pub(crate) fn commit_entry_color(
 fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String> {
     match choice {
         GeneralChoiceV36::MeddlingMageV1 { choice, group } => mage_entry::decision(choice, *group),
+        GeneralChoiceV36::ShowAndTellV1 { choice, .. } => Ok(Decision::ChooseEffectTargets {
+            player: choice.player,
+            source: choice.physical.unwrap_or(choice.producer).source,
+            selected_count: 0,
+            min_targets: 0,
+            max_targets: 1,
+            can_finish: true,
+            legal_targets: choice
+                .candidates
+                .iter()
+                .map(|source| Target::Object(source.source))
+                .collect(),
+        }),
         GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. }
         | GeneralChoiceV36::VialMetamorphV1 { choice, .. } => Ok(Decision::ChooseEffectTargets {
             player: choice.producer.controller,
@@ -3087,6 +3322,24 @@ fn answer_equipment_checkpoint_v48(
     action: Action,
 ) -> Result<GeneralAnswerV36, String> {
     match (choice, action) {
+        (GeneralChoiceV36::ShowAndTellV1 { choice, .. }, action) => {
+            let selected = match action {
+                Action::FinishEffectSelection => None,
+                Action::ChooseEffectTarget(Target::Object(object)) => Some(
+                    choice
+                        .candidates
+                        .iter()
+                        .find(|source| source.source == object)
+                        .copied()
+                        .ok_or("Show and Tell answer is outside its actual menu")?,
+                ),
+                _ => return Err("Show and Tell needs its actual choice answer".into()),
+            };
+            Ok(GeneralAnswerV36::ShowAndTellV1 {
+                choice: choice.clone(),
+                selected,
+            })
+        }
         (
             GeneralChoiceV36::ReanimateMetamorphV1 { choice: copy, .. }
             | GeneralChoiceV36::VialMetamorphV1 { choice: copy, .. },
@@ -3475,7 +3728,8 @@ pub(crate) fn tamper_drake_saved_output_runtime_for_test(state: &mut GameState) 
         mage_start: None,
         mage_plans: Vec::new(),
         mage_names_v2: true,
-        metamorph_mage_copy: None,
+        metamorph_mage_copies: Vec::new(),
+        show_and_tell_entries: Vec::new(),
     };
     state.engine.linked_aura_operation_v1.runtime = Some(Box::new(runner));
 }

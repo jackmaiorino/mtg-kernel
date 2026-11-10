@@ -2749,3 +2749,310 @@ fn liquimetal_coating_makes_a_permanent_an_artifact_for_the_turn() {
     settled(&mut state);
     assert_eq!(state.objects.get(fury).damage, 0);
 }
+
+#[test]
+fn paid_show_and_tell_metamorph_owns_private_choices_and_simultaneous_entry() {
+    use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
+
+    for active in [P0, P1] {
+        let other = active.opponent();
+        for (active_copies, other_copies) in [(true, false), (false, true), (true, true)] {
+            let mut state = paid_meddling_against(active, "Lava Dart", &["Island"; 20]);
+            let donor = state.players[other.index()].battlefield[0];
+            let show = put(&mut state, active, "Show and Tell", Zone::Hand);
+            let mut put_entrant = |player, copies| {
+                put(
+                    &mut state,
+                    player,
+                    if copies {
+                        "Phyrexian Metamorph"
+                    } else {
+                        "Meddling Mage"
+                    },
+                    Zone::Hand,
+                )
+            };
+            let first = put_entrant(active, active_copies);
+            let second = put_entrant(other, other_copies);
+            let secret = put(&mut state, active, "Street Wraith", Zone::Hand);
+            let other_secret = put(&mut state, other, "Wall of Blossoms", Zone::Hand);
+            pool(&mut state, active, &[ManaColor::U], 2);
+            cast(&mut state, show, &[]);
+
+            assert!(matches!(settle(&mut state),
+                Some(Decision::ChooseEffectTargets { player, source, legal_targets, .. })
+                if player == active && source == show
+                    && legal_targets == [Target::Object(first), Target::Object(secret)]));
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(first)),
+            );
+            let second_choice = next(&mut state);
+            assert!(matches!(&second_choice,
+                Decision::ChooseEffectTargets { player, source, legal_targets, .. }
+                if *player == other && *source == show
+                    && *legal_targets == [Target::Object(second), Target::Object(other_secret)]));
+            assert!(state.known_hand_cards(other, active).is_empty());
+            assert!(state.known_hand_cards(active, other).is_empty());
+            assert_eq!(zone(&state, first), Zone::Hand);
+            assert_eq!(zone(&state, second), Zone::Hand);
+            let snapshot = serde_json::to_vec(&state).unwrap();
+            state = serde_json::from_slice(&snapshot).unwrap();
+            assert_eq!(next(&mut state), second_choice);
+
+            for substitute_valid_answer in [false, true] {
+                let mut rebound = serde_json::to_value(&state).unwrap();
+                let answer = &mut rebound["engine"]["linked_aura_operation_v1"]
+                    ["pending_meddling_mage_v1"]["answers"][0]["ShowAndTellV1"];
+                if substitute_valid_answer {
+                    answer["selected"] = answer["choice"]["candidates"][1].clone();
+                } else {
+                    answer["choice"]["player"] = serde_json::to_value(other).unwrap();
+                }
+                let mut rebound: GameState = serde_json::from_value(rebound).unwrap();
+                let before = rebound.state_hash();
+                assert!(engine::step(&mut rebound, Action::FinishEffectSelection).is_err());
+                assert_eq!(rebound.state_hash(), before);
+            }
+
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(second)),
+            );
+            for (player, entrant, copies) in [
+                (active, first, active_copies),
+                (other, second, other_copies),
+            ] {
+                if !copies {
+                    continue;
+                }
+                let choice = next(&mut state);
+                assert!(matches!(&choice,
+                    Decision::ChooseEffectTargets { player: chooser, source, legal_targets,
+                        min_targets: 0, max_targets: 1, can_finish: true, .. }
+                    if *chooser == player && *source == entrant
+                        && *legal_targets == [Target::Object(donor)]));
+                assert_eq!(
+                    state
+                        .known_hand_cards(other, active)
+                        .iter()
+                        .map(|entry| entry.object)
+                        .collect::<Vec<_>>(),
+                    [first]
+                );
+                assert_eq!(
+                    state
+                        .known_hand_cards(active, other)
+                        .iter()
+                        .map(|entry| entry.object)
+                        .collect::<Vec<_>>(),
+                    [second]
+                );
+                assert_eq!(zone(&state, first), Zone::Hand);
+                assert_eq!(zone(&state, second), Zone::Hand);
+                assert_eq!(zone(&state, show), Zone::Stack);
+                let before = state.state_hash();
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(entrant, Zone::Battlefield),
+                );
+                assert_eq!(
+                    state.state_hash(),
+                    before,
+                    "raw entry cannot take the waiting copy"
+                );
+                let sibling = if player == active { second } else { first };
+                assert!(engine::step(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(sibling))
+                )
+                .is_err());
+                assert_eq!(
+                    state.state_hash(),
+                    before,
+                    "another entrant is outside the copy menu"
+                );
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                assert_eq!(next(&mut state), choice);
+                act(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(donor)),
+                );
+            }
+
+            for (ordinal, (player, name)) in [(active, "Lightning Bolt"), (other, "Echoing Truth")]
+                .into_iter()
+                .enumerate()
+            {
+                assert!(matches!(next(&mut state),
+                    Decision::ChooseMeddlingMageNameV1 { player: chooser, entry_ordinal, group: None, .. }
+                    if chooser == player && entry_ordinal as usize == ordinal));
+                assert_eq!(zone(&state, first), Zone::Hand);
+                assert_eq!(zone(&state, second), Zone::Hand);
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                choose_mage_name(&mut state, player, name);
+            }
+            settled(&mut state);
+            let first_entry = state
+                .engine
+                .event_history
+                .iter()
+                .position(|event| {
+                    matches!(event,
+                CommittedEvent::ZoneChange { object, from: Zone::Hand, to: Zone::Battlefield, .. }
+                if *object == first)
+                })
+                .unwrap();
+            let second_entry = state
+                .engine
+                .event_history
+                .iter()
+                .position(|event| {
+                    matches!(event,
+                CommittedEvent::ZoneChange { object, from: Zone::Hand, to: Zone::Battlefield, .. }
+                if *object == second)
+                })
+                .unwrap();
+            let departure = state
+                .engine
+                .event_history
+                .iter()
+                .position(|event| {
+                    matches!(event,
+                CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Graveyard, .. }
+                if *object == show)
+                })
+                .unwrap();
+            assert!(first_entry < second_entry && second_entry < departure);
+            assert_eq!(state.eternal_v1.as_ref().unwrap().s1b.mage_names.len(), 3);
+            for (player, entrant, copied) in [
+                (active, first, active_copies),
+                (other, second, other_copies),
+            ] {
+                assert_eq!(zone(&state, entrant), Zone::Battlefield);
+                assert_eq!(state.objects.get(entrant).controller, player);
+                assert_eq!(state.objects.get(entrant).card_def, id("Meddling Mage"));
+                assert_eq!(
+                    engine::object_has_type(&state, entrant, CardType::Artifact),
+                    copied
+                );
+            }
+            let denied = put(&mut state, active, "Lightning Bolt", Zone::Hand);
+            pool(&mut state, active, &[ManaColor::R], 0);
+            assert!(!castable(&mut state, denied));
+
+            let mut rebound = serde_json::to_value(&state).unwrap();
+            let copy = rebound["engine"]["event_history"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find_map(|event| {
+                    event
+                        .get_mut("MeddlingMageEntryV1")?
+                        .get_mut("journal")?
+                        .get_mut("MetamorphCopied")?
+                        .get_mut("copy")
+                })
+                .unwrap();
+            copy["show_and_tell"]["producer"]["zone_change_count"] = serde_json::json!(999);
+            let mut rebound: GameState = serde_json::from_value(rebound).unwrap();
+            let before = rebound.state_hash();
+            assert!(engine::step(&mut rebound, Action::Pass).is_err());
+            assert_eq!(rebound.state_hash(), before);
+
+            state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            let copied = if active_copies { first } else { second };
+            let bounce = put(&mut state, active, "Stern Dismissal", Zone::Hand);
+            pool(&mut state, active, &[ManaColor::U], 0);
+            cast(&mut state, bounce, &[Target::Object(copied)]);
+            settled(&mut state);
+            assert_eq!(zone(&state, copied), Zone::Hand);
+            assert_eq!(
+                state.objects.get(copied).card_def,
+                id("Phyrexian Metamorph")
+            );
+        }
+    }
+}
+
+#[test]
+fn paid_show_and_tell_metamorph_priest_replacement_uses_pre_entry_battlefield() {
+    use mtg_kernel::event::CommittedEvent;
+
+    for metamorph_owner in [P0, P1] {
+        for priest_already_present in [false, true] {
+            let mut state = paid_meddling_against(P0, "Lava Dart", &["Island"; 20]);
+            let donor = state.players[P1.index()].battlefield[0];
+            let priest_owner = metamorph_owner.opponent();
+            let priest = put(&mut state, priest_owner, "Containment Priest", Zone::Hand);
+            let companion = if priest_already_present {
+                if priest_owner == P1 {
+                    state.active_player = P1;
+                    state.priority_player = P1;
+                }
+                pool(&mut state, priest_owner, &[ManaColor::W], 1);
+                cast(&mut state, priest, &[]);
+                settled(&mut state);
+                state.active_player = P0;
+                state.priority_player = P0;
+                state.engine.priority_passes = [false; 2];
+                put(&mut state, priest_owner, "Island", Zone::Hand)
+            } else {
+                priest
+            };
+            let metamorph = put(
+                &mut state,
+                metamorph_owner,
+                "Phyrexian Metamorph",
+                Zone::Hand,
+            );
+            let show = put(&mut state, P0, "Show and Tell", Zone::Hand);
+            pool(&mut state, P0, &[ManaColor::U], 2);
+            cast(&mut state, show, &[]);
+            let history_start = state.engine.event_history.len();
+            for player in [P0, P1] {
+                let card = if player == metamorph_owner {
+                    metamorph
+                } else {
+                    companion
+                };
+                assert!(matches!(settle(&mut state),
+                    Some(Decision::ChooseEffectTargets { player: chooser, source, .. })
+                    if chooser == player && source == show));
+                act(&mut state, Action::ChooseEffectTarget(Target::Object(card)));
+            }
+            assert!(matches!(next(&mut state),
+                Decision::ChooseEffectTargets { player, source, legal_targets, .. }
+                if player == metamorph_owner && source == metamorph
+                    && legal_targets.contains(&Target::Object(donor))
+                    && legal_targets.contains(&Target::Object(priest)) == priest_already_present));
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(donor)),
+            );
+            if !priest_already_present {
+                assert_eq!(zone(&state, priest), Zone::Hand);
+                assert_eq!(zone(&state, metamorph), Zone::Hand);
+                choose_mage_name(&mut state, metamorph_owner, "Lightning Bolt");
+            }
+            settled(&mut state);
+            assert_eq!(zone(&state, priest), Zone::Battlefield);
+            assert_eq!(zone(&state, companion), Zone::Battlefield);
+            if priest_already_present {
+                assert_eq!(zone(&state, metamorph), Zone::Exile);
+                assert_eq!(
+                    state.objects.get(metamorph).card_def,
+                    id("Phyrexian Metamorph")
+                );
+                assert!(!state.engine.event_history[history_start..]
+                    .iter()
+                    .any(|event| { matches!(event, CommittedEvent::MeddlingMageEntryV1 { .. }) }));
+                assert_eq!(state.eternal_v1.as_ref().unwrap().s1b.mage_names.len(), 1);
+            } else {
+                assert_eq!(zone(&state, metamorph), Zone::Battlefield);
+                assert_eq!(state.objects.get(metamorph).card_def, id("Meddling Mage"));
+                assert_eq!(state.eternal_v1.as_ref().unwrap().s1b.mage_names.len(), 2);
+            }
+        }
+    }
+}
