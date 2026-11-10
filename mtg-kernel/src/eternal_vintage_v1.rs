@@ -957,6 +957,22 @@ pub(crate) fn enter_as_copy(
         return;
     }
     let copied_def = original.card_def;
+    use crate::eternal_sideboard_s1b_v1::meddling_mage_entry::MetamorphCopyV1;
+    match MetamorphCopyV1::capture(state, ctx, copied) {
+        Ok(Some(copy)) => {
+            if crate::linked_aura_operation_v1::stage_metamorph_mage_copy(state, copy).is_err() {
+                halt(state, ctx.source);
+                return;
+            }
+            enter_battlefield(ctx, state);
+            return;
+        }
+        Ok(None) => {}
+        Err(_) => {
+            halt(state, ctx.source);
+            return;
+        }
+    }
     enter_battlefield(ctx, state);
     let host = ctx.source;
     if state.objects.get(host).zone != Zone::Battlefield {
@@ -988,6 +1004,41 @@ pub(crate) fn enter_as_copy(
     if CARD_DEFS[copied_def as usize].enters_battlefield_tapped {
         state.objects.get_mut(host).tapped = true;
     }
+}
+
+pub(crate) fn paid_metamorph_copy_is_suppressed(state: &GameState, ctx: &ExecCtx) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && ctx.stack_item_id.is_some()
+        && state.objects.try_get(ctx.source).is_some_and(|source| {
+            source.zone == Zone::Stack && source.controller == ctx.controller
+                && source.spell_copy_origin.is_none()
+                && source.v4.face_down_v1.is_none()
+                && source.v4.spell_cast_origin.is_some_and(|origin| origin.finalized_method.is_some())
+                && CARD_DEFS[usize::from(source.card_def)].name == "Phyrexian Metamorph"
+        })
+        && crate::eternal_legacy_e7a_v1::active_dress_down_timestamp(state, Some(ctx.source)).is_some()
+}
+
+/// Retain Metamorph's physical printing before any entry observer sees the
+/// copied Mage. The existing copy marker also supplies the artifact type.
+pub(crate) fn retain_mage_copy_on_entry(
+    state: &mut GameState,
+    copy: crate::eternal_sideboard_s1b_v1::meddling_mage_entry::MetamorphCopyV1,
+) {
+    let object = copy.physical.source;
+    let host = live_link(state, object);
+    let card_def = copy.physical.card_def;
+    let physical = crate::state::ObjectStateV4::from_card_def(card_def);
+    vintage_state(state).copies.push(CopyV1 {
+        host,
+        card_def,
+        name: CARD_DEFS[usize::from(card_def)].object_name.into(),
+        color_mask: physical.effective_color_mask,
+        subtype_ids: physical.effective_subtype_ids,
+    });
+    crate::standard_cards_v1::note_copied_definitions(
+        state, object, host.zone_change_count, &[card_def, copy.copied.card_def],
+    );
 }
 
 fn active_copy_index(state: &GameState, object: ObjectId) -> Option<usize> {

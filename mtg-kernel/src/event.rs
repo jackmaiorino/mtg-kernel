@@ -4260,6 +4260,11 @@ fn commit_with_entry_batch_and_source_color(
         || counter_input
             .as_ref()
             .is_some_and(|input| !input.seasons.is_empty());
+    let metamorph_mage_copy = match &event {
+        ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Battlefield =>
+            crate::linked_aura_operation_v1::metamorph_mage_copy(state, change.object),
+        _ => None,
+    };
     if let Some(input) = counter_input.as_ref() {
         let (definition, kicked, face_down, x, time) = match &event {
             ProposedEvent::CreateToken(token) => (token.token_def, false, false, None, None),
@@ -4267,7 +4272,7 @@ fn commit_with_entry_batch_and_source_color(
                 let live = state.objects.get(change.object);
                 let characteristics = entry_context.0.as_ref().map(|(_, entry)| entry);
                 (
-                    live.card_def,
+                    metamorph_mage_copy.map_or(live.card_def, |copy| copy.copied.card_def),
                     live.zone == Zone::Stack
                         && state.engine.pending_kicked_source == Some(change.object),
                     characteristics.is_some_and(|entry| entry.face_down.is_some()),
@@ -4672,6 +4677,18 @@ fn commit_with_entry_batch_and_source_color(
             .record_visibility_v2(entry_history_index, *object, mask);
     }
     state.engine.event_history.push(committed);
+    if let Some(copy) = metamorph_mage_copy {
+        if matches!(state.engine.event_history.get(entry_history_index),
+            Some(CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Battlefield, .. })
+                if *object == copy.physical.source)
+            && crate::eternal_sideboard_s1b_v1::meddling_mage_entry::record_metamorph_copy(
+                state, copy, entry_history_index,
+            ).is_err()
+        {
+            state.engine.halted = Some((crate::engine::UnsupportedMechanic::InvalidEffectContinuation, copy.physical.source));
+            return;
+        }
+    }
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_sideboard_s1d_v1::statics::circle_spell_entered(state, entry_history_index);
     #[cfg(feature = "eternal-fixtures")]
@@ -5147,6 +5164,11 @@ impl FinalZonePtPlanV1 {
                 continue;
             }
             let mut entry = characteristics;
+            let metamorph_mage_copy = match event {
+                ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Battlefield =>
+                    crate::linked_aura_operation_v1::metamorph_mage_copy(&scene, change.object),
+                _ => None,
+            };
             prepare_zone_entry_characteristics_v1(event, &mut entry)?;
             let season = crate::doubling_season_v48::requires_successor(original)
                 || input
@@ -5193,6 +5215,11 @@ impl FinalZonePtPlanV1 {
                     .engine
                     .event_history
                     .push(materialized.committed.clone());
+                if let Some(copy) = metamorph_mage_copy {
+                    crate::eternal_sideboard_s1b_v1::meddling_mage_entry::record_metamorph_copy(
+                        &mut scene, copy, entry_index,
+                    ).map_err(|_| object)?;
+                }
                 crate::linked_aura_operation_v1::commit_entry_color(
                     &mut scene,
                     event,
@@ -7179,8 +7206,9 @@ fn permanent_enters_battlefield_tapped(
     state: &GameState,
     object: ObjectId,
     controller: PlayerId,
+    definition: u16,
 ) -> bool {
-    let def = &crate::card_def::CARD_DEFS[state.objects.get(object).card_def as usize];
+    let def = &crate::card_def::CARD_DEFS[usize::from(definition)];
     if def.enters_battlefield_tapped {
         return true;
     }
@@ -7281,6 +7309,10 @@ fn materialize_zone_change_v1(
     });
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
+    let metamorph_mage_copy = (from_zone == Zone::Stack && to_zone == Zone::Battlefield)
+        .then(|| crate::linked_aura_operation_v1::metamorph_mage_copy(state, id))
+        .flatten();
+    let entry_definition = metamorph_mage_copy.map_or(state.objects.get(id).card_def, |copy| copy.copied.card_def);
     let source_face = state.objects.get(id).v4.face_down_v1;
     let source_face_down = source_face.is_some();
     let nine_lives_cast_entry = to_zone == Zone::Battlefield
@@ -7385,7 +7417,7 @@ fn materialize_zone_change_v1(
     let enters_battlefield_tapped = to_zone == Zone::Battlefield
         && (force_battlefield_tapped
             || (entering_face_down.is_none()
-                && permanent_enters_battlefield_tapped(state, id, owner)));
+                && permanent_enters_battlefield_tapped(state, id, owner, entry_definition)));
     {
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;
@@ -7414,6 +7446,7 @@ fn materialize_zone_change_v1(
                 state.trigger_uses_v1 = None;
             }
         }
+        obj.card_def = entry_definition;
         obj.v4.reset_for_zone_change(obj.card_def, to_zone, turn);
         // CR 611.2e: this resolving entry effect belongs to the new incarnation
         // before entry statics, counter replacements, and committed observers.
@@ -7476,6 +7509,9 @@ fn materialize_zone_change_v1(
             obj.tapped = false;
             obj.summoning_sick = false;
         }
+    }
+    if let Some(copy) = metamorph_mage_copy {
+        crate::eternal_vintage_v1::retain_mage_copy_on_entry(state, copy);
     }
     if to_zone == Zone::Battlefield {
         if let Some(entry) = entering_characteristics {
