@@ -3248,8 +3248,15 @@ fn validate_spell_sourced_trigger(
     {
         return Err("spell-sourced trigger carries incompatible producer metadata".to_string());
     }
-    if item.inline_effect.as_ref().and_then(crate::eternal_cards_v1::owned_draws_v1::portent::bound).is_some() {
-        return crate::eternal_cards_v1::owned_draws_v1::portent::validate_trigger(state, item, false);
+    if item
+        .inline_effect
+        .as_ref()
+        .and_then(crate::eternal_cards_v1::owned_draws_v1::portent::bound)
+        .is_some()
+    {
+        return crate::eternal_cards_v1::owned_draws_v1::portent::validate_trigger(
+            state, item, false,
+        );
     }
     if let Some(expected) = casualty_trigger_source_contract(
         state,
@@ -17444,7 +17451,11 @@ fn pending_trigger_spell_source_contract(
     pending: &PendingTrigger,
 ) -> Result<Option<StackSourceContractV4>, String> {
     if crate::eternal_cards_v1::owned_draws_v1::portent::bound(&pending.effect).is_some() {
-        return crate::eternal_cards_v1::owned_draws_v1::portent::pending_source(state, &pending.effect).map(Some);
+        return crate::eternal_cards_v1::owned_draws_v1::portent::pending_source(
+            state,
+            &pending.effect,
+        )
+        .map(Some);
     }
     if let Some(index) = crate::faebloom_trick_v43::capture_of(&pending.effect) {
         return crate::faebloom_trick_v43::source_at(state, index).map(Some);
@@ -18296,7 +18307,11 @@ fn triggered_stack_item_expected_target_spec(
             }
         };
     if crate::eternal_cards_v1::owned_draws_v1::portent::bound(inline_effect).is_some() {
-        crate::eternal_cards_v1::owned_draws_v1::portent::validate_trigger(state, item, require_publication)?;
+        crate::eternal_cards_v1::owned_draws_v1::portent::validate_trigger(
+            state,
+            item,
+            require_publication,
+        )?;
         return Ok(None);
     }
     if effect::curator_v1::selected(state, item) {

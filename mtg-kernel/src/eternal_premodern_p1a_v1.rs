@@ -990,8 +990,10 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     if name == SYLVAN_LIBRARY && *effect == sylvan_trigger() {
         return true;
     }
-    if name == PORTENT && (*effect == portent_upkeep_draw()
-        || crate::eternal_cards_v1::owned_draws_v1::portent::bound(effect).is_some()) {
+    if name == PORTENT
+        && (*effect == portent_upkeep_draw()
+            || crate::eternal_cards_v1::owned_draws_v1::portent::bound(effect).is_some())
+    {
         return true;
     }
     let EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::P1aV1(op))) = effect else {
@@ -1592,18 +1594,33 @@ pub(crate) fn drive(
     match op {
         P1aOpV1::PortentDrawV1 => {
             if crate::eternal_cards_v1::owned_draws_v1::portent::legacy_copy(state, continuation) {
-                if path != [2] || !continuation.frames.is_empty() { return Err("copied Portent changed its scheduling tail".into()); }
-                let record = PortentDrawV1 { card: continuation.ctx.source, controller: continuation.ctx.controller, turn: TurnV1::now(state) };
+                if path != [2] || !continuation.frames.is_empty() {
+                    return Err("copied Portent changed its scheduling tail".into());
+                }
+                let record = PortentDrawV1 {
+                    card: continuation.ctx.source,
+                    controller: continuation.ctx.controller,
+                    turn: TurnV1::now(state),
+                };
                 p1a_state(state).portent_draws.push(record);
             } else {
-                crate::eternal_cards_v1::owned_draws_v1::portent::schedule(state, continuation, &path)?;
+                crate::eternal_cards_v1::owned_draws_v1::portent::schedule(
+                    state,
+                    continuation,
+                    &path,
+                )?;
             }
             Ok(false)
         }
         P1aOpV1::ShuffleTargetV1 | P1aOpV1::NoEffectV1
             if crate::eternal_cards_v1::owned_draws_v1::portent::physical(continuation) =>
         {
-            crate::eternal_cards_v1::owned_draws_v1::portent::finish_shuffle(state, continuation, op, &path)?;
+            crate::eternal_cards_v1::owned_draws_v1::portent::finish_shuffle(
+                state,
+                continuation,
+                op,
+                &path,
+            )?;
             Ok(false)
         }
 
@@ -1627,7 +1644,11 @@ pub(crate) fn drive(
         }
         P1aOpV1::PortentV1 => {
             if crate::eternal_cards_v1::owned_draws_v1::portent::physical(continuation) {
-                crate::eternal_cards_v1::owned_draws_v1::portent::begin_look(state, continuation, &path)?;
+                crate::eternal_cards_v1::owned_draws_v1::portent::begin_look(
+                    state,
+                    continuation,
+                    &path,
+                )?;
             }
             let ctx = continuation.ctx.clone();
             let Some(player) = legal_player_target(&ctx, state, 0, TargetSpec::AnyPlayer) else {
@@ -1648,7 +1669,12 @@ pub(crate) fn drive(
                     state.reorder_library_top(player, &ordered, &[controller])?;
                 }
                 if crate::eternal_cards_v1::owned_draws_v1::portent::physical(continuation) {
-                    crate::eternal_cards_v1::owned_draws_v1::portent::finish_look(state, continuation, &top, &path)?;
+                    crate::eternal_cards_v1::owned_draws_v1::portent::finish_look(
+                        state,
+                        continuation,
+                        &top,
+                        &path,
+                    )?;
                 }
                 return Ok(false);
             }
@@ -1938,7 +1964,12 @@ pub(crate) fn finish_selection(
             }
             state.reorder_library_top(*owner, &ordered, &[player])?;
             if crate::eternal_cards_v1::owned_draws_v1::portent::physical(continuation) {
-                crate::eternal_cards_v1::owned_draws_v1::portent::finish_look(state, continuation, &bindings, &choice.path)?;
+                crate::eternal_cards_v1::owned_draws_v1::portent::finish_look(
+                    state,
+                    continuation,
+                    &bindings,
+                    &choice.path,
+                )?;
             }
             Ok(false)
         }
@@ -2302,7 +2333,9 @@ fn note_upkeep(state: &mut GameState, events: &[CommittedEvent]) {
         let CommittedEvent::UpkeepBegan { player } = *event else {
             continue;
         };
-        if let Err(source) = crate::eternal_cards_v1::owned_draws_v1::portent::queue_due(state, player) {
+        if let Err(source) =
+            crate::eternal_cards_v1::owned_draws_v1::portent::queue_due(state, player)
+        {
             halt(state, source);
             return;
         }

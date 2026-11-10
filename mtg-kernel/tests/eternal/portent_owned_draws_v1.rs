@@ -150,11 +150,19 @@ fn restored(state: &GameState) -> GameState {
     restored
 }
 
-
-fn cast(state: &mut GameState, actor: PlayerId, name: &str, target: Option<PlayerId>, colored: &[ManaColor], colorless: u8) -> ObjectId {
+fn cast(
+    state: &mut GameState,
+    actor: PlayerId,
+    name: &str,
+    target: Option<PlayerId>,
+    colored: &[ManaColor],
+    colorless: u8,
+) -> ObjectId {
     let card = put(state, actor, name, Zone::Hand);
     pool(state, actor, colored, colorless);
-    assert!(matches!(next(state), Decision::CastSpellOrPass { player, castable_spells, .. } if player == actor && castable_spells.contains(&card)));
+    assert!(
+        matches!(next(state), Decision::CastSpellOrPass { player, castable_spells, .. } if player == actor && castable_spells.contains(&card))
+    );
     act(state, Action::CastSpell(card));
     for _ in 0..12 {
         match next(state) {
@@ -163,10 +171,17 @@ fn cast(state: &mut GameState, actor: PlayerId, name: &str, target: Option<Playe
                 assert!(legal_targets.contains(&target));
                 act(state, Action::ChooseTarget(target));
             }
-            Decision::OrderTriggers { pending, .. } => act(state, Action::OrderTriggers((0..pending.len()).collect())),
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
             Decision::CastSpellOrPass { .. } => {
                 assert!(state.engine.pending_cast.is_none());
-                assert!(state.stack.iter().any(|row| row.source == card && !row.is_copy && row.v4.source_contract.is_some_and(|source| source.spell_cast_origin.is_some())));
+                assert!(state.stack.iter().any(|row| row.source == card
+                    && !row.is_copy
+                    && row
+                        .v4
+                        .source_contract
+                        .is_some_and(|source| source.spell_cast_origin.is_some())));
                 assert_eq!(zone(state, card), Zone::Stack);
                 return card;
             }
@@ -176,15 +191,28 @@ fn cast(state: &mut GameState, actor: PlayerId, name: &str, target: Option<Playe
     panic!("paid cast did not finish");
 }
 fn portent(state: &mut GameState, actor: PlayerId) -> ObjectId {
-    cast(state, actor, "Portent", Some(actor.opponent()), &[ManaColor::U], 0)
+    cast(
+        state,
+        actor,
+        "Portent",
+        Some(actor.opponent()),
+        &[ManaColor::U],
+        0,
+    )
 }
 fn finish_parent(state: &mut GameState, shuffle: bool) {
     for _ in 0..24 {
         match settle(state) {
             None => return,
-            Some(Decision::ChooseEffectTargets { can_finish: true, .. }) => act(state, Action::FinishEffectSelection),
-            Some(Decision::ChooseEffectTargets { legal_targets, .. }) => act(state, Action::ChooseEffectTarget(legal_targets[0])),
-            Some(Decision::ChooseEffectOption { option_count: 2, .. }) => act(state, Action::ChooseEffectOption(u16::from(!shuffle))),
+            Some(Decision::ChooseEffectTargets {
+                can_finish: true, ..
+            }) => act(state, Action::FinishEffectSelection),
+            Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+                act(state, Action::ChooseEffectTarget(legal_targets[0]))
+            }
+            Some(Decision::ChooseEffectOption {
+                option_count: 2, ..
+            }) => act(state, Action::ChooseEffectOption(u16::from(!shuffle))),
             other => panic!("Portent parent: {other:?}"),
         }
     }
@@ -201,7 +229,9 @@ fn next_upkeep(state: &mut GameState, caster: PlayerId) {
             Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
             Decision::DeclareAttackers { .. } => act(state, Action::DeclareAttackers(vec![])),
             Decision::DeclareBlockers { .. } => act(state, Action::DeclareBlockers(vec![])),
-            Decision::OrderTriggers { pending, .. } => act(state, Action::OrderTriggers((0..pending.len()).collect())),
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
             other => panic!("next upkeep: {other:?}"),
         }
     }
@@ -209,24 +239,38 @@ fn next_upkeep(state: &mut GameState, caster: PlayerId) {
 }
 fn entries(value: &serde_json::Value, key: &str) -> usize {
     match value {
-        serde_json::Value::Object(map) => usize::from(map.contains_key(key)) + map.values().map(|v| entries(v, key)).sum::<usize>(),
+        serde_json::Value::Object(map) => {
+            usize::from(map.contains_key(key))
+                + map.values().map(|v| entries(v, key)).sum::<usize>()
+        }
         serde_json::Value::Array(rows) => rows.iter().map(|v| entries(v, key)).sum(),
         _ => 0,
     }
 }
 fn receipt_count(state: &GameState, key: &str) -> usize {
-    entries(&serde_json::to_value(&state.engine.event_history).unwrap(), key)
+    entries(
+        &serde_json::to_value(&state.engine.event_history).unwrap(),
+        key,
+    )
 }
-fn alter(value: &mut serde_json::Value, variant: &str, field: &str, replacement: serde_json::Value) -> bool {
+fn alter(
+    value: &mut serde_json::Value,
+    variant: &str,
+    field: &str,
+    replacement: serde_json::Value,
+) -> bool {
     match value {
         serde_json::Value::Object(map) => {
             if let Some(row) = map.get_mut(variant) {
                 row[field] = replacement;
                 return true;
             }
-            map.values_mut().any(|v| alter(v, variant, field, replacement.clone()))
+            map.values_mut()
+                .any(|v| alter(v, variant, field, replacement.clone()))
         }
-        serde_json::Value::Array(rows) => rows.iter_mut().any(|v| alter(v, variant, field, replacement.clone())),
+        serde_json::Value::Array(rows) => rows
+            .iter_mut()
+            .any(|v| alter(v, variant, field, replacement.clone())),
         _ => false,
     }
 }
@@ -239,8 +283,17 @@ fn paid_portent_both_seats_shuffle_branches_restore_and_original_caster_next_upk
             state.priority_player = actor;
             let original_library = state.players[actor.opponent().index()].library.clone();
             let source = portent(&mut state, actor);
-            let paid_source = state.stack.iter().find(|row| row.source == source).unwrap().v4.source_contract.unwrap();
-            assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, .. }) if player == actor));
+            let paid_source = state
+                .stack
+                .iter()
+                .find(|row| row.source == source)
+                .unwrap()
+                .v4
+                .source_contract
+                .unwrap();
+            assert!(
+                matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, .. }) if player == actor)
+            );
             let mut replay = restored(&state);
             for branch in [&mut state, &mut replay] {
                 finish_parent(branch, shuffle);
@@ -248,15 +301,38 @@ fn paid_portent_both_seats_shuffle_branches_restore_and_original_caster_next_upk
                 assert!(branch.players.iter().all(|seat| seat.hand.is_empty()));
                 assert_eq!(receipt_count(branch, "Scheduled"), 1);
                 assert_eq!(receipt_count(branch, "Queued"), 0);
-                if !shuffle { assert_eq!(branch.players[actor.opponent().index()].library, original_library); }
+                if !shuffle {
+                    assert_eq!(
+                        branch.players[actor.opponent().index()].library,
+                        original_library
+                    );
+                }
                 next_upkeep(branch, actor);
-                let row = branch.stack.iter().find(|row| row.source == source).unwrap();
+                let row = branch
+                    .stack
+                    .iter()
+                    .find(|row| row.source == source)
+                    .unwrap();
                 assert_eq!(row.controller, actor);
                 assert_eq!(row.v4.source_contract, Some(paid_source));
                 assert!(row.v4.ability_source_contract.is_none());
-                assert!(mtg_kernel::rl::observe_v2(branch, &mtg_kernel::surface_v2::HarnessSurfaceV2::default(), actor, 0).unwrap_err().to_string().contains("Portent"));
+                assert!(mtg_kernel::rl::observe_v2(
+                    branch,
+                    &mtg_kernel::surface_v2::HarnessSurfaceV2::default(),
+                    actor,
+                    0
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("Portent"));
                 settled(branch);
-                assert!(mtg_kernel::rl::observe_v2(branch, &mtg_kernel::surface_v2::HarnessSurfaceV2::default(), actor, 0).is_ok());
+                assert!(mtg_kernel::rl::observe_v2(
+                    branch,
+                    &mtg_kernel::surface_v2::HarnessSurfaceV2::default(),
+                    actor,
+                    0
+                )
+                .is_ok());
                 assert_eq!(branch.players[actor.index()].hand.len(), 1);
                 assert!(branch.players[actor.opponent().index()].hand.is_empty());
                 assert_eq!(branch.step, Step::Upkeep);
@@ -272,34 +348,58 @@ fn paid_portent_jace_hull_without_dredge_departed_source_and_terminal_stop() {
     for actor in [P0, P1] {
         for win in [false, true] {
             let mut state = game(&[]);
-            for _ in 0..4 { put(&mut state, actor.opponent(), "Plains", Zone::Library); }
+            for _ in 0..4 {
+                put(&mut state, actor.opponent(), "Plains", Zone::Library);
+            }
             let jace = cast_jace(&mut state, actor);
-            put(&mut state, actor.opponent(), "Hullbreacher", Zone::Battlefield);
+            put(
+                &mut state,
+                actor.opponent(),
+                "Hullbreacher",
+                Zone::Battlefield,
+            );
             put(&mut state, actor, "Quantum Riddler", Zone::Battlefield);
             let source = portent(&mut state, actor);
             finish_parent(&mut state, false);
             assert_eq!(zone(&state, source), Zone::Graveyard);
             // Native zone-event control after the actual spell resolved. This
             // verifies later source movement, not a claimed shipped exile spell.
-            mtg_kernel::event::propose_and_commit(&mut state, mtg_kernel::event::ProposedEvent::zone_change(source, Zone::Exile));
+            mtg_kernel::event::propose_and_commit(
+                &mut state,
+                mtg_kernel::event::ProposedEvent::zone_change(source, Zone::Exile),
+            );
             next_upkeep(&mut state, actor);
             let prompt = settle(&mut state).expect("Jace/Hull competing replacements");
-            assert!(matches!(&prompt, Decision::ChooseEffectTargets { player, legal_targets, .. } if *player == actor && legal_targets == &[Target::Object(jace)]));
+            assert!(
+                matches!(&prompt, Decision::ChooseEffectTargets { player, legal_targets, .. } if *player == actor && legal_targets == &[Target::Object(jace)])
+            );
             let mut replay = restored(&state);
             assert_eq!(next(&mut replay), prompt);
             for branch in [&mut state, &mut replay] {
                 if win {
                     act(branch, Action::ChooseEffectTarget(Target::Object(jace)));
-                    assert!(matches!(next(branch), Decision::GameOver { winner: Some(player) } if player == actor));
+                    assert!(
+                        matches!(next(branch), Decision::GameOver { winner: Some(player) } if player == actor)
+                    );
                     assert!(named(branch, actor.opponent(), "Treasure Token").is_empty());
-                    assert_eq!(receipt_count(branch, "Completed"), 1, "terminal first attempt stops the Riddler tail");
+                    assert_eq!(
+                        receipt_count(branch, "Completed"),
+                        1,
+                        "terminal first attempt stops the Riddler tail"
+                    );
                 } else {
                     act(branch, Action::FinishEffectSelection);
-                    assert!(matches!(settle(branch), Some(Decision::ChooseEffectTargets { .. })));
+                    assert!(matches!(
+                        settle(branch),
+                        Some(Decision::ChooseEffectTargets { .. })
+                    ));
                     act(branch, Action::FinishEffectSelection);
                     settled(branch);
                     assert_eq!(named(branch, actor.opponent(), "Treasure Token").len(), 2);
-                    assert!(branch.players.iter().all(|seat| !seat.has_lost && !seat.drew_from_empty));
+                    assert!(branch
+                        .players
+                        .iter()
+                        .all(|seat| !seat.has_lost && !seat.drew_from_empty));
                     assert_eq!(receipt_count(branch, "Completed"), 2);
                 }
             }
@@ -313,13 +413,20 @@ fn paid_portent_dredge_hull_and_riddler_expand_once_with_restored_progress() {
         let mut state = plains();
         state.active_player = actor;
         state.priority_player = actor;
-        put(&mut state, actor.opponent(), "Hullbreacher", Zone::Battlefield);
+        put(
+            &mut state,
+            actor.opponent(),
+            "Hullbreacher",
+            Zone::Battlefield,
+        );
         put(&mut state, actor, "Quantum Riddler", Zone::Battlefield);
         let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
         portent(&mut state, actor);
         finish_parent(&mut state, true);
         next_upkeep(&mut state, actor);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, legal_targets, .. }) if player == actor && legal_targets == [Target::Object(thug)]));
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, legal_targets, .. }) if player == actor && legal_targets == [Target::Object(thug)])
+        );
         let mut replay = restored(&state);
         for branch in [&mut state, &mut replay] {
             act(branch, Action::ChooseEffectTarget(Target::Object(thug)));
@@ -337,13 +444,23 @@ fn paid_portent_dredge_hull_and_riddler_expand_once_with_restored_progress() {
 fn paid_portent_restore_rejects_rebound_source_count_progress_and_scheduling_proof() {
     for actor in [P0, P1] {
         let mut state = game(&[]);
-        for _ in 0..3 { put(&mut state, actor.opponent(), "Plains", Zone::Library); }
+        for _ in 0..3 {
+            put(&mut state, actor.opponent(), "Plains", Zone::Library);
+        }
         cast_jace(&mut state, actor);
-        put(&mut state, actor.opponent(), "Hullbreacher", Zone::Battlefield);
+        put(
+            &mut state,
+            actor.opponent(),
+            "Hullbreacher",
+            Zone::Battlefield,
+        );
         portent(&mut state, actor);
         finish_parent(&mut state, false);
         next_upkeep(&mut state, actor);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { .. })));
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
         restored(&state);
         for mutation in 0..5 {
             let mut forged = state.clone();
@@ -351,17 +468,57 @@ fn paid_portent_restore_rejects_rebound_source_count_progress_and_scheduling_pro
             match mutation {
                 0 => pending.frames.clear(),
                 1 => pending.ctx.controller = actor.opponent(),
-                2 => pending.resolving_item.v4.source_contract.as_mut().unwrap().zone_change_count += 1,
-                3 => pending.resolving_item.v4.source_contract.as_mut().unwrap().controller = actor.opponent(),
-                _ => pending.resolving_item.inline_effect = Some(mtg_kernel::effect::EffectOp::DrawCards { player: mtg_kernel::effect::PlayerRef::Controller, count: 1 }),
+                2 => {
+                    pending
+                        .resolving_item
+                        .v4
+                        .source_contract
+                        .as_mut()
+                        .unwrap()
+                        .zone_change_count += 1
+                }
+                3 => {
+                    pending
+                        .resolving_item
+                        .v4
+                        .source_contract
+                        .as_mut()
+                        .unwrap()
+                        .controller = actor.opponent()
+                }
+                _ => {
+                    pending.resolving_item.inline_effect =
+                        Some(mtg_kernel::effect::EffectOp::DrawCards {
+                            player: mtg_kernel::effect::PlayerRef::Controller,
+                            count: 1,
+                        })
+                }
             }
-            assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err(), "mutation {mutation}");
+            assert!(
+                mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err(),
+                "mutation {mutation}"
+            );
         }
-        for (variant, field) in [("Started", "total"), ("LookCompleted", "look_at"), ("ShuffleCompleted", "look_at"), ("Scheduled", "paid_at"), ("Queued", "scheduled_at"), ("Published", "queued_at")] {
+        for (variant, field) in [
+            ("Started", "total"),
+            ("LookCompleted", "look_at"),
+            ("ShuffleCompleted", "look_at"),
+            ("Scheduled", "paid_at"),
+            ("Queued", "scheduled_at"),
+            ("Published", "queued_at"),
+        ] {
             let mut json = serde_json::to_value(&state).unwrap();
-            assert!(alter(&mut json["engine"]["event_history"], variant, field, 999999.into()));
+            assert!(alter(
+                &mut json["engine"]["event_history"],
+                variant,
+                field,
+                999999.into()
+            ));
             let forged: GameState = serde_json::from_value(json).unwrap();
-            assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err(), "{variant}.{field}");
+            assert!(
+                mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err(),
+                "{variant}.{field}"
+            );
         }
         let mut json = serde_json::to_value(&state).unwrap();
         json["eternal_owned_draw_progress_v1"]["completed"] = 1.into();
@@ -376,14 +533,36 @@ fn native_copied_portent_preserves_legacy_schedule_and_ordinary_draw() {
             let mut state = plains();
             state.active_player = actor;
             state.priority_player = actor;
-            cast(&mut state, actor, "Lightning Bolt", Some(actor.opponent()), &[ManaColor::R], 0);
+            cast(
+                &mut state,
+                actor,
+                "Lightning Bolt",
+                Some(actor.opponent()),
+                &[ManaColor::R],
+                0,
+            );
             settled(&mut state);
-            cast(&mut state, actor, "Thousand-Year Storm", None, &[ManaColor::U, ManaColor::R], 4);
+            cast(
+                &mut state,
+                actor,
+                "Thousand-Year Storm",
+                None,
+                &[ManaColor::U, ManaColor::R],
+                4,
+            );
             settled(&mut state);
             portent(&mut state, actor);
             finish_parent(&mut state, shuffle);
-            assert_eq!(receipt_count(&state, "Scheduled"), 1, "only the physical original acquires the new owner");
-            assert_eq!(state.eternal_v1.as_ref().unwrap().p1a.portent_draws.len(), 1, "the genuine native copy retains the predecessor record");
+            assert_eq!(
+                receipt_count(&state, "Scheduled"),
+                1,
+                "only the physical original acquires the new owner"
+            );
+            assert_eq!(
+                state.eternal_v1.as_ref().unwrap().p1a.portent_draws.len(),
+                1,
+                "the genuine native copy retains the predecessor record"
+            );
             assert!(state.players[actor.index()].hand.is_empty());
             let mut replay = restored(&state);
             for branch in [&mut state, &mut replay] {
@@ -398,9 +577,9 @@ fn native_copied_portent_preserves_legacy_schedule_and_ordinary_draw() {
 
 #[test]
 fn paid_portent_parent_cannot_skip_look_shuffle_or_replay_completed_cast() {
-    use mtg_kernel::effect::{self, EffectOp, EffectFrame};
-    use mtg_kernel::eternal_premodern_p1a_v1::P1aOpV1;
+    use mtg_kernel::effect::{self, EffectFrame, EffectOp};
     use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_premodern_p1a_v1::P1aOpV1;
     use mtg_kernel::standard_cards_v1::StandardOpV1;
     let leaf = |op| EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::P1aV1(op)));
     for actor in [P0, P1] {
@@ -408,7 +587,10 @@ fn paid_portent_parent_cannot_skip_look_shuffle_or_replay_completed_cast() {
         state.active_player = actor;
         state.priority_player = actor;
         portent(&mut state, actor);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { .. })));
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
         let original = state.engine.pending_effect.clone().unwrap();
         for mutation in 0..3 {
             let mut forged = state.clone();
@@ -416,16 +598,43 @@ fn paid_portent_parent_cannot_skip_look_shuffle_or_replay_completed_cast() {
             match mutation {
                 0 => pending.frames.clear(),
                 1 => pending.ctx.targets = vec![Target::Player(actor)],
-                _ => pending.frames = vec![EffectFrame::Program { op: leaf(P1aOpV1::PortentDrawV1), path: vec![2] }],
+                _ => {
+                    pending.frames = vec![EffectFrame::Program {
+                        op: leaf(P1aOpV1::PortentDrawV1),
+                        path: vec![2],
+                    }]
+                }
             }
             assert!(effect::validate_pending_effect_choice(&forged).is_err());
         }
         let mut skipped = state.clone();
-        skipped.engine.pending_effect = None;
-        let borrowed_tail = EffectOp::Sequence(vec![leaf(P1aOpV1::NoEffectV1), leaf(P1aOpV1::NoEffectV1), leaf(P1aOpV1::PortentDrawV1)]);
-        assert!(effect::begin_resumable_resolution(&borrowed_tail, &original.ctx, original.resolving_item.clone(), &mut skipped).is_err());
+        let pending = skipped.engine.pending_effect.as_mut().unwrap();
+        pending.choice = None;
+        pending.frames = vec![EffectFrame::Program {
+            op: leaf(P1aOpV1::PortentDrawV1),
+            path: vec![2],
+        }];
+        assert!(effect::resume_resumable_resolution(&mut skipped).is_err());
         assert_eq!(receipt_count(&skipped, "Scheduled"), 0);
-        for raw in [leaf(P1aOpV1::PortentDrawV1), leaf(P1aOpV1::PortentUpkeepBoundV1 { queued_at: 0 })] {
+        let mut skipped = state.clone();
+        skipped.engine.pending_effect = None;
+        let borrowed_tail = EffectOp::Sequence(vec![
+            leaf(P1aOpV1::NoEffectV1),
+            leaf(P1aOpV1::NoEffectV1),
+            leaf(P1aOpV1::PortentDrawV1),
+        ]);
+        assert!(effect::begin_resumable_resolution(
+            &borrowed_tail,
+            &original.ctx,
+            original.resolving_item.clone(),
+            &mut skipped
+        )
+        .is_err());
+        assert_eq!(receipt_count(&skipped, "Scheduled"), 0);
+        for raw in [
+            leaf(P1aOpV1::PortentDrawV1),
+            leaf(P1aOpV1::PortentUpkeepBoundV1 { queued_at: 0 }),
+        ] {
             let mut forged = state.clone();
             forged.engine.pending_effect = None;
             effect::execute(&raw, &original.ctx, &mut forged);
@@ -435,7 +644,13 @@ fn paid_portent_parent_cannot_skip_look_shuffle_or_replay_completed_cast() {
         finish_parent(&mut state, false);
         assert_eq!(receipt_count(&state, "Scheduled"), 1);
         let mut replay = state.clone();
-        assert!(effect::begin_resumable_resolution(&mtg_kernel::eternal_premodern_p1a_v1::portent(), &original.ctx, original.resolving_item.clone(), &mut replay).is_err());
+        assert!(effect::begin_resumable_resolution(
+            &mtg_kernel::eternal_premodern_p1a_v1::portent(),
+            &original.ctx,
+            original.resolving_item.clone(),
+            &mut replay
+        )
+        .is_err());
         assert_eq!(receipt_count(&replay, "Scheduled"), 1);
     }
 }
@@ -447,10 +662,20 @@ fn paid_portent_empty_or_single_card_look_schedules_after_both_shuffle_branches(
                 let mut state = game(&[]);
                 state.active_player = actor;
                 state.priority_player = actor;
-                for _ in 0..4 { put(&mut state, actor, "Plains", Zone::Library); }
-                for _ in 0..count { put(&mut state, actor.opponent(), "Plains", Zone::Library); }
+                for _ in 0..4 {
+                    put(&mut state, actor, "Plains", Zone::Library);
+                }
+                for _ in 0..count {
+                    put(&mut state, actor.opponent(), "Plains", Zone::Library);
+                }
                 portent(&mut state, actor);
-                assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { option_count: 2, .. })));
+                assert!(matches!(
+                    settle(&mut state),
+                    Some(Decision::ChooseEffectOption {
+                        option_count: 2,
+                        ..
+                    })
+                ));
                 let mut replay = restored(&state);
                 for branch in [&mut state, &mut replay] {
                     finish_parent(branch, shuffle);

@@ -25,8 +25,8 @@ use serde::{Deserialize, Serialize};
 pub(crate) mod bonder;
 pub(crate) mod echo;
 pub(crate) mod fixed;
-pub(crate) mod rooms;
 pub(crate) mod portent;
+pub(crate) mod rooms;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum InstructionV1 {
@@ -73,13 +73,19 @@ enum InstructionV1 {
         resolution_at: usize,
         drawer: PlayerId,
     },
-    Portent { queued_at: usize },
+    Portent {
+        queued_at: usize,
+    },
 }
 
 impl InstructionV1 {
     fn from_op(op: &EternalOpV1) -> Option<Self> {
         match op {
-            EternalOpV1::P1aV1(crate::eternal_premodern_p1a_v1::P1aOpV1::PortentUpkeepBoundV1 { queued_at }) => Some(Self::Portent { queued_at: *queued_at }),
+            EternalOpV1::P1aV1(
+                crate::eternal_premodern_p1a_v1::P1aOpV1::PortentUpkeepBoundV1 { queued_at },
+            ) => Some(Self::Portent {
+                queued_at: *queued_at,
+            }),
             EternalOpV1::LurrusV1(LurrusOpV1::FrogDrawV1) => Some(Self::Frog),
             EternalOpV1::DrawCastFromGraveyardV1 {
                 normal,
@@ -457,7 +463,7 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
             _ => InstructionV1::from_program(inline)?,
         };
         if let InstructionV1::Portent { queued_at } = instruction {
-            return portent::owns(state, item, queued_at)
+            return portent::selected_draw(state, pending, queued_at)
                 .then_some((instruction, SourceV1::Spell(item.v4.source_contract?)));
         }
         let source = item.v4.ability_source_contract?;
