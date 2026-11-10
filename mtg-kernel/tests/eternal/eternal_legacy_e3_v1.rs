@@ -1187,7 +1187,8 @@ fn show_and_tell_puts_each_players_chosen_card_onto_the_battlefield() {
                     0,
                     0,
                     1,
-                ).unwrap();
+                )
+                .unwrap();
                 let context = observation.projection.surface.engine_context;
                 assert_eq!(context.current_stage, EngineDecisionStageV2::PendingEffect);
                 assert!(matches!(context.pending_effect.unwrap().choice,
@@ -1201,7 +1202,8 @@ fn show_and_tell_puts_each_players_chosen_card_onto_the_battlefield() {
             assert!(mtg_kernel::effect::choose_resumable_target(
                 &mut state,
                 Target::Object(diamond),
-            ).is_err());
+            )
+            .is_err());
             assert_eq!(state.state_hash(), before);
             act(
                 &mut state,
