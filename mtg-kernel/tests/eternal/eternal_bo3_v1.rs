@@ -15,7 +15,7 @@ use mtg_kernel::ids::PlayerId;
 use mtg_kernel::limited_session_v1::CustomCardCountV1;
 use std::collections::{BTreeMap, BTreeSet};
 
-#[path = "eternal_bo3_leyline_v1.rs"]
+#[path = "eternal_bo3_v1/eternal_bo3_leyline_v1.rs"]
 mod leyline;
 
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.

@@ -2,9 +2,9 @@
 //! Jewel Shops and Mono-White Initiative.
 #![cfg(feature = "eternal-fixtures")]
 
-#[path = "owned_artifact_draws.rs"]
+#[path = "eternal_vintage_e4_v1/owned_artifact_draws.rs"]
 mod owned_artifact_draws;
-#[path = "owned_veil_dragon_draws.rs"]
+#[path = "eternal_vintage_e4_v1/owned_veil_dragon_draws.rs"]
 mod owned_veil_dragon_draws;
 
 use mtg_kernel::card_def::{
