@@ -186,6 +186,7 @@ fn stack_item_public_history(
         mode_chosen: item.mode_chosen,
         madness_offer: item.madness_offer,
         kicked: item.kicked,
+        thornscape_kickers_v1: super::public_thornscape_kickers_v1(item),
         cast_method: item.v4.cast_method,
         face_index: item.v4.face_index,
         x_value: item.v4.x_value,

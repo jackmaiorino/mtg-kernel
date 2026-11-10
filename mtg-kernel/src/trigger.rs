@@ -5222,6 +5222,7 @@ pub(crate) fn collect_and_process_with_sba_result_v1(
     waiting.extend(capture_triggers_without_sba(state));
     // This checkpoint ends the resolving item's ownership of its kick marker.
     state.engine.pending_kicked_source = None;
+    state.engine.battlemage_entry_v1.0 = None;
     if state.engine.halted.is_some() {
         return (Vec::new(), false, false);
     }
@@ -6047,6 +6048,15 @@ fn triggers_from_events(
                     ) {
                         let kicked = Some(id) == kicked_source;
                         if def.intervening_if_kicked && !kicked {
+                            continue;
+                        }
+                        if crate::eternal_premodern_p2b_v1::is_thornscape(card)
+                            && !crate::eternal_premodern_p2b_v1::thornscape_etb_is_enabled(
+                                state.engine.battlemage_entry_v1,
+                                id,
+                                &(def.effect)(),
+                            )
+                        {
                             continue;
                         }
                         if def.intervening_if_controls_another_source_card {

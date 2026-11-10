@@ -264,6 +264,10 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
             out.cost(CostAtom::Tap);
             out.cost(CostAtom::TapOthers);
         }
+        // The coarse vocabulary has no subtype, count or source eligibility.
+        ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(_) => {
+            out.cost(CostAtom::TapOthers);
+        }
         ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf => {
             out.effect(
                 EffectAtom::new(EvF::PlaceCounter)

@@ -1648,6 +1648,11 @@ pub struct StackStateV4 {
     /// physical payments through `paid_cost_refs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub optional_additional_cost_paid: Option<crate::card_def::OptionalAdditionalCostDef>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_premodern_p2b_v1::BattlemageKickersV1::is_empty"
+    )]
+    pub battlemage_kickers_v1: crate::eternal_premodern_p2b_v1::BattlemageKickersV1,
     /// Mana spent to cast this spell (CR 601.2h), recorded only for a
     /// definition with `CardDef::records_mana_spent` (Memory Deluge's "X is
     /// the amount of mana spent to cast this spell"). Zero, and absent from
@@ -5806,6 +5811,7 @@ mod tests {
             convoke_finished: false,
             escape_exile_finished_v1: false,
             hand_free_cast_v1: None,
+            thornscape_white_kicker_v1: None,
             mandatory_additional_cost: None,
         });
         let ordinary_contract = state.diagnostic_state_hash();
