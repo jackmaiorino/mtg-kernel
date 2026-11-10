@@ -89,10 +89,16 @@ impl RevealedDiscardFamilyV2 {
             && object.zone == crate::state::Zone::Hand
             && object.card_db_id == self.meaning.printing)
     }
-    pub(crate) fn equivalent_actions(&self, action: &ActionSemanticV1,
-        other: &Self, other_action: &ActionSemanticV1) -> bool {
-        Arc::ptr_eq(&self.prompt, &other.prompt) && self.meaning == other.meaning
-            && self.describes(action) && other.describes(other_action)
+    pub(crate) fn equivalent_actions(
+        &self,
+        action: &ActionSemanticV1,
+        other: &Self,
+        other_action: &ActionSemanticV1,
+    ) -> bool {
+        Arc::ptr_eq(&self.prompt, &other.prompt)
+            && self.meaning == other.meaning
+            && self.describes(action)
+            && other.describes(other_action)
     }
 }
 
@@ -331,9 +337,14 @@ impl KaitoSession {
         {
             return Err((Stage::Encoding, "stale probe owner or action range".into()));
         }
-        let backend_index = decision.current.name_order.as_ref()
+        let backend_index = decision
+            .current
+            .name_order
+            .as_ref()
             .map_or(index, |order| order[index as usize]);
-        let facts = self.hand_facts().map_err(|error| (Stage::Encoding, error.to_string()))?;
+        let facts = self
+            .hand_facts()
+            .map_err(|error| (Stage::Encoding, error.to_string()))?;
         self.inner
             .step_with_current_check(
                 &decision.backend,
@@ -359,35 +370,55 @@ impl KaitoSession {
         let input = self.training_input_v1(decision)?;
         let raw = decision.backend.actions();
         let actions: Vec<_> = match &decision.current.name_order {
-            Some(order) => order.iter().map(|&index| raw[index as usize].clone()).collect(),
+            Some(order) => order
+                .iter()
+                .map(|&index| raw[index as usize].clone())
+                .collect(),
             None => raw.to_vec(),
         };
         let mut families = vec![None; actions.len()];
         if decision.current.name_order.is_some() {
             // This fact is supplied only by the FullPool native
             // DuressDiscard continuation validator, not by numeric equality.
-            let HandFacts::RevealMinimaV3 { discard_owner: Some(owner), .. } = self.hand_facts()? else {
+            let HandFacts::RevealMinimaV3 {
+                discard_owner: Some(owner),
+                ..
+            } = self.hand_facts()?
+            else {
                 return Err(Error::StaleBinding);
             };
             let prompt = Arc::new(());
             for (index, action) in actions.iter().enumerate() {
                 let ActionSemanticV1::ChooseEffectTarget {
-                    actor, source, target: TargetRefV1::Object { object },
-                    selected_count: 0, min_targets: 1, max_targets: 1,
-                } = action else { return Err(Error::StaleBinding); };
+                    actor,
+                    source,
+                    target: TargetRefV1::Object { object },
+                    selected_count: 0,
+                    min_targets: 1,
+                    max_targets: 1,
+                } = action
+                else {
+                    return Err(Error::StaleBinding);
+                };
                 if object.owner != owner || object.zone != crate::state::Zone::Hand {
                     return Err(Error::StaleBinding);
                 }
                 families[index] = Some(RevealedDiscardFamilyV2 {
                     prompt: prompt.clone(),
                     meaning: RevealedDiscardMeaningV2 {
-                        actor: *actor, source: source.clone(), target_owner: owner,
+                        actor: *actor,
+                        source: source.clone(),
+                        target_owner: owner,
                         printing: object.card_db_id,
                     },
                 });
             }
         }
-        Ok(ProbeCaptureV2 { input, actions, families })
+        Ok(ProbeCaptureV2 {
+            input,
+            actions,
+            families,
+        })
     }
 
     fn hand_facts(&self) -> Result<HandFacts> {

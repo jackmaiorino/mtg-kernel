@@ -10,10 +10,10 @@ use crate::{
     state::{GameState, Step, Zone},
 };
 
-#[path = "pilfer_sampling.rs"]
-mod sampling;
 #[path = "pilfer_probe.rs"]
 mod probe;
+#[path = "pilfer_sampling.rs"]
+mod sampling;
 
 fn scene(p: PlayerId) -> (GameState, ObjectId) {
     let forest = crate::card_def::card_id_by_name("Forest").unwrap();

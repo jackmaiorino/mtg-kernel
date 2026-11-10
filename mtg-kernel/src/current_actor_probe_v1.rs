@@ -2,7 +2,9 @@
 //! Use the guarded Python launcher after serial/parallel qualification. Reports
 //! contain actor-visible fingerprints and classified failures, not native state.
 use crate::{
-    current_mixed_policy_v1::{KaitoSession, NumericTree, Packet, Source, ProbeCaptureV2, RevealedDiscardFamilyV2},
+    current_mixed_policy_v1::{
+        KaitoSession, NumericTree, Packet, ProbeCaptureV2, RevealedDiscardFamilyV2, Source,
+    },
     current_tree_learner_v1::{AuthenticatedInputV1, ModelV1},
     ids::PlayerId,
     rl::{
@@ -20,7 +22,8 @@ use std::{collections::BTreeMap, time::Instant};
 
 const SCHEMA: &str = "current-actor-coverage-probe/v1";
 const SCHEMA_V2: &str = "current-actor-coverage-probe/v2";
-const FULL_POOL_RUNTIME: &str = "FullPoolV1/reveal-minima-v3/Foundations-combat/London/environment-v2";
+const FULL_POOL_RUNTIME: &str =
+    "FullPoolV1/reveal-minima-v3/Foundations-combat/London/environment-v2";
 const FAMILY_AUDIT: &str = "ordinal-neutral-with-authenticated-revealed-discard-families/v2";
 const SELECTOR: &str = "splitmix64-rejection-uniform/v1;seed=environment_seed^0x454a11;all-current-tree-fixture-logits-checked";
 
@@ -300,7 +303,12 @@ fn audit(
     row.equal_full_ingress_distinct_actions += counts.full;
     row.equal_ordinal_neutral_ingress_distinct_actions += counts.neutral;
     row.authenticated_revealed_discard_family_pairs += counts.explained;
-    row.collision_examples.extend(counts.examples.into_iter().take(8 - row.collision_examples.len()));
+    row.collision_examples.extend(
+        counts
+            .examples
+            .into_iter()
+            .take(8 - row.collision_examples.len()),
+    );
     for (i, action) in actions.iter().enumerate() {
         let value = serde_json::to_value(action).map_err(|e| e.to_string())?;
         let kind = value["action_kind"].as_str().ok_or("action kind absent")?;
@@ -327,14 +335,23 @@ pub(crate) fn collision_counts_v2(
     families: &[Option<RevealedDiscardFamilyV2>],
 ) -> Result<CollisionCountsV2, String> {
     let packet = input.packet();
-    if actions.len() != packet.actions().len() || actions.len() != input.action_flags().len()
-        || families.len() != actions.len() {
+    if actions.len() != packet.actions().len()
+        || actions.len() != input.action_flags().len()
+        || families.len() != actions.len()
+    {
         return Err("action/input/family count mismatch".into());
     }
-    let signatures = packet.actions().iter()
+    let signatures = packet
+        .actions()
+        .iter()
         .map(|tree| signature(tree, packet.source() == Source::KaitoV75))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut counts = CollisionCountsV2 { full: 0, neutral: 0, explained: 0, examples: Vec::new() };
+    let mut counts = CollisionCountsV2 {
+        full: 0,
+        neutral: 0,
+        explained: 0,
+        examples: Vec::new(),
+    };
     for (i, action) in actions.iter().enumerate() {
         for j in 0..i {
             if action == &actions[j] || input.action_flags()[i] != input.action_flags()[j] {
@@ -346,7 +363,8 @@ pub(crate) fn collision_counts_v2(
             if signatures[i] == signatures[j] {
                 counts.neutral += 1;
                 if matches!((&families[i], &families[j]), (Some(a), Some(b))
-                    if a.equivalent_actions(action, b, &actions[j])) {
+                    if a.equivalent_actions(action, b, &actions[j]))
+                {
                     counts.explained += 1;
                 } else if counts.examples.len() < 8 {
                     counts.examples.push([j as u32, i as u32]);
@@ -372,10 +390,7 @@ impl Owner {
             Self::Eternal(s) => s.current_response().map_err(|e| e.to_string()),
         }
     }
-    fn encode(
-        &self,
-        h: FastActorDecisionV1,
-    ) -> Result<(Decision, ProbeCaptureV2), String> {
+    fn encode(&self, h: FastActorDecisionV1) -> Result<(Decision, ProbeCaptureV2), String> {
         match self {
             Self::Limited(s) => {
                 let d = s.encode(h).map_err(|e| e.to_string())?;
@@ -387,7 +402,14 @@ impl Owner {
                 let input = s.training_input_v1(&d).map_err(|e| e.to_string())?;
                 let actions = d.probe_actions_v1();
                 let families = vec![None; actions.len()];
-                Ok((Decision::Eternal(d), ProbeCaptureV2 { input, actions, families }))
+                Ok((
+                    Decision::Eternal(d),
+                    ProbeCaptureV2 {
+                        input,
+                        actions,
+                        families,
+                    },
+                ))
             }
         }
     }
@@ -427,11 +449,16 @@ fn play(manifest: &Manifest, game: &Game) -> GameResult {
         crate::limited_full_pool_consumer_v1::reset_numeric_reveal_facts_v3(
             &crate::limited_full_pool_consumer_v1::ResetV1 {
                 expected_card_db_hash: crate::card_def::KERNEL_CARDDB_HASH,
-                episode_id: 1, env_seed: game.seed, starting_player: game.starting_player,
-                deck_ids: game.decks.clone(), mainboards: boards,
-                max_physical_decisions: limits.0, max_policy_steps: limits.1,
+                episode_id: 1,
+                env_seed: game.seed,
+                starting_player: game.starting_player,
+                deck_ids: game.decks.clone(),
+                mainboards: boards,
+                max_physical_decisions: limits.0,
+                max_policy_steps: limits.1,
             },
-        ).map(Owner::Limited)
+        )
+        .map(Owner::Limited)
     } else if manifest.pool == "limited" {
         KaitoSession::reset_explicit_mainboards(
             1,
@@ -492,7 +519,14 @@ fn play(manifest: &Manifest, game: &Game) -> GameResult {
                 break;
             }
         };
-        let (decision, ProbeCaptureV2 { input, actions, families }) = match owner.encode(header) {
+        let (
+            decision,
+            ProbeCaptureV2 {
+                input,
+                actions,
+                families,
+            },
+        ) = match owner.encode(header) {
             Ok(v) => v,
             Err(e) => {
                 row.fail(Stage::Encoding, e, Some(header));
@@ -605,15 +639,23 @@ fn reported_pool_digest_free_terminal_probe() {
     match manifest.schema.as_str() {
         SCHEMA => {
             assert!(manifest.consumer_profile.is_none() && manifest.action_audit.is_none());
-            assert_eq!(manifest.runtime, if manifest.pool == "limited" {
-                "KaitoV75/Foundations-combat/London/environment-v2"
-            } else { "EternalActorV1/native-Full/environment-v2" });
+            assert_eq!(
+                manifest.runtime,
+                if manifest.pool == "limited" {
+                    "KaitoV75/Foundations-combat/London/environment-v2"
+                } else {
+                    "EternalActorV1/native-Full/environment-v2"
+                }
+            );
         }
         SCHEMA_V2 => {
             assert_eq!(manifest.pool, "limited");
             assert_eq!(manifest.cohort, "original_limited");
             assert_eq!(manifest.runtime, FULL_POOL_RUNTIME);
-            assert_eq!(manifest.consumer_profile.as_deref(), Some(crate::limited_full_pool_consumer_v1::PROFILE_V1));
+            assert_eq!(
+                manifest.consumer_profile.as_deref(),
+                Some(crate::limited_full_pool_consumer_v1::PROFILE_V1)
+            );
             assert_eq!(manifest.action_audit.as_deref(), Some(FAMILY_AUDIT));
         }
         _ => panic!("unsupported actor probe contract"),
@@ -660,9 +702,14 @@ fn reported_pool_digest_free_terminal_probe() {
         .iter()
         .map(|g| g.equal_ordinal_neutral_ingress_distinct_actions)
         .sum();
-    let explained: u64 = games.iter().map(|g| g.authenticated_revealed_discard_family_pairs).sum();
+    let explained: u64 = games
+        .iter()
+        .map(|g| g.authenticated_revealed_discard_family_pairs)
+        .sum();
     assert!(manifest.schema == SCHEMA_V2 || explained == 0);
-    let unexplained = collisions.checked_sub(explained).expect("invalid family collision accounting");
+    let unexplained = collisions
+        .checked_sub(explained)
+        .expect("invalid family collision accounting");
     let missing = manifest
         .requirements
         .iter()
