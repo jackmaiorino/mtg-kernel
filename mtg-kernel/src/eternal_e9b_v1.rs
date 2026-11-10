@@ -173,6 +173,8 @@ pub enum E9bOpV1 {
     ThiefExileV1,
     /// Sowing Mycospawn's kicked cast trigger: exile target land.
     ExileTargetV1,
+    /// One authenticated delayed draw instruction of a paid Arcane Denial.
+    DenialDrawBoundV1 { queued_at: usize, count: u8 },
 }
 
 impl E9bOpV1 {
@@ -185,6 +187,8 @@ impl E9bOpV1 {
                 | Self::CascadeCastV1 { .. }
                 | Self::BoomerangBasicsV1
                 | Self::DenialMayDrawV1 { .. }
+                | Self::ArcaneDenialV1
+                | Self::DenialDrawBoundV1 { .. }
                 | Self::CastigateV1
                 | Self::GrowthSpiralLandV1
                 | Self::PiecesV1
@@ -1032,34 +1036,7 @@ pub(crate) fn execute(op: &E9bOpV1, ctx: &ExecCtx, state: &mut GameState) {
                     .collect(),
             );
         }
-        E9bOpV1::ArcaneDenialV1 => {
-            let Some(spell) = bound_target_in(ctx, state, 0, Zone::Stack) else {
-                return;
-            };
-            let Some(player) = spell_controller(state, spell) else {
-                return;
-            };
-            crate::effect::execute(
-                &EffectOp::Conditional {
-                    cond: EffectCond::TargetSpellCanBeCountered(0),
-                    then: Box::new(EffectOp::MoveObject {
-                        object: ObjectRef::Target(0),
-                        to_zone: Zone::Graveyard,
-                    }),
-                    else_: Box::new(nothing()),
-                },
-                ctx,
-                state,
-            );
-            let record = DenialDrawV1 {
-                card: ctx.source,
-                controller: ctx.controller,
-                player,
-                turn: state.turn_key_v1(),
-                active: state.active_player,
-            };
-            e9b_state(state).denial_draws.push(record);
-        }
+        E9bOpV1::ArcaneDenialV1 | E9bOpV1::DenialDrawBoundV1 { .. } => halt(state, ctx.source),
         E9bOpV1::ThermokarstV1 => {
             let Some(target) = bound_target_in(ctx, state, 0, Zone::Battlefield) else {
                 return;
@@ -1243,6 +1220,14 @@ pub(crate) fn drive(
             if controlled {
                 push_frame(continuation, draw_one(), &path);
             }
+            Ok(false)
+        }
+        E9bOpV1::ArcaneDenialV1 => {
+            crate::eternal_cards_v1::owned_draws_v1::denial::resolve(state, continuation, &path)?;
+            Ok(false)
+        }
+        E9bOpV1::DenialDrawBoundV1 { queued_at, count } => {
+            crate::eternal_cards_v1::owned_draws_v1::denial::begin_draw(state, continuation, *queued_at, *count, &path)?;
             Ok(false)
         }
         E9bOpV1::DenialMayDrawV1 { player } => {
@@ -1773,6 +1758,9 @@ pub(crate) fn delayed_triggers(
                 queued.controller,
                 queued.effect,
             );
+            if crate::eternal_cards_v1::owned_draws_v1::denial::bound(&pending.effect).is_some() {
+                pending.source_contract = None;
+            }
             if queued.targets_opponent {
                 pending.target_spec = TargetSpec::TargetOpponent;
             }
@@ -1781,7 +1769,7 @@ pub(crate) fn delayed_triggers(
         .collect()
 }
 
-fn queue_trigger(
+pub(crate) fn queue_trigger(
     state: &mut GameState,
     source: AbilitySourceContractV4,
     controller: PlayerId,
@@ -1866,6 +1854,10 @@ fn pestilence_triggers(state: &mut GameState) {
 
 /// Arcane Denial: "at the beginning of the next turn's upkeep".
 fn denial_triggers(state: &mut GameState) {
+    if let Err(source) = crate::eternal_cards_v1::owned_draws_v1::denial::queue_due(state) {
+        halt(state, source);
+        return;
+    }
     let (turn, active) = (state.turn_key_v1(), state.active_player);
     let Some(records) = read_state(state).map(|e9b| e9b.denial_draws.clone()) else {
         return;
@@ -2269,4 +2261,34 @@ pub(crate) mod targets {
             }
         })
     }
+}
+
+// Only the authenticated native copy route retains this serialized predecessor.
+pub(crate) fn resolve_denial_legacy(ctx: &ExecCtx, state: &mut GameState) {
+    let Some(spell) = bound_target_in(ctx, state, 0, Zone::Stack) else {
+        return;
+    };
+    let Some(player) = spell_controller(state, spell) else {
+        return;
+    };
+    crate::effect::execute(
+        &EffectOp::Conditional {
+            cond: EffectCond::TargetSpellCanBeCountered(0),
+            then: Box::new(EffectOp::MoveObject {
+                object: ObjectRef::Target(0),
+                to_zone: Zone::Graveyard,
+            }),
+            else_: Box::new(nothing()),
+        },
+        ctx,
+        state,
+    );
+    let record = DenialDrawV1 {
+        card: ctx.source,
+        controller: ctx.controller,
+        player,
+        turn: state.turn_key_v1(),
+        active: state.active_player,
+    };
+    e9b_state(state).denial_draws.push(record);
 }

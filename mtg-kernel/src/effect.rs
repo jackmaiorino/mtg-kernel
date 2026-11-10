@@ -5068,6 +5068,7 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                         .push(EffectFrame::Program { op: selected, path });
                 }
                 EffectOptionChoicePurpose::Generic => {
+                    crate::eternal_cards_v1::owned_draws_v1::denial::record_answer(state, &continuation, option_index)?;
                     path.push(option_index);
                     continuation
                         .frames

@@ -1297,6 +1297,9 @@ fn arcane_denial_counters_and_both_players_draw_at_the_next_upkeep() {
     settled(&mut state);
     assert_eq!(zone(&state, bolt), Zone::Graveyard);
     assert_eq!(state.players[0].life, 20);
+    let hash = state.state_hash();
+    state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    assert_eq!(state.state_hash(), hash);
     let hands = [state.players[0].hand.len(), state.players[1].hand.len()];
     run_until(
         &mut state,

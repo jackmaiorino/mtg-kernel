@@ -2724,6 +2724,8 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         .map_err(RlContractError)?;
     crate::eternal_cards_v1::owned_draws_v1::knowledge::refuse_legacy(state)
         .map_err(RlContractError)?;
+    crate::eternal_cards_v1::owned_draws_v1::denial::refuse_legacy(state)
+        .map_err(RlContractError)?;
     if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(state) {
         return Err(RlContractError(
             "Crystal requires its selected public/Human successor".into(),
@@ -5487,6 +5489,8 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
     crate::eternal_cards_v1::owned_draws_v1::bonder::refuse_legacy(request.state)
         .map_err(RlContractError)?;
     crate::eternal_cards_v1::owned_draws_v1::knowledge::refuse_legacy(request.state)
+        .map_err(RlContractError)?;
+    crate::eternal_cards_v1::owned_draws_v1::denial::refuse_legacy(request.state)
         .map_err(RlContractError)?;
     if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(request.state) {
         return Err(RlContractError(
@@ -11145,6 +11149,8 @@ fn continuous_effects_common_v2(
         .map_err(RlContractError)?;
     crate::eternal_cards_v1::owned_draws_v1::knowledge::refuse_legacy(state)
         .map_err(RlContractError)?;
+    crate::eternal_cards_v1::owned_draws_v1::denial::refuse_legacy(state)
+        .map_err(RlContractError)?;
     if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(state) {
         return Err(RlContractError(
             "player hexproof and controlled-creature noncombat prevention require a public successor".into(),
@@ -13920,8 +13926,8 @@ fn owned_draw_pending_source_ref(
     state: &GameState,
     pending: &crate::trigger::PendingTrigger,
 ) -> Result<Option<CardStableRefV1>> {
-    use crate::eternal_cards_v1::owned_draws_v1::{portent, standstill};
-    if portent::bound(&pending.effect).is_none() && standstill::bound(&pending.effect).is_none() {
+    use crate::eternal_cards_v1::owned_draws_v1::{denial, portent, standstill};
+    if portent::bound(&pending.effect).is_none() && standstill::bound(&pending.effect).is_none() && denial::bound(&pending.effect).is_none() {
         return Ok(None);
     }
     crate::engine::validate_pending_trigger_identity(state, pending).map_err(RlContractError)?;
@@ -13955,6 +13961,9 @@ fn owned_draw_pending_source_ref(
             source.zone,
             source.zone_change_count,
         )
+    } else if denial::bound(&pending.effect).is_some() {
+        let source = denial::pending_source(state, &pending.effect).map_err(RlContractError)?;
+        (source.source, source.card_def, source.owner, source.controller, source.zone, source.zone_change_count)
     } else {
         let source = standstill::pending_source(state, &pending.effect).map_err(RlContractError)?;
         (

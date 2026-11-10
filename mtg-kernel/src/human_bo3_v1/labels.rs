@@ -25,6 +25,7 @@ struct LabelInput<'a> {
         Option<&'a crate::policy_observation_v6::PendingChosenCreatureCostV6>,
     pending_ward_payment: Option<&'a crate::policy_observation_v6::WardPaymentV6>,
     resolving_spell_sources: Vec<&'a CardStableRefV1>,
+    resolving_trigger_sources: Vec<&'a CardStableRefV1>,
 }
 
 impl<'a> LabelInput<'a> {
@@ -49,6 +50,17 @@ impl<'a> LabelInput<'a> {
                 })
                 .map(|record| &record.source)
                 .collect(),
+            resolving_trigger_sources: observation
+                .extensions
+                .historical_public_sources
+                .iter()
+                .filter(|record| {
+                    record.context
+                        == crate::policy_observation_v7::HistoricalSourceContextV7::PendingEffect
+                        && record.stack_item_kind == StackItemKindV2::TriggeredAbility
+                })
+                .map(|record| &record.source)
+                .collect(),
         }
     }
 
@@ -67,6 +79,16 @@ impl<'a> LabelInput<'a> {
                 .filter(|record| {
                     record.context == HistoricalSourceContextV6::PendingEffect
                         && record.stack_item_kind == StackItemKindV2::Spell
+                })
+                .map(|record| &record.source)
+                .collect(),
+            resolving_trigger_sources: observation
+                .extensions
+                .historical_public_sources
+                .iter()
+                .filter(|record| {
+                    record.context == HistoricalSourceContextV6::PendingEffect
+                        && record.stack_item_kind == StackItemKindV2::TriggeredAbility
                 })
                 .map(|record| &record.source)
                 .collect(),
@@ -89,6 +111,17 @@ impl<'a> LabelInput<'a> {
                     record.context
                         == crate::policy_observation_v7::HistoricalSourceContextV7::PendingEffect
                         && record.stack_item_kind == StackItemKindV2::Spell
+                })
+                .map(|record| &record.source)
+                .collect(),
+            resolving_trigger_sources: observation
+                .extensions
+                .historical_public_sources
+                .iter()
+                .filter(|record| {
+                    record.context
+                        == crate::policy_observation_v7::HistoricalSourceContextV7::PendingEffect
+                        && record.stack_item_kind == StackItemKindV2::TriggeredAbility
                 })
                 .map(|record| &record.source)
                 .collect(),
@@ -2063,6 +2096,16 @@ fn label_common(
                     .get(*option_index as usize)
                     .ok_or(Error::UnsupportedPrompt)?;
                 return Ok(format!("For {}, {}", handles.name(source)?, option.label()));
+            }
+            // The native delayed trigger validator authenticates this exact
+            // paid source and its three options before public projection.
+            // Its program is intentionally absent from the public DTO.
+            if observation.resolving_trigger_sources.contains(&source)
+                && definition(source)?.object_name == "Arcane Denial"
+                && (definition(source)?.spell_effect)() == Some(crate::eternal_e9b_v1::arcane_denial())
+                && structural_path.is_empty() && *option_count == 3 && *option_index < 3
+            {
+                return Ok(format!("For {}, draw {option_index} cards", handles.name(source)?));
             }
             let EffectOp::Choice { options, .. } =
                 pending_program(source, structural_path, observation)?

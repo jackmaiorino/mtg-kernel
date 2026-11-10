@@ -667,8 +667,29 @@ New, each built once in the first wave that needs it:
   restore/tamper and a genuine Chandra spell copy's predecessor route. Copies'
   replacement/count ownership remains outside this component. Source review,
   pinned formatting and native qualification of this component are pending.
-  Generated draws from the remaining Premodern leaves and Arcane Denial still
-  need their Jace/Hullbreacher origins.
+  Arcane Denial's physical paid successor records the actual counter target
+  and both controllers at resolution, then creates two separately ordered
+  delayed instructions at the next turn's upkeep. Native Commandeer control
+  and retarget endpoints extend the original payment binding. Both triggers
+  retain that spell incarnation after later source movement. The target's
+  controller chooses zero, one, or two draws; Denial's resolution controller
+  draws one. Each nonzero instruction applies Riddler once and uses the common
+  Started/Completed replacement and terminal-stop receipts. Legal uncounterable
+  targets still schedule; illegal targets do not. Ordinary pending triggers,
+  ordering, and the optional menu remain available in V5/Human; active owned
+  replacement progress requires a successor. The Human menu labels the three
+  authenticated delayed options without exporting their runtime programs.
+  Actual paid both-seat fixtures cover restore, control changes, retargeting,
+  APNAP, both instruction orders, source reentry, Dredge/Hull, Jace/Hull,
+  and source/controller/schedule/phase/count tampering. Native Chandra copies
+  retain the prior serialized schedule and ordinary draw behavior; their draw
+  replacement ownership and copied bound triggers are not qualified here.
+  Source review, pinned formatting and native qualification remain pending.
+  These source additions do not promote any printing to Full. Rules basis:
+  Wizards' Comprehensive Rules 603.7b/d, 603.3b and 608.2b
+  (https://media.wizards.com/2026/downloads/MagicCompRules%2020260619.pdf).
+  Generated draws from other Premodern leaves still need their replacement
+  origins; the existing ordinary serialized delayed variant is retained.
   Quantum Riddler adjusts the whole count once for uninterrupted fixed and
   dynamic draw instructions. Named draws and top-level fixed draw instructions
   from physical spells or printed triggers retain the adjusted count across
