@@ -571,14 +571,18 @@ New, each built once in the first wave that needs it:
   Hullbreacher on fixed-count draw instructions and the covered owned draws.
   Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
   Their damage-draw interaction has no native qualification.
-  Remaining specialized draws include Curie's combat trigger, which needs the
-  original incarnation's base power at departure, Minsc & Boo's reflexive draw,
+  Curie's combat trigger binds the original source and controller. It uses
+  current base power for the same battlefield incarnation, or the base
+  power recorded in the native departure scene if that incarnation left.
+  The draw count is fixed before the first replacement attempt. Historical
+  serialized `CurieDrawV1` triggers retain their old fallback behavior.
+  Remaining specialized draws include Minsc & Boo's reflexive draw,
   Echo of Eons after both shuffles, and the two drawing dungeon rooms. Generated
   draws from Bonder's Ornament, the Premodern draw leaves, Standstill, Arcane
   Denial and Accumulated Knowledge still need their Jace/Hullbreacher origins.
   Quantum Riddler needs to change the whole instruction's draw count before the
   individual replacement choices. Its current extra draws stop at a terminal
-  Jace win. Native qualification of the Flame repair is pending.
+  Jace win. Native qualification of the Flame and Curie repairs is pending.
 - S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
   S1c, S1a, S1b and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload

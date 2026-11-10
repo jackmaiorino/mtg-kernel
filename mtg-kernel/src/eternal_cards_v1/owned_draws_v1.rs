@@ -44,6 +44,7 @@ enum InstructionV1 {
         creature: Option<u8>,
         spec: TargetSpec,
     },
+    Curie { combat_at: usize },
 }
 
 impl InstructionV1 {
@@ -79,6 +80,9 @@ impl InstructionV1 {
                 creature: *creature,
                 spec: *spec,
             }),
+            EternalOpV1::E7aV1(E7aOpV1::CurieDrawBoundV1 { combat_at }) => Some(Self::Curie {
+                combat_at: *combat_at,
+            }),
             _ => None,
         }
     }
@@ -112,6 +116,9 @@ impl InstructionV1 {
                 super::e3::opponent_cast_blue_or_black_spell_this_turn(state, ctx.controller),
             ),
             Self::DragonEngine => 3,
+            Self::Curie { combat_at } => {
+                eternal_legacy_e7a_v1::curie::draw_count(state, ctx, combat_at).unwrap_or(0)
+            }
             Self::FlameOfAnor { draw, spec, .. } => {
                 if eternal_lurrus_v1::flame_draw_target(state, ctx, draw, spec).is_some() {
                     2
@@ -259,10 +266,27 @@ pub struct StartedV1 {
 #[serde(deny_unknown_fields)]
 pub enum JournalV1 {
     Started(StartedV1),
-    Completed { started_at: usize, ordinal: u32 },
+    Completed {
+        started_at: usize,
+        ordinal: u32,
+    },
+    CurieCombat {
+        combat_at: usize,
+        source: AbilitySourceContractV4,
+    },
+    CurieDeparture {
+        at: usize,
+        source: AbilitySourceContractV4,
+        power: u32,
+    },
+    CurieDrawCount {
+        item: StackItemId,
+        combat_at: usize,
+        count: u32,
+    },
 }
 
-fn record(state: &mut GameState, journal: JournalV1) {
+pub(crate) fn record(state: &mut GameState, journal: JournalV1) {
     state
         .engine
         .event_history
@@ -349,6 +373,9 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
                     .chandra_emblems
                     .contains(&(item.controller, source))
             }),
+            (InstructionV1::Curie { combat_at }, StackItemKind::TriggeredAbility, _) => {
+                eternal_legacy_e7a_v1::curie::combat_source(state, combat_at) == Some(source)
+            }
             _ => false,
         };
         return authorized.then_some((instruction, SourceV1::Ability(source)));
@@ -451,11 +478,25 @@ pub(crate) fn begin(
         (InstructionV1::OneRing, SourceV1::Ability(source)) => {
             super::e3::begin_ring_draws(state, source)
         }
+        (InstructionV1::Curie { combat_at }, SourceV1::Ability(_)) => {
+            eternal_legacy_e7a_v1::curie::draw_count(state, &pending.ctx, combat_at)
+                .ok_or("Curie draw lost its original source base power")?
+        }
         _ => instruction.count(state, &pending.ctx),
     };
     if total == 0 {
         finish_instruction(state, pending, instruction);
         return Ok(());
+    }
+    if let InstructionV1::Curie { combat_at } = instruction {
+        record(
+            state,
+            JournalV1::CurieDrawCount {
+                item: pending.resolving_item.v4.stack_item_id,
+                combat_at,
+                count: total,
+            },
+        );
     }
     let started_at = state.engine.event_history.len();
     let started = StartedV1 {
@@ -620,6 +661,34 @@ fn validate_native_progress(
             SourceV1::Ability(source) => Some(super::e3::ring_burden_count(state, source)),
             SourceV1::Spell(_) | SourceV1::FlameOfAnor { .. } => None,
         },
+        (InstructionV1::Curie { combat_at }, None) => {
+            let count_at = progress
+                .started_at
+                .checked_sub(1)
+                .ok_or("Curie draw lost its native count capture")?;
+            match state.engine.event_history.get(count_at) {
+                Some(CommittedEvent::EternalOwnedDrawV1 { journal }) => match **journal {
+                    JournalV1::CurieDrawCount {
+                        item,
+                        combat_at: original,
+                        count,
+                    } if item == started.item && original == combat_at => {
+                        let SourceV1::Ability(source) = started.source else {
+                            return Err("Curie draw lost its original ability source".into());
+                        };
+                        match eternal_legacy_e7a_v1::curie::departed_count_before(
+                            state, combat_at, source, count_at,
+                        ) {
+                            Some(None) => Some(count),
+                            Some(Some(power)) if power == count => Some(count),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
         (instruction, None) => Some(instruction.count(state, ctx)),
     };
     if total != Some(started.total) {
