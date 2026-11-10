@@ -1,7 +1,7 @@
 //! One replacement choice per draw in selected definition-owned Eternal effects.
 
 use super::EternalOpV1;
-use crate::card_def::CARD_DEFS;
+use crate::card_def::{TargetSpec, CARD_DEFS};
 use crate::effect::{
     EffectContinuation, EffectFrame, EffectOp, EffectOptionChoicePurpose, ExecCtx,
     PendingEffectChoice, PlayerRef,
@@ -9,7 +9,7 @@ use crate::effect::{
 use crate::eternal_e5a_v1::E5aOpV1;
 use crate::eternal_legacy_e7a_v1::{self, E7aOpV1};
 use crate::eternal_legacy_e8a_v1::E8aOpV1;
-use crate::eternal_lurrus_v1::LurrusOpV1;
+use crate::eternal_lurrus_v1::{self, LurrusOpV1};
 use crate::eternal_pauper_e8b_v1::{self, E8bOpV1};
 use crate::eternal_vintage_e7b_v1::{dredge, E7bOpV1};
 use crate::event::CommittedEvent;
@@ -17,7 +17,8 @@ use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{
-    AbilitySourceContractV4, GameState, ObjectLinkV4, StackItemKind, StackSourceContractV4, Zone,
+    AbilitySourceContractV4, GameState, ObjectLinkV4, StackItemKind, StackSourceContractV4,
+    StackTargetContractV4, Target, Zone,
 };
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +35,12 @@ enum InstructionV1 {
     OneRing,
     VeilOfSummer,
     DragonEngine,
+    FlameOfAnor {
+        draw: u8,
+        artifact: Option<u8>,
+        creature: Option<u8>,
+        spec: TargetSpec,
+    },
 }
 
 impl InstructionV1 {
@@ -58,6 +65,17 @@ impl InstructionV1 {
             EternalOpV1::E7aV1(E7aOpV1::DiscardHandThenDrawV1 { count: 3 }) => {
                 Some(Self::DragonEngine)
             }
+            EternalOpV1::LurrusV1(LurrusOpV1::FlameOfAnorV1 {
+                draw: Some(draw),
+                artifact,
+                creature,
+                spec,
+            }) => Some(Self::FlameOfAnor {
+                draw: *draw,
+                artifact: *artifact,
+                creature: *creature,
+                spec: *spec,
+            }),
             _ => None,
         }
     }
@@ -91,6 +109,31 @@ impl InstructionV1 {
                 super::e3::opponent_cast_blue_or_black_spell_this_turn(state, ctx.controller),
             ),
             Self::DragonEngine => 3,
+            Self::FlameOfAnor { draw, spec, .. } => {
+                if eternal_lurrus_v1::flame_draw_target(state, ctx, draw, spec).is_some() {
+                    2
+                } else {
+                    0
+                }
+            }
+        }
+    }
+
+    fn draw_player(self) -> PlayerRef {
+        match self {
+            Self::FlameOfAnor { draw, .. } => PlayerRef::Target(draw),
+            _ => PlayerRef::Controller,
+        }
+    }
+
+    fn drawer(self, ctx: &ExecCtx) -> Option<PlayerId> {
+        if let Self::FlameOfAnor { draw, .. } = self {
+            let Target::Player(player) = *ctx.targets.get(usize::from(draw))? else {
+                return None;
+            };
+            Some(player)
+        } else {
+            Some(ctx.controller)
         }
     }
 
@@ -120,8 +163,16 @@ pub(crate) fn recognizes(op: &EternalOpV1) -> bool {
     InstructionV1::from_op(op).is_some()
 }
 
-pub(crate) fn starting_count(state: &GameState, program: &EffectOp, ctx: &ExecCtx) -> Option<u32> {
-    Some(InstructionV1::from_program(program)?.count(state, ctx))
+pub(crate) fn starting_draws(
+    state: &GameState,
+    program: &EffectOp,
+    ctx: &ExecCtx,
+) -> Option<(PlayerId, u32)> {
+    let instruction = InstructionV1::from_program(program)?;
+    Some((
+        instruction.drawer(ctx)?,
+        instruction.count(state, ctx),
+    ))
 }
 
 pub(crate) fn graveyard_cast_count(
@@ -177,6 +228,11 @@ pub(crate) fn remove_maximum_hand_size(state: &mut GameState, player: PlayerId) 
 enum SourceV1 {
     Spell(StackSourceContractV4),
     Ability(AbilitySourceContractV4),
+    FlameOfAnor {
+        spell: StackSourceContractV4,
+        drawer: PlayerId,
+        other_target: Option<StackTargetContractV4>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -304,7 +360,7 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
     let def = CARD_DEFS.get(usize::from(source.card_def))?;
     if !matches!(
         def.object_name,
-        "Plunder the Trollshaws" | "Twinned Vision" | "Veil of Summer"
+        "Plunder the Trollshaws" | "Twinned Vision" | "Veil of Summer" | "Flame of Anor"
     ) {
         return None;
     }
@@ -321,6 +377,26 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
         | (InstructionV1::VeilOfSummer, "Veil of Summer") => {
             Some((instruction, SourceV1::Spell(source)))
         }
+        (InstructionV1::FlameOfAnor { .. }, "Flame of Anor") => {
+            // Every draw-bearing printed mode targets its drawer first.
+            // Player targets have no generic Targeted event, so freeze the
+            // full original target contracts in this native start receipt.
+            let (drawer, other_target) = match item.v4.target_contracts.as_slice() {
+                [StackTargetContractV4::Player(drawer)] => (*drawer, None),
+                [StackTargetContractV4::Player(drawer), other @ StackTargetContractV4::Object { .. }] => {
+                    (*drawer, Some(*other))
+                }
+                _ => return None,
+            };
+            Some((
+                instruction,
+                SourceV1::FlameOfAnor {
+                    spell: source,
+                    drawer,
+                    other_target,
+                },
+            ))
+        }
         _ => None,
     }
 }
@@ -336,7 +412,7 @@ fn stage(pending: &mut EffectContinuation, instruction: InstructionV1, ordinal: 
     pending.frames.push(completion(instruction, ordinal));
     pending.frames.push(EffectFrame::Program {
         op: EffectOp::DrawCards {
-            player: PlayerRef::Controller,
+            player: instruction.draw_player(),
             count: 1,
         },
         path: instruction.draw_path().to_vec(),
@@ -442,6 +518,10 @@ pub(crate) fn complete(
     {
         return Err("Eternal draw completed the wrong attempt".into());
     }
+    let drawer = started
+        .instruction
+        .drawer(&pending.ctx)
+        .ok_or("Eternal draw lost its original drawer")?;
     let completed = ordinal + 1;
     record(
         state,
@@ -450,7 +530,7 @@ pub(crate) fn complete(
             ordinal,
         },
     );
-    let terminal = draw_won_game(state, started.controller);
+    let terminal = draw_won_game(state, drawer);
     if terminal || completed == started.total {
         state.eternal_owned_draw_progress_v1 = None;
         if !terminal {
@@ -480,6 +560,14 @@ fn finish_instruction(
         InstructionV1::VeilOfSummer => {
             super::e3::apply_veil_protection(state, pending.ctx.controller)
         }
+        InstructionV1::FlameOfAnor {
+            artifact,
+            creature,
+            spec,
+            ..
+        } => eternal_lurrus_v1::finish_flame_of_anor(
+            state, &pending.ctx, artifact, creature, spec,
+        ),
         _ => {}
     }
 }
@@ -532,7 +620,7 @@ fn validate_native_progress(
         (InstructionV1::Tamiyo, _) | (_, Some(_)) => None,
         (InstructionV1::OneRing, None) => match started.source {
             SourceV1::Ability(source) => Some(super::e3::ring_burden_count(state, source)),
-            SourceV1::Spell(_) => None,
+            SourceV1::Spell(_) | SourceV1::FlameOfAnor { .. } => None,
         },
         (instruction, None) => Some(instruction.count(state, ctx)),
     };
@@ -572,7 +660,7 @@ pub(crate) fn draw_stage_matches(
     remaining: &[EffectFrame],
 ) -> bool {
     progress(state, pending).is_some_and(|(progress, started)| {
-        drawer == started.controller
+        Some(drawer) == started.instruction.drawer(&pending.ctx)
             && path == started.instruction.draw_path()
             && remaining == [completion(started.instruction, progress.completed)]
     })
@@ -634,13 +722,17 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
     validate_native_progress(state, &pending.ctx, progress, started)?;
     let (path, remaining) =
         dredge::draw_stage(pending).ok_or("Eternal draw lost its original stage")?;
-    if !draw_stage_matches(state, pending, started.controller, path, remaining) {
+    let drawer = started
+        .instruction
+        .drawer(&pending.ctx)
+        .ok_or("Eternal draw lost its original drawer")?;
+    if !draw_stage_matches(state, pending, drawer, path, remaining) {
         return Err("Eternal draw changed its progress or remaining effects".into());
     }
     dredge::validate_draw_choice(
         state,
         pending,
-        started.controller,
+        drawer,
         path,
         remaining,
         "Eternal draw",

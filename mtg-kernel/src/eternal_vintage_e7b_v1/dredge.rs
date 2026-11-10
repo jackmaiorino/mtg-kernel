@@ -121,8 +121,8 @@ pub(crate) fn forces_resumable(state: &GameState, program: &EffectOp, ctx: &Exec
     if !cfg!(feature = "eternal-fixtures") {
         return false;
     }
-    let needs_choice = match owned_draws_v1::starting_count(state, program, ctx) {
-        Some(count) => owned_draw_needs_choice(state, ctx.controller, count),
+    let needs_choice = match owned_draws_v1::starting_draws(state, program, ctx) {
+        Some((drawer, count)) => owned_draw_needs_choice(state, drawer, count),
         None => {
             draws(program)
                 && [PlayerId::P0, PlayerId::P1]

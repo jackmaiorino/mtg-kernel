@@ -538,7 +538,10 @@ New, each built once in the first wave that needs it:
   Outcome, Psychic Frog, Plunder the Trollshaws, Tamiyo's -7, Twinned Vision,
   The Endstone's land-play draw, Kishla Skimmer's graveyard-departure draw,
   Chandra, Chill of Compliance's emblem draw, Bonder's Ornament, and both
-  selected-discard draw paths. Sensei's Divining Top moves only the original
+  selected-discard draw paths. Flame of Anor uses its original selected player
+  and resolves any other mode after both draw attempts, subject to that mode's
+  original target legality. Its native start binds both target contracts for
+  restore. A Jace win skips the other mode. Sensei's Divining Top moves only the original
   permanent to its owner's library after its draw attempt, including when a
   replacement prevents the draw. The One Ring counts its live burden increment
   or the departed incarnation's retained burden once before its first attempt.
@@ -562,11 +565,14 @@ New, each built once in the first wave that needs it:
   Hullbreacher on fixed-count draw instructions and the covered owned draws.
   Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
   Their damage-draw interaction has no native qualification.
-  Some specialized synchronous draws and unbound generated or dynamic draw instructions
-  still lack a replacement choice. Quantum Riddler's extra draws stop at a
-  terminal Jace win. They are committed inside one shared draw event and still
-  lack individual replacement choices. Native qualification of the repairs is
-  pending.
+  Remaining specialized draws include Curie's combat trigger, which needs the
+  original incarnation's base power at departure, Minsc & Boo's reflexive draw,
+  Echo of Eons after both shuffles, and the two drawing dungeon rooms. Generated
+  draws from Bonder's Ornament, the Premodern draw leaves, Standstill, Arcane
+  Denial and Accumulated Knowledge still need their Jace/Hullbreacher origins.
+  Quantum Riddler needs to change the whole instruction's draw count before the
+  individual replacement choices. Its current extra draws stop at a terminal
+  Jace win. Native qualification of the Flame repair is pending.
 - S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
   S1c, S1a, S1b and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload
