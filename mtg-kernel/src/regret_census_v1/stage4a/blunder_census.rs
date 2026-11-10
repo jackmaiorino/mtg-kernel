@@ -429,6 +429,9 @@ fn lethal_class(recorded_ok: bool, recorded_survives: bool, found: bool, w: &Wal
     }
 }
 
+/// (attacker, blocker, attacker zcc, blocker zcc) as declared.
+type DeclaredPair = (ObjectId, ObjectId, Option<u32>, Option<u32>);
+
 /// A combat the focal seat defends, from its first blocker decision.
 struct Combat {
     turn: (u32, PlayerId),
@@ -439,7 +442,7 @@ struct Combat {
     recorded: Vec<u32>,
     forced_include: bool,
     /// (attacker, blocker, attacker zcc, blocker zcc) once declared.
-    declared: Option<Vec<(ObjectId, ObjectId, Option<u32>, Option<u32>)>>,
+    declared: Option<Vec<DeclaredPair>>,
 }
 
 // ---------------------------------------------------------------- casts
@@ -1261,7 +1264,7 @@ mod tests {
             source: card(7, ME, Zone::Stack),
             selected_count: 1,
         };
-        assert_eq!(target_steps_source(&[finish.clone()]), None);
+        assert_eq!(target_steps_source(std::slice::from_ref(&finish)), None);
         assert_eq!(
             target_steps_source(&[target(7, own.clone()), finish]),
             Some(7)
