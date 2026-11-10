@@ -225,9 +225,18 @@ fn volrath_native_simultaneous_entry_uses_final_donor_after_departure_both_seats
             assert_eq!(state.objects.get(palinchron).zone, Zone::Exile);
             assert_eq!(active_text(&state, source).unwrap().donor().object, guide);
             let capture = captured_entry(&state, source).unwrap();
-            assert_eq!(capture.host, AbilitySourceContractV4::capture(&state, source));
-            assert_eq!(capture.donor, AbilitySourceContractV4::capture(&state, guide));
-            assert!(matches!(capture.kind, DonatedTriggerKindV1::KarmicGuideEnteredAfterBatch { .. }));
+            assert_eq!(
+                capture.host,
+                AbilitySourceContractV4::capture(&state, source)
+            );
+            assert_eq!(
+                capture.donor,
+                AbilitySourceContractV4::capture(&state, guide)
+            );
+            assert!(matches!(
+                capture.kind,
+                DonatedTriggerKindV1::KarmicGuideEnteredAfterBatch { .. }
+            ));
 
             let prompt = settle(&mut state).expect("the final donor offers a graveyard target");
             assert!(matches!(&prompt,
