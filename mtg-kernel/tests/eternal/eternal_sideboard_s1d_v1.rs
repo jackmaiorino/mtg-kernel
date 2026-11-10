@@ -1283,12 +1283,7 @@ fn circle_of_protection_blue_only_offers_public_contextual_sources_both_seats() 
             "Circle of Protection: Blue",
             Zone::Battlefield,
         );
-        let fanatic = put(
-            &mut state,
-            opponent,
-            "Mogg Fanatic",
-            Zone::Battlefield,
-        );
+        let fanatic = put(&mut state, opponent, "Mogg Fanatic", Zone::Battlefield);
         let original = state.objects.get(fanatic).zone_change_count;
         let marked = put(&mut state, opponent, "Mulldrifter", Zone::Graveyard);
         let unrelated_graveyard = put(&mut state, opponent, "Mulldrifter", Zone::Graveyard);
@@ -1576,7 +1571,10 @@ fn circle_of_protection_blue_uses_fanatics_color_before_sacrifice_both_seats() {
         pool(&mut state, actor, &[], 2);
         cast(&mut state, painter, &[]);
         settle_option(&mut state, 1);
-        assert_eq!(state.objects.get(painter).v4.chosen_color, Some(ManaColor::U));
+        assert_eq!(
+            state.objects.get(painter).v4.chosen_color,
+            Some(ManaColor::U)
+        );
         let blue = mtg_kernel::card_def::mana_color_mask(ManaColor::U);
         assert_ne!(engine::object_color_mask(&state, fanatic) & blue, 0);
         let original = state.objects.get(fanatic).zone_change_count;
@@ -1587,7 +1585,14 @@ fn circle_of_protection_blue_uses_fanatics_color_before_sacrifice_both_seats() {
             matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == opponent)
         );
         assert_eq!(zone(&state, fanatic), Zone::Graveyard);
-        let paid_at = state.stack.last().unwrap().v4.fixed_damage_paid_v3.0.unwrap();
+        let paid_at = state
+            .stack
+            .last()
+            .unwrap()
+            .v4
+            .fixed_damage_paid_v3
+            .0
+            .unwrap();
         let CommittedEvent::FixedDamagePaidV3 { payment } =
             &state.engine.event_history[paid_at as usize]
         else {
@@ -1653,21 +1658,32 @@ fn circle_of_protection_blue_uses_fanatics_color_before_sacrifice_both_seats() {
         };
         let option = options
             .iter()
-            .position(|op| matches!(
-                op,
-                EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
-                    S1dOpV1::CopShieldV1 { source },
-                ))) if source.object == fanatic && source.zone_change_count == original
-            ))
+            .position(|op| {
+                matches!(
+                    op,
+                    EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
+                        S1dOpV1::CopShieldV1 { source },
+                    ))) if source.object == fanatic && source.zone_change_count == original
+                )
+            })
             .expect("original blue Fanatic remains a legal source");
         let mut restored: GameState =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         assert_eq!(next(&mut restored), decision);
         for branch in [&mut state, &mut restored] {
-            act(branch, Action::ChooseEffectOption(u16::try_from(option).unwrap()));
+            act(
+                branch,
+                Action::ChooseEffectOption(u16::try_from(option).unwrap()),
+            );
             settled(branch);
             assert_eq!(life(branch, actor), 20);
-            assert!(branch.eternal_v1.as_ref().unwrap().s1d.cop_shields.is_empty());
+            assert!(branch
+                .eternal_v1
+                .as_ref()
+                .unwrap()
+                .s1d
+                .cop_shields
+                .is_empty());
             assert!(branch.engine.event_history.iter().any(|event| matches!(
                 event,
                 CommittedEvent::FixedDamageRemovedV3 { removal } if removal.payment == paid_at
@@ -1695,12 +1711,7 @@ fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
             let mut state = plains();
             state.active_player = actor;
             state.priority_player = actor;
-            let fanatic = put(
-                &mut state,
-                opponent,
-                "Mogg Fanatic",
-                Zone::Battlefield,
-            );
+            let fanatic = put(&mut state, opponent, "Mogg Fanatic", Zone::Battlefield);
             let painter = put(&mut state, actor, "Painter's Servant", Zone::Hand);
             pool(&mut state, actor, &[], 2);
             cast(&mut state, painter, &[]);

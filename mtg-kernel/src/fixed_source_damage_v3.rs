@@ -146,16 +146,18 @@ pub(crate) fn acquire_payment(state: &GameState) -> Result<Option<PaymentOwnerV3
     let tap = firebrand(source.card_def, p.ability_index);
     if !physical_fanatic && !tap {
         // A borrowed Firebrand recipe needs its own departing-source capture.
-        if firebrand_enabled() && crate::engine::resolved_activated_ability(
-            source.card_def,
-            p.ability_index,
-            state,
-            p.source,
-        )
-        .is_some_and(|a| {
-            (a.effect)() == printed_root()
-                && a.cost == [CostComponent::Tap, CostComponent::SacrificeSelf]
-        }) {
+        if firebrand_enabled()
+            && crate::engine::resolved_activated_ability(
+                source.card_def,
+                p.ability_index,
+                state,
+                p.source,
+            )
+            .is_some_and(|a| {
+                (a.effect)() == printed_root()
+                    && a.cost == [CostComponent::Tap, CostComponent::SacrificeSelf]
+            })
+        {
             return Err(
                 "borrowed fixed damage requires an authenticated departure successor".into(),
             );
@@ -301,8 +303,12 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
         })
         .ok_or("fixed damage lost actual sacrifice")?;
     let departure_to = between[sacrifice + 1..].iter().find_map(|e| match e {
-        CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, controller_before }
-            if *object == s.source && *controller_before == s.controller => Some(*to),
+        CommittedEvent::ZoneChange {
+            object,
+            from: Zone::Battlefield,
+            to,
+            controller_before,
+        } if *object == s.source && *controller_before == s.controller => Some(*to),
         _ => None,
     });
     let Some(departure_to) = departure_to else {
