@@ -1814,6 +1814,7 @@ fn paid_mad_wizard_room_reveals_and_casts_only_actual_draws_both_seats() {
         let first = settle(&mut state).expect("Lair's actual Dredge menu");
         assert!(matches!(first, Decision::ChooseEffectTargets { legal_targets, .. }
             if legal_targets == [Target::Object(thug)]));
+        let mut rewind = serde_json::to_value(&state).unwrap();
         act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
         let cast_menu = settle(&mut state).expect("Lair's actual drawn spell is castable");
         assert!(matches!(&cast_menu, Decision::ChooseEffectTargets { legal_targets, .. }
@@ -1824,6 +1825,17 @@ fn paid_mad_wizard_room_reveals_and_casts_only_actual_draws_both_seats() {
             .iter().any(|entry| entry.object == *drawn)));
 
         let saved = serde_json::to_value(&state).unwrap();
+        let early_history = rewind["engine"]["event_history"].as_array_mut().unwrap();
+        let later_history = saved["engine"]["event_history"].as_array().unwrap();
+        early_history.extend(later_history[early_history.len()..].iter().filter(|row| {
+            row["EternalOwnedDrawV1"]["journal"].get("Completed").is_none()
+        }).cloned());
+        let rewind: GameState = serde_json::from_value(rewind).unwrap();
+        assert_eq!(
+            mtg_kernel::effect::validate_pending_effect_choice(&rewind),
+            Err("Mad Wizard cannot resume drawing after its cast stage".into()),
+        );
+
         let mut forged = saved.clone();
         let card = forged["engine"]["event_history"].as_array_mut().unwrap().iter_mut()
             .find_map(|row| row.get_mut("EternalOwnedDrawV1")?.get_mut("journal")?

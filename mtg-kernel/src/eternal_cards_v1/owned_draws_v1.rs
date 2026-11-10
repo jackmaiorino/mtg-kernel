@@ -376,12 +376,18 @@ impl JournalV1 {
             Self::CurieDrawCount { item, .. }
             | Self::MinscDamageCompleted { item, .. }
             | Self::EchoShuffledV1 { item, .. }
-            | Self::EchoShuffleCommittedV1 { item, .. }
-            | Self::RoomDrawRevealedV1 { item, .. }
-            | Self::RoomDrawFinishedV1 { item, .. }
-            | Self::RoomDrawAnsweredV1 { item, .. } => {
+            | Self::EchoShuffleCommittedV1 { item, .. } => {
                 Some(item)
             }
+            _ => self.room_tail_item(),
+        }
+    }
+
+    fn room_tail_item(self) -> Option<StackItemId> {
+        match self {
+            Self::RoomDrawRevealedV1 { item, .. }
+            | Self::RoomDrawFinishedV1 { item, .. }
+            | Self::RoomDrawAnsweredV1 { item, .. } => Some(item),
             _ => None,
         }
     }
@@ -816,6 +822,11 @@ fn validate_native_progress(
     started: StartedV1,
     attempts: u32,
 ) -> Result<(), String> {
+    if matches!(started.instruction, InstructionV1::Room { kind: rooms::KindV1::MadWizard, .. })
+        && rooms::tail_started(state, started.item)
+    {
+        return Err("Mad Wizard cannot resume drawing after its cast stage".into());
+    }
     let tail = progress.started_at + 1;
     let total = match (started.instruction, started.initial_library_len) {
         (InstructionV1::Tamiyo, Some(library_len))

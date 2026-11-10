@@ -59,6 +59,14 @@ pub(super) fn owns(state: &GameState, item: &StackItem) -> bool {
     })
 }
 
+pub(super) fn tail_started(state: &GameState, item: StackItemId) -> bool {
+    state.engine.event_history
+        .scan_for_v1(&[EventKindV1::EternalOwnedDrawV1])
+        .iter()
+        .any(|event| matches!(event, CommittedEvent::EternalOwnedDrawV1 { journal }
+            if journal.room_tail_item() == Some(item)))
+}
+
 fn actual_draws(
     state: &GameState,
     player: PlayerId,
