@@ -95,6 +95,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -298,8 +299,11 @@ class Cgroup:
     def populated(self) -> bool:
         try:
             return self.keyed("cgroup.events").get("populated") == 1
-        except FileNotFoundError:
-            return False
+        except OSError as exc:
+            # Removal can race either open (ENOENT) or a kernfs read (ENODEV).
+            if exc.errno in (errno.ENOENT, errno.ENODEV):
+                return False
+            raise
 
     def frozen(self) -> bool:
         return self.keyed("cgroup.events").get("frozen") == 1

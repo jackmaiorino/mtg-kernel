@@ -698,9 +698,11 @@ jobs:
         if: runner.environment == 'github-hosted'
         uses: actions/download-artifact@v4
         with:
-          pattern: limited-build-${{ matrix.os }}-*-${{ github.run_attempt }}
-          merge-multiple: true
-          path: limited-build
+          # A partial retry keeps successful producer artifacts from the prior
+          # attempt. Every match belongs to this run and its immutable head.
+          pattern: limited-build-${{ matrix.os }}-*
+          merge-multiple: false
+          path: ${{ runner.temp }}/shared-limited-build
 
       # Cargo reuses an output only when it is newer than every source file
       # it recorded. Unpacked files get one time after this checkout, so the
@@ -709,11 +711,19 @@ jobs:
       - name: Unpack the shared Limited build as current output
         if: runner.environment == 'github-hosted'
         run: |
+          staging="${RUNNER_TEMP:?}/shared-limited-build"
+          if [ "$RUNNER_OS" = Windows ]; then
+            staging=$(cygpath -u "$staging")
+          fi
           mkdir -p target
-          for archive in limited-build/limited-*.tar; do
+          # Keep attempts in separate directories to avoid concurrent writes
+          # to the same tar file. Select the newest available attempt per part.
+          for part in binaries tests; do
+            archive=$(find "$staging" -mindepth 2 -maxdepth 2 -type f -path "*/limited-build-*-$part-*/limited-$part.tar" | sort -V | tail -n 1)
+            test -n "$archive" || { echo "Missing shared Limited $part artifact" >&2; exit 1; }
             tar -xf "$archive" -C target
           done
-          rm -rf limited-build
+          rm -rf -- "$staging"
           stamp=$(date +%s)
           find target -exec touch -d "@$stamp" {} +
 
