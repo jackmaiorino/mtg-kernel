@@ -24,6 +24,8 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::Instant;
 
 type Result<T> = std::result::Result<T, String>;
 const SCHEMA: &str = "limited-original-deck-training-smoke/v2";
@@ -31,6 +33,7 @@ const MAX_STEPS: u64 = 4_000;
 const RETAIN_PER_SEAT: usize = 32;
 const TRAIN_SEED: u64 = 552_001;
 const EVAL_SEED: u64 = 552_002;
+const DIAGNOSTIC_INTERVAL: usize = 64;
 
 macro_rules! fixture {
     ($name:literal) => {
@@ -157,6 +160,112 @@ struct Game {
     captured: Vec<Captured>,
 }
 
+struct Diagnostics {
+    started: Instant,
+    file: Mutex<Option<File>>,
+}
+
+impl Diagnostics {
+    fn create(root: &Path) -> Result<Self> {
+        let file = File::options()
+            .write(true)
+            .create_new(true)
+            .open(root.join("stage-diagnostics.jsonl"))
+            .map_err(|error| format!("stage diagnostics: {error}"))?;
+        Ok(Self {
+            started: Instant::now(),
+            file: Mutex::new(Some(file)),
+        })
+    }
+
+    fn record(&self, event: Value) {
+        let mut file = self.file.lock().expect("stage diagnostics writer panicked");
+        if let Some(writer) = file.as_mut() {
+            let mut row = json!({
+                "schema": "limited-training-stage-diagnostics/v1",
+                "elapsed_ns": elapsed_ns(self.started),
+                "event": event,
+            })
+            .to_string()
+            .into_bytes();
+            row.push(b'\n');
+            // Write directly so a process timeout leaves the completed lines available.
+            if let Err(error) = writer.write_all(&row) {
+                *file = None;
+                eprintln!("stage diagnostics write failed: {error}");
+            }
+        }
+    }
+}
+
+fn elapsed_ns(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
+}
+
+fn measure_phase<T>(
+    diagnostics: Option<&Diagnostics>,
+    phase: &str,
+    operation: impl FnOnce() -> T,
+) -> T {
+    let Some(diagnostics) = diagnostics else {
+        return operation();
+    };
+    diagnostics.record(json!({"phase": phase, "checkpoint": "started"}));
+    let started = Instant::now();
+    let result = operation();
+    let duration_ns = elapsed_ns(started);
+    diagnostics.record(json!({"phase": phase, "checkpoint": "returned", "duration_ns": duration_ns}));
+    result
+}
+
+#[derive(Default, Serialize)]
+struct StageCounter {
+    count: u64,
+    total_ns: u64,
+    max_ns: u64,
+}
+
+fn measure_stage<T>(counter: Option<&mut StageCounter>, operation: impl FnOnce() -> T) -> T {
+    let Some(counter) = counter else {
+        return operation();
+    };
+    let started = Instant::now();
+    let result = operation();
+    let duration_ns = elapsed_ns(started);
+    counter.count += 1;
+    counter.total_ns = counter.total_ns.saturating_add(duration_ns);
+    counter.max_ns = counter.max_ns.max(duration_ns);
+    result
+}
+
+#[derive(Default, Serialize)]
+struct GameStages {
+    reset: StageCounter,
+    current_response: StageCounter,
+    encode: StageCounter,
+    authenticated_input: StageCounter,
+    model_forward: StageCounter,
+    sample: StageCounter,
+    apply: StageCounter,
+}
+
+#[derive(Clone, Copy)]
+enum PairPhase {
+    Training,
+    InitialEvaluation,
+    TrainedEvaluation,
+}
+
+impl PairPhase {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Training => "training_pair",
+            Self::InitialEvaluation => "initial_evaluation_pair",
+            Self::TrainedEvaluation => "trained_evaluation_pair",
+        }
+    }
+}
+
 fn sample(scores: &[f64], rng: &mut SplitMix64) -> Result<usize> {
     let max = scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let mut sum = 0.;
@@ -212,8 +321,10 @@ fn game(
     seed: u64,
     leg: usize,
     model: &ModelV1,
-    collect: bool,
+    phase: PairPhase,
+    diagnostics: Option<&Diagnostics>,
 ) -> Game {
+    let collect = matches!(phase, PairPhase::Training);
     let start = if collect && leg == 1 {
         PlayerId::P1
     } else {
@@ -231,15 +342,35 @@ fn game(
         actions: Vec::new(),
     };
     let mut captured = Vec::new();
+    let mut stages = diagnostics.map(|_| GameStages::default());
+    let record = |checkpoint, action_rows, stages: &Option<GameStages>| {
+        if let Some((diagnostics, stages)) = diagnostics.zip(stages.as_ref()) {
+            diagnostics.record(json!({
+                "phase": phase.name(),
+                "leg": leg,
+                "checkpoint": checkpoint,
+                "action_rows": action_rows,
+                "stages": stages,
+            }));
+        }
+    };
+    record("started", 0, &stages);
     let attempt = (|| -> Result<[i8; 2]> {
-        let mut session = reset_game(session, roster, seed, start)?;
+        let mut session = measure_stage(stages.as_mut().map(|stage| &mut stage.reset), || {
+            reset_game(session, roster, seed, start)
+        })?;
+        record("reset_returned", 0, &stages);
         let mut rng = [
             SplitMix64::seed(seed ^ 0x3ac6_352a_54aa_8ba0),
             SplitMix64::seed(seed ^ 0xda7a_2418_d42e_9b1d),
         ];
         let mut retained = [0; 2];
         loop {
-            let decision = match session.current_response() {
+            let response = measure_stage(
+                stages.as_mut().map(|stage| &mut stage.current_response),
+                || session.current_response(),
+            );
+            let decision = match response {
                 FastActorResponseV1::Decision(decision) => decision,
                 FastActorResponseV1::Terminal(terminal) => {
                     if terminal.terminal_classification != TerminalClassificationV1::Natural {
@@ -264,30 +395,37 @@ fn game(
                 "seat {actor} step {} {:?} native width {}",
                 decision.step, decision.decision_kind, decision.legal_action_count
             );
-            let bound = session
-                .encode(decision)
-                .map_err(|error| format!("encode {context}: {error}"))?;
+            let bound = measure_stage(stages.as_mut().map(|stage| &mut stage.encode), || {
+                session.encode(decision)
+            })
+            .map_err(|error| format!("encode {context}: {error}"))?;
             // Combat projection can remove an infeasible native answer.
             // Selection and the receipt both use the sealed public ordinals.
             let legal = u32::try_from(bound.packet().actions().len())
                 .map_err(|_| format!("sealed action count exceeds u32: {context}"))?;
             let input = if model_seat.is_none_or(|seat| seat == actor) {
                 Some(
-                    session
-                        .training_input_v1(&bound)
-                        .map_err(|error| format!("tensor {context}: {error}"))?,
+                    measure_stage(
+                        stages.as_mut().map(|stage| &mut stage.authenticated_input),
+                        || session.training_input_v1(&bound),
+                    )
+                    .map_err(|error| format!("tensor {context}: {error}"))?,
                 )
             } else {
                 None
             };
             let scores = match &input {
-                Some(input) => model
-                    .forward(input)
-                    .map_err(|error| format!("inference {context}: {error}"))?,
+                Some(input) => measure_stage(
+                    stages.as_mut().map(|stage| &mut stage.model_forward),
+                    || model.forward(input),
+                )
+                .map_err(|error| format!("inference {context}: {error}"))?,
                 None => vec![0.; legal as usize],
             };
-            let selected = sample(&scores, &mut rng[actor])
-                .map_err(|error| format!("sample {context}: {error}"))?;
+            let selected = measure_stage(stages.as_mut().map(|stage| &mut stage.sample), || {
+                sample(&scores, &mut rng[actor])
+            })
+            .map_err(|error| format!("sample {context}: {error}"))?;
             let retain = collect && scores.len() > 1 && retained[actor] < RETAIN_PER_SEAT;
             if retain {
                 retained[actor] += 1;
@@ -309,11 +447,16 @@ fn game(
                 selected,
                 retained_for_update: retain,
             });
-            session
-                .apply(&bound, selected as u32)
-                .map_err(|error| format!("apply {context}: {error}"))?;
+            measure_stage(stages.as_mut().map(|stage| &mut stage.apply), || {
+                session.apply(&bound, selected as u32)
+            })
+            .map_err(|error| format!("apply {context}: {error}"))?;
+            if stages.is_some() && receipt.actions.len().is_multiple_of(DIAGNOSTIC_INTERVAL) {
+                record("progress", receipt.actions.len(), &stages);
+            }
         }
     })();
+    record("returned", receipt.actions.len(), &stages);
     match attempt {
         Ok(reward) => receipt.reward = Some(reward),
         Err(error) => receipt.failure = Some(error),
@@ -326,19 +469,22 @@ fn pair(
     roster: [(&str, &[u8]); 2],
     seed: u64,
     model: &ModelV1,
-    collect: bool,
+    phase: PairPhase,
     workers: usize,
+    diagnostics: Option<&Diagnostics>,
 ) -> [Game; 2] {
-    let one = |leg| game(session, roster, seed, leg, model, collect);
-    if workers == 1 {
-        [one(0), one(1)]
-    } else {
-        std::thread::scope(|scope| {
-            let first = scope.spawn(|| one(0));
-            let second = one(1);
-            [first.join().expect("first leg worker panicked"), second]
-        })
-    }
+    measure_phase(diagnostics, phase.name(), || {
+        let one = |leg| game(session, roster, seed, leg, model, phase, diagnostics);
+        if workers == 1 {
+            [one(0), one(1)]
+        } else {
+            std::thread::scope(|scope| {
+                let first = scope.spawn(|| one(0));
+                let second = one(1);
+                [first.join().expect("first leg worker panicked"), second]
+            })
+        }
+    })
 }
 
 fn write_atomic(root: &Path, name: &str, value: &impl Serialize) -> Result<String> {
@@ -367,19 +513,34 @@ struct Training {
     games: [GameReceipt; 2],
 }
 
-fn train(session: Session, root: &Path, workers: usize) -> Result<Training> {
+fn train(
+    session: Session,
+    root: &Path,
+    workers: usize,
+    diagnostics: Option<&Diagnostics>,
+) -> Result<Training> {
     let mut learner = LearnerV1::new(ModelV1::deterministic_fixture(), adam())
         .map_err(|error| error.to_string())?;
     let initial = learner.snapshot();
-    let games = pair(session, TRAIN, TRAIN_SEED, learner.model(), true, workers);
+    let games = pair(
+        session,
+        TRAIN,
+        TRAIN_SEED,
+        learner.model(),
+        PairPhase::Training,
+        workers,
+        diagnostics,
+    );
     if games.iter().any(|game| game.receipt.reward.is_none()) {
-        write_atomic(
-            root,
-            "failed-training.json",
-            &json!({
-                "config": config(session), "initial": initial, "games": games.map(|game| game.receipt),
-            }),
-        )?;
+        measure_phase(diagnostics, "failed_training_publication", || {
+            write_atomic(
+                root,
+                "failed-training.json",
+                &json!({
+                    "config": config(session), "initial": initial, "games": games.map(|game| game.receipt),
+                }),
+            )
+        })?;
         return Err("training pair did not finish naturally. See failed-training.json".into());
     }
     let batch = games
@@ -394,8 +555,7 @@ fn train(session: Session, root: &Path, workers: usize) -> Result<Training> {
         })
         .collect::<Vec<_>>();
     let initial_parameters = learner.model().parameters().to_vec();
-    let updated = learner
-        .update_terminal(&batch)
+    let updated = measure_phase(diagnostics, "terminal_update", || learner.update_terminal(&batch))
         .map_err(|error| error.to_string())
         .and_then(|loss| {
             if learner.model().parameters() == initial_parameters.as_slice() {
@@ -412,13 +572,15 @@ fn train(session: Session, root: &Path, workers: usize) -> Result<Training> {
             games: games.map(|game| game.receipt),
         }),
         Err(error) => {
-            write_atomic(
-                root,
-                "failed-training.json",
-                &json!({
-                    "config": config(session), "initial": initial, "games": games.map(|game| game.receipt), "update_error": error.to_string(),
-                }),
-            )?;
+            measure_phase(diagnostics, "failed_training_publication", || {
+                write_atomic(
+                    root,
+                    "failed-training.json",
+                    &json!({
+                        "config": config(session), "initial": initial, "games": games.map(|game| game.receipt), "update_error": error.to_string(),
+                    }),
+                )
+            })?;
             Err(format!("training update: {error}"))
         }
     }
@@ -457,6 +619,7 @@ fn run(
     root: &Path,
     workers: usize,
     resume: Option<(PathBuf, String)>,
+    stage_diagnostics: bool,
 ) -> Result<()> {
     let local = root.join("training.json");
     let resumed = resume
@@ -464,20 +627,40 @@ fn run(
         .map(|(path, digest)| load_training(session, path, Some(digest)))
         .transpose()?;
     fs::create_dir(root).map_err(|error| format!("{}: {error}", root.display()))?;
+    let diagnostics = stage_diagnostics
+        .then(|| Diagnostics::create(root))
+        .transpose()?;
+    let diagnostics = diagnostics.as_ref();
     let (training, parent_sha256) = if let Some(training) = resumed {
         training
     } else {
-        let training = train(session, root, workers)?;
-        write_atomic(root, "training.json", &training)?;
-        load_training(session, &local, None)?
+        let training = train(session, root, workers, diagnostics)?;
+        measure_phase(diagnostics, "training_publication", || {
+            write_atomic(root, "training.json", &training)
+        })?;
+        measure_phase(diagnostics, "training_reload", || {
+            load_training(session, &local, None)
+        })?
     };
-    let initial = LearnerV1::restore(training.initial).map_err(|error| error.to_string())?;
-    let trained = LearnerV1::restore(training.trained).map_err(|error| error.to_string())?;
-    let eval = |learner: &LearnerV1| {
-        pair(session, EVAL, EVAL_SEED, learner.model(), false, workers).map(|g| g.receipt)
+    let (initial, trained) = measure_phase(diagnostics, "evaluation_restore", || {
+        let initial = LearnerV1::restore(training.initial).map_err(|error| error.to_string())?;
+        let trained = LearnerV1::restore(training.trained).map_err(|error| error.to_string())?;
+        Ok::<_, String>((initial, trained))
+    })?;
+    let eval = |learner: &LearnerV1, phase| {
+        pair(
+            session,
+            EVAL,
+            EVAL_SEED,
+            learner.model(),
+            phase,
+            workers,
+            diagnostics,
+        )
+        .map(|g| g.receipt)
     };
-    let initial_eval = eval(&initial);
-    let trained_eval = eval(&trained);
+    let initial_eval = eval(&initial, PairPhase::InitialEvaluation);
+    let trained_eval = eval(&trained, PairPhase::TrainedEvaluation);
     let complete = initial_eval
         .iter()
         .chain(&trained_eval)
@@ -494,7 +677,9 @@ fn run(
     let result = json!({"config": config(session), "training_sha256": parent_sha256,
         "initial_wdl": tally(&initial_eval), "trained_wdl": tally(&trained_eval),
         "complete": complete, "initial": initial_eval, "trained": trained_eval});
-    let result_hash = write_atomic(root, "evaluation.json", &result)?;
+    let result_hash = measure_phase(diagnostics, "evaluation_publication", || {
+        write_atomic(root, "evaluation.json", &result)
+    })?;
     if !complete {
         return Err(
             "fixed opponent evaluation did not finish naturally. See evaluation.json".into(),
@@ -506,9 +691,13 @@ fn run(
 
 fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let (stage_diagnostics, args) = match args.as_slice() {
+        [flag, tail @ ..] if flag == "--stage-diagnostics" => (true, tail),
+        args => (false, args),
+    };
     let parse = || -> Result<(Session, PathBuf, usize, Option<(PathBuf, String)>)> {
-        let usage = "kernel_limited_training_v1 [-session return|full-pool] OUT_DIR 1|2 [TRAINING_JSON SHA256]";
-        let (session, positional) = match args.as_slice() {
+        let usage = "kernel_limited_training_v1 [--stage-diagnostics] [-session return|full-pool] OUT_DIR 1|2 [TRAINING_JSON SHA256]";
+        let (session, positional) = match args {
             [flag, value, tail @ ..] if flag == "-session" => {
                 let session = match value.to_str() {
                     Some("return") => Session::Return,
@@ -537,9 +726,9 @@ fn main() {
         };
         Ok((session, PathBuf::from(out), workers, resume))
     };
-    if let Err(error) =
-        parse().and_then(|(session, root, workers, resume)| run(session, &root, workers, resume))
-    {
+    if let Err(error) = parse().and_then(|(session, root, workers, resume)| {
+        run(session, &root, workers, resume, stage_diagnostics)
+    }) {
         eprintln!("{error}");
         std::process::exit(2);
     }
@@ -548,6 +737,38 @@ fn main() {
 #[cfg(all(test, not(feature = "standard-magezero-fixtures")))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stage_diagnostics_preserve_failed_calls_and_publish_completed_lines() {
+        let root = std::env::temp_dir().join(format!(
+            "limited-training-stage-diagnostics-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let diagnostics = Diagnostics::create(&root).unwrap();
+        let mut stages = GameStages::default();
+        let result = measure_phase(Some(&diagnostics), "test_phase", || {
+            measure_stage(Some(&mut stages.reset), || Err::<(), _>("test failure"))
+        });
+        assert_eq!(result, Err("test failure"));
+        assert_eq!(stages.reset.count, 1);
+        assert_eq!(stages.reset.total_ns, stages.reset.max_ns);
+        assert_eq!(stages.apply.count, 0);
+
+        let path = root.join("stage-diagnostics.jsonl");
+        let contents = fs::read_to_string(&path).unwrap();
+        let rows: Vec<Value> = contents
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        drop(diagnostics);
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(root).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["event"]["checkpoint"], "started");
+        assert_eq!(rows[1]["event"]["checkpoint"], "returned");
+        assert!(rows[1]["event"]["duration_ns"].as_u64().is_some());
+    }
 
     #[test]
     fn full_pool_original_draftzero_pairs_reach_the_sealed_learner() {
