@@ -582,7 +582,10 @@ fn full_text_ignores_layer_six_removal_but_activation_does_not() {
     let _ = crate::trigger::collect_and_process(&mut state);
     let text = top_creature_text(&state, host).unwrap();
     assert_eq!(text.definition().name, "Masticore");
-    for selector in [FullTextAbilityV1::Printed(0), FullTextAbilityV1::RetainedDiscard] {
+    for selector in [
+        FullTextAbilityV1::Printed(0),
+        FullTextAbilityV1::RetainedDiscard,
+    ] {
         assert_eq!(
             text.freeze_activated(&state, selector).unwrap_err(),
             "full-text ability was removed in a later layer",
@@ -737,12 +740,7 @@ fn full_text_retained_activation_requires_mana_but_not_hand_or_supported_donor()
     let mut state = game();
     state.step = crate::state::Step::Main1;
     let host = host(&mut state);
-    put(
-        &mut state,
-        PlayerId::P0,
-        VOLRATH,
-        Zone::Graveyard,
-    );
+    put(&mut state, PlayerId::P0, VOLRATH, Zone::Graveyard);
     let text = top_creature_text(&state, host).unwrap();
     assert_eq!(text.definition().capability, CardCapability::Partial);
     assert_eq!(

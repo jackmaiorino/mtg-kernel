@@ -614,7 +614,9 @@ pub(crate) fn legal_targets(state: &GameState, facts: HistoricalDamageSourceV1) 
             !crate::source_power_activation_v1::protected(state, facts, id)
                 && !(cfg!(feature = "eternal-fixtures")
                     && crate::eternal_pauper_e6b_v1::protected_from_colors(
-                        state, id, facts.color_mask,
+                        state,
+                        id,
+                        facts.color_mask,
                     ))
                 && !crate::source_type_hexproof_v1::protects_from_source(
                     state,
