@@ -1740,6 +1740,113 @@ fn minsc_and_boo_make_boo_grow_it_and_fling_it() {
 }
 
 #[test]
+fn minsc_hamster_draw_resumes_after_damage_and_fizzles_with_its_target_both_seats() {
+    use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
+
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(&["Island"; 12]);
+        state.active_player = actor;
+        state.priority_player = actor;
+        let minsc = put(&mut state, actor, "Minsc & Boo, Timeless Heroes", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R, ManaColor::G], 2);
+        cast(&mut state, minsc, &[]);
+        settle_picking(&mut state, 1, None);
+        let [boo] = controls(&state, actor, "Boo Token").try_into().unwrap();
+        activate(&mut state, minsc, 0, &[Target::Object(boo)]);
+        settled(&mut state);
+        to_main(&mut state, actor);
+        assert_eq!(power_toughness(&state, boo), (4, 4));
+        let other_target = put(&mut state, opponent, "Wall of Blossoms", Zone::Battlefield);
+        let bounce = put(&mut state, actor, "Echoing Truth", Zone::Hand);
+        activate(&mut state, minsc, 1, &[]);
+        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets {
+            player, legal_targets, .. }) if player == actor
+                && legal_targets.as_slice() == [Target::Object(boo)]));
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(boo)));
+        assert!(matches!(next(&mut state), Decision::ChooseTargets {
+            player, legal_targets, .. } if player == actor
+                && legal_targets.contains(&Target::Object(other_target))
+                && legal_targets.contains(&Target::Player(opponent))));
+        assert_eq!(loyalty(&state, minsc), Some(2));
+
+        // Removing the only announced target makes the entire trigger fizzle.
+        let mut fizzled: GameState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let library_before = fizzled.players[actor.index()].library.clone();
+        act(&mut fizzled, Action::ChooseTarget(Target::Object(other_target)));
+        pool(&mut fizzled, actor, &[ManaColor::U], 1);
+        cast(&mut fizzled, bounce, &[Target::Object(other_target)]);
+        settled(&mut fizzled);
+        assert_eq!(zone(&fizzled, other_target), Zone::Hand);
+        assert_eq!(fizzled.players[actor.index()].library, library_before);
+        assert!(!fizzled.engine.event_history.iter().any(|event|
+            matches!(event, CommittedEvent::Damage { source, .. } if *source == minsc)));
+
+        act(&mut state, Action::ChooseTarget(Target::Player(opponent)));
+        pool(&mut state, actor, &[ManaColor::U], 1);
+        cast(&mut state, bounce, &[Target::Object(minsc)]);
+        pass_until(&mut state, |state| zone(state, minsc) == Zone::Hand);
+        assert_eq!(state.players[opponent.index()].life, 20);
+        assert_eq!(state.stack.last().unwrap().source, minsc);
+        let damage_count = |state: &GameState| state.engine.event_history.iter()
+            .filter(|event| matches!(event,
+                CommittedEvent::Damage { source, target: Target::Player(player), amount: 4 }
+                    if *source == minsc && *player == opponent)).count();
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
+        let library = state.players[actor.index()].library.clone();
+        let before_draws = serde_json::to_vec(&state).unwrap();
+        let prompt = settle(&mut state).expect("Minsc & Boo's first replacement choice");
+        assert!(matches!(&prompt, Decision::ChooseEffectTargets {
+            player, source, legal_targets, can_finish: true, .. }
+            if *player == actor && *source == minsc && legal_targets.as_slice() == [Target::Object(thug)]));
+        assert_eq!(state.players[opponent.index()].life, 16);
+        assert_eq!(damage_count(&state), 1);
+        let snapshot = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
+        assert_eq!(next(&mut restored), prompt);
+        act(&mut restored, Action::ChooseEffectTarget(Target::Object(thug)));
+        settled(&mut restored);
+        assert_eq!(zone(&restored, thug), Zone::Hand);
+        assert_eq!(restored.players[actor.index()].library, library[4..]);
+        assert_eq!(controls(&restored, opponent, "Treasure Token").len(), 3);
+        assert_eq!(damage_count(&restored), 1);
+
+        let mut declined: GameState = serde_json::from_slice(&snapshot).unwrap();
+        settle_with(&mut declined, |_, decision| {
+            assert!(matches!(decision, Decision::ChooseEffectTargets {
+                player, source, can_finish: true, .. } if player == actor && source == minsc));
+            Action::FinishEffectSelection
+        });
+        assert_eq!(declined.players[actor.index()].library, library);
+        assert_eq!(controls(&declined, opponent, "Treasure Token").len(), 4);
+        assert_eq!(damage_count(&declined), 1);
+
+        let mut forged = serde_json::to_value(&state).unwrap();
+        let at = forged["engine"]["event_history"].as_array_mut().unwrap()
+            .iter_mut().find_map(|event| {
+                event.get_mut("EternalOwnedDrawV1")?.get_mut("journal")?
+                    .get_mut("MinscDamageCompleted")?.get_mut("published_at")
+            }).unwrap();
+        *at = serde_json::json!(0);
+        let forged: GameState = serde_json::from_value(forged).unwrap();
+        assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err());
+
+        let mut terminal: GameState = serde_json::from_slice(&before_draws).unwrap();
+        event::propose_and_commit_batch(&mut terminal, library.iter().copied()
+            .map(|card| ProposedEvent::zone_change(card, Zone::Exile)).collect());
+        let jace = put(&mut terminal, actor, "Jace, Wielder of Mysteries", Zone::Battlefield);
+        assert!(matches!(settle(&mut terminal), Some(Decision::ChooseEffectTargets {
+            player, source, legal_targets, can_finish: true, .. })
+            if player == actor && source == minsc && legal_targets.as_slice() == [Target::Object(jace)]));
+        act(&mut terminal, Action::ChooseEffectTarget(Target::Object(jace)));
+        assert!(matches!(next(&mut terminal), Decision::GameOver { winner: Some(player) } if player == actor));
+        assert_eq!(damage_count(&terminal), 1);
+        assert!(controls(&terminal, opponent, "Treasure Token").is_empty());
+    }
+}
+
+#[test]
 fn avatar_of_burgeoning_echoes_empowers_jace_and_grants_its_ability() {
     let mut state = islands();
     let avatar = put(
