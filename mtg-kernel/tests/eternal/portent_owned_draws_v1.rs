@@ -743,10 +743,11 @@ fn paid_portent_pending_order_sources_remain_original_after_hidden_return() {
                 .pending_triggers;
             assert_eq!(pending.len(), 2);
             for (pending, original) in pending.iter().zip(&sources) {
-                assert_eq!(pending.source.arena_id, original.source.0);
-                assert_eq!(pending.source.zone, Zone::Stack);
-                assert_eq!(pending.source.zone_change_count, original.zone_change_count);
-                assert_eq!(pending.source.controller, actor.into());
+                let source = pending.source.as_ref().expect("authenticated original source");
+                assert_eq!(source.arena_id, original.source.0);
+                assert_eq!(source.zone, Zone::Stack);
+                assert_eq!(source.zone_change_count, original.zone_change_count);
+                assert_eq!(source.controller, actor.into());
             }
             let choices = legal_action_candidates_v5(&decision, branch).unwrap();
             assert_eq!(choices.len(), 2);
@@ -761,7 +762,7 @@ fn paid_portent_pending_order_sources_remain_original_after_hidden_return() {
                     pending_sources,
                     &pending
                         .iter()
-                        .map(|row| row.source.clone())
+                        .map(|row| row.source.clone().expect("authenticated original source"))
                         .collect::<Vec<_>>()
                 );
             }
