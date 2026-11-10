@@ -579,7 +579,17 @@ fn play_frozen_feb_mirror(
             labels
                 .iter()
                 .enumerate()
-                .min_by_key(|&(ordinal, label)| (feb_action_rank(label), ordinal))
+                .min_by_key(|&(ordinal, label)| {
+                    // Native attack subsets are ordered from smaller masks to
+                    // larger masks. Prefer the last legal nonempty group so a
+                    // first zero-power attacker cannot starve later attackers.
+                    let tie = if label.starts_with("Attack with ") && *label != "Attack with none" {
+                        usize::MAX - ordinal
+                    } else {
+                        ordinal
+                    };
+                    (feb_action_rank(label), tie)
+                })
                 .expect("FEB decision has a legal action")
                 .0
         };

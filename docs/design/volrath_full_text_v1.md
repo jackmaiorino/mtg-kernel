@@ -87,8 +87,9 @@ open.
 The terminal fixture uses the frozen mirror at seed `20261108` with each
 starting seat and the catalog harness's 65,536 physical-action cap. The
 public-menu policy keeps the dealt hand, plays lands and spells, and chooses
-nonempty attacks and blocks. It uses native order to break ties and passes
-before optional activations. An unsupported decision or Human action meaning
+nonempty attacks and blocks. It prefers the last legal nonempty attack group
+and otherwise uses the first native ordinal to break ties. It passes before
+optional activations. An unsupported decision or Human action meaning
 fails the fixture. A fresh reset must replay the recorded actor, menu and
 native ordinal sequence to the same natural result, state hash and event
 history. The fixture also restores a same-owner cast boundary and checks
