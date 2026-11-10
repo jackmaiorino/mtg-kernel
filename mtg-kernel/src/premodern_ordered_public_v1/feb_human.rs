@@ -5,8 +5,13 @@ use crate::premodern_ordered_public_v1::{
     HumanFullTextProducerV1, HumanGraveyardV1, HumanObservationV1, HumanOrderPromptV1,
 };
 use crate::{
+    effect::{self, EffectOp, EffectOptionChoicePurpose, PendingEffectChoice, PlayerRef},
+    eternal_cards_v1::EternalOpV1,
+    eternal_legacy_e7a_v1::E7aOpV1,
     full_text_v1::FullTextAbilityV1,
     rl::{ActionSemanticV1 as A, CardStableRefV1, TargetRefV1},
+    standard_cards_v1::StandardOpV1,
+    state::{StackItemKind, Zone},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -151,11 +156,95 @@ fn names(cards: &[CardStableRefV1]) -> Result<String, String> {
         .join(", "))
 }
 
+struct CabalTherapyMenu {
+    source: CardStableRefV1,
+    labels: Vec<String>,
+}
+
+fn cabal_therapy_name(option: &EffectOp) -> Option<&'static str> {
+    let EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E7aV1(
+        E7aOpV1::TherapyV1 { named },
+    ))) = option
+    else {
+        return None;
+    };
+    Some(CARD_DEFS.get(usize::from(*named))?.object_name)
+}
+
+fn cabal_therapy_menu(state: &GameState, viewer: PlayerId) -> Option<CabalTherapyMenu> {
+    let pending = state.engine.pending_effect.as_ref()?;
+    let PendingEffectChoice::ChooseOption {
+        player,
+        path,
+        options,
+        purpose: EffectOptionChoicePurpose::Generic,
+    } = pending.choice.as_ref()?
+    else {
+        return None;
+    };
+    let spell = &pending.resolving_item;
+    let source = rl::card_ref(state, spell.source).ok()?;
+    if *player != viewer
+        || spell.controller != viewer
+        || spell.kind != StackItemKind::Spell
+        || spell.inline_effect.is_some()
+        || spell.is_copy
+        || source.zone != Zone::Stack
+        || Some(source.card_db_id) != card_id_by_name("Cabal Therapy")
+        || !pending.frames.is_empty()
+        || pending.answered_choice_guard.is_some()
+        || path.len() > 1
+    {
+        return None;
+    }
+    effect::validate_pending_effect_choice(state).ok()?;
+
+    // Generic native choices validate their operations individually. Bind this
+    // menu to the ordered options of the printed spell at the same path.
+    let definition = &CARD_DEFS[usize::from(source.card_db_id)];
+    let printed = definition.printed_mode_effect(spell.mode_chosen)?;
+    let EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: printed_options,
+    } = effect::effect_op_at_structural_path(&printed, path)?
+    else {
+        return None;
+    };
+    if options != printed_options {
+        return None;
+    }
+
+    let labels = options
+        .iter()
+        .map(|option| {
+            if path.is_empty() {
+                let EffectOp::Choice {
+                    controller: PlayerRef::Controller,
+                    options,
+                } = option
+                else {
+                    return None;
+                };
+                let letter = cabal_therapy_name(options.first()?)?
+                    .chars()
+                    .next()?
+                    .to_ascii_uppercase();
+                Some(format!("Choose names starting with {letter} for Cabal Therapy"))
+            } else {
+                let name = cabal_therapy_name(option)?;
+                Some(format!("Name {name} for Cabal Therapy"))
+            }
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(CabalTherapyMenu { source, labels })
+}
+
 fn label(
     state: &GameState,
     row: &NumericNativeActionV1,
     viewer: PlayerSeatV1,
     graveyards: &[GraveyardV1; 2],
+    cabal_therapy: Option<&CabalTherapyMenu>,
 ) -> Result<Option<String>, String> {
     let action = &row.action.semantic;
     Ok(Some(match action {
@@ -238,6 +327,21 @@ fn label(
         A::FinishEffectSelection { .. } | A::FinishTargetSelection { .. } => {
             "Finish selecting".into()
         }
+        A::ChooseEffectOption {
+            actor,
+            source,
+            option_index,
+            option_count,
+        } => {
+            return Ok(cabal_therapy
+                .filter(|menu| {
+                    *actor == viewer
+                        && *source == menu.source
+                        && usize::from(*option_count) == menu.labels.len()
+                })
+                .and_then(|menu| menu.labels.get(usize::from(*option_index)))
+                .cloned());
+        }
         A::ChooseEffectColor { color, .. } => format!("Choose {color:?}"),
         A::ChooseEffectNumber { number, .. } => format!("Choose {number}"),
         A::Discard { cards, .. } => format!("Discard {}", names(cards)?),
@@ -300,13 +404,20 @@ impl FebSessionV1 {
                     label: label.clone(),
                 })
                 .collect(),
-            Some(NumericMenuV1::Native { actions }) => actions
-                .iter()
-                .zip(action_values)
-                .enumerate()
-                .map(|(native_ordinal, (row, action))| {
-                    Ok(
-                        match label(state, row, viewer, &view.observation.ordered.graveyards)? {
+            Some(NumericMenuV1::Native { actions }) => {
+                let cabal_therapy = cabal_therapy_menu(state, seat);
+                actions
+                    .iter()
+                    .zip(action_values)
+                    .enumerate()
+                    .map(|(native_ordinal, (row, action))| {
+                        Ok(match label(
+                            state,
+                            row,
+                            viewer,
+                            &view.observation.ordered.graveyards,
+                            cabal_therapy.as_ref(),
+                        )? {
                             Some(label) => FebHumanActionV1::Supported {
                                 native_ordinal,
                                 label,
@@ -318,10 +429,10 @@ impl FebSessionV1 {
                                     .unwrap_or("unknown")
                                     .into(),
                             },
-                        },
-                    )
-                })
-                .collect::<Result<Vec<_>, String>>()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?
+            }
         };
         let scene = view.observation.stable.map(|stable| FebHumanSceneV1 {
             turn: stable.projection.turn,

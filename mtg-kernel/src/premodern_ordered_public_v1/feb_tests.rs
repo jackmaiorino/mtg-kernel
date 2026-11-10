@@ -300,6 +300,129 @@ fn frozen_feb_human_distinguishes_paid_krosan_reclamation_graveyard_targets() {
 }
 
 #[test]
+fn frozen_feb_human_names_and_resolves_paid_cabal_therapy_both_seats() {
+    use crate::effect::PendingEffectChoice;
+
+    for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+        let caster = native_seat(seat);
+        let opponent = caster.opponent();
+        let other_viewer = opponent.into();
+        let mut owner = main_phase_owner(460_620, seat);
+        let state = &mut owner.inner.game;
+        let therapy = stage_deck_card(state, caster, "Cabal Therapy", Zone::Hand);
+        let nonmatch = stage_deck_card(state, opponent, "Palinchron", Zone::Hand);
+        let wall = card_id_by_name("Wall of Roots").unwrap();
+        let target = &state.players[opponent.index()];
+        let matching = target
+            .hand
+            .iter()
+            .chain(&target.library)
+            .copied()
+            .filter(|&card| state.objects.get(card).card_def == wall)
+            .collect::<Vec<_>>();
+        assert_eq!(matching.len(), 3);
+        for &card in &matching {
+            if state.objects.get(card).zone != Zone::Hand {
+                propose_and_commit(state, ProposedEvent::zone_change(card, Zone::Hand));
+            }
+        }
+        state.players[caster.index()].mana_pool[ManaColor::B.pool_index()] = 1;
+        owner.inner.current = bind_next(state, &mut owner.inner.surface, owner.inner.step);
+        choose_label(&mut owner, seat, "Begin casting Cabal Therapy");
+        choose_label(&mut owner, seat, "Choose your opponent for Cabal Therapy");
+        for _ in 0..8 {
+            if owner.inner.game.engine.pending_effect.is_some() {
+                break;
+            }
+            let viewer = acting(&owner);
+            choose_label(&mut owner, viewer, "Pass priority");
+        }
+        let state = &owner.inner.game;
+        assert_eq!(state.objects.get(therapy).zone, Zone::Stack);
+        assert_eq!(state.players[caster.index()].mana_pool, [0; 6]);
+        assert!(state.known_hand_cards(caster, opponent).is_empty());
+
+        for expected in [
+            "Choose names starting with W for Cabal Therapy",
+            "Name Wall of Roots for Cabal Therapy",
+        ] {
+            let human = owner.human_current(seat).unwrap().unwrap();
+            let (numeric, token) = issued(&owner, seat);
+            let token = token.unwrap();
+            assert_eq!(human.actions.len(), numeric.actions.len());
+            assert!(human.actions.len() > 1);
+            for (ordinal, row) in human.actions.iter().enumerate() {
+                assert!(matches!(row, FebHumanActionV1::Supported { native_ordinal, .. }
+                    if *native_ordinal == ordinal));
+            }
+            for rendered in [serde_json::to_string(&human).unwrap(), format!("{human:?}")] {
+                assert!(!rendered.contains("arena_id"));
+                assert!(!rendered.contains("zone_change_count"));
+                assert!(!rendered.contains("TherapyV1"));
+            }
+            let other = owner.human_current(other_viewer).unwrap().unwrap();
+            assert!(other.actions.is_empty());
+            let (other, other_token) = issued(&owner, other_viewer);
+            assert!(other.actions.is_empty() && other_token.is_none());
+
+            let snapshot = owner.snapshot();
+            let Some(PendingEffectChoice::ChooseOption { options, .. }) = owner
+                .inner
+                .game
+                .engine
+                .pending_effect
+                .as_mut()
+                .and_then(|pending| pending.choice.as_mut())
+            else {
+                panic!("Cabal Therapy did not reach a native naming stage");
+            };
+            options.swap(0, 1);
+            let reordered = owner.human_current(seat).unwrap().unwrap();
+            assert_eq!(reordered.actions.len(), human.actions.len());
+            assert!(reordered.actions.iter().all(|row| matches!(
+                row,
+                FebHumanActionV1::Unsupported { action_kind, .. }
+                    if action_kind == "choose_effect_option"
+            )));
+            assert!(owner.step_human(&token, 0).is_err());
+
+            owner.restore(&snapshot).unwrap();
+            assert!(owner.step_human(&token, 0).is_err());
+            assert_eq!(owner.human_current(seat).unwrap().unwrap(), human);
+            assert_eq!(issued(&owner, seat).0.actions, numeric.actions);
+            choose_label(&mut owner, seat, expected);
+        }
+
+        for _ in 1..matching.len() {
+            assert_eq!(acting(&owner), other_viewer);
+            choose_label(&mut owner, other_viewer, "Place Wall of Roots next");
+        }
+        let state = &owner.inner.game;
+        assert!(state.stack.is_empty());
+        assert_eq!(state.objects.get(therapy).zone, Zone::Graveyard);
+        let target = &state.players[opponent.index()];
+        assert_eq!(target.graveyard.len(), matching.len());
+        assert!(matching.iter().all(|card| target.graveyard.contains(card)));
+        for card in matching {
+            assert!(state.engine.event_history.iter().any(|event| matches!(
+                event,
+                crate::event::CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Hand,
+                    to: Zone::Graveyard,
+                    ..
+                } if *object == card
+            )));
+        }
+        assert!(target.hand.contains(&nonmatch));
+        assert!(state
+            .known_hand_cards(caster, opponent)
+            .iter()
+            .any(|card| card.object == nonmatch));
+    }
+}
+
+#[test]
 fn frozen_feb_human_order_exposes_only_presentation_and_sealed_ordinals() {
     for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
         let p = native_seat(seat);
