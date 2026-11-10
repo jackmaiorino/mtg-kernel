@@ -33,8 +33,10 @@ fn pool(state: &mut GameState, player: PlayerId, colors: &[ManaColor], generic: 
 }
 
 fn cast(state: &mut GameState, spell: ObjectId) {
-    assert!(matches!(next(state), Decision::CastSpellOrPass { castable_spells, .. }
-        if castable_spells.contains(&spell)));
+    assert!(
+        matches!(next(state), Decision::CastSpellOrPass { castable_spells, .. }
+        if castable_spells.contains(&spell))
+    );
     act(state, Action::CastSpell(spell));
 }
 
@@ -48,8 +50,11 @@ fn cast_volrath(state: &mut GameState, player: PlayerId) -> ObjectId {
 fn settle(state: &mut GameState) -> Option<Decision> {
     for _ in 0..32 {
         match next(state) {
-            Decision::CastSpellOrPass { .. } if state.stack.is_empty()
-                && state.engine.pending_triggers.is_empty() => return None,
+            Decision::CastSpellOrPass { .. }
+                if state.stack.is_empty() && state.engine.pending_triggers.is_empty() =>
+            {
+                return None
+            }
             Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
             other => return Some(other),
         }
@@ -66,7 +71,13 @@ fn resolve_untap(state: &mut GameState, player: PlayerId, source: ObjectId, land
         Some(Decision::ChooseEffectTargets { player: chooser, source: host, legal_targets, .. })
             if chooser == player && host == source && legal_targets.contains(&Target::Object(land))));
     act(state, Action::ChooseEffectTarget(Target::Object(land)));
-    if matches!(next(state), Decision::ChooseEffectTargets { can_finish: true, .. }) {
+    if matches!(
+        next(state),
+        Decision::ChooseEffectTargets {
+            can_finish: true,
+            ..
+        }
+    ) {
         act(state, Action::FinishEffectSelection);
     }
     settled(state);
@@ -86,7 +97,10 @@ fn volrath_native_registration_retains_paid_discard_with_no_or_unsupported_text_
             assert_eq!(state.objects.get(source).card_def, id(VOLRATH));
             assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
             assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
-            assert_eq!(active_text(&state, source).map(|text| text.donor().object), donor);
+            assert_eq!(
+                active_text(&state, source).map(|text| text.donor().object),
+                donor
+            );
             if donor_name != Some("Abyssal Harvester") {
                 assert_eq!(engine::effective_power(&state, source), 0);
                 assert_eq!(engine::effective_toughness(&state, source), 1);
@@ -95,26 +109,41 @@ fn volrath_native_registration_retains_paid_discard_with_no_or_unsupported_text_
                 let mut legacy = state.clone();
                 legacy.engine.runtime_rules = RuntimeRulesV1::default();
                 for observer in [player, player.opponent()] {
-                    assert!(crate::rl::observe_v1(&legacy, observer, 0).unwrap_err().0
+                    assert!(crate::rl::observe_v1(&legacy, observer, 0)
+                        .unwrap_err()
+                        .0
                         .contains("full-text characteristics"));
                 }
             }
 
             pool(&mut state, player, &[], 2);
-            let Decision::CastSpellOrPass { activatable_abilities, .. } = next(&mut state) else {
+            let Decision::CastSpellOrPass {
+                activatable_abilities,
+                ..
+            } = next(&mut state)
+            else {
                 panic!("expected native activation choices");
             };
             assert_eq!(
-                activatable_abilities.iter().copied().filter(|(object, _)| *object == source).collect::<Vec<_>>(),
+                activatable_abilities
+                    .iter()
+                    .copied()
+                    .filter(|(object, _)| *object == source)
+                    .collect::<Vec<_>>(),
                 [(source, 0)],
             );
             act(&mut state, Action::ActivateAbility(source, 0));
-            assert!(matches!(settle(&mut state), Some(Decision::Discard { player: chooser, choices, count: 1 })
-                if chooser == player && choices.contains(&discarded) && choices.contains(&kept)));
+            assert!(
+                matches!(settle(&mut state), Some(Decision::Discard { player: chooser, choices, count: 1 })
+                if chooser == player && choices.contains(&discarded) && choices.contains(&kept))
+            );
             assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
             act(&mut state, Action::Discard(vec![discarded]));
             settled(&mut state);
-            assert_eq!(state.players[player.index()].graveyard.last(), Some(&discarded));
+            assert_eq!(
+                state.players[player.index()].graveyard.last(),
+                Some(&discarded)
+            );
             assert!(state.players[player.index()].hand.contains(&kept));
             assert!(active_text(&state, source).is_none());
         }
@@ -130,43 +159,81 @@ fn volrath_native_mixed_batch_records_real_entry_and_order_both_seats() {
         let other = put(&mut state, player, "Triskelion", Zone::Library);
         let land = put(&mut state, player, "Island", Zone::Battlefield);
         state.objects.get_mut(land).tapped = true;
-        event::propose_and_commit_batch(&mut state, vec![
-            ProposedEvent::zone_change(source, Zone::Battlefield),
-            ProposedEvent::zone_change(donor, Zone::Graveyard),
-            ProposedEvent::zone_change(other, Zone::Graveyard),
-        ]);
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+                ProposedEvent::zone_change(donor, Zone::Graveyard),
+                ProposedEvent::zone_change(other, Zone::Graveyard),
+            ],
+        );
         let prompt = next(&mut state);
-        assert!(matches!(&prompt, Decision::ChooseEffectTargets { player: chooser, legal_targets, .. }
-            if *chooser == player && legal_targets.as_slice() == [Target::Object(donor), Target::Object(other)]));
+        assert!(
+            matches!(&prompt, Decision::ChooseEffectTargets { player: chooser, legal_targets, .. }
+            if *chooser == player && legal_targets.as_slice() == [Target::Object(donor), Target::Object(other)])
+        );
         assert_eq!(state.objects.get(source).zone, Zone::Hand);
-        assert!(!state.engine.event_history.iter().any(|event| matches!(event, CommittedEvent::FullTextBatchEntryV1 { .. })));
+        assert!(!state
+            .engine
+            .event_history
+            .iter()
+            .any(|event| matches!(event, CommittedEvent::FullTextBatchEntryV1 { .. })));
         let mut restored: GameState =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         assert_eq!(next(&mut restored), prompt);
         for branch in [&mut state, &mut restored] {
             act(branch, Action::ChooseEffectTarget(Target::Object(other)));
             assert_eq!(branch.players[player.index()].graveyard, [other, donor]);
-            let markers = branch.engine.event_history.iter().enumerate().filter_map(|(index, event)| {
-                matches!(event, CommittedEvent::FullTextBatchEntryV1 { .. }).then_some(index as u64)
-            }).collect::<Vec<_>>();
-            let [marker] = markers.as_slice() else { panic!("one real mixed entry marker") };
+            let markers = branch
+                .engine
+                .event_history
+                .iter()
+                .enumerate()
+                .filter_map(|(index, event)| {
+                    matches!(event, CommittedEvent::FullTextBatchEntryV1 { .. })
+                        .then_some(index as u64)
+                })
+                .collect::<Vec<_>>();
+            let [marker] = markers.as_slice() else {
+                panic!("one real mixed entry marker")
+            };
             let (entry, text) = batch_entry(branch, *marker).unwrap();
             assert!(matches!(branch.engine.event_history[entry as usize],
                 CommittedEvent::ZoneChange { object, from: Zone::Hand, to: Zone::Battlefield, .. }
                     if object == source));
-            assert_eq!(text.host(), AbilitySourceContractV4::capture(branch, source));
-            assert_eq!(text.donor(), ObjectLinkV4 {
-                object: donor, zone_change_count: branch.objects.get(donor).zone_change_count,
-            });
-            let (captured_at, _) = branch.engine.event_history.iter().enumerate().find(|(_, event)| {
-                matches!(event, CommittedEvent::FullTextTriggerCapturedV1 { .. })
-            }).unwrap();
+            assert_eq!(
+                text.host(),
+                AbilitySourceContractV4::capture(branch, source)
+            );
+            assert_eq!(
+                text.donor(),
+                ObjectLinkV4 {
+                    object: donor,
+                    zone_change_count: branch.objects.get(donor).zone_change_count,
+                }
+            );
+            let (captured_at, _) = branch
+                .engine
+                .event_history
+                .iter()
+                .enumerate()
+                .find(|(_, event)| {
+                    matches!(event, CommittedEvent::FullTextTriggerCapturedV1 { .. })
+                })
+                .unwrap();
             let capture = trigger_record(branch, captured_at as u64).unwrap();
-            assert_eq!(capture.kind, DonatedTriggerKindV1::PalinchronEnteredAfterBatch { entry, marker: *marker });
+            assert_eq!(
+                capture.kind,
+                DonatedTriggerKindV1::PalinchronEnteredAfterBatch {
+                    entry,
+                    marker: *marker
+                }
+            );
             assert_eq!(capture.program(branch).unwrap(), p2c::palinchron_enters());
             let mut forged = branch.clone();
-            let CommittedEvent::FullTextBatchEntryV1 { donor: recorded, .. } =
-                &mut forged.engine.event_history[*marker as usize]
+            let CommittedEvent::FullTextBatchEntryV1 {
+                donor: recorded, ..
+            } = &mut forged.engine.event_history[*marker as usize]
             else {
                 unreachable!("the genuine marker was checked above");
             };
@@ -187,24 +254,38 @@ fn volrath_native_cast_captures_and_pays_for_palinchron_text_both_seats() {
         state.objects.get_mut(land).tapped = true;
         let source = cast_volrath(&mut state, player);
         resolve_untap(&mut state, player, source, land);
-        let (captured_at, _) = state.engine.event_history.iter().enumerate().find(|(_, event)| {
-            matches!(event, CommittedEvent::FullTextTriggerCapturedV1 { .. })
-        }).unwrap();
+        let (captured_at, _) = state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .find(|(_, event)| matches!(event, CommittedEvent::FullTextTriggerCapturedV1 { .. }))
+            .unwrap();
         let capture = trigger_record(&state, captured_at as u64).unwrap();
-        assert!(matches!(capture.kind, DonatedTriggerKindV1::PalinchronEntered { .. }));
+        assert!(matches!(
+            capture.kind,
+            DonatedTriggerKindV1::PalinchronEntered { .. }
+        ));
         assert_eq!(capture.host.card_def, id(VOLRATH));
         assert_eq!(capture.donor.source, donor);
         assert_eq!(state.objects.get(source).card_def, id(VOLRATH));
         assert_eq!(engine::effective_power(&state, source), 4);
 
         pool(&mut state, player, &[ManaColor::U, ManaColor::U], 2);
-        let Decision::CastSpellOrPass { activatable_abilities, .. } = next(&mut state) else {
+        let Decision::CastSpellOrPass {
+            activatable_abilities,
+            ..
+        } = next(&mut state)
+        else {
             panic!("expected the donated activation");
         };
-        let donated = activatable_abilities.iter().filter_map(|&(object, index)| {
-            (object == source && index != 0).then_some(index)
-        }).collect::<Vec<_>>();
-        let [index] = donated.as_slice() else { panic!("one native donated ability") };
+        let donated = activatable_abilities
+            .iter()
+            .filter_map(|&(object, index)| (object == source && index != 0).then_some(index))
+            .collect::<Vec<_>>();
+        let [index] = donated.as_slice() else {
+            panic!("one native donated ability")
+        };
         act(&mut state, Action::ActivateAbility(source, *index));
         assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
         assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
@@ -236,19 +317,34 @@ fn volrath_native_wall_mana_records_the_exact_restricted_use_both_seats() {
         settled(&mut state);
         let text = active_text(&state, source).unwrap();
         assert!(!text.wall_mana_used(&state));
-        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { mana_abilities, .. }
-            if mana_abilities.contains(&source)));
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { mana_abilities, .. }
+            if mana_abilities.contains(&source))
+        );
         act(&mut state, Action::ActivateManaAbility(source));
         let used = restricted_use_event(&state, text.host(), text.donor(), AbilityKindV4::Mana, 0);
         assert_eq!(text.donor().object, donor);
-        assert_eq!(state.engine.event_history.iter().filter(|event| **event == used).count(), 1);
-        assert_eq!(state.players[player.index()].mana_pool[ManaColor::G.pool_index()], 1);
+        assert_eq!(
+            state
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| **event == used)
+                .count(),
+            1
+        );
+        assert_eq!(
+            state.players[player.index()].mana_pool[ManaColor::G.pool_index()],
+            1
+        );
         assert_eq!(engine::effective_toughness(&state, source), 4);
         let mut restored: GameState =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         assert!(text.wall_mana_used(&restored));
-        assert!(matches!(next(&mut restored), Decision::CastSpellOrPass { mana_abilities, .. }
-            if !mana_abilities.contains(&source)));
+        assert!(
+            matches!(next(&mut restored), Decision::CastSpellOrPass { mana_abilities, .. }
+            if !mana_abilities.contains(&source))
+        );
     }
 }
 
@@ -263,7 +359,10 @@ fn volrath_native_paid_control_transfer_records_the_new_controller_both_seats() 
         settled(&mut state);
         assert_eq!(active_text(&state, source).unwrap().donor().object, donor);
         assert!(engine::object_has_type(&state, source, CardType::Artifact));
-        let link = ObjectLinkV4 { object: source, zone_change_count: state.objects.get(source).zone_change_count };
+        let link = ObjectLinkV4 {
+            object: source,
+            zone_change_count: state.objects.get(source).zone_change_count,
+        };
 
         state.active_player = controller;
         state.priority_player = controller;
@@ -272,8 +371,10 @@ fn volrath_native_paid_control_transfer_records_the_new_controller_both_seats() 
         cast(&mut state, dack);
         settled(&mut state);
         act(&mut state, Action::ActivateAbility(dack, 1));
-        assert!(matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. }
-            if legal_targets.contains(&Target::Object(source))));
+        assert!(
+            matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(source)))
+        );
         act(&mut state, Action::ChooseTarget(Target::Object(source)));
         settled(&mut state);
         assert_eq!(crate::planeswalker_v1::loyalty(&state, dack), Some(1));
@@ -282,10 +383,17 @@ fn volrath_native_paid_control_transfer_records_the_new_controller_both_seats() 
             matches!(event, CommittedEvent::OrderedGraveyardControlGainedV1 { permanent, controller: actor }
                 if *permanent == link && *actor == controller)
         }));
-        let restored: GameState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         assert_eq!(restored.objects.get(source).owner, player);
         assert_eq!(restored.objects.get(source).controller, controller);
-        assert_eq!(restored.objects.get(source).zone_change_count, link.zone_change_count);
-        assert_eq!(active_text(&restored, source).unwrap().donor().object, new_donor);
+        assert_eq!(
+            restored.objects.get(source).zone_change_count,
+            link.zone_change_count
+        );
+        assert_eq!(
+            active_text(&restored, source).unwrap().donor().object,
+            new_donor
+        );
     }
 }

@@ -616,7 +616,10 @@ fn full_text_rejects_graveyard_only_ability_and_out_of_range_selectors() {
 
 #[test]
 fn full_text_registration_is_partial() {
-    assert_eq!(CARD_DEFS[usize::from(id(VOLRATH))].capability, CardCapability::Partial);
+    assert_eq!(
+        CARD_DEFS[usize::from(id(VOLRATH))].capability,
+        CardCapability::Partial
+    );
 }
 
 // A resolution fixture starts after payment. It exercises the actual stack
