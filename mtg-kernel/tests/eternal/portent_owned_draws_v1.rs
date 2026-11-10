@@ -533,21 +533,14 @@ fn native_copied_portent_preserves_legacy_schedule_and_ordinary_draw() {
             let mut state = plains();
             state.active_player = actor;
             state.priority_player = actor;
+            // This registered Standard-prefix printing is in the Eternal
+            // catalog. Portent is its first instant/sorcery cast this turn.
             cast(
                 &mut state,
                 actor,
-                "Lightning Bolt",
-                Some(actor.opponent()),
-                &[ManaColor::R],
-                0,
-            );
-            settled(&mut state);
-            cast(
-                &mut state,
-                actor,
-                "Thousand-Year Storm",
+                "Chandra, Hope's Beacon",
                 None,
-                &[ManaColor::U, ManaColor::R],
+                &[ManaColor::R, ManaColor::R],
                 4,
             );
             settled(&mut state);
