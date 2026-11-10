@@ -24,6 +24,8 @@ mod equipment;
 mod life_trigger_tests;
 #[path = "modal_trigger_tests.rs"]
 mod modal_trigger_tests;
+#[path = "pilot_leg0_diagnostic.rs"]
+mod pilot_leg0_diagnostic;
 #[path = "pilot_leg1_diagnostic.rs"]
 mod pilot_leg1_diagnostic;
 

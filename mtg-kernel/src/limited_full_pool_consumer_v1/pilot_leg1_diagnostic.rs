@@ -55,8 +55,7 @@ use crate::limited_match_v1::{DeckFileV1, SessionKindV1};
 use crate::rl_session::FastActorDecisionKindV1;
 use sha2::{Digest, Sha256};
 
-#[test]
-fn retained_numeric_pilot_leg_one_passes_the_original_eaten_alive_boundary() {
+pub(super) fn reset_pilot(starting_player: PlayerSeatV1) -> KaitoSession {
     let decks = [
         (
             "FDN_top_15157_BR",
@@ -79,23 +78,20 @@ fn retained_numeric_pilot_leg_one_passes_the_original_eaten_alive_boundary() {
         assert_eq!(cards.len(), 40);
         cards
     });
-    let mut owner = reset_numeric_reveal_facts_v3(&ResetV1 {
+    reset_numeric_reveal_facts_v3(&ResetV1 {
         expected_card_db_hash: KERNEL_CARDDB_HASH,
         episode_id: 552001,
         env_seed: 552001,
-        starting_player: PlayerSeatV1::P1,
+        starting_player,
         deck_ids: decks.map(|(name, _, _)| name.into()),
         mainboards,
         max_physical_decisions: 4000,
         max_policy_steps: 4000,
     })
-    .unwrap();
-    let eaten = crate::ids::ObjectId(6);
-    assert_eq!(
-        CARD_DEFS[usize::from(owner.fixture_state().objects.get(eaten).card_def)].name,
-        "Eaten Alive"
-    );
+    .unwrap()
+}
 
+pub(super) fn replay_pilot_prefix(owner: &mut KaitoSession, ordinals: &str, trace_from: usize) {
     let parse =
         |bytes: &[u8]| u32::from_str_radix(std::str::from_utf8(bytes).unwrap(), 16).unwrap();
     let kinds = [
@@ -104,8 +100,7 @@ fn retained_numeric_pilot_leg_one_passes_the_original_eaten_alive_boundary() {
         FastActorDecisionKindV1::BlockerInclusion,
     ];
     let actors = [PlayerSeatV1::P0, PlayerSeatV1::P1];
-    assert_eq!(ORDINALS.len(), 539 * 5);
-    for (step, entry) in ORDINALS.as_bytes().chunks_exact(5).enumerate() {
+    for (step, entry) in ordinals.as_bytes().chunks_exact(5).enumerate() {
         let header = parse(&entry[..1]) as usize;
         let width = parse(&entry[1..3]);
         let selected = parse(&entry[3..]);
@@ -133,7 +128,7 @@ fn retained_numeric_pilot_leg_one_passes_the_original_eaten_alive_boundary() {
             width as usize,
             "sealed width at {step}"
         );
-        if step >= 532 {
+        if step >= trace_from {
             eprintln!(
                 "pilot step {step}: {:?}",
                 bound.fixture_backend_v75().actions()[selected as usize],
@@ -143,6 +138,18 @@ fn retained_numeric_pilot_leg_one_passes_the_original_eaten_alive_boundary() {
             .apply(&bound, selected)
             .unwrap_or_else(|error| panic!("pilot action at {step}: {error:?}"));
     }
+}
+
+#[test]
+fn retained_numeric_pilot_leg_one_passes_the_original_eaten_alive_boundary() {
+    let mut owner = reset_pilot(PlayerSeatV1::P1);
+    let eaten = crate::ids::ObjectId(6);
+    assert_eq!(
+        CARD_DEFS[usize::from(owner.fixture_state().objects.get(eaten).card_def)].name,
+        "Eaten Alive"
+    );
+    assert_eq!(ORDINALS.len(), 539 * 5);
+    replay_pilot_prefix(&mut owner, ORDINALS, 532);
     let native = owner.fixture_state();
     assert!(
         native.engine.halted.is_none(),
