@@ -97,6 +97,9 @@ fn full_pool_paid_pilfer_samples_revealed_names_and_rebinds_each_native_answer_b
             assert_eq!(d.packet(), root.packet());
             assert_eq!(decision(&paired).packet(), root.packet());
             assert!(sampled.apply(&root, 0).is_err());
+            if seed == 552_653 {
+                assert_discard_family_guards(&root, &d, p);
+            }
 
             let saved = sampled.snapshot();
             for public in 0..d.packet().actions().len() {
@@ -131,4 +134,39 @@ fn full_pool_paid_pilfer_samples_revealed_names_and_rebinds_each_native_answer_b
         assert_eq!(hidden(&live), live_hidden);
         assert_eq!(hidden(&other), other_hidden);
     }
+}
+
+fn assert_discard_family_guards(before: &KaitoDecision, after: &KaitoDecision, actor: PlayerId) {
+    use crate::akroma_family_public_v40::FamilyProjectionV40;
+
+    let after_families = after.backend.family_projections_v75();
+    let matches = |families: Vec<FamilyProjectionV40>| {
+        FamilyProjectionV40::sampled_revealed_discard_families_match(
+            before.backend.family_projections_v75().to_vec(),
+            families,
+            &before.backend.candidates_v75().candidates,
+            &after.backend.candidates_v75().candidates,
+            actor.into(),
+        )
+    };
+    assert!(matches(after_families.to_vec()));
+
+    let mut changed = after_families.to_vec();
+    let cerberus = changed.iter_mut().find_map(|family| match family {
+        FamilyProjectionV40::Cerberus(observation) => Some(observation),
+        _ => None,
+    }).expect("the sampled discard still binds public creature-death facts");
+    cerberus.creature_died_this_turn = !cerberus.creature_died_this_turn;
+    assert!(!matches(changed));
+
+    let mut changed = after_families.to_vec();
+    let fishing = changed.iter_mut().find_map(|family| match family {
+        FamilyProjectionV40::Fishing(observation) => Some(observation),
+        _ => None,
+    }).expect("the sampled discard still binds Fishing's classified actions");
+    let A::ChooseEffectTarget { min_targets, .. } = &mut fishing.actions[0].semantic else {
+        panic!("missing classified discard answer");
+    };
+    *min_targets += 1;
+    assert!(!matches(changed));
 }

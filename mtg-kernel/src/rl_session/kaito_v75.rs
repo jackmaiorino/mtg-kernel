@@ -706,17 +706,29 @@ impl KaitoSessionV75 {
             ));
         }
         let after = sampled.fresh_binding()?;
-        if after.expected != before.expected
-            || (!root.rebinds_revealed_discard()
-                && (after.original != before.original
-                    || after.public_to_original != before.public_to_original))
-            || !crate::akroma_family_public_v40::FamilyProjectionV40::sampled_families_match(
+        if after.expected != before.expected {
+            return Err(RlContractError("sampled full-pool decision header changed".into()));
+        }
+        use crate::akroma_family_public_v40::FamilyProjectionV40;
+        let families_match = if root.rebinds_revealed_discard() {
+            FamilyProjectionV40::sampled_revealed_discard_families_match(
                 before.families,
                 after.families,
+                &before.projection.candidates,
+                &after.projection.candidates,
+                before.expected.acting_player,
             )
-        {
+        } else {
+            if after.original != before.original
+                || after.public_to_original != before.public_to_original
+            {
+                return Err(RlContractError("sampled full-pool native binding changed".into()));
+            }
+            FamilyProjectionV40::sampled_families_match(before.families, after.families)
+        };
+        if !families_match {
             return Err(RlContractError(
-                "sampled full-pool native binding changed".into(),
+                "sampled full-pool family binding changed".into(),
             ));
         }
         Ok(sampled)
