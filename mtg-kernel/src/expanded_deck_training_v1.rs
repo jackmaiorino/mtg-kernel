@@ -4687,13 +4687,23 @@ fn execute_update_inner_v1(
     // Recompute all actor-visible rows, including opponent decisions,
     // before constructing learner groups. No private state is decoded.
     let (tensor_groups, preparation_telemetry) = if let Some(workers) = preparation_workers {
-        let prepared = ordered_update_preparation::prepare_v1(
+        // Every CPU learner step below derives each learner row's outputs
+        // again with its tape forward and refuses a bit that differs from
+        // the stored row, so those rows may replay through the row cache.
+        // The CUDA steps compare within a tolerance and keep the reference.
+        let row_cache = if update_backend.is_cpu() {
+            ordered_update_preparation::ReplayRowCacheV1::LearnerRows
+        } else {
+            ordered_update_preparation::ReplayRowCacheV1::Off
+        };
+        let prepared = ordered_update_preparation::prepare_with_row_cache_v1(
             &episodes,
             &policy,
             &learner,
             workers,
             max_prepared_tensor_mebibytes,
             training_math,
+            row_cache,
         )?;
         (prepared.groups, Some(prepared.telemetry))
     } else {
