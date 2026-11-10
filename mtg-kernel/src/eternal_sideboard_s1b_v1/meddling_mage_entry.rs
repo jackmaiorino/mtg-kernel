@@ -209,7 +209,9 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
     state
         .engine
         .event_history
-        .has_any(&[crate::event_history_v1::EventKindV1::MeddlingMageEntryV1])
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::MeddlingMageEntryV1])
+        .iter()
+        .any(|event| matches!(event, CommittedEvent::MeddlingMageEntryV1 { .. }))
         || super::read_state(state).is_some_and(|s1b| !s1b.mage_names.is_empty())
 }
 
