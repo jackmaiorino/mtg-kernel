@@ -3,7 +3,7 @@ use super::{append, at, capture, cast_at, copies, validate_published, JournalV1}
 use crate::{
     event::CommittedEvent as E,
     ids::StackItemId,
-    state::{GameState, StackItem, StackTargetContractV4 as C},
+    state::{GameState, StackItem, StackSourceContractV4, StackTargetContractV4 as C},
 };
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +12,14 @@ use serde::{Deserialize, Serialize};
 pub struct FaceV1 {
     contract: C,
     public_card_def: Option<u16>,
+}
+
+/// Ephemeral publication input, captured before any cast cost changes the
+/// battlefield. The finalized native row must retain this exact assignment.
+pub(crate) struct CastTargetsV1 {
+    item: StackItemId,
+    source: StackSourceContractV4,
+    faces: Vec<FaceV1>,
 }
 
 pub(crate) struct CopyOwnerV1 {
@@ -88,22 +96,57 @@ fn capture_face(state: &GameState, contract: C) -> Result<FaceV1, String> {
     })
 }
 
-pub(super) fn record_cast(state: &mut GameState, spell: &StackItem) -> Result<(), String> {
-    let faces = spell
-        .v4
+pub(super) fn freeze_cast(
+    state: &GameState,
+    pending: &crate::engine::PendingCast,
+) -> Result<CastTargetsV1, String> {
+    let item = state
+        .stack
+        .last()
+        .filter(|item| {
+            item.source == pending.spell && item.v4.source_contract == Some(pending.source_contract)
+        })
+        .ok_or("Storm target capture lost its pending cast")?;
+    let faces = pending
         .target_contracts
         .iter()
         .map(|&c| capture_face(state, c))
         .collect::<Result<Vec<_>, _>>()?;
-    append(
-        state,
-        JournalV1::TargetFaces {
-            item: spell.v4.stack_item_id,
-            faces,
-        },
-        false,
-    );
-    Ok(())
+    Ok(CastTargetsV1 {
+        item: item.v4.stack_item_id,
+        source: pending.source_contract,
+        faces,
+    })
+}
+
+pub(super) fn cast_journal(spell: &StackItem, prepared: CastTargetsV1) -> Result<JournalV1, String> {
+    let source = spell
+        .v4
+        .source_contract
+        .ok_or("Storm target publication lost its finalized source")?;
+    if prepared.item != spell.v4.stack_item_id
+        || prepared.source.source != spell.source
+        || prepared.source.zone_change_count != source.zone_change_count
+        || prepared.source.card_def != source.card_def
+        || prepared.source.owner != source.owner
+        || prepared.source.controller != source.controller
+        || prepared
+            .faces
+            .iter()
+            .map(|face| face.contract)
+            .ne(spell.v4.target_contracts.iter().copied())
+        || prepared
+            .faces
+            .iter()
+            .map(|face| face.contract.target())
+            .ne(spell.targets.iter().copied())
+    {
+        return Err("Storm finalized cast changed its pre-payment target faces".into());
+    }
+    Ok(JournalV1::TargetFaces {
+        item: prepared.item,
+        faces: prepared.faces,
+    })
 }
 
 fn faces_at(state: &GameState, index: usize, spell: &StackItem) -> Result<Vec<FaceV1>, String> {

@@ -7103,6 +7103,15 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
 /// this increment's scope (countering a spell removes it from the stack
 /// later, it doesn't replace the cast event itself).
 pub fn log_spell_cast(state: &mut GameState, spell: ObjectId, controller: PlayerId) {
+    log_spell_cast_with_targets(state, spell, controller, None);
+}
+
+pub(crate) fn log_spell_cast_with_targets(
+    state: &mut GameState,
+    spell: ObjectId,
+    controller: PlayerId,
+    storm_targets: Option<crate::effect::thousand_year_storm_v1::targets::CastTargetsV1>,
+) {
     let committed = CommittedEvent::SpellCast { spell, controller };
     let mask = state
         .objects
@@ -7116,7 +7125,7 @@ pub fn log_spell_cast(state: &mut GameState, spell: ObjectId, controller: Player
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
     let kaito_cast = state.engine.event_history.len() - 1;
-    if crate::effect::thousand_year_storm_v1::record_cast(state, spell).is_err() {
+    if crate::effect::thousand_year_storm_v1::record_cast(state, spell, storm_targets).is_err() {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             spell,
