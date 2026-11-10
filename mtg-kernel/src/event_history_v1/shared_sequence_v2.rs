@@ -628,15 +628,19 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
     /// order: what filtering `iter().enumerate()` by kind yields. A subtree
     /// whose counts hold none of `kinds` is skipped whole, so a scan for rare
     /// kinds reads only the leaves that hold them. Editable storage is
-    /// filtered element by element.
-    pub(crate) fn of_kinds(&self, kinds: Vec<usize>) -> KindIter<'_, T, C> {
+    /// filtered element by element. Like `iter`, it never allocates: the
+    /// flat encoders that validate history promise no allocation.
+    pub(crate) fn of_kinds(&self, kinds: impl IntoIterator<Item = usize>) -> KindIter<'_, T, C> {
         self.kind_filter(kinds, true)
     }
 
     /// `of_kinds` reading every leaf, to show that skipping by counts loses
     /// no element.
     #[cfg(test)]
-    pub(crate) fn of_kinds_reading_every_leaf(&self, kinds: Vec<usize>) -> KindIter<'_, T, C> {
+    pub(crate) fn of_kinds_reading_every_leaf(
+        &self,
+        kinds: impl IntoIterator<Item = usize>,
+    ) -> KindIter<'_, T, C> {
         self.kind_filter(kinds, false)
     }
 
@@ -644,55 +648,125 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
     /// filter gives with every guard forced open (tests).
     #[cfg(test)]
     pub(crate) fn every_element_with_position(&self) -> KindIter<'_, T, C> {
-        let mut iter = self.kind_filter(Vec::new(), false);
+        let mut iter = self.kind_filter([], false);
         iter.every = true;
         iter
     }
 
-    fn kind_filter(&self, kinds: Vec<usize>, skip: bool) -> KindIter<'_, T, C> {
-        assert!(
-            C != 0 && kinds.iter().all(|&kind| kind < C),
-            "kind filter outside the sequence's count domain"
-        );
+    fn kind_filter(
+        &self,
+        kinds: impl IntoIterator<Item = usize>,
+        skip: bool,
+    ) -> KindIter<'_, T, C> {
+        const { assert!(C <= KindSet::CAPACITY, "count domain wider than a kind set") };
+        assert!(C != 0, "kind filter outside the sequence's count domain");
+        let mut wanted = KindSet::default();
+        for kind in kinds {
+            assert!(kind < C, "kind filter outside the sequence's count domain");
+            wanted.insert(kind);
+        }
+        let none: &[Arc<Node<T, C>>] = &[];
         let mut iter = KindIter {
-            kinds,
+            kinds: wanted,
             kind: self.kind,
             skip,
             every: false,
-            stack: Vec::new(),
+            open: [(none, 0); MAX_OPEN_BRANCHES],
+            depth: 0,
             leaf: &[],
             position: 0,
         };
         if self.editable {
             iter.leaf = self.flat.get().expect("editable Vec");
         } else if let Some(root) = self.root.as_deref().filter(|root| iter.wanted(root)) {
-            match &root.body {
-                Body::Leaf(values) => iter.leaf = values,
-                Body::Branch(children) => iter.stack.push((children, 0)),
-            }
+            iter.enter(root, 0);
         }
         iter
     }
 }
 
-/// Depth-first cursor over the subtrees that count a wanted kind.
+/// The kinds a kind filter reads, one bit each.
+#[derive(Clone, Copy, Default)]
+struct KindSet([u64; KIND_WORDS]);
+
+/// Words in a kind set: room for 512 kinds.
+const KIND_WORDS: usize = 8;
+
+impl KindSet {
+    const CAPACITY: usize = KIND_WORDS * 64;
+
+    fn insert(&mut self, kind: usize) {
+        self.0[kind / 64] |= 1 << (kind % 64);
+    }
+
+    fn contains(&self, kind: usize) -> bool {
+        self.0
+            .get(kind / 64)
+            .is_some_and(|bits| bits & (1 << (kind % 64)) != 0)
+    }
+
+    /// Whether `counts` holds any of the kinds.
+    fn any_counted<const C: usize>(&self, counts: &[u32; C]) -> bool {
+        self.0.iter().enumerate().any(|(word, &bits)| {
+            let mut bits = bits;
+            while bits != 0 {
+                if counts[word * 64 + bits.trailing_zeros() as usize] != 0 {
+                    return true;
+                }
+                bits &= bits - 1;
+            }
+            false
+        })
+    }
+}
+
+/// Branches a kind filter holds open at once: one per level of the tree.
+/// Every child but a branch's last is full, because `from_vec` fills them,
+/// `append` adds a sibling only once the last child is full, and `prefix`
+/// cuts only the last. So a root `h` levels above its leaves holds more than
+/// `LEAF * FANOUT^(h - 1)` elements, and no length a `usize` can count needs
+/// more than 12 levels.
+const MAX_OPEN_BRANCHES: usize = 16;
+
+/// Depth-first cursor over the subtrees that count a wanted kind. It holds
+/// its kinds and open branches inline, so a scan allocates nothing.
 pub(crate) struct KindIter<'a, T: Clone, const C: usize> {
-    kinds: Vec<usize>,
+    kinds: KindSet,
     kind: fn(&T) -> usize,
     /// Whether subtrees counting none of `kinds` are skipped.
     skip: bool,
     /// Whether every element is yielded, whatever its kind (tests).
     every: bool,
-    /// Unvisited children of each open branch, and the position of the first.
-    stack: Vec<(&'a [Arc<Node<T, C>>], usize)>,
+    /// Unvisited children of each open branch, and the position of the
+    /// first, outermost first: the first `depth` entries are in use.
+    open: [(&'a [Arc<Node<T, C>>], usize); MAX_OPEN_BRANCHES],
+    depth: usize,
     /// Unvisited elements of the current leaf, and the position of the first.
     leaf: &'a [T],
     position: usize,
 }
 
-impl<T: Clone, const C: usize> KindIter<'_, T, C> {
+impl<'a, T: Clone, const C: usize> KindIter<'a, T, C> {
     fn wanted(&self, node: &Node<T, C>) -> bool {
-        !self.skip || self.kinds.iter().any(|&kind| node.counts[kind] != 0)
+        !self.skip || self.kinds.any_counted(&node.counts)
+    }
+
+    /// Reads `node`, whose first element is at `start`, next.
+    fn enter(&mut self, node: &'a Node<T, C>, start: usize) {
+        match &node.body {
+            Body::Leaf(values) => {
+                self.leaf = values;
+                self.position = start;
+            }
+            Body::Branch(children) => {
+                let frame = self
+                    .open
+                    .get_mut(self.depth)
+                    .expect("sequence taller than any countable length");
+                *frame = (children, start);
+                self.depth += 1;
+            }
+        }
     }
 }
 
@@ -705,26 +779,19 @@ impl<'a, T: Clone, const C: usize> Iterator for KindIter<'a, T, C> {
                 let position = self.position;
                 self.leaf = rest;
                 self.position += 1;
-                if self.every || self.kinds.contains(&(self.kind)(value)) {
+                if self.every || self.kinds.contains((self.kind)(value)) {
                     return Some((position, value));
                 }
             }
-            let frame = self.stack.last_mut()?;
-            let Some((child, rest)) = frame.0.split_first() else {
-                self.stack.pop();
+            let innermost = self.depth.checked_sub(1)?;
+            let (children, start) = self.open[innermost];
+            let Some((child, rest)) = children.split_first() else {
+                self.depth = innermost;
                 continue;
             };
-            let start = frame.1;
-            *frame = (rest, start + child.len);
-            if !self.wanted(child) {
-                continue;
-            }
-            match &child.body {
-                Body::Leaf(values) => {
-                    self.leaf = values;
-                    self.position = start;
-                }
-                Body::Branch(children) => self.stack.push((children, start)),
+            self.open[innermost] = (rest, start + child.len);
+            if self.wanted(child) {
+                self.enter(child, start);
             }
         }
     }
@@ -1026,6 +1093,75 @@ mod tests {
             kinds_oracle(&edited, &expected, sparse);
             edited.repack();
             kinds_oracle(&edited, &expected, sparse);
+        }
+    }
+
+    /// The bound behind `MAX_OPEN_BRANCHES`: leaves share one depth, every
+    /// child but a branch's last is full, and a root above its leaves has a
+    /// full first child and another, however the tree was built or cut.
+    #[test]
+    fn trees_are_no_taller_than_their_length_needs() {
+        fn height<const C: usize>(node: &Node<usize, C>) -> u32 {
+            let Body::Branch(children) = &node.body else {
+                return 0;
+            };
+            let below = height(&children[0]);
+            let full = LEAF * FANOUT.pow(below);
+            for (at, child) in children.iter().enumerate() {
+                assert_eq!(height(child), below, "leaves at one depth");
+                if at + 1 < children.len() {
+                    assert_eq!(child.len, full, "child {at} of {} is full", children.len());
+                }
+            }
+            below + 1
+        }
+        fn check(tree: &SharedSequence<usize, 3>) {
+            let Some(root) = &tree.root else {
+                return;
+            };
+            let levels = height(root);
+            if let Body::Branch(children) = &root.body {
+                assert!(children.len() >= 2, "a branch root has two children");
+                assert!(tree.len() > LEAF * FANOUT.pow(levels - 1));
+            }
+            assert!(levels as usize <= MAX_OPEN_BRANCHES);
+        }
+        for len in [0, 1, 64, 65, 2048, 2049, 70_000] {
+            let values: Vec<_> = (0..len).collect();
+            let built = SharedSequence::<_, 3>::from_vec(values.clone(), kind);
+            check(&built);
+            let mut pushed = SharedSequence::<_, 3>::new(kind);
+            for value in &values {
+                pushed.push(*value);
+            }
+            check(&pushed);
+            for cut in [
+                1,
+                63,
+                64,
+                65,
+                2047,
+                2048,
+                2049,
+                len / 2,
+                len.saturating_sub(1),
+            ] {
+                for source in [&built, &pushed] {
+                    let mut prefix = source.prefix(cut);
+                    check(&prefix);
+                    for value in 0..3000 {
+                        prefix.push(value);
+                    }
+                    check(&prefix);
+                    let mut truncated = source.clone();
+                    truncated.truncate(cut);
+                    check(&truncated);
+                }
+            }
+            let mut edited = built.clone();
+            edited.as_mut_vec().push(7);
+            edited.repack();
+            check(&edited);
         }
     }
 

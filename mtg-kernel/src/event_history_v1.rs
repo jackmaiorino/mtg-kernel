@@ -1236,7 +1236,7 @@ impl EventHistoryV1 {
             guard_tests_v1::note_scan(std::panic::Location::caller(), !self.has_any(kinds));
         }
         self.events
-            .of_kinds(kinds.iter().map(|&kind| kind as usize).collect())
+            .of_kinds(kinds.iter().map(|&kind| kind as usize))
     }
 
     pub fn push(&mut self, event: CommittedEvent) {
