@@ -356,6 +356,7 @@ fn paid_knowledge_restore_refuses_source_phase_count_and_raw_borrowing() {
         let mut live = state.clone();
         assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { .. })));
         let original = state.engine.pending_effect.clone().unwrap();
+        assert!(mtg_kernel::rl::observe_policy_v5(&state, &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(), actor, 0, 0, 0, 1).unwrap_err().to_string().contains("Knowledge"));
         let root = mtg_kernel::eternal_premodern_p1b_v1::accumulated_knowledge();
         assert!(effect::begin_resumable_resolution(&root, &original.ctx, original.resolving_item.clone(), &mut live).is_err());
         assert_eq!(receipt_count(&live, "Started"), 0);
@@ -376,12 +377,16 @@ fn paid_knowledge_restore_refuses_source_phase_count_and_raw_borrowing() {
         // Decline dredge once, then restore at the second instruction's real menu.
         act(&mut state, Action::FinishEffectSelection);
         assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets == [Target::Object(thug)]));
-        for (variant, field) in [("Paid", "item"), ("Second", "first_at"), ("Second", "paid_at"), ("Second", "count"), ("Started", "total")] {
+        for (variant, field) in [("Paid", "item"), ("Second", "first_at"), ("Second", "paid_at"), ("Second", "count"), ("Started", "total"), ("Completed", "ordinal")] {
             let mut json = serde_json::to_value(&state).unwrap();
             assert!(alter(&mut json["engine"]["event_history"], variant, field, 999999.into()));
             let forged: GameState = serde_json::from_value(json).unwrap();
             assert!(effect::validate_pending_effect_choice(&forged).is_err(), "{variant}.{field}");
         }
+        let mut removed = serde_json::to_value(&state).unwrap();
+        removed["eternal_owned_draw_progress_v1"] = serde_json::Value::Null;
+        let removed: GameState = serde_json::from_value(removed).unwrap();
+        assert!(effect::validate_pending_effect_choice(&removed).is_err());
         let mut forged = serde_json::to_value(&state).unwrap();
         forged["eternal_owned_draw_progress_v1"]["completed"] = 1.into();
         let forged: GameState = serde_json::from_value(forged).unwrap();
