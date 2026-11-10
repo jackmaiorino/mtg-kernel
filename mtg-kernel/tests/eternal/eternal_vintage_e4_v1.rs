@@ -1070,6 +1070,71 @@ fn eternal_draw_spells_preserve_paid_cast_origins_and_replacements_both_seats() 
 }
 
 #[test]
+fn paid_plunder_ignores_a_nondrawers_dredger_without_owned_receipts_both_seats() {
+    use mtg_kernel::event_history_v1::EventKindV1;
+
+    for drawer in [P0, P1] {
+        let opponent = drawer.opponent();
+        let mut state = islands();
+        state.active_player = drawer;
+        state.priority_player = drawer;
+        let thug = put(&mut state, opponent, "Golgari Thug", Zone::Graveyard);
+        let spell = put(&mut state, drawer, "Plunder the Trollshaws", Zone::Hand);
+        let library = state.players[drawer.index()].library.clone();
+        pool(&mut state, drawer, &[ManaColor::U], 1);
+        cast(&mut state, spell, &[]);
+        settled(&mut state);
+        assert_eq!(state.players[drawer.index()].hand, [library[0]]);
+        assert_eq!(state.players[drawer.index()].library, library[1..]);
+        assert_eq!(state.objects.get(thug).zone, Zone::Graveyard);
+        assert!(!state.engine.event_history.iter().any(|event| {
+            event.kind_v1() == EventKindV1::EternalOwnedDrawV1
+        }));
+        assert!(serde_json::to_value(&state).unwrap()
+            .get("eternal_owned_draw_progress_v1").is_none());
+    }
+}
+
+#[test]
+fn paid_plunder_reaches_a_later_jace_choice_after_the_exempt_draw_both_seats() {
+    for drawer in [P0, P1] {
+        let opponent = drawer.opponent();
+        let mut state = game(&["Island"; 5]);
+        state.active_player = drawer;
+        state.priority_player = drawer;
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let jace = put(&mut state, drawer, "Jace, Wielder of Mysteries", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::U, ManaColor::U, ManaColor::U], 1);
+        cast(&mut state, jace, &[]);
+        settled(&mut state);
+        let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+        let cast_turn = state.turn;
+        pass_until(&mut state, |state| {
+            state.active_player == drawer && state.turn != cast_turn && state.step == Step::Draw
+        });
+        assert!(matches!(next(&mut state), Decision::ChooseEffectOption { player, source, option_count: 2 }
+            if player == drawer && source == thug));
+        act(&mut state, Action::ChooseEffectOption(1));
+        let [last_card] = state.players[drawer.index()].library.as_slice() else {
+            panic!("draw-step dredge should leave the last card");
+        };
+        let last_card = *last_card;
+        let spell = put(&mut state, drawer, "Plunder the Trollshaws", Zone::Graveyard);
+        pool(&mut state, drawer, &[ManaColor::U], 3);
+        cast(&mut state, spell, &[]);
+        let prompt = settle(&mut state).expect("the second draw has competing replacements");
+        assert_draw_replacement_prompt(&prompt, drawer, spell, jace);
+        assert!(state.players[drawer.index()].hand.contains(&last_card));
+        assert!(state.players[drawer.index()].library.is_empty());
+        assert_eq!(treasure_count(&state, opponent), 0);
+        act(&mut state, Action::FinishEffectSelection);
+        settled(&mut state);
+        assert_eq!(treasure_count(&state, opponent), 1);
+        assert_eq!(state.objects.get(spell).zone, Zone::Exile);
+    }
+}
+
+#[test]
 fn paid_psychic_frog_combat_draw_offers_replacements_both_seats() {
     for drawer in [P0, P1] {
         let opponent = drawer.opponent();

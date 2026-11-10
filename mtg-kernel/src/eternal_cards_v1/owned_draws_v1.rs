@@ -66,6 +66,10 @@ pub(crate) fn recognizes(op: &EternalOpV1) -> bool {
     InstructionV1::from_op(op).is_some()
 }
 
+pub(crate) fn starting_count(state: &GameState, program: &EffectOp, ctx: &ExecCtx) -> Option<u32> {
+    Some(InstructionV1::from_program(program)?.count(state, ctx))
+}
+
 pub(crate) fn graveyard_cast_count(
     state: &GameState,
     source: ObjectId,

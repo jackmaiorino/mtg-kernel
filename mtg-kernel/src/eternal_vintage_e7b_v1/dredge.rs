@@ -20,6 +20,7 @@ use crate::effect::{
 use crate::eternal_cards_v1::{
     delayed_upkeep_draw,
     e3::{E3ChoiceKindV1, E3ChoiceV1},
+    owned_draws_v1,
     EternalOpV1,
 };
 use crate::eternal_vintage_v1::{
@@ -85,8 +86,31 @@ fn draws(op: &EffectOp) -> bool {
         EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::VintageV1(
             VintageOpV1::CovetedJewelChangesHandsV1 | VintageOpV1::ParadoxicalOutcomeV1,
         ))) => true,
-        EffectOp::StandardV1(StandardOpV1::EternalV1(op)) => {
-            crate::eternal_cards_v1::owned_draws_v1::recognizes(op)
+        _ => false,
+    }
+}
+
+fn owned_draw_needs_choice(state: &GameState, player: PlayerId, count: u32) -> bool {
+    use crate::eternal_sideboard_s1c_v1::statics::{
+        hullbreacher_controller, hullbreacher_replaces_draw,
+    };
+
+    if count == 0 {
+        return false;
+    }
+    if !dredge_cards(state, player).is_empty() {
+        return true;
+    }
+    if crate::eternal_cards_v1::e3::jace_draw_replacement_source(state, player).is_none() {
+        return false;
+    }
+    match state.players[player.index()].library.len() {
+        0 => hullbreacher_replaces_draw(state, player).is_some(),
+        // The draw step's first draw can consume the last card while Hullbreacher
+        // is inactive for that draw. It can then compete with Jace on the next.
+        1 if count > 1 => {
+            crate::eternal_cards_v1::is_first_draw_in_draw_step(state, player)
+                && hullbreacher_controller(state, player).is_some()
         }
         _ => false,
     }
@@ -94,13 +118,19 @@ fn draws(op: &EffectOp) -> bool {
 
 /// Whether a synchronous program should run in the resumable interpreter
 /// so the affected player can choose a draw replacement.
-pub(crate) fn forces_resumable(state: &GameState, program: &EffectOp) -> bool {
-    cfg!(feature = "eternal-fixtures")
-        && draws(program)
-        && [PlayerId::P0, PlayerId::P1]
-            .into_iter()
-            .any(|player| may_need_draw_choice(state, player))
-        && crate::effect::resumable_program_supported(program)
+pub(crate) fn forces_resumable(state: &GameState, program: &EffectOp, ctx: &ExecCtx) -> bool {
+    if !cfg!(feature = "eternal-fixtures") {
+        return false;
+    }
+    let needs_choice = match owned_draws_v1::starting_count(state, program, ctx) {
+        Some(count) => owned_draw_needs_choice(state, ctx.controller, count),
+        None => {
+            draws(program)
+                && [PlayerId::P0, PlayerId::P1].into_iter()
+                    .any(|player| may_need_draw_choice(state, player))
+        }
+    };
+    needs_choice && crate::effect::resumable_program_supported(program)
 }
 
 pub(crate) fn draw_may_need_choice(
