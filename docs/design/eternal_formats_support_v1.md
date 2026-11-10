@@ -576,8 +576,13 @@ New, each built once in the first wave that needs it:
   power recorded in the native departure scene if that incarnation left.
   The draw count is fixed before the first replacement attempt. Historical
   serialized `CurieDrawV1` triggers retain their old fallback behavior.
-  Remaining specialized draws include Minsc & Boo's reflexive draw,
-  Echo of Eons after both shuffles, and the two drawing dungeon rooms. Generated
+  Echo of Eons finishes both native shuffles before drawing in turn order.
+  Interrupted draws retain the actual shuffle and each player's completed
+  attempts. Each player applies Riddler once at the start of their draws.
+  The shuffles normally remove Dredge cards from both graveyards before any
+  draw can use them. Echo's native qualification is pending.
+  Remaining specialized draws include Minsc & Boo's reflexive draw and the
+  two drawing dungeon rooms. Generated
   draws from Bonder's Ornament, the Premodern draw leaves, Standstill, Arcane
   Denial and Accumulated Knowledge still need their Jace/Hullbreacher origins.
   Quantum Riddler adjusts the whole count once for uninterrupted fixed and

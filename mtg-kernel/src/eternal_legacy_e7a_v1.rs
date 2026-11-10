@@ -1640,6 +1640,14 @@ fn therapy(ctx: &ExecCtx, state: &mut GameState, named: u16) {
 /// Echo of Eons: each player, in turn order, shuffles their hand and
 /// graveyard into their library; then each draws seven.
 fn echo_of_eons_effect(ctx: &ExecCtx, state: &mut GameState) {
+    if shuffle_echo_libraries(state).is_err() {
+        halt(state, ctx.source);
+        return;
+    }
+    draw_echo_cards(state);
+}
+
+pub(crate) fn shuffle_echo_libraries(state: &mut GameState) -> Result<(), String> {
     let first = state.active_player;
     for player in [first, first.opponent()] {
         let cards = state.players[player.index()]
@@ -1657,18 +1665,20 @@ fn echo_of_eons_effect(ctx: &ExecCtx, state: &mut GameState) {
                     .collect(),
             );
         }
-        if shuffle(state, player).is_err() {
-            halt(state, ctx.source);
-            return;
+        if state.engine.halted.is_some() || crate::linked_aura_operation_v1::has_pending(state) {
+            return Err("Echo of Eons could not complete its return batch".into());
         }
+        shuffle(state, player)?;
     }
-    let (first_ref, second_ref) = if first == ctx.controller {
-        (PlayerRef::Controller, PlayerRef::Opponent)
-    } else {
-        (PlayerRef::Opponent, PlayerRef::Controller)
-    };
-    for player in [first_ref, second_ref] {
-        crate::effect::execute(&EffectOp::DrawCards { player, count: 7 }, ctx, state);
+    Ok(())
+}
+
+pub(crate) fn draw_echo_cards(state: &mut GameState) {
+    let first = state.active_player;
+    for player in [first, first.opponent()] {
+        if !crate::eternal_cards_v1::owned_draws_v1::draw_uninterrupted(state, player, 7) {
+            break;
+        }
     }
 }
 
@@ -1928,6 +1938,10 @@ pub(crate) fn drive(
 ) -> Result<bool, String> {
     let controller = continuation.ctx.controller;
     match op {
+        E7aOpV1::EchoOfEonsV1 => {
+            crate::eternal_cards_v1::owned_draws_v1::echo::begin(state, continuation, &path)?;
+            Ok(false)
+        }
         E7aOpV1::GhostQuarterV1 => {
             let Some(land) = legal_object_target(&continuation.ctx, state, 0, TargetSpec::Land)
             else {
