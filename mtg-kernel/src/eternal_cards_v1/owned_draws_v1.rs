@@ -724,7 +724,8 @@ fn validate_native_progress(
             .instruction
             .drawer(ctx)
             .ok_or("Eternal draw lost its original drawer")?;
-        if attempts - started.total != crate::event::draw_instruction_extra(state, drawer, started.total)
+        if attempts - started.total
+            != crate::event::draw_instruction_extra(state, drawer, started.total)
         {
             return Err("Eternal draw changed its original Riddler adjustment".into());
         }
