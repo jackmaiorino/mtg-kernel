@@ -4489,7 +4489,7 @@ fn execute_update_inner_v1(
             preparation_workers,
             max_prepared_tensor_mebibytes,
             #[cfg(test)]
-            verified_tape_cap: None,
+            verified_replay: None,
             unsupported: s_learner_v1::SUnsupportedOptionsV1 {
                 line_b: line_b.is_some(),
                 e_supported: e_supported.is_some(),

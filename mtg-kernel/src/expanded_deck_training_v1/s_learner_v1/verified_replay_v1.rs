@@ -12,6 +12,7 @@ pub(super) struct OptionsV1 {
     pub(super) lambda: f32,
     pub(super) coefficient: f32,
     pub(super) tape_cap: usize,
+    pub(super) short_first_gradient: bool,
     pub(super) training_math: TrainingMathV1,
 }
 
@@ -20,7 +21,9 @@ pub(super) struct GradientV1 {
     pub(super) gradient: Vec<f32>,
     pub(super) gae: GaeTargetsV1,
     pub(super) policy_substeps: usize,
-    pub(super) peak_tape_bytes: usize,
+    /// Maximum retained tape-slot capacity before forward. This excludes
+    /// input, gradient, scratch, transient allocations and allocator overhead.
+    pub(super) peak_retained_tape_bytes: usize,
 }
 
 /// The caller has validated the stored trajectories and their sampler draws.
@@ -63,6 +66,7 @@ pub(super) fn gradient_v1(
         options.tape_cap,
         values.len(),
         options.coefficient,
+        options.short_first_gradient,
     )?;
     let mut opponents = OpponentCacheV1::default().with_training_math_v1(options.training_math);
     let mut gae = None;
@@ -146,12 +150,12 @@ pub(super) fn gradient_v1(
     }
     // No provisional GAE or learner error outranks a later replay error.
     let gae = gae.ok_or_else(|| "no learner decisions".to_owned())??;
-    let (loss, gradient, peak_tape_bytes) = work.finish_v1()?;
+    let (loss, gradient, peak_retained_tape_bytes) = work.finish_v1()?;
     Ok(GradientV1 {
         loss,
         gradient,
         gae,
         policy_substeps,
-        peak_tape_bytes,
+        peak_retained_tape_bytes,
     })
 }

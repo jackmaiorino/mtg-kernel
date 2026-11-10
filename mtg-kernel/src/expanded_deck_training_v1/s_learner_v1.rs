@@ -361,6 +361,12 @@ pub(super) struct SUnsupportedOptionsV1 {
     pub(super) search_targets: bool,
 }
 
+#[cfg(test)]
+pub(super) struct VerifiedReplayTestV1 {
+    pub(super) tape_cap: usize,
+    pub(super) short_first_gradient: bool,
+}
+
 /// The update command's inputs.
 pub(super) struct SUpdateInputsV1 {
     pub(super) source: ExpandedModelSourceV1,
@@ -374,7 +380,7 @@ pub(super) struct SUpdateInputsV1 {
     pub(super) preparation_workers: Option<usize>,
     pub(super) max_prepared_tensor_mebibytes: usize,
     #[cfg(test)]
-    pub(super) verified_tape_cap: Option<usize>,
+    pub(super) verified_replay: Option<VerifiedReplayTestV1>,
     pub(super) unsupported: SUnsupportedOptionsV1,
     /// EX1 or W5 (`Ex1Update`); the caller validated the options and their
     /// combination.
@@ -454,7 +460,7 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         preparation_workers,
         max_prepared_tensor_mebibytes,
         #[cfg(test)]
-        verified_tape_cap,
+        verified_replay,
         ex1,
         training_math,
         started,
@@ -525,8 +531,11 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
     }
     let input_read_seconds = started.elapsed().as_secs_f64();
     #[cfg(test)]
-    let (candidate, verified_replay) = match verified_tape_cap {
-        Some(tape_cap) => {
+    let (candidate, verified_replay) = match verified_replay {
+        Some(VerifiedReplayTestV1 {
+            tape_cap,
+            short_first_gradient,
+        }) => {
             use crate::s_transformer_v1::verified_row_v1::ReplayErrorV1;
 
             ensure(
@@ -544,6 +553,7 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
                     lambda,
                     coefficient: value_coefficient,
                     tape_cap,
+                    short_first_gradient,
                     training_math,
                 },
             );
@@ -571,7 +581,7 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
                             learner_update_seconds: learner_started.elapsed().as_secs_f64(),
                         }),
                         Some(json!({"used":true, "tape_cap_bytes":tape_cap,
-                            "peak_tape_bytes":candidate.peak_tape_bytes,
+                            "peak_retained_tape_bytes":candidate.peak_retained_tape_bytes,
                             "replay_and_gradient_seconds":replay_and_gradient_seconds})),
                     )
                 }

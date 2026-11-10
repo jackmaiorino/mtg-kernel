@@ -293,7 +293,8 @@ pub(crate) struct SerialVerifiedGaeV1<'model> {
     policy_sum: f32,
     value_sum: f32,
     first_error: Option<String>,
-    peak_tape_bytes: usize,
+    peak_retained_tape_bytes: usize,
+    short_first_gradient: bool,
 }
 
 impl<'model> SerialVerifiedGaeV1<'model> {
@@ -303,6 +304,7 @@ impl<'model> SerialVerifiedGaeV1<'model> {
         cap: usize,
         group_count: usize,
         coefficient: f32,
+        short_first_gradient: bool,
     ) -> Result<Self, ReplayErrorV1> {
         let generation = ModelScopeV1::bind_v1(model, expected_generation)?;
         if cap < size_of::<TapeSlotV1>() {
@@ -320,7 +322,8 @@ impl<'model> SerialVerifiedGaeV1<'model> {
             policy_sum: 0.0,
             value_sum: 0.0,
             first_error: None,
-            peak_tape_bytes: size_of::<TapeSlotV1>(),
+            peak_retained_tape_bytes: size_of::<TapeSlotV1>(),
+            short_first_gradient,
         })
     }
 
@@ -341,7 +344,7 @@ impl<'model> SerialVerifiedGaeV1<'model> {
             expected_value,
             true,
         )?;
-        self.peak_tape_bytes = self.peak_tape_bytes.max(row.bytes);
+        self.peak_retained_tape_bytes = self.peak_retained_tape_bytes.max(row.bytes);
         if self.first_error.is_some() {
             return Ok(());
         }
@@ -353,6 +356,13 @@ impl<'model> SerialVerifiedGaeV1<'model> {
             self.first_error = Some(format!("S group {group} has a non-finite target"));
             return Ok(());
         }
+        // A short sink exercises the real backward rejection without changing
+        // replayed inputs or provisional targets.
+        let gradient = if self.short_first_gradient && index == (0, 0) {
+            &mut self.gradient[..0]
+        } else {
+            self.gradient.as_mut_slice()
+        };
         let result = row.backward_v1(
             GaeTargetV1 {
                 group_count: self.group_count,
@@ -360,7 +370,7 @@ impl<'model> SerialVerifiedGaeV1<'model> {
                 value_target,
                 value_coefficient: self.coefficient,
             },
-            &mut SGradientSinkV1::Direct(&mut self.gradient),
+            &mut SGradientSinkV1::Direct(gradient),
             &mut self.scratch,
         );
         match result {
@@ -403,7 +413,7 @@ impl<'model> SerialVerifiedGaeV1<'model> {
                 loss,
             },
             self.gradient,
-            self.peak_tape_bytes,
+            self.peak_retained_tape_bytes,
         ))
     }
 }
