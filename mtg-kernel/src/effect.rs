@@ -20752,7 +20752,7 @@ fn execute_with_native_row_v1(
                 ) {
                     Ok(Some(facts)) => {
                         if let event::ProposedEvent::Damage(damage) = &mut proposal {
-                            damage.bombardment_source = Some(BombardmentDamageFactsV1(facts));
+                            damage.eternal_damage_lki_v1 = Some(EternalDamageLkiV1(facts));
                         }
                     }
                     Ok(None) => {}
@@ -27888,9 +27888,13 @@ struct NativeExecutionProofV1<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct BombardmentDamageFactsV1(crate::event::HistoricalDamageSourceV1);
+pub(crate) struct EternalDamageLkiV1(crate::event::HistoricalDamageSourceV1);
 
-impl BombardmentDamageFactsV1 {
+impl EternalDamageLkiV1 {
+    pub(crate) fn for_minsc(proof: crate::eternal_vintage_e7b_v1::minsc::DamageLoanV1) -> Self {
+        Self(proof.facts())
+    }
+
     pub(crate) fn source(self) -> crate::event::HistoricalDamageSourceV1 {
         self.0
     }

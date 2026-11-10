@@ -17343,6 +17343,7 @@ fn log_final_targeting_events(
         return Err("final targeting vectors no longer have parallel contracts".to_string());
     }
     let zul_graveyard_targeting = crate::zul_ashur_v1::final_graveyard_targeting(state, item)?;
+    crate::eternal_vintage_e7b_v1::minsc::publish(state, item)?;
 
     let mut seen = Vec::new();
     for contract in &item.v4.target_contracts {

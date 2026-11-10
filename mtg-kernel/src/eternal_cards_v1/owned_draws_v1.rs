@@ -11,7 +11,7 @@ use crate::eternal_legacy_e7a_v1::{self, E7aOpV1};
 use crate::eternal_legacy_e8a_v1::E8aOpV1;
 use crate::eternal_lurrus_v1::{self, LurrusOpV1};
 use crate::eternal_pauper_e8b_v1::{self, E8bOpV1};
-use crate::eternal_vintage_e7b_v1::{dredge, E7bOpV1};
+use crate::eternal_vintage_e7b_v1::{dredge, minsc, E7bOpV1};
 use crate::event::CommittedEvent;
 use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
@@ -45,6 +45,7 @@ enum InstructionV1 {
         spec: TargetSpec,
     },
     Curie { combat_at: usize },
+    Minsc { sacrifice: usize },
 }
 
 impl InstructionV1 {
@@ -83,6 +84,9 @@ impl InstructionV1 {
             EternalOpV1::E7aV1(E7aOpV1::CurieDrawBoundV1 { combat_at }) => Some(Self::Curie {
                 combat_at: *combat_at,
             }),
+            EternalOpV1::E7bV1(E7bOpV1::MinscDamageBoundV1 { sacrifice }) => {
+                Some(Self::Minsc { sacrifice: *sacrifice })
+            }
             _ => None,
         }
     }
@@ -116,6 +120,7 @@ impl InstructionV1 {
                 super::e3::opponent_cast_blue_or_black_spell_this_turn(state, ctx.controller),
             ),
             Self::DragonEngine => 3,
+            Self::Minsc { sacrifice } => minsc::count(state, ctx, sacrifice).unwrap_or(0),
             Self::Curie { combat_at } => {
                 eternal_legacy_e7a_v1::curie::draw_count(state, ctx, combat_at).unwrap_or(0)
             }
@@ -284,6 +289,10 @@ pub enum JournalV1 {
         combat_at: usize,
         count: u32,
     },
+    MinscSacrifice(minsc::SacrificeV1),
+    MinscTarget(minsc::PublicationV1),
+    MinscDamageCompleted { item: StackItemId, published_at: usize },
+    MinscDeparture { at: usize, facts: crate::event::HistoricalDamageSourceV1 },
 }
 
 pub(crate) fn record(state: &mut GameState, journal: JournalV1) {
@@ -375,6 +384,9 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
             }),
             (InstructionV1::Curie { combat_at }, StackItemKind::TriggeredAbility, _) => {
                 eternal_legacy_e7a_v1::curie::combat_source(state, combat_at) == Some(source)
+            }
+            (InstructionV1::Minsc { sacrifice }, StackItemKind::TriggeredAbility, _) => {
+                minsc::owns(state, item, sacrifice)
             }
             _ => false,
         };
@@ -482,6 +494,9 @@ pub(crate) fn begin(
             eternal_legacy_e7a_v1::curie::draw_count(state, &pending.ctx, combat_at)
                 .ok_or("Curie draw lost its original source base power")?
         }
+        (InstructionV1::Minsc { sacrifice }, SourceV1::Ability(_)) => {
+            minsc::damage_once(state, pending, sacrifice)?
+        }
         _ => instruction.count(state, &pending.ctx),
     };
     if total == 0 {
@@ -527,6 +542,11 @@ fn progress(state: &GameState, pending: &EffectContinuation) -> Option<(Progress
     let JournalV1::Started(started) = **journal else {
         return None;
     };
+    if let InstructionV1::Minsc { sacrifice } = started.instruction {
+        if !minsc::completed_damage(state, &pending.resolving_item, sacrifice, progress.started_at) {
+            return None;
+        }
+    }
     (Some((started.instruction, started.source)) == selected(state, pending)
         && started.item == pending.resolving_item.v4.stack_item_id
         && started.controller == pending.ctx.controller

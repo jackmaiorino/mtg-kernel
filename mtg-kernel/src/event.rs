@@ -95,10 +95,10 @@ pub struct DamageProposed {
     /// damage receipt is emitted only by Niv's final damage commit.
     #[serde(skip)]
     pub(crate) niv_damage_origin_v1: Option<NivDamageOriginV1>,
-    /// Lexical native Bombardment execution only. A restored proposal cannot
-    /// mint this loan, and the atomic Eternal damage path never saves it.
+    /// Lexical native Eternal damage execution. A restored proposal cannot
+    /// mint this loan, and the atomic damage path never saves it.
     #[serde(skip)]
-    pub(crate) bombardment_source: Option<crate::effect::BombardmentDamageFactsV1>,
+    pub(crate) eternal_damage_lki_v1: Option<crate::effect::EternalDamageLkiV1>,
 }
 
 impl DamageProposed {
@@ -106,7 +106,7 @@ impl DamageProposed {
         &self,
         state: &GameState,
     ) -> Result<Option<HistoricalDamageSourceV1>, String> {
-        match (self.bombardment_source, self.historical_source) {
+        match (self.eternal_damage_lki_v1, self.historical_source) {
             (Some(facts), None) if facts.source().source.source == self.source => {
                 Ok(Some(facts.source()))
             }
@@ -131,7 +131,7 @@ impl std::hash::Hash for DamageProposed {
             0x6e69_765f_646d_676f_u64.hash(state);
             origin.hash(state);
         }
-        if let Some(facts) = self.bombardment_source {
+        if let Some(facts) = self.eternal_damage_lki_v1 {
             b"bombardment-damage-facts/v1".hash(state);
             facts.hash(state);
         }
@@ -445,7 +445,7 @@ impl ProposedEvent {
             is_combat: false,
             historical_source: None,
             niv_damage_origin_v1: None,
-            bombardment_source: None,
+            eternal_damage_lki_v1: None,
         })
     }
     pub fn zone_change(object: ObjectId, to_zone: Zone) -> ProposedEvent {
@@ -4587,6 +4587,7 @@ fn commit_with_entry_batch_and_source_color(
         alesha_power_departure,
         niv_source_departure,
         curie_departure,
+        minsc_departure,
     }) = materialize_event_v1(
         state,
         event,
@@ -4713,6 +4714,9 @@ fn commit_with_entry_batch_and_source_color(
             entry_history_index,
             departure,
         );
+    }
+    if let Some(departure) = minsc_departure {
+        crate::eternal_vintage_e7b_v1::minsc::record_departure(state, entry_history_index, departure);
     }
     if let Some(copy) = metamorph_mage_copy {
         if matches!(state.engine.event_history.get(entry_history_index),
@@ -5095,6 +5099,7 @@ fn initialize_materialized_entry_v1(
 struct FinalZonePtPlanV1 {
     departures: Vec<(crate::state::ObjectLinkV4, (i32, i32))>,
     curie_departures: Vec<crate::eternal_legacy_e7a_v1::curie::DepartureV1>,
+    minsc_departures: Vec<HistoricalDamageSourceV1>,
 }
 #[derive(Clone, Copy)]
 enum NativeMaterializationV1<'a> {
@@ -5105,6 +5110,19 @@ impl NativeMaterializationV1<'_> {
     fn is_scene(self) -> bool {
         matches!(self, Self::FinalScene(_))
     }
+    fn minsc_departure(self, state: &GameState, id: ObjectId) -> Option<HistoricalDamageSourceV1> {
+        match self {
+            Self::FinalScene(_) => None,
+            Self::Commit(Some(plan)) => {
+                let generation = state.objects.get(id).zone_change_count;
+                plan.minsc_departures.iter().find(|departure| {
+                    departure.source.source == id && departure.source.zone_change_count == generation
+                }).copied()
+            }
+            Self::Commit(None) => crate::eternal_vintage_e7b_v1::minsc::departure(state, id),
+        }
+    }
+
     fn curie_departure(
         self,
         state: &GameState,
@@ -5182,11 +5200,13 @@ fn needs_final_zone_pt_plan_v1(state: &GameState, events: &[ProposedEvent]) -> b
         })
 }
 impl FinalZonePtPlanV1 {
-    fn curie_only(state: &GameState, events: &[ProposedEvent]) -> Option<Self> {
+    fn eternal_departures_only(state: &GameState, events: &[ProposedEvent]) -> Option<Self> {
         let curie_departures = crate::eternal_legacy_e7a_v1::curie::capture_batch(state, events);
-        (!curie_departures.is_empty()).then_some(Self {
+        let minsc_departures = crate::eternal_vintage_e7b_v1::minsc::capture_batch(state, events);
+        (!curie_departures.is_empty() || !minsc_departures.is_empty()).then_some(Self {
             departures: Vec::new(),
             curie_departures,
+            minsc_departures,
         })
     }
 
@@ -5209,6 +5229,7 @@ impl FinalZonePtPlanV1 {
         let mut plan = Self {
             departures: Vec::new(),
             curie_departures: crate::eternal_legacy_e7a_v1::curie::capture_batch(original, events),
+            minsc_departures: crate::eternal_vintage_e7b_v1::minsc::capture_batch(original, events),
         };
         for event in events {
             if let ProposedEvent::ZoneChange(z) = event {
@@ -5425,7 +5446,7 @@ fn direct_zone_pt_plan_v1(
 ) -> Result<Option<FinalZonePtPlanV1>, ObjectId> {
     crate::progenitus_v1::preview(state, events)?;
     if !needs_final_zone_pt_plan_v1(state, events) {
-        return Ok(FinalZonePtPlanV1::curie_only(state, events));
+        return Ok(FinalZonePtPlanV1::eternal_departures_only(state, events));
     }
     let final_events = direct_zone_scene_events_v1(state, events);
     let inputs = final_events
@@ -5471,6 +5492,7 @@ fn materialize_event_v1(
     let mut alesha_power_departure = None;
     let mut niv_source_departure = None;
     let mut curie_departure = None;
+    let mut minsc_departure = None;
     let committed = match event {
         ProposedEvent::Damage(d) => {
             let historical = d
@@ -5566,6 +5588,7 @@ fn materialize_event_v1(
             let from = state.objects.get(z.object).zone;
             if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
                 curie_departure = mode.curie_departure(state, z.object);
+                minsc_departure = mode.minsc_departure(state, z.object);
             }
             let departure_pt = mode.departure_pt(state, z.object);
             let departure_power = departure_pt.map(|pt| pt.0);
@@ -6122,6 +6145,7 @@ fn materialize_event_v1(
         alesha_power_departure,
         niv_source_departure,
         curie_departure,
+        minsc_departure,
     })
 }
 struct MaterializedEventV1 {
@@ -6129,6 +6153,7 @@ struct MaterializedEventV1 {
     alesha_power_departure: Option<(ObjectId, u16, u32, i32)>,
     niv_source_departure: Option<crate::state::AbilitySourceContractV4>,
     curie_departure: Option<crate::eternal_legacy_e7a_v1::curie::DepartureV1>,
+    minsc_departure: Option<HistoricalDamageSourceV1>,
 }
 
 /// Runs the replace/prevent pass independently on every event in `events`
@@ -6595,7 +6620,7 @@ fn commit_batch_survivors(
             }
         }
     } else {
-        FinalZonePtPlanV1::curie_only(state, &survivors)
+        FinalZonePtPlanV1::eternal_departures_only(state, &survivors)
     };
     let conqueror_batch = crate::bloodthirsty_conqueror_v49::RecorderV49::capture(state);
     let EntryBatchCommitContextV1 {
@@ -8266,7 +8291,7 @@ mod tests {
                 is_combat: true,
                 historical_source: None,
                 niv_damage_origin_v1: None,
-                bombardment_source: None,
+                eternal_damage_lki_v1: None,
                 touched_by: Vec::new(),
             })
         };

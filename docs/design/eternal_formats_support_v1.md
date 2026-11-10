@@ -576,8 +576,12 @@ New, each built once in the first wave that needs it:
   power recorded in the native departure scene if that incarnation left.
   The draw count is fixed before the first replacement attempt. Historical
   serialized `CurieDrawV1` triggers retain their old fallback behavior.
-  Remaining specialized draws include Minsc & Boo's reflexive draw,
-  Echo of Eons after both shuffles, and the two drawing dungeon rooms. Generated
+  Minsc & Boo's bound reflexive trigger uses the sacrificed Hamster's
+  effective power. It resolves its actual target and damage before draw
+  replacement attempts begin. An illegal target stops the whole trigger.
+  Historical serialized Minsc triggers retain their existing behavior.
+  Remaining specialized draws include Echo of Eons after both shuffles
+  and the two drawing dungeon rooms. Generated
   draws from Bonder's Ornament, the Premodern draw leaves, Standstill, Arcane
   Denial and Accumulated Knowledge still need their Jace/Hullbreacher origins.
   Quantum Riddler needs to change the whole instruction's draw count before the

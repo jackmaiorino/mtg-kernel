@@ -69,7 +69,7 @@ impl ChoiceV1 {
             is_combat: false,
             historical_source: self.historical_source,
             niv_damage_origin_v1: self.niv_damage_origin_v1,
-            bombardment_source: None,
+            eternal_damage_lki_v1: None,
         }
     }
 }
@@ -174,7 +174,7 @@ impl BatchDamageV2 {
             is_combat: false,
             historical_source: None,
             niv_damage_origin_v1: None,
-            bombardment_source: None,
+            eternal_damage_lki_v1: None,
         }
     }
 
@@ -978,7 +978,7 @@ fn original_damage(
         is_combat: false,
         historical_source,
         niv_damage_origin_v1: ctx.niv_damage_origin_v1,
-        bombardment_source: None,
+        eternal_damage_lki_v1: None,
     })
 }
 /// Equipment owns the grant recipe; the host owns the resulting trigger.
