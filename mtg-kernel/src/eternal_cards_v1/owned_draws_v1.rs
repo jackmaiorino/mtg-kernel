@@ -361,7 +361,7 @@ pub(crate) fn begin(
     }
     if instruction == InstructionV1::DragonEngine {
         let player = pending.ctx.controller;
-        eternal_legacy_e7a_v1::discard_hand(state, player);
+        eternal_legacy_e7a_v1::discard_controller_hand(state, player);
         if state.engine.halted.is_some() {
             return Err("Dragon Engine could not complete its discard".into());
         }

@@ -994,7 +994,7 @@ pub(crate) fn dragon_engine_rummage() -> EffectOp {
     }
 }
 
-pub(crate) fn discard_hand(state: &mut GameState, player: PlayerId) {
+pub(crate) fn discard_controller_hand(state: &mut GameState, player: PlayerId) {
     let hand = state.players[player.index()].hand.clone();
     for card in hand {
         crate::engine::commit_discarded_card(state, card);
@@ -1459,10 +1459,10 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
         E7aOpV1::GalvanicRelayV1 => galvanic_relay_effect(ctx, state),
         E7aOpV1::BurningWishV1 => mark_self_exile(ctx, state),
         E7aOpV1::DiscardHandV1 => {
-            discard_hand(state, ctx.controller);
+            discard_controller_hand(state, ctx.controller);
         }
         E7aOpV1::DiscardHandThenDrawV1 { count } => {
-            discard_hand(state, ctx.controller);
+            discard_controller_hand(state, ctx.controller);
             if state.engine.halted.is_none() {
                 crate::eternal_cards_v1::owned_draws_v1::draw_uninterrupted(
                     state,
