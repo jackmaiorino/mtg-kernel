@@ -95,7 +95,7 @@ pub(super) fn paid_matches(
         source: paid_source,
         item: paid_item,
         tap_at,
-    }) = journal(state, paid_at)
+    }) = u32::try_from(paid_at).ok().and_then(|at| journal(state, at))
     else {
         return false;
     };
@@ -251,7 +251,7 @@ pub(super) fn entry_origin_matches(
         && copy.physical.zone == Zone::Hand
         && copy.physical.owner == origin.source.controller
         && card_id_by_name("Phyrexian Metamorph") == Some(copy.physical.card_def)
-        && matches!(journal(state, origin.chosen_at),
+        && matches!(u32::try_from(origin.chosen_at).ok().and_then(|at| journal(state, at)),
             Some(JournalV1::VialMetamorphChosen { paid_at, physical })
             if *paid_at == origin.paid_at && *physical == copy.physical)
 }
