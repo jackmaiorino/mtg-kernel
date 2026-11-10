@@ -723,7 +723,7 @@ fn resolve_rats_discard(
     };
     assert!(
         matches!(&decision, Some(Decision::Discard { player: chooser, count: 1, choices })
-        if *chooser == opponent && choices.as_slice() == &hand)
+        if *chooser == opponent && choices.as_slice() == hand)
     );
     let mut restored: GameState =
         serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
