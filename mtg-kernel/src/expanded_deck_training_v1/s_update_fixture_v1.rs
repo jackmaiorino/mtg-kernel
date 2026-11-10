@@ -1152,9 +1152,8 @@ fn forward_profile_v1(
         profile["counts_match_execution"] = json!(counts_match_execution);
         profile["removed_learner_forwards"] =
             json!(counts_match_execution.then_some(if used { learner_rows } else { 0 }));
-        profile["scope"] = json!(
-            "thread time of each call, including discarded attempt work on fallback"
-        );
+        profile["scope"] =
+            json!("thread time of each call, including discarded attempt work on fallback");
     }
     profile
 }

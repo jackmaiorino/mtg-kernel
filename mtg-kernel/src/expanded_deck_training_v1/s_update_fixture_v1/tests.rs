@@ -99,7 +99,9 @@ fn assert_verified_replay_bench_v1(
     assert_eq!(sample["verified"], true, "{sample}");
     let replay = &sample["verified_replay"];
     assert_eq!(replay["used"], true, "{replay}");
-    let peak = replay["attempt"]["peak_retained_tape_bytes"].as_u64().unwrap();
+    let peak = replay["attempt"]["peak_retained_tape_bytes"]
+        .as_u64()
+        .unwrap();
     assert!(peak > batch.census.learner_row_tape_bytes.max);
     assert!(peak <= u64::try_from(cap).unwrap());
     assert_eq!(
@@ -210,7 +212,9 @@ fn assert_verified_replay_refusals_v1(
         corrupt.trajectories[1] = pin.clone();
         for path in [
             UpdatePathV1::Serial,
-            UpdatePathV1::VerifiedSerial { tape_cap_bytes: cap },
+            UpdatePathV1::VerifiedSerial {
+                tape_cap_bytes: cap,
+            },
         ] {
             let out = root.join(format!("refused-command-{pairing}-{path:?}"));
             let command = update_command_v1(manifest, &corrupt, path, 1, out.clone()).unwrap();
@@ -335,7 +339,9 @@ fn assert_late_capacity_fallback_v1(
         update_command_v1(
             manifest,
             &ragged,
-            UpdatePathV1::VerifiedSerial { tape_cap_bytes: cap },
+            UpdatePathV1::VerifiedSerial {
+                tape_cap_bytes: cap,
+            },
             1,
             root.join("late-oversized-fallback"),
         )
@@ -358,17 +364,14 @@ fn assert_late_capacity_fallback_v1(
         (first.decisions.len() + index - candidate_backwards) as u64
     );
     assert!((1..=cap).contains(&attempt.peak_retained_tape_bytes));
-    let forward = forward_profile_v1(
-        profile.totals_v1(),
-        &ragged.census,
-        Some((false, &attempt)),
-    );
+    let forward = forward_profile_v1(profile.totals_v1(), &ragged.census, Some((false, &attempt)));
     if s_update_profile::ENABLED_V1 {
         assert_eq!(forward["counts_match_execution"], true, "{forward}");
         assert_eq!(forward["removed_learner_forwards"], 0);
         assert_eq!(
             forward["forward_calls"],
-            ragged.census.rows as u64 + ragged.census.learner_rows as u64
+            ragged.census.rows as u64
+                + ragged.census.learner_rows as u64
                 + attempt.learner_replay_forwards
                 + attempt.other_replay_forwards
         );
@@ -748,7 +751,10 @@ fn assert_verified_command_v1(
         assert!(error.to_string().contains("unknown field"), "{error}");
     }
     let mut missing_cap = command.clone();
-    missing_cap.as_object_mut().unwrap().remove("tape_cap_bytes");
+    missing_cap
+        .as_object_mut()
+        .unwrap()
+        .remove("tape_cap_bytes");
     let error = serde_json::from_value::<ExpandedTrainingCommandV1>(missing_cap).unwrap_err();
     assert!(error.to_string().contains("missing field `tape_cap_bytes`"));
     for (field, value, refusal) in [
@@ -762,7 +768,11 @@ fn assert_verified_command_v1(
             json!(67_108_865),
             "verified replay tape cap must be in",
         ),
-        ("source", json!(manifest.net8), "requires an S learner source"),
+        (
+            "source",
+            json!(manifest.net8),
+            "requires an S learner source",
+        ),
         (
             "loss_selection",
             json!(ExpandedLossSelectionV1::TerminalReinforceValueV3),
@@ -778,7 +788,10 @@ fn assert_verified_command_v1(
 
     let result = execute_v1(serde_json::from_value(command).unwrap()).unwrap();
     assert_eq!(result["verified_replay"]["used"], true);
-    assert_eq!(verify_v1(manifest, batch, &result).unwrap()["verified"], true);
+    assert_eq!(
+        verify_v1(manifest, batch, &result).unwrap()["verified"],
+        true
+    );
 }
 
 #[test]
