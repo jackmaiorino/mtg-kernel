@@ -1351,11 +1351,24 @@ pub(crate) fn requires_successor_with_full_text(
 /// Validate all three kinds together so an orphan execution or damage record
 /// cannot bypass validation by omitting its boundary.
 pub(crate) fn validate_ordered_donated_archive(state: &GameState) -> Result<(), String> {
-    if !state.engine.event_history.scan_for_v1(&[
-        EventKindV1::CrystalPreventionBoundaryV1,
-        EventKindV1::CrystalExecutionV1,
-        EventKindV1::CrystalDamageOperationV3,
-    ]).is_empty() {
+    if state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::CrystalPreventionBoundaryV1,
+            EventKindV1::CrystalExecutionV1,
+            EventKindV1::CrystalDamageOperationV3,
+        ])
+        .iter()
+        .any(|event| {
+            matches!(
+                event,
+                CommittedEvent::CrystalPreventionBoundaryV1 { .. }
+                    | CommittedEvent::CrystalExecutionV1 { .. }
+                    | CommittedEvent::CrystalDamageOperationV3 { .. }
+            )
+        })
+    {
         validate(state)?;
     }
     Ok(())
