@@ -768,14 +768,17 @@ fn overload_with_retrace_pays_the_land_discard_and_mana_both_seats() {
         );
         act(&mut state, Action::ChooseSpellMode(1));
         let decision = next(&mut state);
-        assert!(matches!(
-            &decision,
-            Decision::ChooseCostTargets { candidates, remaining: 1, .. }
-                if candidates.len() == 2
-                    && candidates.contains(&land)
-                    && candidates.contains(&other_land)
-                    && !candidates.contains(&nonland)
-        ), "{decision:?}");
+        assert!(
+            matches!(
+                &decision,
+                Decision::ChooseCostTargets { candidates, remaining: 1, .. }
+                    if candidates.len() == 2
+                        && candidates.contains(&land)
+                        && candidates.contains(&other_land)
+                        && !candidates.contains(&nonland)
+            ),
+            "{decision:?}"
+        );
         act(&mut state, Action::ChooseCostTarget(land));
         settled(&mut state);
         assert_eq!(zone(&state, land), Zone::Graveyard);
