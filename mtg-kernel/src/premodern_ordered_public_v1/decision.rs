@@ -321,7 +321,7 @@ fn activation_program<'a>(
     Some((source, program))
 }
 
-fn activation_label(program: FullTextProgramV1) -> Result<&'static str, String> {
+pub(super) fn activation_label(program: FullTextProgramV1) -> Result<&'static str, String> {
     use DonatedActivationV1::*;
 
     Ok(match program {

@@ -1,5 +1,6 @@
 use super::*;
 use crate::{engine::Action, rl::ActionSemanticV1, surface::SurfaceAction};
+use crate::{mana::ManaColor, state::{Step, Zone}};
 
 fn issued(owner: &FebSessionV1, viewer: PlayerSeatV1) -> (Box<FebNumericViewV1>, Option<FebDecisionV1>) {
     let FebCurrentV1::Decision { numeric, decision } = owner.current(viewer).unwrap() else {
@@ -108,4 +109,99 @@ fn frozen_feb_opening_packet_is_inert_to_opponent_hidden_copy_assignment() {
     let (other, _) = issued(&paired, PlayerSeatV1::P0);
     assert_eq!(actual.observation, other.observation);
     assert_eq!(actual.actions, other.actions);
+    assert_eq!(owner.human_current(PlayerSeatV1::P0).unwrap(), paired.human_current(PlayerSeatV1::P0).unwrap());
+}
+
+fn choose_label(owner: &mut FebSessionV1, viewer: PlayerSeatV1, starts_with: &str) {
+    let human = owner.human_current(viewer).unwrap().unwrap();
+    let ordinal = human.actions.iter().find_map(|row| match row {
+        FebHumanActionV1::Supported { native_ordinal, label } if label.starts_with(starts_with) => Some(*native_ordinal),
+        _ => None,
+    }).unwrap_or_else(|| panic!("missing Human action {starts_with:?} in {:?}", human.actions));
+    let (_, token) = issued(owner, viewer);
+    owner.step_human(&token.unwrap(), ordinal).unwrap();
+}
+
+fn acting(owner: &FebSessionV1) -> PlayerSeatV1 {
+    let Ok(BoundBoundaryV1::Decision(binding)) = &owner.inner.current else {
+        panic!("FEB fixture boundary absent: {:?}", owner.inner.current.as_ref().err());
+    };
+    binding.actor.into()
+}
+
+fn stage_deck_card(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> ObjectId {
+    let id = card_id_by_name(name).unwrap();
+    let objects = &state.players[player.index()];
+    let object = objects.hand.iter().chain(&objects.library).copied()
+        .find(|&object| state.objects.get(object).card_def == id).unwrap();
+    if state.objects.get(object).zone != zone {
+        propose_and_commit(state, ProposedEvent::zone_change(object, zone));
+    }
+    object
+}
+
+#[test]
+fn frozen_feb_human_paid_volrath_discard_and_wall_mana_both_seats() {
+    for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+        let p = native_seat(seat);
+        for with_donor in [false, true] {
+            let mut owner = FebSessionV1::reset(460_617, seat).unwrap();
+            choose_label(&mut owner, seat, "Keep this hand");
+            choose_label(&mut owner, p.opponent().into(), "Keep this hand");
+            for _ in 0..16 {
+                if owner.inner.game.step == Step::Main1 {
+                    break;
+                }
+                let viewer = acting(&owner);
+                choose_label(&mut owner, viewer, "Pass priority");
+            }
+            assert_eq!(owner.inner.game.step, Step::Main1);
+            let source = stage_deck_card(&mut owner.inner.game, p, "Volrath's Shapeshifter", Zone::Hand);
+            let donor = with_donor.then(|| stage_deck_card(&mut owner.inner.game, p, "Wall of Roots", Zone::Graveyard));
+            let mana = &mut owner.inner.game.players[p.index()].mana_pool;
+            mana[ManaColor::U.pool_index()] = 2;
+            mana[ManaColor::C.pool_index()] = if with_donor { 1 } else { 3 };
+            owner.inner.current = bind_next(&mut owner.inner.game, &mut owner.inner.surface, owner.inner.step);
+            choose_label(&mut owner, seat, "Begin casting Volrath's Shapeshifter");
+            for _ in 0..8 {
+                if owner.inner.game.stack.is_empty() {
+                    break;
+                }
+                let viewer = acting(&owner);
+                choose_label(&mut owner, viewer, "Pass priority");
+            }
+            assert_eq!(owner.inner.game.objects.get(source).zone, Zone::Battlefield);
+            let human = owner.human_current(seat).unwrap().unwrap();
+            assert!(!serde_json::to_string(&human).unwrap().contains("arena_id"));
+            assert!(owner.human_current(p.opponent().into()).unwrap().unwrap().actions.is_empty());
+            let snapshot = owner.snapshot();
+            let (_, stale) = issued(&owner, seat);
+            owner.restore(&snapshot).unwrap();
+            assert!(owner.step_human(&stale.unwrap(), 0).is_err());
+            assert_eq!(owner.human_current(seat).unwrap().unwrap(), human);
+
+            if let Some(donor) = donor {
+                assert_eq!(full_text_v1::active_text(&owner.inner.game, source).unwrap().donor().object, donor);
+                choose_label(&mut owner, seat, "Put a -0/-1 counter on Volrath's Shapeshifter");
+                let state = &owner.inner.game;
+                assert_eq!(state.players[p.index()].mana_pool[ManaColor::G.pool_index()], 1);
+                assert_eq!(state.objects.get(source).counters.minus0_minus1, 1);
+                assert_eq!(state.objects.get(donor).counters.minus0_minus1, 0);
+            } else {
+                assert!(full_text_v1::active_text(&owner.inner.game, source).is_none());
+                let before = owner.inner.game.players[p.index()].hand.len();
+                choose_label(&mut owner, seat, "Volrath's Shapeshifter: Pay {2} to discard a card");
+                for _ in 0..8 {
+                    if owner.inner.game.engine.pending_discard.is_some() {
+                        break;
+                    }
+                    let viewer = acting(&owner);
+                    choose_label(&mut owner, viewer, "Pass priority");
+                }
+                choose_label(&mut owner, seat, "Discard ");
+                assert_eq!(owner.inner.game.players[p.index()].hand.len(), before - 1);
+                assert_eq!(owner.inner.game.players[p.index()].mana_pool, [0; 6]);
+            }
+        }
+    }
 }

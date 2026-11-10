@@ -1,16 +1,17 @@
 //! In-process owner for the exact frozen Full English Breakfast mainboard.
-use super::{decision::{bind_next, BoundBoundaryV1}, NumericMenuV1};
+use super::{decision::{bind_next, BoundBoundaryV1}, FullTextProgramV1, NumericDecisionViewV1, NumericMenuV1, NumericNativeActionV1};
 use crate::{
     card_def::{card_id_by_name, CardCapability, CARD_DEFS, KERNEL_CARDDB_HASH},
     current_mixed_policy_v1::{visible_numeric_parts_v1, NumericTree},
     event::{propose_and_commit, ProposedEvent},
-    ids::PlayerId,
+    full_text_v1,
+    ids::{ObjectId, PlayerId},
     limited_session_v1::CustomCardCountV1,
-    rl::{self, PlayerSeatV1},
+    rl::{self, ActionSemanticV1, PlayerSeatV1},
     state::{GameState, SplitMix64},
     surface_v2::{HarnessSurfaceV2, PriorityModeV1, SuppressionAuditMode},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
@@ -18,6 +19,9 @@ use std::sync::{Arc, OnceLock};
 #[cfg(test)]
 #[path = "feb_tests.rs"]
 mod tests;
+#[path = "feb_human.rs"]
+mod human;
+pub use human::{FebHumanActionV1, FebHumanSceneV1, FebHumanViewV1};
 
 pub const PROFILE_V1: &str = "mtg-kernel-premodern-feb-ordered/v1";
 const ARCHETYPE: &str = "premodern-full-english-breakfast";
@@ -161,6 +165,52 @@ fn require_visible_actions(observed: &Value, actions: &[Value]) -> Result<(), St
     Ok(())
 }
 
+fn full_text_action(row: &NumericNativeActionV1) -> Option<FullTextProgramV1> {
+    row.full_text.or_else(|| {
+        let ActionSemanticV1::ActivateAbility { source, ability_index: 0, granted_ability, .. } = &row.action.semantic else {
+            return None;
+        };
+        (source.zone == crate::state::Zone::Battlefield && granted_ability.as_ref().is_none()
+            && full_text_v1::owns_definition(&CARD_DEFS[usize::from(source.card_db_id)]))
+            .then_some(FullTextProgramV1::RetainedDiscard)
+    })
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum DonatedManaV1 {
+    BirdsOfParadise,
+    WallOfRoots,
+}
+
+fn donated_mana(state: &GameState, action: &ActionSemanticV1) -> Option<DonatedManaV1> {
+    let ActionSemanticV1::ActivateManaAbility { source, .. } = action else {
+        return None;
+    };
+    let text = full_text_v1::mana_text(state, ObjectId(source.arena_id))?;
+    Some(match text.definition().name {
+        "Birds of Paradise" => DonatedManaV1::BirdsOfParadise,
+        "Wall of Roots" => DonatedManaV1::WallOfRoots,
+        _ => return None,
+    })
+}
+
+fn visible_numeric_input(state: &GameState, view: &NumericDecisionViewV1) -> Result<(Value, Vec<Value>), String> {
+    let actions = match &view.menu {
+        None => Vec::new(),
+        Some(NumericMenuV1::Native { actions }) => actions.iter().map(|row| {
+            json!({"ordinal":row.action.selected_index, "action":row.action.semantic,
+                "full_text":full_text_action(row), "donated_mana":donated_mana(state, &row.action.semantic)})
+        }).collect::<Vec<Value>>(),
+        Some(NumericMenuV1::GraveyardOrder) => view.observation.ordered.order_choice.as_ref()
+            .ok_or("FEB native order choice is absent")?.native_candidates.iter().enumerate()
+            .map(|(ordinal, card)| json!({"ordinal":ordinal, "order_card":card})).collect(),
+    };
+    let observed = serde_json::to_value(&view.observation).map_err(|_| "FEB numeric serialization failed")?;
+    require_visible_actions(&observed, &actions)?;
+    Ok((observed, actions))
+}
+
 impl FebSessionV1 {
     /// Construct and deal both exact 60-card mainboards, then issue the first
     /// London mulligan decision in native starting-seat order.
@@ -198,17 +248,7 @@ impl FebSessionV1 {
         };
         let state = binding.view(&self.inner.game, &self.inner.surface, viewer, self.inner.step)
             .map_err(|_| "FEB ordered observation is unsupported")?;
-        let actions = match &state.menu {
-            None => Vec::new(),
-            Some(NumericMenuV1::Native { actions }) => actions.iter().map(|row| {
-                json!({"ordinal":row.action.selected_index, "action":row.action.semantic, "full_text":row.full_text})
-            }).collect::<Vec<Value>>(),
-            Some(NumericMenuV1::GraveyardOrder) => state.observation.ordered.order_choice.as_ref()
-                .ok_or("FEB native order choice is absent")?.native_candidates.iter().enumerate()
-                .map(|(ordinal, card)| json!({"ordinal":ordinal, "order_card":card})).collect(),
-        };
-        let observed = serde_json::to_value(&state.observation).map_err(|_| "FEB numeric serialization failed")?;
-        require_visible_actions(&observed, &actions)?;
+        let (observed, actions) = visible_numeric_input(&self.inner.game, &state)?;
         let (observation, actions) = visible_numeric_parts_v1(&observed, &actions)
             .map_err(|error| format!("FEB numeric operand: {error}"))?;
         Ok(FebCurrentV1::Decision {

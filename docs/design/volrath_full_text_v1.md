@@ -68,5 +68,14 @@ A separate fixture covers a departing top donor in both batch member orders.
 
 Donor support is finite. It omits, for example, Mogg Fanatic's donated
 activation and Ravenous Rats' donated entry trigger. Mainboard qualification
-also requires a session that resets, plays and replays the actual snapshot
+also requires terminal play and replay evidence from the actual snapshot
 list. Ordinary copy compatibility needs exact-head gameplay evidence.
+
+The in-process `premodern_ordered_public_v1::feb` owner resets both seats
+from the frozen 60-card mainboard in snapshot row order and uses native
+London mulligans and priority. Numeric views use local reference aliases.
+The Human view includes the actor's native menu and an explicit unsupported
+row for action meanings outside the current renderer. Same-owner snapshots
+restore the pending menu and invalidate old decision tokens. The owner is
+an in-process milestone. Transport and complete consumer qualification remain
+open.
