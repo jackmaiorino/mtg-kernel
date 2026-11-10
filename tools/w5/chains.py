@@ -223,13 +223,14 @@ SEGCHECK_SCHEMA = 'w5-segcheck/v1'
 COMMIT_SCHEMA = 'w5-segment-commit/v1'
 COMMIT_LOG = 'durable.jsonl'  # chains/<name>/durable.jsonl: the driver's committed boundaries (module docstring)
 ARMS = {'C': ('C', 'C'), 'X8': ('X', 'X'), 'XS': ('X', 'X'), 'F': ('C', None),
-        'CS': ('C', 'C'), 'CP': ('C', 'C'), 'CG': ('C', 'C')}  # recipe, retention arm
+        'CS': ('C', 'C'), 'CP': ('C', 'C'), 'CG': ('C', 'C'), 'CH': ('C', 'C')}  # recipe, retention arm
 # CS, CP and CG: further C-recipe arms of an independent Stage 0 plan (own parent and base; e.g. an S parent, a pool
 # base). CG (P-grow, pgrow.py) also plays its own checkpoint ladder in the base's fixed-parent share.
-EXTRA_C = ('CS', 'CP', 'CG')
+EXTRA_C = ('CS', 'CP', 'CG', 'CH')
+LADDER_ARMS = ('CG', 'CH')  # CH: a second P-grow arm, so one plan can hold two parents (e.g. two fresh lineages)
 MEASURED = ('C', 'X8', 'XS') + EXTRA_C
 STAGES = ('0', '1a', '1b')
-SEGMENT_UPDATES = {'C': 256, 'X8': 16, 'XS': 16, 'F': 64, 'CS': 256, 'CP': 256, 'CG': 256}
+SEGMENT_UPDATES = {'C': 256, 'X8': 16, 'XS': 16, 'F': 64, 'CS': 256, 'CP': 256, 'CG': 256, 'CH': 256}
 HOT_CAP_BYTES = 60 * 10**9
 BYTE_CAP = 560 * 10**9
 HOLD_DAYS = 7
@@ -610,7 +611,7 @@ def make_plan(inputs_path):
         require(not fresh or extra,
                 f'{a}: a fresh parent (no checkpoint) is for extra C-recipe arms of independent Stage 0 plans only')
         ladder = None
-        if a == 'CG':
+        if a in LADDER_ARMS:
             try:
                 ladder = pgrow.check_spec(spec.get('ladder'), base_doc, length, retention.C_LONG_STRIDE,
                                           read(spec['parent'])['source'], pin)
@@ -619,7 +620,7 @@ def make_plan(inputs_path):
             require(ladder.get('start_member', True) or initial_opponent,
                     f'{a}: a fresh-start ladder plays `initial` before its first state (needs initial_opponent)')
         else:
-            require('ladder' not in spec, f'{a}: only a CG arm plays a checkpoint ladder')
+            require('ladder' not in spec, f'{a}: only a CG or CH arm plays a checkpoint ladder')
         x = None
         if recipe == 'X':
             require(type(spec.get('budget')) is int and spec['budget'] > 0 and spec.get('dose') in xact.DOSES

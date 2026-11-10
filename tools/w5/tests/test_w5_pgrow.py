@@ -145,7 +145,7 @@ class Chains(unittest.TestCase):
         inputs = json.loads((self.node.t / 'prod.json').read_text())
         inputs['arms']['C'] = dict(inputs['arms']['C'], ladder={})
         inputs['chains'] = {'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'oc/c1'}}
-        with self.assertRaisesRegex(chains.Stop, 'only a CG arm'):
+        with self.assertRaisesRegex(chains.Stop, 'only a CG or CH arm'):
             chains.make_plan(jwrite(self.node.t / 'c-ladder.json', dict(inputs, label='cl')))
 
     def test_first_segments_play_b512_then_the_ladder_grows(self):
@@ -551,6 +551,27 @@ class FreshStart(unittest.TestCase):
         b = {r['boundary']: r['after_state_sha256'] for r in self.records(plan, 'g2')[1]}
         self.assertEqual(sorted(a), sorted(b))
         self.assertEqual(a, b)
+
+    def test_two_lineages_in_one_plan(self):
+        """CG and CH: two P-grow arms, so one independent plan holds two fresh parents (G1 and G2)."""
+        other = fresh_dose(self.tmp.name, 'g2fresh')
+        ladder = {'stride': STRIDE, 'test_stride': True, 'start_member': False}
+        inputs = json.loads(Path(self.node.inputs('0', {'g1': {'arm': 'CG', 'slot': 0, 'seed_root': 'pg/G1'},
+                                                        'g2': {'arm': 'CH', 'slot': 1, 'seed_root': 'pg/G2'}},
+                                                  label='two', c_wall_seconds=3600.0, independent=True)).read_text())
+        for arm, parent in (('CG', self.fresh), ('CH', other)):
+            inputs['arms'][arm] = {'parent': str(parent), 'workers': 1, 'memory_max_bytes': 1 << 30,
+                                   'bytes_per_update': 1000, 'segment_updates': SEG, 'base': str(self.base),
+                                   'ladder': dict(ladder), 'initial_opponent': 'segment-start'}
+        _, plan = chains.make_plan(jwrite(self.node.t / 'two.json', inputs))
+        for name, parent in (('g1', self.fresh), ('g2', other)):
+            self.assertEqual(self.run_segments(plan, name, 3), chains.EXIT_ROOM)
+            cfgs = self.configs(name)
+            self.assertEqual(cfgs[0]['initial_source'], json.loads(parent.read_text())['source'])
+            self.assertTrue(any(o['id'] == 'ladder-u8' for o in cfgs[2]['opponents']))
+        a = {r['boundary']: r['after_state_sha256'] for r in self.records(plan, 'g1')[1]}
+        b = {r['boundary']: r['after_state_sha256'] for r in self.records(plan, 'g2')[1]}
+        self.assertTrue(set(a) == set(b) and all(a[k] != b[k] for k in a if k))
 
     def test_no_fork_of_a_fresh_start(self):
         _, plan = self.fresh_plan()
