@@ -104,3 +104,21 @@ cargo test --release -p mtg-kernel --lib --features eternal-fixtures -- premoder
 
 This is an in-process determinism and rules check. Transport and other
 donated programs remain separate from this fixture.
+
+The exact `a8baba3df` native packet completed 61 of 62 checks successfully,
+with no timeouts and all children drained. Its manifest is
+`E:/codex-eternal-feb-a8ba-evidence/manifest.json`, SHA-256
+`bbfe4e1b0dcaf1ed664ae0c94d5403fc188fdf31901c1cafbaddecc292b15561`.
+The paid Fanatic prevention and donor-keyword repairs, both native history
+guards, every-kind consumers, static audit and all retained producers passed.
+The terminal fixture alone failed at starting seat P0, step 63: Cabal Therapy's
+native naming choice had no supported Human label.
+
+The source successor labels both naming stages only for the acting player,
+the validated physical spell and the exact ordered options at its printed
+program path. Copied spells and unrelated generic choices remain unsupported.
+Its both-seat paid fixture checks native naming, reordered-menu refusal,
+snapshot restore, stale tokens and the exact physical discard order selected
+through sealed Human ordinals. Independent source review passed; this successor
+and the unchanged terminal fixture still require native execution. Volrath
+remains Partial and the FEB mainboard remains outside PLAYABLE.
