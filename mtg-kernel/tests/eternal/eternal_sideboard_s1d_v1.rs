@@ -2185,6 +2185,8 @@ fn circle_of_protection_blue_uses_departed_minsc_from_waiting_reflexive_trigger_
         settle_option(&mut state, 1);
         let original = state.objects.get(minsc).zone_change_count;
         assert_ne!(engine::object_color_mask(&state, minsc) & blue, 0);
+        // A second eligible source keeps Circle's choice from auto-resolving.
+        let other_blue = put(&mut state, defender, "Mulldrifter", Zone::Battlefield);
         let boo = state.players[caster.index()]
             .battlefield
             .iter()
@@ -2234,7 +2236,7 @@ fn circle_of_protection_blue_uses_departed_minsc_from_waiting_reflexive_trigger_
         let decision = settle(&mut state).expect("paid Circle source menu");
         assert!(matches!(
             decision,
-            Decision::ChooseEffectOption { player, source, option_count: 1, .. }
+            Decision::ChooseEffectOption { player, source, option_count: 2, .. }
                 if player == defender && source == circle
         ));
         let Some(PendingEffectChoice::ChooseOption { options, .. }) = state
@@ -2245,12 +2247,16 @@ fn circle_of_protection_blue_uses_departed_minsc_from_waiting_reflexive_trigger_
         else {
             panic!("Circle source options missing");
         };
-        assert!(matches!(
-            options.as_slice(),
-            [EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
+        let links: Vec<_> = options.iter().map(|option| match option {
+            EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
                 S1dOpV1::CopShieldV1 { source },
-            )))] if source.object == minsc && source.zone_change_count == original
-        ));
+            ))) => (source.object, source.zone_change_count),
+            other => panic!("unexpected Circle option: {other:?}"),
+        }).collect();
+        assert_eq!(
+            links,
+            [(minsc, original), (other_blue, state.objects.get(other_blue).zone_change_count)]
+        );
 
         let snapshot = serde_json::to_value(&state).unwrap();
         for missing_publication in [true, false] {
