@@ -305,19 +305,21 @@ impl FebSessionV1 {
                 .zip(action_values)
                 .enumerate()
                 .map(|(native_ordinal, (row, action))| {
-                    Ok(match label(state, row, viewer, &view.observation.ordered.graveyards)? {
-                        Some(label) => FebHumanActionV1::Supported {
-                            native_ordinal,
-                            label,
+                    Ok(
+                        match label(state, row, viewer, &view.observation.ordered.graveyards)? {
+                            Some(label) => FebHumanActionV1::Supported {
+                                native_ordinal,
+                                label,
+                            },
+                            None => FebHumanActionV1::Unsupported {
+                                native_ordinal,
+                                action_kind: action["action"]["action_kind"]
+                                    .as_str()
+                                    .unwrap_or("unknown")
+                                    .into(),
+                            },
                         },
-                        None => FebHumanActionV1::Unsupported {
-                            native_ordinal,
-                            action_kind: action["action"]["action_kind"]
-                                .as_str()
-                                .unwrap_or("unknown")
-                                .into(),
-                        },
-                    })
+                    )
                 })
                 .collect::<Result<Vec<_>, String>>()?,
         };

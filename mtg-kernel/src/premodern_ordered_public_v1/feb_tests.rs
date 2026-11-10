@@ -229,7 +229,11 @@ fn stage_deck_card(state: &mut GameState, player: PlayerId, name: &str, zone: Zo
 fn main_phase_owner(seed: u64, seat: PlayerSeatV1) -> FebSessionV1 {
     let mut owner = FebSessionV1::reset(seed, seat).unwrap();
     choose_label(&mut owner, seat, "Keep this hand");
-    choose_label(&mut owner, native_seat(seat).opponent().into(), "Keep this hand");
+    choose_label(
+        &mut owner,
+        native_seat(seat).opponent().into(),
+        "Keep this hand",
+    );
     for _ in 0..16 {
         if owner.inner.game.step == Step::Main1 {
             break;
@@ -252,12 +256,19 @@ fn frozen_feb_human_distinguishes_paid_krosan_reclamation_graveyard_targets() {
         let lower = stage_deck_card(state, opponent, "Wall of Roots", Zone::Graveyard);
         let middle = stage_deck_card(state, opponent, "Palinchron", Zone::Graveyard);
         let upper = stage_deck_card(state, opponent, "Wall of Roots", Zone::Graveyard);
-        assert_eq!(state.players[opponent.index()].graveyard, [lower, middle, upper]);
+        assert_eq!(
+            state.players[opponent.index()].graveyard,
+            [lower, middle, upper]
+        );
         state.players[p.index()].mana_pool[ManaColor::G.pool_index()] = 1;
         state.players[p.index()].mana_pool[ManaColor::C.pool_index()] = 1;
         owner.inner.current = bind_next(state, &mut owner.inner.surface, owner.inner.step);
         choose_label(&mut owner, seat, "Begin casting Krosan Reclamation");
-        choose_label(&mut owner, seat, "Choose your opponent for Krosan Reclamation");
+        choose_label(
+            &mut owner,
+            seat,
+            "Choose your opponent for Krosan Reclamation",
+        );
 
         let human = owner.human_current(seat).unwrap().unwrap();
         for (native_ordinal, position) in [(0, 1), (2, 3)] {
@@ -330,11 +341,18 @@ fn frozen_feb_human_order_exposes_only_presentation_and_sealed_ordinals() {
         choose_label(&mut owner, seat, "Place Triskelion next");
         let next = owner.human_current(seat).unwrap().unwrap();
         assert_eq!(
-            next.ordered.order_choice.as_ref().unwrap().chosen_bottom_first,
+            next.ordered
+                .order_choice
+                .as_ref()
+                .unwrap()
+                .chosen_bottom_first,
             ["Triskelion"]
         );
         choose_label(&mut owner, seat, "Place Wall of Roots next");
-        assert_eq!(owner.inner.game.players[p.index()].graveyard, [second, third, first]);
+        assert_eq!(
+            owner.inner.game.players[p.index()].graveyard,
+            [second, third, first]
+        );
     }
 }
 
