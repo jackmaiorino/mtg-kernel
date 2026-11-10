@@ -752,6 +752,10 @@ fn stacked_delayed_source_link(effect: &EffectOp) -> Option<ObjectLinkV4> {
 /// CR 609.7a. A public zone alone does not make a graveyard or exile card a
 /// source choice. Require an exact active reference or a direct eligible zone.
 fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
+    use crate::eternal_legacy_e8a_v1::{link_live_in, E8aOpV1};
+    use crate::eternal_premodern_p1b_v1::P1bOpV1;
+    use crate::eternal_premodern_p2c_v1::P2cOpV1;
+
     let mask = blue_mask();
     let mut sources = Vec::new();
     let mut include_live = |source: ObjectLinkV4| {
@@ -818,6 +822,85 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
             {
                 include_live(source);
             }
+            let (
+                Some(eternal),
+                Some(source),
+                Some(EffectOp::StandardV1(StandardOpV1::EternalV1(op))),
+            ) = (
+                &state.eternal_v1,
+                item.v4.ability_source_contract,
+                &item.inline_effect,
+            )
+            else {
+                continue;
+            };
+            let mut include_exiled = |card| {
+                if link_live_in(state, card, Zone::Exile) {
+                    include_live(card);
+                }
+            };
+            match op {
+                // Wave captures its ability source immediately after departure,
+                // but keys the linked ledger by the preceding incarnation.
+                EternalOpV1::P1bV1(P1bOpV1::WaveReturnV1 { wave })
+                    if wave.object == item.source
+                        && source.source == item.source
+                        && source.zone != Zone::Battlefield
+                        && wave.zone_change_count.checked_add(1)
+                            == Some(source.zone_change_count)
+                        && crate::engine::validated_stack_item_target_spec(item, state).is_ok() =>
+                {
+                    for &(host, card) in &eternal.p1b.wave_exiles {
+                        if host == *wave {
+                            include_exiled(card);
+                        }
+                    }
+                }
+                EternalOpV1::P2cV1(P2cOpV1::PetradonReturnV1)
+                    if source.source == item.source
+                        && source.zone == Zone::Battlefield
+                        && crate::engine::validated_stack_item_target_spec(item, state).is_ok() =>
+                {
+                    let host = ObjectLinkV4 {
+                        object: source.source,
+                        zone_change_count: source.zone_change_count,
+                    };
+                    if let Some((_, cards)) = eternal
+                        .p2c
+                        .petradon_exiled
+                        .iter()
+                        .find(|(link, _)| *link == host)
+                    {
+                        for &card in cards {
+                            include_exiled(card);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let published_returns = state.stack.iter().filter_map(|item| {
+        if item.kind != StackItemKind::TriggeredAbility {
+            return None;
+        }
+        match item.inline_effect.as_ref()? {
+            EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E8aV1(
+                E8aOpV1::ReturnExiledV1 { cards },
+            ))) => Some(cards),
+            _ => None,
+        }
+    });
+    let waiting_returns = state.eternal_v1.iter().flat_map(|eternal| {
+        eternal
+            .e8a
+            .end_step_returns
+            .iter()
+            .map(|pending| &pending.cards)
+    });
+    for &card in waiting_returns.chain(published_returns).flatten() {
+        if link_live_in(state, card, Zone::Exile) {
+            include_live(card);
         }
     }
     for replacement in &state.engine.active_replacements {
@@ -1596,7 +1679,11 @@ pub(crate) mod statics {
         if matches!(
             spec,
             TargetSpec::KickerControlledCreatures
-                | TargetSpec::StandardV1(S::ArtifactThenArtifactCardInItsControllersGraveyardV1)
+                | TargetSpec::ControlledCreatureThenOpponentCreature
+                | TargetSpec::StandardV1(
+                    S::ArtifactThenArtifactCardInItsControllersGraveyardV1
+                        | S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1
+                )
         ) {
             return true;
         }

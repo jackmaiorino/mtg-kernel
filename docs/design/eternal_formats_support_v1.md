@@ -434,8 +434,8 @@ New, each built once in the first wave that needs it:
   both-seat X, Bestow, split, overload, Room, cascade, Madness and graveyard-cast checks remain unqualified;
   Lavinia stays Partial. Mana value ignores alternative payments and includes announced X, as stated
   in the [Ravnica Remastered rulings](https://media.wizards.com/2023/downloads/RVR_Release_Notes_XrN0zlJaFn/EN_MTGRVR_ReleaseNotes_20231120.pdf).
-  Leyline of the Void's opening action goes on the stack during the
-  first upkeep. The opening action belongs before the first turn under rule 103.6.
+  The native opening profile puts Leyline of the Void's opening action before
+  the first turn under rule 103.6. Legacy starts retain their first-upkeep behavior.
   [Comprehensive Rules](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
 
   Left out of the wave: Damping Sphere (its land replacement spans the mana planner and
@@ -473,11 +473,20 @@ New, each built once in the first wave that needs it:
   The Meddling Mage candidate asks for a name before committing the actual entry.
   A resumed entry checks the original operation, confirmed catalog choice, controller,
   and native entry occurrence. The named-spell restriction uses the same quote and
-  payment gates for ordinary casts and resolution casts. The catalog name menu and
-  legacy observation paths still need a consumer successor. A save with a legacy
-  staged Mage choice or completed name tuple requires the historical engine because
-  the save lacks the choice evidence required by the new entry owner. Leyline has
-  the same opening timing gap as Leyline of the Void.
+  payment gates for ordinary casts and resolution casts. The revised native menu names
+  individual split halves and Room doors, alternate Adventure and Omen spells, and
+  nonland back faces in the executable registry. It checks the selected spell name,
+  including disturb. Existing authenticated numeric choices retain their original
+  menu, serialization and hash. A legacy combined split name remains its literal
+  combined string and matches neither cast half. Names outside the registry
+  and the frozen observation paths remain outside this change. A pre-entry-owner
+  save without authenticated choice evidence still requires its historical engine. Leyline has
+  the same native opening path as Leyline of the Void.
+  A paid physical Phyrexian Metamorph copying a visible Mage chooses its own name
+  before entry. The entry keeps Metamorph's physical cast receipt, commits the Mage
+  characteristics and artifact type, and restores Metamorph's printing on departure.
+  Dress Down suppresses the physical copy choice before entry. Other copy-entry
+  routes are outside this repair. Native qualification is pending.
   Extirpate uses the shared extraction continuation to require all
   public graveyard matches, offer any subset of the hidden matches, and provide the caster
   a private look at the full searched hand and library. Native qualification of this
@@ -594,14 +603,21 @@ New, each built once in the first wave that needs it:
   not retarget its shield. Virtual permanent spell copies still need this binding.
   The choice menu includes blue permanents, stack spells, face-up command
   objects and supported public references from stack items and waiting effects.
+  Flickerwisp and Yorion's unchanged face-up exile links remain eligible
+  when their waiting return moves onto the stack. Parallax Wave and Petradon
+  contribute their exact live linked exiles only once the matching return
+  trigger is on the stack.
   It uses the original incarnation and retained color for authenticated departed
-  damage sources. Unrelated graveyard and exile cards are excluded. Other
+  damage sources. Eternal records the physical Mogg Fanatic's source immediately
+  before paying its sacrifice cost, even if Circle is absent. A later color or
+  zone change cannot affect that damage. Legacy unmarked activations retain the
+  earlier execution path. Unrelated graveyard and exile cards are excluded. Other
   embedded effect references need explicit bindings, departed references need
   last-known color and visibility evidence, and contextual hand and library
   sources remain unsupported. An in-flight saved Circle menu with the old
   broad roster refuses restore when it differs from the legal roster, preserving
   the meaning of its original option indices. Paid source-menu,
-  Firebrand/Painter and blink/restore qualification is pending. Policy observation
+  Fanatic/Painter and blink/restore qualification is pending. Policy observation
   v5 omits the shields.
   [Comprehensive Rules, 609.7 and 702.96](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
 
@@ -698,6 +714,18 @@ mainboard cards before games two and three, from the registered configuration ea
 `tests/eternal/eternal_bo3_v1.rs` tracks the decks whose full 75 is Full (`PLAYABLE_75`) and
 plays each against the next deck of its format in a seeded match with random actions, checking
 natural terminals, replay and that sided-in cards are cast.
+
+For the opt-in native opening window, register both decks with
+`EternalRegisteredDeckV1::new_with_native_opening_v1`, then call
+`EternalBestOfThreeMatchV1::start_game_with_native_opening_v1` for each game.
+Drive the returned `GameState` with `engine::advance_until_decision` and `engine::step`.
+It uses the ordinary shuffle and alternating deal, London mulligans, then kept-hand
+choices before untap. The prepared game's seat map still identifies the starting
+match player as native seat P0. Companion and outside-game setup retain their
+admitted configuration. This explicit registration admits the two executable
+Partial Leylines alongside Chancellor of the Annex and otherwise requires Full.
+The ordinary registration and catalog counts still require Full, and the legacy
+start refuses these opt-in registrations. Native qualification is pending.
 
 S3 is `src/eternal_outside_game_v1.rs`. Each player's cards outside the game (a best-of-three
 game's sideboard without a companion in use) are a sorted list in the eternal module state,

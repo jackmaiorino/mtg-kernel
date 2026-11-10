@@ -747,7 +747,8 @@ fn overload_with_retrace_pays_the_land_discard_and_mana_both_seats() {
 
         let spell = put(&mut state, actor, "Electrickery", Zone::Graveyard);
         let land = put(&mut state, actor, "Plains", Zone::Hand);
-        put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        let other_land = put(&mut state, actor, "Island", Zone::Hand);
+        let nonland = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
         let first = put(
             &mut state,
             actor.opponent(),
@@ -766,13 +767,23 @@ fn overload_with_retrace_pays_the_land_discard_and_mana_both_seats() {
             matches!(next(&mut state), Decision::ChooseSpellMode { legal_modes, .. } if legal_modes == [0, 1])
         );
         act(&mut state, Action::ChooseSpellMode(1));
-        assert!(matches!(
-            next(&mut state),
-            Decision::ChooseCostTargets { candidates, .. } if candidates == [land]
-        ));
+        let decision = next(&mut state);
+        assert!(
+            matches!(
+                &decision,
+                Decision::ChooseCostTargets { candidates, remaining: 1, .. }
+                    if candidates.len() == 2
+                        && candidates.contains(&land)
+                        && candidates.contains(&other_land)
+                        && !candidates.contains(&nonland)
+            ),
+            "{decision:?}"
+        );
         act(&mut state, Action::ChooseCostTarget(land));
         settled(&mut state);
         assert_eq!(zone(&state, land), Zone::Graveyard);
+        assert_eq!(zone(&state, other_land), Zone::Hand);
+        assert_eq!(zone(&state, nonland), Zone::Hand);
         assert_eq!(zone(&state, first), Zone::Graveyard);
         assert_eq!(zone(&state, second), Zone::Graveyard);
         assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
@@ -1222,6 +1233,231 @@ fn deglamer_shuffles_an_artifact_or_enchantment_into_its_owners_library() {
 // ---- Circle of Protection: Blue ---------------------------------------------------
 
 #[test]
+fn circle_offers_live_wave_and_petradon_exiles_only_after_return_publication_both_seats() {
+    use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_premodern_p1b_v1::{self, P1bOpV1};
+    use mtg_kernel::eternal_premodern_p2c_v1::P2cOpV1;
+    use mtg_kernel::eternal_sideboard_s1d_v1::S1dOpV1;
+    use mtg_kernel::event::{self, ProposedEvent};
+    use mtg_kernel::standard_cards_v1::StandardOpV1;
+    use mtg_kernel::state::ObjectLinkV4;
+
+    let open_circle = |state: &mut GameState, actor, circle| {
+        if state.priority_player != actor {
+            act(state, Action::Pass);
+        }
+        pool(state, actor, &[], 1);
+        activate(state, circle, 0, &[]);
+        let decision = settle(state).expect("paid Circle source choice");
+        assert!(
+            matches!(&decision, Decision::ChooseEffectOption { player, source, .. }
+            if *player == actor && *source == circle)
+        );
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        let Some(PendingEffectChoice::ChooseOption { options, .. }) = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .and_then(|pending| pending.choice.as_ref())
+        else {
+            panic!("expected the native Circle option roster");
+        };
+        let sources = options
+            .iter()
+            .map(|option| match option {
+                EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
+                    S1dOpV1::CopShieldV1 { source },
+                ))) => *source,
+                other => panic!("unexpected Circle option {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        (decision, sources)
+    };
+    let choose_source = |state: &mut GameState, sources: &[ObjectLinkV4], object| {
+        let index = sources
+            .iter()
+            .position(|link| link.object == object)
+            .unwrap();
+        act(
+            state,
+            Action::ChooseEffectOption(u16::try_from(index).unwrap()),
+        );
+    };
+
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        for is_wave in [true, false] {
+            let mut state = plains();
+            state.active_player = opponent;
+            state.priority_player = opponent;
+            let painter = put(&mut state, opponent, "Painter's Servant", Zone::Hand);
+            pool(&mut state, opponent, &[], 2);
+            cast(&mut state, painter, &[]);
+            settle_option(&mut state, 1);
+            assert_eq!(
+                state.objects.get(painter).v4.chosen_color,
+                Some(ManaColor::U)
+            );
+            let circle = put(
+                &mut state,
+                actor,
+                "Circle of Protection: Blue",
+                Zone::Battlefield,
+            );
+
+            let (host, live_name, stale_name, removal_name, removal_generic) = if is_wave {
+                let wave = put(&mut state, opponent, "Parallax Wave", Zone::Hand);
+                pool(&mut state, opponent, &[ManaColor::W, ManaColor::W], 2);
+                cast(&mut state, wave, &[]);
+                settled(&mut state);
+                (wave, "Mulldrifter", "Mulldrifter", "Disenchant", 1)
+            } else {
+                (
+                    put(&mut state, opponent, "Petradon", Zone::Hand),
+                    "Island",
+                    "Forest",
+                    "Swords to Plowshares",
+                    0,
+                )
+            };
+            let live = put(&mut state, actor, live_name, Zone::Battlefield);
+            let stale = put(&mut state, opponent, stale_name, Zone::Battlefield);
+            let unrelated = put(&mut state, actor, live_name, Zone::Exile);
+            if is_wave {
+                for target in [live, stale] {
+                    activate(&mut state, host, 0, &[Target::Object(target)]);
+                    settled(&mut state);
+                }
+                assert_eq!(p1b::fade_counters(&state, host), 3);
+            } else {
+                pool(&mut state, opponent, &[ManaColor::R, ManaColor::R], 6);
+                cast(&mut state, host, &[]);
+                let mut targets = [live, stale].into_iter();
+                settle_with(&mut state, |_, decision| match decision {
+                    Decision::ChooseTargets { legal_targets, .. } => {
+                        let target =
+                            Target::Object(targets.next().expect("Petradon targets two lands"));
+                        assert!(legal_targets.contains(&target));
+                        Action::ChooseTarget(target)
+                    }
+                    other => first_answer(other),
+                });
+                assert!(targets.next().is_none());
+            }
+            assert_eq!(zone(&state, live), Zone::Exile);
+            assert_eq!(zone(&state, stale), Zone::Exile);
+            let live_generation = state.objects.get(live).zone_change_count;
+            let stale_generation = state.objects.get(stale).zone_change_count;
+
+            let (_, dormant) = open_circle(&mut state, actor, circle);
+            assert!(dormant
+                .iter()
+                .all(|link| ![live, stale, unrelated].contains(&link.object)));
+            choose_source(&mut state, &dormant, painter);
+            settled(&mut state);
+            if state.priority_player != opponent {
+                act(&mut state, Action::Pass);
+            }
+            let removal = put(&mut state, opponent, removal_name, Zone::Hand);
+            pool(&mut state, opponent, &[ManaColor::W], removal_generic);
+            cast(&mut state, removal, &[Target::Object(host)]);
+            run_until(
+                &mut state,
+                |state| {
+                    state.stack.last().is_some_and(|item| {
+                        item.source == host
+                            && item.kind == StackItemKind::TriggeredAbility
+                            && match &item.inline_effect {
+                                Some(EffectOp::StandardV1(StandardOpV1::EternalV1(
+                                    EternalOpV1::P1bV1(P1bOpV1::WaveReturnV1 { .. }),
+                                ))) => is_wave,
+                                Some(EffectOp::StandardV1(StandardOpV1::EternalV1(
+                                    EternalOpV1::P2cV1(P2cOpV1::PetradonReturnV1),
+                                ))) => !is_wave,
+                                _ => false,
+                            }
+                    })
+                },
+                |_, _| None,
+            );
+            assert_eq!(state.players[opponent.index()].mana_pool, [0; 6]);
+            assert_eq!(
+                zone(&state, host),
+                if is_wave {
+                    Zone::Graveyard
+                } else {
+                    Zone::Exile
+                }
+            );
+
+            for changed_zone in [None, Some(Zone::Graveyard), Some(Zone::Exile)] {
+                let mut pending = state.clone();
+                if let Some(destination) = changed_zone {
+                    event::propose_and_commit(
+                        &mut pending,
+                        ProposedEvent::zone_change(stale, Zone::Graveyard),
+                    );
+                    if destination == Zone::Exile {
+                        event::propose_and_commit(
+                            &mut pending,
+                            ProposedEvent::zone_change(stale, Zone::Exile),
+                        );
+                    }
+                    assert!(pending.objects.get(stale).zone_change_count > stale_generation);
+                }
+                let (decision, sources) = open_circle(&mut pending, actor, circle);
+                let live_link = ObjectLinkV4 {
+                    object: live,
+                    zone_change_count: live_generation,
+                };
+                assert!(sources.contains(&live_link));
+                assert_eq!(
+                    sources
+                        .iter()
+                        .filter(|link| link.object == stale)
+                        .copied()
+                        .collect::<Vec<_>>(),
+                    if changed_zone.is_none() {
+                        vec![ObjectLinkV4 {
+                            object: stale,
+                            zone_change_count: stale_generation,
+                        }]
+                    } else {
+                        Vec::new()
+                    },
+                );
+                assert!(sources.iter().all(|link| link.object != unrelated));
+                let mut restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&pending).unwrap()).unwrap();
+                assert_eq!(next(&mut restored), decision);
+                for branch in [&mut pending, &mut restored] {
+                    choose_source(branch, &sources, live);
+                    settled(branch);
+                    let shield = branch
+                        .eternal_v1
+                        .as_ref()
+                        .unwrap()
+                        .s1d
+                        .cop_shields
+                        .last()
+                        .unwrap();
+                    assert_eq!(shield.source, live_link);
+                    assert_eq!(zone(branch, live), Zone::Battlefield);
+                    assert_eq!(branch.objects.get(live).controller, actor);
+                    assert_eq!(
+                        zone(branch, stale),
+                        changed_zone.unwrap_or(Zone::Battlefield)
+                    );
+                    assert_eq!(zone(branch, unrelated), Zone::Exile);
+                }
+                assert_eq!(pending.state_hash(), restored.state_hash());
+            }
+        }
+    }
+}
+
+#[test]
 fn circle_of_protection_blue_prevents_the_next_damage_from_a_chosen_blue_source() {
     let mut state = plains();
     let circle = put(
@@ -1283,13 +1519,8 @@ fn circle_of_protection_blue_only_offers_public_contextual_sources_both_seats() 
             "Circle of Protection: Blue",
             Zone::Battlefield,
         );
-        let firebrand = put(
-            &mut state,
-            opponent,
-            "Fanatical Firebrand",
-            Zone::Battlefield,
-        );
-        let original = state.objects.get(firebrand).zone_change_count;
+        let fanatic = put(&mut state, opponent, "Mogg Fanatic", Zone::Battlefield);
+        let original = state.objects.get(fanatic).zone_change_count;
         let marked = put(&mut state, opponent, "Mulldrifter", Zone::Graveyard);
         let unrelated_graveyard = put(&mut state, opponent, "Mulldrifter", Zone::Graveyard);
         let unrelated_exile = put(&mut state, opponent, "Mulldrifter", Zone::Exile);
@@ -1299,16 +1530,16 @@ fn circle_of_protection_blue_only_offers_public_contextual_sources_both_seats() 
         assert!(
             matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == opponent)
         );
-        activate(&mut state, firebrand, 0, &[Target::Player(actor)]);
+        activate(&mut state, fanatic, 0, &[Target::Player(actor)]);
         assert!(
             matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == opponent)
         );
-        assert_eq!(zone(&state, firebrand), Zone::Graveyard);
-        assert!(state.objects.get(firebrand).zone_change_count > original);
+        assert_eq!(zone(&state, fanatic), Zone::Graveyard);
+        assert!(state.objects.get(fanatic).zone_change_count > original);
         assert!(state
             .stack
             .iter()
-            .any(|item| item.source == firebrand && item.kind == StackItemKind::ActivatedAbility));
+            .any(|item| item.source == fanatic && item.kind == StackItemKind::ActivatedAbility));
 
         act(&mut state, Action::Pass);
         pool(&mut state, actor, &[], 1);
@@ -1338,13 +1569,13 @@ fn circle_of_protection_blue_only_offers_public_contextual_sources_both_seats() 
             .collect();
         let option = links
             .iter()
-            .position(|source| source.object == firebrand)
+            .position(|source| source.object == fanatic)
             .unwrap();
         assert_eq!(links[option].zone_change_count, original);
         assert_eq!(
             links
                 .iter()
-                .filter(|source| source.object == firebrand)
+                .filter(|source| source.object == fanatic)
                 .count(),
             1
         );
@@ -1425,6 +1656,285 @@ fn circle_of_protection_blue_only_offers_public_contextual_sources_both_seats() 
 }
 
 #[test]
+fn circle_of_protection_blue_tracks_flickerwisps_waiting_and_published_returns_both_seats() {
+    use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_legacy_e8a_v1::E8aOpV1;
+    use mtg_kernel::eternal_sideboard_s1d_v1::S1dOpV1;
+    use mtg_kernel::event::{propose_and_commit, ProposedEvent};
+    use mtg_kernel::standard_cards_v1::StandardOpV1;
+    use mtg_kernel::state::ObjectLinkV4;
+
+    for actor in [P0, P1] {
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let circle = put(
+            &mut state,
+            actor,
+            "Circle of Protection: Blue",
+            Zone::Battlefield,
+        );
+        let flickerwisp = put(&mut state, actor, "Flickerwisp", Zone::Hand);
+        let returning = put(&mut state, actor, "Mulldrifter", Zone::Battlefield);
+        let unrelated = put(&mut state, actor, "Mulldrifter", Zone::Exile);
+        for player in [P0, P1] {
+            put(&mut state, player, "Delver of Secrets", Zone::Battlefield);
+        }
+        pool(&mut state, actor, &[ManaColor::W, ManaColor::W], 1);
+        cast(&mut state, flickerwisp, &[]);
+        settle_choosing(&mut state, returning);
+        assert_eq!(zone(&state, flickerwisp), Zone::Battlefield);
+        assert_eq!(zone(&state, returning), Zone::Exile);
+        let returning_link = ObjectLinkV4 {
+            object: returning,
+            zone_change_count: state.objects.get(returning).zone_change_count,
+        };
+        assert_eq!(
+            state.eternal_v1.as_ref().unwrap().e8a.end_step_returns[0].cards,
+            [returning_link]
+        );
+
+        let paid_sources = |state: &mut GameState| -> Vec<ObjectLinkV4> {
+            pool(state, actor, &[], 1);
+            activate(state, circle, 0, &[]);
+            assert!(
+                matches!(settle(state), Some(Decision::ChooseEffectOption { player, source, .. })
+                if player == actor && source == circle)
+            );
+            assert_eq!(mana(state, actor, ManaColor::C), 0);
+            let Some(PendingEffectChoice::ChooseOption { options, .. }) = state
+                .engine
+                .pending_effect
+                .as_ref()
+                .and_then(|pending| pending.choice.as_ref())
+            else {
+                panic!("expected the paid Circle menu");
+            };
+            options
+                .iter()
+                .map(|option| match option {
+                    EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
+                        S1dOpV1::CopShieldV1 { source },
+                    ))) => *source,
+                    _ => panic!("unexpected Circle source option"),
+                })
+                .collect()
+        };
+
+        let mut waiting = state.clone();
+        let sources = paid_sources(&mut waiting);
+        assert!(sources.iter().all(|source| source.object != unrelated));
+        let option = sources
+            .iter()
+            .position(|source| *source == returning_link)
+            .unwrap() as u16;
+        act(&mut waiting, Action::ChooseEffectOption(option));
+        settled(&mut waiting);
+        assert_eq!(
+            waiting.eternal_v1.as_ref().unwrap().s1d.cop_shields[0].source,
+            returning_link
+        );
+
+        pass_until(&mut state, |s| {
+            s.step == Step::End
+                && s.stack.iter().any(|item| {
+                    item.source == flickerwisp
+                        && matches!(
+                            item.inline_effect.as_ref(),
+                            Some(EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E8aV1(
+                                E8aOpV1::ReturnExiledV1 { cards },
+                            )))) if cards.as_slice() == [returning_link]
+                        )
+                })
+        });
+        assert!(state
+            .eternal_v1
+            .as_ref()
+            .unwrap()
+            .e8a
+            .end_step_returns
+            .is_empty());
+        let mut stale = state.clone();
+        propose_and_commit(
+            &mut stale,
+            ProposedEvent::zone_change(returning, Zone::Graveyard),
+        );
+        propose_and_commit(
+            &mut stale,
+            ProposedEvent::zone_change(returning, Zone::Exile),
+        );
+        assert!(stale.objects.get(returning).zone_change_count > returning_link.zone_change_count);
+        assert!(paid_sources(&mut stale)
+            .iter()
+            .all(|source| source.object != returning && source.object != unrelated));
+
+        let sources = paid_sources(&mut state);
+        assert!(sources.iter().all(|source| source.object != unrelated));
+        let option = sources
+            .iter()
+            .position(|source| *source == returning_link)
+            .unwrap() as u16;
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut restored), next(&mut state));
+        act(&mut restored, Action::ChooseEffectOption(option));
+        settled(&mut restored);
+        assert_eq!(zone(&restored, returning), Zone::Battlefield);
+        assert_eq!(zone(&restored, unrelated), Zone::Exile);
+    }
+}
+
+#[test]
+fn circle_of_protection_blue_uses_fanatics_color_before_sacrifice_both_seats() {
+    use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_sideboard_s1d_v1::S1dOpV1;
+    use mtg_kernel::event::CommittedEvent;
+    use mtg_kernel::standard_cards_v1::StandardOpV1;
+
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let circle = put(&mut state, actor, "Circle of Protection: Blue", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::W], 1);
+        cast(&mut state, circle, &[]);
+        settled(&mut state);
+        let fanatic = put(&mut state, opponent, "Mogg Fanatic", Zone::Battlefield);
+        let painter = put(&mut state, actor, "Painter's Servant", Zone::Hand);
+        pool(&mut state, actor, &[], 2);
+        cast(&mut state, painter, &[]);
+        settle_option(&mut state, 1);
+        assert_eq!(
+            state.objects.get(painter).v4.chosen_color,
+            Some(ManaColor::U)
+        );
+        let blue = mtg_kernel::card_def::mana_color_mask(ManaColor::U);
+        assert_ne!(engine::object_color_mask(&state, fanatic) & blue, 0);
+        let original = state.objects.get(fanatic).zone_change_count;
+        assert!(!state.objects.get(fanatic).tapped);
+        act(&mut state, Action::Pass);
+        activate(&mut state, fanatic, 0, &[Target::Player(actor)]);
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == opponent)
+        );
+        assert_eq!(zone(&state, fanatic), Zone::Graveyard);
+        let paid_at = state
+            .stack
+            .last()
+            .unwrap()
+            .v4
+            .fixed_damage_paid_v3
+            .0
+            .unwrap();
+        let CommittedEvent::FixedDamagePaidV3 { payment } =
+            &state.engine.event_history[paid_at as usize]
+        else {
+            panic!("Fanatic lost actual payment");
+        };
+        let departure_at = payment.departure as usize;
+        let CommittedEvent::FixedDamageDepartureV3 { departure } =
+            &state.engine.event_history[departure_at]
+        else {
+            panic!("Fanatic lost original departure");
+        };
+        assert_eq!(departure.facts.source.zone_change_count, original);
+        assert_ne!(departure.facts.color_mask & blue, 0);
+
+        act(&mut state, Action::Pass);
+        let removal = put(&mut state, actor, "Cast Down", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::B], 1);
+        cast(&mut state, removal, &[Target::Object(painter)]);
+        run_until(
+            &mut state,
+            |s| zone(s, painter) == Zone::Graveyard,
+            |_, _| None,
+        );
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(state.stack[0].source, fanatic);
+        assert_eq!(engine::object_color_mask(&state, fanatic) & blue, 0);
+        assert_eq!(life(&state, actor), 20);
+        let mut unprotected = state.clone();
+        settled(&mut unprotected);
+        assert_eq!(life(&unprotected, actor), 19);
+
+        let mut forged: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let later = forged.objects.get(fanatic).zone_change_count;
+        let CommittedEvent::FixedDamageDepartureV3 { departure } =
+            &mut forged.engine.event_history[departure_at]
+        else {
+            panic!("restored Fanatic departure missing");
+        };
+        departure.facts.source.zone_change_count = later;
+        let hash = forged.state_hash();
+        assert!(engine::step(&mut forged, Action::Pass).is_err());
+        assert_eq!(forged.state_hash(), hash);
+
+        put(&mut state, actor, "Mulldrifter", Zone::Battlefield);
+        if state.priority_player != actor {
+            act(&mut state, Action::Pass);
+        }
+        pool(&mut state, actor, &[], 1);
+        activate(&mut state, circle, 0, &[]);
+        let decision = settle(&mut state).expect("paid Circle source choice");
+        assert!(
+            matches!(decision, Decision::ChooseEffectOption { player, source, .. }
+                if player == actor && source == circle)
+        );
+        let Some(PendingEffectChoice::ChooseOption { options, .. }) = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .and_then(|pending| pending.choice.as_ref())
+        else {
+            panic!("Circle source options missing");
+        };
+        let option = options
+            .iter()
+            .position(|op| {
+                matches!(
+                    op,
+                    EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
+                        S1dOpV1::CopShieldV1 { source },
+                    ))) if source.object == fanatic && source.zone_change_count == original
+                )
+            })
+            .expect("original blue Fanatic remains a legal source");
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut restored), decision);
+        for branch in [&mut state, &mut restored] {
+            act(
+                branch,
+                Action::ChooseEffectOption(u16::try_from(option).unwrap()),
+            );
+            settled(branch);
+            assert_eq!(life(branch, actor), 20);
+            assert!(branch
+                .eternal_v1
+                .as_ref()
+                .unwrap()
+                .s1d
+                .cop_shields
+                .is_empty());
+            assert!(branch.engine.event_history.iter().any(|event| matches!(
+                event,
+                CommittedEvent::FixedDamageRemovedV3 { removal } if removal.payment == paid_at
+            )));
+            assert!(!branch.engine.event_history.iter().any(|event| matches!(
+                event,
+                CommittedEvent::CrystalPreventionBoundaryV1 { boundary }
+                    if boundary.item.source == fanatic
+            )));
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
+    }
+}
+
+#[test]
 fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
     use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
     use mtg_kernel::eternal_cards_v1::EternalOpV1;
@@ -1437,12 +1947,7 @@ fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
             let mut state = plains();
             state.active_player = actor;
             state.priority_player = actor;
-            let firebrand = put(
-                &mut state,
-                opponent,
-                "Fanatical Firebrand",
-                Zone::Battlefield,
-            );
+            let fanatic = put(&mut state, opponent, "Mogg Fanatic", Zone::Battlefield);
             let painter = put(&mut state, actor, "Painter's Servant", Zone::Hand);
             pool(&mut state, actor, &[], 2);
             cast(&mut state, painter, &[]);
@@ -1471,14 +1976,14 @@ fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
             };
             let option = options.iter().position(|op| matches!(op,
                 EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(S1dOpV1::CopShieldV1 { source })))
-                    if source.object == firebrand
+                    if source.object == fanatic
             )).unwrap();
             act(
                 &mut state,
                 Action::ChooseEffectOption(u16::try_from(option).unwrap()),
             );
             settled(&mut state);
-            let original = state.objects.get(firebrand).zone_change_count;
+            let original = state.objects.get(fanatic).zone_change_count;
             if scenario == 1 {
                 // Removing Painter makes the paid damage source red again.
                 // The still-unused shield must survive that damage.
@@ -1495,10 +2000,10 @@ fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
                 }
                 let blink = put(&mut state, opponent, "Ephemerate", Zone::Hand);
                 pool(&mut state, opponent, &[ManaColor::W], 0);
-                cast(&mut state, blink, &[Target::Object(firebrand)]);
+                cast(&mut state, blink, &[Target::Object(fanatic)]);
                 settled(&mut state);
-                assert_eq!(zone(&state, firebrand), Zone::Battlefield);
-                assert!(state.objects.get(firebrand).zone_change_count > original);
+                assert_eq!(zone(&state, fanatic), Zone::Battlefield);
+                assert!(state.objects.get(fanatic).zone_change_count > original);
             }
             if state.priority_player != opponent {
                 act(&mut state, Action::Pass);
@@ -1506,14 +2011,14 @@ fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
             let mut restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             for branch in [&mut state, &mut restored] {
-                activate(branch, firebrand, 0, &[Target::Player(actor)]);
+                activate(branch, fanatic, 0, &[Target::Player(actor)]);
                 assert!(matches!(next(branch), Decision::CastSpellOrPass { .. }));
                 assert!(branch
                     .stack
                     .iter()
-                    .any(|item| item.source == firebrand
+                    .any(|item| item.source == fanatic
                         && item.kind == StackItemKind::ActivatedAbility));
-                assert_eq!(zone(branch, firebrand), Zone::Graveyard);
+                assert_eq!(zone(branch, fanatic), Zone::Graveyard);
                 assert_eq!(life(branch, actor), 20);
                 settled(branch);
                 assert_eq!(life(branch, actor), if scenario == 0 { 20 } else { 19 });
@@ -1548,11 +2053,11 @@ fn circle_of_protection_blue_follows_only_the_chosen_permanent_spell() {
             pool(&mut state, opponent, &[], 2);
             cast(&mut state, painter, &[]);
             settle_option(&mut state, 1);
-            let firebrand = put(&mut state, opponent, "Fanatical Firebrand", Zone::Hand);
+            let fanatic = put(&mut state, opponent, "Mogg Fanatic", Zone::Hand);
             pool(&mut state, opponent, &[ManaColor::R], 0);
-            cast(&mut state, firebrand, &[]);
+            cast(&mut state, fanatic, &[]);
             assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
-            assert_eq!(zone(&state, firebrand), Zone::Stack);
+            assert_eq!(zone(&state, fanatic), Zone::Stack);
             let spell_item = state.stack.last().unwrap().v4.stack_item_id;
             if state.priority_player != actor {
                 act(&mut state, Action::Pass);
@@ -1573,13 +2078,13 @@ fn circle_of_protection_blue_follows_only_the_chosen_permanent_spell() {
             };
             let option = options.iter().position(|op| matches!(op,
                 EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(S1dOpV1::CopShieldV1 { source })))
-                    if source.object == firebrand)).unwrap();
+                    if source.object == fanatic)).unwrap();
             act(
                 &mut state,
                 Action::ChooseEffectOption(u16::try_from(option).unwrap()),
             );
             assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
-            assert_eq!(zone(&state, firebrand), Zone::Stack);
+            assert_eq!(zone(&state, fanatic), Zone::Stack);
             let shield = state.eternal_v1.as_ref().unwrap().s1d.cop_shields[0];
             assert_eq!(shield.spell.unwrap().item, spell_item);
             assert_eq!(shield.spell.unwrap().permanent, None);
@@ -1587,8 +2092,8 @@ fn circle_of_protection_blue_follows_only_the_chosen_permanent_spell() {
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             for branch in [&mut state, &mut restored] {
                 settled(branch);
-                assert_eq!(zone(branch, firebrand), Zone::Battlefield);
-                let entry = branch.objects.get(firebrand).zone_change_count;
+                assert_eq!(zone(branch, fanatic), Zone::Battlefield);
+                let entry = branch.objects.get(fanatic).zone_change_count;
                 assert_eq!(
                     branch.eternal_v1.as_ref().unwrap().s1d.cop_shields[0]
                         .spell
@@ -1630,7 +2135,7 @@ fn circle_of_protection_blue_follows_only_the_chosen_permanent_spell() {
                         if forged.priority_player != opponent {
                             act(&mut forged, Action::Pass);
                         }
-                        activate(&mut forged, firebrand, 0, &[Target::Player(actor)]);
+                        activate(&mut forged, fanatic, 0, &[Target::Player(actor)]);
                         assert!(matches!(
                             next(&mut forged),
                             Decision::CastSpellOrPass { .. }
@@ -1650,9 +2155,9 @@ fn circle_of_protection_blue_follows_only_the_chosen_permanent_spell() {
                     }
                     let spell = put(branch, opponent, "Ephemerate", Zone::Hand);
                     pool(branch, opponent, &[ManaColor::W], 0);
-                    cast(branch, spell, &[Target::Object(firebrand)]);
+                    cast(branch, spell, &[Target::Object(fanatic)]);
                     settled(branch);
-                    assert!(branch.objects.get(firebrand).zone_change_count > entry);
+                    assert!(branch.objects.get(fanatic).zone_change_count > entry);
                     assert_eq!(
                         branch.eternal_v1.as_ref().unwrap().s1d.cop_shields[0]
                             .spell
@@ -1666,9 +2171,9 @@ fn circle_of_protection_blue_follows_only_the_chosen_permanent_spell() {
                 if branch.priority_player != opponent {
                     act(branch, Action::Pass);
                 }
-                activate(branch, firebrand, 0, &[Target::Player(actor)]);
+                activate(branch, fanatic, 0, &[Target::Player(actor)]);
                 assert!(matches!(next(branch), Decision::CastSpellOrPass { .. }));
-                assert_eq!(zone(branch, firebrand), Zone::Graveyard);
+                assert_eq!(zone(branch, fanatic), Zone::Graveyard);
                 assert_eq!(life(branch, actor), 20);
                 settled(branch);
                 assert_eq!(life(branch, actor), if blink { 19 } else { 20 });
@@ -2363,6 +2868,216 @@ fn flagbearers_constrain_welders_first_slot_only_when_the_pair_can_complete() {
         assert_eq!(zone(&restored, opponent_card), Zone::Battlefield);
         assert_eq!(zone(&restored, coating), Zone::Battlefield);
         assert_eq!(zone(&restored, own_card), Zone::Graveyard);
+    }
+}
+
+#[test]
+fn flagbearers_require_a_complete_ram_through_assignment_both_seats() {
+    use mtg_kernel::event::{propose_and_commit, ProposedEvent};
+
+    for actor in [P0, P1] {
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let opponent = actor.opponent();
+        let (own_name, opposing_name) = if actor == P0 {
+            ("Standard Bearer", "Coalition Honor Guard")
+        } else {
+            ("Coalition Honor Guard", "Standard Bearer")
+        };
+        let own = put(&mut state, actor, own_name, Zone::Battlefield);
+        let other = put(&mut state, actor, "Mogg Fanatic", Zone::Battlefield);
+        let opposing = put(&mut state, opponent, opposing_name, Zone::Battlefield);
+        let mother = put(&mut state, opponent, "Mother of Runes", Zone::Battlefield);
+        let ram = put(&mut state, actor, "Ram Through", Zone::Hand);
+        let own_target = Target::Object(own);
+        let other_target = Target::Object(other);
+        let opposing_target = Target::Object(opposing);
+        let mother_target = Target::Object(mother);
+        pool(&mut state, actor, &[ManaColor::G], 1);
+
+        // When both slots can supply a Flagbearer, the first pick stays free.
+        let mut flexible = state.clone();
+        cast(&mut flexible, ram, &[other_target]);
+        assert!(matches!(
+            next(&mut flexible),
+            Decision::ChooseTargets { player, legal_targets, .. }
+                if player == actor && legal_targets == [opposing_target]
+        ));
+        choose_target(&mut flexible, opposing_target);
+        settled(&mut flexible);
+        assert_eq!(zone(&flexible, ram), Zone::Graveyard);
+
+        act(&mut state, Action::Pass);
+        activate(&mut state, mother, 0, &[opposing_target]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption { player, option_count: 5, .. })
+                if player == opponent
+        ));
+        // Mother of Runes's five choices use WUBRG order.
+        act(&mut state, Action::ChooseEffectOption(4));
+        settled(&mut state);
+        assert!(state.objects.get(mother).tapped);
+
+        let mut no_second = state.clone();
+        propose_and_commit(
+            &mut no_second,
+            ProposedEvent::zone_change(mother, Zone::Graveyard),
+        );
+        assert!(!castable(&mut no_second, ram));
+        assert_eq!(zone(&no_second, ram), Zone::Hand);
+
+        let mut no_eligible_bearer = state.clone();
+        propose_and_commit(
+            &mut no_eligible_bearer,
+            ProposedEvent::zone_change(own, Zone::Graveyard),
+        );
+        cast(&mut no_eligible_bearer, ram, &[other_target, mother_target]);
+        settled(&mut no_eligible_bearer);
+        assert_eq!(zone(&no_eligible_bearer, mother), Zone::Graveyard);
+
+        assert!(castable(&mut state, ram));
+        act(&mut state, Action::CastSpell(ram));
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseTargets { player, legal_targets, .. }
+                if player == actor && legal_targets == [own_target]
+        ));
+        let hash = state.state_hash();
+        assert!(engine::step(&mut state, Action::ChooseTarget(other_target)).is_err());
+        assert_eq!(state.state_hash(), hash);
+
+        let mut forged = state.clone();
+        let contract = StackTargetContractV4::capture(&forged, other_target);
+        let pending = forged.engine.pending_cast.as_mut().unwrap();
+        pending.targets_chosen.push(other_target);
+        pending.target_contracts.push(contract);
+        let mut forged: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut forged),
+            Decision::Halted { .. }
+        ));
+        assert_eq!(mana(&forged, actor, ManaColor::G), 1);
+
+        choose_target(&mut state, own_target);
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let original_menu = next(&mut state);
+        assert_eq!(next(&mut restored), original_menu);
+        assert!(matches!(
+            original_menu,
+            Decision::ChooseTargets { player, legal_targets, .. }
+                if player == actor && legal_targets == [mother_target]
+        ));
+        choose_target(&mut restored, mother_target);
+        assert!(matches!(
+            next(&mut restored),
+            Decision::CastSpellOrPass { .. }
+        ));
+        let paid = restored.stack.last().expect("paid Ram Through");
+        assert_eq!(paid.source, ram);
+        assert_eq!(paid.targets, [own_target, mother_target]);
+        assert_eq!(mana(&restored, actor, ManaColor::G), 0);
+        assert_eq!(mana(&restored, actor, ManaColor::C), 0);
+        settled(&mut restored);
+        assert_eq!(zone(&restored, ram), Zone::Graveyard);
+        assert_eq!(zone(&restored, mother), Zone::Graveyard);
+        assert_eq!(zone(&restored, opposing), Zone::Battlefield);
+    }
+}
+
+#[test]
+fn flagbearers_bind_okos_first_exchange_slot_both_seats() {
+    use mtg_kernel::planeswalker_v1::loyalty;
+
+    for actor in [P0, P1] {
+        let mut state = plains();
+        let opponent = actor.opponent();
+        state.active_player = opponent;
+        state.priority_player = opponent;
+        let own = put(&mut state, actor, "Standard Bearer", Zone::Battlefield);
+        let opposing = put(
+            &mut state,
+            opponent,
+            "Coalition Honor Guard",
+            Zone::Battlefield,
+        );
+        let small = put(&mut state, opponent, "Mogg Fanatic", Zone::Battlefield);
+        let rancor = put(&mut state, opponent, "Rancor", Zone::Hand);
+        let oko = put(&mut state, actor, "Oko, Thief of Crowns", Zone::Hand);
+
+        pool(&mut state, opponent, &[ManaColor::G], 0);
+        cast(&mut state, rancor, &[Target::Object(opposing)]);
+        settled(&mut state);
+        assert_eq!(engine::effective_power(&state, opposing), 4);
+
+        pass_until(&mut state, |s| {
+            s.active_player == actor && s.step == Step::Main1
+        });
+        pool(&mut state, actor, &[ManaColor::G, ManaColor::U], 1);
+        cast(&mut state, oko, &[]);
+        settled(&mut state);
+        activate(&mut state, oko, 0, &[]);
+        settled(&mut state);
+        assert_eq!(loyalty(&state, oko), Some(6));
+        let food = named(&state, actor, "Food Token")[0];
+        let turn = state.turn;
+        pass_until(&mut state, |s| {
+            s.turn > turn && s.active_player == actor && s.step == Step::Main1
+        });
+
+        let own_target = Target::Object(own);
+        let food_target = Target::Object(food);
+        let small_target = Target::Object(small);
+        activate(&mut state, oko, 2, &[]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseTargets { player, legal_targets, .. }
+                if player == actor && legal_targets == [own_target]
+        ));
+        let hash = state.state_hash();
+        assert!(engine::step(&mut state, Action::ChooseTarget(food_target)).is_err());
+        assert_eq!(state.state_hash(), hash);
+
+        let mut forged = state.clone();
+        let contract = StackTargetContractV4::capture(&forged, food_target);
+        let pending = forged.engine.pending_activation.as_mut().unwrap();
+        pending.targets_chosen.push(food_target);
+        pending.target_contracts.push(contract);
+        let mut forged: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut forged),
+            Decision::Halted { .. }
+        ));
+        assert_eq!(loyalty(&forged, oko), Some(6));
+
+        choose_target(&mut state, own_target);
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let original_menu = next(&mut state);
+        assert_eq!(next(&mut restored), original_menu);
+        assert!(matches!(
+            original_menu,
+            Decision::ChooseTargets { player, legal_targets, .. }
+                if player == actor && legal_targets == [small_target]
+        ));
+        choose_target(&mut restored, small_target);
+        assert!(matches!(
+            next(&mut restored),
+            Decision::CastSpellOrPass { .. }
+        ));
+        let paid = restored.stack.last().expect("paid Oko exchange");
+        assert_eq!(paid.source, oko);
+        assert_eq!(paid.targets, [own_target, small_target]);
+        assert_eq!(loyalty(&restored, oko), Some(1));
+        settled(&mut restored);
+        assert_eq!(restored.objects.get(own).controller, opponent);
+        assert_eq!(restored.objects.get(small).controller, actor);
+        assert_eq!(restored.objects.get(food).controller, actor);
+        assert_eq!(restored.objects.get(opposing).controller, opponent);
     }
 }
 

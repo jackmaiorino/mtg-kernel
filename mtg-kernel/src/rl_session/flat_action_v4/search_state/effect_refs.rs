@@ -1920,6 +1920,9 @@ fn conflicts_in_scope(
             | SphinxsTutelageMillStartedV1 { .. }
             | SphinxsTutelageMillBatchV1 { .. }
             | KinshipEntryV1 { .. }
+            | MeddlingMageEntryV1 { .. }
+            | EternalOpeningV1 { .. }
+            | EternalOwnedDrawV1 { .. }
             | BannerEntryOperationStartedV1 { .. }
             | BannerEntryColorCapturedV1 { .. }
             | BannerEntryColorChosenV1 { .. }

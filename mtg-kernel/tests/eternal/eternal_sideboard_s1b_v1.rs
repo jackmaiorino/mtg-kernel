@@ -916,20 +916,11 @@ fn meddling_mage_names_a_card_that_then_cannot_be_cast() {
     let mut state = islands();
     let mage = put(&mut state, P0, "Meddling Mage", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::W, ManaColor::U], 0);
-    let bolt_id = id("Lightning Bolt");
     let groups = mtg_kernel::eternal_sideboard_s1b_v1::nameable_nonland();
     assert!(
         groups.iter().flatten().all(|&named| !def_is_land(named)),
         "nonland names only"
     );
-    let letter = groups
-        .iter()
-        .position(|group| group.contains(&bolt_id))
-        .expect("Lightning Bolt is nameable");
-    let name = groups[letter]
-        .iter()
-        .position(|&named| named == bolt_id)
-        .unwrap();
     cast(&mut state, mage, &[]);
     assert!(matches!(
         settle(&mut state),
@@ -940,8 +931,7 @@ fn meddling_mage_names_a_card_that_then_cannot_be_cast() {
         })
     ));
     assert_eq!(zone(&state, mage), Zone::Stack);
-    act(&mut state, Action::ChooseEffectOption(letter as u16));
-    act(&mut state, Action::ChooseEffectOption(name as u16));
+    choose_mage_name(&mut state, P0, "Lightning Bolt");
     settled(&mut state);
     assert_eq!(zone(&state, mage), Zone::Battlefield);
     state.priority_player = P1;
@@ -952,17 +942,30 @@ fn meddling_mage_names_a_card_that_then_cannot_be_cast() {
     assert!(castable(&mut state, other), "another spell");
 }
 
-fn choose_mage_name(state: &mut GameState, player: PlayerId, name: &str) {
-    let groups = mtg_kernel::eternal_sideboard_s1b_v1::nameable_nonland();
-    let named = id(name);
-    let group = groups
-        .iter()
-        .position(|entries| entries.contains(&named))
-        .unwrap() as u16;
-    assert!(matches!(next(state), Decision::ChooseMeddlingMageNameV1 {
-        player: chooser, group: None, ..
-    } if chooser == player));
+fn choose_mage_name_group(state: &mut GameState, player: PlayerId, name: &str) -> u16 {
+    let Decision::ChooseMeddlingMageNameV1 {
+        player: chooser,
+        group: None,
+        options,
+        ..
+    } = next(state)
+    else {
+        panic!("expected the catalog name groups")
+    };
+    assert_eq!(chooser, player);
+    let letter = name
+        .chars()
+        .next()
+        .unwrap()
+        .to_ascii_uppercase()
+        .to_string();
+    let group = options.iter().position(|option| option == &letter).unwrap() as u16;
     act(state, Action::ChooseEffectOption(group));
+    group
+}
+
+fn choose_mage_name(state: &mut GameState, player: PlayerId, name: &str) {
+    let group = choose_mage_name_group(state, player, name);
     let Decision::ChooseMeddlingMageNameV1 {
         player: chooser,
         group: Some(actual),
@@ -1090,6 +1093,282 @@ fn meddling_mage_filters_paid_bilbo_resolution_cast_both_seats() {
                 2
             );
         }
+    }
+}
+
+#[test]
+fn meddling_mage_names_exact_split_and_adventure_forms_both_seats() {
+    for actor in [P0, P1] {
+        let chooser = actor.opponent();
+        for (name, printing, blocked_color) in [
+            ("Fire", "Fire // Ice", ManaColor::R),
+            ("Ice", "Fire // Ice", ManaColor::U),
+            ("Forktail Sweep", "Fang Dragon", ManaColor::R),
+        ] {
+            let mut state = islands();
+            state.active_player = chooser;
+            state.priority_player = chooser;
+            let mage = put(&mut state, chooser, "Meddling Mage", Zone::Hand);
+            pool(&mut state, chooser, &[ManaColor::W, ManaColor::U], 0);
+            cast(&mut state, mage, &[]);
+            assert!(settle(&mut state).is_some());
+            if name == "Fire" {
+                // Recreate the prior checkpoint shape, before any group was chosen.
+                let mut legacy = serde_json::to_value(&state).unwrap();
+                let checkpoint =
+                    &mut legacy["engine"]["linked_aura_operation_v1"]["pending_meddling_mage_v1"];
+                let operation = checkpoint["operation_history_index"].as_u64().unwrap() as usize;
+                assert!(checkpoint["choice"]["MeddlingMageV1"]["choice"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("names_v2")
+                    .is_some());
+                let journal = legacy["engine"]["event_history"][operation]["MeddlingMageEntryV1"]
+                    ["journal"]
+                    .as_object_mut()
+                    .unwrap();
+                let started = journal.remove("StartedWithNamesV2").unwrap();
+                journal.insert("Started".into(), started);
+                let mut legacy: GameState = serde_json::from_value(legacy).unwrap();
+                choose_mage_name(&mut legacy, chooser, "Lightning Bolt");
+                settled(&mut legacy);
+                let retained = &legacy.eternal_v1.as_ref().unwrap().s1b.mage_names;
+                assert_eq!(
+                    serde_json::to_value(retained[0].1).unwrap(),
+                    serde_json::json!(id("Lightning Bolt"))
+                );
+                let mut old_hash = std::collections::hash_map::DefaultHasher::new();
+                let mut new_hash = std::collections::hash_map::DefaultHasher::new();
+                use std::hash::{Hash, Hasher};
+                [(retained[0].0, id("Lightning Bolt"))].hash(&mut old_hash);
+                retained.hash(&mut new_hash);
+                assert_eq!(old_hash.finish(), new_hash.finish());
+
+                let mut land_check = state.clone();
+                choose_mage_name_group(&mut land_check, chooser, "Shatterskull Smashing");
+                let Decision::ChooseMeddlingMageNameV1 { options, .. } = next(&mut land_check)
+                else {
+                    panic!("expected the Shatterskull name group")
+                };
+                assert!(options
+                    .iter()
+                    .any(|option| option == "Shatterskull Smashing"));
+                assert!(!options
+                    .iter()
+                    .any(|option| option == "Shatterskull, the Hammer Pass"));
+            }
+            let group = choose_mage_name_group(&mut state, chooser, name);
+            let menu = next(&mut state);
+            let Decision::ChooseMeddlingMageNameV1 {
+                options,
+                group: Some(selected),
+                ..
+            } = &menu
+            else {
+                panic!("expected names in the chosen group")
+            };
+            assert_eq!(*selected, group);
+            assert!(!options.iter().any(|option| option == "Fire // Ice"));
+            let index = options.iter().position(|option| option == name).unwrap() as u16;
+
+            let snapshot = serde_json::to_value(&state).unwrap();
+            let mut altered = snapshot.clone();
+            assert!(
+                altered["engine"]["linked_aura_operation_v1"]["pending_meddling_mage_v1"]["choice"]
+                    ["MeddlingMageV1"]["choice"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("names_v2")
+                    .is_some()
+            );
+            let mut altered: GameState = serde_json::from_value(altered).unwrap();
+            assert!(engine::step(&mut altered, Action::ChooseEffectOption(index)).is_err());
+            state = serde_json::from_value(snapshot).unwrap();
+            assert_eq!(next(&mut state), menu);
+            act(&mut state, Action::ChooseEffectOption(index));
+            settled(&mut state);
+            assert_eq!(zone(&state, mage), Zone::Battlefield);
+
+            if name == "Ice" {
+                let mut altered = serde_json::to_value(&state).unwrap();
+                let named = altered["engine"]["event_history"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find_map(|row| {
+                        row.get_mut("MeddlingMageEntryV1")?
+                            .get_mut("journal")?
+                            .get_mut("Named")
+                    })
+                    .unwrap();
+                named["named"]["face"] = serde_json::json!("LeftHalf");
+                altered["eternal_v1"]["s1b"]["mage_names"][0][1]["face"] =
+                    serde_json::json!("LeftHalf");
+                let mut altered: GameState = serde_json::from_value(altered).unwrap();
+                assert!(engine::step(&mut altered, Action::Pass).is_err());
+            }
+
+            state = serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+            state.active_player = actor;
+            state.priority_player = actor;
+            state.engine.priority_passes = [false; 2];
+            let spell = put(&mut state, actor, printing, Zone::Hand);
+            pool(&mut state, actor, &[blocked_color], 1);
+            assert!(!castable(&mut state, spell), "only {name} would be payable");
+            match name {
+                "Fire" => {
+                    pool(&mut state, actor, &[ManaColor::U], 0);
+                    cast_mode(&mut state, spell, 1, &[Target::Object(mage)]);
+                    settled(&mut state);
+                    assert!(state.objects.get(mage).tapped);
+                    assert_eq!(zone(&state, spell), Zone::Graveyard);
+                }
+                "Ice" => {
+                    pool(&mut state, actor, &[ManaColor::R], 0);
+                    cast_mode(&mut state, spell, 0, &[Target::Player(chooser); 2]);
+                    settled(&mut state);
+                    assert_eq!(life(&state, chooser), 18);
+                    assert_eq!(zone(&state, spell), Zone::Graveyard);
+                }
+                _ => {
+                    pool(&mut state, actor, &[ManaColor::R], 4);
+                    cast_mode(&mut state, spell, 0, &[]);
+                    settled(&mut state);
+                    assert_eq!(zone(&state, spell), Zone::Battlefield);
+                }
+            }
+        }
+        let mut state = paid_meddling_against(actor, "Luminous Phantom", &["Island"; 20]);
+        let disturbed = put(&mut state, actor, "Lunarch Veteran", Zone::Graveyard);
+        let normal = put(&mut state, actor, "Lunarch Veteran", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::W], 1);
+        assert!(!castable(&mut state, disturbed));
+        cast(&mut state, normal, &[]);
+        settled(&mut state);
+        assert_eq!(zone(&state, normal), Zone::Battlefield);
+    }
+}
+
+#[test]
+fn meddling_mage_name_precedes_paid_metamorph_copy_entry_both_seats() {
+    use mtg_kernel::card_def::CardType;
+    use mtg_kernel::event::CommittedEvent;
+
+    for actor in [P0, P1] {
+        let mut state = paid_meddling_against(actor, "Lava Dart", &["Island"; 20]);
+        let donor = state.players[actor.opponent().index()].battlefield[0];
+        let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Hand);
+        let mut suppressed = state.clone();
+        let dress = put(&mut suppressed, actor, "Dress Down", Zone::Hand);
+        pool(&mut suppressed, actor, &[ManaColor::U, ManaColor::U], 4);
+        cast(&mut suppressed, dress, &[]);
+        settled(&mut suppressed);
+        assert_eq!(zone(&suppressed, dress), Zone::Battlefield);
+        cast(&mut suppressed, metamorph, &[]);
+        settled(&mut suppressed);
+        assert_eq!(zone(&suppressed, metamorph), Zone::Graveyard);
+        assert_eq!(
+            suppressed.objects.get(metamorph).card_def,
+            id("Phyrexian Metamorph")
+        );
+        assert!(suppressed
+            .eternal_v1
+            .as_ref()
+            .unwrap()
+            .vintage
+            .copies
+            .is_empty());
+        assert_eq!(
+            suppressed.eternal_v1.as_ref().unwrap().s1b.mage_names.len(),
+            1
+        );
+
+        pool(&mut state, actor, &[ManaColor::U], 3);
+        cast(&mut state, metamorph, &[]);
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, legal_targets, .. })
+            if player == actor && legal_targets.contains(&Target::Object(donor)))
+        );
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(donor)),
+        );
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 { player, group: None, .. })
+            if player == actor)
+        );
+        let physical_generation = state.objects.get(metamorph).zone_change_count;
+        assert_eq!(zone(&state, metamorph), Zone::Stack);
+        assert_eq!(
+            state.objects.get(metamorph).card_def,
+            id("Phyrexian Metamorph")
+        );
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        assert!(!state.engine.event_history.iter().any(|event| matches!(event,
+            CommittedEvent::ZoneChange { object, to: Zone::Battlefield, .. } if *object == metamorph)));
+
+        let snapshot = serde_json::to_vec(&state).unwrap();
+        state = serde_json::from_slice(&snapshot).unwrap();
+        choose_mage_name(&mut state, actor, "Lightning Bolt");
+        settled(&mut state);
+        assert_eq!(zone(&state, metamorph), Zone::Battlefield);
+        assert_eq!(state.objects.get(metamorph).card_def, id("Meddling Mage"));
+        assert_eq!(
+            state.objects.get(metamorph).zone_change_count,
+            physical_generation + 1
+        );
+        assert!(engine::object_has_type(
+            &state,
+            metamorph,
+            CardType::Artifact
+        ));
+        assert!(engine::object_has_type(
+            &state,
+            metamorph,
+            CardType::Creature
+        ));
+        assert!(!state.objects.get(metamorph).v4.is_token);
+        assert_eq!(engine::effective_power(&state, metamorph), 2);
+
+        let mut forged = serde_json::to_value(&state).unwrap();
+        let mut edits = 0;
+        for event in forged["engine"]["event_history"].as_array_mut().unwrap() {
+            let Some(journal) = event
+                .get_mut("MeddlingMageEntryV1")
+                .and_then(|row| row.get_mut("journal"))
+            else {
+                continue;
+            };
+            let copy = if journal.get("MetamorphCopied").is_some() {
+                journal["MetamorphCopied"].get_mut("copy")
+            } else {
+                journal
+                    .get_mut("Chosen")
+                    .and_then(|row| row["choice"].get_mut("metamorph_copy"))
+            };
+            if let Some(copy) = copy {
+                let original = copy["stack_item"].as_u64().unwrap();
+                copy["stack_item"] = serde_json::json!(original + 1);
+                edits += 1;
+            }
+        }
+        assert_eq!(edits, 2);
+        let mut forged: GameState = serde_json::from_value(forged).unwrap();
+        assert!(engine::step(&mut forged, Action::Pass).is_err());
+
+        let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        let disenchant = put(&mut state, actor, "Disenchant", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R, ManaColor::W], 1);
+        assert!(!castable(&mut state, bolt));
+        cast(&mut state, disenchant, &[Target::Object(metamorph)]);
+        settled(&mut state);
+        assert_eq!(zone(&state, metamorph), Zone::Graveyard);
+        assert_eq!(
+            state.objects.get(metamorph).card_def,
+            id("Phyrexian Metamorph")
+        );
+        assert!(state.eternal_v1.as_ref().unwrap().vintage.copies.is_empty());
+        assert!(castable(&mut state, bolt));
     }
 }
 
@@ -1346,7 +1625,7 @@ fn meddling_mage_entering_under_dress_down_never_chose_a_name() {
             object: mage,
             zone_change_count: state.objects.get(mage).zone_change_count,
         },
-        id("Lightning Bolt"),
+        mtg_kernel::eternal_sideboard_s1b_v1::MeddlingMageNameV1::Front(id("Lightning Bolt")),
     ));
     let mut restored: GameState =
         serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();

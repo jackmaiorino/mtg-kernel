@@ -16375,6 +16375,12 @@ fn drive_resumable_inner_with_native_row_v1(
                 }
             }
             EffectOp::SelectObjectsV1 { rule } => {
+                if matches!(rule.action, ObjectSelectionActionV1::EnterAsCopyV1)
+                    && crate::eternal_vintage_v1::paid_metamorph_copy_is_suppressed(state, &continuation.ctx)
+                {
+                    // The remaining frame enters Metamorph with its own 0/0 characteristics.
+                    continue;
+                }
                 standard_selection_v1::begin(state, &mut continuation, rule, path)?;
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
@@ -20719,6 +20725,20 @@ fn execute_with_native_row_v1(
             }
             let target = ctx.resolve_target(*target);
             let mut proposal = event::damage_from_exec_ctx_v1(ctx, target, *amount);
+            match crate::fixed_source_damage_v3::native_fanatic_damage(state, ctx, op) {
+                Ok(id) => {
+                    if let event::ProposedEvent::Damage(damage) = &mut proposal {
+                        damage.historical_source = id;
+                    }
+                }
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            }
             if let Some(origin) = ctx.niv_damage_origin_v1 {
                 if !crate::event::niv_damage_origin_matches_context_v1(
                     origin,
