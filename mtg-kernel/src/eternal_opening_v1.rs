@@ -106,7 +106,9 @@ fn first_cast(state: &GameState, after: usize, player: PlayerId) -> Option<(usiz
         .iter()
         .enumerate()
         .find_map(|(at, event)| match event {
-            CommittedEvent::SpellCast { spell, controller } if at >= after && *controller == player => {
+            CommittedEvent::SpellCast { spell, controller }
+                if at >= after && *controller == player =>
+            {
                 Some((at, *spell))
             }
             _ => None,
