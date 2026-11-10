@@ -377,6 +377,9 @@ jobs:
         if: matrix.group == 'eternal'
         run: |
           set -euo pipefail
+          if [ "$RUNNER_OS" = Linux ]; then
+            export CARGO_BUILD_JOBS=1
+          fi
           samples="$PWD/feb-native-event-samples"
           mkdir -p "$samples"
           git rev-parse HEAD > "$samples/source.txt"
