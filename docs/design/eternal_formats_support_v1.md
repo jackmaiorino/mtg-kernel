@@ -528,14 +528,20 @@ New, each built once in the first wave that needs it:
   Partial: the drawing player can choose dredge or let Hullbreacher replace the draw (616.1) on
   resumable draw programs, including the monarch's draw, both Baubles' delayed
   upkeep draws, Coveted Jewel's entry and unblocked combat draws, Paradoxical
-  Outcome, Bonder's Ornament, and both selected-discard draw paths. The Jewel
+  Outcome, Psychic Frog, Plunder the Trollshaws, Tamiyo's -7, Twinned Vision,
+  Bonder's Ornament, and both selected-discard draw paths. The Jewel
   combat continuation binds draw progress to the original trigger and transfers
   only its original battlefield incarnation after the third attempt. Outcome
   returns its legal targets in one batch and derives draw progress from actual
   original-incarnation arrivals into the spell controller's hand. Both progress
-  checks validate continuation consistency. An affected
-  player can also choose between Jace's empty-library win and Hullbreacher on
-  fixed-count draw instructions, the monarch's draw and the Baubles' upkeep draws.
+  checks validate continuation consistency. Plunder and Twinned Vision retain
+  their cast-origin conditions. Tamiyo's count uses the library size when her
+  ability starts, and the hand-size effect follows the last draw attempt if
+  play continues. The four owned draw instructions journal their start and
+  actual completed attempts when the replacement continuation runs. Restore
+  checks saved progress against that native evidence.
+  An affected player can also choose between Jace's empty-library win and
+  Hullbreacher on fixed-count draw instructions and the covered owned draws.
   Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
   Their damage-draw interaction has no native qualification.
   Some specialized synchronous draws and unbound generated or dynamic draw instructions

@@ -1661,6 +1661,9 @@ impl StandardOpV1 {
                 | Self::DiscardChosenThenDraw { .. }
                 | Self::BecomeEverflame { .. }
                 | Self::RetargetSpellCopy { .. }
+                | Self::EternalV1(
+                    crate::eternal_cards_v1::EternalOpV1::OwnedDrawCompletedV1 { .. }
+                )
         )
     }
 }
