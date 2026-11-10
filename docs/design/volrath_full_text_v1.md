@@ -4,6 +4,13 @@ This work supports the Full English Breakfast mainboard in #460. The
 Shapeshifter is appended to the Eternal registry as Partial for scoped
 native gameplay. The mainboard still fails the playable catalog check.
 
+The guarded Rust 1.94.1 catalog generator at
+`0051f21f1049d7befe9250ea7f8b6eb3f26779ee` emitted Volrath as Partial at
+ID 1198 and catalog hash `b7272db8a877989e`. The generated source SHA-256 is
+`ff3cfba884d3d0d3fa5a00f1286470ec2080f2574a12721324b5582d47c2600b`.
+The generator receipt SHA-256 is
+`25727e984f5d21006e6f6ce6d28ece47ce7ab7c8d77cebf9c43e5f66c6e8aae8`.
+
 Full-text changes apply in layer 3 and copies use layer 1. The battlefield
 object retains its physical definition. The public top card in its current
 controller's graveyard supplies text only while that card is a creature.
