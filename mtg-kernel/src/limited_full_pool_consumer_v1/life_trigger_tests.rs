@@ -126,7 +126,10 @@ fn assert_exemplar_cap_lifetime(
     food: ObjectId,
     seraph: ObjectId,
 ) {
-    let original = state.trigger_uses_v1.clone().expect("actual first gain paid its cap");
+    let original = state
+        .trigger_uses_v1
+        .clone()
+        .expect("actual first gain paid its cap");
     let original_generation = state.objects.get(exemplar).zone_change_count;
     assert!(original.iter().any(|use_| {
         use_.source.object == exemplar && use_.source.zone_change_count == original_generation
@@ -150,7 +153,10 @@ fn assert_exemplar_cap_lifetime(
     let new_generation = reentered.objects.get(exemplar).zone_change_count;
     assert!(new_generation > original_generation);
     reentered.trigger_uses_v1 = Some(original);
-    assert_eq!(trigger_programs::project_live_uses(&reentered).unwrap(), None);
+    assert_eq!(
+        trigger_programs::project_live_uses(&reentered).unwrap(),
+        None
+    );
 
     let mut owner = KaitoSession::from_session(raw(&reentered)).unwrap();
     let mut native = raw(&reentered);
@@ -161,10 +167,22 @@ fn assert_exemplar_cap_lifetime(
     });
     let (seen, milled) = settle(&mut owner, &mut native, actor, seraph);
     assert!(milled.is_none());
-    assert_eq!(seen, vec![ProgramV1::ExemplarCounter, ProgramV1::ExemplarDraw]);
+    assert_eq!(
+        seen,
+        vec![ProgramV1::ExemplarCounter, ProgramV1::ExemplarDraw]
+    );
     let decision = super::decision(&owner);
-    let uses = decision.fixture_backend_v75().observation()
-        .common.common.projection.surface.engine_context.trigger_uses.as_ref().unwrap();
+    let uses = decision
+        .fixture_backend_v75()
+        .observation()
+        .common
+        .common
+        .projection
+        .surface
+        .engine_context
+        .trigger_uses
+        .as_ref()
+        .unwrap();
     assert!(uses.iter().any(|use_| {
         use_.source.arena_id == exemplar.0
             && use_.source.zone_change_count == new_generation
@@ -290,10 +308,19 @@ fn paid_life_creatures_publish_exact_programs_and_caps_both_seats() {
                 }));
             if index == 0 {
                 let mut forged = d.fixture_backend_v75().observation().clone();
-                let source = &mut forged.common.common.projection.surface.engine_context
-                    .trigger_uses.as_mut().unwrap()[0].source;
+                let source = &mut forged
+                    .common
+                    .common
+                    .projection
+                    .surface
+                    .engine_context
+                    .trigger_uses
+                    .as_mut()
+                    .unwrap()[0]
+                    .source;
                 source.zone = Zone::Hand;
-                forged.projection_sha256 = crate::kaito_observation_v75::commitment(&forged).unwrap();
+                forged.projection_sha256 =
+                    crate::kaito_observation_v75::commitment(&forged).unwrap();
                 assert!(crate::kaito_observation_v75::validate_artifact(&forged).is_err());
                 assert_exemplar_cap_lifetime(live, actor, exemplar, second_food, seraph);
             }

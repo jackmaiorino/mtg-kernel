@@ -47,21 +47,26 @@ pub(crate) fn project_live_uses(
     let mut public = Vec::new();
     let mut previous = None;
     for entry in state.trigger_uses_v1.iter().flatten() {
-        let Some(live) = state.objects.try_get(entry.source.object) else { continue };
+        let Some(live) = state.objects.try_get(entry.source.object) else {
+            continue;
+        };
         if entry.turn != state.turn_key_v1()
             || entry.active_player != state.active_player
             || live.zone != Zone::Battlefield
             || live.zone_change_count != entry.source.zone_change_count
             || live.v4.face_down_v1.is_some()
-            || !state.players.get(live.controller.index()).is_some_and(|player| {
-                player.battlefield.contains(&entry.source.object)
-            })
+            || !state
+                .players
+                .get(live.controller.index())
+                .is_some_and(|player| player.battlefield.contains(&entry.source.object))
         {
             continue;
         }
         // If a public permanent stops copying a capped ability, its old
         // slot may remain in native history without a current cap to show.
-        let Some(maximum) = cap(live.card_def, entry.ability_index) else { continue };
+        let Some(maximum) = cap(live.card_def, entry.ability_index) else {
+            continue;
+        };
         let key = (entry.source.object, entry.ability_index);
         if entry.uses == 0 || entry.uses > maximum || previous.is_some_and(|last| key <= last) {
             return Err("invalid FullPool native trigger cap ledger".into());
@@ -79,15 +84,23 @@ pub(crate) fn project_live_uses(
 }
 
 fn validate_public_uses(board: &PublicObservationProjectionV2) -> Result<(), String> {
-    let Some(uses) = &board.engine_context.trigger_uses else { return Ok(()) };
-    let Some(first) = uses.first() else { return Err("empty FullPool trigger cap ledger".into()) };
+    let Some(uses) = &board.engine_context.trigger_uses else {
+        return Ok(());
+    };
+    let Some(first) = uses.first() else {
+        return Err("empty FullPool trigger cap ledger".into());
+    };
     let mut previous = None;
     for entry in uses {
         let key = (entry.source.arena_id, entry.ability_index);
         if entry.active_player != board.active_player
             || entry.turn != first.turn
             || entry.source.zone != Zone::Battlefield
-            || !board.battlefield.iter().flatten().any(|card| card.stable == entry.source)
+            || !board
+                .battlefield
+                .iter()
+                .flatten()
+                .any(|card| card.stable == entry.source)
             || cap(entry.source.card_db_id, entry.ability_index)
                 .is_none_or(|maximum| entry.uses == 0 || entry.uses > maximum)
             || previous.is_some_and(|last| key <= last)

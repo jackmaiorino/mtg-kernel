@@ -11956,22 +11956,24 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                 .map_err(RlContractError)?
         } else {
             state
-            .trigger_uses_v1
-            .as_ref()
-            .map(|uses| {
-                uses.iter()
-                    .map(|entry| {
-                        card_ref(state, entry.source.object).map(|source| TriggerUseSemanticV1 {
-                            source,
-                            ability_index: entry.ability_index,
-                            turn: entry.turn,
-                            active_player: entry.active_player.into(),
-                            uses: entry.uses,
+                .trigger_uses_v1
+                .as_ref()
+                .map(|uses| {
+                    uses.iter()
+                        .map(|entry| {
+                            card_ref(state, entry.source.object).map(|source| {
+                                TriggerUseSemanticV1 {
+                                    source,
+                                    ability_index: entry.ability_index,
+                                    turn: entry.turn,
+                                    active_player: entry.active_player.into(),
+                                    uses: entry.uses,
+                                }
+                            })
                         })
-                    })
-                    .collect::<Result<Vec<_>>>()
-            })
-            .transpose()?
+                        .collect::<Result<Vec<_>>>()
+                })
+                .transpose()?
         },
         wide_marked_damage: {
             let damage = state
