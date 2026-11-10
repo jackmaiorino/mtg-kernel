@@ -209,15 +209,30 @@ struct RunnerV1 {
     mage_start: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     mage_plans: Vec<MagePlanV1>,
-    #[serde(skip)]
+    // Panda and end-turn replay borrows serialize this runner, so these
+    // fields round-trip. Their defaults write no bytes, which keeps every
+    // earlier borrow's bytes and hash unchanged.
+    #[serde(
+        default = "printed_mage_names_v2",
+        skip_serializing_if = "is_printed_mage_names_v2"
+    )]
     mage_names_v2: bool,
-    #[serde(skip)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     metamorph_mage_copies: Vec<mage_entry::MetamorphCopyV1>,
-    #[serde(skip)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     show_and_tell_entries: Vec<(
         crate::state::AbilitySourceContractV4,
         crate::event::ZoneChangeProposed,
     )>,
+}
+
+/// New runners name printed faces unless an answer keeps the legacy list.
+fn printed_mage_names_v2() -> bool {
+    true
+}
+
+fn is_printed_mage_names_v2(names_v2: &bool) -> bool {
+    *names_v2
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -3737,3 +3752,64 @@ pub(crate) fn tamper_drake_saved_output_runtime_for_test(state: &mut GameState) 
 
 mod genesis_current_slots_v69;
 pub(crate) use genesis_current_slots_v69::sample_genesis_checkpoint_v69;
+
+#[cfg(test)]
+mod runner_serde_tests {
+    use super::*;
+
+    fn runner(mage_names_v2: bool) -> RunnerV1 {
+        RunnerV1 {
+            kinship_start: None,
+            kinship_plans: Vec::new(),
+            original_stack: Vec::new(),
+            original_history_len: 0,
+            batch_depth: 0,
+            deferred_departures: Vec::new(),
+            answers: Vec::new(),
+            cursor: 0,
+            checkpoint: None,
+            operation: OperationV1::Advance,
+            original_sha256: String::new(),
+            banner_start: None,
+            color_plans: Vec::new(),
+            used_banner: false,
+            original_world_v48: None,
+            attachment_input_v48: None,
+            original_world_v50: None,
+            active_fake_aura_entry_v50: None,
+            mage_start: None,
+            mage_plans: Vec::new(),
+            mage_names_v2,
+            metamorph_mage_copies: Vec::new(),
+            show_and_tell_entries: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn replay_borrow_runner_keeps_mage_name_profile_and_default_bytes() {
+        for mage_names_v2 in [true, false] {
+            let borrow = EndTurnReplayBorrowV1 {
+                runner: Some(Box::new(runner(mage_names_v2))),
+            };
+            let bytes = serde_json::to_string(&borrow).unwrap();
+            for key in [
+                "mage_names_v2",
+                "metamorph_mage_copies",
+                "show_and_tell_entries",
+            ] {
+                assert_eq!(
+                    bytes.contains(key),
+                    key == "mage_names_v2" && !mage_names_v2
+                );
+            }
+            let restored: EndTurnReplayBorrowV1 = serde_json::from_str(&bytes).unwrap();
+            assert_eq!(restored, borrow);
+            let panda = PandaReplayBorrowV1 {
+                runner: borrow.runner,
+            };
+            let restored: PandaReplayBorrowV1 =
+                serde_json::from_slice(&serde_json::to_vec(&panda).unwrap()).unwrap();
+            assert_eq!(restored, panda);
+        }
+    }
+}
