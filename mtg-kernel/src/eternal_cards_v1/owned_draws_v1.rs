@@ -44,7 +44,9 @@ enum InstructionV1 {
         creature: Option<u8>,
         spec: TargetSpec,
     },
-    Curie { combat_at: usize },
+    Curie {
+        combat_at: usize,
+    },
 }
 
 impl InstructionV1 {
@@ -280,16 +282,17 @@ pub enum JournalV1 {
     },
     /// The native start of the same instruction, with its one-time Riddler
     /// expansion separate from the base count authenticated by the source.
-    StartedWithRiddlerV1 { started: StartedV1, extra: u32 },
+    StartedWithRiddlerV1 {
+        started: StartedV1,
+        extra: u32,
+    },
 }
 
 impl JournalV1 {
     fn start(self) -> Option<(StartedV1, u32)> {
         match self {
             Self::Started(started) => Some((started, started.total)),
-            Self::StartedWithRiddlerV1 { started, extra }
-                if started.total != 0 && extra != 0 =>
-            {
+            Self::StartedWithRiddlerV1 { started, extra } if started.total != 0 && extra != 0 => {
                 Some((started, started.total.checked_add(extra)?))
             }
             _ => None,

@@ -3565,9 +3565,11 @@ pub(crate) fn draw_instruction_extra(state: &GameState, player: PlayerId, count:
     if count == 0 || !cfg!(feature = "eternal-fixtures") {
         return 0;
     }
-    u32::try_from(crate::eternal_legacy_e5b_v1::riddler_extra_draws(state, player))
-        .unwrap_or(u32::MAX)
-        .min(u32::MAX - count)
+    u32::try_from(crate::eternal_legacy_e5b_v1::riddler_extra_draws(
+        state, player,
+    ))
+    .unwrap_or(u32::MAX)
+    .min(u32::MAX - count)
 }
 
 fn draw_instruction_continues(state: &GameState, player: PlayerId) -> bool {

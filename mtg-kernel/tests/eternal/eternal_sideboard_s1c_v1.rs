@@ -954,12 +954,7 @@ fn announce_flame(
     flame
 }
 
-fn paid_riddler(
-    state: &mut GameState,
-    drawer: PlayerId,
-    hullbreacher: bool,
-    copies: usize,
-) {
+fn paid_riddler(state: &mut GameState, drawer: PlayerId, hullbreacher: bool, copies: usize) {
     state.active_player = drawer;
     state.priority_player = drawer;
     if hullbreacher {
@@ -1003,8 +998,14 @@ fn paid_gush_applies_riddler_once_before_individual_draw_replacements_both_seats
             assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
             let attempts = 2 + riddlers;
             let drawn = if hull { 0 } else { attempts };
-            assert_eq!(state.players[drawer.index()].hand.len(), hand_before + drawn);
-            assert_eq!(state.players[drawer.index()].library.len(), library_before - drawn);
+            assert_eq!(
+                state.players[drawer.index()].hand.len(),
+                hand_before + drawn
+            );
+            assert_eq!(
+                state.players[drawer.index()].library.len(),
+                library_before - drawn
+            );
             assert_eq!(
                 named(&state, drawer.opponent(), "Treasure Token").len(),
                 treasures_before + attempts - drawn
@@ -1022,7 +1023,10 @@ fn paid_flame_riddler_freezes_three_individual_attempts_across_restore_both_seat
         let mut state = plains();
         paid_riddler(&mut state, drawer, true, 1);
         let treasures_before = named(&state, caster, "Treasure Token").len();
-        assert_eq!(treasures_before, 2, "Riddler's paid entry draws one plus one");
+        assert_eq!(
+            treasures_before, 2,
+            "Riddler's paid entry draws one plus one"
+        );
         let dredger = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
         let ring = put(&mut state, drawer, "Sol Ring", Zone::Battlefield);
         act(&mut state, Action::Pass);
@@ -1064,7 +1068,10 @@ fn paid_flame_riddler_freezes_three_individual_attempts_across_restore_both_seat
             settled(branch);
             assert_eq!(zone(branch, dredger), Zone::Hand);
             assert_eq!(branch.players[drawer.index()].library.len(), 16);
-            assert_eq!(named(branch, caster, "Treasure Token").len(), treasures_before + 2);
+            assert_eq!(
+                named(branch, caster, "Treasure Token").len(),
+                treasures_before + 2
+            );
             assert_eq!(zone(branch, ring), Zone::Graveyard);
         }
         assert_eq!(restored.state_hash(), answered.state_hash());
@@ -1073,8 +1080,18 @@ fn paid_flame_riddler_freezes_three_individual_attempts_across_restore_both_seat
             act(&mut state, Action::FinishEffectSelection);
             let prompt = settle(&mut state);
             assert_eq!(prompt.as_ref(), (completed < 3).then_some(&first));
-            assert_eq!(named(&state, caster, "Treasure Token").len(), treasures_before + completed);
-            assert_eq!(zone(&state, ring), if completed < 3 { Zone::Battlefield } else { Zone::Graveyard });
+            assert_eq!(
+                named(&state, caster, "Treasure Token").len(),
+                treasures_before + completed
+            );
+            assert_eq!(
+                zone(&state, ring),
+                if completed < 3 {
+                    Zone::Battlefield
+                } else {
+                    Zone::Graveyard
+                }
+            );
         }
     }
 }
