@@ -163,9 +163,40 @@ pub(crate) fn tracked(state: &GameState, item: &StackItem) -> bool {
 pub(crate) fn requires_crystal_execution(state: &GameState, item: &StackItem) -> bool {
     !native_ordinary_damage(item) && tracked(state, item)
 }
+/// A paid physical Fanatic is an ordinary activated ability whose damage
+/// uses its departed source's last-known characteristics. Current
+/// observations represent it unchanged; every other fixed payment still
+/// requires its successor.
 pub(crate) fn requires_successor(state: &GameState) -> bool {
-    state.stack.iter().any(|i| tracked(state, i))
-        || state.engine.event_history.iter().any(is_record)
+    requires_successor_except(state, paid_fanatic)
+}
+
+fn requires_successor_except(state: &GameState, represented: fn(&StackItem) -> bool) -> bool {
+    let history = &state.engine.event_history;
+    state
+        .stack
+        .iter()
+        .any(|item| !represented(item) && tracked(state, item))
+        || history
+            .scan_for_v1(&[
+                EventKindV1::FixedDamageDepartureV3,
+                EventKindV1::FixedDamagePaidV3,
+                EventKindV1::FixedDamageRemovedV3,
+            ])
+            .iter()
+            .enumerate()
+            .any(|(index, event)| match event {
+                CommittedEvent::FixedDamagePaidV3 { payment } => !represented(&payment.item),
+                CommittedEvent::FixedDamageRemovedV3 { removal } => !represented(&removal.item),
+                CommittedEvent::FixedDamageDepartureV3 { .. } => !history
+                    .scan_for_v1(&[EventKindV1::FixedDamagePaidV3])
+                    .iter()
+                    .any(|event| {
+                        matches!(event, CommittedEvent::FixedDamagePaidV3 { payment }
+                            if payment.departure as usize == index && represented(&payment.item))
+                    }),
+                _ => false,
+            })
 }
 fn is_record(e: &CommittedEvent) -> bool {
     matches!(

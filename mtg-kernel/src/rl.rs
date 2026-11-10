@@ -1988,23 +1988,11 @@ fn refuse_unrepresented_shroud_in_mode(
     Ok(())
 }
 
-fn require_supported_undercity_source(state: &GameState) -> Result<()> {
-    if cfg!(feature = "eternal-fixtures")
-        && crate::eternal_cards_v1::e3::dungeons::occurrences::undercity_requires_successor(state)
-    {
-        return Err(RlContractError(
-            "Bound Undercity rooms require their consumer successor".into(),
-        ));
-    }
-    Ok(())
-}
-
 pub fn observe_v1(
     state: &GameState,
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
-    require_supported_undercity_source(state)?;
     if crate::eternal_opening_v1::requires_successor(state) {
         return Err(RlContractError(
             "Eternal opening actions require their consumer successor".into(),
@@ -2384,7 +2372,6 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     accept_fake: bool,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<ObservationV2> {
-    require_supported_undercity_source(state)?;
     if crate::eternal_opening_v1::requires_successor(state) {
         return Err(RlContractError(
             "Eternal opening actions require their consumer successor".into(),
@@ -3233,7 +3220,6 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
     accept_fake: bool,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
-    require_supported_undercity_source(state)?;
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
     }

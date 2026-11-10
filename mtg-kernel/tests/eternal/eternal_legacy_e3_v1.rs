@@ -2218,10 +2218,10 @@ fn acererak_advances_native_undercity_with_bound_throne_restore_both_seats() {
             Some(UndercityRoomV1::ThroneOfTheDeadThree.stable_id())
         );
         assert!(marker.completed_dungeons.is_empty());
-        assert!(mtg_kernel::rl::observe_v1(&state, actor, 0)
-            .unwrap_err()
-            .0
-            .contains("Bound Undercity rooms"));
+        // Frozen observations show the bound room like a bound Forgotten
+        // Realms room: its venture source's waiting trigger.
+        mtg_kernel::rl::observe_v1(&state, actor, 0)
+            .expect("frozen observations show a bound Undercity room");
 
         let pending = state.engine.pending_effect.as_ref().unwrap();
         let Some(EffectOp::ResolveInitiativeTrigger { binding }) =

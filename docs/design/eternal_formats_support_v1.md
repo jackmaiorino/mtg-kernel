@@ -612,8 +612,10 @@ New, each built once in the first wave that needs it:
   still follow the source's native venture instruction.
   New Eternal room triggers use the dungeon's characteristics for targeting.
   Painter's Servant can color the active dungeon. A room that outlasts its
-  dungeon uses the colors recorded at removal. New bound Undercity rooms
-  require a successor to the frozen observation profiles.
+  dungeon uses the colors recorded at removal. Frozen observation profiles
+  show a bound Undercity room like a bound Forgotten Realms room, as its
+  venture source's trigger with the engine's legal targets. Infoset exports
+  still refuse bound Undercity rooms.
   Serra's Emissary's existing type choices still omit Dungeon.
   Temple of Dumathoin and Mad Wizard's Lair bind each draw attempt to the
   native venture entry and published room ability. The Lair reveals and
@@ -737,7 +739,8 @@ New, each built once in the first wave that needs it:
   damage sources. Eternal records the physical Mogg Fanatic's source immediately
   before paying its sacrifice cost, even if Circle is absent. A later color or
   zone change cannot affect that damage. Legacy unmarked Fanatic activations retain
-  the earlier execution path. Goblin Bombardment's native activation sacrificing
+  the earlier execution path. Frozen observations show a paid physical Fanatic
+  as its ordinary activated ability. Goblin Bombardment's native activation sacrificing
   another creature uses its live source while it remains on the battlefield.
   If it leaves with that activation waiting, the actual departure captures its
   last-known color and other damage characteristics, including when Circle enters
