@@ -1759,6 +1759,13 @@ fn paid_black_painter(state: &mut GameState, player: PlayerId) -> ObjectId {
 
 #[test]
 fn fungi_cavern_targets_using_the_active_dungeons_characteristics_both_seats() {
+    use mtg_kernel::effect::EffectOp;
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::standard_cards_v1::StandardOpV1;
+
+    let legacy = EffectOp::StandardV1(StandardOpV1::EternalV1(
+        EternalOpV1::RoomAbilityV1 { dungeon: LOST_MINE, room: 6 },
+    ));
     for actor in [P0, P1] {
         let opponent = actor.opponent();
         for painted in [false, true] {
@@ -1786,7 +1793,31 @@ fn fungi_cavern_targets_using_the_active_dungeons_characteristics_both_seats() {
             assert!(!legal_targets.contains(&Target::Object(shroud)));
             let target = if painted { chaplain } else { enforcer };
             let power = engine::effective_power(&state, target);
+            if !painted {
+                let mut downgraded = state.clone();
+                downgraded.engine.pending_triggers[0].effect = legacy.clone();
+                let mut downgraded: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&downgraded).unwrap()).unwrap();
+                assert!(matches!(engine::advance_until_decision(&mut downgraded),
+                    Decision::Halted { mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation, .. }));
+            }
             act(&mut state, Action::ChooseTarget(Target::Object(target)));
+            if !painted {
+                assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+                let mut downgraded = state.clone();
+                let room = downgraded.stack.last_mut().expect("published Fungi Cavern");
+                assert!(matches!(&room.inline_effect,
+                    Some(EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::RoomBoundV1 { .. })))));
+                room.inline_effect = Some(legacy.clone());
+                let mut downgraded: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&downgraded).unwrap()).unwrap();
+                for _ in 0..2 {
+                    assert!(matches!(next(&mut downgraded), Decision::CastSpellOrPass { .. }));
+                    act(&mut downgraded, Action::Pass);
+                }
+                assert!(matches!(engine::advance_until_decision(&mut downgraded),
+                    Decision::Halted { mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation, .. }));
+            }
             settled(&mut state);
             assert_eq!(engine::effective_power(&state, target), power - 4);
         }

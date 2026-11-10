@@ -159,8 +159,8 @@ fn for_item(state: &GameState, item: &StackItem) -> Option<RoomEntryV1> {
 
 fn published_rows(
     state: &GameState,
-    item: StackItemId,
-    entered_at: usize,
+    item: Option<StackItemId>,
+    entered_at: Option<usize>,
 ) -> impl Iterator<Item = (usize, usize, StackItemId)> + '_ {
     state.engine.event_history
         .scan_for_v1(&[EventKindV1::EternalOwnedDrawV1])
@@ -169,7 +169,30 @@ fn published_rows(
         .filter_map(move |(at, event)| match event {
             CommittedEvent::EternalOwnedDrawV1 { journal } => match **journal {
                 JournalV1::DungeonRoomV1(RoomJournalV1::Published { entered_at: entry, item: id })
-                    if id == item || entry == entered_at => Some((at, entry, id)),
+                    if Some(id) == item || Some(entry) == entered_at => Some((at, entry, id)),
+                _ => None,
+            },
+            _ => None,
+        })
+}
+
+pub(super) fn retained_room_entry(
+    state: &GameState,
+    player: PlayerId,
+    source: AbilitySourceContractV4,
+    dungeon: u16,
+    room: u16,
+) -> Option<RoomEntryV1> {
+    state.engine.event_history
+        .scan_for_v1(&[EventKindV1::EternalOwnedDrawV1])
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(at, event)| match event {
+            CommittedEvent::EternalOwnedDrawV1 { journal } => match **journal {
+                JournalV1::DungeonRoomV1(RoomJournalV1::Entered(entry))
+                    if entry.entered_at == at && entry.player == player && entry.source == source
+                        && entry.dungeon == dungeon && entry.room == room => Some(entry),
                 _ => None,
             },
             _ => None,
@@ -178,6 +201,13 @@ fn published_rows(
 
 pub(crate) fn validate_pending(state: &GameState, pending: &PendingTrigger) -> Result<(), String> {
     if !is_bound(&pending.effect) {
+        if let (Some((dungeon, room)), Some(source)) =
+            (room_of(&pending.effect), pending.source_contract)
+        {
+            if retained_room_entry(state, pending.controller, source, dungeon, room).is_some() {
+                return Err("native room entry cannot use the legacy trigger".into());
+            }
+        }
         return Ok(());
     }
     let entry = bound_entry(state, &pending.effect).ok_or("room trigger lost its native entry")?;
@@ -186,7 +216,7 @@ pub(crate) fn validate_pending(state: &GameState, pending: &PendingTrigger) -> R
         || pending.source != entry.source.source
         || pending.source_contract != Some(entry.source)
         || pending.target_spec != room_target_spec(entry.dungeon, entry.room)
-        || published_rows(state, StackItemId::default(), entry.entered_at).next().is_some()
+        || published_rows(state, None, Some(entry.entered_at)).next().is_some()
     {
         return Err("room trigger does not match its unpublished entry".into());
     }
@@ -199,7 +229,7 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
     }
     let entry = for_item(state, item).ok_or("room publication lost its native entry")?;
     let item = item.v4.stack_item_id;
-    if published_rows(state, item, entry.entered_at).next().is_some() {
+    if published_rows(state, Some(item), Some(entry.entered_at)).next().is_some() {
         return Err("room entry has already published its trigger".into());
     }
     record(state, JournalV1::DungeonRoomV1(RoomJournalV1::Published {
@@ -212,30 +242,37 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
 pub(crate) fn published(state: &GameState, item: &StackItem) -> Option<RoomEntryV1> {
     let entry = for_item(state, item)?;
     let id = item.v4.stack_item_id;
-    let mut rows = published_rows(state, id, entry.entered_at);
+    let mut rows = published_rows(state, Some(id), Some(entry.entered_at));
     let (at, entered_at, published_id) = rows.next()?;
     (at > entered_at && entered_at == entry.entered_at && published_id == id && rows.next().is_none())
         .then_some(entry)
 }
 
-pub(crate) fn validate_stack_target_source(state: &GameState, item: &StackItem) -> Result<(), String> {
+fn validated_published_room(state: &GameState, item: &StackItem) -> Result<Option<RoomEntryV1>, String> {
     if let Some(effect) = item.inline_effect.as_ref().filter(|effect| is_bound(effect)) {
-        published(state, item).ok_or("room source lost its native publication")?;
+        let entry = published(state, item).ok_or("room source lost its native publication")?;
         source_colors(state, effect)?;
+        return Ok(Some(entry));
     }
-    Ok(())
+    if item.v4.stack_item_id != StackItemId::default()
+        && published_rows(state, Some(item.v4.stack_item_id), None).next().is_some()
+    {
+        return Err("native room publication lost its bound effect".into());
+    }
+    Ok(None)
+}
+
+pub(crate) fn validate_stack_target_source(state: &GameState, item: &StackItem) -> Result<(), String> {
+    validated_published_room(state, item).map(|_| ())
 }
 
 pub(crate) fn validate_resolving(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Result<(), String> {
-    if !pending.resolving_item.inline_effect.as_ref().is_some_and(is_bound) {
+    let Some(entry) = validated_published_room(state, &pending.resolving_item)? else {
         return Ok(());
-    }
-    let item = &pending.resolving_item;
-    let entry = published(state, item).ok_or("room resolution lost its native publication")?;
-    source_colors(state, item.inline_effect.as_ref().ok_or("room resolution lost its effect")?)?;
+    };
     if pending.ctx.source != entry.source.source
         || pending.ctx.controller != entry.player
         || pending.ctx.ability_source_contract != Some(entry.source)
@@ -350,10 +387,16 @@ impl BottommostV1 {
                         && room.player == controller
                         && source == Some(room.source);
                 }
-                *includes_legacy_rooms
-                    && !is_bound(effect)
-                    && controller == entry.player
-                    && room_of(effect).is_some_and(|(dungeon, _)| dungeon == entry.dungeon)
+                if is_bound(effect) || controller != entry.player {
+                    return false;
+                }
+                let Some((dungeon, room)) = room_of(effect) else {
+                    return false;
+                };
+                dungeon == entry.dungeon && (*includes_legacy_rooms || source.is_some_and(|source| {
+                    retained_room_entry(state, controller, source, dungeon, room)
+                        .is_some_and(|room| room.occurrence == entry.occurrence)
+                }))
             }
             Self::Undercity { .. } => match effect {
                 EffectOp::ResolveInitiativeTrigger { binding } => {

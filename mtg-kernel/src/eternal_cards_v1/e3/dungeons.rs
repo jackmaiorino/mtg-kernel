@@ -267,6 +267,16 @@ fn room_target_spec(dungeon: u16, room: u16) -> TargetSpec {
 
 /// The room abilities set off since the last collection.
 pub(crate) fn room_triggers(state: &mut GameState) -> Vec<crate::trigger::PendingTrigger> {
+    if let Some(source) = super::e3(state).and_then(|e3| {
+        e3.room_triggers.iter().find_map(|room| {
+            (room.entered_at.is_none()
+                && occurrences::retained_room_entry(state, room.player, room.source, room.dungeon, room.room)
+                    .is_some()).then_some(room.source.source)
+        })
+    }) {
+        state.engine.halted = Some((crate::engine::UnsupportedMechanic::InvalidEffectContinuation, source));
+        return Vec::new();
+    }
     let Some(rooms) = state
         .eternal_v1
         .as_mut()
