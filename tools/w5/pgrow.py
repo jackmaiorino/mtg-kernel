@@ -133,7 +133,7 @@ def check_spec(spec, base, segment_updates, long_stride, parent_source=None, pin
     replaces = spec.get('replaces', REPLACES)
     test = spec.get('test_stride', False)
     start_member = spec.get('start_member', True)
-    if start_member not in (True, False):
+    if type(start_member) is not bool:
         raise ValueError('start_member is true or false')
     if start_member and parent_source is not None and not parent_source.get('checkpoint'):
         raise ValueError('a parent without a checkpoint cannot be a ladder member (set start_member false)')
