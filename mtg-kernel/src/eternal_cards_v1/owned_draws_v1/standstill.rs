@@ -59,8 +59,11 @@ fn cast_identity(state: &GameState, cast_at: usize) -> Option<crate::cast_identi
         && receipt.origin_zone_change_count.checked_add(1) == Some(receipt.stack_zone_change_count))
         .then_some(*receipt)
 }
-/// Called only while collecting the native SpellCast event. A bare spell ID
-/// cannot select a prior cast of that physical card or another stack row.
+/// Called only while collecting the native SpellCast event. Ordinary finalize
+/// captures before priority; resolution_cast_v1::finish_child captures before
+/// resuming its parent. Trigger resolution later uses the saved receipt and
+/// does not require this spell to remain live. A bare spell ID cannot select
+/// a prior cast of that physical card or another stack row.
 fn actual_cast(state: &GameState, spell: ObjectId, caster: PlayerId) -> Option<usize> {
     let mut live = state.stack.iter().filter(|row| row.kind == StackItemKind::Spell && row.source == spell);
     let item = live.next()?;

@@ -1587,7 +1587,9 @@ fn note_spell_casts(state: &mut GameState, events: &[CommittedEvent]) {
         let CommittedEvent::SpellCast { spell, controller } = *event else {
             continue;
         };
-        // Only Decree of Silence's counter needs the spell still on the stack.
+        // Decree needs a live target when it resolves. Standstill authenticates
+        // the paid cast here at native collection, then retains that occurrence
+        // independently of the spell's later departure before trigger resolution.
         let item = state
             .stack
             .iter()

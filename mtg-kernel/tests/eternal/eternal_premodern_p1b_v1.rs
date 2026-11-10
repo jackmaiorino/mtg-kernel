@@ -1504,23 +1504,47 @@ fn cast_triggers_need_no_spell_on_the_stack() {
     put(&mut state, P0, "Enchantress's Presence", Zone::Battlefield);
     let standstill = put(&mut state, P0, "Standstill", Zone::Battlefield);
     let decree = put(&mut state, P1, "Decree of Silence", Zone::Battlefield);
+    // A genuine paid cast creates the triggers. APNAP puts the opponent's
+    // Decree trigger on top, so it counters Seal before any draw resolves.
+    let seal = put(&mut state, P0, "Seal of Cleansing", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 1);
+    cast(&mut state, seal, &[]);
+    run_until(&mut state, |state| zone(state, seal) == Zone::Graveyard, |_, _| None);
+    assert!(state.stack.iter().all(|item| item.source != seal));
+    assert!(state.stack.iter().any(|item| item.source == standstill));
+    assert_eq!(zone(&state, standstill), Zone::Battlefield);
+    assert!(state.players.iter().all(|player| player.hand.is_empty()));
+    assert_eq!(p1b::depletion_counters(&state, decree), 1);
+    let mut replay: GameState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    assert_eq!(state.state_hash(), replay.state_hash());
+    for branch in [&mut state, &mut replay] {
+        settled(branch);
+        assert_eq!(branch.players[0].hand.len(), 2, "both enchantresses drew");
+        assert_eq!(zone(branch, standstill), Zone::Graveyard);
+        assert_eq!(branch.players[1].hand.len(), 3, "Standstill's draws");
+        assert_eq!(p1b::depletion_counters(branch, decree), 1);
+    }
+    assert_eq!(state.state_hash(), replay.state_hash());
+}
+
+#[test]
+fn injected_departed_spell_cast_cannot_mint_standstill_draw_ownership() {
+    let mut state = islands();
+    let standstill = put(&mut state, P0, "Standstill", Zone::Battlefield);
     let island = put(&mut state, P0, "Island", Zone::Battlefield);
-    // A cast of an enchantment that already left the stack.
     let seal = put(&mut state, P0, "Seal of Cleansing", Zone::Graveyard);
     next(&mut state);
-    state
-        .engine
-        .event_log
-        .push(mtg_kernel::event::CommittedEvent::SpellCast {
-            spell: seal,
-            controller: P0,
-        });
+    // This is deliberately not an actual cast and has no finalized native
+    // cast identity. It cannot borrow the old card ID to authorize draws.
+    state.engine.event_log.push(mtg_kernel::event::CommittedEvent::SpellCast {
+        spell: seal,
+        controller: P0,
+    });
     act(&mut state, Action::ActivateManaAbility(island));
-    settled(&mut state);
-    assert_eq!(state.players[0].hand.len(), 2, "both enchantresses drew");
-    assert_eq!(zone(&state, standstill), Zone::Graveyard);
-    assert_eq!(state.players[1].hand.len(), 3, "Standstill's draws");
-    assert_eq!(p1b::depletion_counters(&state, decree), 1);
+    assert!(matches!(engine::advance_until_decision(&mut state), Decision::Halted { source, .. } if source == standstill));
+    assert_eq!(zone(&state, standstill), Zone::Battlefield);
+    assert!(state.players.iter().all(|player| player.hand.is_empty()));
+    assert!(!state.engine.event_history.iter().any(|event| matches!(event, mtg_kernel::event::CommittedEvent::EternalOwnedDrawV1 { .. })));
 }
 
 #[test]
