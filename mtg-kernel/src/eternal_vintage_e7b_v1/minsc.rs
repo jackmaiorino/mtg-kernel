@@ -298,6 +298,21 @@ fn departed_source(
     Ok(Some(departure))
 }
 
+/// A published reflexive trigger refers to its authenticated departed source.
+pub(crate) fn waiting_departed_source(
+    state: &GameState,
+    item: &StackItem,
+) -> Option<HistoricalDamageSourceV1> {
+    let row = announced(item)?;
+    if !owns(state, item, row.sacrifice) {
+        return None;
+    }
+    departed_source(state, row.source)
+        .ok()
+        .flatten()
+        .map(|departure| departure.facts)
+}
+
 /// Minsc's original native target with source characteristics from departure.
 pub(crate) fn departed_target_legal(
     state: &GameState,

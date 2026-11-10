@@ -2151,6 +2151,149 @@ fn circle_of_protection_blue_uses_waiting_bombardments_actual_departure_both_sea
 }
 
 #[test]
+fn circle_of_protection_blue_uses_departed_minsc_from_waiting_reflexive_trigger_both_seats() {
+    use mtg_kernel::effect::{validate_pending_effect_choice, EffectOp, PendingEffectChoice};
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_sideboard_s1d_v1::S1dOpV1;
+    use mtg_kernel::standard_cards_v1::StandardOpV1;
+
+    let blue = mtg_kernel::card_def::mana_color_mask(ManaColor::U);
+    for caster in [P0, P1] {
+        let defender = caster.opponent();
+        let mut state = plains();
+        state.active_player = defender;
+        state.priority_player = defender;
+        let circle = put(&mut state, defender, "Circle of Protection: Blue", Zone::Hand);
+        pool(&mut state, defender, &[ManaColor::W], 1);
+        cast(&mut state, circle, &[]);
+        settled(&mut state);
+        run_until(
+            &mut state,
+            |s| s.active_player == caster && s.priority_player == caster && s.step == Step::Main1,
+            |_, _| None,
+        );
+
+        let painter = put(&mut state, caster, "Painter's Servant", Zone::Hand);
+        pool(&mut state, caster, &[], 2);
+        cast(&mut state, painter, &[]);
+        settle_option(&mut state, 1);
+        assert_eq!(state.objects.get(painter).v4.chosen_color, Some(ManaColor::U));
+
+        let minsc = put(&mut state, caster, "Minsc & Boo, Timeless Heroes", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::R, ManaColor::G], 2);
+        cast(&mut state, minsc, &[]);
+        settle_option(&mut state, 1);
+        let original = state.objects.get(minsc).zone_change_count;
+        assert_ne!(engine::object_color_mask(&state, minsc) & blue, 0);
+        // A second eligible source keeps Circle's choice from auto-resolving.
+        let other_blue = put(&mut state, defender, "Mulldrifter", Zone::Battlefield);
+        let boo = state.players[caster.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .find(|&object| state.objects.get(object).name == "Boo Token")
+            .expect("Minsc's native Hamster token");
+
+        activate(&mut state, minsc, 1, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { player, legal_targets, .. })
+                if player == caster && legal_targets.contains(&Target::Object(boo))
+        ));
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(boo)));
+        choose_target(&mut state, Target::Player(defender));
+
+        let bounce = put(&mut state, caster, "Echoing Truth", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::U], 1);
+        cast(&mut state, bounce, &[Target::Object(minsc)]);
+        run_until(&mut state, |s| zone(s, minsc) == Zone::Hand, |_, _| None);
+        let removal = put(&mut state, caster, "Cast Down", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::B], 1);
+        cast(&mut state, removal, &[Target::Object(painter)]);
+        run_until(
+            &mut state,
+            |s| zone(s, painter) == Zone::Graveyard,
+            |_, _| None,
+        );
+        assert_eq!(engine::object_color_mask(&state, minsc) & blue, 0);
+        let [waiting] = state.stack.as_slice() else {
+            panic!("the reflexive trigger must still be waiting");
+        };
+        assert_eq!(waiting.kind, StackItemKind::TriggeredAbility);
+        assert_eq!(waiting.source, minsc);
+        assert_eq!(waiting.targets.as_slice(), [Target::Player(defender)]);
+        assert_eq!(waiting.v4.ability_source_contract.unwrap().zone_change_count, original);
+
+        let hand = state.players[caster.index()].hand.len();
+        let mut unprotected = state.clone();
+        settled(&mut unprotected);
+        assert_eq!(life(&unprotected, defender), 19);
+        assert_eq!(unprotected.players[caster.index()].hand.len(), hand + 1);
+
+        act(&mut state, Action::Pass);
+        pool(&mut state, defender, &[], 1);
+        activate(&mut state, circle, 0, &[]);
+        let decision = settle(&mut state).expect("paid Circle source menu");
+        assert!(matches!(
+            decision,
+            Decision::ChooseEffectOption { player, source, option_count: 2, .. }
+                if player == defender && source == circle
+        ));
+        let Some(PendingEffectChoice::ChooseOption { options, .. }) = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .and_then(|pending| pending.choice.as_ref())
+        else {
+            panic!("Circle source options missing");
+        };
+        let links: Vec<_> = options.iter().map(|option| match option {
+            EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
+                S1dOpV1::CopShieldV1 { source },
+            ))) => (source.object, source.zone_change_count),
+            other => panic!("unexpected Circle option: {other:?}"),
+        }).collect();
+        assert_eq!(
+            links,
+            [(minsc, original), (other_blue, state.objects.get(other_blue).zone_change_count)]
+        );
+
+        let snapshot = serde_json::to_value(&state).unwrap();
+        for missing_publication in [true, false] {
+            let mut forged = snapshot.clone();
+            let history = forged["engine"]["event_history"].as_array_mut().unwrap();
+            if missing_publication {
+                // Keep later native history indices unchanged.
+                let draw = history.iter().find(|event| event.get("Draw").is_some()).unwrap().clone();
+                let publication = history.iter_mut().find(|event| {
+                    event["EternalOwnedDrawV1"]["journal"].get("MinscTarget").is_some()
+                }).unwrap();
+                *publication = draw;
+            } else {
+                let departure = history.iter_mut().find_map(|event| {
+                    event.get_mut("EternalOwnedDrawV1")?.get_mut("journal")?.get_mut("MinscDeparture")
+                }).unwrap();
+                departure["departure"]["facts"]["source"]["zone_change_count"] =
+                    serde_json::json!(original + 1);
+            }
+            let forged: GameState = serde_json::from_value(forged).unwrap();
+            assert_eq!(
+                validate_pending_effect_choice(&forged).unwrap_err(),
+                "Circle source choice no longer matches its exact public menu"
+            );
+        }
+
+        let mut restored: GameState = serde_json::from_value(snapshot).unwrap();
+        assert_eq!(next(&mut restored), decision);
+        act(&mut restored, Action::ChooseEffectOption(0));
+        settled(&mut restored);
+        assert_eq!(life(&restored, defender), 20);
+        assert_eq!(restored.players[caster.index()].hand.len(), hand + 1);
+        assert!(restored.eternal_v1.as_ref().unwrap().s1d.cop_shields.is_empty());
+    }
+}
+
+#[test]
 fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
     use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
     use mtg_kernel::eternal_cards_v1::EternalOpV1;

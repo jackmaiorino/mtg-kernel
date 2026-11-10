@@ -580,8 +580,9 @@ New, each built once in the first wave that needs it:
   effective power. It resolves its actual target and damage before draw
   replacement attempts begin. An illegal target stops the whole trigger.
   Historical serialized Minsc triggers retain their existing behavior.
-  Circle of Protection: Blue does not yet offer a departed blue Minsc
-  as a source choice from its waiting reflexive trigger.
+  Circle of Protection: Blue can choose a departed blue Minsc while its
+  authenticated reflexive trigger waits on the stack. The shield binds the
+  original battlefield incarnation and uses the color captured at departure.
   Echo of Eons finishes both native shuffles before drawing in turn order.
   Interrupted draws retain both native shuffle commits and each player's
   completed attempts. The kernel has no generic shuffle event, so Echo
