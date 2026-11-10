@@ -973,6 +973,10 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
             crate::source_power_activation_v1::bombardment::departed_source(state, item)
                 .ok()
                 .flatten()
+        } else if let Some(facts) =
+            crate::eternal_vintage_e7b_v1::minsc::waiting_departed_source(state, item)
+        {
+            Some(facts)
         } else {
             crate::source_power_activation_v1::damage_source(
                 state,
