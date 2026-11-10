@@ -2416,12 +2416,18 @@ fn flagbearers_require_a_complete_ram_through_assignment_both_seats() {
         assert!(state.objects.get(mother).tapped);
 
         let mut no_second = state.clone();
-        propose_and_commit(&mut no_second, ProposedEvent::zone_change(mother, Zone::Graveyard));
+        propose_and_commit(
+            &mut no_second,
+            ProposedEvent::zone_change(mother, Zone::Graveyard),
+        );
         assert!(!castable(&mut no_second, ram));
         assert_eq!(zone(&no_second, ram), Zone::Hand);
 
         let mut no_eligible_bearer = state.clone();
-        propose_and_commit(&mut no_eligible_bearer, ProposedEvent::zone_change(own, Zone::Graveyard));
+        propose_and_commit(
+            &mut no_eligible_bearer,
+            ProposedEvent::zone_change(own, Zone::Graveyard),
+        );
         cast(&mut no_eligible_bearer, ram, &[other_target, mother_target]);
         settled(&mut no_eligible_bearer);
         assert_eq!(zone(&no_eligible_bearer, mother), Zone::Graveyard);
@@ -2461,7 +2467,10 @@ fn flagbearers_require_a_complete_ram_through_assignment_both_seats() {
                 if player == actor && legal_targets == [mother_target]
         ));
         choose_target(&mut restored, mother_target);
-        assert!(matches!(next(&mut restored), Decision::CastSpellOrPass { .. }));
+        assert!(matches!(
+            next(&mut restored),
+            Decision::CastSpellOrPass { .. }
+        ));
         let paid = restored.stack.last().expect("paid Ram Through");
         assert_eq!(paid.source, ram);
         assert_eq!(paid.targets, [own_target, mother_target]);
