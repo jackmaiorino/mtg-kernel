@@ -59,12 +59,16 @@ fn paid_veil_draw_replacements_finish_before_protection_both_seats() {
         let bolt = put(&mut base, drawer, "Lightning Bolt", Zone::Hand);
         pool(&mut base, drawer, &[ManaColor::R, ManaColor::G], 0);
         cast(&mut base, bolt, &[Target::Player(opponent)]);
-        assert!(matches!(next(&mut base), Decision::CastSpellOrPass { player, .. } if player == drawer));
+        assert!(
+            matches!(next(&mut base), Decision::CastSpellOrPass { player, .. } if player == drawer)
+        );
         act(&mut base, Action::Pass);
         let counter = put(&mut base, opponent, "Counterspell", Zone::Hand);
         pool(&mut base, opponent, &[ManaColor::U, ManaColor::U], 0);
         cast(&mut base, counter, &[Target::Object(bolt)]);
-        assert!(matches!(next(&mut base), Decision::CastSpellOrPass { player, .. } if player == opponent));
+        assert!(
+            matches!(next(&mut base), Decision::CastSpellOrPass { player, .. } if player == opponent)
+        );
         act(&mut base, Action::Pass);
         cast(&mut base, veil, &[]);
         let start = base.engine.event_history.len();
@@ -85,9 +89,16 @@ fn paid_veil_draw_replacements_finish_before_protection_both_seats() {
             for state in [&mut branch, &mut restored] {
                 settled(state);
                 assert_eq!(veil_count(state), 1);
-                assert_eq!(state.players[opponent.index()].life, 17, "Veil protects Bolt");
+                assert_eq!(
+                    state.players[opponent.index()].life,
+                    17,
+                    "Veil protects Bolt"
+                );
                 assert_eq!(treasure_count(state, opponent), usize::from(!dredge));
-                assert_eq!(state.players[drawer.index()].library, library[if dredge { 4 } else { 0 }..]);
+                assert_eq!(
+                    state.players[drawer.index()].library,
+                    library[if dredge { 4 } else { 0 }..]
+                );
                 assert_eq!(history_draws(state, drawer, start), 0);
                 assert_eq!(owned_records(state, start), 2);
             }
@@ -101,8 +112,9 @@ fn paid_dragon_entry(state: &mut GameState, drawer: PlayerId) -> ObjectId {
     pool(state, drawer, &[ManaColor::R, ManaColor::R], 3);
     activate(state, dragon, 0, &[]);
     pass_until(state, |state| {
-        state.stack.last().is_some_and(|item| item.source == dragon
-            && item.kind == StackItemKind::TriggeredAbility)
+        state.stack.last().is_some_and(|item| {
+            item.source == dragon && item.kind == StackItemKind::TriggeredAbility
+        })
     });
     assert_eq!(state.objects.get(dragon).zone, Zone::Battlefield);
     assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
@@ -166,10 +178,20 @@ fn paid_dragon_discards_once_then_offers_new_dredger_both_seats() {
             assert_eq!(state.objects.get(thug).zone, Zone::Hand);
             let mut forged: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-            let Some(PendingEffectChoice::ChooseOption { options, .. }) = forged.engine.pending_effect.as_mut().unwrap().choice.as_mut() else {
+            let Some(PendingEffectChoice::ChooseOption { options, .. }) = forged
+                .engine
+                .pending_effect
+                .as_mut()
+                .unwrap()
+                .choice
+                .as_mut()
+            else {
                 panic!("Dragon option missing");
             };
-            options[0] = EffectOp::DrawCards { player: mtg_kernel::effect::PlayerRef::Controller, count: 3 };
+            options[0] = EffectOp::DrawCards {
+                player: mtg_kernel::effect::PlayerRef::Controller,
+                count: 3,
+            };
             let hash = forged.state_hash();
             assert!(engine::step(&mut forged, Action::ChooseEffectOption(0)).is_err());
             assert_eq!(forged.state_hash(), hash);
@@ -205,8 +227,14 @@ fn paid_dragon_discards_once_then_offers_new_dredger_both_seats() {
                     assert_eq!(discard_attempts(state, thug, start), 1);
                     assert_eq!(owned_records(state, start), 4);
                     assert_eq!(treasure_count(state, opponent), if dredge { 2 } else { 3 });
-                    assert_eq!(state.players[drawer.index()].library, library[if dredge { 4 } else { 0 }..]);
-                    assert_eq!(state.objects.get(thug).zone, if dredge { Zone::Hand } else { Zone::Graveyard });
+                    assert_eq!(
+                        state.players[drawer.index()].library,
+                        library[if dredge { 4 } else { 0 }..]
+                    );
+                    assert_eq!(
+                        state.objects.get(thug).zone,
+                        if dredge { Zone::Hand } else { Zone::Graveyard }
+                    );
                 }
                 assert_eq!(branch.state_hash(), restored.state_hash());
             }
@@ -232,7 +260,9 @@ fn paid_veil_and_dragon_stop_on_jace_win_both_seats() {
         let ritual = put(&mut veil_game, opponent, "Dark Ritual", Zone::Hand);
         pool(&mut veil_game, opponent, &[ManaColor::B], 0);
         cast(&mut veil_game, ritual, &[]);
-        assert!(matches!(next(&mut veil_game), Decision::CastSpellOrPass { player, .. } if player == opponent));
+        assert!(
+            matches!(next(&mut veil_game), Decision::CastSpellOrPass { player, .. } if player == opponent)
+        );
         act(&mut veil_game, Action::Pass);
         let veil = put(&mut veil_game, drawer, "Veil of Summer", Zone::Hand);
         for competing in [false, true] {
@@ -245,12 +275,19 @@ fn paid_veil_and_dragon_stop_on_jace_win_both_seats() {
             let first = settle(&mut branch).unwrap();
             if competing {
                 assert_draw_replacement_prompt(&first, drawer, veil, jace);
-                act(&mut branch, Action::ChooseEffectTarget(Target::Object(jace)));
+                act(
+                    &mut branch,
+                    Action::ChooseEffectTarget(Target::Object(jace)),
+                );
                 branch = restore_draw_answer(&branch);
-                assert!(matches!(next(&mut branch), Decision::GameOver { winner: Some(player) } if player == drawer));
+                assert!(
+                    matches!(next(&mut branch), Decision::GameOver { winner: Some(player) } if player == drawer)
+                );
                 assert_eq!(treasure_count(&branch, opponent), 0);
             } else {
-                assert!(matches!(first, Decision::GameOver { winner: Some(player) } if player == drawer));
+                assert!(
+                    matches!(first, Decision::GameOver { winner: Some(player) } if player == drawer)
+                );
             }
             assert_eq!(veil_count(&branch), 0);
         }
@@ -264,11 +301,20 @@ fn paid_veil_and_dragon_stop_on_jace_win_both_seats() {
         act(&mut dragon_game, Action::ChooseEffectOption(0));
         let first = settle(&mut dragon_game).expect("discarded Thug can replace the first draw");
         assert_draw_replacement_prompt(&first, drawer, dragon, thug);
-        act(&mut dragon_game, Action::ChooseEffectTarget(Target::Object(thug)));
+        act(
+            &mut dragon_game,
+            Action::ChooseEffectTarget(Target::Object(thug)),
+        );
         let mut restored = restore_draw_answer(&dragon_game);
         for state in [&mut dragon_game, &mut restored] {
-            assert!(matches!(next(state), Decision::GameOver { winner: Some(player) } if player == drawer));
-            assert_eq!(history_draws(state, drawer, start), 1, "third draw was skipped");
+            assert!(
+                matches!(next(state), Decision::GameOver { winner: Some(player) } if player == drawer)
+            );
+            assert_eq!(
+                history_draws(state, drawer, start),
+                1,
+                "third draw was skipped"
+            );
             assert_eq!(owned_records(state, start), 3);
             assert_eq!(discard_attempts(state, thug, start), 1);
             assert_eq!(state.objects.get(thug).zone, Zone::Hand);

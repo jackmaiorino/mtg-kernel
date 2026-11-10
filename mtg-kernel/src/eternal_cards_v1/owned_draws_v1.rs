@@ -87,10 +87,9 @@ impl InstructionV1 {
             Self::OneRing => ctx
                 .ability_source_contract
                 .map_or(0, |source| super::e3::quote_ring_draw_count(state, source)),
-            Self::VeilOfSummer => u32::from(super::e3::opponent_cast_blue_or_black_spell_this_turn(
-                state,
-                ctx.controller,
-            )),
+            Self::VeilOfSummer => u32::from(
+                super::e3::opponent_cast_blue_or_black_spell_this_turn(state, ctx.controller),
+            ),
             Self::DragonEngine => 3,
         }
     }
@@ -261,7 +260,11 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
             (InstructionV1::OneRing, StackItemKind::ActivatedAbility, "The One Ring") => {
                 item.v4.activated_ability_index == Some(0)
             }
-            (InstructionV1::DragonEngine, StackItemKind::TriggeredAbility, "Phyrexian Dragon Engine") => {
+            (
+                InstructionV1::DragonEngine,
+                StackItemKind::TriggeredAbility,
+                "Phyrexian Dragon Engine",
+            ) => {
                 source.owner == source.controller
                     && source.zone_change_count > 0
                     && *inline == eternal_legacy_e7a_v1::dragon_engine_rummage()
@@ -299,7 +302,10 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
     }
     let source = item.v4.source_contract?;
     let def = CARD_DEFS.get(usize::from(source.card_def))?;
-    if !matches!(def.object_name, "Plunder the Trollshaws" | "Twinned Vision" | "Veil of Summer") {
+    if !matches!(
+        def.object_name,
+        "Plunder the Trollshaws" | "Twinned Vision" | "Veil of Summer"
+    ) {
         return None;
     }
     state.objects.try_get(item.source)?;
@@ -460,7 +466,9 @@ fn finish_instruction(
         InstructionV1::DiviningTop => {
             crate::eternal_e5a_v1::put_draw_source_on_top(&pending.ctx, state);
         }
-        InstructionV1::VeilOfSummer => super::e3::apply_veil_protection(state, pending.ctx.controller),
+        InstructionV1::VeilOfSummer => {
+            super::e3::apply_veil_protection(state, pending.ctx.controller)
+        }
         _ => {}
     }
 }
@@ -564,7 +572,10 @@ fn dragon_before_start(pending: &EffectContinuation) -> bool {
         return false;
     }
     let root = eternal_legacy_e7a_v1::dragon_engine_rummage();
-    let EffectOp::Choice { options: expected, .. } = &root else {
+    let EffectOp::Choice {
+        options: expected, ..
+    } = &root
+    else {
         unreachable!("Dragon Engine has one printed choice");
     };
     match (&pending.choice, pending.frames.as_slice()) {
