@@ -110,6 +110,7 @@ fn state_checks() -> Vec<StateCheck> {
         crate::equipment_damage_source_v4::public_sources,
         crate::event::validate_exile_if_dies_replacements,
         crate::extra_turn_v1::validate,
+        crate::faebloom_trick_v43::validate_state,
         crate::fiendish_panda_v1::validate_state,
         crate::fiendish_panda_v1::custody::validate,
         crate::fiery_annihilation_v1::requires_successor,

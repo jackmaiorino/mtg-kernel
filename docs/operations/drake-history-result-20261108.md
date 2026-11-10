@@ -97,3 +97,15 @@ found no blocker in allocation identity, exact prefix checks, or legacy
 serialization fallback. Native correctness, timing and current CI remain
 pending. Neither this candidate nor the logical-index repair establishes flat
 per-decision cost; PR #583 and issue #474 remain open.
+
+The retained `7b2576e7` train 436 diagnostic recorded 4.173 ms in 912
+Faebloom validation spans around decisions 301-400 in owned staging and
+21.489 ms in 900 spans around decisions 1401-1500, grouped by native apply
+markers. The journal scan now skips histories whose event index proves they
+have no Faebloom journal rows. Trigger-log, live-stack and pending checks
+still run. These small inclusive spans motivate the guard. The current
+candidate has no measured timing result.
+
+Diagnostic log: `timing-7b-qualification/diagnostic-train436-001/phase.stderr.log`
+under the logical qualification evidence directory above, SHA-256
+`a94e7697fa06bc5251b70df857842503706dc284affa8fce3f0fd618888d1c43`.
