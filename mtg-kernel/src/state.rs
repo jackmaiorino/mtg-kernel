@@ -2517,7 +2517,8 @@ pub struct GameState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) eternal_opening_v1: Option<crate::eternal_opening_v1::OpeningV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) coveted_jewel_draw_progress_v1: Option<crate::eternal_vintage_v1::JewelDrawProgressV1>,
+    pub(crate) coveted_jewel_draw_progress_v1:
+        Option<crate::eternal_vintage_v1::JewelDrawProgressV1>,
     /// Opt-in (issue #531): the other player reads a card leaving a hand by
     /// name, never by copy (see [`GameState::forget_departing_hand_object`]).
     /// Off in every historical session, whose rows, snapshot bytes and hashes

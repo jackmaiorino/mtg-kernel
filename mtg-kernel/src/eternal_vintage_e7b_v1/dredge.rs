@@ -289,7 +289,12 @@ pub(crate) fn validate_coveted_jewel_draw(
         return Err("Coveted Jewel draw changed its progress or remaining effects".into());
     }
     validate_draw_choice(
-        state, pending, item.controller.opponent(), path, remaining, "Coveted Jewel draw",
+        state,
+        pending,
+        item.controller.opponent(),
+        path,
+        remaining,
+        "Coveted Jewel draw",
     )
 }
 
@@ -303,7 +308,14 @@ fn validate_draw_choice(
 ) -> Result<(), String> {
     let (kind, cards) = replacement_options(state, pending, drawer, path, remaining)
         .ok_or_else(|| format!("{owner} lost its replacement choices"))?;
-    let expected = choice(state, drawer, kind, &cards, path.to_vec(), remaining.to_vec());
+    let expected = choice(
+        state,
+        drawer,
+        kind,
+        &cards,
+        path.to_vec(),
+        remaining.to_vec(),
+    );
     let valid = match (&pending.choice, pending.frames.as_slice()) {
         (
             Some(PendingEffectChoice::SelectTargets {

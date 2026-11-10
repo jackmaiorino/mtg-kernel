@@ -8083,7 +8083,10 @@ pub(crate) fn jace_draw_replacement_origin(
         Some(op) if *op == crate::eternal_vintage_v1::coveted_jewel_changes_hands() => {
             return drawer == pending.ctx.controller.opponent()
                 && crate::eternal_vintage_v1::coveted_jewel_draw_stage_matches(
-                    state, &pending.ctx, path, remaining,
+                    state,
+                    &pending.ctx,
+                    path,
+                    remaining,
                 );
         }
         Some(EffectOp::NivMizzetVisionaryDrawV1 {

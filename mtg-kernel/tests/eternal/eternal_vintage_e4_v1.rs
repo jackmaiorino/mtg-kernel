@@ -820,18 +820,28 @@ fn coveted_jewel_etb_dredge_preserves_the_other_two_draws_both_seats() {
     }
 }
 
-fn assert_jewel_dredge_prompt(decision: &Decision, drawer: PlayerId, jewel: ObjectId, thug: ObjectId) {
-    assert!(matches!(
-        decision,
-        Decision::ChooseEffectTargets {
-            player, source, min_targets: 0, max_targets: 1, legal_targets, can_finish: true, ..
-        } if *player == drawer && *source == jewel && legal_targets.as_slice() == [Target::Object(thug)]
-    ), "{decision:?}");
+fn assert_jewel_dredge_prompt(
+    decision: &Decision,
+    drawer: PlayerId,
+    jewel: ObjectId,
+    thug: ObjectId,
+) {
+    assert!(
+        matches!(
+            decision,
+            Decision::ChooseEffectTargets {
+                player, source, min_targets: 0, max_targets: 1, legal_targets, can_finish: true, ..
+            } if *player == drawer && *source == jewel && legal_targets.as_slice() == [Target::Object(thug)]
+        ),
+        "{decision:?}"
+    );
 }
 
 fn jewel_treasures(state: &GameState, player: PlayerId) -> usize {
     let treasure = card_id_by_name("Treasure Token").unwrap();
-    state.players[player.index()].battlefield.iter()
+    state.players[player.index()]
+        .battlefield
+        .iter()
         .filter(|&&object| state.objects.get(object).card_def == treasure)
         .count()
 }
@@ -853,7 +863,10 @@ fn coveted_jewel_combat_draws_finish_before_transfer_both_seats() {
             cast(&mut state, jewel, &[]);
             settled(&mut state);
             assert_eq!(state.players[defender.index()].hand.len(), 3);
-            act(&mut state, Action::ActivateManaAbilityChoice(jewel, ManaColor::G));
+            act(
+                &mut state,
+                Action::ActivateManaAbilityChoice(jewel, ManaColor::G),
+            );
             assert_eq!(mana(&state, defender, ManaColor::G), 3);
             assert!(state.objects.get(jewel).tapped);
             let jewel_generation = state.objects.get(jewel).zone_change_count;
@@ -875,11 +888,27 @@ fn coveted_jewel_combat_draws_finish_before_transfer_both_seats() {
 
             let prompt = settle(&mut state).expect("the combat trigger's first draw");
             assert_jewel_dredge_prompt(&prompt, drawer, jewel, thug);
-            let source = state.engine.pending_effect.as_ref().unwrap()
-                .resolving_item.v4.ability_source_contract.unwrap();
-            assert_eq!((source.controller, source.zone_change_count), (defender, jewel_generation));
-            assert_eq!(state.objects.get(jewel).zone,
-                if remove_jewel { Zone::Graveyard } else { Zone::Battlefield });
+            let source = state
+                .engine
+                .pending_effect
+                .as_ref()
+                .unwrap()
+                .resolving_item
+                .v4
+                .ability_source_contract
+                .unwrap();
+            assert_eq!(
+                (source.controller, source.zone_change_count),
+                (defender, jewel_generation)
+            );
+            assert_eq!(
+                state.objects.get(jewel).zone,
+                if remove_jewel {
+                    Zone::Graveyard
+                } else {
+                    Zone::Battlefield
+                }
+            );
             assert_eq!(jewel_treasures(&state, defender), 0);
 
             let mut forged = state.clone();
@@ -919,7 +948,10 @@ fn coveted_jewel_combat_draws_finish_before_transfer_both_seats() {
                 settled(continued);
                 assert_eq!(continued.objects.get(thug).zone, Zone::Hand);
                 assert_eq!(continued.players[drawer.index()].library, library[4..]);
-                assert_eq!(continued.players[drawer.index()].draws_this_turn, draws_before);
+                assert_eq!(
+                    continued.players[drawer.index()].draws_this_turn,
+                    draws_before
+                );
                 assert_eq!(jewel_treasures(continued, defender), 2);
                 let live = continued.objects.get(jewel);
                 if remove_jewel {
@@ -929,8 +961,10 @@ fn coveted_jewel_combat_draws_finish_before_transfer_both_seats() {
                     assert_eq!(live.zone_change_count, jewel_generation);
                     assert!(!live.tapped);
                 }
-                assert!(serde_json::to_value(&*continued).unwrap()
-                    .get("coveted_jewel_draw_progress_v1").is_none());
+                assert!(serde_json::to_value(&*continued)
+                    .unwrap()
+                    .get("coveted_jewel_draw_progress_v1")
+                    .is_none());
             }
             assert_eq!(state.state_hash(), restored.state_hash());
         }

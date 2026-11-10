@@ -330,14 +330,24 @@ pub(crate) fn coveted_jewel_changes_hands() -> EffectOp {
 
 fn coveted_jewel_draw_frames() -> [EffectFrame; 6] {
     let draw = |ordinal| EffectFrame::Program {
-        op: EffectOp::DrawCards { player: PlayerRef::Opponent, count: 1 },
+        op: EffectOp::DrawCards {
+            player: PlayerRef::Opponent,
+            count: 1,
+        },
         path: vec![ordinal],
     };
     let completed = |ordinal| EffectFrame::Program {
         op: vintage(VintageOpV1::CovetedJewelDrawCompletedV1 { ordinal }),
         path: vec![ordinal + 3],
     };
-    [completed(2), draw(2), completed(1), draw(1), completed(0), draw(0)]
+    [
+        completed(2),
+        draw(2),
+        completed(1),
+        draw(1),
+        completed(0),
+        draw(0),
+    ]
 }
 
 pub(crate) fn begin_coveted_jewel_draws(
@@ -351,28 +361,41 @@ pub(crate) fn begin_coveted_jewel_draws(
     {
         return Err("Coveted Jewel lost its original combat trigger path".into());
     }
-    let item = continuation.ctx.stack_item_id.ok_or("Coveted Jewel lost its stack item")?;
-    let source = continuation.ctx.ability_source_contract.ok_or("Coveted Jewel lost its original source")?;
+    let item = continuation
+        .ctx
+        .stack_item_id
+        .ok_or("Coveted Jewel lost its stack item")?;
+    let source = continuation
+        .ctx
+        .ability_source_contract
+        .ok_or("Coveted Jewel lost its original source")?;
     state.coveted_jewel_draw_progress_v1 = Some(JewelDrawProgressV1 {
-        item, source, completed: 0,
+        item,
+        source,
+        completed: 0,
     });
     continuation.frames.extend(coveted_jewel_draw_frames());
     Ok(())
 }
 
 fn coveted_jewel_progress_matches(state: &GameState, ctx: &ExecCtx, ordinal: u16) -> bool {
-    state.coveted_jewel_draw_progress_v1.is_some_and(|progress| {
-        Some(progress.item) == ctx.stack_item_id
-            && Some(progress.source) == ctx.ability_source_contract
-            && progress.completed == ordinal
-    })
+    state
+        .coveted_jewel_draw_progress_v1
+        .is_some_and(|progress| {
+            Some(progress.item) == ctx.stack_item_id
+                && Some(progress.source) == ctx.ability_source_contract
+                && progress.completed == ordinal
+        })
 }
 
 pub(crate) fn abandon_coveted_jewel_draws(state: &mut GameState, ctx: &ExecCtx) {
-    if state.coveted_jewel_draw_progress_v1.is_some_and(|progress| {
-        Some(progress.item) == ctx.stack_item_id
-            && Some(progress.source) == ctx.ability_source_contract
-    }) {
+    if state
+        .coveted_jewel_draw_progress_v1
+        .is_some_and(|progress| {
+            Some(progress.item) == ctx.stack_item_id
+                && Some(progress.source) == ctx.ability_source_contract
+        })
+    {
         state.coveted_jewel_draw_progress_v1 = None;
     }
 }
@@ -705,7 +728,11 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 state.coveted_jewel_draw_progress_v1 = None;
                 finish_coveted_jewel_transfer(ctx, state);
             } else {
-                state.coveted_jewel_draw_progress_v1.as_mut().unwrap().completed += 1;
+                state
+                    .coveted_jewel_draw_progress_v1
+                    .as_mut()
+                    .unwrap()
+                    .completed += 1;
             }
         }
         VintageOpV1::BindCounterCastSpellV1 => halt(state, ctx.source),
