@@ -491,46 +491,71 @@ fn volrath_native_paid_fanatic_uses_original_damage_source_both_seats() {
             let mut state = ordered_game(player);
             let donor = put(&mut state, player, "Mogg Fanatic", Zone::Graveyard);
             let target = if protect {
-                Target::Object(put(&mut state, opponent, "Tireless Tribe", Zone::Battlefield))
+                Target::Object(put(
+                    &mut state,
+                    opponent,
+                    "Tireless Tribe",
+                    Zone::Battlefield,
+                ))
             } else {
                 Target::Player(opponent)
             };
-            let mother = protect.then(|| {
-                put(&mut state, opponent, "Mother of Runes", Zone::Battlefield)
-            });
+            let mother =
+                protect.then(|| put(&mut state, opponent, "Mother of Runes", Zone::Battlefield));
             let source = cast_volrath(&mut state, player);
             settled(&mut state);
             assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
             let host = AbilitySourceContractV4::capture(&state, source);
             let original_color = engine::object_color_mask(&state, source);
-            assert_eq!(original_color, crate::card_def::mana_color_mask(ManaColor::R));
-            let Decision::CastSpellOrPass { activatable_abilities, .. } = next(&mut state) else {
+            assert_eq!(
+                original_color,
+                crate::card_def::mana_color_mask(ManaColor::R)
+            );
+            let Decision::CastSpellOrPass {
+                activatable_abilities,
+                ..
+            } = next(&mut state)
+            else {
                 panic!("expected the paid Shapeshifter's native menu");
             };
-            let donated = activatable_abilities.into_iter().filter_map(|(object, index)| {
-                (object == source && index != 0).then_some(index)
-            }).collect::<Vec<_>>();
-            let [index] = donated.as_slice() else { panic!("expected one donated activation") };
+            let donated = activatable_abilities
+                .into_iter()
+                .filter_map(|(object, index)| (object == source && index != 0).then_some(index))
+                .collect::<Vec<_>>();
+            let [index] = donated.as_slice() else {
+                panic!("expected one donated activation")
+            };
             act(&mut state, Action::ActivateAbility(source, *index));
-            assert!(matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. }
-                if legal_targets.contains(&target)));
-            assert!(observe(&state, player).unwrap().producers.iter().any(|row| {
-                row.native_ability_index == Some(*index)
-                    && row.program == (FullTextProgramV1::DonatedActivation {
-                        printed_index: 0,
-                        effect: DonatedActivationV1::MoggFanaticSacrificeForDamage,
-                    })
-            }));
+            assert!(
+                matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&target))
+            );
+            assert!(observe(&state, player)
+                .unwrap()
+                .producers
+                .iter()
+                .any(|row| {
+                    row.native_ability_index == Some(*index)
+                        && row.program
+                            == (FullTextProgramV1::DonatedActivation {
+                                printed_index: 0,
+                                effect: DonatedActivationV1::MoggFanaticSacrificeForDamage,
+                            })
+                }));
             act(&mut state, Action::ChooseTarget(target));
             assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
             let item = state.stack.last().unwrap().clone();
             assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
             assert_eq!(state.objects.get(donor).zone, Zone::Graveyard);
             assert_eq!(item.v4.ability_source_contract, Some(host));
-            assert_eq!(item.v4.full_text_activation_v1.0.unwrap().donor.source, donor);
+            assert_eq!(
+                item.v4.full_text_activation_v1.0.unwrap().donor.source,
+                donor
+            );
             assert_eq!(
                 fixed_source_damage_v3::damage_source(&state, source, item.v4.stack_item_id)
-                    .unwrap().color_mask,
+                    .unwrap()
+                    .color_mask,
                 original_color,
             );
             let mut forged = state.clone();
@@ -539,7 +564,10 @@ fn volrath_native_paid_fanatic_uses_original_damage_source_both_seats() {
 
             // A later incarnation now has the original blue physical text.
             event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
-            event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Battlefield));
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
             assert_ne!(engine::object_color_mask(&state, source), original_color);
             assert!(state.objects.get(source).zone_change_count > host.zone_change_count);
             let surface = crate::surface_v2::HarnessSurfaceV2::new();
@@ -555,21 +583,37 @@ fn volrath_native_paid_fanatic_uses_original_damage_source_both_seats() {
                         player: chooser, activatable_abilities, ..
                     } if chooser == opponent && activatable_abilities.contains(&(mother, 0))));
                     act(branch, Action::ActivateAbility(mother, 0));
-                    assert!(matches!(next(branch), Decision::ChooseTargets { legal_targets, .. }
-                        if legal_targets.contains(&target)));
+                    assert!(
+                        matches!(next(branch), Decision::ChooseTargets { legal_targets, .. }
+                        if legal_targets.contains(&target))
+                    );
                     act(branch, Action::ChooseTarget(target));
-                    assert!(matches!(settle(branch), Some(Decision::ChooseEffectOption { .. })));
+                    assert!(matches!(
+                        settle(branch),
+                        Some(Decision::ChooseEffectOption { .. })
+                    ));
                     act(branch, Action::ChooseEffectOption(3)); // red in WUBRG order
                     assert!(branch.objects.get(mother).tapped);
                 }
                 let life_before = branch.players[opponent.index()].life;
                 settled(branch);
-                assert_eq!(branch.players[opponent.index()].life, life_before - i32::from(!protect));
-                assert_eq!(branch.engine.event_history.iter().filter(|event| {
-                    matches!(event, CommittedEvent::Damage {
+                assert_eq!(
+                    branch.players[opponent.index()].life,
+                    life_before - i32::from(!protect)
+                );
+                assert_eq!(
+                    branch
+                        .engine
+                        .event_history
+                        .iter()
+                        .filter(|event| {
+                            matches!(event, CommittedEvent::Damage {
                         source: actual, target: recipient, amount: 1,
                     } if *actual == source && *recipient == target)
-                }).count(), usize::from(!protect));
+                        })
+                        .count(),
+                    usize::from(!protect)
+                );
                 let outcome = if protect {
                     fixed_source_damage_v3::OutcomeV3::NoLegalTarget
                 } else {
@@ -597,8 +641,12 @@ fn resolve_rats_discard(
     let target = Target::Player(opponent);
     let decision = settle(state);
     let decision = if let Some(Decision::ChooseTargets {
-        player: chooser, spell, legal_targets, ..
-    }) = &decision {
+        player: chooser,
+        spell,
+        legal_targets,
+        ..
+    }) = &decision
+    {
         assert_eq!((*chooser, *spell), (player, source));
         assert_eq!(legal_targets.as_slice(), &[target]);
         act(state, Action::ChooseTarget(target));
@@ -606,8 +654,10 @@ fn resolve_rats_discard(
     } else {
         decision
     };
-    assert!(matches!(&decision, Some(Decision::Discard { player: chooser, count: 1, choices })
-        if *chooser == opponent && choices.as_slice() == &hand));
+    assert!(
+        matches!(&decision, Some(Decision::Discard { player: chooser, count: 1, choices })
+        if *chooser == opponent && choices.as_slice() == &hand)
+    );
     let mut restored: GameState =
         serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
     assert_eq!(Some(next(&mut restored)), decision);
@@ -646,7 +696,10 @@ fn volrath_native_paid_rats_discards_for_the_opponent_unless_suppressed_both_sea
                 resolve_rats_discard(&mut state, player, source, hand);
                 let capture = captured_entry(&state, source).unwrap();
                 assert_eq!(capture.donor.source, donor);
-                assert!(matches!(capture.kind, DonatedTriggerKindV1::RavenousRatsEntered { .. }));
+                assert!(matches!(
+                    capture.kind,
+                    DonatedTriggerKindV1::RavenousRatsEntered { .. }
+                ));
             }
             assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
             assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
@@ -676,7 +729,10 @@ fn volrath_native_rats_uses_final_batch_text_after_donor_departure_both_seats() 
             event::propose_and_commit_batch(&mut state, changes);
             let capture = captured_entry(&state, source).unwrap();
             assert_eq!(capture.donor.source, donor);
-            assert!(matches!(capture.kind, DonatedTriggerKindV1::RavenousRatsEnteredAfterBatch { .. }));
+            assert!(matches!(
+                capture.kind,
+                DonatedTriggerKindV1::RavenousRatsEnteredAfterBatch { .. }
+            ));
             assert_eq!(state.objects.get(departed).zone, Zone::Exile);
             resolve_rats_discard(&mut state, player, source, hand);
         }

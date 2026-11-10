@@ -2715,7 +2715,10 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         crate::fixed_source_damage_v3::validate_state(state).map_err(RlContractError)?;
     }
     if !accept_crystal
-        && crate::effect::crystal_prevention_v1::requires_successor_with_full_text(state, ordered_full_text)
+        && crate::effect::crystal_prevention_v1::requires_successor_with_full_text(
+            state,
+            ordered_full_text,
+        )
     {
         return Err(RlContractError(
             "Crystal requires its selected public/Human successor".into(),

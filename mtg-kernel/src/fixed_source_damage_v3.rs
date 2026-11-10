@@ -81,12 +81,15 @@ fn printed_definition(def: u16, index: u8) -> bool {
 pub(crate) fn fanatic_recipe(definition: &CardDef) -> bool {
     definition.name == "Mogg Fanatic"
         && definition.capability.is_fully_supported()
-        && definition.activated_abilities.first().is_some_and(|ability| {
-            ability.cost == [CostComponent::SacrificeSelf]
-                && ability.activation_zone == Zone::Battlefield
-                && ability.target_spec == TargetSpec::AnyTarget
-                && (ability.effect)() == printed_root()
-        })
+        && definition
+            .activated_abilities
+            .first()
+            .is_some_and(|ability| {
+                ability.cost == [CostComponent::SacrificeSelf]
+                    && ability.activation_zone == Zone::Battlefield
+                    && ability.target_spec == TargetSpec::AnyTarget
+                    && (ability.effect)() == printed_root()
+            })
 }
 pub(crate) fn donated_fanatic(item: &StackItem) -> bool {
     item.kind == StackItemKind::ActivatedAbility
@@ -95,12 +98,12 @@ pub(crate) fn donated_fanatic(item: &StackItem) -> bool {
 pub(crate) fn selected(item: &StackItem) -> bool {
     donated_fanatic(item)
         || (enabled()
-        && item.kind == StackItemKind::ActivatedAbility
-        && item
-            .v4
-            .ability_source_contract
-            .zip(item.v4.activated_ability_index)
-            .is_some_and(|(s, i)| printed_definition(s.card_def, i)))
+            && item.kind == StackItemKind::ActivatedAbility
+            && item
+                .v4
+                .ability_source_contract
+                .zip(item.v4.activated_ability_index)
+                .is_some_and(|(s, i)| printed_definition(s.card_def, i)))
 }
 pub(crate) fn tracked(state: &GameState, item: &StackItem) -> bool {
     selected(item) || item.v4.fixed_damage_paid_v3.0.is_some()
@@ -116,20 +119,30 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
 /// remains outside its observation contract.
 pub(crate) fn requires_other_successor(state: &GameState) -> bool {
     let history = &state.engine.event_history;
-    state.stack.iter().any(|item| !donated_fanatic(item) && tracked(state, item))
-        || history.scan_for_v1(&[
-            EventKindV1::FixedDamageDepartureV3,
-            EventKindV1::FixedDamagePaidV3,
-            EventKindV1::FixedDamageRemovedV3,
-        ]).iter().enumerate().any(|(index, event)| match event {
-            CommittedEvent::FixedDamagePaidV3 { payment } => !donated_fanatic(&payment.item),
-            CommittedEvent::FixedDamageRemovedV3 { removal } => !donated_fanatic(&removal.item),
-            CommittedEvent::FixedDamageDepartureV3 { .. } => !history
-                .scan_for_v1(&[EventKindV1::FixedDamagePaidV3])
-                .iter().any(|event| matches!(event, CommittedEvent::FixedDamagePaidV3 { payment }
-                    if payment.departure as usize == index && donated_fanatic(&payment.item))),
-            _ => false,
-        })
+    state
+        .stack
+        .iter()
+        .any(|item| !donated_fanatic(item) && tracked(state, item))
+        || history
+            .scan_for_v1(&[
+                EventKindV1::FixedDamageDepartureV3,
+                EventKindV1::FixedDamagePaidV3,
+                EventKindV1::FixedDamageRemovedV3,
+            ])
+            .iter()
+            .enumerate()
+            .any(|(index, event)| match event {
+                CommittedEvent::FixedDamagePaidV3 { payment } => !donated_fanatic(&payment.item),
+                CommittedEvent::FixedDamageRemovedV3 { removal } => !donated_fanatic(&removal.item),
+                CommittedEvent::FixedDamageDepartureV3 { .. } => !history
+                    .scan_for_v1(&[EventKindV1::FixedDamagePaidV3])
+                    .iter()
+                    .any(|event| {
+                        matches!(event, CommittedEvent::FixedDamagePaidV3 { payment }
+                    if payment.departure as usize == index && donated_fanatic(&payment.item))
+                    }),
+                _ => false,
+            })
 }
 
 pub(crate) fn requires_crystal_execution(state: &GameState, item: &StackItem) -> bool {
@@ -157,16 +170,18 @@ pub(crate) fn acquire_payment(state: &GameState) -> Result<Option<PaymentOwnerV3
     let tap = enabled() && printed_definition(source.card_def, p.ability_index);
     if !donated && !tap {
         // A borrowed Firebrand recipe needs its own departing-source capture.
-        if enabled() && crate::engine::resolved_activated_ability(
-            source.card_def,
-            p.ability_index,
-            state,
-            p.source,
-        )
-        .is_some_and(|a| {
-            (a.effect)() == printed_root()
-                && a.cost == [CostComponent::Tap, CostComponent::SacrificeSelf]
-        }) {
+        if enabled()
+            && crate::engine::resolved_activated_ability(
+                source.card_def,
+                p.ability_index,
+                state,
+                p.source,
+            )
+            .is_some_and(|a| {
+                (a.effect)() == printed_root()
+                    && a.cost == [CostComponent::Tap, CostComponent::SacrificeSelf]
+            })
+        {
             return Err(
                 "borrowed fixed damage requires an authenticated departure successor".into(),
             );
@@ -306,17 +321,30 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
         if *object==s.source && *controller_before==s.controller)
         })
         .ok_or("fixed damage lost actual sacrifice")?;
-    let Some(destination) = between[sacrifice + 1..].iter().find_map(|event| match event {
-        CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, controller_before }
-            if *object == s.source && *controller_before == s.controller => Some(*to),
-        _ => None,
-    }) else {
+    let Some(destination) = between[sacrifice + 1..]
+        .iter()
+        .find_map(|event| match event {
+            CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Battlefield,
+                to,
+                controller_before,
+            } if *object == s.source && *controller_before == s.controller => Some(*to),
+            _ => None,
+        })
+    else {
         return Err("fixed damage lost actual post-sacrifice departure".into());
     };
     if donated_fanatic(&p.item) {
-        let ability_index = p.item.v4.activated_ability_index
+        let ability_index = p
+            .item
+            .v4
+            .activated_ability_index
             .ok_or("donated Fanatic lost its native activation index")?;
-        p.item.v4.full_text_activation_v1.resolve(state, s, ability_index, None, Default::default())?
+        p.item
+            .v4
+            .full_text_activation_v1
+            .resolve(state, s, ability_index, None, Default::default())?
             .ok_or("donated Fanatic lost its original host and donor")?;
         if !p.item.v4.paid_cost_refs.iter().any(|reference| {
             reference.object == s.source

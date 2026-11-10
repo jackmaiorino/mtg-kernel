@@ -1299,7 +1299,10 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
     requires_successor_with_full_text(state, false)
 }
 
-pub(crate) fn requires_successor_with_full_text(state: &GameState, ordered_full_text: bool) -> bool {
+pub(crate) fn requires_successor_with_full_text(
+    state: &GameState,
+    ordered_full_text: bool,
+) -> bool {
     crate::crystal_barricade_v1::active(state)
         || crate::equipment_damage_source_v4::requires_successor(state)
         || if ordered_full_text {

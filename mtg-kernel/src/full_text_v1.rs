@@ -945,12 +945,16 @@ impl FullTextActivationRecordV1 {
     }
 
     pub(crate) fn is_donated_fanatic(self) -> bool {
-        cfg!(feature = "eternal-fixtures") && self.0.is_some_and(|record| {
-            record.selector == FullTextAbilityV1::Printed(0)
-                && CARD_DEFS.get(usize::from(record.host.card_def)).is_some_and(owns_definition)
-                && CARD_DEFS.get(usize::from(record.donor.card_def))
-                    .is_some_and(crate::fixed_source_damage_v3::fanatic_recipe)
-        })
+        cfg!(feature = "eternal-fixtures")
+            && self.0.is_some_and(|record| {
+                record.selector == FullTextAbilityV1::Printed(0)
+                    && CARD_DEFS
+                        .get(usize::from(record.host.card_def))
+                        .is_some_and(owns_definition)
+                    && CARD_DEFS
+                        .get(usize::from(record.donor.card_def))
+                        .is_some_and(crate::fixed_source_damage_v3::fanatic_recipe)
+            })
     }
 
     /// The native pending owner checks the exact current donor before costs
