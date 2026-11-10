@@ -119,6 +119,16 @@ the validated physical spell and the exact ordered options at its printed
 program path. Copied spells and unrelated generic choices remain unsupported.
 Its both-seat paid fixture checks native naming, reordered-menu refusal,
 snapshot restore, stale tokens and the exact physical discard order selected
-through sealed Human ordinals. Independent source review passed; this successor
-and the unchanged terminal fixture still require native execution. Volrath
-remains Partial and the FEB mainboard remains outside PLAYABLE.
+through sealed Human ordinals. Independent source review passed.
+
+The exact successor `ea95de740b1158fc1c644720bab9294a9530bd49` completed
+all 63 native checks with exit 0, no timeouts and all children drained.
+Manifest: `E:/codex-eternal-feb-ea95-evidence/manifest.json`, SHA-256
+`b726aecb7499fe873b0f33634228fd77757a2c60da436d37fbb08c15636fd47c`.
+The unchanged frozen terminal/replay fixture passed for both starting seats,
+as did paid Cabal naming and exact discard order, all retained donor and
+producer cases, both history guards and every-kind consumers. Catalog
+fingerprint remains `b7272db8a877989e`. This establishes the scoped in-process
+terminal and replay result. Transport, further donor compatibility, hosted
+checks and default-branch integration remain open. Volrath remains Partial
+and the FEB mainboard remains outside PLAYABLE.
