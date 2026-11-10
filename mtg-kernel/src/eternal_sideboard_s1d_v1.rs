@@ -822,8 +822,15 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
             {
                 include_live(source);
             }
-            let (Some(eternal), Some(source), Some(EffectOp::StandardV1(StandardOpV1::EternalV1(op)))) =
-                (&state.eternal_v1, item.v4.ability_source_contract, &item.inline_effect)
+            let (
+                Some(eternal),
+                Some(source),
+                Some(EffectOp::StandardV1(StandardOpV1::EternalV1(op))),
+            ) = (
+                &state.eternal_v1,
+                item.v4.ability_source_contract,
+                &item.inline_effect,
+            )
             else {
                 continue;
             };
@@ -839,7 +846,8 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
                     if wave.object == item.source
                         && source.source == item.source
                         && source.zone != Zone::Battlefield
-                        && wave.zone_change_count.checked_add(1) == Some(source.zone_change_count)
+                        && wave.zone_change_count.checked_add(1)
+                            == Some(source.zone_change_count)
                         && crate::engine::validated_stack_item_target_spec(item, state).is_ok() =>
                 {
                     for &(host, card) in &eternal.p1b.wave_exiles {
@@ -857,7 +865,12 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
                         object: source.source,
                         zone_change_count: source.zone_change_count,
                     };
-                    if let Some((_, cards)) = eternal.p2c.petradon_exiled.iter().find(|(link, _)| *link == host) {
+                    if let Some((_, cards)) = eternal
+                        .p2c
+                        .petradon_exiled
+                        .iter()
+                        .find(|(link, _)| *link == host)
+                    {
                         for &card in cards {
                             include_exiled(card);
                         }
