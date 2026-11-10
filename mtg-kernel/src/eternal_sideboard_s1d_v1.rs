@@ -22,15 +22,17 @@
 
 use crate::card_def::{CardDef, CardType, Keywords, Subtype, TargetSpec, CARD_DEFS};
 use crate::effect::{
-    CreatureFilter, EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp, ExecCtx,
-    ObjectRef, PlayerRef, TargetRef,
+    CreatureFilter, EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp,
+    EffectOptionChoicePurpose, ExecCtx, ObjectRef, PendingEffectChoice, PlayerRef, TargetRef,
 };
 use crate::eternal_cards_v1::EternalOpV1;
 use crate::event::{self, DamageProposed, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::{ManaColor, Pip};
 use crate::standard_cards_v1::{StandardChosenActionV1, StandardOpV1, StandardPermanentFilterV1};
-use crate::state::{GameState, ObjectLinkV4, Step, Target, Zone};
+use crate::state::{
+    GameState, ObjectLinkV4, StackItemKind, StackTargetContractV4, Step, Target, Zone,
+};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
@@ -706,24 +708,240 @@ fn devotion_to_green(state: &GameState, player: PlayerId) -> i32 {
     i32::try_from(total).unwrap_or(i32::MAX)
 }
 
-/// Every blue object a Circle of Protection: Blue can name: permanents,
-/// spells and cards in the public zones that are blue.
+fn target_source_link(target: StackTargetContractV4) -> Option<ObjectLinkV4> {
+    let (object, zone_change_count) = match target {
+        StackTargetContractV4::Object {
+            object,
+            zone_change_count,
+            ..
+        } => (object, zone_change_count),
+        StackTargetContractV4::StackItem {
+            source,
+            source_zone_change_count,
+            ..
+        } => (source, source_zone_change_count),
+        StackTargetContractV4::Player(_) => return None,
+    };
+    Some(ObjectLinkV4 {
+        object,
+        zone_change_count,
+    })
+}
+
+fn stacked_delayed_source_link(effect: &EffectOp) -> Option<ObjectLinkV4> {
+    use crate::eternal_legacy_e5b_v1::E5bOpV1;
+    use crate::eternal_legacy_e7a_v1::E7aOpV1;
+    use crate::eternal_pauper_e6a_v1::E6aOpV1;
+    use crate::eternal_premodern_p1a_v1::P1aOpV1;
+    use crate::eternal_vintage_e7b_v1::E7bOpV1;
+
+    let EffectOp::StandardV1(StandardOpV1::EternalV1(op)) = effect else {
+        return None;
+    };
+    match op {
+        EternalOpV1::E5bV1(E5bOpV1::PheliaReturnV1 { card })
+        | EternalOpV1::E6aV1(E6aOpV1::ReboundV1 { card })
+        | EternalOpV1::E7aV1(E7aOpV1::SuspendTickV1 { card })
+        | EternalOpV1::E7aV1(E7aOpV1::ShallowGraveExileV1 { creature: card })
+        | EternalOpV1::E7bV1(E7bOpV1::EndStepReturnV1 { card, .. })
+        | EternalOpV1::P1aV1(P1aOpV1::BrushhopperReturnV1 { card }) => Some(*card),
+        _ => None,
+    }
+}
+
+/// CR 609.7a. A public zone alone does not make a graveyard or exile card a
+/// source choice. Require an exact active reference or a direct eligible zone.
 fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
     let mask = blue_mask();
-    state
-        .objects
-        .iter()
-        .filter(|(id, live)| {
-            matches!(
-                live.zone,
-                Zone::Battlefield | Zone::Stack | Zone::Graveyard | Zone::Exile
-            ) && crate::engine::object_color_mask(state, *id) & mask != 0
-        })
-        .map(|(id, live)| ObjectLinkV4 {
-            object: id,
-            zone_change_count: live.zone_change_count,
-        })
+    let mut sources = Vec::new();
+    let mut include_live = |source: ObjectLinkV4| {
+        if state.objects.try_get(source.object).is_some_and(|live| {
+            live.zone_change_count == source.zone_change_count
+                && match live.zone {
+                    Zone::Battlefield | Zone::Stack | Zone::Graveyard => true,
+                    Zone::Exile | Zone::Command => live.v4.face_down_v1.is_none(),
+                    _ => false,
+                }
+                && crate::engine::object_color_mask(state, source.object) & mask != 0
+        }) {
+            sources.push(source);
+        }
+    };
+
+    let direct = battlefield(state)
+        .map(|object| (object, Zone::Battlefield))
+        .chain(
+            state
+                .command
+                .iter()
+                .copied()
+                .map(|object| (object, Zone::Command)),
+        );
+    for (object, zone) in direct {
+        if state
+            .objects
+            .try_get(object)
+            .is_some_and(|live| live.zone == zone)
+        {
+            include_live(live_link(state, object));
+        }
+    }
+    for item in &state.stack {
+        if item.kind == StackItemKind::Spell {
+            if let Some(source) = item.v4.source_contract {
+                include_live(ObjectLinkV4 {
+                    object: source.source,
+                    zone_change_count: source.zone_change_count,
+                });
+            }
+        }
+        if let Some(source) = item.v4.ability_source_contract {
+            include_live(ObjectLinkV4 {
+                object: source.source,
+                zone_change_count: source.zone_change_count,
+            });
+        }
+        for source in item
+            .v4
+            .target_contracts
+            .iter()
+            .copied()
+            .filter_map(target_source_link)
+        {
+            include_live(source);
+        }
+        if item.kind == StackItemKind::TriggeredAbility {
+            if let Some(source) = item
+                .inline_effect
+                .as_ref()
+                .and_then(stacked_delayed_source_link)
+            {
+                include_live(source);
+            }
+        }
+    }
+    for replacement in &state.engine.active_replacements {
+        use event::ReplacementEffectKind as R;
+        match replacement.kind {
+            R::PreventCombatDamageToObjectUntilEndOfTurn {
+                object,
+                turn,
+                active_player,
+            } if turn == state.turn_key_v1() && active_player == state.active_player => {
+                include_live(object)
+            }
+            R::ExileIfDiesUntilEndOfTurnV1 {
+                target,
+                turn,
+                active_player,
+                ..
+            } if turn == state.turn_key_v1() && active_player == state.active_player => {
+                if let Some(source) = target_source_link(target) {
+                    include_live(source);
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(eternal) = &state.eternal_v1 {
+        for rebound in &eternal.e6a.rebounds {
+            include_live(rebound.card);
+        }
+        for delayed in &eternal.e5b.phelia_returns {
+            include_live(delayed.card);
+        }
+        for delayed in &eternal.p1a.end_step_returns {
+            include_live(delayed.card);
+        }
+        for delayed in &eternal.e7b.end_step_returns {
+            include_live(delayed.card);
+        }
+        for delayed in &eternal.e7a.shallow_graves {
+            include_live(delayed.creature);
+        }
+        for &card in &eternal.e7a.suspended {
+            include_live(card);
+        }
+        for shield in eternal
+            .s1d
+            .cop_shields
+            .iter()
+            .filter(|shield| shield.turn == TurnV1::now(state))
+        {
+            include_live(shield.source);
+        }
+    }
+
+    // A departed damage source keeps its original public incarnation and
+    // authenticated last-known color. Do not read a later incarnation.
+    for item in &state.stack {
+        let Some(source) = item.v4.ability_source_contract else {
+            continue;
+        };
+        if source.zone == Zone::Battlefield
+            && state
+                .objects
+                .try_get(source.source)
+                .is_some_and(|live| live.zone_change_count > source.zone_change_count)
+            && crate::source_power_activation_v1::damage_source(
+                state,
+                source.source,
+                item.v4.stack_item_id,
+            )
+            .is_ok_and(|facts| facts.source == source && facts.color_mask & mask != 0)
+        {
+            sources.push(ObjectLinkV4 {
+                object: source.source,
+                zone_change_count: source.zone_change_count,
+            });
+        }
+    }
+    sources.sort_unstable_by_key(|source| (source.object, source.zone_change_count));
+    sources.dedup();
+    sources
+}
+
+fn circle_options(state: &GameState) -> Vec<EffectOp> {
+    blue_sources(state)
+        .into_iter()
+        .map(|source| s1d(S1dOpV1::CopShieldV1 { source }))
         .collect()
+}
+
+pub(crate) fn validate_circle_choice(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    if pending.resolving_item.inline_effect.as_ref() != Some(&cop_choose()) {
+        return Ok(());
+    }
+    let options = circle_options(state);
+    let valid = match &pending.choice {
+        Some(PendingEffectChoice::ChooseOption {
+            player,
+            path,
+            options: selected,
+            purpose: EffectOptionChoicePurpose::Generic,
+        }) => {
+            *player == pending.ctx.controller
+                && path.is_empty()
+                && pending.frames.is_empty()
+                && !options.is_empty()
+                && *selected == options
+        }
+        None => match pending.frames.as_slice() {
+            [EffectFrame::Program { op, path }] => match path.as_slice() {
+                [index] => options.get(usize::from(*index)) == Some(op),
+                _ => false,
+            },
+            _ => false,
+        },
+        _ => false,
+    };
+    if !valid {
+        return Err("Circle source choice no longer matches its exact public menu".into());
+    }
+    Ok(())
 }
 
 /// Untapped artifacts and creatures `player` controls, which waterbend may
@@ -1004,10 +1222,7 @@ pub(crate) fn drive(
     let controller = continuation.ctx.controller;
     match op {
         S1dOpV1::CopChooseV1 => {
-            let options = blue_sources(state)
-                .into_iter()
-                .map(|source| s1d(S1dOpV1::CopShieldV1 { source }))
-                .collect::<Vec<_>>();
+            let options = circle_options(state);
             if !options.is_empty() {
                 push_choice(continuation, options, &path);
             }

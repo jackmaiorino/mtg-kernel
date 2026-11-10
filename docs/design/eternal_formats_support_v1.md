@@ -577,10 +577,17 @@ New, each built once in the first wave that needs it:
   entry records the exact permanent that a chosen physical cast becomes, bound
   to its published cast identity and first committed departure; later blinks do
   not retarget its shield. Virtual permanent spell copies still need this binding.
-  Paid Firebrand/Painter and blink/restore qualification
-  is pending. Its choice menu still offers unrelated graveyard and exile cards as
-  sources and excludes contextual sources outside its public-zone list. Policy
-  observation v5 omits the shields.
+  The choice menu includes blue permanents, stack spells, face-up command
+  objects and supported public references from stack items and waiting effects.
+  It uses the original incarnation and retained color for authenticated departed
+  damage sources. Unrelated graveyard and exile cards are excluded. Other
+  embedded effect references need explicit bindings, departed references need
+  last-known color and visibility evidence, and contextual hand and library
+  sources remain unsupported. An in-flight saved Circle menu with the old
+  broad roster refuses restore when it differs from the legal roster, preserving
+  the meaning of its original option indices. Paid source-menu,
+  Firebrand/Painter and blink/restore qualification is pending. Policy observation
+  v5 omits the shields.
   [Comprehensive Rules, 609.7 and 702.96](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
 
 The Extirpate, Martyr and Lavinia repair batch is composed at `e8d06349e2956e3a386d10a77295ebcc928a991d`.
