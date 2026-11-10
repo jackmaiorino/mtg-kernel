@@ -386,7 +386,17 @@ fn rewrite(value: &Value, refs: &mut References, key: &str) -> Result<Value> {
     })
 }
 
-pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) -> Result<Packet> {
+pub(super) fn encode(source: Source, state: Value, actions: Vec<Value>) -> Result<Packet> {
+    encode_with_action_rows(source, state, |_| Ok((actions, ()))).map(|(packet, ())| packet)
+}
+
+/// The owning encoder may project the exact action rows after the common
+/// wire projection has passed its typed round trip, before identity rewrite.
+pub(super) fn encode_with_action_rows<T>(
+    source: Source,
+    mut state: Value,
+    action_rows: impl FnOnce(&mut Value) -> Result<(Vec<Value>, T)>,
+) -> Result<(Packet, T)> {
     #[cfg(test)]
     let _timing = crate::rl_session::test_timing_v1::span(
         crate::rl_session::test_timing_v1::Phase::NumericNormalizeInclusive,
@@ -411,6 +421,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     } else {
         super::public_projection_operands::prepare(&mut state)?;
     }
+    let (mut actions, binding) = action_rows(&mut state)?;
     super::kellan_public_operands::prepare(&mut state)?;
     super::fiery_public_operands::prepare(&mut state)?;
     super::fishing_public_operands::prepare(&mut state)?;
@@ -1186,11 +1197,14 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     if actions.is_empty() {
         return Err(Error::NoDecision);
     }
-    Ok(Packet {
-        source,
-        state: NumericTree::encode(&state)?,
-        actions,
-    })
+    Ok((
+        Packet {
+            source,
+            state: NumericTree::encode(&state)?,
+            actions,
+        },
+        binding,
+    ))
 }
 
 /// This distinct source accepts only the sealed owner's typed public parts.

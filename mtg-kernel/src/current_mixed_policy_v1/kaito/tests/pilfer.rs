@@ -109,6 +109,21 @@ fn full_pool_paid_pilfer_uses_public_names_and_exact_native_answers_both_seats()
             assert_eq!(h.acting_player, p.into());
             let d = own.encode(h).unwrap();
             assert_eq!(d.packet().actions().len(), 3);
+            // A name operand is valid in the numeric successor, never in the
+            // incoming typed wire projection.
+            let mut forged_wire = serde_json::to_value(d.backend.candidates_v75()).unwrap();
+            forged_wire["observation"]["common"]["common"]["projection"]["engine_context"]
+                ["pending_effect"]["choice"]["legal_targets"][0] = serde_json::json!({
+                "target_kind": "revealed_hand_name",
+                "card_db_id": crate::card_def::card_id_by_name("Giant Growth").unwrap(),
+                "card_name": "Giant Growth",
+                "owner": PlayerSeatV1::from(opponent),
+            });
+            let raw_actions = forged_wire["candidates"].as_array().unwrap().clone();
+            assert!(matches!(
+                normalize::encode(Source::KaitoV75, forged_wire, raw_actions),
+                Err(Error::UnsupportedOperand(operand)) if operand == "public_projection_operand"
+            ));
             let inputs = own.training_input_v1(&d).unwrap();
             let logits = crate::current_tree_learner_v1::ModelV1::deterministic_fixture()
                 .forward(&inputs)
