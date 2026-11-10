@@ -1647,7 +1647,9 @@ fn paid_echo_draws_for_the_active_player_first_and_applies_riddler_per_player() 
         settled(&mut state);
         activate(&mut state, teferi, 0, &[]);
         settled(&mut state);
-        pass_until(&mut state, |s| s.active_player == active && s.step == Step::Main1);
+        pass_until(&mut state, |s| {
+            s.active_player == active && s.step == Step::Main1
+        });
         let thug = put(&mut state, active, "Golgari Thug", Zone::Graveyard);
         for player in [caster, active] {
             put(&mut state, player, "Quantum Riddler", Zone::Battlefield);
@@ -1664,18 +1666,23 @@ fn paid_echo_draws_for_the_active_player_first_and_applies_riddler_per_player() 
         assert_eq!(zone(&state, echo), Zone::Graveyard);
         assert_eq!(state.players[caster.index()].mana_pool, [0; 6]);
         assert_ne!(zone(&state, thug), Zone::Graveyard);
-        let mut draws = state.engine.event_history[start..].iter().filter_map(|event| {
-            match event {
-                CommittedEvent::Draw { player, object: Some(_) } => Some(*player),
-                _ => None,
-            }
-        });
+        let mut draws =
+            state.engine.event_history[start..]
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::Draw {
+                        player,
+                        object: Some(_),
+                    } => Some(*player),
+                    _ => None,
+                });
         assert!(draws.by_ref().take(8).eq([active; 8]));
         assert!(draws.eq([caster; 8]));
         assert_eq!(hand_len(&state, caster), 8);
         assert_eq!(hand_len(&state, active), 8);
-        assert!(!state.engine.event_history[start..].iter().any(|event|
-            matches!(event, CommittedEvent::EternalOwnedDrawV1 { .. })));
+        assert!(!state.engine.event_history[start..]
+            .iter()
+            .any(|event| matches!(event, CommittedEvent::EternalOwnedDrawV1 { .. })));
     }
 }
 
@@ -1688,13 +1695,22 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
         for drawer in [caster, caster.opponent()] {
             let other = drawer.opponent();
             let mut state = GameState::new_from_libraries_environment_v2_with_starting_player_v1(
-                &[], &[], |id| CARD_DEFS[id as usize].object_name.into(), 0x4537_4121_0002, caster,
+                &[],
+                &[],
+                |id| CARD_DEFS[id as usize].object_name.into(),
+                0x4537_4121_0002,
+                caster,
             );
             state.step = Step::Main1;
             for _ in 0..12 {
                 put(&mut state, other, "Island", Zone::Library);
             }
-            let jace = put(&mut state, drawer, "Jace, Wielder of Mysteries", Zone::Battlefield);
+            let jace = put(
+                &mut state,
+                drawer,
+                "Jace, Wielder of Mysteries",
+                Zone::Battlefield,
+            );
             put(&mut state, drawer, "Quantum Riddler", Zone::Battlefield);
             put(&mut state, other, "Hullbreacher", Zone::Battlefield);
             let thug = put(&mut state, other, "Golgari Thug", Zone::Graveyard);
@@ -1710,7 +1726,10 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
             assert_eq!(state.players[caster.index()].mana_pool, [0; 6]);
             assert_eq!(zone(&state, echo), Zone::Stack);
             assert_ne!(zone(&state, thug), Zone::Graveyard);
-            assert_eq!(hand_len(&state, other), if drawer == caster { 0 } else { 7 });
+            assert_eq!(
+                hand_len(&state, other),
+                if drawer == caster { 0 } else { 7 }
+            );
             assert!(state.engine.event_history.iter().any(|event|
                 matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Hand, to: Zone::Library, .. }
                     if *object == returned)));
@@ -1728,22 +1747,37 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
                 path: Vec::new(),
             }];
             let mut rewound = serde_json::to_value(&rewound).unwrap();
-            rewound.as_object_mut().unwrap().remove("eternal_owned_draw_progress_v1");
-            rewound["engine"]["event_history"].as_array_mut().unwrap().retain(|event| {
-                let journal = &event["EternalOwnedDrawV1"]["journal"];
-                journal.get("Started").is_none() && journal.get("StartedWithRiddlerV1").is_none()
-            });
+            rewound
+                .as_object_mut()
+                .unwrap()
+                .remove("eternal_owned_draw_progress_v1");
+            rewound["engine"]["event_history"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|event| {
+                    let journal = &event["EternalOwnedDrawV1"]["journal"];
+                    journal.get("Started").is_none()
+                        && journal.get("StartedWithRiddlerV1").is_none()
+                });
             let rewound: GameState = serde_json::from_value(rewound).unwrap();
             assert!(mtg_kernel::effect::validate_pending_effect_choice(&rewound)
-                .unwrap_err().contains("already started"));
+                .unwrap_err()
+                .contains("already started"));
 
             if drawer != caster {
                 let mut skipped = saved.clone();
-                let completed = skipped["engine"]["event_history"].as_array_mut().unwrap()
-                    .iter_mut().find_map(|event| {
-                        event.get_mut("EternalOwnedDrawV1")?.get_mut("journal")?
-                            .get_mut("Completed")?.get_mut("ordinal")
-                    }).expect("the active player's actual completed attempts");
+                let completed = skipped["engine"]["event_history"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find_map(|event| {
+                        event
+                            .get_mut("EternalOwnedDrawV1")?
+                            .get_mut("journal")?
+                            .get_mut("Completed")?
+                            .get_mut("ordinal")
+                    })
+                    .expect("the active player's actual completed attempts");
                 *completed = serde_json::json!(1);
                 let skipped: GameState = serde_json::from_value(skipped).unwrap();
                 assert!(mtg_kernel::effect::validate_pending_effect_choice(&skipped).is_err());
@@ -1758,22 +1792,36 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
                 assert_eq!(next(branch), first);
                 assert_eq!(named(branch, other, "Treasure Token").len(), 1);
                 act(branch, Action::ChooseEffectTarget(Target::Object(jace)));
-                assert!(matches!(next(branch), Decision::GameOver { winner: Some(p) } if p == drawer));
+                assert!(
+                    matches!(next(branch), Decision::GameOver { winner: Some(p) } if p == drawer)
+                );
                 assert_eq!(named(branch, other, "Treasure Token").len(), 1);
-                assert_eq!(shuffle_ordinals(&serde_json::to_value(branch).unwrap()), serde_json::json!([1, 1]));
-                assert_eq!(hand_len(branch, other), if drawer == caster { 0 } else { 7 });
+                assert_eq!(
+                    shuffle_ordinals(&serde_json::to_value(branch).unwrap()),
+                    serde_json::json!([1, 1])
+                );
+                assert_eq!(
+                    hand_len(branch, other),
+                    if drawer == caster { 0 } else { 7 }
+                );
             }
             assert_eq!(restored.state_hash(), answered.state_hash());
 
             for completed in 1..=8 {
                 act(&mut state, Action::FinishEffectSelection);
-                assert_eq!(settle(&mut state).as_ref(), (completed < 8).then_some(&first));
+                assert_eq!(
+                    settle(&mut state).as_ref(),
+                    (completed < 8).then_some(&first)
+                );
                 assert_eq!(named(&state, other, "Treasure Token").len(), completed);
             }
             assert_eq!(zone(&state, echo), Zone::Exile);
             assert_eq!(hand_len(&state, drawer), 0);
             assert_eq!(hand_len(&state, other), 7);
-            assert_eq!(shuffle_ordinals(&serde_json::to_value(&state).unwrap()), serde_json::json!([1, 1]));
+            assert_eq!(
+                shuffle_ordinals(&serde_json::to_value(&state).unwrap()),
+                serde_json::json!([1, 1])
+            );
         }
     }
 }

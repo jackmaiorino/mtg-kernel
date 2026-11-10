@@ -22,8 +22,8 @@ use crate::state::{
 };
 use serde::{Deserialize, Serialize};
 
-pub(crate) mod fixed;
 pub(crate) mod echo;
+pub(crate) mod fixed;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum InstructionV1 {
@@ -55,7 +55,10 @@ enum InstructionV1 {
         drawer: PlayerId,
         count: u32,
     },
-    Echo { shuffled_at: usize, drawer: PlayerId },
+    Echo {
+        shuffled_at: usize,
+        drawer: PlayerId,
+    },
 }
 
 impl InstructionV1 {
@@ -652,8 +655,17 @@ pub(crate) fn complete(
         state.eternal_owned_draw_progress_v1 = None;
         if !terminal {
             match started.instruction {
-                InstructionV1::Echo { shuffled_at, drawer } if drawer == state.active_player => {
-                    echo::start_draws(state, pending, shuffled_at, drawer.opponent(), started.source);
+                InstructionV1::Echo {
+                    shuffled_at,
+                    drawer,
+                } if drawer == state.active_player => {
+                    echo::start_draws(
+                        state,
+                        pending,
+                        shuffled_at,
+                        drawer.opponent(),
+                        started.source,
+                    );
                 }
                 _ => finish_instruction(state, pending, started.instruction),
             }
@@ -884,8 +896,10 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
         if before_start {
             return Ok(());
         }
-    } else if selected(state, pending).is_none() && fixed::selected(state, pending).is_none()
-        && echo::selected(state, pending).is_none() {
+    } else if selected(state, pending).is_none()
+        && fixed::selected(state, pending).is_none()
+        && echo::selected(state, pending).is_none()
+    {
         return Err("Eternal draw progress lost its original source".into());
     }
     let (progress, started, attempts) =

@@ -23,9 +23,9 @@ pub(super) fn selected(
         source.spell_copy_origin.is_some() && source.spell_cast_origin.is_none()
     } else {
         source.spell_copy_origin.is_none()
-            && source.spell_cast_origin.is_some_and(|origin| {
-                origin.finalized_method == Some(source.cast_method)
-            })
+            && source
+                .spell_cast_origin
+                .is_some_and(|origin| origin.finalized_method == Some(source.cast_method))
     };
     if item.kind != StackItemKind::Spell
         || !finalized
@@ -81,7 +81,14 @@ pub(crate) fn begin(
         return Ok(());
     }
     let shuffled_at = state.engine.event_history.len();
-    record(state, JournalV1::EchoShuffledV1 { item, source, first });
+    record(
+        state,
+        JournalV1::EchoShuffledV1 {
+            item,
+            source,
+            first,
+        },
+    );
     start_draws(state, pending, shuffled_at, first, SourceV1::Spell(source));
     Ok(())
 }
@@ -97,7 +104,10 @@ pub(super) fn start_draws(
     start_instruction(
         state,
         pending,
-        InstructionV1::Echo { shuffled_at, drawer },
+        InstructionV1::Echo {
+            shuffled_at,
+            drawer,
+        },
         source,
         7,
         extra,
@@ -117,10 +127,19 @@ pub(super) fn matches_start(
     started: StartedV1,
     started_at: usize,
 ) -> bool {
-    let InstructionV1::Echo { shuffled_at, drawer } = started.instruction else {
+    let InstructionV1::Echo {
+        shuffled_at,
+        drawer,
+    } = started.instruction
+    else {
         return false;
     };
-    let Some(JournalV1::EchoShuffledV1 { item, source, first }) = journal(state, shuffled_at) else {
+    let Some(JournalV1::EchoShuffledV1 {
+        item,
+        source,
+        first,
+    }) = journal(state, shuffled_at)
+    else {
         return false;
     };
     if item != started.item
@@ -137,10 +156,14 @@ pub(super) fn matches_start(
     if drawer != first.opponent() || started_at <= first_at {
         return false;
     }
-    let Some((first_start, first_count)) = journal(state, first_at).and_then(JournalV1::start) else {
+    let Some((first_start, first_count)) = journal(state, first_at).and_then(JournalV1::start)
+    else {
         return false;
     };
-    let first_leg = InstructionV1::Echo { shuffled_at, drawer: first };
+    let first_leg = InstructionV1::Echo {
+        shuffled_at,
+        drawer: first,
+    };
     first_start.instruction == first_leg
         && first_start.item == started.item
         && first_start.source == started.source
@@ -151,8 +174,9 @@ pub(super) fn matches_start(
             &state.engine.event_history[first_at + 1..started_at],
             first_at,
         ) == Some(first_count)
-        && journal(state, started_at - 1) == Some(JournalV1::Completed {
-            started_at: first_at,
-            ordinal: first_count - 1,
-        })
+        && journal(state, started_at - 1)
+            == Some(JournalV1::Completed {
+                started_at: first_at,
+                ordinal: first_count - 1,
+            })
 }
