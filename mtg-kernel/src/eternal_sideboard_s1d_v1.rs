@@ -1597,7 +1597,10 @@ pub(crate) mod statics {
             spec,
             TargetSpec::KickerControlledCreatures
                 | TargetSpec::ControlledCreatureThenOpponentCreature
-                | TargetSpec::StandardV1(S::ArtifactThenArtifactCardInItsControllersGraveyardV1)
+                | TargetSpec::StandardV1(
+                    S::ArtifactThenArtifactCardInItsControllersGraveyardV1
+                        | S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1
+                )
         ) {
             return true;
         }
