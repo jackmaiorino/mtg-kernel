@@ -1,6 +1,6 @@
 //! A native, opt-in owner for actions taken from kept opening hands.
 use crate::{
-    card_def::CARD_DEFS,
+    card_def::{CardDef, CARD_DEFS},
     engine::{Action, Decision},
     event::{self, CommittedEvent, ProposedEvent},
     event_history_v1::EventKindV1,
@@ -55,15 +55,21 @@ enum OpeningAction {
     Reveal,
 }
 
+/// These printings must use the kept-hand owner in new declared games.
+pub(crate) fn requires_native_opening(def: &CardDef) -> bool {
+    def.is_executable() && matches!(def.name, "Leyline of the Void" | "Leyline of Sanctity")
+}
+
 fn opening_action(printing: u16) -> Option<OpeningAction> {
     let def = CARD_DEFS.get(usize::from(printing))?;
     if !def.is_executable() {
         return None;
     }
     match def.name {
-        "Leyline of the Void" | "Leyline of Sanctity" => Some(OpeningAction::Enter),
         "Chancellor of the Annex" => Some(OpeningAction::Reveal),
-        _ if crate::leyline_axe_v1::definition(printing) => Some(OpeningAction::Enter),
+        _ if requires_native_opening(def) || crate::leyline_axe_v1::definition(printing) => {
+            Some(OpeningAction::Enter)
+        }
         _ => None,
     }
 }

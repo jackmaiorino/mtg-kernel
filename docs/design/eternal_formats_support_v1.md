@@ -751,8 +751,20 @@ choices before untap. The prepared game's seat map still identifies the starting
 match player as native seat P0. Companion and outside-game setup retain their
 admitted configuration. This explicit registration admits the two executable
 Partial Leylines alongside Chancellor of the Annex and otherwise requires Full.
-The ordinary registration and catalog counts still require Full, and the legacy
-start refuses these opt-in registrations. Native qualification is pending.
+Leyline of the Void and Leyline of Sanctity require this profile whenever either
+appears in a registered mainboard or sideboard. That registration rule applies
+even if a later catalog wave marks them Full. Ordinary declared game construction
+also refuses Full printings that require the opening owner. Catalog counts still
+follow the capability marks. Unenabled historical states retain the first-upkeep
+path, including the historical Chancellor route.
+
+The targeted rules fixtures board four Voids into the frozen Legacy Mardu Energy
+list against Izzet Delver, check a real pre-untap entry and cleanup discard to
+exile, then replay the native game-two actions to the same natural terminal.
+A separate registered game checks the first paid Lightning Bolt's legal player
+targets with and without Sanctity's opening action for both seats. These fixtures
+are pending native execution. The Leylines remain Partial and the tracked
+`PLAYABLE_75` census is unchanged.
 
 S3 is `src/eternal_outside_game_v1.rs`. Each player's cards outside the game (a best-of-three
 game's sideboard without a companion in use) are a sorted list in the eternal module state,

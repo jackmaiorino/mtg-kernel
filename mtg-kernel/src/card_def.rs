@@ -3579,6 +3579,11 @@ pub enum DeckPreflightError {
         name: &'static str,
         capability: CardCapability,
     },
+    RequiresNativeOpening {
+        index: usize,
+        card_def: u16,
+        name: &'static str,
+    },
 }
 
 impl fmt::Display for DeckPreflightError {
@@ -3604,15 +3609,22 @@ impl fmt::Display for DeckPreflightError {
                 f,
                 "deck card {index} ({name}, definition {card_def}) is not fully supported: {capability:?}"
             ),
+            DeckPreflightError::RequiresNativeOpening {
+                index,
+                card_def,
+                name,
+            } => write!(
+                f,
+                "deck card {index} ({name}, definition {card_def}) requires the native opening profile"
+            ),
         }
     }
 }
 
 impl std::error::Error for DeckPreflightError {}
 
-/// Rejects a deck at environment construction time unless every definition
-/// is explicitly `Full`. Missing records and newly added records whose
-/// capability was omitted both fail closed.
+/// Admits explicitly `Full` printings to ordinary environment construction.
+/// Printings requiring the native opening owner use its separate registration.
 pub fn preflight_fully_supported_deck(card_defs: &[u16]) -> Result<(), DeckPreflightError> {
     for (index, &card_def) in card_defs.iter().enumerate() {
         let Some(def) = CARD_DEFS.get(card_def as usize) else {
@@ -3631,6 +3643,13 @@ pub fn preflight_fully_supported_deck(card_defs: &[u16]) -> Result<(), DeckPrefl
                 card_def,
                 name: def.name,
                 capability: def.capability,
+            });
+        }
+        if crate::eternal_opening_v1::requires_native_opening(def) {
+            return Err(DeckPreflightError::RequiresNativeOpening {
+                index,
+                card_def,
+                name: def.name,
             });
         }
     }

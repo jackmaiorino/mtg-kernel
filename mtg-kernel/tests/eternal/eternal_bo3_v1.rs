@@ -15,6 +15,9 @@ use mtg_kernel::ids::PlayerId;
 use mtg_kernel::limited_session_v1::CustomCardCountV1;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[path = "eternal_bo3_leyline_v1.rs"]
+mod leyline;
+
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
@@ -551,7 +554,7 @@ fn native_opening_match_uses_real_london_keeps_and_preserves_the_profile_both_se
     let main = make_main(id("Island"));
     assert!(matches!(
         EternalRegisteredDeckV1::new_v1(format, "legacy", main.clone(), vec![], None),
-        Err(EternalBo3ErrorV1::UnsupportedCard { .. })
+        Err(EternalBo3ErrorV1::NativeOpeningSetup { .. })
     ));
     let mut unrelated = main.clone();
     unrelated[0] = id("Meddling Mage");

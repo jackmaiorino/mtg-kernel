@@ -147,8 +147,9 @@ impl EternalRegisteredDeckV1 {
     }
 
     /// Explicit native pregame profile. In addition to Full definitions, it
-    /// admits the three executable Eternal opening cards while their ordinary
-    /// catalog admission remains separate. Both match registrations must opt in.
+    /// admits the executable Eternal opening cards. Leyline of the Void and
+    /// Leyline of Sanctity require this profile in either registered zone.
+    /// Both match registrations must opt in.
     pub fn new_with_native_opening_v1(
         format: EternalFormatV1,
         deck_id: impl Into<String>,
@@ -188,17 +189,20 @@ impl EternalRegisteredDeckV1 {
             let card = CARD_DEFS
                 .get(usize::from(id))
                 .ok_or(EternalBo3ErrorV1::UnknownCardId { card_id: id })?;
+            let requires_opening = crate::eternal_opening_v1::requires_native_opening(card);
+            if !native_opening && requires_opening {
+                return Err(EternalBo3ErrorV1::NativeOpeningSetup {
+                    reason: format!("{} requires native opening registration", card.name),
+                });
+            }
             if native_opening && crate::leyline_axe_v1::definition(id) {
                 return Err(EternalBo3ErrorV1::NativeOpeningSetup {
                     reason: "Leyline Axe belongs to its own opening profile".into(),
                 });
             }
             let opening_card = native_opening
-                && card.is_executable()
-                && matches!(
-                    card.name,
-                    "Leyline of the Void" | "Leyline of Sanctity" | "Chancellor of the Annex"
-                );
+                && (requires_opening
+                    || (card.is_executable() && card.name == "Chancellor of the Annex"));
             if card.is_token || !(card.has_full_support() || opening_card) {
                 return Err(EternalBo3ErrorV1::UnsupportedCard {
                     name: card.name.to_owned(),
