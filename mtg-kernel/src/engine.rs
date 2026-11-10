@@ -15955,7 +15955,10 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
 
     if let Err(_error) = finalize_cast(state, Vec::new()) {
         #[cfg(test)]
-        eprintln!("native finalized cast {:?} rejected: {_error}", pending.spell);
+        eprintln!(
+            "native finalized cast {:?} rejected: {_error}",
+            pending.spell
+        );
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.spell,

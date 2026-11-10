@@ -96,7 +96,8 @@ fn retained_numeric_pilot_leg_one_passes_the_original_eaten_alive_boundary() {
         "Eaten Alive"
     );
 
-    let parse = |bytes: &[u8]| u32::from_str_radix(std::str::from_utf8(bytes).unwrap(), 16).unwrap();
+    let parse =
+        |bytes: &[u8]| u32::from_str_radix(std::str::from_utf8(bytes).unwrap(), 16).unwrap();
     let kinds = [
         FastActorDecisionKindV1::Surface,
         FastActorDecisionKindV1::AttackerInclusion,
@@ -109,22 +110,38 @@ fn retained_numeric_pilot_leg_one_passes_the_original_eaten_alive_boundary() {
         let width = parse(&entry[1..3]);
         let selected = parse(&entry[3..]);
         let FastActorResponseV1::Decision(expected) = owner.current_response() else {
-            panic!("pilot ended before step {step}: {:?}", owner.current_response());
+            panic!(
+                "pilot ended before step {step}: {:?}",
+                owner.current_response()
+            );
         };
         assert_eq!(expected.step, step as u64);
-        assert_eq!(expected.acting_player, actors[header / 3], "actor at {step}");
+        assert_eq!(
+            expected.acting_player,
+            actors[header / 3],
+            "actor at {step}"
+        );
         assert_eq!(expected.decision_kind, kinds[header % 3], "kind at {step}");
         let bound = owner.encode(expected).unwrap_or_else(|error| {
-            panic!("pilot projection at {step}: {error:?}; {:?}", owner.fixture_projection_error())
+            panic!(
+                "pilot projection at {step}: {error:?}; {:?}",
+                owner.fixture_projection_error()
+            )
         });
-        assert_eq!(bound.packet().actions().len(), width as usize, "sealed width at {step}");
+        assert_eq!(
+            bound.packet().actions().len(),
+            width as usize,
+            "sealed width at {step}"
+        );
         if step >= 532 {
             eprintln!(
                 "pilot step {step}: {:?}",
                 bound.fixture_backend_v75().actions()[selected as usize],
             );
         }
-        owner.apply(&bound, selected).unwrap_or_else(|error| panic!("pilot action at {step}: {error:?}"));
+        owner
+            .apply(&bound, selected)
+            .unwrap_or_else(|error| panic!("pilot action at {step}: {error:?}"));
     }
     let native = owner.fixture_state();
     assert!(
@@ -132,8 +149,16 @@ fn retained_numeric_pilot_leg_one_passes_the_original_eaten_alive_boundary() {
         "pilot halted after the stored prefix: {:?}; source zone {:?}; pending Eaten {:?}",
         owner.current_response(),
         native.objects.get(eaten).zone,
-        native.engine.pending_cast.as_ref().filter(|cast| cast.spell == eaten).map(|cast| {
-            (cast.targets_chosen.as_slice(), cast.mandatory_additional_cost)
-        }),
+        native
+            .engine
+            .pending_cast
+            .as_ref()
+            .filter(|cast| cast.spell == eaten)
+            .map(|cast| {
+                (
+                    cast.targets_chosen.as_slice(),
+                    cast.mandatory_additional_cost,
+                )
+            }),
     );
 }
