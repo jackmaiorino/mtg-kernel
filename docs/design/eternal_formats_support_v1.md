@@ -627,8 +627,20 @@ New, each built once in the first wave that needs it:
   but all seven new Bonder cases stopped at a shared setup assertion before
   native advance finalized payment. The helper now advances to priority and
   verifies the paid stack row before checking tap and mana; it does not resolve
-  the draws. Those seven cases still require native qualification. Generated
-  draws from the Premodern draw leaves, Standstill, Arcane
+  the draws. Those seven cases still require native qualification.
+  The physical paid Portent successor binds
+  its original cast, targeted-library look/order and optional shuffle before
+  scheduling the caster's draw at the next turn's upkeep. The delayed trigger
+  retains the original spell contract after source departure and the native
+  APNAP publication path. Each draw attempt uses the common Started/Completed
+  owner for Jace, Hullbreacher, Dredge and one Riddler adjustment, with terminal
+  stop and restored progress validation. Raw or borrowed-ID scheduling cannot
+  replace the completed native parent. Genuine native spell copies retain the
+  historical Portent schedule and ordinary draw; their replacement ownership
+  remains outside this successor. Active bound delayed triggers require an
+  observation successor. Independent source review and pinned formatting passed;
+  native qualification of Portent remains pending.
+  Generated draws from the remaining Premodern leaves, Standstill, Arcane
   Denial and Accumulated Knowledge still need their Jace/Hullbreacher origins.
   Quantum Riddler adjusts the whole count once for uninterrupted fixed and
   dynamic draw instructions. Named draws and top-level fixed draw instructions
