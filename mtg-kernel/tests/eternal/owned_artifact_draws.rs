@@ -66,10 +66,13 @@ fn paid_top_draws_then_returns_and_offers_dredge_or_hullbreacher_both_seats() {
         let start = ordinary.engine.event_history.len();
         paid_tap(&mut ordinary, top, 1);
         settled(&mut ordinary);
-        let drawn = ordinary.engine.event_history[start..].iter().position(|event| {
-            matches!(event, CommittedEvent::Draw { player, object: Some(card) }
+        let drawn = ordinary.engine.event_history[start..]
+            .iter()
+            .position(|event| {
+                matches!(event, CommittedEvent::Draw { player, object: Some(card) }
                 if *player == drawer && *card == library[0])
-        }).unwrap();
+            })
+            .unwrap();
         assert!(drawn < top_return_position(&ordinary, top, start).unwrap());
         assert_eq!(ordinary.players[drawer.index()].library[0], top);
         assert_eq!(owned_draw_records(&ordinary, start), 0);
@@ -104,16 +107,22 @@ fn paid_top_draws_then_returns_and_offers_dredge_or_hullbreacher_both_seats() {
                     settled(state);
                     assert_eq!(owned_draw_records(state, start), 2);
                     assert_eq!(treasure_count(state, opponent), usize::from(!dredge));
-                    assert_eq!(state.objects.get(thug).zone, if dredge { Zone::Hand } else { Zone::Graveyard });
+                    assert_eq!(
+                        state.objects.get(thug).zone,
+                        if dredge { Zone::Hand } else { Zone::Graveyard }
+                    );
                     let mut expected = library[if dredge { 4 } else { 0 }..].to_vec();
                     if departed {
                         assert_eq!(state.objects.get(top).zone, Zone::Hand);
                         assert_eq!(top_return_position(state, top, start), None);
                     } else {
                         expected.insert(0, top);
-                        let completed = state.engine.event_history[start..].iter().rposition(|event| {
-                            matches!(event, CommittedEvent::EternalOwnedDrawV1 { .. })
-                        }).unwrap();
+                        let completed = state.engine.event_history[start..]
+                            .iter()
+                            .rposition(|event| {
+                                matches!(event, CommittedEvent::EternalOwnedDrawV1 { .. })
+                            })
+                            .unwrap();
                         assert!(completed < top_return_position(state, top, start).unwrap());
                     }
                     assert_eq!(state.players[drawer.index()].library, expected);
@@ -125,9 +134,17 @@ fn paid_top_draws_then_returns_and_offers_dredge_or_hullbreacher_both_seats() {
 }
 
 fn burden(state: &GameState, source: ObjectLinkV4) -> u32 {
-    state.eternal_v1.as_ref().and_then(|eternal| eternal.e3.as_ref()).and_then(|e3| {
-        e3.burden_counters.iter().find(|(ring, _)| *ring == source).map(|(_, count)| *count)
-    }).unwrap_or(0)
+    state
+        .eternal_v1
+        .as_ref()
+        .and_then(|eternal| eternal.e3.as_ref())
+        .and_then(|e3| {
+            e3.burden_counters
+                .iter()
+                .find(|(ring, _)| *ring == source)
+                .map(|(_, count)| *count)
+        })
+        .unwrap_or(0)
 }
 
 fn accumulate_ring_burden(state: &mut GameState, drawer: PlayerId, count: u32) -> ObjectId {
@@ -152,7 +169,10 @@ fn paid_ring_freezes_live_increment_or_departed_burden_both_seats() {
         base.active_player = drawer;
         base.priority_player = drawer;
         let ring = accumulate_ring_burden(&mut base, drawer, 1);
-        let original = ObjectLinkV4 { object: ring, zone_change_count: base.objects.get(ring).zone_change_count };
+        let original = ObjectLinkV4 {
+            object: ring,
+            zone_change_count: base.objects.get(ring).zone_change_count,
+        };
         assert_eq!(burden(&base, original), 1);
         assert_eq!(base.players[drawer.index()].library.len(), 8);
         let library = base.players[drawer.index()].library.clone();
@@ -171,10 +191,12 @@ fn paid_ring_freezes_live_increment_or_departed_burden_both_seats() {
             let total = if departed { 1 } else { 2 };
             assert_eq!(burden(&state, original), total);
             let saved = serde_json::to_value(&state).unwrap();
-            let started_at = saved["eternal_owned_draw_progress_v1"]["started_at"].as_u64().unwrap() as usize;
+            let started_at = saved["eternal_owned_draw_progress_v1"]["started_at"]
+                .as_u64()
+                .unwrap() as usize;
             let mut forged = saved.clone();
-            forged["engine"]["event_history"][started_at]["EternalOwnedDrawV1"]["journal"]["Started"]["total"] =
-                serde_json::json!(total + 1);
+            forged["engine"]["event_history"][started_at]["EternalOwnedDrawV1"]["journal"]
+                ["Started"]["total"] = serde_json::json!(total + 1);
             let forged: GameState = serde_json::from_value(forged).unwrap();
             assert_eq!(
                 mtg_kernel::effect::validate_pending_effect_choice(&forged).unwrap_err(),
@@ -200,9 +222,22 @@ fn paid_ring_freezes_live_increment_or_departed_burden_both_seats() {
                     settled(state);
                     assert_eq!(owned_draw_records(state, start), total as usize + 1);
                     assert_eq!(burden(state, original), total);
-                    assert_eq!(treasure_count(state, opponent), total as usize - usize::from(dredge));
-                    assert_eq!(state.players[drawer.index()].library, library[if dredge { 4 } else { 0 }..]);
-                    assert_eq!(state.objects.get(ring).zone, if departed { Zone::Hand } else { Zone::Battlefield });
+                    assert_eq!(
+                        treasure_count(state, opponent),
+                        total as usize - usize::from(dredge)
+                    );
+                    assert_eq!(
+                        state.players[drawer.index()].library,
+                        library[if dredge { 4 } else { 0 }..]
+                    );
+                    assert_eq!(
+                        state.objects.get(ring).zone,
+                        if departed {
+                            Zone::Hand
+                        } else {
+                            Zone::Battlefield
+                        }
+                    );
                 }
                 assert_eq!(branch.state_hash(), restored.state_hash());
             }
@@ -229,7 +264,9 @@ fn paid_artifact_draws_stop_after_jace_wins_both_seats() {
         let jace = cast_jace(&mut state, drawer);
         let mut ordinary = state.clone();
         paid_tap(&mut ordinary, top, 1);
-        assert!(matches!(settle(&mut ordinary), Some(Decision::GameOver { winner: Some(player) }) if player == drawer));
+        assert!(
+            matches!(settle(&mut ordinary), Some(Decision::GameOver { winner: Some(player) }) if player == drawer)
+        );
         assert_eq!(ordinary.objects.get(top).zone, Zone::Battlefield);
 
         put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
@@ -244,7 +281,9 @@ fn paid_artifact_draws_stop_after_jace_wins_both_seats() {
         act(&mut state, Action::ChooseEffectTarget(Target::Object(jace)));
         let mut restored = restore_draw_answer(&state);
         for branch in [&mut state, &mut restored] {
-            assert!(matches!(next(branch), Decision::GameOver { winner: Some(player) } if player == drawer));
+            assert!(
+                matches!(next(branch), Decision::GameOver { winner: Some(player) } if player == drawer)
+            );
             assert_eq!(branch.objects.get(top).zone, Zone::Battlefield);
             assert!(branch.players[drawer.index()].library.is_empty());
             assert_eq!(treasure_count(branch, opponent), 0);
@@ -255,14 +294,19 @@ fn paid_artifact_draws_stop_after_jace_wins_both_seats() {
         state.active_player = drawer;
         state.priority_player = drawer;
         let ring = accumulate_ring_burden(&mut state, drawer, 2);
-        let link = ObjectLinkV4 { object: ring, zone_change_count: state.objects.get(ring).zone_change_count };
+        let link = ObjectLinkV4 {
+            object: ring,
+            zone_change_count: state.objects.get(ring).zone_change_count,
+        };
         assert_eq!(burden(&state, link), 2);
         assert!(state.players[drawer.index()].library.is_empty());
         let jace = cast_jace(&mut state, drawer);
         let mut ordinary = state.clone();
         let start = ordinary.engine.event_history.len();
         paid_tap(&mut ordinary, ring, 0);
-        assert!(matches!(settle(&mut ordinary), Some(Decision::GameOver { winner: Some(player) }) if player == drawer));
+        assert!(
+            matches!(settle(&mut ordinary), Some(Decision::GameOver { winner: Some(player) }) if player == drawer)
+        );
         assert_eq!(burden(&ordinary, link), 3);
         assert_eq!(ordinary.engine.event_history[start..].iter().filter(|event| {
             matches!(event, CommittedEvent::Draw { player, object: None } if *player == drawer)
@@ -272,7 +316,8 @@ fn paid_artifact_draws_stop_after_jace_wins_both_seats() {
         put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
         let start = state.engine.event_history.len();
         paid_tap(&mut state, ring, 0);
-        let first = settle(&mut state).expect("Jace and Hullbreacher compete for Ring's first draw");
+        let first =
+            settle(&mut state).expect("Jace and Hullbreacher compete for Ring's first draw");
         assert_draw_replacement_prompt(&first, drawer, ring, jace);
         act(&mut state, Action::FinishEffectSelection);
         let second = settle(&mut state).expect("Ring offers the second draw");
@@ -280,11 +325,16 @@ fn paid_artifact_draws_stop_after_jace_wins_both_seats() {
         act(&mut state, Action::ChooseEffectTarget(Target::Object(jace)));
         let mut restored = restore_draw_answer(&state);
         for branch in [&mut state, &mut restored] {
-            assert!(matches!(next(branch), Decision::GameOver { winner: Some(player) } if player == drawer));
+            assert!(
+                matches!(next(branch), Decision::GameOver { winner: Some(player) } if player == drawer)
+            );
             assert_eq!(owned_draw_records(branch, start), 3);
             assert_eq!(burden(branch, link), 3);
             assert_eq!(treasure_count(branch, opponent), 1);
-            assert!(serde_json::to_value(&*branch).unwrap().get("eternal_owned_draw_progress_v1").is_none());
+            assert!(serde_json::to_value(&*branch)
+                .unwrap()
+                .get("eternal_owned_draw_progress_v1")
+                .is_none());
         }
         assert_eq!(state.state_hash(), restored.state_hash());
     }

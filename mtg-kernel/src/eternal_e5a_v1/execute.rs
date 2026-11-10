@@ -87,9 +87,8 @@ fn draw(ctx: &ExecCtx, state: &mut GameState, player: PlayerRef, count: u32) {
 pub(crate) fn execute(op: &E5aOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         E5aOpV1::DrawThenSourceOnTopV1 => {
-            if crate::eternal_cards_v1::owned_draws_v1::draw_uninterrupted(
-                state, ctx.controller, 1,
-            ) {
+            if crate::eternal_cards_v1::owned_draws_v1::draw_uninterrupted(state, ctx.controller, 1)
+            {
                 put_draw_source_on_top(ctx, state);
             }
         }

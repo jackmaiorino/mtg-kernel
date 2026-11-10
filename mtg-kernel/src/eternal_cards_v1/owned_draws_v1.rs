@@ -74,9 +74,9 @@ impl InstructionV1 {
             Self::TwinnedVision => {
                 eternal_pauper_e8b_v1::twinned_vision_draw_count(state, ctx.source)
             }
-            Self::OneRing => ctx.ability_source_contract.map_or(0, |source| {
-                super::e3::quote_ring_draw_count(state, source)
-            }),
+            Self::OneRing => ctx
+                .ability_source_contract
+                .map_or(0, |source| super::e3::quote_ring_draw_count(state, source)),
         }
     }
 }
@@ -214,9 +214,11 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
                 StackItemKind::ActivatedAbility,
                 "Tamiyo, Inquisitive Student",
             ) => item.v4.activated_ability_index == Some(2),
-            (InstructionV1::DiviningTop, StackItemKind::ActivatedAbility, "Sensei's Divining Top") => {
-                item.v4.activated_ability_index == Some(1)
-            }
+            (
+                InstructionV1::DiviningTop,
+                StackItemKind::ActivatedAbility,
+                "Sensei's Divining Top",
+            ) => item.v4.activated_ability_index == Some(1),
             (InstructionV1::OneRing, StackItemKind::ActivatedAbility, "The One Ring") => {
                 item.v4.activated_ability_index == Some(0)
             }
