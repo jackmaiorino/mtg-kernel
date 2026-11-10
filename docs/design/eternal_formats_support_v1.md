@@ -576,8 +576,11 @@ New, each built once in the first wave that needs it:
   objects and supported public references from stack items and waiting effects.
   It uses the original incarnation and retained color for authenticated departed
   damage sources. Unrelated graveyard and exile cards are excluded. Other
-  departed references still need last-known color and visibility evidence, and
-  contextual hand and library sources remain unsupported. Paid source-menu,
+  embedded effect references need explicit bindings, departed references need
+  last-known color and visibility evidence, and contextual hand and library
+  sources remain unsupported. An in-flight saved Circle menu with the old
+  broad roster refuses restore when it differs from the legal roster, preserving
+  the meaning of its original option indices. Paid source-menu,
   Firebrand/Painter and blink/restore qualification is pending. Policy observation
   v5 omits the shields.
   [Comprehensive Rules, 609.7 and 702.96](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)

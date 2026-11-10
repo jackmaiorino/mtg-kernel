@@ -728,6 +728,27 @@ fn target_source_link(target: StackTargetContractV4) -> Option<ObjectLinkV4> {
     })
 }
 
+fn stacked_delayed_source_link(effect: &EffectOp) -> Option<ObjectLinkV4> {
+    use crate::eternal_legacy_e5b_v1::E5bOpV1;
+    use crate::eternal_legacy_e7a_v1::E7aOpV1;
+    use crate::eternal_pauper_e6a_v1::E6aOpV1;
+    use crate::eternal_premodern_p1a_v1::P1aOpV1;
+    use crate::eternal_vintage_e7b_v1::E7bOpV1;
+
+    let EffectOp::StandardV1(StandardOpV1::EternalV1(op)) = effect else {
+        return None;
+    };
+    match op {
+        EternalOpV1::E5bV1(E5bOpV1::PheliaReturnV1 { card })
+        | EternalOpV1::E6aV1(E6aOpV1::ReboundV1 { card })
+        | EternalOpV1::E7aV1(E7aOpV1::SuspendTickV1 { card })
+        | EternalOpV1::E7aV1(E7aOpV1::ShallowGraveExileV1 { creature: card })
+        | EternalOpV1::E7bV1(E7bOpV1::EndStepReturnV1 { card, .. })
+        | EternalOpV1::P1aV1(P1aOpV1::BrushhopperReturnV1 { card }) => Some(*card),
+        _ => None,
+    }
+}
+
 /// CR 609.7a. A public zone alone does not make a graveyard or exile card a
 /// source choice. Require an exact active reference or a direct eligible zone.
 fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
@@ -788,6 +809,11 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
             .filter_map(target_source_link)
         {
             include_live(source);
+        }
+        if item.kind == StackItemKind::TriggeredAbility {
+            if let Some(source) = item.inline_effect.as_ref().and_then(stacked_delayed_source_link) {
+                include_live(source);
+            }
         }
     }
     for replacement in &state.engine.active_replacements {
