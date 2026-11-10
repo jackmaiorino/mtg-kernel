@@ -1087,11 +1087,15 @@ fn paid_plunder_ignores_a_nondrawers_dredger_without_owned_receipts_both_seats()
         assert_eq!(state.players[drawer.index()].hand, [library[0]]);
         assert_eq!(state.players[drawer.index()].library, library[1..]);
         assert_eq!(state.objects.get(thug).zone, Zone::Graveyard);
-        assert!(!state.engine.event_history.iter().any(|event| {
-            event.kind_v1() == EventKindV1::EternalOwnedDrawV1
-        }));
-        assert!(serde_json::to_value(&state).unwrap()
-            .get("eternal_owned_draw_progress_v1").is_none());
+        assert!(!state
+            .engine
+            .event_history
+            .iter()
+            .any(|event| { event.kind_v1() == EventKindV1::EternalOwnedDrawV1 }));
+        assert!(serde_json::to_value(&state)
+            .unwrap()
+            .get("eternal_owned_draw_progress_v1")
+            .is_none());
     }
 }
 
@@ -1104,7 +1108,12 @@ fn paid_plunder_reaches_a_later_jace_choice_after_the_exempt_draw_both_seats() {
         state.priority_player = drawer;
         put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
         let jace = put(&mut state, drawer, "Jace, Wielder of Mysteries", Zone::Hand);
-        pool(&mut state, drawer, &[ManaColor::U, ManaColor::U, ManaColor::U], 1);
+        pool(
+            &mut state,
+            drawer,
+            &[ManaColor::U, ManaColor::U, ManaColor::U],
+            1,
+        );
         cast(&mut state, jace, &[]);
         settled(&mut state);
         let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
@@ -1112,14 +1121,21 @@ fn paid_plunder_reaches_a_later_jace_choice_after_the_exempt_draw_both_seats() {
         pass_until(&mut state, |state| {
             state.active_player == drawer && state.turn != cast_turn && state.step == Step::Draw
         });
-        assert!(matches!(next(&mut state), Decision::ChooseEffectOption { player, source, option_count: 2 }
-            if player == drawer && source == thug));
+        assert!(
+            matches!(next(&mut state), Decision::ChooseEffectOption { player, source, option_count: 2 }
+            if player == drawer && source == thug)
+        );
         act(&mut state, Action::ChooseEffectOption(1));
         let [last_card] = state.players[drawer.index()].library.as_slice() else {
             panic!("draw-step dredge should leave the last card");
         };
         let last_card = *last_card;
-        let spell = put(&mut state, drawer, "Plunder the Trollshaws", Zone::Graveyard);
+        let spell = put(
+            &mut state,
+            drawer,
+            "Plunder the Trollshaws",
+            Zone::Graveyard,
+        );
         pool(&mut state, drawer, &[ManaColor::U], 3);
         cast(&mut state, spell, &[]);
         let prompt = settle(&mut state).expect("the second draw has competing replacements");

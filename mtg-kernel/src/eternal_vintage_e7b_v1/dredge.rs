@@ -20,8 +20,7 @@ use crate::effect::{
 use crate::eternal_cards_v1::{
     delayed_upkeep_draw,
     e3::{E3ChoiceKindV1, E3ChoiceV1},
-    owned_draws_v1,
-    EternalOpV1,
+    owned_draws_v1, EternalOpV1,
 };
 use crate::eternal_vintage_v1::{
     abandon_coveted_jewel_draws, coveted_jewel_changes_hands, coveted_jewel_draw_stage_matches,
@@ -126,7 +125,8 @@ pub(crate) fn forces_resumable(state: &GameState, program: &EffectOp, ctx: &Exec
         Some(count) => owned_draw_needs_choice(state, ctx.controller, count),
         None => {
             draws(program)
-                && [PlayerId::P0, PlayerId::P1].into_iter()
+                && [PlayerId::P0, PlayerId::P1]
+                    .into_iter()
                     .any(|player| may_need_draw_choice(state, player))
         }
     };
