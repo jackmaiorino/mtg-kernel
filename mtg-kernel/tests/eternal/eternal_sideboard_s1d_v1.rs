@@ -1329,7 +1329,7 @@ fn circle_offers_live_wave_and_petradon_exiles_only_after_return_publication_bot
                     activate(&mut state, host, 0, &[Target::Object(target)]);
                     settled(&mut state);
                 }
-                assert_eq!(p1b::fade_counters(&state, host), 3);
+                assert_eq!(p1b::statics::fade_counters(&state, host), 3);
             } else {
                 pool(&mut state, opponent, &[ManaColor::R, ManaColor::R], 6);
                 cast(&mut state, host, &[]);
