@@ -959,13 +959,16 @@ fn overload_uses_future_sight_paid_library_permission_and_restores_both_seats() 
                 let generation = state.objects.get(spell).zone_change_count;
                 pool(&mut state, actor, &[ManaColor::R], generic);
                 assert!(castable(&mut state, spell));
-                assert!(state.known_library_cards(other, actor).iter().any(|known| {
-                    known.position == 0 && known.object == spell
-                }));
+                assert!(state
+                    .known_library_cards(other, actor)
+                    .iter()
+                    .any(|known| { known.position == 0 && known.object == spell }));
                 act(&mut state, Action::CastSpell(spell));
                 let prompt = next(&mut state);
-                assert!(matches!(&prompt, Decision::ChooseSpellMode { legal_modes, .. }
-                    if legal_modes == &[0, 1]));
+                assert!(
+                    matches!(&prompt, Decision::ChooseSpellMode { legal_modes, .. }
+                    if legal_modes == &[0, 1])
+                );
                 let mut restored: GameState =
                     serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
                 assert_eq!(prompt, next(&mut restored));
@@ -980,18 +983,35 @@ fn overload_uses_future_sight_paid_library_permission_and_restores_both_seats() 
                     .remove("future_sight_overload")
                     .unwrap();
                 let mut missing_grant: GameState = serde_json::from_value(missing_grant).unwrap();
-                missing_grant.engine.pending_cast.as_mut().unwrap().mode_chosen = Some(1);
-                assert!(matches!(engine::advance_until_decision(&mut missing_grant), Decision::Halted { .. }));
+                missing_grant
+                    .engine
+                    .pending_cast
+                    .as_mut()
+                    .unwrap()
+                    .mode_chosen = Some(1);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut missing_grant),
+                    Decision::Halted { .. }
+                ));
                 assert_eq!(life(&missing_grant, actor), 20);
-                assert_eq!(missing_grant.players[actor.index()].mana_pool, state.players[actor.index()].mana_pool);
+                assert_eq!(
+                    missing_grant.players[actor.index()].mana_pool,
+                    state.players[actor.index()].mana_pool
+                );
                 if with_citadel {
                     let mut ordinary = restored.clone();
                     act(&mut ordinary, Action::ChooseSpellMode(0));
-                    assert!(matches!(next(&mut ordinary), Decision::ChooseTargets { .. }));
+                    assert!(matches!(
+                        next(&mut ordinary),
+                        Decision::ChooseTargets { .. }
+                    ));
                     act(&mut ordinary, Action::ChooseTarget(Target::Object(first)));
                     settled(&mut ordinary);
                     assert_eq!(life(&ordinary, actor), 19);
-                    assert_eq!(ordinary.players[actor.index()].mana_pool, state.players[actor.index()].mana_pool);
+                    assert_eq!(
+                        ordinary.players[actor.index()].mana_pool,
+                        state.players[actor.index()].mana_pool
+                    );
                     assert_eq!(zone(&ordinary, first), Zone::Graveyard);
                     assert_eq!(zone(&ordinary, second), Zone::Battlefield);
                 }
@@ -1006,10 +1026,13 @@ fn overload_uses_future_sight_paid_library_permission_and_restores_both_seats() 
                     assert_eq!(origin.origin_zone, Zone::Library);
                     assert_eq!(origin.origin_zone_change_count, generation);
                     assert_eq!(origin.finalized_method, Some(CastMethodV4::Omen));
-                    assert_eq!(origin.route, SpellCastRouteV4::LibraryPermissionV1 {
-                        holder: actor,
-                        permission_zone_change_count: generation,
-                    });
+                    assert_eq!(
+                        origin.route,
+                        SpellCastRouteV4::LibraryPermissionV1 {
+                            holder: actor,
+                            permission_zone_change_count: generation,
+                        }
+                    );
                     assert_eq!(continued.players[actor.index()].mana_pool, [0; 6]);
                     assert_eq!(life(continued, actor), 20);
                     mtg_kernel::event::propose_and_commit(

@@ -2501,7 +2501,9 @@ fn validate_physical_spell_cast_origin(
                         && cast_method == CastMethodV4::Omen
                         && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
                         && crate::eternal_e5a_v1::permissions::library_overload_allowed(
-                            state, caster, item.source,
+                            state,
+                            caster,
+                            item.source,
                         )))
                 && crate::eternal_e5a_v1::permissions::library_permission(
                     state,
@@ -28410,7 +28412,11 @@ fn finalize_owned_cast(
     if cast_method != CastMethodV4::Omen
         || !crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
     {
-        crate::eternal_e5a_v1::permissions::pay_citadel_life(state, pending.spell, pending.controller);
+        crate::eternal_e5a_v1::permissions::pay_citadel_life(
+            state,
+            pending.spell,
+            pending.controller,
+        );
     }
 
     let mut paid_cost_objects = object_cost_chosen;

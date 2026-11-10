@@ -116,11 +116,12 @@ pub(crate) fn note_library_cast(state: &mut GameState, player: PlayerId, card: O
         card: super::live_link(state, card),
         holder: player,
         pay_life,
-        future_sight_overload: library_overload_source(state, player, card)
-            .map(|source| FutureSightOverloadV1 {
+        future_sight_overload: library_overload_source(state, player, card).map(|source| {
+            FutureSightOverloadV1 {
                 source: AbilitySourceContractV4::capture(state, source),
                 announced_at: state.engine.event_history.len(),
-            }),
+            }
+        }),
     };
     let casts = &mut e5a_state(state).library_casts;
     casts.retain(|recorded| recorded.card.object != card);
@@ -135,10 +136,16 @@ fn recorded_cast(state: &GameState, card: ObjectLinkV4) -> Option<LibraryCastV1>
         .find(|cast| cast.card == card)
 }
 
-fn library_overload_source(state: &GameState, player: PlayerId, card: ObjectId) -> Option<ObjectId> {
+fn library_overload_source(
+    state: &GameState,
+    player: PlayerId,
+    card: ObjectId,
+) -> Option<ObjectId> {
     if !is_library_top(state, player, card)
         || !crate::eternal_sideboard_s1d_v1::statics::is_overload(
-            CARD_DEFS.get(usize::from(state.objects.get(card).card_def))?.name,
+            CARD_DEFS
+                .get(usize::from(state.objects.get(card).card_def))?
+                .name,
         )
     {
         return None;
@@ -148,7 +155,11 @@ fn library_overload_source(state: &GameState, player: PlayerId, card: ObjectId) 
 
 /// Future Sight grants a normally paid cast. Overload replaces that mana
 /// cost even when the ordinary form can instead use Bolas's Citadel.
-pub(crate) fn library_overload_allowed(state: &GameState, player: PlayerId, card: ObjectId) -> bool {
+pub(crate) fn library_overload_allowed(
+    state: &GameState,
+    player: PlayerId,
+    card: ObjectId,
+) -> bool {
     let Some(live) = state.objects.try_get(card) else {
         return false;
     };
@@ -169,10 +180,13 @@ pub(crate) fn library_overload_allowed(state: &GameState, player: PlayerId, card
     {
         return false;
     }
-    recorded_cast(state, ObjectLinkV4 {
-        object: card,
-        zone_change_count: origin.origin_zone_change_count,
-    })
+    recorded_cast(
+        state,
+        ObjectLinkV4 {
+            object: card,
+            zone_change_count: origin.origin_zone_change_count,
+        },
+    )
     .filter(|cast| cast.holder == player)
     .and_then(|cast| cast.future_sight_overload)
     .is_some_and(|permit| {
@@ -186,20 +200,29 @@ pub(crate) fn library_overload_allowed(state: &GameState, player: PlayerId, card
                 live.owner == source.owner
                     && if origin.finalized_method.is_none() {
                         AbilitySourceContractV4::capture(state, source.source) == source
-                            && state.players[player.index()].battlefield.contains(&source.source)
+                            && state.players[player.index()]
+                                .battlefield
+                                .contains(&source.source)
                             && crate::eternal_premodern_p2a_v1::active_named(
-                                state, source.source, crate::eternal_premodern_p2a_v1::FUTURE_SIGHT,
+                                state,
+                                source.source,
+                                crate::eternal_premodern_p2a_v1::FUTURE_SIGHT,
                             )
                     } else if live.zone_change_count == source.zone_change_count {
                         live.zone == Zone::Battlefield && live.card_def == source.card_def
                     } else {
                         origin.finalized_method == Some(CastMethodV4::Omen)
                             && live.zone_change_count > source.zone_change_count
-                            && state.engine.event_history.iter().skip(permit.announced_at).any(|event| {
-                                matches!(event, CommittedEvent::ZoneChange {
+                            && state
+                                .engine
+                                .event_history
+                                .iter()
+                                .skip(permit.announced_at)
+                                .any(|event| {
+                                    matches!(event, CommittedEvent::ZoneChange {
                                     object, from: Zone::Battlefield, to, ..
                                 } if *object == source.source && *to != Zone::Battlefield)
-                            })
+                                })
                     }
             })
     })
