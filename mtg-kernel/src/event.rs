@@ -3489,6 +3489,10 @@ fn preflight_wide_life_v59(state: &mut GameState, event: &ProposedEvent) -> bool
 }
 
 pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
+    propose_event(state, event, false);
+}
+
+fn propose_event(state: &mut GameState, event: ProposedEvent, individual_draw: bool) {
     if !preflight_wide_life_v59(state, &event) {
         return;
     }
@@ -3507,10 +3511,18 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
     {
         return;
     }
-    propose_without_linked_aura_v1(state, event);
+    propose_event_without_linked_aura(state, event, individual_draw);
 }
 
 pub(crate) fn propose_without_linked_aura_v1(state: &mut GameState, event: ProposedEvent) {
+    propose_event_without_linked_aura(state, event, false);
+}
+
+fn propose_event_without_linked_aura(
+    state: &mut GameState,
+    event: ProposedEvent,
+    individual_draw: bool,
+) {
     if !preflight_wide_life_v59(state, &event) {
         return;
     }
@@ -3528,7 +3540,56 @@ pub(crate) fn propose_without_linked_aura_v1(state: &mut GameState, event: Propo
         ));
         return;
     }
+    if !individual_draw {
+        if let ProposedEvent::Draw(draw) = &event {
+            let player = draw.player;
+            let extra = draw_instruction_extra(state, player, 1);
+            if extra != 0 {
+                propose_and_commit_inner(state, event);
+                for _ in 0..extra {
+                    if !draw_instruction_continues(state, player) {
+                        break;
+                    }
+                    propose_and_commit_inner(state, ProposedEvent::draw(player));
+                }
+                return;
+            }
+        }
+    }
     propose_and_commit_inner(state, event);
+}
+
+/// Draw-count replacements see the original instruction before any individual
+/// draw, including an attempt that will be replaced or fail to draw a card.
+pub(crate) fn draw_instruction_extra(state: &GameState, player: PlayerId, count: u32) -> u32 {
+    if count == 0 || !cfg!(feature = "eternal-fixtures") {
+        return 0;
+    }
+    u32::try_from(crate::eternal_legacy_e5b_v1::riddler_extra_draws(state, player))
+        .unwrap_or(u32::MAX)
+        .min(u32::MAX - count)
+}
+
+fn draw_instruction_continues(state: &GameState, player: PlayerId) -> bool {
+    state.engine.halted.is_none()
+        && !crate::eternal_cards_v1::owned_draws_v1::draw_won_game(state, player)
+}
+
+pub(crate) fn propose_draw_attempt(state: &mut GameState, player: PlayerId) {
+    propose_event(state, ProposedEvent::draw(player), true);
+}
+
+/// An uninterrupted draw instruction. Owners that can suspend freeze the
+/// adjusted total instead and call `propose_draw_attempt` for each attempt.
+pub(crate) fn draw_instruction(state: &mut GameState, player: PlayerId, count: u32) -> bool {
+    let count = count + draw_instruction_extra(state, player, count);
+    for _ in 0..count {
+        propose_draw_attempt(state, player);
+        if !draw_instruction_continues(state, player) {
+            return false;
+        }
+    }
+    true
 }
 /// Only the scoped pre-pop Crystal interpreter calls this while holding the
 /// privately constructed removed-item loan. Generic public begin/resume refuse it.
@@ -3904,30 +3965,11 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
         }
         return;
     }
-    // Quantum Riddler: "if you would draw one or more cards, you draw that
-    // many cards plus one instead", read before the draw.
-    #[cfg(feature = "eternal-fixtures")]
-    let extra_draws = match &event {
-        ProposedEvent::Draw(draw) => Some((
-            draw.player,
-            crate::eternal_legacy_e5b_v1::riddler_extra_draws(state, draw.player),
-        )),
-        _ => None,
-    };
     if let Some(final_event) = apply_replacements(state, event) {
         let lifelink_gain = lifelink_gain_for(state, &final_event);
         commit(state, final_event);
         if let Some((player, amount)) = lifelink_gain {
             commit(state, ProposedEvent::life_gain(player, amount));
-        }
-    }
-    #[cfg(feature = "eternal-fixtures")]
-    if let Some((player, extra)) = extra_draws {
-        for _ in 0..extra {
-            if crate::eternal_cards_v1::owned_draws_v1::draw_won_game(state, player) {
-                break;
-            }
-            commit(state, ProposedEvent::draw(player));
         }
     }
 }

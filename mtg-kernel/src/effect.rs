@@ -17165,11 +17165,17 @@ fn drive_resumable_inner_with_native_row_v1(
             }
             EffectOp::DrawCards { player, count }
                 if cfg!(feature = "eternal-fixtures")
-                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
+                    && (crate::eternal_cards_v1::owned_draws_v1::draw_stage_matches(
+                        state,
+                        &continuation,
+                        continuation.ctx.resolve_player(player, state),
+                        &path,
+                        &continuation.frames,
+                    ) || crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
                         state,
                         &continuation,
                         player,
-                    ) =>
+                    )) =>
             {
                 if crate::eternal_vintage_e7b_v1::dredge::drive_draws(
                     state,
@@ -21182,16 +21188,12 @@ fn execute_with_native_row_v1(
         }
         EffectOp::DrawCards { player, count } => {
             let player = ctx.resolve_player(*player, state);
-            for _ in 0..*count {
-                event::propose_and_commit(state, event::ProposedEvent::draw(player));
-            }
+            event::draw_instruction(state, player, *count);
         }
         EffectOp::DrawCardsDynamic { player, count } => {
             let player = ctx.resolve_player(*player, state);
             let count = crate::engine::evaluate_dynamic_value(state, *count, ctx.controller);
-            for _ in 0..count.max(0) {
-                event::propose_and_commit(state, event::ProposedEvent::draw(player));
-            }
+            event::draw_instruction(state, player, count.max(0) as u32);
         }
         EffectOp::BindLathrilCombatTokensV1 | EffectOp::LathrilCombatTokensV1 { .. } => {
             state.engine.halted = Some((

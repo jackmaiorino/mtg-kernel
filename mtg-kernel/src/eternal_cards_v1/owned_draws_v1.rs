@@ -208,13 +208,7 @@ pub(crate) fn draw_won_game(state: &GameState, player: PlayerId) -> bool {
 /// Draws with no pending replacement choice. A Jace win ends the game
 /// immediately, before another attempt or a following instruction.
 pub(crate) fn draw_uninterrupted(state: &mut GameState, player: PlayerId, count: u32) -> bool {
-    for _ in 0..count {
-        crate::event::propose_and_commit(state, crate::event::ProposedEvent::draw(player));
-        if draw_won_game(state, player) || state.engine.halted.is_some() {
-            return false;
-        }
-    }
-    true
+    crate::event::draw_instruction(state, player, count)
 }
 
 pub(crate) fn remove_maximum_hand_size(state: &mut GameState, player: PlayerId) {
@@ -260,6 +254,23 @@ pub struct StartedV1 {
 pub enum JournalV1 {
     Started(StartedV1),
     Completed { started_at: usize, ordinal: u32 },
+    /// The native start of the same instruction, with its one-time Riddler
+    /// expansion separate from the base count authenticated by the source.
+    StartedWithRiddlerV1 { started: StartedV1, extra: u32 },
+}
+
+impl JournalV1 {
+    fn start(self) -> Option<(StartedV1, u32)> {
+        match self {
+            Self::Started(started) => Some((started, started.total)),
+            Self::StartedWithRiddlerV1 { started, extra }
+                if started.total != 0 && extra != 0 =>
+            {
+                Some((started, started.total.checked_add(extra)?))
+            }
+            _ => None,
+        }
+    }
 }
 
 fn record(state: &mut GameState, journal: JournalV1) {
@@ -279,7 +290,7 @@ fn has_started(state: &GameState, item: StackItemId) -> bool {
         .iter()
         .any(|event| {
             matches!(event, CommittedEvent::EternalOwnedDrawV1 { journal }
-            if matches!(**journal, JournalV1::Started(started) if started.item == item))
+            if journal.start().is_some_and(|(started, _)| started.item == item))
         })
 }
 
@@ -467,7 +478,16 @@ pub(crate) fn begin(
         initial_library_len: (instruction == InstructionV1::Tamiyo)
             .then_some(state.players[pending.ctx.controller.index()].library.len()),
     };
-    record(state, JournalV1::Started(started));
+    let drawer = instruction
+        .drawer(&pending.ctx)
+        .ok_or("Eternal draw lost its original drawer")?;
+    let extra = crate::event::draw_instruction_extra(state, drawer, total);
+    let journal = if extra == 0 {
+        JournalV1::Started(started)
+    } else {
+        JournalV1::StartedWithRiddlerV1 { started, extra }
+    };
+    record(state, journal);
     state.eternal_owned_draw_progress_v1 = Some(ProgressV1 {
         started_at,
         completed: 0,
@@ -476,21 +496,22 @@ pub(crate) fn begin(
     Ok(())
 }
 
-fn progress(state: &GameState, pending: &EffectContinuation) -> Option<(ProgressV1, StartedV1)> {
+fn progress(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Option<(ProgressV1, StartedV1, u32)> {
     let progress = state.eternal_owned_draw_progress_v1?;
     let CommittedEvent::EternalOwnedDrawV1 { journal } =
         state.engine.event_history.get(progress.started_at)?
     else {
         return None;
     };
-    let JournalV1::Started(started) = **journal else {
-        return None;
-    };
+    let (started, attempts) = journal.start()?;
     (Some((started.instruction, started.source)) == selected(state, pending)
         && started.item == pending.resolving_item.v4.stack_item_id
         && started.controller == pending.ctx.controller
-        && progress.completed < started.total)
-        .then_some((progress, started))
+        && progress.completed < attempts)
+        .then_some((progress, started, attempts))
 }
 
 pub(crate) fn completion_matches(
@@ -499,7 +520,7 @@ pub(crate) fn completion_matches(
     ordinal: u32,
     path: &[u16],
 ) -> bool {
-    progress(state, pending).is_some_and(|(progress, started)| {
+    progress(state, pending).is_some_and(|(progress, started, _)| {
         ordinal == progress.completed && path == started.instruction.completion_path()
     })
 }
@@ -510,7 +531,7 @@ pub(crate) fn complete(
     ordinal: u32,
     path: &[u16],
 ) -> Result<(), String> {
-    let (progress, started) =
+    let (progress, started, attempts) =
         progress(state, pending).ok_or("Eternal draw lost its native start")?;
     if ordinal != progress.completed
         || path != started.instruction.completion_path()
@@ -531,7 +552,7 @@ pub(crate) fn complete(
         },
     );
     let terminal = draw_won_game(state, drawer);
-    if terminal || completed == started.total {
+    if terminal || completed == attempts {
         state.eternal_owned_draw_progress_v1 = None;
         if !terminal {
             finish_instruction(state, pending, started.instruction);
@@ -657,7 +678,7 @@ pub(crate) fn draw_stage_matches(
     path: &[u16],
     remaining: &[EffectFrame],
 ) -> bool {
-    progress(state, pending).is_some_and(|(progress, started)| {
+    progress(state, pending).is_some_and(|(progress, started, _)| {
         Some(drawer) == started.instruction.drawer(&pending.ctx)
             && path == started.instruction.draw_path()
             && remaining == [completion(started.instruction, progress.completed)]
@@ -715,7 +736,7 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
             Ok(())
         };
     }
-    let (progress, started) =
+    let (progress, started, _) =
         progress(state, pending).ok_or("Eternal draw lost its native start")?;
     validate_native_progress(state, &pending.ctx, progress, started)?;
     let (path, remaining) =

@@ -1596,7 +1596,8 @@ pub fn hamlet_name(state: &GameState, hamlet: ObjectId) -> Option<u16> {
 
 /// Quantum Riddler: "As long as you have one or fewer cards in hand, if you
 /// would draw one or more cards, you draw that many cards plus one
-/// instead." The extra draws one draw event gets, one per Riddler.
+/// instead." One additional attempt per applicable Riddler, for the whole
+/// instruction before any individual draw replacement.
 pub(crate) fn riddler_extra_draws(state: &GameState, player: PlayerId) -> usize {
     static RIDDLER: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();
     let Some(riddler) = *RIDDLER.get_or_init(|| card_id_by_name(QUANTUM_RIDDLER)) else {

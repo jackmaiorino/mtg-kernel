@@ -97,6 +97,7 @@ pub(crate) fn owned_draw_needs_choice(state: &GameState, player: PlayerId, count
     if count == 0 {
         return false;
     }
+    let count = count + event::draw_instruction_extra(state, player, count);
     if !dredge_cards(state, player).is_empty() {
         return true;
     }
@@ -155,7 +156,7 @@ pub(crate) fn drive_draws(
         let Some((kind, cards)) =
             replacement_options(state, continuation, drawer, &path, &continuation.frames)
         else {
-            event::propose_and_commit(state, ProposedEvent::draw(drawer));
+            commit_resolution_draw(state, continuation, drawer, &path);
             count -= 1;
             continue;
         };
@@ -180,6 +181,19 @@ pub(crate) fn drive_draws(
         return Ok(true);
     }
     Ok(false)
+}
+
+fn commit_resolution_draw(
+    state: &mut GameState,
+    continuation: &EffectContinuation,
+    drawer: PlayerId,
+    path: &[u16],
+) {
+    if owned_draws_v1::draw_stage_matches(state, continuation, drawer, path, &continuation.frames) {
+        event::propose_draw_attempt(state, drawer);
+    } else {
+        event::propose_and_commit(state, ProposedEvent::draw(drawer));
+    }
 }
 
 fn replacement_options(
@@ -470,19 +484,25 @@ pub(crate) fn finish_jace_or_hullbreacher(
             crate::eternal_vintage_v1::paradoxical_outcome_v1::abandon(state, &pending.ctx);
         }
     } else {
-        event::propose_and_commit(state, ProposedEvent::draw(player));
+        commit_resolution_draw(state, pending, player, &choice.path);
     }
     Ok(())
 }
 
 /// Applies a dredge choice: no card draws, a card dredges.
-pub(crate) fn finish(state: &mut GameState, player: PlayerId, chosen: Option<EffectObjectBinding>) {
+pub(crate) fn finish(
+    state: &mut GameState,
+    pending: &EffectContinuation,
+    choice: &E3ChoiceV1,
+    chosen: Option<EffectObjectBinding>,
+) {
+    let player = choice.player;
     let Some(card) = chosen else {
-        event::propose_and_commit(state, ProposedEvent::draw(player));
+        commit_resolution_draw(state, pending, player, &choice.path);
         return;
     };
     if !dredge(state, player, card.object, binding_link(&card)) {
-        event::propose_and_commit(state, ProposedEvent::draw(player));
+        commit_resolution_draw(state, pending, player, &choice.path);
     }
 }
 

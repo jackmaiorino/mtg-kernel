@@ -2092,7 +2092,7 @@ pub(crate) fn finish_selection(
     }
     match kind {
         E7bChoiceV1::DredgeV1 => {
-            dredge::finish(state, player, chosen);
+            dredge::finish(state, continuation, choice, chosen);
             Ok(false)
         }
         E7bChoiceV1::JaceOrHullbreacherV1 => {
