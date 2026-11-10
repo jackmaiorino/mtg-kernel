@@ -316,5 +316,6 @@
 {"NishobaDamageSourceV1":{"source":{"source":41,"card_def":1190,"owner":0,"controller":0,"zone":"Battlefield","zone_change_count":1},"damage_history_index":7}},
 {"MartyrRevealPaidV1":{"item":1,"source":{"source":40,"card_def":1215,"owner":1,"controller":0,"zone":"Battlefield","zone_change_count":0},"revealed":[737,737]}},
 {"MeddlingMageEntryV1":{"journal":{"Started":{"operation":"Advance","original_sha256":"v2:11ea7bef6c516758715d8dd7a25e3eac23067a118f1912cfdf4799eadf3fad6d"}}}},
-{"EternalOpeningV1":{"record":{"Enabled":0}}}
+{"EternalOpeningV1":{"record":{"Enabled":0}}},
+{"EternalOwnedDrawV1":{"journal":{"Started":{"item":4,"source":{"Ability":{"source":40,"card_def":487,"owner":0,"controller":0,"zone":"Battlefield","zone_change_count":4}},"controller":0,"instruction":"Tamiyo","total":9,"initial_library_len":17}}}}
 ]

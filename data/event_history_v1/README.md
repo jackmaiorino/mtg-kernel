@@ -200,3 +200,23 @@ in `mage-producer/MeddlingMageEntryV1.json` and
 `2443309bc6f5430868ffccc7fc1dc8528d215d8ec0aef812709e7b580781c11e`.
 The batch had 49 passes and four failures. Passing producers do not establish
 the still-pending every-kind consumer checks or complete card admission.
+
+## Appended owned-draw sample (November 10, 2026)
+
+Row 319, `EternalOwnedDrawV1`, is the first actual event emitted by
+`eternal_vintage_e4_v1::paid_tamiyo_ultimate_keeps_its_starting_draw_count_and_tail_both_seats`
+at source `f90a56fd929b457a87dc9be1ac5102085b4844a4`. The complete paid producer
+passed in 2.317818 seconds; the guarded Rust 1.94.1/MSVC integration batch
+passed all 86 cases with no timeout. The previous 318-event prefix is unchanged.
+
+The original 248-byte payload has SHA-256
+`44b4152a57a971fe2da5a6a7f11fab882fc5e923f2e84a5b082d4fe916c712d5`
+and remains at
+`D:/codex-mixed21-52f25-20261108/verify-limited-fullpool-s1-f90a/event-samples/owned-draw-producer/EternalOwnedDrawV1.json`.
+The run manifest SHA-256 is
+`32ccef354fbd383671b1cf1cb1e742646032ab24c360e3420f6606724d46b8c2`;
+the archived integration binary SHA-256 is
+`1f561d384ee34e399f681a5d9ce9f13e86a2d78ab832f7c1bd2cd188933e68f6`.
+Only this passing producer supplied the appended sample. The earlier failed
+Tamiyo attempt is retained separately and was not imported. Every-kind
+consumer checks and complete card admission remain pending.
