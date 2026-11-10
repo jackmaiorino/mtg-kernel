@@ -2797,7 +2797,34 @@ pub(crate) fn add_soul_counter_to_ability_source_v1(
 /// active replacement that applies to `event` and hasn't already touched it
 /// (loop-prevention via `touched_by`), applies it, and marks it touched.
 /// Returns `None` if the event ends up fully prevented.
-pub fn apply_replacements(
+pub fn apply_replacements(state: &mut GameState, proposed: ProposedEvent) -> Option<ProposedEvent> {
+    if refuse_unowned_donated_damage(state, &proposed) {
+        return None;
+    }
+    apply_replacements_inner(state, proposed)
+}
+
+fn donated_historical_damage_source(state: &GameState, event: &ProposedEvent) -> Option<ObjectId> {
+    let ProposedEvent::Damage(damage) = event else {
+        return None;
+    };
+    damage.historical_source
+        .filter(|id| crate::fixed_source_damage_v3::has_donated_payment(state, *id))
+        .map(|_| damage.source)
+}
+
+fn refuse_unowned_donated_damage(state: &mut GameState, event: &ProposedEvent) -> bool {
+    let Some(source) = donated_historical_damage_source(state, event) else {
+        return false;
+    };
+    state.engine.halted = Some((
+        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+        source,
+    ));
+    true
+}
+
+fn apply_replacements_inner(
     state: &mut GameState,
     mut proposed: ProposedEvent,
 ) -> Option<ProposedEvent> {
@@ -3612,7 +3639,7 @@ pub(crate) fn commit_twinflame_ordered_scalar(
     let gain = lifelink_gain_for(state, &proposed);
     let at = u32::try_from(state.engine.event_history.len())
         .map_err(|_| "ordered damage index overflow")?;
-    commit(state, proposed);
+    commit_crystal_owned_damage(state, proposed);
     let gain_at = if let Some((player, amount)) = gain {
         let index = u32::try_from(state.engine.event_history.len())
             .map_err(|_| "ordered gain index overflow")?;
@@ -3685,7 +3712,7 @@ fn prepare_commit_crystal_damage(
     let prepared = if guaranteed_zero {
         None
     } else {
-        apply_replacements(state, ProposedEvent::Damage(damage))
+        apply_replacements_inner(state, ProposedEvent::Damage(damage))
     };
     if state.engine.halted.is_some() {
         return Err("Crystal damage preparation halted".into());
@@ -3705,7 +3732,7 @@ fn prepare_commit_crystal_damage(
         let gain = lifelink_gain_for(state, &final_event);
         let at = u32::try_from(state.engine.event_history.len())
             .map_err(|_| "Crystal damage history exceeds u32")?;
-        commit(state, final_event);
+        commit_crystal_owned_damage(state, final_event);
         if !matches!(
             state.engine.event_history.get(at as usize),
             Some(CommittedEvent::Damage { .. })
@@ -4010,6 +4037,23 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
 }
 
 pub(crate) fn commit_without_linked_aura_v1(state: &mut GameState, event: ProposedEvent) {
+    if refuse_unowned_donated_damage(state, &event) {
+        return;
+    }
+    commit_after_authority_check(state, event);
+}
+
+// The Crystal interpreter's two scalar commit paths have already authenticated
+// the exact removed row or replacement answer before dispatching this event.
+fn commit_crystal_owned_damage(state: &mut GameState, event: ProposedEvent) {
+    if donated_historical_damage_source(state, &event).is_some() {
+        commit_after_authority_check(state, event);
+    } else {
+        commit(state, event);
+    }
+}
+
+fn commit_after_authority_check(state: &mut GameState, event: ProposedEvent) {
     if !preflight_wide_life_v59(state, &event) {
         return;
     }

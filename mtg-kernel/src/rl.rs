@@ -2724,6 +2724,10 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             "Crystal requires its selected public/Human successor".into(),
         ));
     }
+    if ordered_full_text {
+        crate::effect::crystal_prevention_v1::validate_ordered_donated_archive(state)
+            .map_err(RlContractError)?;
+    }
     let projection = PublicObservationProjectionV2 {
         turn: state.turn,
         phase: state.step.into(),
@@ -2767,6 +2771,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             acting_player,
             (accept_cant_block, accept_gourmand),
             accept_temporary_control,
+            accept_crystal || ordered_full_text,
         )?,
         object_relations: object_relations_public_v4(state, acting_player)?,
         exile_play_permissions: exile_play_permissions_public_v2(state)?,
@@ -5478,6 +5483,10 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         return Err(RlContractError(
             "Crystal requires its selected public/Human successor".into(),
         ));
+    }
+    if ordered_full_text {
+        crate::effect::crystal_prevention_v1::validate_ordered_donated_archive(state)
+            .map_err(RlContractError)?;
     }
     if !accept_combat_rules && crate::combat_static_rules_v1::requires_successor(request.state) {
         return Err(RlContractError(
@@ -11145,8 +11154,14 @@ fn continuous_effects_common_v2(
     acting_player: PlayerId,
     accept_cant_block: (bool, bool),
     accept_temporary_control: bool,
+    accept_crystal: bool,
 ) -> Result<Vec<ContinuousEffectPublicV2>> {
     let (accept_cant_block, accept_gourmand) = accept_cant_block;
+    if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "player hexproof and controlled-creature noncombat prevention require a public successor".into(),
+        ));
+    }
     if accept_temporary_control {
         crate::effect::temporary_control_v1::authority::validate(state).map_err(RlContractError)?;
     } else {

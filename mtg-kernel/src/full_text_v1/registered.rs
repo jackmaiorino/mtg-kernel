@@ -487,7 +487,7 @@ fn volrath_native_paid_fanatic_uses_original_damage_source_both_seats() {
 
     for player in [PlayerId::P0, PlayerId::P1] {
         let opponent = player.opponent();
-        for protect in [false, true] {
+        for (protect, prevent) in [(false, false), (true, false), (false, true)] {
             let mut state = ordered_game(player);
             let donor = put(&mut state, player, "Mogg Fanatic", Zone::Graveyard);
             let target = if protect {
@@ -502,6 +502,7 @@ fn volrath_native_paid_fanatic_uses_original_damage_source_both_seats() {
             };
             let mother =
                 protect.then(|| put(&mut state, opponent, "Mother of Runes", Zone::Battlefield));
+            let strands = prevent.then(|| put(&mut state, opponent, "Prismatic Strands", Zone::Hand));
             let source = cast_volrath(&mut state, player);
             settled(&mut state);
             assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
@@ -561,6 +562,23 @@ fn volrath_native_paid_fanatic_uses_original_damage_source_both_seats() {
             let mut forged = state.clone();
             forged.stack.last_mut().unwrap().v4.fixed_damage_paid_v3 = Default::default();
             assert!(fixed_source_damage_v3::validate_state(&forged).is_err());
+            let ctx = crate::effect::crystal_prevention_v1::context(&item);
+            let mut forged = state.clone();
+            crate::effect::execute(&fixed_source_damage_v3::printed_root(), &ctx, &mut forged);
+            assert!(forged.engine.halted.is_some());
+            assert_eq!(forged.engine.event_history, state.engine.event_history);
+
+            let mut forged_damage = event::ProposedEvent::damage(source, target, 1);
+            let event::ProposedEvent::Damage(damage) = &mut forged_damage else {
+                unreachable!();
+            };
+            damage.historical_source = Some(item.v4.stack_item_id);
+            for apply in [event::propose_and_commit, event::commit] {
+                let mut forged = state.clone();
+                apply(&mut forged, forged_damage.clone());
+                assert!(forged.engine.halted.is_some());
+                assert_eq!(forged.engine.event_history, state.engine.event_history);
+            }
 
             // A later incarnation now has the original blue physical text.
             event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
@@ -595,11 +613,23 @@ fn volrath_native_paid_fanatic_uses_original_damage_source_both_seats() {
                     act(branch, Action::ChooseEffectOption(3)); // red in WUBRG order
                     assert!(branch.objects.get(mother).tapped);
                 }
+                if let Some(strands) = strands {
+                    act(branch, Action::Pass);
+                    pool(branch, opponent, &[ManaColor::W], 2);
+                    cast(branch, strands);
+                    assert!(matches!(
+                        settle(branch),
+                        Some(Decision::ChooseEffectOption { player, source, option_count: 5 })
+                        if player == opponent && source == strands
+                    ));
+                    act(branch, Action::ChooseEffectOption(3)); // red in WUBRG order
+                }
+                let deals_damage = !protect && !prevent;
                 let life_before = branch.players[opponent.index()].life;
                 settled(branch);
                 assert_eq!(
                     branch.players[opponent.index()].life,
-                    life_before - i32::from(!protect)
+                    life_before - i32::from(deals_damage)
                 );
                 assert_eq!(
                     branch
@@ -612,7 +642,7 @@ fn volrath_native_paid_fanatic_uses_original_damage_source_both_seats() {
                     } if *actual == source && *recipient == target)
                         })
                         .count(),
-                    usize::from(!protect)
+                    usize::from(deals_damage)
                 );
                 let outcome = if protect {
                     fixed_source_damage_v3::OutcomeV3::NoLegalTarget
@@ -625,6 +655,38 @@ fn volrath_native_paid_fanatic_uses_original_damage_source_both_seats() {
                             && removal.outcome == outcome)
                 }));
                 fixed_source_damage_v3::validate_state(branch).unwrap();
+                crate::effect::crystal_prevention_v1::validate(branch).unwrap();
+                for viewer in [player, opponent] {
+                    crate::rl::observe_premodern_ordered_v1(branch, &surface, viewer, 3).unwrap();
+                }
+
+                if prevent {
+                    assert_eq!(branch.objects.get(strands.unwrap()).zone, Zone::Graveyard);
+                    assert_eq!(branch.players[opponent.index()].mana_pool, [0; 6]);
+                    assert!(branch.engine.event_history.iter().any(|event| {
+                        matches!(event, CommittedEvent::CrystalDamageOperationV3 { operation }
+                            if operation.historical_source == Some(item.v4.stack_item_id)
+                                && operation.output.is_none()
+                                && operation.damage_history.is_none())
+                    }));
+                }
+                if protect {
+                    let mut forged: GameState = serde_json::from_slice(
+                        &serde_json::to_vec(branch).unwrap(),
+                    ).unwrap();
+                    let removal = forged.engine.event_history.iter_mut().find_map(|event| {
+                        match event {
+                            CommittedEvent::FixedDamageRemovedV3 { removal }
+                                if removal.item.v4.stack_item_id == item.v4.stack_item_id =>
+                            {
+                                Some(removal)
+                            }
+                            _ => None,
+                        }
+                    }).unwrap();
+                    removal.outcome = fixed_source_damage_v3::OutcomeV3::Resolved;
+                    assert!(fixed_source_damage_v3::validate_state(&forged).is_err());
+                }
             }
             assert_eq!(state.state_hash(), restored.state_hash());
         }

@@ -1310,7 +1310,9 @@ pub(crate) fn requires_successor_with_full_text(
         } else {
             crate::fixed_source_damage_v3::requires_successor(state)
         }
-        || boundaries(state).next().is_some()
+        || boundaries(state).any(|boundary| {
+            !ordered_full_text || !crate::fixed_source_damage_v3::donated_fanatic(&boundary.item)
+        })
         || state
             .engine
             .event_history
@@ -1322,15 +1324,22 @@ pub(crate) fn requires_successor_with_full_text(
                 EventKindV1::CrystalShieldOperationV1,
             ])
             .iter()
-            .any(|event| {
-                matches!(
-                    event,
-                    CommittedEvent::CrystalShieldOperationV1 { .. }
-                        | CommittedEvent::CrystalExecutionV1 { .. }
-                        | CommittedEvent::CrystalDamageOperationV3 { .. }
-                        | CommittedEvent::CrystalBatchPreparedV3 { .. }
-                        | CommittedEvent::CrystalProgramChoiceV3 { .. }
-                )
+            .any(|event| match event {
+                CommittedEvent::CrystalExecutionV1 { execution } => {
+                    !ordered_full_text
+                        || !crate::fixed_source_damage_v3::donated_fanatic(&execution.item)
+                }
+                CommittedEvent::CrystalDamageOperationV3 { operation } => {
+                    !ordered_full_text
+                        || !operation.historical_source.is_some_and(|id| {
+                            operation.ctx.stack_item_id == Some(id)
+                                && crate::fixed_source_damage_v3::has_donated_payment(state, id)
+                        })
+                }
+                CommittedEvent::CrystalShieldOperationV1 { .. }
+                | CommittedEvent::CrystalBatchPreparedV3 { .. }
+                | CommittedEvent::CrystalProgramChoiceV3 { .. } => true,
+                _ => false,
             })
         || state
             .stack
@@ -1338,6 +1347,20 @@ pub(crate) fn requires_successor_with_full_text(
             .any(|i| i.v4.crystal_prevention_started_v1.0.is_some())
         || is_choice(state)
 }
+/// The ordered consumer admits only the donated Fanatic's closed receipts.
+/// Validate all three kinds together so an orphan execution or damage record
+/// cannot bypass validation by omitting its boundary.
+pub(crate) fn validate_ordered_donated_archive(state: &GameState) -> Result<(), String> {
+    if !state.engine.event_history.scan_for_v1(&[
+        EventKindV1::CrystalPreventionBoundaryV1,
+        EventKindV1::CrystalExecutionV1,
+        EventKindV1::CrystalDamageOperationV3,
+    ]).is_empty() {
+        validate(state)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn mixed_environment(state: &GameState) -> bool {
     (crate::crystal_barricade_v1::active(state) || crate::twinflame_tyrant_v1::has_active_source(state))
         && state.engine.active_replacements.iter().any(|r|
@@ -1365,7 +1388,7 @@ pub(crate) fn acquire_owner(
         || excess_root
         || mixed_environment(state)
         || crate::twinflame_tyrant_v1::has_active_source(state)
-        || crate::fixed_source_damage_v3::requires_crystal_execution(state, item)
+        || crate::fixed_source_damage_v3::tracked(state, item)
         || crate::equipment_damage_source_v4::tracked(state, item)
         || (crate::gorehorn_damage_v1::selected(item)
             && crate::crystal_barricade_v1::active(state))

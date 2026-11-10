@@ -1,6 +1,6 @@
 //! Captured fixed damage for exact Firebrand and donated Fanatic payments.
 use crate::card_def::{CardDef, CostComponent, TargetSpec, CARD_DEFS};
-use crate::effect::{EffectOp, ExecCtx, TargetRef};
+use crate::effect::{EffectOp, TargetRef};
 use crate::event::{CommittedEvent, HistoricalDamageSourceV1};
 use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, StackItemId};
@@ -145,9 +145,7 @@ pub(crate) fn requires_other_successor(state: &GameState) -> bool {
             })
 }
 
-pub(crate) fn requires_crystal_execution(state: &GameState, item: &StackItem) -> bool {
-    tracked(state, item) && !donated_fanatic(item)
-}
+
 fn is_record(e: &CommittedEvent) -> bool {
     matches!(
         e,
@@ -396,31 +394,14 @@ pub(crate) fn has_payment(state: &GameState, id: StackItemId) -> bool {
         if payment.item.v4.stack_item_id==id)
         })
 }
-pub(crate) fn donated_fanatic_damage(
-    state: &GameState,
-    ctx: &ExecCtx,
-    op: &EffectOp,
-) -> Result<Option<StackItemId>, String> {
-    if !cfg!(feature = "eternal-fixtures") {
-        return Ok(None);
-    }
-    let Some(id) = ctx.stack_item_id.filter(|id| has_payment(state, *id)) else {
-        return Ok(None);
-    };
-    let paid = payment(state, id)?;
-    if !donated_fanatic(&paid.item) {
-        return Ok(None);
-    }
-    if paid.item.v4.ability_source_contract != ctx.ability_source_contract
-        || paid.item.source != ctx.source
-        || paid.item.controller != ctx.controller
-        || paid.item.targets != ctx.targets
-        || paid.item.v4.target_contracts != ctx.target_contracts
-        || *op != printed_root()
-    {
-        return Err("donated Fanatic damage differs from its exact paid activation".into());
-    }
-    Ok(Some(id))
+pub(crate) fn has_donated_payment(state: &GameState, id: StackItemId) -> bool {
+    cfg!(feature = "eternal-fixtures") && state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::FixedDamagePaidV3])
+        .iter()
+        .any(|event| matches!(event, CommittedEvent::FixedDamagePaidV3 { payment }
+            if payment.item.v4.stack_item_id == id && donated_fanatic(&payment.item)))
 }
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
     if !tracked(state, item) {
@@ -479,12 +460,9 @@ fn completed_item(state: &GameState, payment: &PaidV3) -> Result<StackItem, Stri
             _ => None,
         })
         .collect::<Vec<_>>();
-    let Some(last) = rows.last() else {
-        if donated_fanatic(&payment.item) {
-            return Ok(*payment.item.clone());
-        }
-        return Err("fixed damage resolution has no owned execution".into());
-    };
+    let last = rows
+        .last()
+        .ok_or("fixed damage resolution has no owned execution")?;
     if last.pending.is_some()
         || last.answer.is_some()
         || !crate::effect::crystal_prevention_v1::source_power_payment_matches(
