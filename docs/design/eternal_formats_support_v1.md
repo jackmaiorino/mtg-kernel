@@ -485,6 +485,13 @@ New, each built once in the first wave that needs it:
   A paid physical Phyrexian Metamorph copying a visible Mage chooses its own name
   before entry. The entry keeps Metamorph's physical cast receipt, commits the Mage
   characteristics and artifact type, and restores Metamorph's printing on departure.
+  Paid Reanimate uses a native pre-entry copy choice across both battlefields,
+  then installs the supported face-up Mage or Wall of Blossoms form before the
+  Mage name choice or the Wall's draw trigger. An unsupported legal copy
+  refuses the entire prompt. The saved copy binds the actual Reanimate cast
+  and entry window. The native runner authenticates its original graveyard
+  target during execution. Aether Vial and other noncast producers remain
+  outside this path.
   Dress Down suppresses the physical copy choice before entry. Other copy-entry
   routes are outside this repair. Native qualification is pending.
   Extirpate uses the shared extraction continuation to require all

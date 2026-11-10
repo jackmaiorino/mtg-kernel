@@ -175,7 +175,10 @@ pub(crate) fn replace_zone_change(state: &GameState, change: &mut event::ZoneCha
             if is_token || live.zone == Zone::Stack || live.zone == Zone::Battlefield {
                 return;
             }
-            let Some(def) = CARD_DEFS.get(usize::from(live.card_def)) else {
+            let printing =
+                crate::linked_aura_operation_v1::metamorph_mage_copy(state, change.object)
+                    .map_or(live.card_def, |copy| copy.copied.card_def);
+            let Some(def) = CARD_DEFS.get(usize::from(printing)) else {
                 return;
             };
             if !change.battlefield_manifested_v1 && !def.has_type(CardType::Creature) {

@@ -39,13 +39,164 @@ pub struct ChoiceV1 {
     pub(crate) metamorph_copy: Option<MetamorphCopyV1>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MetamorphCopyV1 {
     pub(crate) physical: AbilitySourceContractV4,
     pub(crate) copied: AbilitySourceContractV4,
     cast_at: usize,
     stack_item: StackItemId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reanimated_by: Option<AbilitySourceContractV4>,
+}
+
+impl Hash for MetamorphCopyV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.physical.hash(state);
+        self.copied.hash(state);
+        self.cast_at.hash(state);
+        self.stack_item.hash(state);
+        if let Some(source) = self.reanimated_by {
+            b"metamorph-reanimate-copy/v1".hash(state);
+            source.hash(state);
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReanimateCopyChoiceV1 {
+    pub(crate) physical: AbilitySourceContractV4,
+    pub(crate) producer: AbilitySourceContractV4,
+    pub(crate) candidates: Vec<AbilitySourceContractV4>,
+    cast_at: usize,
+    stack_item: StackItemId,
+}
+
+pub(crate) fn physical_graveyard_metamorph(state: &GameState, object: ObjectId) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && state.objects.try_get(object).is_some_and(|live| {
+            live.zone == Zone::Graveyard
+                && !live.v4.is_token
+                && live.v4.face_down_v1.is_none()
+                && live.spell_copy_origin.is_none()
+                && card_id_by_name("Phyrexian Metamorph") == Some(live.card_def)
+        })
+}
+
+pub(crate) fn reanimate_metamorph_waiting(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> bool {
+    use crate::state::{StackItemKind, Target};
+    item.kind == StackItemKind::Spell
+        && !item.is_copy
+        && item.v4.source_contract.is_some_and(|source| {
+            source.zone == Zone::Stack && card_id_by_name("Reanimate") == Some(source.card_def)
+        })
+        && matches!(item.targets.as_slice(), [Target::Object(object)]
+            if physical_graveyard_metamorph(state, *object))
+}
+
+/// The prospective entry owner implements Mage's name choice and Wall's
+/// ordinary draw trigger. Other registered definitions can still require an
+/// as-enters choice or a copy overlay that this entry path cannot install.
+fn reanimate_copy_definition(card_def: u16) -> bool {
+    owns_definition(card_def)
+        || CARD_DEFS
+            .get(usize::from(card_def))
+            .is_some_and(|definition| {
+                definition.name == "Wall of Blossoms" && definition.has_full_support()
+            })
+}
+
+impl ReanimateCopyChoiceV1 {
+    pub(crate) fn capture(
+        state: &GameState,
+        ctx: &crate::effect::ExecCtx,
+        object: ObjectId,
+        item: &crate::state::StackItem,
+    ) -> Result<Option<Self>, String> {
+        if !reanimate_metamorph_waiting(state, item)
+            || ctx.targets.as_slice() != [crate::state::Target::Object(object)]
+            || ctx.stack_item_id != Some(item.v4.stack_item_id)
+            || ctx.source != item.source
+            || ctx.controller != item.controller
+            || ctx.targets != item.targets
+            || ctx.target_contracts != item.v4.target_contracts
+            || !ctx.target_incarnation_matches(0, state)
+        {
+            return Err("noncast Metamorph lost its actual paid Reanimate target".into());
+        }
+        if crate::eternal_legacy_e7a_v1::active_dress_down_timestamp(state, Some(object)).is_some()
+        {
+            return Ok(None);
+        }
+        let mut candidates = Vec::new();
+        for binding in crate::effect::metamorph_copy_candidates(state, ctx.controller)? {
+            let live = state.objects.get(binding.object);
+            if live.zone != Zone::Battlefield
+                || live.v4.face_down_v1.is_some()
+                || live.v4.face_index != 0
+                || live.v4.is_token
+                || crate::eternal_vintage_v1::active_copy(state, binding.object)
+                || !reanimate_copy_definition(live.card_def)
+            {
+                return Err(
+                    "noncast Metamorph copy menu contains an unsupported entry form".into(),
+                );
+            }
+            candidates.push(AbilitySourceContractV4::capture(state, binding.object));
+        }
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+        let choice = Self {
+            physical: AbilitySourceContractV4::capture(state, object),
+            producer: AbilitySourceContractV4::capture(state, ctx.source),
+            candidates,
+            cast_at: paid_cast_index(state, item.v4.stack_item_id)?,
+            stack_item: item.v4.stack_item_id,
+        };
+        if !choice.copy(choice.candidates[0]).cast_matches(state) {
+            return Err("noncast Metamorph lost its actual paid Reanimate publication".into());
+        }
+        Ok(Some(choice))
+    }
+
+    pub(crate) fn copy(&self, copied: AbilitySourceContractV4) -> MetamorphCopyV1 {
+        MetamorphCopyV1 {
+            physical: self.physical,
+            copied,
+            cast_at: self.cast_at,
+            stack_item: self.stack_item,
+            reanimated_by: Some(self.producer),
+        }
+    }
+}
+
+fn paid_cast_index(state: &GameState, stack_item: StackItemId) -> Result<usize, String> {
+    let mut casts = state
+        .engine
+        .event_history
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::PublishedCastIdentityV1])
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| match event {
+            CommittedEvent::PublishedCastIdentityV1 { receipt }
+                if receipt.stack_item_id == stack_item =>
+            {
+                Some(index + 1)
+            }
+            _ => None,
+        });
+    let cast = casts
+        .next()
+        .ok_or("Metamorph copy has no paid cast receipt")?;
+    if casts.next().is_some() {
+        return Err("Metamorph copy has duplicate cast receipts".into());
+    }
+    Ok(cast)
 }
 
 impl MetamorphCopyV1 {
@@ -77,30 +228,15 @@ impl MetamorphCopyV1 {
         {
             return Ok(None);
         }
-        let mut casts = state
-            .engine
-            .event_history
-            .scan_for_v1(&[crate::event_history_v1::EventKindV1::PublishedCastIdentityV1])
-            .iter()
-            .enumerate()
-            .filter_map(|(index, event)| match event {
-                CommittedEvent::PublishedCastIdentityV1 { receipt }
-                    if receipt.stack_item_id == stack_item =>
-                {
-                    Some(index + 1)
-                }
-                _ => None,
-            });
-        let cast_at = casts
-            .next()
-            .ok_or("Metamorph copy has no paid cast receipt")?;
+        let cast_at = paid_cast_index(state, stack_item)?;
         let copy = Self {
             physical: AbilitySourceContractV4::capture(state, ctx.source),
             copied: AbilitySourceContractV4::capture(state, selected.object),
             cast_at,
             stack_item,
+            reanimated_by: None,
         };
-        if casts.next().is_some() || !copy.cast_matches(state) {
+        if !copy.cast_matches(state) {
             return Err("Metamorph copy changed its paid physical cast".into());
         }
         Ok(Some(copy))
@@ -112,9 +248,16 @@ impl MetamorphCopyV1 {
         let Some(cast_receipt) = self.cast_at.checked_sub(1).and_then(|at| history.get(at)) else {
             return false;
         };
-        let source = self.physical;
+        let source = self.reanimated_by.unwrap_or(self.physical);
+        let expected = if self.reanimated_by.is_some() {
+            "Reanimate"
+        } else {
+            "Phyrexian Metamorph"
+        };
         source.zone == Zone::Stack
-            && card_id_by_name("Phyrexian Metamorph") == Some(source.card_def)
+            && card_id_by_name(expected) == Some(source.card_def)
+            && card_id_by_name("Phyrexian Metamorph") == Some(self.physical.card_def)
+            && (self.reanimated_by.is_none() || self.physical.zone == Zone::Graveyard)
             && matches!(cast_receipt, CommittedEvent::PublishedCastIdentityV1 { receipt }
                 if receipt.stack_item_id == self.stack_item
                     && receipt.spell_cast_history_index == self.cast_at as u64
@@ -130,11 +273,12 @@ impl MetamorphCopyV1 {
     fn entrant_matches(self, entrant: AbilitySourceContractV4) -> bool {
         self.copied.zone == Zone::Battlefield
             && self.copied.source != self.physical.source
-            && owns_definition(self.copied.card_def)
+            && (owns_definition(self.copied.card_def)
+                || self.reanimated_by.is_some() && reanimate_copy_definition(self.copied.card_def))
             && entrant.source == self.physical.source
             && entrant.card_def == self.copied.card_def
             && entrant.zone == Zone::Battlefield
-            && entrant.controller == self.physical.controller
+            && entrant.controller == self.reanimated_by.unwrap_or(self.physical).controller
             && entrant.owner == self.physical.owner
             && self.physical.zone_change_count.checked_add(1) == Some(entrant.zone_change_count)
     }
@@ -219,7 +363,8 @@ pub struct CheckpointV1 {
     pub(crate) operation: OperationV1,
     pub(crate) answers: Vec<GeneralAnswerV36>,
     pub(crate) choice: GeneralChoiceV36,
-    pub(crate) operation_history_index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) operation_history_index: Option<u32>,
     pub(crate) used_banner: bool,
 }
 
@@ -399,23 +544,84 @@ pub(crate) fn record(state: &mut GameState, journal: JournalV1) {
         });
 }
 
+/// A paid Reanimate must still be resolving when its target actually enters.
+/// The native archive binds the exact cast and resulting entry window. The
+/// original graveyard target itself is authenticated by the lexical runner.
+fn reanimate_resolution_matches(
+    state: &GameState,
+    copy: MetamorphCopyV1,
+    entry: usize,
+    archived: bool,
+) -> bool {
+    let Some(producer) = copy.reanimated_by else {
+        return true;
+    };
+    let after_cast = copy.cast_at + 1;
+    let first_departure = state.engine.event_history[after_cast..]
+        .iter()
+        .enumerate()
+        .find_map(|(offset, event)| match event {
+            CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Stack,
+                to,
+                controller_before,
+            } if *object == producer.source => Some((after_cast + offset, *to, *controller_before)),
+            _ => None,
+        });
+    match first_departure {
+        Some((at, to, controller)) => {
+            archived
+                && at > entry
+                && to != Zone::Stack
+                && controller == producer.controller
+                && !state.engine.event_history[entry + 1..at]
+                    .iter()
+                    .any(|event| {
+                        matches!(
+                            event,
+                            CommittedEvent::ZoneChange {
+                                from: Zone::Stack,
+                                ..
+                            }
+                        )
+                    })
+        }
+        None => {
+            !archived
+                && state.objects.try_get(producer.source).is_some()
+                && AbilitySourceContractV4::capture(state, producer.source) == producer
+        }
+    }
+}
+
 fn copy_entry_matches(
     state: &GameState,
     copy: MetamorphCopyV1,
     entrant: AbilitySourceContractV4,
     entry: usize,
+    archived: bool,
 ) -> bool {
     let history = &state.engine.event_history;
     copy.cast_at < entry
         && copy.cast_matches(state)
         && copy.entrant_matches(entrant)
+        && reanimate_resolution_matches(state, copy, entry, archived)
+        && (copy.reanimated_by.is_none()
+            || crate::standard_cards_v1::had_card_def(
+                state,
+                entrant.source,
+                entrant.zone_change_count,
+                entrant.card_def,
+            ))
         && matches!(history.get(entry),
-            Some(CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Battlefield, controller_before })
-                if *object == entrant.source && *controller_before == copy.physical.controller)
+            Some(CommittedEvent::ZoneChange { object, from, to: Zone::Battlefield, controller_before })
+                if *object == entrant.source && *from == copy.physical.zone
+                    && *controller_before == copy.physical.controller)
         && !history[copy.cast_at + 1..entry].iter().any(|event| {
             matches!(event,
-            CommittedEvent::ZoneChange { object, from: Zone::Stack, .. }
-                if *object == entrant.source)
+            CommittedEvent::ZoneChange { object, from, .. }
+                if *object == entrant.source && *from == copy.physical.zone)
         })
 }
 
@@ -425,11 +631,11 @@ pub(crate) fn record_metamorph_copy(
     entry_history_index: usize,
 ) -> Result<(), String> {
     let entrant = AbilitySourceContractV4::capture(state, copy.physical.source);
-    if !copy_entry_matches(state, copy, entrant, entry_history_index)
+    if !copy_entry_matches(state, copy, entrant, entry_history_index, false)
         || AbilitySourceContractV4::capture(state, copy.copied.source) != copy.copied
         || !crate::eternal_vintage_v1::active_copy(state, entrant.source)
     {
-        return Err("Metamorph lost the exact public Mage copy on entry".into());
+        return Err("Metamorph lost the exact public copy on entry".into());
     }
     record(
         state,
@@ -512,6 +718,11 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         .scan_for_v1(&[crate::event_history_v1::EventKindV1::MeddlingMageEntryV1])
         .iter()
         .any(|event| matches!(event, CommittedEvent::MeddlingMageEntryV1 { .. }))
+        || state
+            .engine
+            .linked_aura_operation_v1
+            .pending_meddling_mage_v1
+            .is_some()
         || super::read_state(state).is_some_and(|s1b| !s1b.mage_names.is_empty())
 }
 
@@ -689,10 +900,11 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
                 copy,
             } => {
                 if entry_history_index.checked_add(1) != Some(index as usize)
-                    || !copy_entry_matches(state, *copy, *entrant, *entry_history_index)
-                    || !copies_needing_names.insert(*entry_history_index)
+                    || !copy_entry_matches(state, *copy, *entrant, *entry_history_index, true)
+                    || (owns_definition(entrant.card_def)
+                        && !copies_needing_names.insert(*entry_history_index))
                 {
-                    return Err("Metamorph's Mage copy lost its actual cast or entry".into());
+                    return Err("Metamorph copy lost its actual producer or entry".into());
                 }
                 if state.objects.try_get(entrant.source).is_some_and(|live| {
                     live.zone_change_count == entrant.zone_change_count

@@ -1422,18 +1422,22 @@ pub fn anointed_peacekeeper() -> EffectOp {
 pub fn phyrexian_metamorph() -> EffectOp {
     EffectOp::Sequence(vec![
         EffectOp::SelectObjectsV1 {
-            rule: crate::effect::ObjectSelectionRuleV1 {
-                player: PlayerRef::Controller,
-                zone: Zone::Battlefield,
-                any_player: true,
-                filter: crate::effect::ObjectSelectionFilterV1::ArtifactOrCreatureV1,
-                min: 0,
-                max: 1,
-                action: crate::effect::ObjectSelectionActionV1::EnterAsCopyV1,
-            },
+            rule: metamorph_copy_rule(),
         },
         vintage(VintageOpV1::EnterIfStillOnStackV1),
     ])
+}
+
+pub(crate) fn metamorph_copy_rule() -> crate::effect::ObjectSelectionRuleV1 {
+    crate::effect::ObjectSelectionRuleV1 {
+        player: PlayerRef::Controller,
+        zone: Zone::Battlefield,
+        any_player: true,
+        filter: crate::effect::ObjectSelectionFilterV1::ArtifactOrCreatureV1,
+        min: 0,
+        max: 1,
+        action: crate::effect::ObjectSelectionActionV1::EnterAsCopyV1,
+    }
 }
 
 /// Karn, the Great Creator's +1.
