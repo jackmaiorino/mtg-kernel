@@ -1918,9 +1918,15 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
                         Some(Action::ChooseEffectOption(1))
                     }
                     Decision::Discard { count, choices, .. } => {
-                        let islands = choices.iter().copied().filter(|&object| {
-                            object != selected && state.objects.get(object).card_def == id("Island")
-                        }).take(*count as usize).collect::<Vec<_>>();
+                        let islands = choices
+                            .iter()
+                            .copied()
+                            .filter(|&object| {
+                                object != selected
+                                    && state.objects.get(object).card_def == id("Island")
+                            })
+                            .take(*count as usize)
+                            .collect::<Vec<_>>();
                         assert_eq!(islands.len(), *count as usize);
                         Some(Action::Discard(islands))
                     }
@@ -1972,7 +1978,10 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
                 cast(&mut state, bounce, &[Target::Object(vial)]);
                 pass_until(&mut state, |state| zone(state, vial) == Zone::Hand);
                 assert_eq!(state.stack.last().unwrap().source, vial);
-                assert_eq!(state.counter_lki_for(vial, vial_generation).unwrap().charge, 4);
+                assert_eq!(
+                    state.counter_lki_for(vial, vial_generation).unwrap().charge,
+                    4
+                );
             }
             let hand_choice = settle(&mut state);
             assert_eq!(frozen_opening_refusal(&state, opponent), refusal);
