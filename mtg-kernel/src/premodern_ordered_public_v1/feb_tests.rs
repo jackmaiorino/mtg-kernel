@@ -1,0 +1,111 @@
+use super::*;
+use crate::{engine::Action, rl::ActionSemanticV1, surface::SurfaceAction};
+
+fn issued(owner: &FebSessionV1, viewer: PlayerSeatV1) -> (Box<FebNumericViewV1>, Option<FebDecisionV1>) {
+    let FebCurrentV1::Decision { numeric, decision } = owner.current(viewer).unwrap() else {
+        panic!("FEB did not issue a decision: {:?}", owner.inner.current.as_ref().err());
+    };
+    (numeric, decision)
+}
+
+#[test]
+fn frozen_feb_opening_step_and_same_owner_restore_match_native_both_seats() {
+    let deck = resolve_frozen_mainboard_v1().unwrap();
+    let rows = frozen_mainboard_rows_v1().unwrap();
+    assert_eq!(rows.len(), 27);
+    assert_eq!(rows[0].name, "Brushland");
+    assert_eq!(rows.last().unwrap().name, "Survival of the Fittest");
+    assert_eq!(deck.as_slice(), rows.iter().flat_map(|row| {
+        std::iter::repeat_n(card_id_by_name(&row.name).unwrap(), row.count as usize)
+    }).collect::<Vec<_>>());
+    let volrath = card_id_by_name("Volrath's Shapeshifter").unwrap();
+    assert_eq!(deck.iter().filter(|&&id| id == volrath).count(), 2);
+    assert!(crate::limited_session_v1::CustomDeckV1 { cards: rows.to_vec(), companion: None }.resolve().is_err());
+
+    for first in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+        let first_player = native_seat(first);
+        let other = first_player.opponent().into();
+        let mut owner = FebSessionV1::reset(460_615, first).unwrap();
+        let foreign = FebSessionV1::reset(460_615, first).unwrap();
+        let mut native = owner.inner.clone();
+        assert_eq!(owner.inner.game.starting_player, first_player);
+        assert!(owner.inner.game.players.iter().all(|p| p.hand.len() == 7 && p.library.len() == 53));
+        let (initial, token) = issued(&owner, first);
+        let token = token.unwrap();
+        assert_eq!(initial.actor, first);
+        assert_eq!(initial.actions.len(), 2);
+        let (nonactor, authority) = issued(&owner, other);
+        assert!(authority.is_none() && nonactor.actions.is_empty());
+
+        let saved = owner.snapshot();
+        let (_, foreign_token) = issued(&foreign, first);
+        assert!(owner.step(&foreign_token.unwrap(), 0).is_err());
+        assert!(owner.restore(&foreign.snapshot()).is_err());
+        assert!(owner.step(&token, usize::MAX).is_err());
+        assert_eq!(owner.inner.game.state_hash(), saved.inner.game.state_hash());
+
+        let native_opening = native.surface.next_decision(&mut native.game);
+        let menu = rl::legal_action_candidates_v1(&native_opening, &native.game).unwrap();
+        let keep = menu.iter().position(|row| matches!(row.record.semantic,
+            ActionSemanticV1::ChooseLondonMulligan { mulligan: false, .. })).unwrap();
+        assert_eq!(menu[keep].surface_action, SurfaceAction::Action(Action::ChooseLondonMulligan { mulligan: false }));
+        owner.step(&token, keep).unwrap();
+        native.surface.apply(&mut native.game, menu[keep].surface_action.clone()).unwrap();
+        let next = native.surface.next_decision(&mut native.game);
+        assert_eq!(rl::acting_player_for_surface_decision(&next, &native.game), Some(first_player.opponent()));
+        assert_eq!(owner.inner.game.state_hash(), native.game.state_hash());
+
+        owner.restore(&saved).unwrap();
+        assert!(owner.step(&token, keep).is_err());
+        let (restored, fresh) = issued(&owner, first);
+        assert_eq!(restored.observation, initial.observation);
+        assert_eq!(restored.actions, initial.actions);
+        owner.step(&fresh.unwrap(), keep).unwrap();
+        assert_eq!(owner.inner.game.state_hash(), native.game.state_hash());
+
+        let mut played_land = false;
+        for _ in 0..32 {
+            let native_decision = native.surface.next_decision(&mut native.game);
+            let chooser = rl::acting_player_for_surface_decision(&native_decision, &native.game).unwrap();
+            let menu = rl::legal_action_candidates_v1(&native_decision, &native.game).unwrap();
+            let land = menu.iter().position(|row| matches!(row.record.semantic, ActionSemanticV1::PlayLand { .. }));
+            let ordinal = land.or_else(|| menu.iter().position(|row| matches!(row.record.semantic,
+                ActionSemanticV1::Pass { .. } | ActionSemanticV1::ChooseLondonMulligan { mulligan: false, .. }
+            ))).unwrap_or_else(|| panic!("unhandled native opening menu {native_decision:?}"));
+            let (numeric, token) = issued(&owner, chooser.into());
+            assert_eq!(numeric.actions.len(), menu.len());
+            owner.step(&token.unwrap(), ordinal).unwrap();
+            native.surface.apply(&mut native.game, menu[ordinal].surface_action.clone()).unwrap();
+            let _ = native.surface.next_decision(&mut native.game);
+            assert_eq!(owner.inner.game.state_hash(), native.game.state_hash());
+            if land.is_some() {
+                played_land = true;
+                break;
+            }
+        }
+        assert!(played_land);
+    }
+}
+
+#[test]
+fn frozen_feb_opening_packet_is_inert_to_opponent_hidden_copy_assignment() {
+    let owner = FebSessionV1::reset(460_616, PlayerSeatV1::P0).unwrap();
+    let mut paired = FebSessionV1::reset(460_616, PlayerSeatV1::P0).unwrap();
+    let state = &mut paired.inner.game;
+    let hand = state.players[1].hand[0];
+    let library = state.players[1].library.iter().copied().find(|&id| {
+        state.objects.get(id).card_def != state.objects.get(hand).card_def
+    }).unwrap();
+    let a = state.objects.get(hand).card_def;
+    let b = state.objects.get(library).card_def;
+    for (id, definition) in [(hand, b), (library, a)] {
+        let object = state.objects.get_mut(id);
+        object.card_def = definition;
+        object.name = rl::card_name(definition);
+        object.v4 = crate::state::ObjectStateV4::from_card_def(definition);
+    }
+    let (actual, _) = issued(&owner, PlayerSeatV1::P0);
+    let (other, _) = issued(&paired, PlayerSeatV1::P0);
+    assert_eq!(actual.observation, other.observation);
+    assert_eq!(actual.actions, other.actions);
+}
