@@ -176,9 +176,22 @@ intermediates, preserving every executable, log and evidence record.
 commands; `drake474-20261110-cleanup.json` records the observed removal.
 All failed attempts and earlier timing results remain retained.
 
-Next work targets a remaining whole-journal relation pass inside enclosing
-replay. The retained older profile identifies replay as a growing inclusive
-span; it does not isolate that loop's runtime in this candidate. Any sparse
-checked-prefix shortcut must preserve unchecked replay, overlap and duplicate
-refusal, live stack and held-trigger checks before another matched comparison.
+The next source successor, `61ad66ecb`, makes relation validation sparse only
+after an accepted immutable public prefix. It retains the ordered positions
+of private journal rows, rechecks those rows and every new row, and projects
+new enclosing intervals onto their positions. Proven old coverage starts at
+one; backward overlap and duplicate-reference checks remain active. Live
+stack, held-trigger and Time Stop checks still run. Edited, legacy and
+memo-free histories retain the dense relation pass. Replay, serialization
+and digest semantics are unchanged.
+
+The retained older profile identifies replay as a growing inclusive span;
+it does not isolate this loop's runtime in `be8611b12`. The new native fixture
+uses actual paid Drake combat, checks historical row-visit counts, and compares
+dense refusal verdicts for overlapping enclosures, duplicate publication and
+reintroduced live/held rows. Root and independent source review found no
+blocker. Pinned Rust 1.94.1 formatting passed, receipt SHA-256
+`1109ac88ed313ee47aea36253f84809256e60e472c70e56267a88a7d1027e8e8`.
+Native correctness and timing of this successor remain pending. The measured
+33.2203% regression belongs to `be8611b12`, not to this unmeasured successor.
 PR #583 and issue #474 remain open.
