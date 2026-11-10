@@ -547,7 +547,7 @@ impl KaitoSessionV75 {
             session: &self.inner,
             current,
         };
-        let (projection, native) = candidates::project_issued_parts_v75(
+        let (projection, binding) = candidates::project_issued_parts_v75(
             &proof,
             &self.inner.state,
             &self.inner.surface,
@@ -556,17 +556,10 @@ impl KaitoSessionV75 {
             current.physical_decision_id,
             (current.substep_index, current.substep_count),
         )?;
-        if native.original != current.candidates {
+        if binding.original != current.candidates {
             return Err(RlContractError("V75 original pair binding changed".into()));
         }
-        let (_, mut families) = observation::observe_parts_v75(
-            &self.inner.state,
-            &self.inner.surface,
-            (current.actor, &current.origin_decision),
-            self.inner.policy_step_count,
-            current.physical_decision_id,
-            (current.substep_index, current.substep_count),
-        )?;
+        let mut families = binding.families;
         let classified = projection
             .candidates
             .iter()
@@ -580,8 +573,8 @@ impl KaitoSessionV75 {
         }
         Ok(BindingV75 {
             expected,
-            original: native.original,
-            public_to_original: native.public_to_original,
+            original: binding.original,
+            public_to_original: binding.public_to_original,
             projection,
             families,
         })
