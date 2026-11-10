@@ -1,10 +1,14 @@
 //! Rebuild the active, publicly revealed discard menu in a disposable world.
 use super::{
-    bind_hand, revealed_discard_eligible_hand, revealed_discard_excludes_creatures, revealed_discard_names_v1,
-    stage_duress_discard_choice, validate_pending_effect_choice, EffectContinuation,
-    EffectObjectBinding, EffectTargetSelectionPurpose, PendingEffectChoice,
+    bind_hand, revealed_discard_eligible_hand, revealed_discard_excludes_creatures,
+    revealed_discard_names_v1, stage_duress_discard_choice, validate_pending_effect_choice,
+    EffectContinuation, EffectObjectBinding, EffectTargetSelectionPurpose, PendingEffectChoice,
 };
-use crate::{engine::Decision, ids::{ObjectId, PlayerId}, state::{GameState, StackItemKind}};
+use crate::{
+    engine::Decision,
+    ids::{ObjectId, PlayerId},
+    state::{GameState, StackItemKind},
+};
 
 pub(crate) struct PreparedV1<'a> {
     original: &'a EffectContinuation,
@@ -16,7 +20,8 @@ pub(crate) struct PreparedV1<'a> {
 }
 
 fn printings(state: &GameState, bindings: &[EffectObjectBinding]) -> Vec<u16> {
-    let mut names: Vec<_> = bindings.iter()
+    let mut names: Vec<_> = bindings
+        .iter()
         .map(|binding| state.objects.get(binding.object).card_def)
         .collect();
     names.sort_unstable();
@@ -34,11 +39,16 @@ impl<'a> PreparedV1<'a> {
         };
         let Some(PendingEffectChoice::SelectTargets {
             player,
-            purpose: EffectTargetSelectionPurpose::DuressDiscard {
-                player: owner, eligible, canonical_path, ..
-            },
+            purpose:
+                EffectTargetSelectionPurpose::DuressDiscard {
+                    player: owner,
+                    eligible,
+                    canonical_path,
+                    ..
+                },
             ..
-        }) = &original.choice else {
+        }) = &original.choice
+        else {
             return Ok(None);
         };
         if *player != actor || *owner != actor.opponent() {
@@ -54,13 +64,21 @@ impl<'a> PreparedV1<'a> {
         let (_, names) = revealed_discard_names_v1(state, actor)?
             .ok_or("revealed discard sampling lacks native public names")?;
         let mut disclosed = names.iter();
-        if !known_names.iter().all(|known| disclosed.any(|name| name == known)) {
+        if !known_names
+            .iter()
+            .all(|known| disclosed.any(|name| name == known))
+        {
             return Err("revealed discard names contradict retained minima".into());
         }
         Ok(Some(Self {
             original,
             owner: *owner,
-            exclude_creatures: revealed_discard_excludes_creatures(state, original, *owner, canonical_path)?,
+            exclude_creatures: revealed_discard_excludes_creatures(
+                state,
+                original,
+                *owner,
+                canonical_path,
+            )?,
             names,
             eligible_printings: printings(state, eligible),
             eligible_objects: eligible.iter().map(|binding| binding.object).collect(),
@@ -76,7 +94,10 @@ impl<'a> PreparedV1<'a> {
     }
 
     pub(crate) fn rebind(&self, sampled: &mut GameState) -> Result<Decision, String> {
-        let mut pending = sampled.engine.pending_effect.take()
+        let mut pending = sampled
+            .engine
+            .pending_effect
+            .take()
             .ok_or("revealed discard sampled continuation absent")?;
         if &pending != self.original {
             return Err("revealed discard sampled continuation changed before rebinding".into());

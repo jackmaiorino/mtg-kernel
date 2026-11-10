@@ -13,13 +13,28 @@ fn decision(owner: &KaitoSession) -> KaitoDecision {
 }
 
 fn slots(state: &GameState, objects: &[ObjectId]) -> Vec<u16> {
-    objects.iter().map(|&id| state.objects.get(id).card_def).collect()
+    objects
+        .iter()
+        .map(|&id| state.objects.get(id).card_def)
+        .collect()
 }
 
 #[test]
 fn full_pool_paid_pilfer_samples_revealed_names_and_rebinds_each_native_answer_both_seats() {
-    let shown = ["Forest", "Giant Growth", "Hero's Downfall", "Hero's Downfall", "Plains"];
-    let paired = ["Hero's Downfall", "Forest", "Hero's Downfall", "Plains", "Giant Growth"];
+    let shown = [
+        "Forest",
+        "Giant Growth",
+        "Hero's Downfall",
+        "Hero's Downfall",
+        "Plains",
+    ];
+    let paired = [
+        "Hero's Downfall",
+        "Forest",
+        "Hero's Downfall",
+        "Plains",
+        "Giant Growth",
+    ];
     let mut corpus = shown.map(card).to_vec();
     corpus.extend([card("Island"); 3]);
     corpus.extend([card("Forest"); 39]);
@@ -56,13 +71,22 @@ fn full_pool_paid_pilfer_samples_revealed_names_and_rebinds_each_native_answer_b
         let mut forged_names = shown.map(card);
         forged_names[0] = card("Mountain");
         forged_names.sort_unstable();
-        assert!(crate::effect::revealed_discard_sampling_v1::PreparedV1::capture(
-            live.fixture_state(), p, &forged_names,
-        ).is_err());
+        assert!(
+            crate::effect::revealed_discard_sampling_v1::PreparedV1::capture(
+                live.fixture_state(),
+                p,
+                &forged_names,
+            )
+            .is_err()
+        );
 
         for seed in [552_653, 552_654] {
-            let mut sampled = live.sampled_full_pool_closed_list_v1(&root, seed, &belief).unwrap();
-            let paired = other.sampled_full_pool_closed_list_v1(&other_root, seed, &belief).unwrap();
+            let mut sampled = live
+                .sampled_full_pool_closed_list_v1(&root, seed, &belief)
+                .unwrap();
+            let paired = other
+                .sampled_full_pool_closed_list_v1(&other_root, seed, &belief)
+                .unwrap();
             assert_eq!(hidden(&sampled), hidden(&paired));
             assert_ne!(hidden(&sampled).1, live_hidden.1);
             assert_eq!(
@@ -81,8 +105,10 @@ fn full_pool_paid_pilfer_samples_revealed_names_and_rebinds_each_native_answer_b
                 let fresh = decision(&sampled);
                 assert_eq!(fresh.packet(), root.packet());
                 let ordinal = fresh.current.name_order.as_ref().unwrap()[public];
-                let A::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. } =
-                    &fresh.backend.actions()[ordinal as usize]
+                let A::ChooseEffectTarget {
+                    target: TargetRefV1::Object { object },
+                    ..
+                } = &fresh.backend.actions()[ordinal as usize]
                 else {
                     panic!("missing sampled discard object");
                 };

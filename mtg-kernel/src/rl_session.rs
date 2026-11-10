@@ -8775,7 +8775,9 @@ impl FastActorSessionV1 {
         if root.rebinds_revealed_discard() {
             // Exact prompt names constrained the sample. Only the prior
             // conservative ledger survives the choice.
-            sampled.state.bind_reveal_names_v4(root.actor, root.actor.opponent());
+            sampled
+                .state
+                .bind_reveal_names_v4(root.actor, root.actor.opponent());
         }
         sampled.state.reveal_meaning_v3 = Default::default();
         sampled.state.hand_departures_by_name_v1 = false;

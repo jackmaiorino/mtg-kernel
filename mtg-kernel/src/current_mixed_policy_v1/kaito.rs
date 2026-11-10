@@ -277,7 +277,10 @@ fn packet_from_current(
 impl KaitoSession {
     fn hand_facts(&self) -> Result<HandFacts> {
         if let Some(mut minima) = self.inner.reveal_hand_minima_v3() {
-            let reveal = self.inner.revealed_discard_hand_v1().map_err(Error::Projection)?;
+            let reveal = self
+                .inner
+                .revealed_discard_hand_v1()
+                .map_err(Error::Projection)?;
             let discard_owner = if let Some((owner, names)) = reveal {
                 let mut counts = BTreeMap::<u16, usize>::new();
                 for name in names {
@@ -289,7 +292,8 @@ impl KaitoSession {
                 None
             };
             Ok(HandFacts::RevealMinimaV3 {
-                minima, discard_owner,
+                minima,
+                discard_owner,
             })
         } else if self.inner.uses_hand_knowledge_by_name_v2() {
             Ok(HandFacts::NamesV2)

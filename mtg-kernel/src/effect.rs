@@ -8795,18 +8795,28 @@ pub(crate) fn revealed_discard_names_v1(
     }
     let Some(PendingEffectChoice::SelectTargets {
         player,
-        purpose: EffectTargetSelectionPurpose::DuressDiscard {
-            player: owner, original_hand, ..
-        },
+        purpose:
+            EffectTargetSelectionPurpose::DuressDiscard {
+                player: owner,
+                original_hand,
+                ..
+            },
         ..
-    }) = state.engine.pending_effect.as_ref().and_then(|pending| pending.choice.as_ref()) else {
+    }) = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .and_then(|pending| pending.choice.as_ref())
+    else {
         return Ok(None);
     };
     if *player != viewer || *owner != viewer.opponent() {
         return Ok(None);
     }
     validate_pending_effect_choice(state)?;
-    let mut names = original_hand.iter().map(|binding| state.objects.get(binding.object).card_def)
+    let mut names = original_hand
+        .iter()
+        .map(|binding| state.objects.get(binding.object).card_def)
         .collect::<Vec<_>>();
     names.sort_unstable();
     Ok(Some((*owner, names)))
