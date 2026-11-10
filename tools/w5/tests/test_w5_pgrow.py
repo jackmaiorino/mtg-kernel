@@ -452,5 +452,125 @@ class Chains(unittest.TestCase):
                                else parent2, 'forkbad3', 'f8', 3)
 
 
+def fresh_dose(t, name):
+    """A fresh net-8 start (a G(i) lineage): no checkpoint; the dose record says `fresh` and the play import (the
+    fresh-initialization parameters) is the pin."""
+    imp = Path(t) / f'{name}-import.json'
+    imp.write_text(f'{name} fresh parameters')
+    return jwrite(Path(t) / f'{name}-dose.json', {'fresh': True, 'source': {
+        'checkpoint': None, 'play_import': chains.pin(imp)}})
+
+
+class FreshStart(unittest.TestCase):
+    """A fresh-initialization lineage on a CG arm: `initial` (the segment start) in the base, a parent with no
+    checkpoint that is not a ladder member, and G(i)'s empty-pool rule until the first ladder state."""
+    plan, run_segments, records, configs = Chains.plan, Chains.run_segments, Chains.records, Chains.configs
+
+    def setUp(self):
+        Chains.setUp(self)
+        self.fresh = fresh_dose(self.tmp.name, 'g1fresh')
+        doc = json.loads(self.base.read_text())
+        doc['iterations'][0]['episodes'][2]['opponent'] = {'kind': 'initial'}  # a48's slot becomes the lagged self
+        doc['opponents'] = [o for o in doc['opponents'] if o['id'] == 'parent']
+        self.base = jwrite(self.node.t / 'base-fresh.json', doc)
+
+    def fresh_plan(self, label='fresh', ladder=None, **extra):
+        arm = dict({'parent': str(self.fresh), 'initial_opponent': 'segment-start'}, **extra)
+        return self.plan({'stride': STRIDE, 'test_stride': True, 'start_member': False} if ladder is None
+                         else ladder, label=label, **arm)
+
+    def test_refusals(self):
+        with self.assertRaisesRegex(chains.Stop, 'cannot be a ladder member'):
+            self.fresh_plan('f1', ladder={'stride': STRIDE, 'test_stride': True})
+        with self.assertRaisesRegex(chains.Stop, 'needs initial_opponent'):
+            self.plan({'stride': STRIDE, 'test_stride': True, 'start_member': False}, label='f2',
+                      parent=str(self.fresh), base=str(jwrite(self.node.t / 'b2.json', dict(
+                          json.loads(self.base.read_text()), iterations=[{'episodes': [
+                              {'episode': {'learner_seat': 0}, 'opponent': {'id': 'parent', 'kind': 'fixed'}}]}]))))
+        with self.assertRaisesRegex(chains.Stop, 'history-relative'):
+            self.plan({'stride': STRIDE, 'test_stride': True}, label='f3')  # `initial` without the arm option
+        with self.assertRaisesRegex(chains.Stop, 'initial_opponent is'):
+            self.fresh_plan('f4', initial_opponent='block')
+        with self.assertRaisesRegex(chains.Stop, 'start_member is true or false'):
+            self.fresh_plan('f5', ladder={'stride': STRIDE, 'test_stride': True, 'start_member': 0})
+
+    def test_arm_file_and_identity_name_the_options(self):
+        _, plan = self.fresh_plan()
+        arm = json.loads(Path(plan['arms']['CG']['file']['path']).read_text())
+        self.assertEqual(arm['initial_opponent'], 'segment-start')
+        self.assertIs(arm['ladder']['start_member'], False)
+        man = json.loads(Path(plan['chains']['g1']['manifest']).read_text())
+        self.assertEqual(man['recipe']['initial_opponent'], 'segment-start')
+        self.assertIs(man['recipe']['ladder']['start_member'], False)
+
+    def test_initial_until_the_first_ladder_state_then_the_ladder(self):
+        _, plan = self.fresh_plan()
+        self.assertEqual(self.run_segments(plan, 'g1', 5), chains.EXIT_ROOM)
+        cfgs = self.configs('g1')
+        self.assertEqual(len(cfgs), 5)
+        fresh = json.loads(self.fresh.read_text())['source']
+        self.assertEqual(cfgs[0]['initial_source'], fresh)
+        _, records = self.records(plan, 'g1')
+        after = {r['boundary']: r for r in records}
+        for s, cfg in enumerate(cfgs):
+            played = [e['opponent'] for it in cfg['iterations'] for e in it['episodes']]
+            named = {o['id'] for o in cfg['opponents']}
+            self.assertNotIn('parent', named)
+            kinds = Counter(o.get('kind') for o in played)
+            if s * SEG < STRIDE:  # segments 0, 1: no ladder state yet, both replaced slots play `initial`
+                self.assertEqual(named, set())
+                self.assertEqual(kinds, Counter({'initial': 3 * SEG, 'current': SEG}))
+            else:  # u8 from segment 2, u16 from segment 4; never the fresh parent
+                expect = {f'ladder-u{b}' for b in range(STRIDE, s * SEG + 1, STRIDE)}
+                ids = {o['id'] for o in played if 'id' in o}
+                self.assertTrue(ids and ids <= expect, (s, ids))
+                self.assertEqual(kinds, Counter({'initial': SEG, 'fixed': 2 * SEG, 'current': SEG}))
+            if s:
+                self.assertEqual(cfg['initial_source']['checkpoint']['sha256'],
+                                 after[s * SEG]['checkpoint']['sha256'])
+        ladder = json.loads((self.node.root / 'chains' / 'g1' / 'LADDER.json').read_text())
+        self.assertEqual(sorted(ladder['states']), ['ladder-u16', 'ladder-u8'])
+        # Configs are derived again identically from the pins and the ladder (a resume's check).
+        arm = chains.load_arm(plan['arms']['CG']['file']['path'])
+        man = json.loads(Path(plan['chains']['g1']['manifest']).read_text())
+        for s, cfg in enumerate(cfgs):
+            seg = man['segments'][s]
+            source = chains.next_source(man['segments'][s - 1]['root']) if s else None
+            again = chains.arm_config(arm, 'pg/c1', s * SEG, SEG, Path(seg['root']), source, None,
+                                      chains.chain_ladder(arm, man, self.node.root / 'chains' / 'g1', s * SEG))
+            again['chain_ledger'] = cfg['chain_ledger']
+            self.assertEqual(again, cfg)
+
+    def test_resume_after_a_crash_reproduces_states(self):
+        _, plan = self.fresh_plan()
+        self.run_segments(plan, 'g1', 5)
+        with mock.patch.dict(os.environ, {'FAKE_FAIL_AT': '10'}):
+            self.assertEqual(self.run_segments(plan, 'g2', 5), chains.EXIT_FAILED)
+        self.run_segments(plan, 'g2', 5)
+        a = {r['boundary']: r['after_state_sha256'] for r in self.records(plan, 'g1')[1]}
+        b = {r['boundary']: r['after_state_sha256'] for r in self.records(plan, 'g2')[1]}
+        self.assertEqual(sorted(a), sorted(b))
+        self.assertEqual(a, b)
+
+    def test_no_fork_of_a_fresh_start(self):
+        _, plan = self.fresh_plan()
+        self.run_segments(plan, 'g1', 4)
+        with self.assertRaisesRegex(pgrow.LadderError, 'cannot be forked'):
+            pgrow.write_history(plan['chains']['g1']['manifest'], STRIDE, STRIDE, self.node.t / 'h.json')
+
+    def test_only_a_record_marked_fresh_starts_without_a_checkpoint(self):
+        base = json.loads(self.base.read_text())
+        doc = json.loads(self.fresh.read_text())
+        cfg = chains.qual.build_config(base, doc, self.node.t / 'out', 'pg/c1', 'w5', 0, 1, 1)
+        self.assertEqual(cfg['initial_source'], doc['source'])
+        doc.pop('fresh')
+        with self.assertRaisesRegex(AssertionError, 'neither a checkpoint'):
+            chains.qual.build_config(base, doc, self.node.t / 'out', 'pg/c1', 'w5', 0, 1, 1)
+        Path(json.loads(self.fresh.read_text())['source']['play_import']['path']).write_text('changed')
+        with self.assertRaisesRegex(AssertionError, 'differs from its dose pin'):
+            chains.qual.build_config(base, json.loads(self.fresh.read_text()), self.node.t / 'out', 'pg/c1',
+                                     'w5', 0, 1, 1)
+
+
 if __name__ == '__main__':
     unittest.main()
