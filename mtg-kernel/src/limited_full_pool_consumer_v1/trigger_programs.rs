@@ -2,7 +2,10 @@
 use crate::{
     card_def::CARD_DEFS,
     effect::{EffectOp, PlayerRef},
-    rl::{CardStableRefV1, PendingTriggerKindV2, PublicObservationProjectionV2, StackItemKindV2},
+    rl::{
+        CardStableRefV1, PendingTriggerKindV2, PublicObservationProjectionV2, StackItemKindV2,
+        TriggerUseSemanticV1,
+    },
     state::{AbilitySourceContractV4, GameState, Zone},
 };
 use serde::{Deserialize, Serialize};
@@ -29,6 +32,71 @@ pub(crate) fn is_printing(id: u16) -> bool {
                 | (WARDENS, "Wardens of the Cycle")
         )
     })
+}
+
+fn cap(card_def: u16, ability_index: u16) -> Option<u16> {
+    let ability = crate::trigger::triggers_for(card_def).get(usize::from(ability_index))?;
+    crate::trigger::per_turn_trigger_cap(ability.condition)
+}
+
+/// A cap only constrains this battlefield incarnation, even if the arena
+/// object has since become a private card or a different permanent.
+pub(crate) fn project_live_uses(
+    state: &GameState,
+) -> Result<Option<Vec<TriggerUseSemanticV1>>, String> {
+    let mut public = Vec::new();
+    let mut previous = None;
+    for entry in state.trigger_uses_v1.iter().flatten() {
+        let Some(live) = state.objects.try_get(entry.source.object) else { continue };
+        if entry.turn != state.turn_key_v1()
+            || entry.active_player != state.active_player
+            || live.zone != Zone::Battlefield
+            || live.zone_change_count != entry.source.zone_change_count
+            || live.v4.face_down_v1.is_some()
+            || !state.players.get(live.controller.index()).is_some_and(|player| {
+                player.battlefield.contains(&entry.source.object)
+            })
+        {
+            continue;
+        }
+        // If a public permanent stops copying a capped ability, its old
+        // slot may remain in native history without a current cap to show.
+        let Some(maximum) = cap(live.card_def, entry.ability_index) else { continue };
+        let key = (entry.source.object, entry.ability_index);
+        if entry.uses == 0 || entry.uses > maximum || previous.is_some_and(|last| key <= last) {
+            return Err("invalid FullPool native trigger cap ledger".into());
+        }
+        previous = Some(key);
+        public.push(TriggerUseSemanticV1 {
+            source: crate::rl::card_ref(state, entry.source.object).map_err(|error| error.0)?,
+            ability_index: entry.ability_index,
+            turn: entry.turn,
+            active_player: entry.active_player.into(),
+            uses: entry.uses,
+        });
+    }
+    Ok((!public.is_empty()).then_some(public))
+}
+
+fn validate_public_uses(board: &PublicObservationProjectionV2) -> Result<(), String> {
+    let Some(uses) = &board.engine_context.trigger_uses else { return Ok(()) };
+    let Some(first) = uses.first() else { return Err("empty FullPool trigger cap ledger".into()) };
+    let mut previous = None;
+    for entry in uses {
+        let key = (entry.source.arena_id, entry.ability_index);
+        if entry.active_player != board.active_player
+            || entry.turn != first.turn
+            || entry.source.zone != Zone::Battlefield
+            || !board.battlefield.iter().flatten().any(|card| card.stable == entry.source)
+            || cap(entry.source.card_db_id, entry.ability_index)
+                .is_none_or(|maximum| entry.uses == 0 || entry.uses > maximum)
+            || previous.is_some_and(|last| key <= last)
+        {
+            return Err("invalid FullPool public trigger cap ledger".into());
+        }
+        previous = Some(key);
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -232,6 +300,7 @@ pub(crate) fn validate(
     facts: &FactsV1,
     board: &PublicObservationProjectionV2,
 ) -> Result<(), String> {
+    validate_public_uses(board)?;
     fn check<'a>(
         mut facts: impl Iterator<Item = &'a TriggerRowV1>,
         roster: impl Iterator<Item = (usize, u16)>,

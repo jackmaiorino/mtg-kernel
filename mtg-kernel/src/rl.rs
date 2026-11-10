@@ -11951,7 +11951,11 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
         state.engine.mana_ability_activations != state.engine.mana_ability_count_at_round_open;
 
     Ok(EngineContextV2 {
-        trigger_uses: state
+        trigger_uses: if appendix == LimitedAppendixV1::FullPool {
+            crate::limited_full_pool_consumer_v1::trigger_programs::project_live_uses(state)
+                .map_err(RlContractError)?
+        } else {
+            state
             .trigger_uses_v1
             .as_ref()
             .map(|uses| {
@@ -11967,7 +11971,8 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     })
                     .collect::<Result<Vec<_>>>()
             })
-            .transpose()?,
+            .transpose()?
+        },
         wide_marked_damage: {
             let damage = state
                 .objects

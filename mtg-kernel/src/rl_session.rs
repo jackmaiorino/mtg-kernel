@@ -5243,7 +5243,9 @@ fn flat_validate_expected_decision_numeric_domain(
         i16::try_from(object.counters.plus1_plus1).is_err()
             || u16::try_from(object.damage).is_err()
     })) || (session.state.planeswalkers_v1.is_some() && !session.is_common_v40())
-        || session.state.trigger_uses_v1.is_some()
+        || (session.state.trigger_uses_v1.is_some()
+            && !(session.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75
+                && session.surface.limited_appendix_v1() == LimitedAppendixV1::FullPool))
         || session.state.engine.active_replacements.iter().any(|replacement| {
             match replacement.kind {
                 crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1|FlatActionContractModeV1::AjaniV42|FlatActionContractModeV1::FaebloomV43|FlatActionContractModeV1::DivineV44|FlatActionContractModeV1::HunterV45|FlatActionContractModeV1::EatenV46|FlatActionContractModeV1::PandaV47|FlatActionContractModeV1::SeasonV48 | FlatActionContractModeV1::ConquerorV49 | FlatActionContractModeV1::FakeV50

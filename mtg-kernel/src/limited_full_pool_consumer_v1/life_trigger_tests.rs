@@ -119,6 +119,60 @@ fn settle(
     panic!("actual life trigger resolution did not settle");
 }
 
+fn assert_exemplar_cap_lifetime(
+    state: &GameState,
+    actor: PlayerId,
+    exemplar: ObjectId,
+    food: ObjectId,
+    seraph: ObjectId,
+) {
+    let original = state.trigger_uses_v1.clone().expect("actual first gain paid its cap");
+    let original_generation = state.objects.get(exemplar).zone_change_count;
+    assert!(original.iter().any(|use_| {
+        use_.source.object == exemplar && use_.source.zone_change_count == original_generation
+    }));
+    let mut reentered = state.clone();
+    crate::event::propose_and_commit(
+        &mut reentered,
+        crate::event::ProposedEvent::zone_change(exemplar, Zone::Hand),
+    );
+    assert!(reentered.trigger_uses_v1.is_none());
+    for printing in ["Exemplar of Light", "Plains"] {
+        let mut hidden = reentered.clone();
+        hidden.objects.get_mut(exemplar).card_def = card(printing);
+        hidden.trigger_uses_v1 = Some(original.clone());
+        assert_eq!(trigger_programs::project_live_uses(&hidden).unwrap(), None);
+    }
+    crate::event::propose_and_commit(
+        &mut reentered,
+        crate::event::ProposedEvent::zone_change(exemplar, Zone::Battlefield),
+    );
+    let new_generation = reentered.objects.get(exemplar).zone_change_count;
+    assert!(new_generation > original_generation);
+    reentered.trigger_uses_v1 = Some(original);
+    assert_eq!(trigger_programs::project_live_uses(&reentered).unwrap(), None);
+
+    let mut owner = KaitoSession::from_session(raw(&reentered)).unwrap();
+    let mut native = raw(&reentered);
+    let decision = decision(&owner);
+    choose(&mut owner, &mut native, &decision, |action| {
+        matches!(action, Action::ActivateAbility { source, ability_index: 0, .. }
+            if source.arena_id == food.0)
+    });
+    let (seen, milled) = settle(&mut owner, &mut native, actor, seraph);
+    assert!(milled.is_none());
+    assert_eq!(seen, vec![ProgramV1::ExemplarCounter, ProgramV1::ExemplarDraw]);
+    let decision = super::decision(&owner);
+    let uses = decision.fixture_backend_v75().observation()
+        .common.common.projection.surface.engine_context.trigger_uses.as_ref().unwrap();
+    assert!(uses.iter().any(|use_| {
+        use_.source.arena_id == exemplar.0
+            && use_.source.zone_change_count == new_generation
+            && use_.ability_index == 1
+            && use_.uses == 1
+    }));
+}
+
 #[test]
 fn paid_life_creatures_publish_exact_programs_and_caps_both_seats() {
     use ProgramV1::*;
@@ -234,6 +288,15 @@ fn paid_life_creatures_publish_exact_programs_and_caps_both_seats() {
                 .any(|row| {
                     row.source.arena_id == exemplar.0 && row.ability_index == 1 && row.uses == 1
                 }));
+            if index == 0 {
+                let mut forged = d.fixture_backend_v75().observation().clone();
+                let source = &mut forged.common.common.projection.surface.engine_context
+                    .trigger_uses.as_mut().unwrap()[0].source;
+                source.zone = Zone::Hand;
+                forged.projection_sha256 = crate::kaito_observation_v75::commitment(&forged).unwrap();
+                assert!(crate::kaito_observation_v75::validate_artifact(&forged).is_err());
+                assert_exemplar_cap_lifetime(live, actor, exemplar, second_food, seraph);
+            }
         }
     }
 }
