@@ -2108,29 +2108,11 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         }
         EternalOpV1::VeilOfSummerV1 => {
             let player = ctx.controller;
-            if opponent_cast_blue_or_black_spell_this_turn(state, player) {
-                crate::effect::execute(
-                    &EffectOp::DrawCards {
-                        player: PlayerRef::Controller,
-                        count: 1,
-                    },
-                    ctx,
-                    state,
-                );
+            if !opponent_cast_blue_or_black_spell_this_turn(state, player)
+                || super::owned_draws_v1::draw_uninterrupted(state, player, 1)
+            {
+                apply_veil_protection(state, player);
             }
-            let permanents = state.players[player.index()]
-                .battlefield
-                .iter()
-                .map(|&object| link(state, object))
-                .collect();
-            let turn = state.turn_key_v1();
-            let e3 = e3_mut(state);
-            e3.veils.retain(|veil| veil.turn == turn);
-            e3.veils.push(VeilV1 {
-                player,
-                turn,
-                permanents,
-            });
         }
         EternalOpV1::EnterRoomV1 { dungeon, room } => {
             if dungeons::enter_room(state, ctx, *dungeon, *room).is_err() {
@@ -2260,7 +2242,10 @@ fn blue_or_black_mask() -> u8 {
 
 /// Whether an opponent of `player` cast a blue or black spell this turn.
 /// The turn begins at its `UpkeepBegan` marker; no spell is cast earlier.
-fn opponent_cast_blue_or_black_spell_this_turn(state: &GameState, player: PlayerId) -> bool {
+pub(super) fn opponent_cast_blue_or_black_spell_this_turn(
+    state: &GameState,
+    player: PlayerId,
+) -> bool {
     for event in state.engine.event_history.iter().rev() {
         match event {
             CommittedEvent::UpkeepBegan { .. } => return false,
@@ -2278,6 +2263,22 @@ fn opponent_cast_blue_or_black_spell_this_turn(state: &GameState, player: Player
         }
     }
     false
+}
+
+pub(super) fn apply_veil_protection(state: &mut GameState, player: PlayerId) {
+    let permanents = state.players[player.index()]
+        .battlefield
+        .iter()
+        .map(|&object| link(state, object))
+        .collect();
+    let turn = state.turn_key_v1();
+    let e3 = e3_mut(state);
+    e3.veils.retain(|veil| veil.turn == turn);
+    e3.veils.push(VeilV1 {
+        player,
+        turn,
+        permanents,
+    });
 }
 
 fn active_veils(state: &GameState, player: PlayerId) -> impl Iterator<Item = &VeilV1> {

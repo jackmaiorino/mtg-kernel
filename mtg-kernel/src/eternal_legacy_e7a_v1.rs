@@ -987,10 +987,17 @@ fn create_drone() -> EffectOp {
 
 /// Phyrexian Dragon Engine: "you may discard your hand. If you do, draw
 /// three cards."
-fn dragon_engine_rummage() -> EffectOp {
+pub(crate) fn dragon_engine_rummage() -> EffectOp {
     EffectOp::Choice {
         controller: PlayerRef::Controller,
         options: vec![e7a(E7aOpV1::DiscardHandThenDrawV1 { count: 3 }), nothing()],
+    }
+}
+
+pub(crate) fn discard_hand(state: &mut GameState, player: PlayerId) {
+    let hand = state.players[player.index()].hand.clone();
+    for card in hand {
+        crate::engine::commit_discarded_card(state, card);
     }
 }
 
@@ -1452,24 +1459,17 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
         E7aOpV1::GalvanicRelayV1 => galvanic_relay_effect(ctx, state),
         E7aOpV1::BurningWishV1 => mark_self_exile(ctx, state),
         E7aOpV1::DiscardHandV1 => {
-            let hand = state.players[ctx.controller.index()].hand.clone();
-            for card in hand {
-                crate::engine::commit_discarded_card(state, card);
-            }
+            discard_hand(state, ctx.controller);
         }
         E7aOpV1::DiscardHandThenDrawV1 { count } => {
-            let hand = state.players[ctx.controller.index()].hand.clone();
-            for card in hand {
-                crate::engine::commit_discarded_card(state, card);
+            discard_hand(state, ctx.controller);
+            if state.engine.halted.is_none() {
+                crate::eternal_cards_v1::owned_draws_v1::draw_uninterrupted(
+                    state,
+                    ctx.controller,
+                    u32::from(*count),
+                );
             }
-            crate::effect::execute(
-                &EffectOp::DrawCards {
-                    player: PlayerRef::Controller,
-                    count: u32::from(*count),
-                },
-                ctx,
-                state,
-            );
         }
         E7aOpV1::EngineerReturnV1 => {
             let spec = TargetSpec::StandardV1(

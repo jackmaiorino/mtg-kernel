@@ -89,7 +89,7 @@ fn draws(op: &EffectOp) -> bool {
     }
 }
 
-fn owned_draw_needs_choice(state: &GameState, player: PlayerId, count: u32) -> bool {
+pub(crate) fn owned_draw_needs_choice(state: &GameState, player: PlayerId, count: u32) -> bool {
     use crate::eternal_sideboard_s1c_v1::statics::{
         hullbreacher_controller, hullbreacher_replaces_draw,
     };

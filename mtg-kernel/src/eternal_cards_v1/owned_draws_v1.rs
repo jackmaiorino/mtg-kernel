@@ -2,8 +2,12 @@
 
 use super::EternalOpV1;
 use crate::card_def::CARD_DEFS;
-use crate::effect::{EffectContinuation, EffectFrame, EffectOp, ExecCtx, PlayerRef};
+use crate::effect::{
+    EffectContinuation, EffectFrame, EffectOp, EffectOptionChoicePurpose, ExecCtx,
+    PendingEffectChoice, PlayerRef,
+};
 use crate::eternal_e5a_v1::E5aOpV1;
+use crate::eternal_legacy_e7a_v1::{self, E7aOpV1};
 use crate::eternal_legacy_e8a_v1::E8aOpV1;
 use crate::eternal_lurrus_v1::LurrusOpV1;
 use crate::eternal_pauper_e8b_v1::{self, E8bOpV1};
@@ -28,6 +32,8 @@ enum InstructionV1 {
     ChandraEmblem,
     DiviningTop,
     OneRing,
+    VeilOfSummer,
+    DragonEngine,
 }
 
 impl InstructionV1 {
@@ -48,6 +54,10 @@ impl InstructionV1 {
             EternalOpV1::E8aV1(E8aOpV1::DrawOneV1) => Some(Self::ChandraEmblem),
             EternalOpV1::E5aV1(E5aOpV1::DrawThenSourceOnTopV1) => Some(Self::DiviningTop),
             EternalOpV1::BurdenCounterThenDrawV1 => Some(Self::OneRing),
+            EternalOpV1::VeilOfSummerV1 => Some(Self::VeilOfSummer),
+            EternalOpV1::E7aV1(E7aOpV1::DiscardHandThenDrawV1 { count: 3 }) => {
+                Some(Self::DragonEngine)
+            }
             _ => None,
         }
     }
@@ -77,6 +87,32 @@ impl InstructionV1 {
             Self::OneRing => ctx
                 .ability_source_contract
                 .map_or(0, |source| super::e3::quote_ring_draw_count(state, source)),
+            Self::VeilOfSummer => u32::from(super::e3::opponent_cast_blue_or_black_spell_this_turn(
+                state,
+                ctx.controller,
+            )),
+            Self::DragonEngine => 3,
+        }
+    }
+
+    fn program_path(self) -> &'static [u16] {
+        match self {
+            Self::DragonEngine => &[0],
+            _ => &[],
+        }
+    }
+
+    fn draw_path(self) -> &'static [u16] {
+        match self {
+            Self::DragonEngine => &[0, 0],
+            _ => &[0],
+        }
+    }
+
+    fn completion_path(self) -> &'static [u16] {
+        match self {
+            Self::DragonEngine => &[0, 1],
+            _ => &[1],
         }
     }
 }
@@ -195,7 +231,10 @@ fn has_started(state: &GameState, item: StackItemId) -> bool {
 fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(InstructionV1, SourceV1)> {
     let item = &pending.resolving_item;
     if let Some(inline) = &item.inline_effect {
-        let instruction = InstructionV1::from_program(inline)?;
+        let instruction = match inline {
+            EffectOp::Choice { .. } => InstructionV1::DragonEngine,
+            _ => InstructionV1::from_program(inline)?,
+        };
         let source = item.v4.ability_source_contract?;
         if source.source != item.source
             || source.controller != item.controller
@@ -221,6 +260,11 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
             ) => item.v4.activated_ability_index == Some(1),
             (InstructionV1::OneRing, StackItemKind::ActivatedAbility, "The One Ring") => {
                 item.v4.activated_ability_index == Some(0)
+            }
+            (InstructionV1::DragonEngine, StackItemKind::TriggeredAbility, "Phyrexian Dragon Engine") => {
+                source.owner == source.controller
+                    && source.zone_change_count > 0
+                    && *inline == eternal_legacy_e7a_v1::dragon_engine_rummage()
             }
             (InstructionV1::KishlaSkimmer, StackItemKind::TriggeredAbility, "Kishla Skimmer") => {
                 let source_link = ObjectLinkV4 {
@@ -255,7 +299,7 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
     }
     let source = item.v4.source_contract?;
     let def = CARD_DEFS.get(usize::from(source.card_def))?;
-    if !matches!(def.object_name, "Plunder the Trollshaws" | "Twinned Vision") {
+    if !matches!(def.object_name, "Plunder the Trollshaws" | "Twinned Vision" | "Veil of Summer") {
         return None;
     }
     state.objects.try_get(item.source)?;
@@ -267,28 +311,29 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
     let instruction = InstructionV1::from_program(&def.printed_mode_effect(item.mode_chosen)?)?;
     match (instruction, def.object_name) {
         (InstructionV1::Plunder { .. }, "Plunder the Trollshaws")
-        | (InstructionV1::TwinnedVision, "Twinned Vision") => {
+        | (InstructionV1::TwinnedVision, "Twinned Vision")
+        | (InstructionV1::VeilOfSummer, "Veil of Summer") => {
             Some((instruction, SourceV1::Spell(source)))
         }
         _ => None,
     }
 }
 
-fn completion(ordinal: u32) -> EffectFrame {
+fn completion(instruction: InstructionV1, ordinal: u32) -> EffectFrame {
     EffectFrame::Program {
         op: super::eternal(EternalOpV1::OwnedDrawCompletedV1 { ordinal }),
-        path: vec![1],
+        path: instruction.completion_path().to_vec(),
     }
 }
 
-fn stage(pending: &mut EffectContinuation, ordinal: u32) {
-    pending.frames.push(completion(ordinal));
+fn stage(pending: &mut EffectContinuation, instruction: InstructionV1, ordinal: u32) {
+    pending.frames.push(completion(instruction, ordinal));
     pending.frames.push(EffectFrame::Program {
         op: EffectOp::DrawCards {
             player: PlayerRef::Controller,
             count: 1,
         },
-        path: vec![0],
+        path: instruction.draw_path().to_vec(),
     });
 }
 
@@ -301,12 +346,24 @@ pub(crate) fn begin(
     let (instruction, source) =
         selected(state, pending).ok_or("Eternal draw lost its original source")?;
     if InstructionV1::from_op(op) != Some(instruction)
-        || !path.is_empty()
+        || path != instruction.program_path()
         || !pending.frames.is_empty()
         || state.eternal_owned_draw_progress_v1.is_some()
         || has_started(state, pending.resolving_item.v4.stack_item_id)
     {
         return Err("Eternal draw lost its original instruction".into());
+    }
+    if instruction == InstructionV1::DragonEngine {
+        let player = pending.ctx.controller;
+        eternal_legacy_e7a_v1::discard_hand(state, player);
+        if state.engine.halted.is_some() {
+            return Err("Dragon Engine could not complete its discard".into());
+        }
+        let count = instruction.count(state, &pending.ctx);
+        if !dredge::owned_draw_needs_choice(state, player, count) {
+            draw_uninterrupted(state, player, count);
+            return Ok(());
+        }
     }
     let total = match (instruction, source) {
         (InstructionV1::OneRing, SourceV1::Ability(source)) => {
@@ -315,9 +372,7 @@ pub(crate) fn begin(
         _ => instruction.count(state, &pending.ctx),
     };
     if total == 0 {
-        if instruction == InstructionV1::Tamiyo {
-            remove_maximum_hand_size(state, pending.ctx.controller);
-        }
+        finish_instruction(state, pending, instruction);
         return Ok(());
     }
     let started_at = state.engine.event_history.len();
@@ -335,7 +390,7 @@ pub(crate) fn begin(
         started_at,
         completed: 0,
     });
-    stage(pending, 0);
+    stage(pending, instruction, 0);
     Ok(())
 }
 
@@ -364,7 +419,10 @@ pub(crate) fn complete(
 ) -> Result<(), String> {
     let (progress, started) =
         progress(state, pending).ok_or("Eternal draw lost its native start")?;
-    if ordinal != progress.completed || path != [1] || !pending.frames.is_empty() {
+    if ordinal != progress.completed
+        || path != started.instruction.completion_path()
+        || !pending.frames.is_empty()
+    {
         return Err("Eternal draw completed the wrong attempt".into());
     }
     let completed = ordinal + 1;
@@ -379,13 +437,7 @@ pub(crate) fn complete(
     if terminal || completed == started.total {
         state.eternal_owned_draw_progress_v1 = None;
         if !terminal {
-            match started.instruction {
-                InstructionV1::Tamiyo => remove_maximum_hand_size(state, started.controller),
-                InstructionV1::DiviningTop => {
-                    crate::eternal_e5a_v1::put_draw_source_on_top(&pending.ctx, state);
-                }
-                _ => {}
-            }
+            finish_instruction(state, pending, started.instruction);
         }
     } else {
         state
@@ -393,9 +445,24 @@ pub(crate) fn complete(
             .as_mut()
             .unwrap()
             .completed = completed;
-        stage(pending, completed);
+        stage(pending, started.instruction, completed);
     }
     Ok(())
+}
+
+fn finish_instruction(
+    state: &mut GameState,
+    pending: &EffectContinuation,
+    instruction: InstructionV1,
+) {
+    match instruction {
+        InstructionV1::Tamiyo => remove_maximum_hand_size(state, pending.ctx.controller),
+        InstructionV1::DiviningTop => {
+            crate::eternal_e5a_v1::put_draw_source_on_top(&pending.ctx, state);
+        }
+        InstructionV1::VeilOfSummer => super::e3::apply_veil_protection(state, pending.ctx.controller),
+        _ => {}
+    }
 }
 
 fn initial_library_len(state: &GameState, player: PlayerId, start: usize) -> Option<usize> {
@@ -486,8 +553,37 @@ pub(crate) fn draw_stage_matches(
     remaining: &[EffectFrame],
 ) -> bool {
     progress(state, pending).is_some_and(|(progress, started)| {
-        drawer == started.controller && path == [0] && remaining == [completion(progress.completed)]
+        drawer == started.controller
+            && path == started.instruction.draw_path()
+            && remaining == [completion(started.instruction, progress.completed)]
     })
+}
+
+fn dragon_before_start(pending: &EffectContinuation) -> bool {
+    if pending.answered_choice_guard.is_some() {
+        return false;
+    }
+    let root = eternal_legacy_e7a_v1::dragon_engine_rummage();
+    let EffectOp::Choice { options: expected, .. } = &root else {
+        unreachable!("Dragon Engine has one printed choice");
+    };
+    match (&pending.choice, pending.frames.as_slice()) {
+        (None, [EffectFrame::Program { op, path }]) => match path.as_slice() {
+            [] => op == &root,
+            [index] => expected.get(usize::from(*index)) == Some(op),
+            _ => false,
+        },
+        (
+            Some(PendingEffectChoice::ChooseOption {
+                player,
+                path,
+                options,
+                purpose: EffectOptionChoicePurpose::Generic,
+            }),
+            [],
+        ) => *player == pending.ctx.controller && path.is_empty() && options == expected,
+        _ => false,
+    }
 }
 
 pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Result<(), String> {
@@ -498,10 +594,13 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
             Err("Eternal draw progress lost its original source".into())
         };
     };
-    if state.eternal_owned_draw_progress_v1.is_none()
-        && matches!((&pending.choice, pending.frames.as_slice()),
+    let before_start = if instruction == InstructionV1::DragonEngine {
+        dragon_before_start(pending)
+    } else {
+        matches!((&pending.choice, pending.frames.as_slice()),
             (None, [EffectFrame::Program { op, path }]) if InstructionV1::from_program(op) == Some(instruction) && path.is_empty())
-    {
+    };
+    if state.eternal_owned_draw_progress_v1.is_none() && before_start {
         return if has_started(state, pending.resolving_item.v4.stack_item_id) {
             Err("Eternal draw already started its original instruction".into())
         } else {

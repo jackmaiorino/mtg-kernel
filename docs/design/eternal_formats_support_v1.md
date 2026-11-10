@@ -535,8 +535,12 @@ New, each built once in the first wave that needs it:
   permanent to its owner's library after its draw attempt, including when a
   replacement prevents the draw. The One Ring counts its live burden increment
   or the departed incarnation's retained burden once before its first attempt.
-  A terminal Jace win skips Top's move and any remaining Ring attempts, with
-  or without a replacement choice. The Jewel
+  Veil of Summer applies its protection after the conditional draw attempt, or
+  immediately when the draw condition is false. Phyrexian Dragon Engine
+  discards the hand once after its original optional choice, then checks for
+  replacements using the resulting graveyard. A terminal Jace win skips
+  Top's move, Veil's protection and remaining Ring or Dragon Engine attempts,
+  with or without a replacement choice. The Jewel
   combat continuation binds draw progress to the original trigger and transfers
   only its original battlefield incarnation after the third attempt. Outcome
   returns its legal targets in one batch and derives draw progress from actual
@@ -552,7 +556,9 @@ New, each built once in the first wave that needs it:
   Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
   Their damage-draw interaction has no native qualification.
   Some specialized synchronous draws and unbound generated or dynamic draw instructions
-  still lack a replacement choice. Native qualification of the repairs is pending.
+  still lack a replacement choice. Quantum Riddler's extra draws are committed
+  inside one shared draw event and remain outside these choice and terminal
+  boundaries. Native qualification of the repairs is pending.
 - S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
   S1c, S1a, S1b and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload

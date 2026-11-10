@@ -4,6 +4,8 @@
 
 #[path = "owned_artifact_draws.rs"]
 mod owned_artifact_draws;
+#[path = "owned_veil_dragon_draws.rs"]
+mod owned_veil_dragon_draws;
 
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, CARD_DEFS,
