@@ -606,8 +606,15 @@ New, each built once in the first wave that needs it:
   Temple of Dumathoin and Mad Wizard's Lair bind each draw attempt to the
   native venture entry and published room ability. The Lair reveals and
   offers only cards actually drawn, and an immediate Jace win ends the
-  ability before the reveal. Native qualification is pending. Generated
-  draws from Bonder's Ornament, the Premodern draw leaves, Standstill, Arcane
+  ability before the reveal. The paid Bonder's Ornament successor binds the
+  actual activation and original source, including native Metamorph copies.
+  It captures eligible controllers at resolution, draws in APNAP order and
+  retains each player's adjusted attempts across replacement choices. A Jace
+  win ends the ability before the next player's draw. Ordinary completed
+  activations retain current observations; an active owned choice requires
+  a successor. Source review and formatting passed; native qualification of
+  this Bonder successor is pending. Generated
+  draws from the Premodern draw leaves, Standstill, Arcane
   Denial and Accumulated Knowledge still need their Jace/Hullbreacher origins.
   Quantum Riddler adjusts the whole count once for uninterrupted fixed and
   dynamic draw instructions. Named draws and top-level fixed draw instructions
