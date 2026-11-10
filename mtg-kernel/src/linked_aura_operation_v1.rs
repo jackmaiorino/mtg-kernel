@@ -1115,6 +1115,15 @@ fn replay_general_current_slots_v69(
                     | GeneralChoiceV36::ShowAndTellV1 { .. }
             )
         {
+            let confirmed_show_answers_sha256 = (!answers.is_empty()
+                && matches!(&choice, GeneralChoiceV36::ShowAndTellV1 { choice, .. } if choice.physical.is_none()))
+                .then(|| {
+                    let mut digest = Sha256::new();
+                    digest.update(b"mtg-kernel/show-and-tell-private-answers/v1");
+                    digest.update(runner.original_sha256.as_bytes());
+                    stream_json(&mut digest, &answers);
+                    hex(&digest.finalize())
+                });
             checkpoint
                 .engine
                 .linked_aura_operation_v1
@@ -1122,6 +1131,7 @@ fn replay_general_current_slots_v69(
                 original: Box::new(original.clone()),
                 operation: operation.clone(),
                 answers: answers.to_vec(),
+                confirmed_show_answers_sha256,
                 choice,
                 operation_history_index: runner.mage_start,
                 used_banner: runner.used_banner,

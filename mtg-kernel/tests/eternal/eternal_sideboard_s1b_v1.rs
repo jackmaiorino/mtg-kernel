@@ -2800,14 +2800,20 @@ fn paid_show_and_tell_metamorph_owns_private_choices_and_simultaneous_entry() {
             state = serde_json::from_slice(&snapshot).unwrap();
             assert_eq!(next(&mut state), second_choice);
 
-            let mut rebound = serde_json::to_value(&state).unwrap();
-            let answer = &mut rebound["engine"]["linked_aura_operation_v1"]
-                ["pending_meddling_mage_v1"]["answers"][0]["ShowAndTellV1"];
-            answer["choice"]["player"] = serde_json::to_value(other).unwrap();
-            let mut rebound: GameState = serde_json::from_value(rebound).unwrap();
-            let before = rebound.state_hash();
-            assert!(engine::step(&mut rebound, Action::FinishEffectSelection).is_err());
-            assert_eq!(rebound.state_hash(), before);
+            for substitute_valid_answer in [false, true] {
+                let mut rebound = serde_json::to_value(&state).unwrap();
+                let answer = &mut rebound["engine"]["linked_aura_operation_v1"]
+                    ["pending_meddling_mage_v1"]["answers"][0]["ShowAndTellV1"];
+                if substitute_valid_answer {
+                    answer["selected"] = answer["choice"]["candidates"][1].clone();
+                } else {
+                    answer["choice"]["player"] = serde_json::to_value(other).unwrap();
+                }
+                let mut rebound: GameState = serde_json::from_value(rebound).unwrap();
+                let before = rebound.state_hash();
+                assert!(engine::step(&mut rebound, Action::FinishEffectSelection).is_err());
+                assert_eq!(rebound.state_hash(), before);
+            }
 
             act(
                 &mut state,

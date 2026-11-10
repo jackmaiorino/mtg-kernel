@@ -441,6 +441,9 @@ pub struct CheckpointV1 {
     pub(crate) original: Box<GameState>,
     pub(crate) operation: OperationV1,
     pub(crate) answers: Vec<GeneralAnswerV36>,
+    // A private hand answer has no visible world change before the reveal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) confirmed_show_answers_sha256: Option<String>,
     pub(crate) choice: GeneralChoiceV36,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) operation_history_index: Option<u32>,
