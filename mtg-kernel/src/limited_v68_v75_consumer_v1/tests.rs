@@ -480,42 +480,94 @@ fn exact_profile_gates_and_v3_learner_reset_are_separate_from_legacy() {
     assert_eq!(reply["payload"]["state"]["state_type"], "decision");
 }
 
-#[test]
-fn all_eight_printings_cast_from_real_forty_card_reset_with_paid_consumer_parity() {
-    type PaidCastCase = (u16, &'static [(&'static str, usize)], usize, Option<u16>);
-    let cases: [PaidCastCase; 8] = [
-        (486, &[("Island", 36)], 6, None),
-        (487, &[("Forest", 36)], 5, Some(2)),
-        (488, &[("Forest", 36)], 5, None),
-        (
-            489,
-            &[("Swamp", 12), ("Forest", 12), ("Island", 12)],
-            6,
-            None,
-        ),
-        (490, &[("Swamp", 36)], 2, None),
-        (491, &[("Swamp", 36)], 6, None),
-        (493, &[("Mountain", 36)], 7, None),
-        (494, &[("Island", 36)], 3, None),
-    ];
+type PaidCastCase = (u16, &'static [(&'static str, usize)], usize, Option<u16>);
+
+/// One paid cast per admitted printing: printing, deck lands, cost and X.
+const PAID_CASTS: [PaidCastCase; 8] = [
+    (486, &[("Island", 36)], 6, None),
+    (487, &[("Forest", 36)], 5, Some(2)),
+    (488, &[("Forest", 36)], 5, None),
+    (
+        489,
+        &[("Swamp", 12), ("Forest", 12), ("Island", 12)],
+        6,
+        None,
+    ),
+    (490, &[("Swamp", 36)], 2, None),
+    (491, &[("Swamp", 36)], 6, None),
+    (493, &[("Mountain", 36)], 7, None),
+    (494, &[("Island", 36)], 3, None),
+];
+
+/// Casts one admitted printing from a real forty-card reset in both seats,
+/// keeping every consumer in parity until the spell leaves the stack. Each
+/// printing has its own test so one slow reset cannot hold all eight.
+fn paid_cast_from_real_forty_card_reset_with_paid_consumer_parity(printing: u16) {
+    let (_, lands, cost, x) = PAID_CASTS
+        .into_iter()
+        .find(|case| case.0 == printing)
+        .unwrap();
     for actor in [PlayerId::P0, PlayerId::P1] {
-        for (printing, lands, cost, x) in cases {
-            let mut owners = Owners::reset(&reset_config(actor, printing, lands));
-            let source = owners.paid_cast(actor, printing, cost, x);
-            for _ in 0..60 {
-                if owners.state().objects.get(source).zone != Zone::Stack {
-                    break;
-                }
-                owners.quiet(&owners.decision());
+        let mut owners = Owners::reset(&reset_config(actor, printing, lands));
+        let source = owners.paid_cast(actor, printing, cost, x);
+        for _ in 0..60 {
+            if owners.state().objects.get(source).zone != Zone::Stack {
+                break;
             }
-            let expected_zone = match printing {
-                486 => Zone::Exile,
-                487 => Zone::Graveyard,
-                _ => Zone::Battlefield,
-            };
-            assert_eq!(owners.state().objects.get(source).zone, expected_zone);
+            owners.quiet(&owners.decision());
         }
+        let expected_zone = match printing {
+            486 => Zone::Exile,
+            487 => Zone::Graveyard,
+            _ => Zone::Battlefield,
+        };
+        assert_eq!(owners.state().objects.get(source).zone, expected_zone);
     }
+}
+
+#[test]
+fn paid_casts_cover_all_eight_printings() {
+    assert_eq!(PAID_CASTS.map(|case| case.0), PARTIAL_PRINTINGS_V1);
+}
+
+#[test]
+fn time_stop_casts_from_real_forty_card_reset_with_paid_consumer_parity() {
+    paid_cast_from_real_forty_card_reset_with_paid_consumer_parity(486);
+}
+
+#[test]
+fn genesis_wave_casts_from_real_forty_card_reset_with_paid_consumer_parity() {
+    paid_cast_from_real_forty_card_reset_with_paid_consumer_parity(487);
+}
+
+#[test]
+fn vivien_reid_casts_from_real_forty_card_reset_with_paid_consumer_parity() {
+    paid_cast_from_real_forty_card_reset_with_paid_consumer_parity(488);
+}
+
+#[test]
+fn muldrotha_casts_from_real_forty_card_reset_with_paid_consumer_parity() {
+    paid_cast_from_real_forty_card_reset_with_paid_consumer_parity(489);
+}
+
+#[test]
+fn tinybones_casts_from_real_forty_card_reset_with_paid_consumer_parity() {
+    paid_cast_from_real_forty_card_reset_with_paid_consumer_parity(490);
+}
+
+#[test]
+fn liliana_casts_from_real_forty_card_reset_with_paid_consumer_parity() {
+    paid_cast_from_real_forty_card_reset_with_paid_consumer_parity(491);
+}
+
+#[test]
+fn chandra_casts_from_real_forty_card_reset_with_paid_consumer_parity() {
+    paid_cast_from_real_forty_card_reset_with_paid_consumer_parity(493);
+}
+
+#[test]
+fn kaito_casts_from_real_forty_card_reset_with_paid_consumer_parity() {
+    paid_cast_from_real_forty_card_reset_with_paid_consumer_parity(494);
 }
 
 #[test]

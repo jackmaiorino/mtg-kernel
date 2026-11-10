@@ -30,7 +30,11 @@ fn terminal_outcome(terminal: RlSessionTerminalV1) -> GameOutcomeV1 {
         (TerminalClassificationV1::Natural, TerminalOutcomeV1::P1Win) => {
             GameOutcomeV1::Winner(PlayerId::P1)
         }
-        (TerminalClassificationV1::Natural, _) => GameOutcomeV1::Draw,
+        (TerminalClassificationV1::Natural, TerminalOutcomeV1::Draw) => GameOutcomeV1::Draw,
+        // The trainer refuses the same inconsistent terminal.
+        (TerminalClassificationV1::Natural, outcome) => GameOutcomeV1::Error(format!(
+            "natural terminal has no W/D/L outcome: {outcome:?}"
+        )),
         (TerminalClassificationV1::Truncated, _) => GameOutcomeV1::Stall,
         (TerminalClassificationV1::Halted, _) => GameOutcomeV1::Error(terminal.terminal_reason),
     }

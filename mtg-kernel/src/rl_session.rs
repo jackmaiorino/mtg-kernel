@@ -1729,6 +1729,7 @@ where
         | ActionSemanticV1::ChooseDivineKickerV44 { .. }
         | ActionSemanticV1::ChooseDivineTargetV44 { .. }
         | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
+        | ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 { .. }
         | ActionSemanticV1::FinishDivineTargetsV44 { .. } => {
             return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
         }
@@ -2676,6 +2677,10 @@ fn flat_validate_origin_decision_common_scoped_v42(
             let mut mana_action_count = 0_usize;
             let mut choices = crate::mana::ManaColorSetV1::new();
             for object in mana_abilities {
+                if crate::engine::two_object_mana_cost_candidates(state, *player, *object).is_some()
+                {
+                    return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+                }
                 crate::engine::available_mana_ability_choices_into(
                     *player,
                     *object,
@@ -3552,6 +3557,7 @@ fn flat_validate_semantic_policy_pair_v1(
             | ActionSemanticV1::ChooseDivineKickerV44 { .. }
             | ActionSemanticV1::ChooseDivineTargetV44 { .. }
             | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
+            | ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 { .. }
             | ActionSemanticV1::FinishDivineTargetsV44 { .. },
             _,
         ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),

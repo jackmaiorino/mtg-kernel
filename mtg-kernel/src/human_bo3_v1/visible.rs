@@ -890,6 +890,8 @@ record!(HumanStackItemV1, StackItemPublicV2, {
     counter_transfer: Option<HumanCounterTransferV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
     granted_ability: Option<(HumanCardRefV1, u16)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thornscape_kickers_v1: Option<u8>,
 });
 record!(HumanCombatV1, CombatStatePublicV2, {
     attackers_declared: bool, blockers_declared: bool,
@@ -1014,6 +1016,8 @@ record!(HumanPendingCastV1, PendingCastSemanticV2, {
     chosen_targets: Vec<HumanTargetV1>, is_flashback: bool, cast_mode: Option<CastMode>,
     additional_cost_discarded: Option<Vec<HumanCardRefV1>>, mode_chosen: Option<u8>,
     origin_zone: Zone, sacrifice_chosen: Vec<HumanCardRefV1>, kicked: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thornscape_white_kicker_v1: Option<bool>,
 });
 record!(HumanPendingActivationV1, PendingActivationSemanticV2, {
     source: Option<HumanCardRefV1>, controller: PlayerSeatV1, ability_index: u8,

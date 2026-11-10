@@ -449,8 +449,14 @@ fn remembered_attack_ignores_later_concealed_source_before_and_after_resolution_
             &mut state,
             ProposedEvent::zone_change(source, Zone::Library),
         );
+        // Reproduce the sampler's later rewrite of the concealed library card.
+        // Its custody proofs come from the real world, as the search sampler's
+        // do; without them the departed source fails color history validation.
         let mut hidden = state.clone();
-        hidden.objects.get_mut(source).card_def = card("Forest");
+        hidden.sampled_history_v1 = crate::sampled_history_v1::capture(&state).unwrap();
+        let concealed = hidden.objects.get_mut(source);
+        concealed.card_def = card("Forest");
+        concealed.name = "Forest".into();
         for viewer in [actor, actor.opponent()] {
             assert_eq!(
                 public::capture(&state, viewer).unwrap(),
@@ -460,7 +466,8 @@ fn remembered_attack_ignores_later_concealed_source_before_and_after_resolution_
         let plain = KaitoSession::from_session(fixture(&state)).unwrap();
         let paired = KaitoSession::from_session(fixture(&hidden)).unwrap();
         assert_eq!(decision(&plain).packet(), decision(&paired).packet());
-        let mut hidden = restore(&hidden);
+        // Custody is search-only and never serialized, so the rewritten world
+        // resolves unrestored.
         native::install(&mut state, actor, target);
         native::install(&mut hidden, actor, target);
         for viewer in [actor, actor.opponent()] {

@@ -279,6 +279,7 @@ fn play(flags: &Flags) -> Result<(), String> {
         ));
     }
     let uses_conditioned_belief = uses_closed_list || limits.session == SessionKindV1::FullPoolV1;
+    let records_search = policies.iter().any(PolicySpecV1::records_search_v1);
     let out = PathBuf::from(flags.get("out")?);
     let legs: u64 = if spec_a == spec_b || flags.switches.contains("single") {
         1
@@ -420,8 +421,13 @@ fn play(flags: &Flags) -> Result<(), String> {
         "full_validation": limits.full_validation,
         "session": format!("{:?}", limits.session),
     });
-    if uses_closed_list {
-        summary["world_contract"] = if uses_closed_list_v3 {
+    if records_search {
+        summary["world_contract"] = if policies
+            .iter()
+            .any(PolicySpecV1::uses_full_pool_closed_list_v1)
+        {
+            json!("limited-closedlist-full-pool/v1")
+        } else if uses_closed_list_v3 {
             if policies.iter().any(PolicySpecV1::uses_closed_list_v2) {
                 json!(["limited-closedlist/v2", "limited-closedlist/v3"])
             } else {
@@ -547,7 +553,7 @@ fn play_one(
     }
     if seat_policies
         .iter()
-        .any(|policy| policy.uses_versioned_closed_list())
+        .any(|policy| policy.records_search_v1())
     {
         row["env_seed"] = json!(env_seed);
         row["searched_decisions"] = json!(result.searched_decisions);

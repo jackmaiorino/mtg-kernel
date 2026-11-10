@@ -104,14 +104,18 @@ owner with V3 reveal minima. Both seats use either this search policy or
 steps. The sampler draws from the supplied public belief corpus and
 authenticates each rebuilt root before applying its action index. The
 match output records the resolved belief deck hash and checks held-out
-overlap by both deck name and card multiset.
+overlap by both deck name and card multiset. The summary names the world
+contract `limited-closedlist-full-pool/v1` with the game and belief deck
+content hashes, and each row records its environment seed, searched
+decisions, uniform fallbacks and rejection reasons.
 
 UCB1 uses the existing seeded action selection. A natural rollout win or
 loss scores +1 or -1 for the search root. Draws and depth, turn or session
 cutoffs score zero. The match rows retain separate counts for rejected
 worlds, rollout errors and uniform fallbacks. A capped live game is a
 `stall`, distinct from a natural `draw`. Its reported turn is the most
-recent turn visible in an authenticated decision.
+recent turn visible in an authenticated decision. As in the trainer, a
+natural terminal without a win, loss or draw is an error.
 
 The FullPool match mode is separate from the rules-only search probes and
 the pinned DraftZero training and fixed-opponent evaluation.

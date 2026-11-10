@@ -182,16 +182,17 @@ fn exact_forty_card_v3_reset_pays_cast_and_both_abilities_both_seats() {
                 Action::CastSpell { source, .. } => Some(ObjectId(source.arena_id)),
                 _ => None,
             };
-            let finishing = matches!(
+            // The doubling takes up to two creatures or artifacts. A deck of
+            // Zimone and basic lands has no second one, so the engine ends the
+            // selection after Zimone is chosen and offers no finish row.
+            let activation_target = matches!(
                 row.zimone_action,
                 Some(ActionV1::TargetChoice {
                     kind: AbilityKindV1::ActivateDoubleEveryKind,
-                    selected_count: 1,
-                    finish: true,
                     ..
                 })
             );
-            if finishing {
+            if activation_target {
                 let input = numeric.training_input_v1(&d).unwrap();
                 assert!(ModelV1::deterministic_fixture()
                     .forward(&input)
@@ -205,13 +206,12 @@ fn exact_forty_card_v3_reset_pays_cast_and_both_abilities_both_seats() {
                 assert_eq!(tapped_lands(numeric.fixture_state(), actor) - before, 4);
                 zimone = Some(id);
             }
-            if finishing {
+            if activation_target && numeric.fixture_state().engine.pending_activation.is_none() {
                 let state = numeric.fixture_state();
                 let source = zimone.unwrap();
-                assert_eq!(
-                    state.stack.last().unwrap().targets,
-                    [Target::Object(source)]
-                );
+                let activation = state.stack.last().unwrap();
+                assert_eq!(activation.source, source);
+                assert_eq!(activation.targets, [Target::Object(source)]);
                 assert!(state.objects.get(source).tapped);
                 assert_eq!(tapped_lands(state, actor) - before, 2);
                 assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);

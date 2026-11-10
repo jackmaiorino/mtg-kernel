@@ -4,6 +4,7 @@
 //! and complete ordinary semantics, with mandatory typed
 //! Kaito V75 and inherited family context. This is not a session, restore capability or action dispatcher.
 use crate::{
+    akroma_family_public_v40::FamilyProjectionV40,
     artist_consumer_v1 as artist, chosen_type_consumer_v1 as chosen_type,
     graveyard_return_public_v61::{
         DeathV61, ProgramV61, ScheduleV61, StageV61, TargetV61, TriggerV61,
@@ -727,11 +728,12 @@ fn drake_activation(
     ))
 }
 
-/// Private exact original pairs and public-to-native mapping. No Debug or
-/// serialization, no supplied binding accepted, and no action application API.
-pub(crate) struct NativeCandidateProjectionV75 {
+/// Internal binding parts from the same observation as the public candidates.
+/// No serialization, supplied binding, or action application API.
+pub(crate) struct CandidateBindingPartsV75 {
     pub(crate) original: Vec<crate::rl::CorePolicyActionCandidateV1>,
     pub(crate) public_to_original: Vec<usize>,
+    pub(crate) families: Vec<FamilyProjectionV40>,
 }
 
 pub fn project_v75(
@@ -742,13 +744,9 @@ pub fn project_v75(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<KaitoCandidatesV75, RlContractError> {
-    project_parts_v75(state, surface, actor_and_origin, step, physical, substep).map(
-        |(value, native)| {
-            // Read-only projection discards both original executable pairs and their index map.
-            let _ = (native.original, native.public_to_original);
-            value
-        },
-    )
+    // The read-only API returns only the public projection.
+    project_parts_v75(state, surface, actor_and_origin, step, physical, substep)
+        .map(|(value, _)| value)
 }
 
 pub(crate) fn project_parts_v75(
@@ -758,7 +756,7 @@ pub(crate) fn project_parts_v75(
     step: u64,
     physical: u64,
     substep: (u32, u32),
-) -> Result<(KaitoCandidatesV75, NativeCandidateProjectionV75), RlContractError> {
+) -> Result<(KaitoCandidatesV75, CandidateBindingPartsV75), RlContractError> {
     if surface.limited_appendix_v1() != crate::policy_surface_v5::LimitedAppendixV1::Legacy {
         return Err(error("Appendix candidates require their owning profile"));
     }
@@ -790,7 +788,7 @@ pub(crate) fn project_issued_parts_v75(
     step: u64,
     physical: u64,
     substep: (u32, u32),
-) -> Result<(KaitoCandidatesV75, NativeCandidateProjectionV75), RlContractError> {
+) -> Result<(KaitoCandidatesV75, CandidateBindingPartsV75), RlContractError> {
     proof.validate(state, surface, actor_and_origin, step, physical, substep)?;
     project_authenticated_parts_v75(state, surface, actor_and_origin, step, physical, substep)
 }
@@ -801,8 +799,8 @@ fn project_authenticated_parts_v75(
     step: u64,
     physical: u64,
     substep: (u32, u32),
-) -> Result<(KaitoCandidatesV75, NativeCandidateProjectionV75), RlContractError> {
-    let (observation, _) =
+) -> Result<(KaitoCandidatesV75, CandidateBindingPartsV75), RlContractError> {
+    let (observation, families) =
         observation::observe_parts_v75(state, surface, actor_and_origin, step, physical, substep)?;
     let (schema, annotation_schema) = schemas(&observation);
     let authorized = authorized_references(&observation)?;
@@ -1025,9 +1023,10 @@ fn project_authenticated_parts_v75(
     validate_artifact(&value)?;
     Ok((
         value,
-        NativeCandidateProjectionV75 {
+        CandidateBindingPartsV75 {
             original,
             public_to_original,
+            families,
         },
     ))
 }

@@ -162,7 +162,7 @@ fn declared_forty_card_opening_choice_keeps_opponent_roster_private_and_binds_al
         assert_eq!(current, other_current);
         let current = body(&mut wire, 4, CommandV1::Current);
         assert_eq!(current, body(&mut other_wire, 4, CommandV1::Current));
-        let wire_action = wire_step(&current, 1);
+        let wire_current = current.clone();
         let Body::State { state, .. } = current else {
             panic!()
         };
@@ -208,7 +208,13 @@ fn declared_forty_card_opening_choice_keeps_opponent_roster_private_and_binds_al
         let (projected, indices) =
             project_limited_kaito_v16(backend, expected.acting_player, visible.prompt_seq).unwrap();
         assert_eq!(*visible, projected);
-        assert_eq!(indices, [0, 1]);
+        // The human projection sorts actions by their public labels, so the
+        // native accept row is found through the returned permutation.
+        let mut native_rows = indices.clone();
+        native_rows.sort_unstable();
+        assert_eq!(native_rows, [0, 1]);
+        let accept = indices.iter().position(|&index| index == 1).unwrap() as u32;
+        let wire_action = wire_step(&wire_current, accept);
         assert_eq!(prompt.actions, visible.actions);
         assert_eq!(prompt.action_meanings, visible.action_meanings);
 
@@ -222,7 +228,7 @@ fn declared_forty_card_opening_choice_keeps_opponent_roster_private_and_binds_al
         };
         let action = HumanActionRequestV1 {
             prompt_seq: prompt.prompt_seq,
-            action_index: 1,
+            action_index: accept,
         };
         let input = numeric.training_input_v1(&d).unwrap();
         assert!(ModelV1::deterministic_fixture()

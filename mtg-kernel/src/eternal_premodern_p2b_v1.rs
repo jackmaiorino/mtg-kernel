@@ -1,7 +1,7 @@
 //! Card programs for the eternal catalog's Premodern wave P2b
 //! (`docs/design/eternal_formats_support_v1.md`): Survival, Madness
-//! Threshold and the cards Elves shares with them (Birchlore Rangers and
-//! Thornscape Battlemage stay out; the design document says why).
+//! Threshold, the cards Elves shares with them, and the Elves follow-up
+//! for Birchlore Rangers and Thornscape Battlemage.
 //!
 //! `eternal_cards_v1` forwards its effect leaves and state here, wave P1a's
 //! tables fall through to this module's, and the engine calls the hooks in
@@ -22,8 +22,9 @@
 //!   chosen), and "Return an Elf you control" as Wirewood Symbiote's cost;
 //! - a count of the nontoken creatures put into each graveyard from the
 //!   battlefield this turn (Caller of the Claw);
-//! - more morph cards (Nantuko Vigilante) and the trigger for turning one
-//!   face up;
+//! - more morph cards (Nantuko Vigilante and Birchlore Rangers) and the
+//!   trigger for turning Vigilante face up;
+//! - Birchlore's two-Elf mana payment and Battlemage's independent kickers;
 //! - Deranged Hermit's Squirrel lord, Vintara Snapper's conditional shroud
 //!   and Masticore's upkeep cost.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
@@ -45,6 +46,55 @@ use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Target, Zone};
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
+
+pub(crate) const THORNSCAPE_BATTLEMAGE: &str = "Thornscape Battlemage";
+pub(crate) const THORNSCAPE_WHITE_KICKER: crate::mana::Cost = crate::mana::Cost {
+    pips: &[crate::mana::Pip::Colored(ManaColor::W)],
+    generic: 0,
+    x_count: 0,
+};
+
+pub(crate) fn is_thornscape(def: &crate::card_def::CardDef) -> bool {
+    cfg!(feature = "eternal-fixtures") && def.name == THORNSCAPE_BATTLEMAGE
+}
+
+/// The two printed choices travel with a resolved or copied spell.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BattlemageKickersV1(pub u8);
+
+impl BattlemageKickersV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl std::hash::Hash for BattlemageKickersV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if !self.is_empty() {
+            std::hash::Hash::hash(&("battlemage-kickers/v1", self.0), state);
+        }
+    }
+}
+
+/// One resolution's kicker choices, available through its entry checkpoint.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BattlemageEntryV1(pub Option<(ObjectId, BattlemageKickersV1)>);
+
+impl BattlemageEntryV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+impl std::hash::Hash for BattlemageEntryV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if let Some((object, kickers)) = self.0 {
+            std::hash::Hash::hash(&("battlemage-entry/v1", object, kickers), state);
+        }
+    }
+}
 
 // ---- State ------------------------------------------------------------------------
 
@@ -359,6 +409,37 @@ const GRANGER_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(TriggerCondition::Et
 const BLASTODERM_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(YOUR_UPKEEP, fading_upkeep)];
 const MASTICORE_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(YOUR_UPKEEP, masticore_upkeep)];
 
+fn thornscape_damage() -> EffectOp {
+    EffectOp::DealDamage {
+        target: crate::effect::TargetRef::Target(0),
+        amount: 2,
+    }
+}
+
+fn thornscape_destroy() -> EffectOp {
+    EffectOp::DestroyObject {
+        object: crate::effect::ObjectRef::Target(0),
+    }
+}
+
+const THORNSCAPE_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    trigger(TriggerCondition::Etb, thornscape_damage),
+    trigger(TriggerCondition::Etb, thornscape_destroy),
+];
+
+pub(crate) fn thornscape_etb_is_enabled(
+    entry: BattlemageEntryV1,
+    object: ObjectId,
+    effect: &EffectOp,
+) -> bool {
+    let Some((source, kickers)) = entry.0 else {
+        return false;
+    };
+    source == object
+        && ((kickers.0 & 1 != 0 && *effect == thornscape_damage())
+            || (kickers.0 & 2 != 0 && *effect == thornscape_destroy()))
+}
+
 /// Triggered abilities of this module's cards that use the engine's own
 /// trigger conditions. The rest are queued by the hooks below.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
@@ -368,6 +449,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         DERANGED_HERMIT => &HERMIT_TRIGGERS,
         MASTICORE => &MASTICORE_TRIGGERS,
         MULTANIS_ACOLYTE => &ACOLYTE_TRIGGERS,
+        THORNSCAPE_BATTLEMAGE => &THORNSCAPE_TRIGGERS,
         YAVIMAYA_GRANGER => &GRANGER_TRIGGERS,
         _ => &[],
     }
@@ -384,6 +466,8 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     }
     Some(match name {
         NANTUKO_VIGILANTE => TargetSpec::ArtifactOrEnchantmentPermanent,
+        THORNSCAPE_BATTLEMAGE if *effect == thornscape_damage() => TargetSpec::AnyTarget,
+        THORNSCAPE_BATTLEMAGE => TargetSpec::ArtifactPermanent,
         _ => TargetSpec::None,
     })
 }

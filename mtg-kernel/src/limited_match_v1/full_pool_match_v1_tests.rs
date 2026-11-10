@@ -150,6 +150,16 @@ fn full_pool_match_reset_and_caps_are_distinct_from_natural_draw() {
     assert!(search
         .validate_full_pool_session_v1(SessionKindV1::PreparedV57)
         .is_err());
+    // Match rows and the summary keep this policy's search counts and replay
+    // identity, without the rules-only session requirement of v2 and v3.
+    assert!(search.records_search_v1() && !search.uses_versioned_closed_list());
+    assert!(PolicySpecV1::parse("pimc:closedlist-v3")
+        .unwrap()
+        .records_search_v1());
+    assert!(!random.records_search_v1());
+    assert!(!PolicySpecV1::parse("pimc:closedlist")
+        .unwrap()
+        .records_search_v1());
     assert!(PolicySpecV1::parse("pimc:closedlist-v3")
         .unwrap()
         .validate_full_pool_session_v1(SessionKindV1::FullPoolV1)

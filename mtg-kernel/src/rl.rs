@@ -429,6 +429,9 @@ pub struct StackItemPublicV2 {
     pub counter_transfer: Option<crate::standard_creatures_v1::CounterTransferV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub granted_ability: Option<(CardStableRefV1, u16)>,
+    /// Paid Thornscape Battlemage kickers. Bit 0 is red and bit 1 is white.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thornscape_kickers_v1: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -558,7 +561,7 @@ pub enum EngineDecisionStageV2 {
     Halted,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingCastSemanticV2 {
     pub source: Option<CardStableRefV1>,
     pub controller: PlayerSeatV1,
@@ -574,6 +577,8 @@ pub struct PendingCastSemanticV2 {
     /// Escape deck can be admitted to training.
     pub sacrifice_chosen: Vec<CardStableRefV1>,
     pub kicked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thornscape_white_kicker_v1: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1395,6 +1400,12 @@ pub enum ActionSemanticV1 {
         actor: PlayerSeatV1,
         source: CardStableRefV1,
         x_value: u16,
+    },
+    ActivateManaAbilityWithTwoCostTargetsV1 {
+        actor: PlayerSeatV1,
+        source: CardStableRefV1,
+        mana_choice: ManaColor,
+        cost_targets: [CardStableRefV1; 2],
     },
     /// Native Limited entry choice over the complete pinned type domain.
     ChooseEntryCreatureTypeV60 {
@@ -7139,47 +7150,9 @@ fn core_surface_action_candidates_fake_scoped_v50(
                     )?;
                 }
                 for &id in mana_abilities {
-                    let choices = engine::available_mana_ability_choices(*player, id, state);
-                    for &choice in &choices {
-                        let cost_targets = engine::mana_ability_cost_targets_for_choice(
-                            *player, id, choice, state,
-                        );
-                        if cost_targets.is_empty() {
-                            push_action(
-                                &mut out,
-                                ActionSemanticV1::ActivateManaAbility {
-                                    actor,
-                                    source: card_ref(state, id)?,
-                                    mana_choice: Some(choice),
-                                    cost_target: None,
-                                },
-                                SurfaceAction::Action(if choices.len() == 1 {
-                                    Action::ActivateManaAbility(id)
-                                } else {
-                                    Action::ActivateManaAbilityChoice(id, choice)
-                                }),
-                            )?;
-                        } else {
-                            for &cost_target in &cost_targets {
-                                push_action(
-                                    &mut out,
-                                    ActionSemanticV1::ActivateManaAbility {
-                                        actor,
-                                        source: card_ref(state, id)?,
-                                        mana_choice: Some(choice),
-                                        cost_target: Some(card_ref(state, cost_target)?),
-                                    },
-                                    SurfaceAction::Action(
-                                        Action::ActivateManaAbilityWithCostTarget(
-                                            id,
-                                            choice,
-                                            cost_target,
-                                        ),
-                                    ),
-                                )?;
-                            }
-                        }
-                    }
+                    for_each_mana_action(state, *player, actor, id, |semantic, action| {
+                        push_action(&mut out, semantic, SurfaceAction::Action(action))
+                    })?;
                 }
                 for &id in land_drops {
                     push_action(
@@ -12953,6 +12926,7 @@ fn pending_cast_semantic_v2(
         origin_zone: p.origin_zone,
         sacrifice_chosen,
         kicked: p.kicked,
+        thornscape_white_kicker_v1: p.thornscape_white_kicker_v1,
     })
 }
 
@@ -13547,6 +13521,7 @@ pub(crate) fn stack_item_public_v2_from_frozen(
         mode_chosen: item.mode_chosen,
         madness_offer: item.madness_offer,
         kicked: item.kicked,
+        thornscape_kickers_v1: public_thornscape_kickers_v1(item),
         cast_method: item.v4.cast_method,
         face_index: item.v4.face_index,
         x_value: item.v4.x_value,
@@ -13650,6 +13625,7 @@ fn stack_item_public_conqueror_v49_fake_v50(
         mode_chosen: item.mode_chosen,
         madness_offer: item.madness_offer,
         kicked: item.kicked,
+        thornscape_kickers_v1: public_thornscape_kickers_v1(item),
         cast_method: item.v4.cast_method,
         face_index: item.v4.face_index,
         x_value: item.v4.x_value,
@@ -13662,6 +13638,11 @@ fn stack_item_public_conqueror_v49_fake_v50(
         ),
         counter_distribution,
     })
+}
+
+fn public_thornscape_kickers_v1(item: &StackItem) -> Option<u8> {
+    let kickers = item.v4.battlemage_kickers_v1;
+    (!kickers.is_empty()).then_some(kickers.0)
 }
 
 /// Selected Crystal transport: derive the resolving identity from the real
@@ -14422,6 +14403,73 @@ fn visible_projection_hash_v5(observation: &ObservationV5) -> Result<u64> {
         known_hand_cards: &observation.known_hand_cards,
         known_face_down_cards: &observation.known_face_down_cards,
     })
+}
+
+pub(crate) fn for_each_mana_action(
+    state: &GameState,
+    player: PlayerId,
+    actor: PlayerSeatV1,
+    source: ObjectId,
+    mut emit: impl FnMut(ActionSemanticV1, Action) -> Result<()>,
+) -> Result<()> {
+    let mut choices = engine::available_mana_ability_choices(player, source, state);
+    let single_choice = choices.len() == 1;
+    if let Some(candidates) = engine::two_object_mana_cost_candidates(state, player, source) {
+        let pair_choices = engine::two_object_mana_cost_choices(state, player, source);
+        for &choice in pair_choices.as_slice() {
+            for (index, &first) in candidates.iter().enumerate() {
+                for &second in &candidates[index + 1..] {
+                    emit(
+                        ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 {
+                            actor,
+                            source: card_ref(state, source)?,
+                            mana_choice: choice,
+                            cost_targets: [card_ref(state, first)?, card_ref(state, second)?],
+                        },
+                        Action::ActivateManaAbilityWithTwoCostTargetsV1(
+                            source,
+                            choice,
+                            [first, second],
+                        ),
+                    )?;
+                }
+            }
+        }
+        let granted = engine::granted_tap_mana_choices(state, source);
+        choices.retain(|color| granted.contains(color));
+    }
+    for &choice in &choices {
+        let cost_targets =
+            engine::mana_ability_cost_targets_for_choice(player, source, choice, state);
+        if cost_targets.is_empty() {
+            emit(
+                ActionSemanticV1::ActivateManaAbility {
+                    actor,
+                    source: card_ref(state, source)?,
+                    mana_choice: Some(choice),
+                    cost_target: None,
+                },
+                if single_choice {
+                    Action::ActivateManaAbility(source)
+                } else {
+                    Action::ActivateManaAbilityChoice(source, choice)
+                },
+            )?;
+        } else {
+            for cost_target in cost_targets {
+                emit(
+                    ActionSemanticV1::ActivateManaAbility {
+                        actor,
+                        source: card_ref(state, source)?,
+                        mana_choice: Some(choice),
+                        cost_target: Some(card_ref(state, cost_target)?),
+                    },
+                    Action::ActivateManaAbilityWithCostTarget(source, choice, cost_target),
+                )?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn push_action(
