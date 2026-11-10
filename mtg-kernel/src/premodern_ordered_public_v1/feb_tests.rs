@@ -497,7 +497,13 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
 
     for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
         let player = native_seat(seat);
-        for (donated, departed) in [(false, false), (true, false), (false, true), (true, true)] {
+        for (donated, departed, returned) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (true, true, false),
+            (false, true, true),
+        ] {
             let mut owner = main_phase_owner(460_622, seat);
             let source_name = if donated {
                 "Volrath's Shapeshifter"
@@ -614,10 +620,18 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
                 }
                 (None, true) => {
                     propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Hand));
+                    if returned {
+                        propose_and_commit(
+                            state,
+                            ProposedEvent::zone_change(source, Zone::Battlefield),
+                        );
+                    }
                 }
                 (None, false) => {}
             }
             let state = &mut owner.inner.game;
+            let departed_zone = state.objects.get(source).zone;
+            let departed_generation = state.objects.get(source).zone_change_count;
             let mana = &mut state.players[player.index()].mana_pool;
             mana[ManaColor::W.pool_index()] = 2;
             mana[ManaColor::C.pool_index()] = 3;
@@ -633,13 +647,8 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
 
             let human = owner.human_current(seat).unwrap().unwrap();
             let (pay_label, decline_label) = if departed {
-                let pay = if donated {
-                    format!("Pay {{3}}{{W}}{{W}} for Karmic Guide echo from {source_name} (original source left)")
-                } else {
-                    format!("Choose payment for Karmic Guide echo from {source_name} (original source left, no mana due)")
-                };
                 (
-                    pay,
+                    format!("Pay {{3}}{{W}}{{W}} for Karmic Guide echo from {source_name} (original source left)"),
                     format!("Decline Karmic Guide echo from {source_name} (original source left)"),
                 )
             } else {
@@ -708,7 +717,7 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
                 FebHumanActionV1::Unsupported { action_kind, .. } if action_kind == "choose_effect_option")));
             assert!(owner.step_human(&stale, 0).is_err());
 
-            if departed {
+            if departed && !returned {
                 owner.restore(&snapshot).unwrap();
                 let (_, token) = issued(&owner, seat);
                 let state = &mut owner.inner.game;
@@ -726,20 +735,16 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
                 (
                     0,
                     if departed {
-                        Zone::Hand
+                        departed_zone
                     } else {
                         Zone::Battlefield
                     },
-                    if departed && !donated {
-                        unpaid_pool
-                    } else {
-                        [0; 6]
-                    },
+                    [0; 6],
                 ),
                 (
                     1,
                     if departed {
-                        Zone::Hand
+                        departed_zone
                     } else {
                         Zone::Graveyard
                     },
@@ -756,6 +761,13 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
                 assert!(state.stack.is_empty());
                 assert_eq!(state.objects.get(source).zone, zone);
                 assert_eq!(state.players[player.index()].mana_pool, mana);
+                if departed {
+                    assert_eq!(state.objects.get(source).zone_change_count, departed_generation);
+                    assert!(!state.engine.event_history.iter().any(|event| matches!(
+                        event,
+                        crate::event::CommittedEvent::Sacrificed { object, .. } if *object == source
+                    )));
+                }
             }
         }
     }

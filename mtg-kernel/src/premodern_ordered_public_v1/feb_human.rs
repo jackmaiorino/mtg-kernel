@@ -354,11 +354,7 @@ pub(super) fn guide_echo_menu(
             format!("Decline Karmic Guide echo from {name} (source changed control)"),
         ],
         None => vec![
-            if donated.is_some() {
-                format!("Pay {payment} for Karmic Guide echo from {name} (original source left)")
-            } else {
-                format!("Choose payment for Karmic Guide echo from {name} (original source left, no mana due)")
-            },
+            format!("Pay {payment} for Karmic Guide echo from {name} (original source left)"),
             format!("Decline Karmic Guide echo from {name} (original source left)"),
         ],
     };
