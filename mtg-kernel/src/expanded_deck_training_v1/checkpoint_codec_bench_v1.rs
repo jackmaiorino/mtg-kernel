@@ -340,7 +340,7 @@ pub fn peak_rss_bytes_v1() -> Option<u64> {
     }
     #[cfg(windows)]
     {
-        crate::kernel_native_search_calibration_runner_v1::peak_working_set_bytes_v1()
+        windows_v1::peak_rss_bytes_v1()
     }
     #[cfg(target_os = "macos")]
     {
@@ -432,6 +432,67 @@ mod macos_v1 {
         }
         // Darwin reports `ru_maxrss` in bytes (Linux in KiB).
         u64::try_from(usage.longs[0]).ok()
+    }
+}
+
+/// The process's peak working set on Windows. The crate's other reader lives
+/// in the calibration runner, which is compiled only for tests.
+#[cfg(windows)]
+mod windows_v1 {
+    use std::ffi::c_void;
+
+    /// `PROCESS_MEMORY_COUNTERS`. Only `cb` and the peak are read; the rest
+    /// give the struct its Win32 layout.
+    #[repr(C)]
+    struct ProcessMemoryCountersV1 {
+        cb: u32,
+        page_fault_count: u32,
+        peak_working_set_size: usize,
+        working_set_size: usize,
+        quota_peak_paged_pool_usage: usize,
+        quota_paged_pool_usage: usize,
+        quota_peak_non_paged_pool_usage: usize,
+        quota_non_paged_pool_usage: usize,
+        pagefile_usage: usize,
+        peak_pagefile_usage: usize,
+    }
+
+    #[link(name = "psapi")]
+    unsafe extern "system" {
+        fn GetProcessMemoryInfo(
+            process: *mut c_void,
+            counters: *mut ProcessMemoryCountersV1,
+            size: u32,
+        ) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> *mut c_void;
+    }
+
+    pub(super) fn peak_rss_bytes_v1() -> Option<u64> {
+        let mut counters = ProcessMemoryCountersV1 {
+            cb: u32::try_from(std::mem::size_of::<ProcessMemoryCountersV1>()).ok()?,
+            page_fault_count: 0,
+            peak_working_set_size: 0,
+            working_set_size: 0,
+            quota_peak_paged_pool_usage: 0,
+            quota_paged_pool_usage: 0,
+            quota_peak_non_paged_pool_usage: 0,
+            quota_non_paged_pool_usage: 0,
+            pagefile_usage: 0,
+            peak_pagefile_usage: 0,
+        };
+        // SAFETY: `GetCurrentProcess` returns a pseudo-handle that needs no
+        // closing, and `counters` is a zeroed `PROCESS_MEMORY_COUNTERS` whose
+        // `cb` holds its size.
+        let succeeded =
+            unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) != 0 };
+        if !succeeded {
+            return None;
+        }
+        u64::try_from(counters.peak_working_set_size).ok()
     }
 }
 

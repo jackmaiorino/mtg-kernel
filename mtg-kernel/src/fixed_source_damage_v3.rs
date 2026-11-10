@@ -471,7 +471,10 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
     {
         return Err("fixed damage payment changed departure identity or cost".into());
     }
-    let between = &state.engine.event_history[p.departure as usize + 1..index];
+    let between = state
+        .engine
+        .event_history
+        .range_v2(p.departure as usize + 1..index);
     let sacrifice = between
         .iter()
         .position(|e| {
@@ -479,16 +482,19 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
         if *object==s.source && *controller_before==s.controller)
         })
         .ok_or("fixed damage lost actual sacrifice")?;
-    let departure_to = between[sacrifice + 1..].iter().find_map(|e| match e {
-        CommittedEvent::ZoneChange {
-            object,
-            from: Zone::Battlefield,
-            to,
-            controller_before,
-        } if *object == s.source && *controller_before == s.controller => Some(*to),
-        _ => None,
-    });
-    let Some(departure_to) = departure_to else {
+    let Some(destination) = between
+        .iter()
+        .skip(sacrifice + 1)
+        .find_map(|event| match event {
+            CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Battlefield,
+                to,
+                controller_before,
+            } if *object == s.source && *controller_before == s.controller => Some(*to),
+            _ => None,
+        })
+    else {
         return Err("fixed damage lost actual post-sacrifice departure".into());
     };
     if donated_fanatic(&p.item) {
@@ -505,7 +511,7 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
         if !p.item.v4.paid_cost_refs.iter().any(|reference| {
             reference.object == s.source
                 && reference.owner == s.owner
-                && reference.zone == departure_to
+                && reference.zone == destination
                 && s.zone_change_count.checked_add(1) == Some(reference.zone_change_count)
         }) {
             return Err("donated Fanatic lost its exact sacrificed incarnation".into());
@@ -518,7 +524,7 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
         if sacrifice != 0
             || !matches!(first_source_move,
             Some((at, CommittedEvent::ZoneChange { from: Zone::Battlefield, to, controller_before, .. }))
-                if at > sacrifice && *to != Zone::Battlefield && *to == departure_to && *controller_before == s.controller)
+                if at > sacrifice && *to != Zone::Battlefield && *to == destination && *controller_before == s.controller)
             || p.item.v4.paid_cost_refs.len() != 1
             || p.item.v4.target_contracts.len() != 1
             || !p.item.v4.bombardment_lki_v1.is_empty()
@@ -534,7 +540,7 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
                 r.object == s.source
                     && r.card_def == paid_definition
                     && r.owner == s.owner
-                    && r.zone == departure_to
+                    && r.zone == destination
                     && s.zone_change_count.checked_add(1) == Some(r.zone_change_count)
             }))
     {
@@ -806,7 +812,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     (0,[],true)=>{},
                     (0,[r],false) if r.history_index>p.history_index && (r.history_index as usize)<state.engine.event_history.len()=>{
                         if r.outcome==OutcomeV3::Resolved {
-                            if completed_item(state,p)?!=*r.item || state.engine.event_history[r.history_index as usize..].iter().any(|e|
+                            if completed_item(state,p)?!=*r.item || state.engine.event_history.range_v2(r.history_index as usize..).iter().any(|e|
                                 matches!(e,CommittedEvent::CrystalPreventionBoundaryV1{boundary}
                                     if boundary.item.v4.stack_item_id==p.item.v4.stack_item_id)) {
                                 return Err("fixed resolved closure changed or preceded execution".into());

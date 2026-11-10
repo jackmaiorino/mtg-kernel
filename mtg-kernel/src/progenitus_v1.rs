@@ -309,11 +309,32 @@ pub(crate) fn graveyard_members(
     }
     Ok(Some(members))
 }
+/// The Progenitus rows of `kinds` with their positions. Each check below
+/// acts only on these rows, so reading only them gives the same verdict.
+fn rows<'a>(
+    state: &'a GameState,
+    kinds: &[crate::event_history_v1::EventKindV1],
+) -> impl Iterator<Item = (usize, &'a CommittedEvent)> + 'a {
+    state.engine.event_history.of_kinds_v2(kinds)
+}
 pub(crate) fn validate(state: &GameState) -> Result<(), String> {
-    for (at, event) in state.engine.event_history.iter().enumerate() {
-        if matches!(event,CommittedEvent::ProgenitusInputV1{..}) && state.engine.event_history.iter().filter(|entry|matches!(entry,CommittedEvent::ProgenitusShuffledV1{input_history_index,..}if *input_history_index==at as u64)).count()!=1 { return Err("Progenitus input has no unique actual shuffle".into()); }
+    let shuffles = || {
+        rows(
+            state,
+            &[crate::event_history_v1::EventKindV1::ProgenitusShuffledV1],
+        )
+        .map(|(_, entry)| entry)
+    };
+    for (at, event) in rows(
+        state,
+        &[crate::event_history_v1::EventKindV1::ProgenitusInputV1],
+    ) {
+        if matches!(event,CommittedEvent::ProgenitusInputV1{..}) && shuffles().filter(|entry|matches!(entry,CommittedEvent::ProgenitusShuffledV1{input_history_index,..}if *input_history_index==at as u64)).count()!=1 { return Err("Progenitus input has no unique actual shuffle".into()); }
     }
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in rows(
+        state,
+        &[crate::event_history_v1::EventKindV1::ProgenitusShuffledV1],
+    ) {
         let CommittedEvent::ProgenitusShuffledV1 {
             input_history_index,
             move_history_index,
@@ -331,7 +352,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         };
         if !valid_move || !definition(source.card_def)
             || !matches!(state.engine.event_history.get(input_at),Some(CommittedEvent::ProgenitusInputV1{input})if input.source==*source && input.original.object==source.source && input.original.to_zone==Zone::Graveyard)
-            || state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::ProgenitusShuffledV1{input_history_index:i,..}if i==input_history_index)).count()!=1 { return Err("Progenitus replacement lost original input/move".into()); }
+            || shuffles().filter(|e|matches!(e,CommittedEvent::ProgenitusShuffledV1{input_history_index:i,..}if i==input_history_index)).count()!=1 { return Err("Progenitus replacement lost original input/move".into()); }
         crate::engine::validate_historical_ability_source_contract(state, *source)?;
     }
     Ok(())
@@ -343,7 +364,14 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
                 && o.v4.face_down_v1.is_none()
                 && definition(o.card_def)
         })
-        || state.engine.event_history.iter().any(|e| {
+        || rows(
+            state,
+            &[
+                crate::event_history_v1::EventKindV1::ProgenitusInputV1,
+                crate::event_history_v1::EventKindV1::ProgenitusShuffledV1,
+            ],
+        )
+        .any(|(_, e)| {
             matches!(
                 e,
                 CommittedEvent::ProgenitusInputV1 { .. }

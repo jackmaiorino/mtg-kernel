@@ -2493,7 +2493,10 @@ pub(crate) fn create_token_copy(
                 crate::linked_aura_operation_v1::OperationV1::CopyTokenV36 { source, controller }
             },
         );
-        return state.engine.event_history[history_start..]
+        return state
+            .engine
+            .event_history
+            .range_v2(history_start..)
             .iter()
             .find_map(|event| match event {
                 CommittedEvent::CreateToken { object, .. } => Some(*object),
@@ -2538,7 +2541,10 @@ pub(crate) fn create_token_copy_without_banner_owner(
         }
         let start = state.engine.event_history.len();
         event::propose_and_commit_batch(state, vec![proposal]);
-        return state.engine.event_history[start..]
+        return state
+            .engine
+            .event_history
+            .range_v2(start..)
             .iter()
             .find_map(|event| match event {
                 CommittedEvent::CreateToken { object, .. } => Some(*object),

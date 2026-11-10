@@ -189,7 +189,10 @@ pub(crate) fn sample_power(
         return Err("Ashroot lost unique departing source power".into());
     };
     if *owner != source.owner
-        || !state.engine.event_history[*index + 1..]
+        || !state
+            .engine
+            .event_history
+            .range_v2(*index + 1..)
             .iter()
             .find_map(|e| match e {
                 CommittedEvent::ZoneChange { object, from, .. } if *object == source.source => {
@@ -278,7 +281,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         if live.owner != *owner || state.engine.event_history.scan_for_v1(&[EventKindV1::AshrootPowerBeforeDepartureV1]).iter().filter(|e| matches!(e,CommittedEvent::AshrootPowerBeforeDepartureV1 {source:other,..} if other==source)).count()!=1 {
             return Err("Ashroot departure snapshot is duplicated or changed owner".into());
         }
-        let changes = state.engine.event_history[index + 1..]
+        let changes = state
+            .engine
+            .event_history
+            .range_v2(index + 1..)
             .iter()
             .filter_map(|e| match e {
                 CommittedEvent::ZoneChange { object, from, .. } if *object == source.object => {

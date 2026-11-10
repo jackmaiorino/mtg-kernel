@@ -100,7 +100,7 @@ pub(crate) fn flags(state: &GameState) -> Result<[bool; 2], String> {
         return Err("life-loss anchor belongs to another turn".into());
     }
     let mut flags = [false; 2];
-    for event in &state.engine.event_history[boundary + 1..] {
+    for event in state.engine.event_history.range_v2(boundary + 1..) {
         if let Some(player) = committed_loss_player(event) {
             flags[player.index()] = true;
         }

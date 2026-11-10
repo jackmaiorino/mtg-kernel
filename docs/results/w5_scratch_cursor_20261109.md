@@ -17,7 +17,8 @@ durable updates/hour claim needs T6's guarded comparison on a node (handoff belo
 saving is about 3% of one core in the driver, so a box with spare cores may show no difference. With the reaper's
 growth gone, persistence is the larger cost per segment: at 4,096 updates `persist` took 23 s here (40,968
 fsyncs), against 1.5 s for all of the cursor's ticks. Milestone 3 still waits for the node's fsync latency
-(milestone 1's handoff).
+(milestone 1's handoff). [Nov 10: the nodes fsync in about 0.18 ms, so persistence costs about 2.5 ms per update
+there; see [`w5_scratch_node_fsync_20261110.md`](w5_scratch_node_fsync_20261110.md).]
 
 ## Reaper
 

@@ -197,7 +197,10 @@ fn validate_operation(
     {
         return Err("Inspiration operation redirected original boundary or remainder".into());
     }
-    let events = &state.engine.event_history[input.index as usize + 1..operation.index as usize];
+    let events = state
+        .engine
+        .event_history
+        .range_v2(input.index as usize + 1..operation.index as usize);
     let actual = |from, to| {
         events
             .iter()
@@ -264,8 +267,10 @@ fn validate_operation(
                         .iter()
                         .copied()
                         .filter(|binding| {
-                            !state.engine.event_history
-                                [input.index as usize + 1..operation.index as usize]
+                            !state
+                                .engine
+                                .event_history
+                                .range_v2(input.index as usize + 1..operation.index as usize)
                                 .iter()
                                 .any(|entry| {
                                     let CommittedEvent::ProgenitusShuffledV1 {
@@ -659,9 +664,7 @@ fn history(state: &GameState) -> Result<Vec<&InspirationResolutionReceiptV1>, St
     for (index, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::InspirationResolutionBoundaryV1])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::InspirationResolutionBoundaryV1])
     {
         let CommittedEvent::InspirationResolutionBoundaryV1 { receipt } = event else {
             continue;
@@ -774,20 +777,14 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             }
         }
     }
-    for (at, event) in state
-        .engine
-        .event_history
-        .scan_for_v1(&[
-            EventKindV1::InspirationEngineDepartureV1,
-            EventKindV1::InspirationResolutionInputV1,
-            EventKindV1::InspirationResolutionOperationV1,
-        ])
-        .iter()
-        .enumerate()
-    {
+    for (at, event) in state.engine.event_history.of_kinds_v2(&[
+        EventKindV1::InspirationEngineDepartureV1,
+        EventKindV1::InspirationResolutionInputV1,
+        EventKindV1::InspirationResolutionOperationV1,
+    ]) {
         match event {
             CommittedEvent::InspirationResolutionInputV1 { input } => {
-                let uses = state.engine.event_history.scan_for_v1(&[EventKindV1::InspirationResolutionOperationV1]).iter().filter(|e| matches!(e,
+                let uses = state.engine.event_history.of_kinds_v2(&[EventKindV1::InspirationResolutionOperationV1]).filter(|(_, e)| matches!(e,
                     CommittedEvent::InspirationResolutionOperationV1 { operation } if operation.input == input.index)).count();
                 if input.index as usize != at || uses != 1 {
                     return Err("Inspiration actual input erased, duplicated or orphaned".into());
@@ -876,9 +873,7 @@ fn validate_departure(
     let rows = state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::InspirationEngineDepartureV1])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::InspirationEngineDepartureV1])
         .filter_map(|(at, e)| match e {
             CommittedEvent::InspirationEngineDepartureV1 { departure }
                 if departure.closed == receipt.history_index =>
