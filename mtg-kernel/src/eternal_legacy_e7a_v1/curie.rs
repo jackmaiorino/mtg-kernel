@@ -79,10 +79,9 @@ pub(crate) fn combat_source(state: &GameState, combat_at: usize) -> Option<Abili
     };
     (original == combat_at && source.zone == Zone::Battlefield
         && matches!(history.get(combat_at), Some(CommittedEvent::CombatDamageToPlayer {
-            source: object, source_zone_change_count, amount, player,
+            source: object, source_zone_change_count, amount, ..
         }) if *object == source.source
-            && *source_zone_change_count == source.zone_change_count
-            && *amount > 0 && *player == source.controller.opponent()))
+            && *source_zone_change_count == source.zone_change_count && *amount > 0))
         .then_some(source)
 }
 
