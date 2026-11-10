@@ -327,6 +327,15 @@ fn every_undercity_route_edge_is_exact_and_throne_completes_the_dungeon() {
             }
             assert_eq!(latest_room_event(&state), Some(expected), "edge {from:?}");
             if expected == UndercityRoomV1::ThroneOfTheDeadThree {
+                assert_eq!(state.players[0].dungeon.dungeon_id, Some(UNDERCITY_DUNGEON_ID_V1));
+                assert_eq!(state.players[0].dungeon.room_id, Some(expected.stable_id()));
+                assert!(state.players[0].dungeon.completed_dungeons.is_empty());
+                advance_to_initiative_stack(
+                    &mut state,
+                    InitiativeTriggerKindV1::UndercityRoom(expected),
+                );
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                assert!(matches!(resolve_top_until_choice(&mut state), Some(Decision::CastSpellOrPass { .. })));
                 assert_eq!(state.players[0].dungeon.dungeon_id, None);
                 assert_eq!(state.players[0].dungeon.room_id, None);
                 assert_eq!(

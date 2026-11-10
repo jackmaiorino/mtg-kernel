@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) mod echo;
 pub(crate) mod fixed;
+pub(crate) mod rooms;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum InstructionV1 {
@@ -62,6 +63,7 @@ enum InstructionV1 {
         shuffled_at: usize,
         drawer: PlayerId,
     },
+    Room { kind: rooms::KindV1, entered_at: usize },
 }
 
 impl InstructionV1 {
@@ -103,6 +105,10 @@ impl InstructionV1 {
             EternalOpV1::E7bV1(E7bOpV1::MinscDamageBoundV1 { sacrifice }) => Some(Self::Minsc {
                 sacrifice: *sacrifice,
             }),
+            EternalOpV1::RoomBoundV1 { dungeon, room, entered_at } => {
+                let kind = rooms::KindV1::from_room(*dungeon, *room)?;
+                Some(Self::Room { kind, entered_at: *entered_at })
+            }
             _ => None,
         }
     }
@@ -139,6 +145,7 @@ impl InstructionV1 {
             Self::FixedRoot { count, .. } => count,
             Self::Minsc { sacrifice } => minsc::count(state, ctx, sacrifice).unwrap_or(0),
             Self::Echo { .. } => 7,
+            Self::Room { kind, .. } => kind.count(),
             Self::Curie { combat_at } => {
                 eternal_legacy_e7a_v1::curie::draw_count(state, ctx, combat_at).unwrap_or(0)
             }
@@ -330,6 +337,19 @@ pub enum JournalV1 {
         item: StackItemId,
         commit: echo::ShuffleCommitV1,
     },
+    DungeonRoomV1(super::e3::dungeons::occurrences::RoomJournalV1),
+    RoomDrawRevealedV1 {
+        item: StackItemId,
+        draw_at: usize,
+        card: crate::effect::EffectObjectBinding,
+        card_def: u16,
+    },
+    RoomDrawFinishedV1 { item: StackItemId, started_at: usize, draws_end: usize },
+    RoomDrawAnsweredV1 {
+        item: StackItemId,
+        finished_at: usize,
+        selected: Option<crate::effect::EffectObjectBinding>,
+    },
 }
 
 impl JournalV1 {
@@ -359,6 +379,15 @@ impl JournalV1 {
             | Self::EchoShuffleCommittedV1 { item, .. } => {
                 Some(item)
             }
+            _ => self.room_tail_item(),
+        }
+    }
+
+    fn room_tail_item(self) -> Option<StackItemId> {
+        match self {
+            Self::RoomDrawRevealedV1 { item, .. }
+            | Self::RoomDrawFinishedV1 { item, .. }
+            | Self::RoomDrawAnsweredV1 { item, .. } => Some(item),
             _ => None,
         }
     }
@@ -456,6 +485,9 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
             }
             (InstructionV1::Minsc { sacrifice }, StackItemKind::TriggeredAbility, _) => {
                 minsc::owns(state, item, sacrifice)
+            }
+            (InstructionV1::Room { .. }, StackItemKind::TriggeredAbility, _) => {
+                rooms::owns(state, item)
             }
             _ => false,
         };
@@ -711,6 +743,9 @@ pub(crate) fn complete(
                         started.source,
                     );
                 }
+                InstructionV1::Room { kind: rooms::KindV1::MadWizard, .. } => {
+                    rooms::finish(state, pending, progress.started_at)?;
+                }
                 _ => finish_instruction(state, pending, started.instruction),
             }
         }
@@ -787,6 +822,11 @@ fn validate_native_progress(
     started: StartedV1,
     attempts: u32,
 ) -> Result<(), String> {
+    if matches!(started.instruction, InstructionV1::Room { kind: rooms::KindV1::MadWizard, .. })
+        && rooms::tail_started(state, started.item)
+    {
+        return Err("Mad Wizard cannot resume drawing after its cast stage".into());
+    }
     let tail = progress.started_at + 1;
     let total = match (started.instruction, started.initial_library_len) {
         (InstructionV1::Tamiyo, Some(library_len))
@@ -918,6 +958,9 @@ fn dragon_before_start(pending: &EffectContinuation) -> bool {
 
 pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Result<(), String> {
     if state.eternal_owned_draw_progress_v1.is_none() {
+        if rooms::validate_idle(state, pending)? {
+            return Ok(());
+        }
         let named = selected(state, pending);
         let is_echo = named.is_none() && echo::selected(state, pending).is_some();
         if (named.is_some() || is_echo || fixed::selected(state, pending).is_some())

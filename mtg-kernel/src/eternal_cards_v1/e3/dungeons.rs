@@ -2,12 +2,12 @@
 //! Forgotten Realms dungeons, and Acererak the Archlich.
 //!
 //! A player's dungeon and room live in `PlayerState::dungeon`, beside the
-//! Undercity (dungeon id 1, which only the initiative ventures into). As for
-//! the Undercity, a room's ability is a triggered ability whose source is the
-//! card whose ability made the player venture, and a dungeon is completed as
-//! its bottommost room is entered.
+//! Undercity (dungeon id 1). Room abilities use the venturing card as the
+//! engine's proxy source. Native room occurrences retain the dungeon
+//! identity independently, including while a room ability is resolving.
 
 use super::super::{eternal, EternalOpV1};
+use super::super::owned_draws_v1::rooms;
 use super::{
     bind, binding_live, e3_mut, link, offer, printed, E3ChoiceKindV1, E3ChoiceV1, UntilNextTurnV1,
 };
@@ -19,6 +19,9 @@ use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Target, Zone};
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
+
+pub(crate) mod occurrences;
 
 pub(crate) const ACERERAK: &str = "Acererak the Archlich";
 pub(crate) const LOST_MINE_OF_PHANDELVER: u16 = 2;
@@ -31,13 +34,28 @@ const DUNGEONS: [u16; 3] = [
 ];
 
 /// A room ability waiting for the next trigger collection.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomTriggerV1 {
     pub player: PlayerId,
     pub source: AbilitySourceContractV4,
     pub dungeon: u16,
     pub room: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entered_at: Option<usize>,
+}
+
+impl Hash for RoomTriggerV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.player.hash(state);
+        self.source.hash(state);
+        self.dungeon.hash(state);
+        self.room.hash(state);
+        if let Some(at) = self.entered_at {
+            "eternal_room_occurrence_v1".hash(state);
+            at.hash(state);
+        }
+    }
 }
 
 /// The rooms a room leads to, by room id (the topmost room is 1). The
@@ -95,6 +113,7 @@ pub(super) fn venture(
     continuation: &mut EffectContinuation,
     path: Vec<u16>,
 ) -> Result<(), String> {
+    occurrences::complete_bottommost(state, continuation.ctx.controller);
     let options = next_rooms(state, continuation.ctx.controller)?;
     if let [(dungeon, room)] = options.as_slice() {
         return enter_room(state, &continuation.ctx, *dungeon, *room);
@@ -127,23 +146,16 @@ pub(super) fn enter_room(
     if !next_rooms(state, player)?.contains(&(dungeon, room)) {
         return Err("venture chose a room the marker cannot reach".to_string());
     }
-    let bottommost = leads_to(dungeon, room).is_some_and(<[u16]>::is_empty);
+    let entered_at = occurrences::entered(state, player, source, dungeon, room)?;
     let marker = &mut state.players[player.index()].dungeon;
-    if bottommost {
-        if let Err(index) = marker.completed_dungeons.binary_search(&dungeon) {
-            marker.completed_dungeons.insert(index, dungeon);
-        }
-        marker.dungeon_id = None;
-        marker.room_id = None;
-    } else {
-        marker.dungeon_id = Some(dungeon);
-        marker.room_id = Some(room);
-    }
+    marker.dungeon_id = Some(dungeon);
+    marker.room_id = Some(room);
     e3_mut(state).room_triggers.push(RoomTriggerV1 {
         player,
         source,
         dungeon,
         room,
+        entered_at: Some(entered_at),
     });
     Ok(())
 }
@@ -163,7 +175,8 @@ pub(super) fn room_ability(dungeon: u16, room: u16) -> EffectOp {
 fn room_of(effect: &EffectOp) -> Option<(u16, u16)> {
     match effect {
         EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
-            EternalOpV1::RoomAbilityV1 { dungeon, room },
+            EternalOpV1::RoomAbilityV1 { dungeon, room }
+            | EternalOpV1::RoomBoundV1 { dungeon, room, .. },
         )) if leads_to(*dungeon, *room).is_some() => Some((*dungeon, *room)),
         _ => None,
     }
@@ -178,7 +191,7 @@ fn room_target_spec(dungeon: u16, room: u16) -> TargetSpec {
 }
 
 /// The room abilities set off since the last collection.
-pub(super) fn room_triggers(state: &mut GameState) -> Vec<crate::trigger::PendingTrigger> {
+pub(crate) fn room_triggers(state: &mut GameState) -> Vec<crate::trigger::PendingTrigger> {
     let Some(rooms) = state
         .eternal_v1
         .as_mut()
@@ -190,11 +203,15 @@ pub(super) fn room_triggers(state: &mut GameState) -> Vec<crate::trigger::Pendin
     rooms
         .into_iter()
         .map(|entered| {
-            let mut trigger = super::super::delayed_trigger(
-                entered.source,
-                entered.player,
-                room_ability(entered.dungeon, entered.room),
-            );
+            let effect = match entered.entered_at {
+                Some(entered_at) => eternal(EternalOpV1::RoomBoundV1 {
+                    entered_at,
+                    dungeon: entered.dungeon,
+                    room: entered.room,
+                }),
+                None => room_ability(entered.dungeon, entered.room),
+            };
+            let mut trigger = super::super::delayed_trigger(entered.source, entered.player, effect);
             trigger.target_spec = room_target_spec(entered.dungeon, entered.room);
             trigger
         })
@@ -426,13 +443,12 @@ pub(super) fn resolve_room(
             }
         }
         // Temple of Dumathoin: "Draw a card."
-        (LOST_MINE_OF_PHANDELVER, 7) => run(
-            state,
-            EffectOp::DrawCards {
-                player: PlayerRef::Controller,
-                count: 1,
-            },
-        ),
+        (LOST_MINE_OF_PHANDELVER, 7) => {
+            if crate::eternal_vintage_e7b_v1::dredge::owned_draw_needs_choice(state, player, 1) {
+                return Err("Temple draw choice needs its native room entry".into());
+            }
+            super::super::owned_draws_v1::draw_uninterrupted(state, player, 1);
+        }
         // Yawning Portal: "You gain 1 life."
         (DUNGEON_OF_THE_MAD_MAGE, 1) => run(
             state,
@@ -644,29 +660,33 @@ fn mad_wizards_lair(
     path: Vec<u16>,
 ) -> Result<bool, String> {
     let player = continuation.ctx.controller;
-    let before = state.players[player.index()].hand.clone();
-    crate::effect::execute(
-        &EffectOp::DrawCards {
-            player: PlayerRef::Controller,
-            count: 3,
-        },
-        &continuation.ctx,
-        state,
-    );
-    let drawn = state.players[player.index()]
-        .hand
-        .iter()
-        .copied()
-        .filter(|card| !before.contains(card))
-        .collect::<Vec<_>>();
-    for &card in &drawn {
-        // spellbench-public-reveal: hand card revealed by the card rules.
-        state.reveal_distinct_hand_card(player.opponent(), player, card)?;
+    if crate::eternal_vintage_e7b_v1::dredge::owned_draw_needs_choice(state, player, 3) {
+        return Err("Mad Wizard draw choice needs its native room entry".into());
     }
-    let drawn = drawn
-        .into_iter()
-        .map(|card| bind(state, card))
-        .collect::<Vec<_>>();
+    let start = state.engine.event_history.len();
+    if !super::super::owned_draws_v1::draw_uninterrupted(state, player, 3) {
+        return Ok(false);
+    }
+    let drawn = rooms::live_drawn(state, player, start..state.engine.event_history.len())?;
+    for &(_, card) in &drawn {
+        // spellbench-public-reveal: hand card revealed by the card rules.
+        state.reveal_distinct_hand_card(player.opponent(), player, card.object)?;
+    }
+    let drawn = drawn.into_iter().map(|(_, card)| card).collect();
+    let Some(choice) = mad_wizard_choice(state, continuation, drawn, path) else {
+        return Ok(false);
+    };
+    offer(continuation, choice);
+    Ok(true)
+}
+
+pub(crate) fn mad_wizard_choice(
+    state: &GameState,
+    continuation: &EffectContinuation,
+    drawn: Vec<EffectObjectBinding>,
+    path: Vec<u16>,
+) -> Option<E3ChoiceV1> {
+    let player = continuation.ctx.controller;
     let castable = drawn
         .iter()
         .copied()
@@ -676,12 +696,7 @@ fn mad_wizards_lair(
             )
         })
         .collect::<Vec<_>>();
-    if castable.is_empty() {
-        return Ok(false);
-    }
-    offer(
-        continuation,
-        E3ChoiceV1 {
+    (!castable.is_empty()).then(|| E3ChoiceV1 {
             kind: E3ChoiceKindV1::MadWizardV1 { drawn },
             player,
             candidates: targets(&castable),
@@ -691,9 +706,7 @@ fn mad_wizards_lair(
             ordered: false,
             path,
             remaining: continuation.frames.clone(),
-        },
-    );
-    Ok(true)
+        })
 }
 
 /// The card a Mad Wizard's Lair answer casts, if any.

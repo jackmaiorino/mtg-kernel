@@ -4875,6 +4875,10 @@ fn sba_fixed_point_with_protected_triggers(
             crate::standard_keywords_v1::sync_day_night(state);
         }
         let mut changed = protected_draws_consumed;
+        changed |= crate::eternal_cards_v1::e3::dungeons::occurrences::complete_ready(
+            state,
+            protected_triggers,
+        );
 
         // 704.5g: a creature with toughness 0 or less is put into its
         // owner's graveyard. 704.5h: a creature with lethal damage marked
@@ -5595,6 +5599,10 @@ fn triggers_from_events(
         new_triggers.extend(crate::eternal_premodern_p2a_v1::delayed_triggers(
             state, events,
         ));
+        // A resolving Acererak trigger can venture after its source left the
+        // battlefield, without returning anything to hand in this batch.
+        #[cfg(feature = "eternal-fixtures")]
+        new_triggers.extend(crate::eternal_cards_v1::e3::dungeons::room_triggers(state));
         // Coveted Jewel also queues its unblocked-attack trigger when
         // blockers are declared, without adding a committed event.
         #[cfg(feature = "eternal-fixtures")]

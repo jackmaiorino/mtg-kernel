@@ -856,7 +856,7 @@ pub(crate) fn drive(
         }
         EternalOpV1::OwnedDrawCompletedV1 { ordinal } => {
             super::owned_draws_v1::complete(state, continuation, *ordinal, &path)?;
-            Ok(false)
+            Ok(continuation.choice.is_some())
         }
         EternalOpV1::MayImprintFromHandV1 => {
             let Some(contract) = continuation.ctx.ability_source_contract else {
@@ -1030,6 +1030,10 @@ pub(crate) fn drive(
             Ok(true)
         }
         EternalOpV1::RoomAbilityV1 { dungeon, room } => {
+            dungeons::resolve_room(state, continuation, *dungeon, *room, path)
+        }
+        EternalOpV1::RoomBoundV1 { dungeon, room, .. } => {
+            dungeons::occurrences::validate_resolving(state, continuation)?;
             dungeons::resolve_room(state, continuation, *dungeon, *room, path)
         }
         EternalOpV1::AcererakEntersV1 => {
@@ -1234,6 +1238,7 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
             | EternalOpV1::AnnihilatorV1 { .. }
             | EternalOpV1::AtraxaRevealV1
             | EternalOpV1::RoomAbilityV1 { .. }
+            | EternalOpV1::RoomBoundV1 { .. }
             | EternalOpV1::AcererakEntersV1
             | EternalOpV1::AcererakAttacksV1
     ) || matches!(op, EternalOpV1::E5bV1(op) if op.contains_player_choice())
@@ -2161,6 +2166,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | EternalOpV1::AnnihilatorV1 { .. }
         | EternalOpV1::AtraxaRevealV1
         | EternalOpV1::RoomAbilityV1 { .. }
+        | EternalOpV1::RoomBoundV1 { .. }
         | EternalOpV1::AcererakEntersV1
         | EternalOpV1::AcererakAttacksV1 => {
             // Choice leaves run only inside the resumable interpreter.
