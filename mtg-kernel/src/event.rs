@@ -107,8 +107,14 @@ impl DamageProposed {
         state: &GameState,
     ) -> Result<Option<HistoricalDamageSourceV1>, String> {
         match (self.eternal_damage_lki_v1, self.historical_source) {
-            (Some(facts), None) if facts.source().source.source == self.source => {
-                Ok(Some(facts.source()))
+            (Some(origin), None) if origin.source() == self.source => Ok(origin.facts()),
+            (None, _)
+                if crate::fixed_source_damage_v3::waiting_bombardment_source(
+                    state,
+                    self.source,
+                ) =>
+            {
+                Err("waiting Bombardment damage needs a lexical native source".into())
             }
             (None, Some(id)) => {
                 crate::source_power_activation_v1::damage_source(state, self.source, id).map(Some)
@@ -2837,14 +2843,8 @@ pub fn apply_replacements(
         ));
         return None;
     }
-    if let ProposedEvent::Damage(damage) = &proposed {
-        if damage.historical_facts(state).is_err() {
-            state.engine.halted = Some((
-                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                damage.source,
-            ));
-            return None;
-        }
+    if !preflight_historical_damage_v1(state, &proposed) {
+        return None;
     }
     // Grafdigger's Cage: "Creature cards in graveyards and libraries can't
     // enter the battlefield."
@@ -3493,7 +3493,7 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
 }
 
 fn propose_event(state: &mut GameState, event: ProposedEvent, individual_draw: bool) {
-    if !preflight_wide_life_v59(state, &event) {
+    if !preflight_wide_life_v59(state, &event) || !preflight_historical_damage_v1(state, &event) {
         return;
     }
     if unsupported_partial_token_v1(&event) {
@@ -4074,10 +4074,23 @@ pub(crate) fn propose_and_commit_gorehorn_owned(
     Ok(index)
 }
 
+fn preflight_historical_damage_v1(state: &mut GameState, event: &ProposedEvent) -> bool {
+    if let ProposedEvent::Damage(damage) = event {
+        if damage.historical_facts(state).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                damage.source,
+            ));
+            return false;
+        }
+    }
+    true
+}
+
 /// Applies the (possibly rewritten) proposal to `GameState` and appends the
 /// resulting `CommittedEvent` to the event log for this resolution.
 pub fn commit(state: &mut GameState, event: ProposedEvent) {
-    if !preflight_wide_life_v59(state, &event) {
+    if !preflight_wide_life_v59(state, &event) || !preflight_historical_damage_v1(state, &event) {
         return;
     }
     if unsupported_partial_token_v1(&event) {
@@ -4099,7 +4112,7 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
 }
 
 pub(crate) fn commit_without_linked_aura_v1(state: &mut GameState, event: ProposedEvent) {
-    if !preflight_wide_life_v59(state, &event) {
+    if !preflight_wide_life_v59(state, &event) || !preflight_historical_damage_v1(state, &event) {
         return;
     }
     if unsupported_partial_token_v1(&event) {

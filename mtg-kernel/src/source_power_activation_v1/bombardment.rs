@@ -3,6 +3,26 @@ use super::*;
 use crate::card_def::{CostComponent, PermanentFilter, TargetSpec};
 use crate::state::{AbilitySourceContractV4, BombardmentLkiV1, BombardmentPaidV1};
 
+pub(crate) const COST: CostComponent = CostComponent::SacrificeControlled {
+    count: 1,
+    filter: PermanentFilter::Creature,
+};
+
+pub(crate) fn printed(definition: u16, index: u8) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && index == 0
+        && CARD_DEFS.get(usize::from(definition)).is_some_and(|def| {
+            def.name == "Goblin Bombardment"
+                && def.capability.is_fully_supported()
+                && def.activated_abilities.first().is_some_and(|ability| {
+                    ability.cost == [COST]
+                        && ability.activation_zone == Zone::Battlefield
+                        && ability.target_spec == TargetSpec::AnyTarget
+                        && (ability.effect)() == crate::fixed_source_damage_v3::printed_root()
+                })
+        })
+}
+
 pub(crate) fn selected(state: &GameState, item: &StackItem) -> bool {
     if !cfg!(feature = "eternal-fixtures")
         || item.kind != StackItemKind::ActivatedAbility
@@ -22,25 +42,13 @@ pub(crate) fn selected(state: &GameState, item: &StackItem) -> bool {
             .objects
             .try_get(item.source)
             .is_some_and(|live| !live.v4.is_token)
-        && CARD_DEFS
-            .get(usize::from(source.card_def))
-            .is_some_and(|def| {
-                def.name == "Goblin Bombardment"
-                    && def.capability.is_fully_supported()
-                    && def.activated_abilities.first().is_some_and(|ability| {
-                        ability.cost
-                            == [CostComponent::SacrificeControlled {
-                                count: 1,
-                                filter: PermanentFilter::Creature,
-                            }]
-                            && ability.activation_zone == Zone::Battlefield
-                            && ability.target_spec == TargetSpec::AnyTarget
-                            && (ability.effect)() == crate::fixed_source_damage_v3::printed_root()
-                    })
-            })
+        && printed(source.card_def, 0)
 }
 
 pub(crate) fn needs_lki(state: &GameState, item: &StackItem) -> bool {
+    if crate::fixed_source_damage_v3::paid_bombardment_self(item) {
+        return true;
+    }
     item.v4.ability_source_contract.is_some_and(|source| {
         state.objects.get(item.source).zone_change_count != source.zone_change_count
             && (!item.v4.bombardment_lki_v1.is_empty() || captured(state, source).next().is_some())
@@ -165,6 +173,9 @@ pub(crate) fn departed_source(
         .ability_source_contract
         .ok_or("Bombardment lost its source")?;
     crate::engine::validate_historical_ability_source_contract(state, source)?;
+    if crate::fixed_source_damage_v3::paid_bombardment_self(item) {
+        return crate::fixed_source_damage_v3::bombardment_source(state, item).map(Some);
+    }
     let paid = item.v4.bombardment_lki_v1.0;
     if let Some(paid) = paid {
         validate_payment(state, item, paid)?;

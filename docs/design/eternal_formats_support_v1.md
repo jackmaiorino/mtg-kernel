@@ -686,8 +686,13 @@ New, each built once in the first wave that needs it:
   last-known color and other damage characteristics, including when Circle enters
   later. Newly paid activations carry a marker and refuse restore after departure
   if the receipt is missing. Older unmarked rows retain their earlier behavior.
-  Eternal excludes the Crystal and Twinflame damage owners by catalog. An
-  animated Bombardment sacrificed as its own cost is outside this capture path.
+  Eternal excludes the Crystal and Twinflame damage owners by catalog. When a
+  physical Goblin Bombardment or a Metamorph copying it is animated and
+  sacrificed as its own cost, the native payment captures the source before
+  sacrifice and binds it to the actual departure and published activation. For
+  Metamorph this records the copied activation separately from the physical
+  printing that pays the cost. Circle can offer the original source while the
+  activation waits, including after Painter leaves.
   Unrelated graveyard and exile cards are excluded. Other
   embedded effect references need explicit bindings, departed references need
   last-known color and visibility evidence, and contextual hand and library
