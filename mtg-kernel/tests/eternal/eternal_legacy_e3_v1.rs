@@ -1796,6 +1796,19 @@ fn paid_mad_wizard_room_reveals_and_casts_only_actual_draws_both_seats() {
         assert_eq!(replaced.players[player.index()].hand, vec![acererak]);
         assert_eq!(replaced.players[player.index()].library, library);
 
+        let mut terminal = state.clone();
+        mtg_kernel::event::propose_and_commit_batch(
+            &mut terminal,
+            library.iter().copied().filter(|&card| card != bolt).map(|card| {
+                mtg_kernel::event::ProposedEvent::zone_change(card, Zone::Exile)
+            }).collect(),
+        );
+        put(&mut terminal, player, "Jace, Wielder of Mysteries", Zone::Battlefield);
+        pay_for_acererak(&mut terminal, player, acererak);
+        assert_eq!(settle(&mut terminal), Some(Decision::GameOver { winner: Some(player) }));
+        assert_eq!(terminal.objects.get(bolt).zone, Zone::Hand);
+        assert!(!terminal.known_hand_cards(opponent, player).iter().any(|entry| entry.object == bolt));
+
         let thug = put(&mut state, player, "Golgari Thug", Zone::Graveyard);
         pay_for_acererak(&mut state, player, acererak);
         let first = settle(&mut state).expect("Lair's actual Dredge menu");

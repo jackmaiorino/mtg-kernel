@@ -115,9 +115,10 @@ pub(super) fn finish(
     let draws_end = state.engine.event_history.len();
     let drawn = live_drawn(state, player, started_at + 1..draws_end)?;
     for &(draw_at, card) in &drawn {
+        let card_def = state.objects.get(card.object).card_def;
         // spellbench-public-reveal: only actual cards drawn by this room.
         state.reveal_distinct_hand_card(player.opponent(), player, card.object)?;
-        record(state, JournalV1::RoomDrawRevealedV1 { item, draw_at, card });
+        record(state, JournalV1::RoomDrawRevealedV1 { item, draw_at, card, card_def });
     }
     record(state, JournalV1::RoomDrawFinishedV1 { item, started_at, draws_end });
     let drawn = drawn.into_iter().map(|(_, card)| card).collect();
@@ -134,10 +135,15 @@ fn journal(state: &GameState, at: usize) -> Option<JournalV1> {
     Some(**journal)
 }
 
+struct RevealedV1 {
+    card: EffectObjectBinding,
+    card_def: u16,
+}
+
 fn finished(
     state: &GameState,
     pending: &EffectContinuation,
-) -> Result<Option<(usize, Vec<EffectObjectBinding>)>, String> {
+) -> Result<Option<(usize, Vec<RevealedV1>)>, String> {
     let id = pending.resolving_item.v4.stack_item_id;
     let history = &state.engine.event_history;
     let mut endings = history.scan_for_v1(&[EventKindV1::EternalOwnedDrawV1])
@@ -177,13 +183,13 @@ fn finished(
     }
     let mut actual = actual_draws(state, player, started_at + 1..draws_end).ok_or(invalid)?;
     let drawn = (draws_end..finish_at).map(|at| {
-        let Some(JournalV1::RoomDrawRevealedV1 { item, draw_at, card }) = journal(state, at) else {
+        let Some(JournalV1::RoomDrawRevealedV1 { item, draw_at, card, card_def }) = journal(state, at) else {
             return Err(invalid);
         };
         if item != id || card.expected_zone != Zone::Hand || actual.next() != Some((draw_at, card.object)) {
             return Err(invalid);
         }
-        Ok(card)
+        Ok(RevealedV1 { card, card_def })
     }).collect::<Result<Vec<_>, _>>()?;
     if actual.next().is_some() {
         return Err(invalid.into());
@@ -195,10 +201,13 @@ fn validate_menu(
     state: &GameState,
     pending: &EffectContinuation,
     offered: &E3ChoiceV1,
-    drawn: Vec<EffectObjectBinding>,
+    drawn: Vec<RevealedV1>,
 ) -> Result<(), String> {
-    if drawn.iter().any(|&card| !live_hand(state, pending.ctx.controller, card))
-        || dungeons::mad_wizard_choice(state, pending, drawn, Vec::new()).as_ref() != Some(offered)
+    if drawn.iter().any(|reveal| !live_hand(state, pending.ctx.controller, reveal.card)
+        || state.objects.get(reveal.card.object).card_def != reveal.card_def)
+        || dungeons::mad_wizard_choice(
+            state, pending, drawn.into_iter().map(|reveal| reveal.card).collect(), Vec::new(),
+        ).as_ref() != Some(offered)
     {
         return Err("Mad Wizard cast menu differs from its actual draws".into());
     }
@@ -250,7 +259,8 @@ pub(super) fn validate_idle(
             tail.frames.clear();
             validate_menu(state, &tail, choice, drawn)?;
         }
-        (None, [], Some(selected)) if selected.is_none_or(|card| drawn.contains(&card)) => {}
+        (None, [], Some(selected))
+            if selected.is_none_or(|card| drawn.iter().any(|reveal| reveal.card == card)) => {}
         _ => return Err("Mad Wizard lost its actual cast choice".into()),
     }
     Ok(true)

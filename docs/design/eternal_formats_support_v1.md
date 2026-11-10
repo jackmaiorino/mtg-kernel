@@ -591,7 +591,10 @@ New, each built once in the first wave that needs it:
   player's event-time adjustment remains bound when the second player draws.
   The shuffles normally remove Dredge cards from both graveyards before any
   draw can use them. Echo's native qualification is pending.
-  Remaining specialized draws include the two drawing dungeon rooms. Generated
+  Temple of Dumathoin and Mad Wizard's Lair bind each draw attempt to the
+  native venture entry and published room ability. The Lair reveals and
+  offers only cards actually drawn, and an immediate Jace win ends the
+  ability before the reveal. Native qualification is pending. Generated
   draws from Bonder's Ornament, the Premodern draw leaves, Standstill, Arcane
   Denial and Accumulated Knowledge still need their Jace/Hullbreacher origins.
   Quantum Riddler adjusts the whole count once for uninterrupted fixed and

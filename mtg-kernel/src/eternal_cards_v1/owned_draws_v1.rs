@@ -342,6 +342,7 @@ pub enum JournalV1 {
         item: StackItemId,
         draw_at: usize,
         card: crate::effect::EffectObjectBinding,
+        card_def: u16,
     },
     RoomDrawFinishedV1 { item: StackItemId, started_at: usize, draws_end: usize },
     RoomDrawAnsweredV1 {
