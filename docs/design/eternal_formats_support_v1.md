@@ -595,8 +595,9 @@ New, each built once in the first wave that needs it:
   triggered room ability from that dungeon remains. Another venture completes
   the old dungeon before starting a new one, even while an old room waits.
   Restored snapshots that already marked completion keep their recorded result.
-  The existing separate route graphs still limit switching venture sources
-  while a different dungeon is active above its bottom room.
+  Taking or keeping the initiative advances an active Forgotten Realms
+  dungeon. Acererak's ordinary venture still cannot advance an active
+  Undercity above its bottom room.
   Remaining specialized draws include the two drawing dungeon rooms. Generated
   draws from Bonder's Ornament, the Premodern draw leaves, Standstill, Arcane
   Denial and Accumulated Knowledge still need their Jace/Hullbreacher origins.

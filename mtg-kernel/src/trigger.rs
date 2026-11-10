@@ -4455,7 +4455,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
         return true;
     }
     if crate::eternal_vintage_v1::initiative_granter(card.name)
-        && matches!(effect, EffectOp::ResolveInitiativeTrigger { .. })
+        && (matches!(effect, EffectOp::ResolveInitiativeTrigger { .. })
+            || (cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cards_v1::e3::dungeons::occurrences::is_bound(effect)))
     {
         return true;
     }
@@ -4690,6 +4692,11 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
             TargetSpec::TargetOpponent
         } else if card.name == "Journey to Nowhere" && *effect == journey_to_nowhere_etb_effect() {
             TargetSpec::CreatureOtherThanSource
+        } else if cfg!(feature = "eternal-fixtures")
+            && crate::eternal_vintage_v1::initiative_granter(card.name)
+            && crate::eternal_cards_v1::e3::dungeons::occurrences::is_bound(effect)
+        {
+            crate::eternal_cards_v1::e3::dungeons::trigger_target_spec(effect)
         } else if let Some(spec) = crate::standard_cards_v1::trigger_target_spec(card.name, effect)
         {
             spec
@@ -4705,6 +4712,7 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
                     }
                     _ => TargetSpec::None,
                 },
+
                 _ => trigger_target_spec(card_def),
             }
         } else {

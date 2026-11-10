@@ -8996,7 +8996,7 @@ fn resolve_monarch_trigger(
     Ok(())
 }
 
-fn validate_initiative_continuation_root(
+pub(crate) fn validate_initiative_continuation_root(
     state: &GameState,
     pending: &EffectContinuation,
     binding: InitiativeTriggerBindingV1,
@@ -9317,7 +9317,12 @@ fn stage_undercity_venture(
     if !path.is_empty() || !continuation.frames.is_empty() {
         return Err("venture trigger is not a root-only effect".to_string());
     }
-    crate::eternal_cards_v1::e3::dungeons::occurrences::complete_bottommost(state, binding.player);
+    use crate::eternal_cards_v1::e3::dungeons;
+    dungeons::occurrences::complete_bottommost(state, binding.player);
+    if cfg!(feature = "eternal-fixtures") && dungeons::in_forgotten_realms(state, binding.player) {
+        dungeons::venture(state, continuation, path)?;
+        return Ok(false);
+    }
     let (from_room, legal_rooms) = undercity_next_rooms(state, binding.player)?;
     match legal_rooms.as_slice() {
         [] => Err("Undercity route has no next room".to_string()),
@@ -10726,6 +10731,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::eternal_sideboard_s1d_v1::validate_circle_choice(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::e3::dungeons::occurrences::validate_resolving(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::dungeons::validate_initiative_venture_choice(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_sideboard_s1a_v1::surgical::validate_continuation(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]

@@ -518,7 +518,7 @@ impl EternalOpV1 {
     pub(crate) fn drives_in_resumable(&self) -> bool {
         self.contains_player_choice()
             || owned_draws_v1::recognizes(self)
-            || matches!(self, EternalOpV1::OwnedDrawCompletedV1 { .. })
+            || matches!(self, EternalOpV1::OwnedDrawCompletedV1 { .. } | EternalOpV1::EnterRoomV1 { .. })
             || matches!(self, EternalOpV1::DelayedUpkeepDrawV1)
             || matches!(self, EternalOpV1::E7aV1(crate::eternal_legacy_e7a_v1::E7aOpV1::EchoOfEonsV1))
             || matches!(

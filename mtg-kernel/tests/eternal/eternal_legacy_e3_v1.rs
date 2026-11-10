@@ -1691,6 +1691,62 @@ fn a_departed_acererak_still_publishes_its_room_before_priority_both_seats() {
 }
 
 #[test]
+fn taking_initiative_advances_the_current_forgotten_realms_dungeon_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let acererak = put(&mut state, actor, ACERERAK, Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::B], 2);
+        cast(&mut state, acererak, &[]);
+        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { option_count: 3, .. })));
+        act(&mut state, Action::ChooseEffectOption(0));
+        let top = state.players[actor.index()].library[0];
+        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { .. })));
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(top)));
+        settled(&mut state);
+        pool(&mut state, actor, &[ManaColor::B], 2);
+        cast(&mut state, acererak, &[]);
+        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { option_count: 2, .. })));
+        act(&mut state, Action::ChooseEffectOption(0)); // Goblin Lair.
+        settled(&mut state);
+
+        let hunter = put(&mut state, actor, "Avenging Hunter", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::G], 4);
+        cast(&mut state, hunter, &[]);
+        let route = settle(&mut state).expect("initiative must advance the existing dungeon");
+        assert!(matches!(route, Decision::ChooseEffectOption {
+            player, source, option_count: 2, ..
+        } if player == actor && source == hunter));
+        let marker = &state.players[actor.index()].dungeon;
+        assert_eq!((marker.dungeon_id, marker.room_id), (Some(LOST_MINE), Some(2)));
+
+        let saved = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(next(&mut restored), route);
+        let mut reordered = restored.clone();
+        let Some(mtg_kernel::effect::PendingEffectChoice::ChooseOption { options, .. }) =
+            reordered.engine.pending_effect.as_mut().and_then(|pending| pending.choice.as_mut())
+        else {
+            panic!("native initiative route menu");
+        };
+        options.swap(0, 1);
+        assert!(mtg_kernel::effect::validate_pending_effect_choice(&reordered).is_err());
+
+        act(&mut restored, Action::ChooseEffectOption(0)); // Storeroom.
+        assert!(matches!(settle(&mut restored), Some(Decision::ChooseTargets {
+            player, legal_targets, ..
+        }) if player == actor && legal_targets.contains(&Target::Object(hunter))));
+        act(&mut restored, Action::ChooseTarget(Target::Object(hunter)));
+        settled(&mut restored);
+        assert_eq!(restored.objects.get(hunter).counters.plus1_plus1, 1);
+        let marker = &restored.players[actor.index()].dungeon;
+        assert_eq!((marker.dungeon_id, marker.room_id), (Some(LOST_MINE), Some(4)));
+        assert!(marker.completed_dungeons.is_empty());
+    }
+}
+
+#[test]
 fn veils_of_fear_costs_two_life_unless_a_card_is_discarded() {
     let mut state = islands();
     in_room(&mut state, P0, TOMB, 1);

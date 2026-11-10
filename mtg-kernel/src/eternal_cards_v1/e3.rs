@@ -1029,6 +1029,10 @@ pub(crate) fn drive(
             );
             Ok(true)
         }
+        EternalOpV1::EnterRoomV1 { dungeon, room } => {
+            dungeons::enter_selected_room(state, continuation, *dungeon, *room)?;
+            Ok(false)
+        }
         EternalOpV1::RoomAbilityV1 { dungeon, room } => {
             dungeons::resolve_room(state, continuation, *dungeon, *room, path)
         }
@@ -2141,11 +2145,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 apply_veil_protection(state, player);
             }
         }
-        EternalOpV1::EnterRoomV1 { dungeon, room } => {
-            if dungeons::enter_room(state, ctx, *dungeon, *room).is_err() {
-                halt(state, ctx.source);
-            }
-        }
+        EternalOpV1::EnterRoomV1 { .. } => halt(state, ctx.source),
         EternalOpV1::RevealUntilCreatureAttackingV1 => {
             if reveal_until_creature_attacking(state, ctx.controller).is_err() {
                 halt(state, ctx.source);

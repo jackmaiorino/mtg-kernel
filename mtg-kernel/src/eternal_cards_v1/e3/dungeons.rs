@@ -12,11 +12,15 @@ use super::{
 };
 use crate::card_def::{card_id_by_name, CardType, TargetSpec};
 use crate::effect::{
-    EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp, ExecCtx, PlayerRef,
+    EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp, EffectOptionChoicePurpose,
+    ExecCtx, PendingEffectChoice, PlayerRef,
 };
 use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
-use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Target, Zone};
+use crate::state::{
+    AbilitySourceContractV4, GameState, InitiativeTriggerBindingV1, InitiativeTriggerKindV1,
+    ObjectLinkV4, Target, Zone,
+};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
@@ -107,7 +111,7 @@ fn next_rooms(state: &GameState, player: PlayerId) -> Result<Vec<(u16, u16)>, St
 
 /// "Venture into the dungeon": enter the only next room, or let the
 /// controller choose among them.
-pub(super) fn venture(
+pub(crate) fn venture(
     state: &mut GameState,
     continuation: &mut EffectContinuation,
     path: Vec<u16>,
@@ -122,12 +126,84 @@ pub(super) fn venture(
             controller: PlayerRef::Controller,
             options: options
                 .into_iter()
-                .map(|(dungeon, room)| eternal(EternalOpV1::EnterRoomV1 { dungeon, room }))
+                .map(enter_room_op)
                 .collect(),
         },
         path,
     });
     Ok(())
+}
+
+fn enter_room_op((dungeon, room): (u16, u16)) -> EffectOp {
+    eternal(EternalOpV1::EnterRoomV1 { dungeon, room })
+}
+
+pub(crate) fn in_forgotten_realms(state: &GameState, player: PlayerId) -> bool {
+    state.players[player.index()].dungeon.dungeon_id
+        .is_some_and(|dungeon| DUNGEONS.contains(&dungeon))
+}
+
+fn initiative_venture(effect: &EffectOp) -> Option<InitiativeTriggerBindingV1> {
+    match effect {
+        EffectOp::ResolveInitiativeTrigger { binding } if matches!(
+            binding.kind,
+            InitiativeTriggerKindV1::VentureAfterTaking | InitiativeTriggerKindV1::VentureAtUpkeep
+        ) => Some(*binding),
+        _ => None,
+    }
+}
+
+pub(crate) fn validate_initiative_venture_choice(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    let Some(root) = pending.resolving_item.inline_effect.as_ref() else {
+        return Ok(());
+    };
+    let Some(binding) = initiative_venture(root) else {
+        return Ok(());
+    };
+    if !in_forgotten_realms(state, binding.player) {
+        return Ok(());
+    }
+    crate::effect::validate_initiative_continuation_root(state, pending, binding)?;
+    let rooms = next_rooms(state, binding.player)?;
+    let valid = match (&pending.choice, pending.frames.as_slice()) {
+        (Some(PendingEffectChoice::ChooseOption {
+            player, path, options, purpose: EffectOptionChoicePurpose::Generic,
+        }), []) => *player == binding.player && path.is_empty()
+            && rooms.len() > 1 && rooms.iter().copied().map(enter_room_op).eq(options.iter().cloned()),
+        (None, [EffectFrame::Program { op, path }]) => match path.as_slice() {
+            [] => op == root,
+            [index] => rooms.get(usize::from(*index)).copied().map(enter_room_op).as_ref() == Some(op),
+            _ => false,
+        },
+        _ => false,
+    };
+    if !valid {
+        return Err("Initiative venture lost its exact Forgotten Realms room choices".into());
+    }
+    Ok(())
+}
+
+pub(super) fn enter_selected_room(
+    state: &mut GameState,
+    pending: &EffectContinuation,
+    dungeon: u16,
+    room: u16,
+) -> Result<(), String> {
+    match pending.resolving_item.inline_effect.as_ref() {
+        Some(effect) if *effect == acererak_enters() => {}
+        Some(effect) => {
+            let binding = initiative_venture(effect).ok_or("room choice lost its native venture")?;
+            crate::effect::validate_initiative_continuation_root(state, pending, binding)?;
+            if !in_forgotten_realms(state, binding.player) {
+                return Err("Initiative venture lost its active Forgotten Realms dungeon".into());
+            }
+        }
+        None => return Err("room choice lost its native venture".into()),
+    }
+    enter_room(state, &pending.ctx, dungeon, room)
 }
 
 /// Moves the controller's venture marker into `room` of `dungeon` and sets
@@ -224,7 +300,7 @@ pub(super) fn delayed_effect_matches(effect: &EffectOp) -> bool {
 }
 
 /// The target specification of an Acererak trigger.
-pub(super) fn trigger_target_spec(effect: &EffectOp) -> TargetSpec {
+pub(crate) fn trigger_target_spec(effect: &EffectOp) -> TargetSpec {
     room_of(effect).map_or(TargetSpec::None, |(dungeon, room)| {
         room_target_spec(dungeon, room)
     })

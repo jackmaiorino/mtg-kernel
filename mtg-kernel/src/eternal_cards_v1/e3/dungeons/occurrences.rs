@@ -103,7 +103,7 @@ fn bound_entry(state: &GameState, op: &EffectOp) -> Option<RoomEntryV1> {
         .then_some(entry)
 }
 
-fn is_bound(op: &EffectOp) -> bool {
+pub(crate) fn is_bound(op: &EffectOp) -> bool {
     matches!(op, EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::RoomBoundV1 { .. })))
 }
 
