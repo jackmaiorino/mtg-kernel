@@ -715,8 +715,9 @@ impl KaitoSessionV75 {
         }
         let after = sampled.fresh_binding()?;
         if after.expected != before.expected
-            || after.original != before.original
-            || after.public_to_original != before.public_to_original
+            || (!root.rebinds_revealed_discard()
+                && (after.original != before.original
+                    || after.public_to_original != before.public_to_original))
             || !crate::akroma_family_public_v40::FamilyProjectionV40::sampled_families_match(
                 before.families,
                 after.families,

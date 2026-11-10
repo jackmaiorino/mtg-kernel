@@ -21,6 +21,8 @@ pub(crate) mod greatwurm_v1;
 pub(crate) mod harvester_v1;
 pub(crate) mod kykar_v1;
 pub(crate) mod loot_v1;
+#[cfg(feature = "limited-fdn-fixtures")]
+pub(crate) mod revealed_discard_sampling_v1;
 pub(crate) mod source_token_copy_v1;
 pub(crate) mod sphinx_lore_v1;
 mod standard_ward;

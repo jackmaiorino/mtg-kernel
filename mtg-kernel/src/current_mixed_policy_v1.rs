@@ -285,6 +285,7 @@ pub fn feature_identity() -> String {
             include_str!("continuous_characteristics_v1.rs"),
             include_str!("trigger.rs"),
             include_str!("effect.rs"),
+            include_str!("effect/revealed_discard_sampling_v1.rs"),
             include_str!("state.rs"),
             include_str!("event.rs"),
             include_str!("arahbo_public_v1.rs"),

@@ -6,8 +6,12 @@ use super::{
 use crate::{
     ids::ObjectId,
     policy_observation_v6::tests::put,
+    policy_surface_v5::LimitedAppendixV1,
     state::{GameState, Step, Zone},
 };
+
+#[path = "pilfer_sampling.rs"]
+mod sampling;
 
 fn scene(p: PlayerId) -> (GameState, ObjectId) {
     let forest = crate::card_def::card_id_by_name("Forest").unwrap();
@@ -47,9 +51,35 @@ fn setup(
     (own, native, source, counter)
 }
 
+fn full_pool_pending(
+    p: PlayerId,
+    mut s: GameState,
+    source: ObjectId,
+) -> (KaitoSession, FastActorSessionV1, Packet) {
+    FastActorSessionV1::enable_limited_native_modes_v1(&mut s, LimitedAppendixV1::FullPool);
+    s.reveal_knowledge_v4 = Some(Default::default());
+    s.reveal_meaning_v3.enable();
+    let mut native = FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
+        s.clone(),
+        LimitedAppendixV1::FullPool,
+    );
+    let mut own = KaitoSession::from_session(
+        FastActorSessionV1::from_kaito_v75_fixture_state_scoped(s, LimitedAppendixV1::FullPool),
+    )
+    .unwrap();
+    let before = packet(&own);
+    begin(&mut own, &mut native, source, p);
+    for _ in 0..32 {
+        if own.fixture_state().engine.pending_effect.is_some() {
+            return (own, native, before);
+        }
+        act(&mut own, &mut native, |a| matches!(a, A::Pass { .. }));
+    }
+    panic!("no paid Pilfer choice");
+}
+
 #[test]
 fn full_pool_paid_pilfer_uses_public_names_and_exact_native_answers_both_seats() {
-    use crate::policy_surface_v5::LimitedAppendixV1;
     for p in [PlayerId::P0, PlayerId::P1] {
         let opponent = p.opponent();
         let mut paired_packets = None;
@@ -71,29 +101,8 @@ fn full_pool_paid_pilfer_uses_public_names_and_exact_native_answers_both_seats()
             ],
         ] {
             let (mut s, source) = scene(p);
-            FastActorSessionV1::enable_limited_native_modes_v1(&mut s, LimitedAppendixV1::FullPool);
-            s.reveal_knowledge_v4 = Some(Default::default());
-            s.reveal_meaning_v3.enable();
             let hand = names.map(|name| put(&mut s, opponent, name, Zone::Hand));
-            let mut native = FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
-                s.clone(),
-                LimitedAppendixV1::FullPool,
-            );
-            let mut own = KaitoSession::from_session(
-                FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
-                    s,
-                    LimitedAppendixV1::FullPool,
-                ),
-            )
-            .unwrap();
-            let before = packet(&own);
-            begin(&mut own, &mut native, source, p);
-            for _ in 0..32 {
-                if own.fixture_state().engine.pending_effect.is_some() {
-                    break;
-                }
-                act(&mut own, &mut native, |a| matches!(a, A::Pass { .. }));
-            }
+            let (mut own, mut native, before) = full_pool_pending(p, s, source);
             let FastActorResponseV1::Decision(h) = own.current_response() else {
                 panic!("no paid Pilfer choice");
             };
