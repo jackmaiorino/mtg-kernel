@@ -152,18 +152,24 @@ fn assert_discard_family_guards(before: &KaitoDecision, after: &KaitoDecision, a
     assert!(matches(after_families.to_vec()));
 
     let mut changed = after_families.to_vec();
-    let cerberus = changed.iter_mut().find_map(|family| match family {
-        FamilyProjectionV40::Cerberus(observation) => Some(observation),
-        _ => None,
-    }).expect("the sampled discard still binds public creature-death facts");
+    let cerberus = changed
+        .iter_mut()
+        .find_map(|family| match family {
+            FamilyProjectionV40::Cerberus(observation) => Some(observation),
+            _ => None,
+        })
+        .expect("the sampled discard still binds public creature-death facts");
     cerberus.creature_died_this_turn = !cerberus.creature_died_this_turn;
     assert!(!matches(changed));
 
     let mut changed = after_families.to_vec();
-    let fishing = changed.iter_mut().find_map(|family| match family {
-        FamilyProjectionV40::Fishing(observation) => Some(observation),
-        _ => None,
-    }).expect("the sampled discard still binds Fishing's classified actions");
+    let fishing = changed
+        .iter_mut()
+        .find_map(|family| match family {
+            FamilyProjectionV40::Fishing(observation) => Some(observation),
+            _ => None,
+        })
+        .expect("the sampled discard still binds Fishing's classified actions");
     let A::ChooseEffectTarget { min_targets, .. } = &mut fishing.actions[0].semantic else {
         panic!("missing classified discard answer");
     };

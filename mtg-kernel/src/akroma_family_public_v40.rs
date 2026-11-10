@@ -356,23 +356,32 @@ impl FamilyProjectionV40 {
                 return None;
             }
             let Some(crate::rl::PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) =
-                part.projection_mut().surface.engine_context.pending_effect.as_mut()?.choice.as_mut()
+                part.projection_mut()
+                    .surface
+                    .engine_context
+                    .pending_effect
+                    .as_mut()?
+                    .choice
+                    .as_mut()
             else {
                 return None;
             };
             *legal_targets = names.clone();
             if let Self::Fishing(fishing) = part {
                 if fishing.actions.len() != candidates.len()
-                    || fishing.actions.iter().zip(candidates).any(|(row, candidate)| {
-                        row.semantic != candidate.action
-                    })
+                    || fishing
+                        .actions
+                        .iter()
+                        .zip(candidates)
+                        .any(|(row, candidate)| row.semantic != candidate.action)
                 {
                     return None;
                 }
                 let mut ordered = Vec::with_capacity(rows.len());
                 for (_, index, named_target) in &rows {
                     let mut row = fishing.actions[*index].clone();
-                    let ActionSemanticV1::ChooseEffectTarget { target, .. } = &mut row.semantic else {
+                    let ActionSemanticV1::ChooseEffectTarget { target, .. } = &mut row.semantic
+                    else {
                         return None;
                     };
                     *target = named_target.clone();

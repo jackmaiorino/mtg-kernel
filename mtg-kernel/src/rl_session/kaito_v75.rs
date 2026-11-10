@@ -707,7 +707,9 @@ impl KaitoSessionV75 {
         }
         let after = sampled.fresh_binding()?;
         if after.expected != before.expected {
-            return Err(RlContractError("sampled full-pool decision header changed".into()));
+            return Err(RlContractError(
+                "sampled full-pool decision header changed".into(),
+            ));
         }
         use crate::akroma_family_public_v40::FamilyProjectionV40;
         let families_match = if root.rebinds_revealed_discard() {
@@ -722,7 +724,9 @@ impl KaitoSessionV75 {
             if after.original != before.original
                 || after.public_to_original != before.public_to_original
             {
-                return Err(RlContractError("sampled full-pool native binding changed".into()));
+                return Err(RlContractError(
+                    "sampled full-pool native binding changed".into(),
+                ));
             }
             FamilyProjectionV40::sampled_families_match(before.families, after.families)
         };
