@@ -1,7 +1,8 @@
 //! Actor-visible labels for the finite FEB owner.
 use super::*;
 use crate::premodern_ordered_public_v1::{
-    decision::activation_label, observe_human, public_name, HumanObservationV1,
+    decision::activation_label, observe_human, public_name, GraveyardV1, HumanFullTextFormV1,
+    HumanFullTextProducerV1, HumanGraveyardV1, HumanObservationV1, HumanOrderPromptV1,
 };
 use crate::{
     full_text_v1::FullTextAbilityV1,
@@ -32,17 +33,91 @@ pub struct FebHumanSceneV1 {
     pub battlefield: [Vec<String>; 2],
 }
 
+/// Presentation of a native order prompt. Its authority stays with FebDecisionV1.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FebHumanOrderV1 {
+    pub schema: &'static str,
+    pub viewer: PlayerSeatV1,
+    pub chosen_bottom_first: Vec<&'static str>,
+    pub action_labels: Vec<String>,
+}
+
+impl From<HumanOrderPromptV1> for FebHumanOrderV1 {
+    fn from(prompt: HumanOrderPromptV1) -> Self {
+        Self {
+            schema: prompt.schema,
+            viewer: prompt.viewer,
+            chosen_bottom_first: prompt.chosen_bottom_first,
+            action_labels: prompt.action_labels,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FebHumanOrderedV1 {
+    pub schema: &'static str,
+    pub card_db_hash: u64,
+    pub viewer: PlayerSeatV1,
+    pub graveyards: [HumanGraveyardV1; 2],
+    pub order_choice: Option<FebHumanOrderV1>,
+    pub full_text: Option<Vec<HumanFullTextFormV1>>,
+    pub producers: Vec<HumanFullTextProducerV1>,
+}
+
+impl From<HumanObservationV1> for FebHumanOrderedV1 {
+    fn from(view: HumanObservationV1) -> Self {
+        Self {
+            schema: view.schema,
+            card_db_hash: view.card_db_hash,
+            viewer: view.viewer,
+            graveyards: view.graveyards,
+            order_choice: view.order_choice.map(Into::into),
+            full_text: view.full_text,
+            producers: view.producers,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FebHumanViewV1 {
     pub profile: &'static str,
     pub step: u64,
     pub actor: PlayerSeatV1,
-    pub ordered: HumanObservationV1,
+    pub ordered: FebHumanOrderedV1,
     pub scene: Option<FebHumanSceneV1>,
     pub actions: Vec<FebHumanActionV1>,
 }
 
-fn target_name(target: &TargetRefV1, viewer: PlayerSeatV1) -> Result<String, String> {
+fn card_label(
+    card: &CardStableRefV1,
+    viewer: PlayerSeatV1,
+    graveyards: &[GraveyardV1; 2],
+) -> Result<String, String> {
+    let name = public_name(card)?;
+    if card.zone != crate::state::Zone::Graveyard {
+        return Ok(name.into());
+    }
+    let position = graveyards[native_seat(card.owner).index()]
+        .bottom_to_top
+        .iter()
+        .position(|visible| visible == card)
+        .ok_or("FEB action lacks its ordered graveyard position")?;
+    let owner = if card.owner == viewer {
+        "your"
+    } else {
+        "your opponent's"
+    };
+    Ok(format!(
+        "{name} ({} from bottom of {owner} graveyard)",
+        position + 1
+    ))
+}
+
+fn target_name(
+    target: &TargetRefV1,
+    viewer: PlayerSeatV1,
+    graveyards: &[GraveyardV1; 2],
+) -> Result<String, String> {
     Ok(match target {
         TargetRefV1::Player { player } => if *player == viewer {
             "you"
@@ -50,7 +125,7 @@ fn target_name(target: &TargetRefV1, viewer: PlayerSeatV1) -> Result<String, Str
             "your opponent"
         }
         .into(),
-        TargetRefV1::Object { object } => public_name(object)?.into(),
+        TargetRefV1::Object { object } => card_label(object, viewer, graveyards)?,
         TargetRefV1::StackItem {
             source,
             stack_index,
@@ -80,6 +155,7 @@ fn label(
     state: &GameState,
     row: &NumericNativeActionV1,
     viewer: PlayerSeatV1,
+    graveyards: &[GraveyardV1; 2],
 ) -> Result<Option<String>, String> {
     let action = &row.action.semantic;
     Ok(Some(match action {
@@ -148,7 +224,7 @@ fn label(
         A::ChooseTarget { source, target, .. } | A::ChooseEffectTarget { source, target, .. } => {
             format!(
                 "Choose {} for {}",
-                target_name(target, viewer)?,
+                target_name(target, viewer, graveyards)?,
                 public_name(source)?
             )
         }
@@ -156,7 +232,7 @@ fn label(
             source, candidate, ..
         } => format!(
             "Choose {} to pay the cost for {}",
-            public_name(candidate)?,
+            card_label(candidate, viewer, graveyards)?,
             public_name(source)?
         ),
         A::FinishEffectSelection { .. } | A::FinishTargetSelection { .. } => {
@@ -173,7 +249,7 @@ fn label(
             attacker, target, ..
         } => format!(
             "Attack {} with {}",
-            target_name(target, viewer)?,
+            target_name(target, viewer, graveyards)?,
             public_name(attacker)?
         ),
         A::ChooseLegendPermanent { keep, .. } => format!("Keep {}", public_name(keep)?),
@@ -229,7 +305,7 @@ impl FebSessionV1 {
                 .zip(action_values)
                 .enumerate()
                 .map(|(native_ordinal, (row, action))| {
-                    Ok(match label(state, row, viewer)? {
+                    Ok(match label(state, row, viewer, &view.observation.ordered.graveyards)? {
                         Some(label) => FebHumanActionV1::Supported {
                             native_ordinal,
                             label,
@@ -265,7 +341,7 @@ impl FebSessionV1 {
             profile: PROFILE_V1,
             step: self.inner.step,
             actor: binding.actor.into(),
-            ordered,
+            ordered: ordered.into(),
             scene,
             actions,
         }))

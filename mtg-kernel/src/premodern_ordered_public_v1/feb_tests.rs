@@ -226,22 +226,124 @@ fn stage_deck_card(state: &mut GameState, player: PlayerId, name: &str, zone: Zo
     object
 }
 
+fn main_phase_owner(seed: u64, seat: PlayerSeatV1) -> FebSessionV1 {
+    let mut owner = FebSessionV1::reset(seed, seat).unwrap();
+    choose_label(&mut owner, seat, "Keep this hand");
+    choose_label(&mut owner, native_seat(seat).opponent().into(), "Keep this hand");
+    for _ in 0..16 {
+        if owner.inner.game.step == Step::Main1 {
+            break;
+        }
+        let viewer = acting(&owner);
+        choose_label(&mut owner, viewer, "Pass priority");
+    }
+    assert_eq!(owner.inner.game.step, Step::Main1);
+    owner
+}
+
+#[test]
+fn frozen_feb_human_distinguishes_paid_krosan_reclamation_graveyard_targets() {
+    for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+        let p = native_seat(seat);
+        let opponent = p.opponent();
+        let mut owner = main_phase_owner(460_618, seat);
+        let state = &mut owner.inner.game;
+        stage_deck_card(state, p, "Krosan Reclamation", Zone::Hand);
+        let lower = stage_deck_card(state, opponent, "Wall of Roots", Zone::Graveyard);
+        let middle = stage_deck_card(state, opponent, "Palinchron", Zone::Graveyard);
+        let upper = stage_deck_card(state, opponent, "Wall of Roots", Zone::Graveyard);
+        assert_eq!(state.players[opponent.index()].graveyard, [lower, middle, upper]);
+        state.players[p.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+        state.players[p.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+        owner.inner.current = bind_next(state, &mut owner.inner.surface, owner.inner.step);
+        choose_label(&mut owner, seat, "Begin casting Krosan Reclamation");
+        choose_label(&mut owner, seat, "Choose your opponent for Krosan Reclamation");
+
+        let human = owner.human_current(seat).unwrap().unwrap();
+        for (native_ordinal, position) in [(0, 1), (2, 3)] {
+            assert_eq!(
+                human.actions[native_ordinal],
+                FebHumanActionV1::Supported {
+                    native_ordinal,
+                    label: format!(
+                        "Choose Wall of Roots ({position} from bottom of your opponent's graveyard) for Krosan Reclamation"
+                    ),
+                }
+            );
+        }
+        let (_, token) = issued(&owner, seat);
+        owner.step_human(&token.unwrap(), 2).unwrap();
+        choose_label(&mut owner, seat, "Finish selecting");
+        for _ in 0..8 {
+            if owner.inner.game.stack.is_empty() {
+                break;
+            }
+            let viewer = acting(&owner);
+            choose_label(&mut owner, viewer, "Pass priority");
+        }
+        let state = &owner.inner.game;
+        assert_eq!(state.players[p.index()].mana_pool, [0; 6]);
+        assert_eq!(state.players[opponent.index()].graveyard, [lower, middle]);
+        assert_eq!(state.objects.get(upper).zone, Zone::Library);
+    }
+}
+
+#[test]
+fn frozen_feb_human_order_exposes_only_presentation_and_sealed_ordinals() {
+    for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+        let p = native_seat(seat);
+        let mut owner = main_phase_owner(460_619, seat);
+        let state = &mut owner.inner.game;
+        let first = stage_deck_card(state, p, "Palinchron", Zone::Hand);
+        let second = stage_deck_card(state, p, "Triskelion", Zone::Hand);
+        let third = stage_deck_card(state, p, "Wall of Roots", Zone::Hand);
+        crate::event::propose_and_commit_batch(
+            state,
+            vec![
+                ProposedEvent::zone_change(first, Zone::Graveyard),
+                ProposedEvent::zone_change(second, Zone::Graveyard),
+                ProposedEvent::zone_change(third, Zone::Graveyard),
+            ],
+        );
+        owner.inner.current = bind_next(state, &mut owner.inner.surface, owner.inner.step);
+
+        let actor_view = owner.human_current(seat).unwrap().unwrap();
+        let order = actor_view.ordered.order_choice.as_ref().unwrap();
+        assert_eq!(
+            order.action_labels,
+            [
+                "Place Palinchron next (choice 1)",
+                "Place Triskelion next (choice 2)",
+                "Place Wall of Roots next (choice 3)",
+            ]
+        );
+        for rendered in [
+            serde_json::to_string(&actor_view).unwrap(),
+            format!("{actor_view:?}"),
+        ] {
+            assert!(!rendered.contains("arena_id"));
+            assert!(!rendered.contains("zone_change_count"));
+        }
+        let other = owner.human_current(p.opponent().into()).unwrap().unwrap();
+        assert!(other.ordered.order_choice.is_none() && other.actions.is_empty());
+
+        choose_label(&mut owner, seat, "Place Triskelion next");
+        let next = owner.human_current(seat).unwrap().unwrap();
+        assert_eq!(
+            next.ordered.order_choice.as_ref().unwrap().chosen_bottom_first,
+            ["Triskelion"]
+        );
+        choose_label(&mut owner, seat, "Place Wall of Roots next");
+        assert_eq!(owner.inner.game.players[p.index()].graveyard, [second, third, first]);
+    }
+}
+
 #[test]
 fn frozen_feb_human_paid_volrath_discard_and_wall_mana_both_seats() {
     for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
         let p = native_seat(seat);
         for with_donor in [false, true] {
-            let mut owner = FebSessionV1::reset(460_617, seat).unwrap();
-            choose_label(&mut owner, seat, "Keep this hand");
-            choose_label(&mut owner, p.opponent().into(), "Keep this hand");
-            for _ in 0..16 {
-                if owner.inner.game.step == Step::Main1 {
-                    break;
-                }
-                let viewer = acting(&owner);
-                choose_label(&mut owner, viewer, "Pass priority");
-            }
-            assert_eq!(owner.inner.game.step, Step::Main1);
+            let mut owner = main_phase_owner(460_617, seat);
             let source = stage_deck_card(
                 &mut owner.inner.game,
                 p,

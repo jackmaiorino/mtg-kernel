@@ -24,7 +24,9 @@ mod human;
 #[cfg(test)]
 #[path = "feb_tests.rs"]
 mod tests;
-pub use human::{FebHumanActionV1, FebHumanSceneV1, FebHumanViewV1};
+pub use human::{
+    FebHumanActionV1, FebHumanOrderV1, FebHumanOrderedV1, FebHumanSceneV1, FebHumanViewV1,
+};
 
 pub const PROFILE_V1: &str = "mtg-kernel-premodern-feb-ordered/v1";
 const ARCHETYPE: &str = "premodern-full-english-breakfast";
