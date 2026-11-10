@@ -144,6 +144,19 @@ class GuardTests(unittest.TestCase):
         with self.assertRaises(w5box.Refusal):
             w5box.require_throughput(serial_only, self.binding)
 
+    def test_box_subset_full_phase_is_the_plans_boxes(self):
+        binding = dict(self.binding, box_slots=[3, 4, 5])
+        record = throughput_record(dict(binding, boxes=3))
+        record["binding"] = binding
+        result = w5box.require_throughput(record, binding)
+        self.assertEqual(len(result["in_box_cpu_per_wall"]), 3)
+        with self.assertRaises(w5box.Refusal):  # a whole-layout record does not qualify the subset plan
+            whole = throughput_record(self.binding)
+            whole["binding"] = binding
+            w5box.require_throughput(whole, binding)
+        with self.assertRaises(w5box.Refusal):  # nor a subset record the whole-layout plan
+            w5box.require_throughput(record, self.binding)
+
     def test_pins(self):
         with tempfile.TemporaryDirectory() as tmp:
             binary, config = Path(tmp) / "bin", Path(tmp) / "cfg.json"
@@ -177,6 +190,17 @@ class GuardTests(unittest.TestCase):
             self.assertEqual(w5box.throughput_binding(plan, spec), w5box.throughput_binding(plan, same_arm))
             self.assertNotEqual(w5box.throughput_binding(plan, spec),
                                 w5box.throughput_binding(plan, dict(spec, argv=spec["argv"] + ["--fast"])))
+            # box_slots: the binding names them (absent otherwise) and a chain outside them is refused
+            self.assertNotIn("box_slots", w5box.throughput_binding(plan, spec))
+            subset = dict(plan, box_slots=[3, 4, 5])
+            self.assertEqual(w5box.throughput_binding(subset, spec)["box_slots"], [3, 4, 5])
+            w5box.check_pins(subset, "c1", dict(spec, box_slot=4), layout, "linux-zen5-9950x")
+            with self.assertRaisesRegex(w5box.Refusal, "box_slots"):
+                w5box.check_pins(subset, "c1", spec, layout, "linux-zen5-9950x")
+            for bad in ([], [4, 3], [3, 3], [6], [-1], "3"):
+                with self.assertRaisesRegex(w5box.Refusal, "box_slots"):
+                    w5box.check_pins(dict(plan, box_slots=bad), "c1", dict(spec, box_slot=4), layout,
+                                     "linux-zen5-9950x")
             binary.write_bytes(b"y")
             with self.assertRaises(w5box.Refusal):
                 w5box.check_pins(plan, "c1", spec, layout, "linux-zen5-9950x")
@@ -216,6 +240,32 @@ class NodeStateTests(unittest.TestCase):
             self.assertEqual(records[-1]["event"], "enforced")
             self.assertTrue(records[-1]["frozen"])
             self.assertEqual(records[-1]["changed"], [])
+
+    def test_box_subset_plan_enforces_only_its_own_boxes(self):
+        """A plan with box_slots never freezes a chain in a box it does not own (another plan's)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_root, cgroup_root = root / "state", root / "cgroups"
+            for k in (0, 3):
+                chain = cgroup_root / f"box{k}" / "chain"
+                chain.mkdir(parents=True)
+                (chain / "cgroup.procs").touch()
+                (chain / "cgroup.events").write_text("populated 1\nfrozen 0\n")
+            node = w5box.NodeLog(state_root)
+            node.append({"event": "node-freeze", "reason": "operator hold"})
+            layout = {"boxes": [{"slot": k, "cpus": [k]} for k in range(6)]}
+            frozen = []
+
+            def freeze(cg, on, timeout=None):
+                frozen.append((cg.path.parent.name, on))
+            with patch.object(node, "locked", nullcontext), patch.object(w5box.Cgroup, "freeze", freeze):
+                w5box.enforce_node({"state_root": state_root, "cgroup_root": cgroup_root, "layout": layout,
+                                    "box_slots": [3, 4, 5]}, node, "test")
+                self.assertEqual(frozen, [("box3", True)])
+                frozen.clear()
+                w5box.enforce_node({"state_root": state_root, "cgroup_root": cgroup_root, "layout": layout},
+                                   node, "test")  # without box_slots: every box, as before
+                self.assertEqual(frozen, [("box0", True), ("box3", True)])
 
     def test_populated_propagates_other_io_errors(self):
         cgroup = w5box.Cgroup("unused-cgroup")

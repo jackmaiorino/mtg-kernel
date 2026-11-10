@@ -78,6 +78,14 @@ serial and full-node concurrent phases with identical outputs). A qualification 
 (`--qualification LABEL --max-wall-seconds S`); without a record its wall cap is 6 hours (small correctness and
 scaling checks only).
 
+**Box subsets.** A plan may name `box_slots`, the layout slots it owns (the layout itself stays the host's whole
+detected layout). Its chains run only in those boxes, its cgroup root holds only their CPUs, its node enforcement
+freezes and thaws only those boxes, and its throughput record's full-node phase is all of those boxes (the binding
+carries `box_slots`). This lets a second plan run beside a running one on the same host, in boxes the first no
+longer uses: give it its own state root and a cgroup root the first plan's enforcement never globs (for example a
+child of the first plan's partition root, `<first root>/<name>`, with isolation `none`; the first root stays the
+exclusive partition). Plans without `box_slots` are unchanged.
+
     w5box.py layout [--cores-per-box 2] [--offbox-cores-per-domain 2] [--out LAYOUT.json]
     w5box.py host-class
     w5box.py run --plan PLAN.json --chain CHAIN [--qualification LABEL --max-wall-seconds S]
@@ -342,12 +350,13 @@ class Cgroup:
         os.rmdir(self.path)
 
 
-def prepare_root(root: Cgroup, layout: dict, isolation: str) -> None:
-    """The W5 root: every box CPU, exclusive (a cpuset partition root) unless isolation is `none`."""
+def prepare_root(root: Cgroup, layout: dict, isolation: str, slots: list[int] | None = None) -> None:
+    """The W5 root: every box CPU (a plan's `box_slots` only, when it names them), exclusive (a cpuset partition
+    root) unless isolation is `none`."""
     parent = Cgroup(root.path.parent)
     require(parent.exists(), f"{parent.path} is not a cgroup v2 directory")
     parent.enable()
-    cpus = sorted(cpu for slot in layout["boxes"] for cpu in slot["cpus"])
+    cpus = sorted(cpu for slot in layout["boxes"] if slots is None or slot["slot"] in slots for cpu in slot["cpus"])
     if not root.exists():
         root.path.mkdir()
         root.write("cpuset.cpus", format_cpu_list(cpus))
@@ -547,6 +556,17 @@ def load_plan(path) -> tuple[dict, str]:
     return plan, sha256_bytes(raw)
 
 
+def plan_box_slots(plan: dict) -> list[int] | None:
+    """A plan's `box_slots` (module docstring, "Box subsets"): the layout slots the plan owns, or None (every box)."""
+    slots = plan.get("box_slots")
+    if slots is None:
+        return None
+    boxes = len(plan["layout"]["boxes"])
+    require(isinstance(slots, list) and slots and all(type(s) is int and 0 <= s < boxes for s in slots)
+            and slots == sorted(set(slots)), "box_slots must be distinct layout slots in increasing order")
+    return slots
+
+
 def chain_spec(plan: dict, chain: str) -> dict:
     spec = plan["chains"].get(chain)
     require(spec is not None, f"Plan has no chain {chain}")
@@ -588,6 +608,8 @@ def check_pins(plan: dict, chain: str, spec: dict, layout: dict, detected_class:
     require({k: frozen.get(k) for k in LAYOUT_KEYS} == {k: layout[k] for k in LAYOUT_KEYS},
             "The plan's box layout differs from the layout detected on this host")
     require(0 <= spec["box_slot"] < len(layout["boxes"]), "Chain box slot is not in the layout")
+    slots = plan_box_slots(plan)
+    require(slots is None or spec["box_slot"] in slots, "Chain box slot is not one of the plan's box_slots")
     check_launch(spec, chain_argv(spec, chain, Path(plan["state_root"]) / chain), "chain")
     filler = plan["filler"]
     for key in ("argv", "binary", "config", "memory_max_bytes", "seed_root_template"):
@@ -605,10 +627,14 @@ def launch_spec_sha256(plan: dict, spec: dict) -> str:
 
 
 def throughput_binding(plan: dict, spec: dict) -> dict:
-    return {"host_class": plan["host_class"], "positions_sha256": plan["layout"]["positions_sha256"],
-            "cores_per_box": plan["layout"]["cores_per_box"], "boxes": len(plan["layout"]["boxes"]),
-            "arm": spec["arm"], "binary_sha256": spec["binary"]["sha256"], "config_sha256": spec["config"]["sha256"],
-            "launch_spec_sha256": launch_spec_sha256(plan, spec)}
+    binding = {"host_class": plan["host_class"], "positions_sha256": plan["layout"]["positions_sha256"],
+               "cores_per_box": plan["layout"]["cores_per_box"], "boxes": len(plan["layout"]["boxes"]),
+               "arm": spec["arm"], "binary_sha256": spec["binary"]["sha256"], "config_sha256": spec["config"]["sha256"],
+               "launch_spec_sha256": launch_spec_sha256(plan, spec)}
+    slots = plan_box_slots(plan)
+    if slots is not None:  # absent otherwise: every existing binding and record keeps its keys
+        binding["box_slots"] = slots
+    return binding
 
 
 def require_throughput(record: dict | None, binding: dict) -> dict:
@@ -619,7 +645,9 @@ def require_throughput(record: dict | None, binding: dict) -> dict:
         require(record["binding"].get(key) == value, f"Throughput record binds a different {key}")
     phases = record["phases"]
     concurrent = [p["concurrent_boxes"] for p in phases]
-    require(concurrent == sorted(set(concurrent)) and concurrent[0] == 1 and concurrent[-1] == binding["boxes"],
+    # A plan that owns a subset of the layout's boxes (box_slots) is measured full on its own boxes.
+    full_boxes = len(binding["box_slots"]) if "box_slots" in binding else binding["boxes"]
+    require(concurrent == sorted(set(concurrent)) and concurrent[0] == 1 and concurrent[-1] == full_boxes,
             "Throughput needs a single-box phase and a full-node phase, in increasing order")
     reference = None
     for phase in phases:
@@ -759,11 +787,14 @@ def enforce_node(plan: dict, node: NodeLog, reason: str) -> dict:
     unpaused ones when it is, and escalate overdue outages. Any supervisor or operator command may run it, so
     enforcement does not depend on a particular supervisor being alive."""
     state_root, cgroup_root = Path(plan["state_root"]), Path(plan["cgroup_root"])
+    slots = plan_box_slots(plan)
     with node.locked():
         records, torn = node.read()
         state = NodeLog.state(records, torn)
         changed = []
         for box in sorted(cgroup_root.glob("box*")):
+            if slots is not None and box.name not in {f"box{s}" for s in slots}:
+                continue  # a box-subset plan enforces its own boxes only
             chain_cg = Cgroup(box / "chain")
             if not chain_cg.exists() or not chain_cg.populated():
                 continue
@@ -1091,7 +1122,7 @@ class Supervisor:
         locks = [flock(self.state / "supervisor.lock", f"Chain {self.chain}"),
                  flock(self.state_root / f"box{self.slot['slot']}.lock", f"Box {self.slot['slot']}")]
         with self.node.locked():  # concurrent supervisors create the shared root one at a time
-            prepare_root(self.root, self.layout, self.plan["isolation"])
+            prepare_root(self.root, self.layout, self.plan["isolation"], plan_box_slots(self.plan))
             prepare_box(self.root, self.slot)
         self.recover()
         if self.spec.get("handoff") is True:  # a W5 controller chain: an OOM kill is a chain failure, never resumed
@@ -1266,7 +1297,7 @@ def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None, st
     stop_key = str(stop_path)  # each outage names its stage's stop file: only that stage's fills close it
     root = Cgroup(plan["cgroup_root"])
     with node.locked():
-        prepare_root(root, layout, plan["isolation"])
+        prepare_root(root, layout, plan["isolation"], plan_box_slots(plan))
         box = prepare_box(root, slot)
     chain_cg, filler_cg = Cgroup(box.path / "chain"), Cgroup(box.path / "filler")
     require(not chain_cg.exists() or not chain_cg.populated(), f"Box {index} holds a running chain")
@@ -1495,6 +1526,8 @@ def main(argv=None) -> int:
             require({k: frozen.get(k) for k in LAYOUT_KEYS} == {k: layout[k] for k in LAYOUT_KEYS},
                     "The plan's box layout differs from the layout detected on this host")
             require(0 <= args.slot < len(layout["boxes"]), "Box slot is not in the layout")
+            slots = plan_box_slots(plan)
+            require(slots is None or args.slot in slots, "Box slot is not one of the plan's box_slots")
             filler = plan["filler"]
             check_launch(filler, filler_argv(filler, filler["seed_root_template"].format(j=args.slot), args.slot, 0),
                          "filler")
