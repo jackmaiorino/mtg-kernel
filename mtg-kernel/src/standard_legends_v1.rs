@@ -495,7 +495,8 @@ pub(crate) fn hexproof_from_color_mask(
     source_colors: u8,
 ) -> bool {
     state.objects.get(target).controller != targeter
-        && characteristics(state, target).is_some_and(|current| current.hexproof_color_mask & source_colors != 0)
+        && characteristics(state, target)
+            .is_some_and(|current| current.hexproof_color_mask & source_colors != 0)
 }
 
 pub(crate) fn skrelv_blocks(state: &GameState, attacker: ObjectId, blocker: ObjectId) -> bool {
