@@ -1,13 +1,15 @@
 //! Bounded original-deck training and fixed-opponent engineering replay.
 //! The roster, batch count, maximum decisions and seeds are compile-bound.
 use mtg_kernel::card_def::KERNEL_CARDDB_HASH;
+use mtg_kernel::current_mixed_policy_v1::KaitoSession;
 use mtg_kernel::current_tree_learner_v1::{
     feature_identity_v1, AdamConfigV1, AuthenticatedInputV1, LearnerV1, ModelV1, SnapshotV1,
     TerminalExampleV1,
 };
 use mtg_kernel::ids::PlayerId;
-use mtg_kernel::limited_match_v1::DeckFileV1;
-use mtg_kernel::limited_return_consumer_v1::{reset_numeric_reveal_facts_v3, ResetV1, PROFILE_V1};
+use mtg_kernel::limited_match_v1::{DeckFileV1, SessionKindV1};
+use mtg_kernel::limited_return_consumer_v1::ResetV1;
+use mtg_kernel::{limited_full_pool_consumer_v1 as full_pool, limited_return_consumer_v1 as returns};
 use mtg_kernel::rl::{PlayerSeatV1, TerminalClassificationV1, TerminalOutcomeV1};
 use mtg_kernel::rl_session::{FastActorDecisionKindV1, FastActorResponseV1};
 use mtg_kernel::state::SplitMix64;
@@ -43,6 +45,35 @@ macro_rules! fixture {
 const TRAIN: [(&str, &[u8]); 2] = [fixture!("FDN_top_15157_BR"), fixture!("FDN_top_09703_UB")];
 const EVAL: [(&str, &[u8]); 2] = [fixture!("FDN_top_26941_WB"), fixture!("FDN_top_30836_UR")];
 
+#[derive(Clone, Copy)]
+enum Session {
+    Return,
+    FullPool,
+}
+
+impl Session {
+    fn profile(self) -> &'static str {
+        match self {
+            Self::Return => returns::PROFILE_V1,
+            Self::FullPool => full_pool::PROFILE_V1,
+        }
+    }
+
+    fn producer_sha256(self) -> String {
+        match self {
+            Self::Return => returns::producer_sha256_v1(),
+            Self::FullPool => full_pool::producer_sha256_v1(),
+        }
+    }
+
+    fn reset(self, config: &ResetV1) -> Result<KaitoSession> {
+        match self {
+            Self::Return => returns::reset_numeric_reveal_facts_v3(config),
+            Self::FullPool => full_pool::reset_numeric_reveal_facts_v3(config),
+        }
+    }
+}
+
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -56,7 +87,7 @@ fn adam() -> AdamConfigV1 {
     }
 }
 
-fn config() -> Value {
+fn config(session: Session) -> Value {
     let roster = |decks: [(&str, &[u8]); 2]| {
         decks.map(|(name, bytes)| json!({"name": name, "source_sha256": hash(bytes), "cards": 40}))
     };
@@ -65,8 +96,8 @@ fn config() -> Value {
         "binary_source_sha256": hash(include_bytes!("kernel_limited_training_v1.rs")),
         "card_db_hash": format!("{KERNEL_CARDDB_HASH:016x}"),
         "feature_sha256": feature_identity_v1(),
-        "actor_profile": PROFILE_V1,
-        "actor_producer_sha256": mtg_kernel::limited_return_consumer_v1::producer_sha256_v1(),
+        "actor_profile": session.profile(),
+        "actor_producer_sha256": session.producer_sha256(),
         "hand_knowledge": "public-reveal-minima/v3",
         "reveal_producer_sha256": hash(include_bytes!("../reveal_meaning_v3.rs")),
         "reveal_reducer_sha256": hash(include_bytes!("../reveal_meaning_v3/reducer.rs")),
@@ -138,7 +169,49 @@ fn sample(scores: &[f64], rng: &mut SplitMix64) -> Result<usize> {
         .map_err(|error| error.to_string())
 }
 
-fn game(roster: [(&str, &[u8]); 2], seed: u64, leg: usize, model: &ModelV1, collect: bool) -> Game {
+fn reset_game(
+    session: Session,
+    roster: [(&str, &[u8]); 2],
+    seed: u64,
+    start: PlayerId,
+) -> Result<KaitoSession> {
+    let resolve = |(name, bytes): (&str, &[u8])| -> Result<Vec<u16>> {
+        let deck: DeckFileV1 = serde_json::from_slice(bytes)
+            .map_err(|error| format!("configuration {name}: {error}"))?;
+        let cards = match session {
+            Session::Return => deck.resolve(),
+            Session::FullPool => deck.resolve_for(SessionKindV1::FullPoolV1),
+        }
+        .map_err(|error| format!("configuration {name}: {error}"))?;
+        if cards.len() != 40 || deck.name.as_deref() != Some(name) {
+            return Err(format!(
+                "configuration {name}: expected the original 40-card deck"
+            ));
+        }
+        Ok(cards)
+    };
+    session
+        .reset(&ResetV1 {
+            expected_card_db_hash: KERNEL_CARDDB_HASH,
+            episode_id: seed,
+            env_seed: seed,
+            starting_player: start.into(),
+            deck_ids: roster.map(|(name, _)| name.into()),
+            mainboards: [resolve(roster[0])?, resolve(roster[1])?],
+            max_physical_decisions: MAX_STEPS,
+            max_policy_steps: MAX_STEPS,
+        })
+        .map_err(|error| format!("session: {error}"))
+}
+
+fn game(
+    session: Session,
+    roster: [(&str, &[u8]); 2],
+    seed: u64,
+    leg: usize,
+    model: &ModelV1,
+    collect: bool,
+) -> Game {
     let start = if collect && leg == 1 {
         PlayerId::P1
     } else {
@@ -157,31 +230,7 @@ fn game(roster: [(&str, &[u8]); 2], seed: u64, leg: usize, model: &ModelV1, coll
     };
     let mut captured = Vec::new();
     let attempt = (|| -> Result<[i8; 2]> {
-        let resolve = |(name, bytes): (&str, &[u8])| -> Result<Vec<u16>> {
-            let deck: DeckFileV1 = serde_json::from_slice(bytes)
-                .map_err(|error| format!("configuration {name}: {error}"))?;
-            let cards = deck
-                .resolve()
-                .map_err(|error| format!("configuration {name}: {error}"))?;
-            if cards.len() != 40 || deck.name.as_deref() != Some(name) {
-                return Err(format!(
-                    "configuration {name}: expected the original 40-card deck"
-                ));
-            }
-            Ok(cards)
-        };
-        let decks = [resolve(roster[0])?, resolve(roster[1])?];
-        let mut session = reset_numeric_reveal_facts_v3(&ResetV1 {
-            expected_card_db_hash: KERNEL_CARDDB_HASH,
-            episode_id: seed,
-            env_seed: seed,
-            starting_player: start.into(),
-            deck_ids: receipt.decks.clone(),
-            mainboards: decks,
-            max_physical_decisions: MAX_STEPS,
-            max_policy_steps: MAX_STEPS,
-        })
-        .map_err(|error| format!("session: {error}"))?;
+        let mut session = reset_game(session, roster, seed, start)?;
         let mut rng = [
             SplitMix64::seed(seed ^ 0x3ac6_352a_54aa_8ba0),
             SplitMix64::seed(seed ^ 0xda7a_2418_d42e_9b1d),
@@ -271,13 +320,14 @@ fn game(roster: [(&str, &[u8]); 2], seed: u64, leg: usize, model: &ModelV1, coll
 }
 
 fn pair(
+    session: Session,
     roster: [(&str, &[u8]); 2],
     seed: u64,
     model: &ModelV1,
     collect: bool,
     workers: usize,
 ) -> [Game; 2] {
-    let one = |leg| game(roster, seed, leg, model, collect);
+    let one = |leg| game(session, roster, seed, leg, model, collect);
     if workers == 1 {
         [one(0), one(1)]
     } else {
@@ -315,17 +365,17 @@ struct Training {
     games: [GameReceipt; 2],
 }
 
-fn train(root: &Path, workers: usize) -> Result<Training> {
+fn train(session: Session, root: &Path, workers: usize) -> Result<Training> {
     let mut learner = LearnerV1::new(ModelV1::deterministic_fixture(), adam())
         .map_err(|error| error.to_string())?;
     let initial = learner.snapshot();
-    let games = pair(TRAIN, TRAIN_SEED, learner.model(), true, workers);
+    let games = pair(session, TRAIN, TRAIN_SEED, learner.model(), true, workers);
     if games.iter().any(|game| game.receipt.reward.is_none()) {
         write_atomic(
             root,
             "failed-training.json",
             &json!({
-                "config": config(), "initial": initial, "games": games.map(|game| game.receipt),
+                "config": config(session), "initial": initial, "games": games.map(|game| game.receipt),
             }),
         )?;
         return Err("training pair did not finish naturally. See failed-training.json".into());
@@ -353,7 +403,7 @@ fn train(root: &Path, workers: usize) -> Result<Training> {
         });
     match updated {
         Ok(loss) => Ok(Training {
-            config: config(),
+            config: config(session),
             initial,
             trained: learner.snapshot(),
             loss_bits: loss.to_bits(),
@@ -364,7 +414,7 @@ fn train(root: &Path, workers: usize) -> Result<Training> {
                 root,
                 "failed-training.json",
                 &json!({
-                    "config": config(), "initial": initial, "games": games.map(|game| game.receipt), "update_error": error.to_string(),
+                    "config": config(session), "initial": initial, "games": games.map(|game| game.receipt), "update_error": error.to_string(),
                 }),
             )?;
             Err(format!("training update: {error}"))
@@ -372,37 +422,57 @@ fn train(root: &Path, workers: usize) -> Result<Training> {
     }
 }
 
-fn load_training(path: &Path, expected: Option<&str>) -> Result<(Training, String)> {
+fn load_training(
+    session: Session,
+    path: &Path,
+    expected: Option<&str>,
+) -> Result<(Training, String)> {
     let bytes = fs::read(path).map_err(|error| error.to_string())?;
     let digest = hash(&bytes);
     if expected.is_some_and(|expected| expected != digest) {
         return Err("training artifact SHA-256 does not match the resume pin".into());
     }
     let training: Training = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
-    if training.config != config() || training.games.iter().any(|game| game.reward.is_none()) {
+    validate_config(session, &training.config)?;
+    if training.games.iter().any(|game| game.reward.is_none()) {
         return Err("training artifact has another configuration or incomplete games".into());
     }
     Ok((training, digest))
 }
 
-fn run(root: &Path, workers: usize, resume: Option<(PathBuf, String)>) -> Result<()> {
+fn validate_config(session: Session, saved: &Value) -> Result<()> {
+    if saved.get("actor_profile").and_then(Value::as_str) != Some(session.profile()) {
+        return Err("training artifact has another actor profile".into());
+    }
+    if saved != &config(session) {
+        return Err("training artifact has another configuration".into());
+    }
+    Ok(())
+}
+
+fn run(
+    session: Session,
+    root: &Path,
+    workers: usize,
+    resume: Option<(PathBuf, String)>,
+) -> Result<()> {
     let local = root.join("training.json");
     let resumed = resume
         .as_ref()
-        .map(|(path, digest)| load_training(path, Some(digest)))
+        .map(|(path, digest)| load_training(session, path, Some(digest)))
         .transpose()?;
     fs::create_dir(root).map_err(|error| format!("{}: {error}", root.display()))?;
     let (training, parent_sha256) = if let Some(training) = resumed {
         training
     } else {
-        let training = train(root, workers)?;
+        let training = train(session, root, workers)?;
         write_atomic(root, "training.json", &training)?;
-        load_training(&local, None)?
+        load_training(session, &local, None)?
     };
     let initial = LearnerV1::restore(training.initial).map_err(|error| error.to_string())?;
     let trained = LearnerV1::restore(training.trained).map_err(|error| error.to_string())?;
     let eval = |learner: &LearnerV1| {
-        pair(EVAL, EVAL_SEED, learner.model(), false, workers).map(|g| g.receipt)
+        pair(session, EVAL, EVAL_SEED, learner.model(), false, workers).map(|g| g.receipt)
     };
     let initial_eval = eval(&initial);
     let trained_eval = eval(&trained);
@@ -419,7 +489,7 @@ fn run(root: &Path, workers: usize, resume: Option<(PathBuf, String)>) -> Result
         }
         json!({"wins": result[0], "draws": result[1], "losses": result[2]})
     };
-    let result = json!({"config": config(), "training_sha256": parent_sha256,
+    let result = json!({"config": config(session), "training_sha256": parent_sha256,
         "initial_wdl": tally(&initial_eval), "trained_wdl": tally(&trained_eval),
         "complete": complete, "initial": initial_eval, "trained": trained_eval});
     let result_hash = write_atomic(root, "evaluation.json", &result)?;
@@ -434,9 +504,20 @@ fn run(root: &Path, workers: usize, resume: Option<(PathBuf, String)>) -> Result
 
 fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    let parse = || -> Result<(PathBuf, usize, Option<(PathBuf, String)>)> {
-        let usage = "kernel_limited_training_v1 OUT_DIR 1|2 [TRAINING_JSON SHA256]";
-        let [out, workers, tail @ ..] = args.as_slice() else {
+    let parse = || -> Result<(Session, PathBuf, usize, Option<(PathBuf, String)>)> {
+        let usage = "kernel_limited_training_v1 [-session return|full-pool] OUT_DIR 1|2 [TRAINING_JSON SHA256]";
+        let (session, positional) = match args.as_slice() {
+            [flag, value, tail @ ..] if flag == "-session" => {
+                let session = match value.to_str() {
+                    Some("return") => Session::Return,
+                    Some("full-pool") => Session::FullPool,
+                    _ => return Err(usage.into()),
+                };
+                (session, tail)
+            }
+            positional => (Session::Return, positional),
+        };
+        let [out, workers, tail @ ..] = positional else {
             return Err(usage.into());
         };
         let workers = match workers.to_str() {
@@ -452,10 +533,54 @@ fn main() {
             )),
             _ => return Err(usage.into()),
         };
-        Ok((PathBuf::from(out), workers, resume))
+        Ok((session, PathBuf::from(out), workers, resume))
     };
-    if let Err(error) = parse().and_then(|(root, workers, resume)| run(&root, workers, resume)) {
+    if let Err(error) =
+        parse().and_then(|(session, root, workers, resume)| run(session, &root, workers, resume))
+    {
         eprintln!("{error}");
         std::process::exit(2);
+    }
+}
+
+#[cfg(all(test, not(feature = "standard-magezero-fixtures")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_pool_original_draftzero_pairs_reach_the_sealed_learner() {
+        assert!(reset_game(Session::Return, TRAIN, TRAIN_SEED, PlayerId::P0).is_err());
+        let model = ModelV1::deterministic_fixture();
+        for (roster, seed) in [(TRAIN, TRAIN_SEED), (EVAL, EVAL_SEED)] {
+            for start in [PlayerId::P0, PlayerId::P1] {
+                let mut owner = reset_game(Session::FullPool, roster, seed, start).unwrap();
+                let other_owner = reset_game(Session::FullPool, roster, seed, start).unwrap();
+                let FastActorResponseV1::Decision(decision) = owner.current_response() else {
+                    panic!("the original DraftZero pair has no opening decision");
+                };
+                let bound = owner.encode(decision).unwrap();
+                assert!(other_owner.training_input_v1(&bound).is_err());
+                let input = owner.training_input_v1(&bound).unwrap();
+                let scores = model.forward(&input).unwrap();
+                assert_eq!(scores.len(), bound.packet().actions().len());
+                assert!(scores.iter().all(|score| score.is_finite()));
+                owner.apply(&bound, 0).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn resume_config_requires_the_exact_source_and_actor_profile() {
+        let mut saved = config(Session::FullPool);
+        assert!(validate_config(Session::FullPool, &saved).is_ok());
+        assert_eq!(
+            validate_config(Session::Return, &saved).unwrap_err(),
+            "training artifact has another actor profile",
+        );
+        saved["binary_source_sha256"] = json!("00".repeat(32));
+        assert_eq!(
+            validate_config(Session::FullPool, &saved).unwrap_err(),
+            "training artifact has another configuration",
+        );
     }
 }

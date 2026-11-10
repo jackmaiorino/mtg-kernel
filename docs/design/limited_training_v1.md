@@ -2,11 +2,13 @@
 
 Issue #552 uses the authenticated #454 Kaito tree learner on exact DraftZero
 registrations. The four engineering fixtures below are 40-card lists without
-Drake Hatcher. The typed return profile admits exactly its three registered
-Partial printings alongside Full cards. Only two original recipes contain one
-of those three and no other Partial printing. Each is paired with a Full-only
-recipe on the same source split. The actor can still refuse a decision during
-play. The roster and seeds are fixed before native execution.
+Drake Hatcher. The original Return-mode attempt at `08243cba` stopped in the
+legacy Full-only deck parser before opening a game. Its exact three-printing
+profile also excludes Flamewake Phoenix in the train roster and Arbiter of Woe
+and Scrawling Crawler in the evaluation roster. The opt-in `full-pool` learner
+resolves the unchanged rosters against the frozen Foundations set and uses
+that profile's sealed V3 owner. The actor can still refuse a decision during
+play.
 
 | Stage | Original decks | Environment seed |
 | --- | --- | --- |
@@ -63,13 +65,15 @@ one update, with no playing-strength threshold.
    `kernel_limited_training_v1` from that composition. Exercise the V3 match
    profile against the pinned disjoint belief pool in a bounded replay. The
    tests and replay preserve search refusals separately from sampled actions.
-3. Run `kernel_limited_training_v1 OUT_DIR 1|2` in a fresh directory once
+3. Run `kernel_limited_training_v1 -session full-pool OUT_DIR 1|2` in a fresh directory once
    the bounded training run is admitted. The checkpoint binds the exact
    decks, seeds, actor and reveal producer identities, feature contract,
    objective and complete Adam state. Evaluation reloads `training.json`.
    Replay the batch at the other worker count and compare `training.json`
    and `evaluation.json` byte for byte. Verify eval-only resume using
-   `kernel_limited_training_v1 OUT_DIR 1|2 TRAINING_JSON SHA256`.
+   `kernel_limited_training_v1 -session full-pool OUT_DIR 1|2 TRAINING_JSON SHA256`.
+   Omitting the selector retains the historical Return CLI. Both modes
+   require the same source and actor profile when resuming.
 4. Save input and output hashes with the binary hash. Report natural
    outcomes, any refusal and whether deterministic replay matched. The
    bounded run covers those exact recipes. Active fair-search coverage of
