@@ -30,7 +30,9 @@ use crate::event::{self, DamageProposed, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::{ManaColor, Pip};
 use crate::standard_cards_v1::{StandardChosenActionV1, StandardOpV1, StandardPermanentFilterV1};
-use crate::state::{GameState, ObjectLinkV4, StackItemKind, StackTargetContractV4, Step, Target, Zone};
+use crate::state::{
+    GameState, ObjectLinkV4, StackItemKind, StackTargetContractV4, Step, Target, Zone,
+};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
@@ -708,15 +710,22 @@ fn devotion_to_green(state: &GameState, player: PlayerId) -> i32 {
 
 fn target_source_link(target: StackTargetContractV4) -> Option<ObjectLinkV4> {
     let (object, zone_change_count) = match target {
-        StackTargetContractV4::Object { object, zone_change_count, .. } => {
-            (object, zone_change_count)
-        }
-        StackTargetContractV4::StackItem { source, source_zone_change_count, .. } => {
-            (source, source_zone_change_count)
-        }
+        StackTargetContractV4::Object {
+            object,
+            zone_change_count,
+            ..
+        } => (object, zone_change_count),
+        StackTargetContractV4::StackItem {
+            source,
+            source_zone_change_count,
+            ..
+        } => (source, source_zone_change_count),
         StackTargetContractV4::Player(_) => return None,
     };
-    Some(ObjectLinkV4 { object, zone_change_count })
+    Some(ObjectLinkV4 {
+        object,
+        zone_change_count,
+    })
 }
 
 /// CR 609.7a. A public zone alone does not make a graveyard or exile card a
@@ -740,9 +749,19 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
 
     let direct = battlefield(state)
         .map(|object| (object, Zone::Battlefield))
-        .chain(state.command.iter().copied().map(|object| (object, Zone::Command)));
+        .chain(
+            state
+                .command
+                .iter()
+                .copied()
+                .map(|object| (object, Zone::Command)),
+        );
     for (object, zone) in direct {
-        if state.objects.try_get(object).is_some_and(|live| live.zone == zone) {
+        if state
+            .objects
+            .try_get(object)
+            .is_some_and(|live| live.zone == zone)
+        {
             include_live(live_link(state, object));
         }
     }
@@ -761,21 +780,36 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
                 zone_change_count: source.zone_change_count,
             });
         }
-        for source in item.v4.target_contracts.iter().copied().filter_map(target_source_link) {
+        for source in item
+            .v4
+            .target_contracts
+            .iter()
+            .copied()
+            .filter_map(target_source_link)
+        {
             include_live(source);
         }
     }
     for replacement in &state.engine.active_replacements {
         use event::ReplacementEffectKind as R;
         match replacement.kind {
-            R::PreventCombatDamageToObjectUntilEndOfTurn { object, turn, active_player }
-                if turn == state.turn_key_v1() && active_player == state.active_player => include_live(object),
-            R::ExileIfDiesUntilEndOfTurnV1 { target, turn, active_player, .. }
-                if turn == state.turn_key_v1() && active_player == state.active_player => {
-                    if let Some(source) = target_source_link(target) {
-                        include_live(source);
-                    }
+            R::PreventCombatDamageToObjectUntilEndOfTurn {
+                object,
+                turn,
+                active_player,
+            } if turn == state.turn_key_v1() && active_player == state.active_player => {
+                include_live(object)
+            }
+            R::ExileIfDiesUntilEndOfTurnV1 {
+                target,
+                turn,
+                active_player,
+                ..
+            } if turn == state.turn_key_v1() && active_player == state.active_player => {
+                if let Some(source) = target_source_link(target) {
+                    include_live(source);
                 }
+            }
             _ => {}
         }
     }
@@ -798,7 +832,12 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
         for &card in &eternal.e7a.suspended {
             include_live(card);
         }
-        for shield in eternal.s1d.cop_shields.iter().filter(|shield| shield.turn == TurnV1::now(state)) {
+        for shield in eternal
+            .s1d
+            .cop_shields
+            .iter()
+            .filter(|shield| shield.turn == TurnV1::now(state))
+        {
             include_live(shield.source);
         }
     }
@@ -806,15 +845,25 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
     // A departed damage source keeps its original public incarnation and
     // authenticated last-known color. Do not read a later incarnation.
     for item in &state.stack {
-        let Some(source) = item.v4.ability_source_contract else { continue; };
+        let Some(source) = item.v4.ability_source_contract else {
+            continue;
+        };
         if source.zone == Zone::Battlefield
-            && state.objects.try_get(source.source).is_some_and(|live| {
-                live.zone_change_count > source.zone_change_count
-            })
-            && crate::source_power_activation_v1::damage_source(state, source.source, item.v4.stack_item_id)
-                .is_ok_and(|facts| facts.source == source && facts.color_mask & mask != 0)
+            && state
+                .objects
+                .try_get(source.source)
+                .is_some_and(|live| live.zone_change_count > source.zone_change_count)
+            && crate::source_power_activation_v1::damage_source(
+                state,
+                source.source,
+                item.v4.stack_item_id,
+            )
+            .is_ok_and(|facts| facts.source == source && facts.color_mask & mask != 0)
         {
-            sources.push(ObjectLinkV4 { object: source.source, zone_change_count: source.zone_change_count });
+            sources.push(ObjectLinkV4 {
+                object: source.source,
+                zone_change_count: source.zone_change_count,
+            });
         }
     }
     sources.sort_unstable_by_key(|source| (source.object, source.zone_change_count));
@@ -839,9 +888,17 @@ pub(crate) fn validate_circle_choice(
     let options = circle_options(state);
     let valid = match &pending.choice {
         Some(PendingEffectChoice::ChooseOption {
-            player, path, options: selected, purpose: EffectOptionChoicePurpose::Generic,
-        }) => *player == pending.ctx.controller && path.is_empty() && pending.frames.is_empty()
-            && !options.is_empty() && *selected == options,
+            player,
+            path,
+            options: selected,
+            purpose: EffectOptionChoicePurpose::Generic,
+        }) => {
+            *player == pending.ctx.controller
+                && path.is_empty()
+                && pending.frames.is_empty()
+                && !options.is_empty()
+                && *selected == options
+        }
         None => match pending.frames.as_slice() {
             [EffectFrame::Program { op, path }] => match path.as_slice() {
                 [index] => options.get(usize::from(*index)) == Some(op),
