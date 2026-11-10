@@ -1076,6 +1076,98 @@ fn circle_of_protection_blue_prevents_the_next_damage_from_a_chosen_blue_source(
 }
 
 #[test]
+fn circle_of_protection_blue_only_offers_public_contextual_sources_both_seats() {
+    use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_sideboard_s1d_v1::S1dOpV1;
+    use mtg_kernel::standard_cards_v1::StandardOpV1;
+    use mtg_kernel::state::ObjectLinkV4;
+
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = plains();
+        state.active_player = opponent;
+        state.priority_player = opponent;
+        let painter = put(&mut state, opponent, "Painter's Servant", Zone::Hand);
+        pool(&mut state, opponent, &[], 2);
+        cast(&mut state, painter, &[]);
+        settle_option(&mut state, 1);
+        assert_eq!(state.objects.get(painter).v4.chosen_color, Some(ManaColor::U));
+
+        let circle = put(&mut state, actor, "Circle of Protection: Blue", Zone::Battlefield);
+        let firebrand = put(&mut state, opponent, "Fanatical Firebrand", Zone::Battlefield);
+        let original = state.objects.get(firebrand).zone_change_count;
+        let marked = put(&mut state, opponent, "Mulldrifter", Zone::Graveyard);
+        let unrelated_graveyard = put(&mut state, opponent, "Mulldrifter", Zone::Graveyard);
+        let unrelated_exile = put(&mut state, opponent, "Mulldrifter", Zone::Exile);
+        let reanimate = put(&mut state, opponent, "Reanimate", Zone::Hand);
+        pool(&mut state, opponent, &[ManaColor::B], 0);
+        cast(&mut state, reanimate, &[Target::Object(marked)]);
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == opponent));
+        activate(&mut state, firebrand, 0, &[Target::Player(actor)]);
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == opponent));
+        assert_eq!(zone(&state, firebrand), Zone::Graveyard);
+        assert!(state.objects.get(firebrand).zone_change_count > original);
+        assert!(state.stack.iter().any(|item| item.source == firebrand && item.kind == StackItemKind::ActivatedAbility));
+
+        act(&mut state, Action::Pass);
+        pool(&mut state, actor, &[], 1);
+        activate(&mut state, circle, 0, &[]);
+        let decision = settle(&mut state).expect("paid Circle source choice");
+        assert!(matches!(decision, Decision::ChooseEffectOption { player, source, .. }
+            if player == actor && source == circle));
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        let Some(PendingEffectChoice::ChooseOption { options, .. }) = state
+            .engine.pending_effect.as_ref().and_then(|pending| pending.choice.as_ref())
+        else { panic!("Circle source options missing"); };
+        let links: Vec<_> = options.iter().map(|op| match op {
+            EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(S1dOpV1::CopShieldV1 { source }))) => *source,
+            _ => panic!("unexpected Circle option {op:?}"),
+        }).collect();
+        let option = links.iter().position(|source| source.object == firebrand).unwrap();
+        assert_eq!(links[option].zone_change_count, original);
+        assert_eq!(links.iter().filter(|source| source.object == firebrand).count(), 1);
+        assert!(links.iter().any(|source| source.object == marked));
+        assert!(links.iter().all(|source| source.object != unrelated_graveyard && source.object != unrelated_exile));
+
+        let snapshot = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
+        assert_eq!(decision, next(&mut restored));
+        let mut other_source = restored.clone();
+        let painter_option = links.iter().position(|source| source.object == painter).unwrap();
+        act(&mut other_source, Action::ChooseEffectOption(u16::try_from(painter_option).unwrap()));
+        settled(&mut other_source);
+        assert_eq!(life(&other_source, actor), 19);
+        assert_eq!(other_source.eternal_v1.as_ref().unwrap().s1d.cop_shields.len(), 1);
+        let mut forged: GameState = serde_json::from_slice(&snapshot).unwrap();
+        let generation = forged.objects.get(unrelated_graveyard).zone_change_count;
+        let Some(PendingEffectChoice::ChooseOption { options, .. }) = forged
+            .engine.pending_effect.as_mut().and_then(|pending| pending.choice.as_mut())
+        else { panic!("restored Circle options missing"); };
+        options[option] = EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
+            S1dOpV1::CopShieldV1 { source: ObjectLinkV4 { object: unrelated_graveyard, zone_change_count: generation } },
+        )));
+        let option = u16::try_from(option).unwrap();
+        let hash = forged.state_hash();
+        assert!(engine::step(&mut forged, Action::ChooseEffectOption(option)).is_err());
+        assert_eq!(forged.state_hash(), hash);
+
+        act(&mut state, Action::ChooseEffectOption(option));
+        act(&mut restored, Action::ChooseEffectOption(option));
+        restored = serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
+        for branch in [&mut state, &mut restored] {
+            settled(branch);
+            assert_eq!(zone(branch, marked), Zone::Battlefield);
+            assert_eq!(zone(branch, unrelated_graveyard), Zone::Graveyard);
+            assert_eq!(zone(branch, unrelated_exile), Zone::Exile);
+            assert_eq!(life(branch, actor), 20);
+            assert!(branch.eternal_v1.as_ref().unwrap().s1d.cop_shields.is_empty());
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
+    }
+}
+
+#[test]
 fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
     use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
     use mtg_kernel::eternal_cards_v1::EternalOpV1;
