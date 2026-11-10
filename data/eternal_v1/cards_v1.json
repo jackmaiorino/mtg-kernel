@@ -24085,6 +24085,37 @@
     "counters"
    ],
    "java_file": "Mage.Sets/src/mage/cards/p/PhyrexianDevourer.java"
+  },
+  {
+   "name": "Volrath's Shapeshifter",
+   "engine_capability": "partial",
+   "mana_cost": "{1}{U}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Phyrexian",
+    "Shapeshifter"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "graveyard_top_full_text",
+    "discard"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/VolrathsShapeshifter.java"
   }
  ]
 }

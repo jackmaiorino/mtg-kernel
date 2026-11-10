@@ -1,12 +1,9 @@
-//! Layer-3 full-text primitives for the unregistered Volrath's Shapeshifter.
+//! Layer-3 full-text primitives for the Partial Volrath's Shapeshifter.
 //!
-//! This is source preparation, not card admission. The caller must first
-//! establish the full-text static ability in layer 3. In particular this
-//! module must never replace `GameObject::card_def`: copy effects read that
-//! layer-1 identity, and text changes are not copiable (CR 612.6, 707.2).
-//! Neither the card, action selectors nor an observation schema is enabled.
-//! The retained-discard owner carries an optional producer through native
-//! payment and resolution; all existing observation paths refuse it.
+//! The physical printing remains the layer-1 authority. Copy effects read
+//! `GameObject::card_def` and do not inherit layer-3 text changes (CR 612.6,
+//! 707.2). Native activation freezes the donor through payment and resolution.
+//! The ordered Premodern successor owns its public views.
 #![allow(dead_code)]
 
 use crate::card_def::{
@@ -819,7 +816,7 @@ impl FullTextAbilityV1 {
     }
 }
 
-fn retained_discard() -> EffectOp {
+pub(crate) fn retained_discard() -> EffectOp {
     // Discard is the resolving effect, never an activation cost. The action
     // remains legal with an empty hand if the ordinary mana payment is legal.
     EffectOp::DiscardCards {
