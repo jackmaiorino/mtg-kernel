@@ -9508,6 +9508,19 @@ fn validate_answered_choice_guard(
                 ) {
                     return Err("bound Aura attachment has no answered choice guard".to_string());
                 }
+            } else if let EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
+                crate::eternal_cards_v1::EternalOpV1::OwnedDrawCompletedV1 { ordinal },
+            )) = op
+            {
+                // This continuation belongs to a committed draw attempt and can
+                // sit below either an open prompt or its authenticated answer.
+                if !cfg!(feature = "eternal-fixtures")
+                    || !crate::eternal_cards_v1::owned_draws_v1::completion_matches(
+                        state, pending, *ordinal, path,
+                    )
+                {
+                    return Err("bound Eternal draw completion lost its native attempt".into());
+                }
             } else if matches!(op, EffectOp::StandardV1(inner) if inner.is_bound_continuation()) {
                 if !matches!(
                     pending.answered_choice_guard,
