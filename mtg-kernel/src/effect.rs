@@ -10738,6 +10738,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_sideboard_s1d_v1::validate_circle_choice(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::dungeons::occurrences::validate_resolving(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
     crate::eternal_sideboard_s1a_v1::surgical::validate_continuation(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_vintage_e7b_v1::dredge::validate_jace_or_hullbreacher(state, pending)?;

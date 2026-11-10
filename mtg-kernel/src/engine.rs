@@ -17603,6 +17603,8 @@ pub(crate) fn validate_pending_trigger_identity(
     state: &GameState,
     pending: &PendingTrigger,
 ) -> Result<(), String> {
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::dungeons::occurrences::validate_pending(state, pending)?;
     if pending.targets.len() != pending.target_contracts.len() {
         return Err("pending trigger targeting vectors are not parallel".to_string());
     }
@@ -17878,6 +17880,8 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         crate::authority_of_the_consuls_v1::publish(state, &published)?;
     }
     let finalized = state.stack.last().expect("trigger just published").clone();
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::dungeons::occurrences::publish(state, &finalized)?;
     crate::drake_hatcher_v1::custody::publish(state, &finalized)?;
     crate::fake_your_own_death_v50::death_custody::publish(state, &finalized)?;
     crate::faebloom_trick_v43::publish_trigger(state, &finalized)?;
