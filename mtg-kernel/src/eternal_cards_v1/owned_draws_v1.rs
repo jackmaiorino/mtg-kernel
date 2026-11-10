@@ -177,7 +177,9 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
         let name = CARD_DEFS.get(usize::from(source.card_def))?.object_name;
         let authorized = match (instruction, item.kind, name) {
             (InstructionV1::Frog, StackItemKind::TriggeredAbility, "Psychic Frog")
-            | (InstructionV1::EndstoneLand, StackItemKind::TriggeredAbility, "The Endstone") => true,
+            | (InstructionV1::EndstoneLand, StackItemKind::TriggeredAbility, "The Endstone") => {
+                true
+            }
             (
                 InstructionV1::Tamiyo,
                 StackItemKind::ActivatedAbility,
@@ -202,7 +204,10 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
                 StackItemKind::TriggeredAbility,
                 "Chandra, Chill of Compliance",
             ) => state.eternal_v1.as_ref().is_some_and(|eternal| {
-                eternal.e8a.chandra_emblems.contains(&(item.controller, source))
+                eternal
+                    .e8a
+                    .chandra_emblems
+                    .contains(&(item.controller, source))
             }),
             _ => false,
         };

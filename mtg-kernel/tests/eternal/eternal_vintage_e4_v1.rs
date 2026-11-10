@@ -1052,19 +1052,31 @@ fn check_departed_draw_trigger(
 
     let opponent = drawer.opponent();
     let trigger = state.stack.last().unwrap();
-    assert_eq!(trigger.kind, mtg_kernel::state::StackItemKind::TriggeredAbility);
-    assert_eq!(trigger.inline_effect, Some(EffectOp::StandardV1(StandardOpV1::EternalV1(expected.clone()))));
+    assert_eq!(
+        trigger.kind,
+        mtg_kernel::state::StackItemKind::TriggeredAbility
+    );
+    assert_eq!(
+        trigger.inline_effect,
+        Some(EffectOp::StandardV1(StandardOpV1::EternalV1(
+            expected.clone()
+        )))
+    );
     let original = trigger.v4.ability_source_contract.unwrap();
-    assert_eq!((original.source, original.controller, original.zone), (source, drawer, Zone::Battlefield));
+    assert_eq!(
+        (original.source, original.controller, original.zone),
+        (source, drawer, Zone::Battlefield)
+    );
     assert_eq!(original.zone_change_count, original_generation);
     assert!(state.objects.get(source).zone_change_count > original_generation);
     assert_ne!(state.objects.get(source).zone, Zone::Battlefield);
     let library = state.players[drawer.index()].library.clone();
     let history_start = state.engine.event_history.len();
     let receipt_count = |state: &GameState| {
-        state.engine.event_history[history_start..].iter().filter(|event| {
-            event.kind_v1() == EventKindV1::EternalOwnedDrawV1
-        }).count()
+        state.engine.event_history[history_start..]
+            .iter()
+            .filter(|event| event.kind_v1() == EventKindV1::EternalOwnedDrawV1)
+            .count()
     };
 
     let mut unopposed = state.clone();
@@ -1134,7 +1146,12 @@ fn paid_endstone_land_draw_survives_source_departure_both_seats() {
         let mut state = islands();
         state.active_player = drawer;
         state.priority_player = drawer;
-        put(&mut state, drawer.opponent(), "Hullbreacher", Zone::Battlefield);
+        put(
+            &mut state,
+            drawer.opponent(),
+            "Hullbreacher",
+            Zone::Battlefield,
+        );
         let stone = put(&mut state, drawer, "The Endstone", Zone::Hand);
         pool(&mut state, drawer, &[], 7);
         cast(&mut state, stone, &[]);
@@ -1146,8 +1163,13 @@ fn paid_endstone_land_draw_survives_source_departure_both_seats() {
         remove_source_with_draw_waiting(&mut state, drawer, stone, "Disenchant", 1);
         assert_eq!(state.objects.get(stone).zone, Zone::Graveyard);
         assert_eq!(state.objects.get(land).zone, Zone::Battlefield);
-        check_departed_draw_trigger(state, drawer, stone, original,
-            EternalOpV1::E5aV1(E5aOpV1::EndstoneDrawV1));
+        check_departed_draw_trigger(
+            state,
+            drawer,
+            stone,
+            original,
+            EternalOpV1::E5aV1(E5aOpV1::EndstoneDrawV1),
+        );
     }
 }
 
@@ -1160,7 +1182,12 @@ fn paid_kishla_graveyard_departure_draw_survives_source_departure_both_seats() {
         let mut state = islands();
         state.active_player = drawer;
         state.priority_player = drawer;
-        put(&mut state, drawer.opponent(), "Hullbreacher", Zone::Battlefield);
+        put(
+            &mut state,
+            drawer.opponent(),
+            "Hullbreacher",
+            Zone::Battlefield,
+        );
         let skimmer = put(&mut state, drawer, "Kishla Skimmer", Zone::Hand);
         pool(&mut state, drawer, &[ManaColor::G, ManaColor::U], 0);
         cast(&mut state, skimmer, &[]);
@@ -1171,14 +1198,22 @@ fn paid_kishla_graveyard_departure_draw_survives_source_departure_both_seats() {
         pool(&mut state, drawer, &[ManaColor::B], 0);
         cast(&mut state, reanimate, &[Target::Object(creature)]);
         pass_until(&mut state, |state| {
-            state.stack.last().is_some_and(|item| item.source == skimmer)
+            state
+                .stack
+                .last()
+                .is_some_and(|item| item.source == skimmer)
         });
         assert_eq!(state.objects.get(creature).zone, Zone::Battlefield);
         assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
         remove_source_with_draw_waiting(&mut state, drawer, skimmer, "Swords to Plowshares", 0);
         assert_eq!(state.objects.get(skimmer).zone, Zone::Exile);
-        check_departed_draw_trigger(state, drawer, skimmer, original,
-            EternalOpV1::E7bV1(E7bOpV1::DrawOneV1));
+        check_departed_draw_trigger(
+            state,
+            drawer,
+            skimmer,
+            original,
+            EternalOpV1::E7bV1(E7bOpV1::DrawOneV1),
+        );
     }
 }
 
@@ -1193,7 +1228,12 @@ fn paid_chandra_emblem_owns_the_draw_after_chandra_leaves_both_seats() {
         state.active_player = drawer;
         state.priority_player = drawer;
         put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
-        let chandra = put(&mut state, drawer, "Chandra, Chill of Compliance", Zone::Hand);
+        let chandra = put(
+            &mut state,
+            drawer,
+            "Chandra, Chill of Compliance",
+            Zone::Hand,
+        );
         pool(&mut state, drawer, &[ManaColor::U, ManaColor::U], 1);
         cast(&mut state, chandra, &[]);
         settled(&mut state);
@@ -1206,11 +1246,19 @@ fn paid_chandra_emblem_owns_the_draw_after_chandra_leaves_both_seats() {
         pool(&mut state, drawer, &[ManaColor::R], 0);
         cast(&mut state, bolt, &[Target::Player(opponent)]);
         pass_until(&mut state, |state| {
-            state.stack.last().is_some_and(|item| item.source == chandra)
+            state
+                .stack
+                .last()
+                .is_some_and(|item| item.source == chandra)
         });
         assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
-        check_departed_draw_trigger(state, drawer, chandra, original,
-            EternalOpV1::E8aV1(E8aOpV1::DrawOneV1));
+        check_departed_draw_trigger(
+            state,
+            drawer,
+            chandra,
+            original,
+            EternalOpV1::E8aV1(E8aOpV1::DrawOneV1),
+        );
     }
 }
 
