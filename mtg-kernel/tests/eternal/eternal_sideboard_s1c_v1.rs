@@ -631,8 +631,10 @@ fn hullbreacher_and_dredge_compete_for_bauble_upkeep_draws_both_seats() {
             let bauble_generation = state.objects.get(bauble).zone_change_count;
             assert_eq!(zone(&state, bauble), Zone::Battlefield);
             act(&mut state, Action::Pass);
-            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { player, .. }
-                if player == opponent));
+            assert!(
+                matches!(next(&mut state), Decision::CastSpellOrPass { player, .. }
+                if player == opponent)
+            );
             pool(&mut state, opponent, &[ManaColor::U], 2);
             cast(&mut state, hull, &[]);
             settled(&mut state);
@@ -649,11 +651,15 @@ fn hullbreacher_and_dredge_compete_for_bauble_upkeep_draws_both_seats() {
             assert_eq!(delayed[0].source.source, bauble);
             assert_eq!(delayed[0].source.zone_change_count, bauble_generation);
             if name == "Mishra's Bauble" {
-                assert!(state.known_library_cards(actor, opponent).iter().any(|entry| {
-                    entry.position == 0 && entry.object == top
-                }));
+                assert!(state
+                    .known_library_cards(actor, opponent)
+                    .iter()
+                    .any(|entry| { entry.position == 0 && entry.object == top }));
             } else {
-                assert!(state.known_hand_cards(actor, opponent).iter().any(|entry| entry.object == hidden));
+                assert!(state
+                    .known_hand_cards(actor, opponent)
+                    .iter()
+                    .any(|entry| entry.object == hidden));
             }
             assert!(named(&state, opponent, "Treasure Token").is_empty());
             let library = state.players[actor.index()].library.clone();
@@ -669,7 +675,15 @@ fn hullbreacher_and_dredge_compete_for_bauble_upkeep_draws_both_seats() {
             ));
             let suspended = state.engine.pending_effect.as_ref().unwrap();
             assert_eq!(suspended.resolving_item.controller, actor);
-            assert_eq!(suspended.resolving_item.v4.ability_source_contract.unwrap().zone_change_count, bauble_generation);
+            assert_eq!(
+                suspended
+                    .resolving_item
+                    .v4
+                    .ability_source_contract
+                    .unwrap()
+                    .zone_change_count,
+                bauble_generation
+            );
             assert!(named(&state, opponent, "Treasure Token").is_empty());
             assert_eq!(state.players[actor.index()].library, library);
 
@@ -681,7 +695,13 @@ fn hullbreacher_and_dredge_compete_for_bauble_upkeep_draws_both_seats() {
                 player,
                 purpose: EffectTargetSelectionPurpose::EternalV1 { choice },
                 ..
-            }) = forged.engine.pending_effect.as_mut().unwrap().choice.as_mut()
+            }) = forged
+                .engine
+                .pending_effect
+                .as_mut()
+                .unwrap()
+                .choice
+                .as_mut()
             else {
                 panic!("the native Bauble draw must own an Eternal choice");
             };
@@ -712,7 +732,9 @@ fn hullbreacher_and_dredge_compete_for_bauble_upkeep_draws_both_seats() {
             for branch in [&mut state, &mut answered] {
                 settled(branch);
                 assert_eq!(zone(branch, thug), Zone::Hand);
-                assert!(library[..4].iter().all(|&card| zone(branch, card) == Zone::Graveyard));
+                assert!(library[..4]
+                    .iter()
+                    .all(|&card| zone(branch, card) == Zone::Graveyard));
                 assert_eq!(branch.players[actor.index()].library, library[4..]);
                 assert_eq!(branch.players[actor.index()].draws_this_turn, 0);
                 assert!(named(branch, opponent, "Treasure Token").is_empty());
