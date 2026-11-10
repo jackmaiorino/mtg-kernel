@@ -167,8 +167,14 @@ the cloud receipt.
 
 ### Correctness
 
+The test results here and the build and host conditions under Identities come
+from the run's own logs. Those logs stay on the host and are not committed.
+The manifest holds the timings, digests and profile.
+
 - With this profile all 21 `s_transformer_v1::` tests pass, including the five
-  exact tests listed above, and `tests/s_learner_profile_v1.rs` passes.
+  exact tests listed above (`test result: ok. 21 passed; 0 failed; 0 ignored;
+  0 measured; 3865 filtered out`). `tests/s_learner_profile_v1.rs` passes
+  (`test result: ok. 1 passed; 0 failed`).
 - `parity-dump` gives identical `files_sha256` under baseline and candidate,
   and the same 7 file hashes as the cloud receipt.
 - Every `gae-bench` attempt, in all three builds and at both worker counts,
