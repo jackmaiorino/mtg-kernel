@@ -621,7 +621,7 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
                     group,
                     index: name_index,
                     ..
-                }) = journal(state, *chosen)
+                }) = self::journal(state, *chosen)
                 else {
                     return Err("Meddling Mage name lost its actual choice".into());
                 };

@@ -1301,8 +1301,8 @@ fn meddling_mage_name_precedes_paid_metamorph_copy_entry_both_seats() {
         let mut edits = 0;
         for event in forged["engine"]["event_history"].as_array_mut().unwrap() {
             let Some(journal) = event.get_mut("MeddlingMageEntryV1").and_then(|row| row.get_mut("journal")) else { continue };
-            let copy = if let Some(row) = journal.get_mut("MetamorphCopied") {
-                row.get_mut("copy")
+            let copy = if journal.get("MetamorphCopied").is_some() {
+                journal["MetamorphCopied"].get_mut("copy")
             } else {
                 journal.get_mut("Chosen").and_then(|row| row["choice"].get_mut("metamorph_copy"))
             };
