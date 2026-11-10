@@ -1218,19 +1218,25 @@ impl EventHistoryV1 {
     /// The events of `kinds` with their positions, in history order: what
     /// filtering `iter().enumerate()` to those kinds yields. Stored chunks
     /// that count none of `kinds` are skipped whole, so a check of rare events
-    /// reads only the chunks that hold one, not the whole history. With every
-    /// guard forced open (tests) it reads every chunk, which must give the
-    /// same events.
+    /// reads only the chunks that hold one, not the whole history.
+    ///
+    /// As with `scan_for_v1`, a check must act only on events of `kinds`:
+    /// with every guard forced open (tests) it is given every event, so a
+    /// check that needs a kind it does not list gives a different result.
+    #[cfg_attr(test, track_caller)]
     pub(crate) fn of_kinds_v2(
         &self,
         kinds: &[EventKindV1],
     ) -> impl Iterator<Item = (usize, &CommittedEvent)> + '_ {
-        let kinds = kinds.iter().map(|&kind| kind as usize).collect();
         #[cfg(test)]
-        if guard_tests_v1::scans_forced() {
-            return self.events.of_kinds_reading_every_leaf(kinds);
+        {
+            if guard_tests_v1::scans_forced() {
+                return self.events.every_element_with_position();
+            }
+            guard_tests_v1::note_scan(std::panic::Location::caller(), !self.has_any(kinds));
         }
-        self.events.of_kinds(kinds)
+        self.events
+            .of_kinds(kinds.iter().map(|&kind| kind as usize).collect())
     }
 
     pub fn push(&mut self, event: CommittedEvent) {

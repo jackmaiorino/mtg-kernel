@@ -1,9 +1,11 @@
 //! The event-history index changes no game. A history guard skips a scan
-//! only when no event of the kinds its scan acts on occurred, so every
+//! only when no event of the kinds its scan acts on occurred, and a kind scan
+//! (`of_kinds_v2`) reads only the events of the kinds it acts on, so every
 //! computation must give the same result with its guards and with every
-//! guard forced open. These tests compare the two on fixture games, and on
-//! mid-game states with one event of each kind added: a kind no fixture game
-//! produces is exactly where a guard that left it out would hide.
+//! guard forced open, where a kind scan is given every event. These tests
+//! compare the two on fixture games, and on mid-game states with one event of
+//! each kind added: a kind no fixture game produces is exactly where a guard
+//! or kind scan that left it out would hide.
 
 use super::tests::{fixture, test_cfg};
 use super::*;
@@ -67,8 +69,9 @@ fn fixture_games_are_identical_with_guards_and_with_every_guard_open() {
 /// A named check of a state, rendered as text.
 type StateCheck = (&'static str, fn(&GameState) -> String);
 
-/// Every check that takes only a state and has its own history guard; each
-/// is compared directly, so an early failure of one cannot hide another.
+/// Every check that takes only a state and has its own history guard or
+/// kind scan; each is compared directly, so an early failure of one cannot
+/// hide another.
 fn state_checks() -> Vec<StateCheck> {
     macro_rules! checks {
         ($($check:path),* $(,)?) => {
@@ -79,6 +82,7 @@ fn state_checks() -> Vec<StateCheck> {
         crate::akroma_public_v1::facts,
         crate::arahbo_public_v1::facts,
         crate::arahbo_v1::validate_state,
+        crate::arahbo_v1::requires_successor,
         crate::ashroot_animist_v1::validate_state,
         crate::ashroot_dispatch_v2::validate_state,
         crate::authority_of_the_consuls_v1::validate_state,
@@ -95,22 +99,38 @@ fn state_checks() -> Vec<StateCheck> {
         crate::controlled_creature_grants_v1::require_legacy_consumer_supported,
         crate::controlled_creature_grants_v1::validate_color_history,
         crate::doubling_season_public_v48::capture,
+        crate::doubling_season_v48::require_legacy_supported,
         crate::doubling_season_v48::requires_successor,
         crate::doubling_season_v48::validate_token_journals,
         crate::eaten_public_v46::validate_state,
         crate::effect::crystal_prevention_v1::requires_successor,
+        crate::effect::crystal_prevention_v1::validate,
         crate::effect::exile_top_choose_v1::require_legacy_consumer_supported,
         crate::effect::frenzied_goblin_resolution_v1::active,
+        crate::effect::harvester_v1::require_legacy_absence,
+        crate::effect::harvester_v1::validate_state,
         crate::effect::inspiration_resolution_v1::validate,
         crate::effect::strongbox_permission_v1::validate,
+        crate::effect::thousand_year_storm_v1::refuse_legacy,
+        crate::effect::thousand_year_storm_v1::validate_state,
         crate::engine::mandatory_cast_cost_v1::linked_payment_input,
         crate::engine::mandatory_cast_cost_v1::validate_state,
         crate::equipment_damage_source_v4::validate_state,
         crate::equipment_damage_source_v4::requires_successor,
         crate::equipment_damage_source_v4::public_sources,
         crate::event::validate_exile_if_dies_replacements,
+        crate::event::validate_copied_token_abilities_v1,
         crate::extra_turn_v1::validate,
         crate::faebloom_trick_v43::validate_state,
+        crate::fake_your_own_death_v50::death_custody::has_unowned_roots,
+        crate::fake_your_own_death_v50::death_custody::validate_collection,
+        crate::fake_your_own_death_v50::death_custody::validate_retained_owners,
+        crate::fake_your_own_death_v50::public_v50::capture,
+        crate::fake_your_own_death_v50::return_aura::validate_history,
+        crate::fake_your_own_death_v50::spell_custody::installed_grants,
+        crate::fake_your_own_death_v50::spell_custody::validate_death_captures,
+        crate::fake_your_own_death_v50::spell_custody::validate_grant_lifetime,
+        crate::fake_your_own_death_v50::spell_custody::validate_retained_grant_history,
         crate::fiendish_panda_v1::validate_state,
         crate::fiendish_panda_v1::custody::validate,
         crate::fiery_annihilation_v1::requires_successor,
@@ -126,6 +146,7 @@ fn state_checks() -> Vec<StateCheck> {
         crate::heraldic_banner_v1::requires_successor,
         crate::heraldic_banner_v1::validate_state,
         crate::high_society_hunter_custody_v45::captures,
+        crate::high_society_hunter_custody_v45::validate,
         crate::high_society_hunter_public_v45::capture,
         crate::inspiration_observation_v1::validate_projection_authority,
         crate::krenko_public_v1::facts_v1,
@@ -133,9 +154,15 @@ fn state_checks() -> Vec<StateCheck> {
         crate::krenko_v1::requires_successor,
         crate::librarian_activation_v1::validate_state,
         crate::panda_public_v47::capture,
+        crate::progenitus_v1::refuse_legacy,
+        crate::progenitus_v1::validate,
         crate::raid_entry_custody_v1::validate,
         crate::ravenous_public_v51::capture,
         crate::season_token_attachment_v48::validate_journals,
+        crate::snack_wide_life_v59::custody::validate,
+        crate::snack_wide_life_v59::has_wide_history,
+        crate::snack_wide_life_v59::require_legacy,
+        crate::snack_wide_life_v59::validate,
         crate::soul_counters_v1::has_history,
         crate::source_power_activation_v1::validate_state,
         crate::sower_restriction_capture_v1::active,

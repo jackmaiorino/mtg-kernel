@@ -162,8 +162,13 @@ pub(crate) fn require_legacy_absence(state: &GameState) -> Result<(), String> {
                 crate::event_history_v1::EventKindV1::NightmareCopyEnteredV1,
                 crate::event_history_v1::EventKindV1::NightmareCopyLayerV1,
             ])
-            .next()
-            .is_some()
+            .any(|(_, e)| {
+                matches!(
+                    e,
+                    event::CommittedEvent::NightmareCopyEnteredV1 { .. }
+                        | event::CommittedEvent::NightmareCopyLayerV1 { .. }
+                )
+            })
     {
         return Err("copiable Nightmare exception requires a distinct complete consumer".into());
     }

@@ -963,7 +963,9 @@ pub(crate) fn collect(
     state: &mut GameState,
     events: &[CommittedEvent],
 ) -> Result<Vec<PendingTrigger>, ObjectId> {
-    if rows(state).next().is_none() && !events.iter().any(|e| journal(e).is_some()) {
+    if !row_events(state).any(|e| journal(e).is_some())
+        && !events.iter().any(|e| journal(e).is_some())
+    {
         return Ok(Vec::new());
     }
     super::spell_custody::validate_grant_lifetime(state).map_err(|_| ObjectId(0))?;

@@ -640,6 +640,15 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
         self.kind_filter(kinds, false)
     }
 
+    /// Every element with its position, whatever its kind: what a kind
+    /// filter gives with every guard forced open (tests).
+    #[cfg(test)]
+    pub(crate) fn every_element_with_position(&self) -> KindIter<'_, T, C> {
+        let mut iter = self.kind_filter(Vec::new(), false);
+        iter.every = true;
+        iter
+    }
+
     fn kind_filter(&self, kinds: Vec<usize>, skip: bool) -> KindIter<'_, T, C> {
         assert!(
             C != 0 && kinds.iter().all(|&kind| kind < C),
@@ -649,6 +658,7 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
             kinds,
             kind: self.kind,
             skip,
+            every: false,
             stack: Vec::new(),
             leaf: &[],
             position: 0,
@@ -671,6 +681,8 @@ pub(crate) struct KindIter<'a, T: Clone, const C: usize> {
     kind: fn(&T) -> usize,
     /// Whether subtrees counting none of `kinds` are skipped.
     skip: bool,
+    /// Whether every element is yielded, whatever its kind (tests).
+    every: bool,
     /// Unvisited children of each open branch, and the position of the first.
     stack: Vec<(&'a [Arc<Node<T, C>>], usize)>,
     /// Unvisited elements of the current leaf, and the position of the first.
@@ -693,7 +705,7 @@ impl<'a, T: Clone, const C: usize> Iterator for KindIter<'a, T, C> {
                 let position = self.position;
                 self.leaf = rest;
                 self.position += 1;
-                if self.kinds.contains(&(self.kind)(value)) {
+                if self.every || self.kinds.contains(&(self.kind)(value)) {
                     return Some((position, value));
                 }
             }
@@ -778,6 +790,9 @@ mod tests {
                 "kinds {kinds:?} reading every leaf"
             );
         }
+        assert!(tree
+            .every_element_with_position()
+            .eq(values.iter().enumerate()));
     }
 
     #[test]

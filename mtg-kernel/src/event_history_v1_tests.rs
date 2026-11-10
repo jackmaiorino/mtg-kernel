@@ -53,6 +53,48 @@ fn counts_follow_every_mutation() {
     assert!(counted(&history) && !history.has_any(&[EventKindV1::Tap]));
 }
 
+/// A kind scan reads only its kinds, with their positions. With every guard
+/// forced open it is given every event, so a check that acts on a kind it
+/// does not list gives a different result, which the guarded-versus-forced
+/// parity tests detect.
+#[test]
+fn kind_scans_read_their_kinds_and_every_event_when_forced() {
+    let mut history = EventHistoryV1::from((0..70).map(tap).collect::<Vec<_>>());
+    history.push(upkeep());
+    history.extend((70..140).map(tap));
+    history.push(upkeep());
+    let read = |history: &EventHistoryV1| {
+        history
+            .of_kinds_v2(&[EventKindV1::UpkeepBegan])
+            .map(|(at, event)| (at, event.kind_v1()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        read(&history),
+        [
+            (70, EventKindV1::UpkeepBegan),
+            (141, EventKindV1::UpkeepBegan)
+        ]
+    );
+    let forced = guard_tests_v1::with_scans_forced(|| read(&history));
+    let every: Vec<_> = history
+        .iter()
+        .enumerate()
+        .map(|(at, event)| (at, event.kind_v1()))
+        .collect();
+    assert_eq!(forced, every);
+    // A check that acts on taps but lists only upkeeps sees no tap with its
+    // guard and every tap with the guard forced open.
+    let taps = |history: &EventHistoryV1| {
+        history
+            .of_kinds_v2(&[EventKindV1::UpkeepBegan])
+            .filter(|(_, event)| matches!(event, CommittedEvent::Tap { .. }))
+            .count()
+    };
+    assert_eq!(taps(&history), 0);
+    assert_eq!(guard_tests_v1::with_scans_forced(|| taps(&history)), 140);
+}
+
 #[test]
 fn records_and_digests_equal_the_plain_vec() {
     use std::collections::hash_map::DefaultHasher;
