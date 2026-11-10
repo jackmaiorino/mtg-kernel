@@ -25,7 +25,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum InstructionV1 {
     Frog,
-    Plunder { normal: u8, from_graveyard: u8 },
+    Plunder {
+        normal: u8,
+        from_graveyard: u8,
+    },
     Tamiyo,
     TwinnedVision,
     EndstoneLand,
@@ -169,10 +172,7 @@ pub(crate) fn starting_draws(
     ctx: &ExecCtx,
 ) -> Option<(PlayerId, u32)> {
     let instruction = InstructionV1::from_program(program)?;
-    Some((
-        instruction.drawer(ctx)?,
-        instruction.count(state, ctx),
-    ))
+    Some((instruction.drawer(ctx)?, instruction.count(state, ctx)))
 }
 
 pub(crate) fn graveyard_cast_count(
@@ -565,9 +565,7 @@ fn finish_instruction(
             creature,
             spec,
             ..
-        } => eternal_lurrus_v1::finish_flame_of_anor(
-            state, &pending.ctx, artifact, creature, spec,
-        ),
+        } => eternal_lurrus_v1::finish_flame_of_anor(state, &pending.ctx, artifact, creature, spec),
         _ => {}
     }
 }
@@ -729,12 +727,5 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
     if !draw_stage_matches(state, pending, drawer, path, remaining) {
         return Err("Eternal draw changed its progress or remaining effects".into());
     }
-    dredge::validate_draw_choice(
-        state,
-        pending,
-        drawer,
-        path,
-        remaining,
-        "Eternal draw",
-    )
+    dredge::validate_draw_choice(state, pending, drawer, path, remaining, "Eternal draw")
 }

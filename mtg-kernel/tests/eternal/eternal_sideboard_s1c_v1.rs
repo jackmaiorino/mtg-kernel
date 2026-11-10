@@ -942,8 +942,10 @@ fn announce_flame(
     pool(state, caster, &[ManaColor::U, ManaColor::R], 1);
     assert!(castable(state, flame));
     act(state, Action::CastSpell(flame));
-    assert!(matches!(next(state), Decision::ChooseSpellMode { legal_modes, .. }
-        if legal_modes.contains(&mode)));
+    assert!(
+        matches!(next(state), Decision::ChooseSpellMode { legal_modes, .. }
+        if legal_modes.contains(&mode))
+    );
     act(state, Action::ChooseSpellMode(mode));
     choose_target(state, Target::Player(drawer));
     if let Some(other_target) = other_target {
@@ -958,7 +960,11 @@ fn paid_flame_of_anor_draws_for_its_target_then_resolves_other_mode_both_seats()
 
     for caster in [P0, P1] {
         let drawer = caster.opponent();
-        for (name, mode) in [(None, 0), (Some("Sol Ring"), 3), (Some("Llanowar Elves"), 4)] {
+        for (name, mode) in [
+            (None, 0),
+            (Some("Sol Ring"), 3),
+            (Some("Llanowar Elves"), 4),
+        ] {
             let mut state = plains();
             state.active_player = caster;
             state.priority_player = caster;
@@ -987,11 +993,15 @@ fn paid_flame_of_anor_draws_for_its_target_then_resolves_other_mode_both_seats()
             pending.ctx.targets[0] = item.targets[0];
             pending.ctx.target_contracts[0] = item.v4.target_contracts[0];
             assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged)
-                .unwrap_err().contains("lost its native start"));
+                .unwrap_err()
+                .contains("lost its native start"));
             let mut restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             assert_eq!(next(&mut restored), first);
-            act(&mut restored, Action::ChooseEffectTarget(Target::Object(dredger)));
+            act(
+                &mut restored,
+                Action::ChooseEffectTarget(Target::Object(dredger)),
+            );
             restored = serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
             settled(&mut restored);
             assert_eq!(zone(&restored, dredger), Zone::Hand);
@@ -1041,7 +1051,12 @@ fn paid_flame_of_anor_stops_other_mode_when_its_draw_target_wins_both_seats() {
         let mut restored: GameState =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         for branch in [&mut state, &mut restored] {
-            assert_eq!(next(branch), Decision::GameOver { winner: Some(drawer) });
+            assert_eq!(
+                next(branch),
+                Decision::GameOver {
+                    winner: Some(drawer)
+                }
+            );
             assert_eq!(named(branch, caster, "Treasure Token").len(), 1);
             assert_eq!(zone(branch, ring), Zone::Battlefield);
         }
@@ -1062,7 +1077,9 @@ fn paid_flame_of_anor_ignores_caster_dredge_and_departed_other_target_both_seats
         let bounce = put(&mut state, drawer, "Echoing Truth", Zone::Hand);
         let unrelated = put(&mut state, caster, "Golgari Thug", Zone::Graveyard);
         announce_flame(&mut state, caster, drawer, Some(ring), 3);
-        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == caster));
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == caster)
+        );
         act(&mut state, Action::Pass);
         pool(&mut state, drawer, &[ManaColor::U], 1);
         cast(&mut state, bounce, &[Target::Object(ring)]);
@@ -1071,9 +1088,11 @@ fn paid_flame_of_anor_ignores_caster_dredge_and_departed_other_target_both_seats
         assert_eq!(zone(&state, unrelated), Zone::Graveyard);
         assert_eq!(state.players[drawer.index()].library.len(), 18);
         assert_eq!(state.players[drawer.index()].hand.len(), 3);
-        assert!(!state.engine.event_history.iter().any(|event| matches!(
-            event, CommittedEvent::EternalOwnedDrawV1 { .. }
-        )));
+        assert!(!state
+            .engine
+            .event_history
+            .iter()
+            .any(|event| matches!(event, CommittedEvent::EternalOwnedDrawV1 { .. })));
     }
 }
 
