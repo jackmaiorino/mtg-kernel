@@ -591,7 +591,9 @@ New, each built once in the first wave that needs it:
   The choice menu includes blue permanents, stack spells, face-up command
   objects and supported public references from stack items and waiting effects.
   Flickerwisp and Yorion's unchanged face-up exile links remain eligible
-  when their waiting return moves onto the stack.
+  when their waiting return moves onto the stack. Parallax Wave and Petradon
+  contribute their exact live linked exiles only once the matching return
+  trigger is on the stack.
   It uses the original incarnation and retained color for authenticated departed
   damage sources. Unrelated graveyard and exile cards are excluded. Other
   embedded effect references need explicit bindings, departed references need

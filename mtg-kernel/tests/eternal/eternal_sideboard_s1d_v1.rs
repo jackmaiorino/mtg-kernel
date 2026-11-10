@@ -1222,6 +1222,164 @@ fn deglamer_shuffles_an_artifact_or_enchantment_into_its_owners_library() {
 // ---- Circle of Protection: Blue ---------------------------------------------------
 
 #[test]
+fn circle_offers_live_wave_and_petradon_exiles_only_after_return_publication_both_seats() {
+    use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_premodern_p1b_v1::{self, P1bOpV1};
+    use mtg_kernel::eternal_premodern_p2c_v1::P2cOpV1;
+    use mtg_kernel::eternal_sideboard_s1d_v1::S1dOpV1;
+    use mtg_kernel::event::{self, ProposedEvent};
+    use mtg_kernel::standard_cards_v1::StandardOpV1;
+    use mtg_kernel::state::ObjectLinkV4;
+
+    let open_circle = |state: &mut GameState, actor, circle| {
+        if state.priority_player != actor {
+            act(state, Action::Pass);
+        }
+        pool(state, actor, &[], 1);
+        activate(state, circle, 0, &[]);
+        let decision = settle(state).expect("paid Circle source choice");
+        assert!(matches!(&decision, Decision::ChooseEffectOption { player, source, .. }
+            if *player == actor && *source == circle));
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        let Some(PendingEffectChoice::ChooseOption { options, .. }) = state
+            .engine.pending_effect.as_ref().and_then(|pending| pending.choice.as_ref())
+        else {
+            panic!("expected the native Circle option roster");
+        };
+        let sources = options.iter().map(|option| match option {
+            EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
+                S1dOpV1::CopShieldV1 { source },
+            ))) => *source,
+            other => panic!("unexpected Circle option {other:?}"),
+        }).collect::<Vec<_>>();
+        (decision, sources)
+    };
+    let choose_source = |state: &mut GameState, sources: &[ObjectLinkV4], object| {
+        let index = sources.iter().position(|link| link.object == object).unwrap();
+        act(state, Action::ChooseEffectOption(u16::try_from(index).unwrap()));
+    };
+
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        for is_wave in [true, false] {
+            let mut state = plains();
+            state.active_player = opponent;
+            state.priority_player = opponent;
+            let painter = put(&mut state, opponent, "Painter's Servant", Zone::Hand);
+            pool(&mut state, opponent, &[], 2);
+            cast(&mut state, painter, &[]);
+            settle_option(&mut state, 1);
+            assert_eq!(state.objects.get(painter).v4.chosen_color, Some(ManaColor::U));
+            let circle = put(&mut state, actor, "Circle of Protection: Blue", Zone::Battlefield);
+
+            let (host, live_name, stale_name, removal_name, removal_generic) = if is_wave {
+                let wave = put(&mut state, opponent, "Parallax Wave", Zone::Hand);
+                pool(&mut state, opponent, &[ManaColor::W, ManaColor::W], 2);
+                cast(&mut state, wave, &[]);
+                settled(&mut state);
+                (wave, "Mulldrifter", "Mulldrifter", "Disenchant", 1)
+            } else {
+                (put(&mut state, opponent, "Petradon", Zone::Hand),
+                    "Island", "Forest", "Swords to Plowshares", 0)
+            };
+            let live = put(&mut state, actor, live_name, Zone::Battlefield);
+            let stale = put(&mut state, opponent, stale_name, Zone::Battlefield);
+            let unrelated = put(&mut state, actor, live_name, Zone::Exile);
+            if is_wave {
+                for target in [live, stale] {
+                    activate(&mut state, host, 0, &[Target::Object(target)]);
+                    settled(&mut state);
+                }
+                assert_eq!(p1b::fade_counters(&state, host), 3);
+            } else {
+                pool(&mut state, opponent, &[ManaColor::R, ManaColor::R], 6);
+                cast(&mut state, host, &[]);
+                let mut targets = [live, stale].into_iter();
+                settle_with(&mut state, |_, decision| match decision {
+                    Decision::ChooseTargets { legal_targets, .. } => {
+                        let target = Target::Object(targets.next().expect("Petradon targets two lands"));
+                        assert!(legal_targets.contains(&target));
+                        Action::ChooseTarget(target)
+                    }
+                    other => first_answer(other),
+                });
+                assert!(targets.next().is_none());
+            }
+            assert_eq!(zone(&state, live), Zone::Exile);
+            assert_eq!(zone(&state, stale), Zone::Exile);
+            let live_generation = state.objects.get(live).zone_change_count;
+            let stale_generation = state.objects.get(stale).zone_change_count;
+
+            let (_, dormant) = open_circle(&mut state, actor, circle);
+            assert!(dormant.iter().all(|link| ![live, stale, unrelated].contains(&link.object)));
+            choose_source(&mut state, &dormant, painter);
+            settled(&mut state);
+            if state.priority_player != opponent {
+                act(&mut state, Action::Pass);
+            }
+            let removal = put(&mut state, opponent, removal_name, Zone::Hand);
+            pool(&mut state, opponent, &[ManaColor::W], removal_generic);
+            cast(&mut state, removal, &[Target::Object(host)]);
+            run_until(&mut state, |state| {
+                state.stack.last().is_some_and(|item| {
+                    item.source == host
+                        && item.kind == StackItemKind::TriggeredAbility
+                        && match &item.inline_effect {
+                            Some(EffectOp::StandardV1(StandardOpV1::EternalV1(
+                                EternalOpV1::P1bV1(P1bOpV1::WaveReturnV1 { .. }),
+                            ))) => is_wave,
+                            Some(EffectOp::StandardV1(StandardOpV1::EternalV1(
+                                EternalOpV1::P2cV1(P2cOpV1::PetradonReturnV1),
+                            ))) => !is_wave,
+                            _ => false,
+                        }
+                })
+            }, |_, _| None);
+            assert_eq!(state.players[opponent.index()].mana_pool, [0; 6]);
+            assert_eq!(zone(&state, host), if is_wave { Zone::Graveyard } else { Zone::Exile });
+
+            for changed_zone in [None, Some(Zone::Graveyard), Some(Zone::Exile)] {
+                let mut pending = state.clone();
+                if let Some(destination) = changed_zone {
+                    event::propose_and_commit(&mut pending, ProposedEvent::zone_change(stale, Zone::Graveyard));
+                    if destination == Zone::Exile {
+                        event::propose_and_commit(&mut pending, ProposedEvent::zone_change(stale, Zone::Exile));
+                    }
+                    assert!(pending.objects.get(stale).zone_change_count > stale_generation);
+                }
+                let (decision, sources) = open_circle(&mut pending, actor, circle);
+                let live_link = ObjectLinkV4 { object: live, zone_change_count: live_generation };
+                assert!(sources.contains(&live_link));
+                assert_eq!(
+                    sources.iter().filter(|link| link.object == stale).copied().collect::<Vec<_>>(),
+                    if changed_zone.is_none() {
+                        vec![ObjectLinkV4 { object: stale, zone_change_count: stale_generation }]
+                    } else {
+                        Vec::new()
+                    },
+                );
+                assert!(sources.iter().all(|link| link.object != unrelated));
+                let mut restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&pending).unwrap()).unwrap();
+                assert_eq!(next(&mut restored), decision);
+                for branch in [&mut pending, &mut restored] {
+                    choose_source(branch, &sources, live);
+                    settled(branch);
+                    let shield = branch.eternal_v1.as_ref().unwrap().s1d.cop_shields.last().unwrap();
+                    assert_eq!(shield.source, live_link);
+                    assert_eq!(zone(branch, live), Zone::Battlefield);
+                    assert_eq!(branch.objects.get(live).controller, actor);
+                    assert_eq!(zone(branch, stale), changed_zone.unwrap_or(Zone::Battlefield));
+                    assert_eq!(zone(branch, unrelated), Zone::Exile);
+                }
+                assert_eq!(pending.state_hash(), restored.state_hash());
+            }
+        }
+    }
+}
+
+#[test]
 fn circle_of_protection_blue_prevents_the_next_damage_from_a_chosen_blue_source() {
     let mut state = plains();
     let circle = put(
