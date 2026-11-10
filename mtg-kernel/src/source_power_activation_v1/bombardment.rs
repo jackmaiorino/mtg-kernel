@@ -11,18 +11,16 @@ pub(crate) const COST: CostComponent = CostComponent::SacrificeControlled {
 pub(crate) fn printed(definition: u16, index: u8) -> bool {
     cfg!(feature = "eternal-fixtures")
         && index == 0
-        && CARD_DEFS
-            .get(usize::from(definition))
-            .is_some_and(|def| {
-                def.name == "Goblin Bombardment"
-                    && def.capability.is_fully_supported()
-                    && def.activated_abilities.first().is_some_and(|ability| {
-                        ability.cost == [COST]
-                            && ability.activation_zone == Zone::Battlefield
-                            && ability.target_spec == TargetSpec::AnyTarget
-                            && (ability.effect)() == crate::fixed_source_damage_v3::printed_root()
-                    })
-            })
+        && CARD_DEFS.get(usize::from(definition)).is_some_and(|def| {
+            def.name == "Goblin Bombardment"
+                && def.capability.is_fully_supported()
+                && def.activated_abilities.first().is_some_and(|ability| {
+                    ability.cost == [COST]
+                        && ability.activation_zone == Zone::Battlefield
+                        && ability.target_spec == TargetSpec::AnyTarget
+                        && (ability.effect)() == crate::fixed_source_damage_v3::printed_root()
+                })
+        })
 }
 
 pub(crate) fn selected(state: &GameState, item: &StackItem) -> bool {

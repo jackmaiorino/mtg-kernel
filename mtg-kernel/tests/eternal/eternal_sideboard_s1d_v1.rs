@@ -2163,7 +2163,12 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
         let mut state = plains();
         state.active_player = actor;
         state.priority_player = actor;
-        let source = put(&mut state, opponent, "Goblin Bombardment", Zone::Battlefield);
+        let source = put(
+            &mut state,
+            opponent,
+            "Goblin Bombardment",
+            Zone::Battlefield,
+        );
         let alternative = put(&mut state, opponent, "Llanowar Elves", Zone::Battlefield);
         let original = state.objects.get(source).zone_change_count;
         let circle = put(&mut state, actor, "Circle of Protection: Blue", Zone::Hand);
@@ -2195,7 +2200,9 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
         state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         assert_eq!(next(&mut state), payment_choice);
         act(&mut state, Action::ChooseCostTarget(source));
-        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == opponent));
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == opponent)
+        );
         assert_eq!(zone(&state, source), Zone::Graveyard);
         assert_eq!(zone(&state, alternative), Zone::Battlefield);
         let item = state.stack[0].clone();
@@ -2268,7 +2275,11 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
         let removal = put(&mut state, actor, "Cast Down", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::B], 1);
         cast(&mut state, removal, &[Target::Object(painter)]);
-        run_until(&mut state, |s| zone(s, painter) == Zone::Graveyard, |_, _| None);
+        run_until(
+            &mut state,
+            |s| zone(s, painter) == Zone::Graveyard,
+            |_, _| None,
+        );
         assert_eq!(state.stack.as_slice(), &[item]);
         assert_eq!(engine::object_color_mask(&state, source) & blue, 0);
         let mut unprotected = state.clone();
@@ -2290,19 +2301,31 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
         else {
             panic!("Circle source options missing");
         };
-        let option = options.iter().position(|op| {
-            matches!(op, EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
+        let option = options
+            .iter()
+            .position(|op| {
+                matches!(op, EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
                 S1dOpV1::CopShieldV1 { source: link },
             ))) if link.object == source && link.zone_change_count == original)
-        }).expect("Circle must offer the departed original blue Bombardment");
+            })
+            .expect("Circle must offer the departed original blue Bombardment");
         let mut restored: GameState =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         assert_eq!(next(&mut restored), decision);
         for branch in [&mut state, &mut restored] {
-            act(branch, Action::ChooseEffectOption(u16::try_from(option).unwrap()));
+            act(
+                branch,
+                Action::ChooseEffectOption(u16::try_from(option).unwrap()),
+            );
             settled(branch);
             assert_eq!(life(branch, actor), 20);
-            assert!(branch.eternal_v1.as_ref().unwrap().s1d.cop_shields.is_empty());
+            assert!(branch
+                .eternal_v1
+                .as_ref()
+                .unwrap()
+                .s1d
+                .cop_shields
+                .is_empty());
             assert!(branch.engine.event_history.iter().any(|event| matches!(
                 event, CommittedEvent::FixedDamageRemovedV3 { removal } if removal.payment == paid_at
             )));
