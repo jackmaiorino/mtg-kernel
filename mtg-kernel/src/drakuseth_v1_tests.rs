@@ -116,6 +116,80 @@ fn paid_v76_source_facts_eighteen_counters_real_publication_positional_illegalit
 }
 
 #[test]
+fn sampled_paid_attack_preserves_archived_target_and_departure_without_hidden_printing() {
+    use crate::{fdn_family_source_v76 as public76, optional_trigger_public_v1::ConsumerV1};
+    let scope = ConsumerV1::KaitoFullPoolV1;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut live, source) = paid(actor);
+        let victim = put(
+            &mut live,
+            actor.opponent(),
+            "Aegis Turtle",
+            Zone::Battlefield,
+        );
+        attack(&mut live, source, actor);
+        choose(
+            &mut live,
+            source,
+            &[Target::Object(victim), Target::Player(actor.opponent())],
+        );
+        crate::event::propose_and_commit(
+            &mut live,
+            crate::event::ProposedEvent::zone_change(victim, Zone::Library),
+        );
+        assert_eq!(live.objects.get(victim).zone, Zone::Library);
+
+        let mut sampled = live.clone();
+        sampled.sampled_history_v1 = crate::sampled_history_v1::capture(&live).unwrap();
+        let hidden = sampled.objects.get_mut(victim);
+        hidden.card_def = card_id_by_name("Island").unwrap();
+        hidden.name = "Island".into();
+        for viewer in [actor, actor.opponent()] {
+            assert_eq!(
+                public76::capture_scoped(&live, viewer, scope).unwrap(),
+                public76::capture_scoped(&sampled, viewer, scope).unwrap()
+            );
+        }
+        let start = live.engine.event_history.len();
+        settle(&mut live);
+        settle(&mut sampled);
+        let damage = vec![(Target::Player(actor.opponent()), 3)];
+        assert_eq!(damage_since(&live, start, source), damage);
+        assert_eq!(damage_since(&sampled, start, source), damage);
+
+        for state in [&mut live, &mut sampled] {
+            crate::event::propose_and_commit(
+                state,
+                crate::event::ProposedEvent::zone_change(source, Zone::Library),
+            );
+            assert_eq!(state.objects.get(source).zone, Zone::Library);
+        }
+        sampled.sampled_history_v1 = crate::sampled_history_v1::capture(&sampled).unwrap();
+        let hidden = sampled.objects.get_mut(source);
+        hidden.card_def = card_id_by_name("Forest").unwrap();
+        hidden.name = "Forest".into();
+
+        for viewer in [actor, actor.opponent()] {
+            let actual = public76::capture_scoped(&sampled, viewer, scope).unwrap();
+            assert_eq!(
+                actual,
+                public76::capture_scoped(&live, viewer, scope).unwrap()
+            );
+            let public76::LaterFamilyV76::Drakuseth(family) = &actual.families[0];
+            assert_eq!(family.publications.len(), 1);
+            assert_eq!(
+                family.publications[0].original_target_slots[0].printed_damage,
+                4
+            );
+            assert!(family.triggers.is_empty());
+        }
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&sampled).unwrap()).unwrap();
+        assert!(public76::capture_scoped(&restored, actor.opponent(), scope).is_err());
+    }
+}
+
+#[test]
 fn independently_initialized_hidden_worlds_after_actual_paid_attack_have_equal_v76_source_facts_both_seats(
 ) {
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -171,10 +245,10 @@ fn restored(state: &GameState) -> GameState {
     assert_eq!(&restored, state);
     restored
 }
-fn paid(actor: PlayerId) -> (GameState, ObjectId) {
+pub(crate) fn paid(actor: PlayerId) -> (GameState, ObjectId) {
     paid_with_hidden(actor, None)
 }
-fn paid_with_hidden(actor: PlayerId, hidden: Option<&str>) -> (GameState, ObjectId) {
+pub(crate) fn paid_with_hidden(actor: PlayerId, hidden: Option<&str>) -> (GameState, ObjectId) {
     let mut state = crate::extra_turn_v1::tests::ready(actor);
     if let Some(name) = hidden {
         // Independently initialized private operand, before every paid action.
@@ -209,7 +283,7 @@ fn paid_with_hidden(actor: PlayerId, hidden: Option<&str>) -> (GameState, Object
     assert!(state.objects.get(source).summoning_sick);
     (state, source)
 }
-fn attack(state: &mut GameState, source: ObjectId, actor: PlayerId) {
+pub(crate) fn attack(state: &mut GameState, source: ObjectId, actor: PlayerId) {
     let cast_turn = state.turn_key_v1();
     let generation = state.objects.get(source).zone_change_count;
     let mut saw_sick_declaration = false;
@@ -244,7 +318,7 @@ fn attack(state: &mut GameState, source: ObjectId, actor: PlayerId) {
     }
     panic!("genuinely cast source did not reach its next legal attack");
 }
-fn choose(state: &mut GameState, source: ObjectId, targets: &[Target]) {
+pub(crate) fn choose(state: &mut GameState, source: ObjectId, targets: &[Target]) {
     for (index, target) in targets.iter().enumerate() {
         assert!(
             matches!(next(state), Decision::ChooseTargets { spell, legal_targets, can_finish, .. }
@@ -275,7 +349,11 @@ fn choose(state: &mut GameState, source: ObjectId, targets: &[Target]) {
         ))
     );
 }
-fn damage_since(state: &GameState, start: usize, source: ObjectId) -> Vec<(Target, i32)> {
+pub(crate) fn damage_since(
+    state: &GameState,
+    start: usize,
+    source: ObjectId,
+) -> Vec<(Target, i32)> {
     state.engine.event_history[start..]
         .iter()
         .filter_map(|event| match event {
@@ -481,7 +559,7 @@ fn paid_attack_departed_reentered_and_stolen_source_retains_original_controller_
     }
 }
 
-fn mixed_prevention_scene(
+pub(crate) fn mixed_prevention_scene(
     actor: PlayerId,
     form: u8,
 ) -> (GameState, ObjectId, [ObjectId; 2], usize) {

@@ -22,6 +22,10 @@ import host_slots_v1
 from compute_throughput_v1 import checked, nonnegative, read
 
 SCHEMA = "current-actor-coverage-probe/v1"
+SCHEMA_V2 = "current-actor-coverage-probe/v2"
+FULL_POOL_RUNTIME = "FullPoolV1/reveal-minima-v3/Foundations-combat/London/environment-v2"
+FULL_POOL_PROFILE = "fdn-full-pool-consumer/v1"
+FAMILY_AUDIT = "ordinal-neutral-with-authenticated-revealed-discard-families/v2"
 SELECTOR = "splitmix64-rejection-uniform/v1;seed=environment_seed^0x454a11;all-current-tree-fixture-logits-checked"
 TEST = "current_actor_probe_v1::reported_pool_digest_free_terminal_probe"
 PINS = {
@@ -141,10 +145,22 @@ def prepare(args):
                     max_physical_decisions=template["max_physical_decisions"],
                     max_policy_steps=template["max_policy_steps"], decks=pool, games=games,
                     requirements=[dict(decks=list(decks), kinds=sorted(kinds)) for decks, kinds in sorted(required.items())])
+    if args.cohort == "original_limited":
+        manifest.update(schema=SCHEMA_V2, runtime=FULL_POOL_RUNTIME,
+                        consumer_profile=FULL_POOL_PROFILE, action_audit=FAMILY_AUDIT)
     write_new(args.output, manifest)
 
 
 def require_choice(path, binary, manifest):
+    workload = read(checked(manifest))
+    v2 = workload.get("schema") == SCHEMA_V2
+    if v2:
+        if (workload.get("pool"), workload.get("cohort"), workload.get("runtime"),
+                workload.get("consumer_profile"), workload.get("action_audit")) != (
+                "limited", "original_limited", FULL_POOL_RUNTIME, FULL_POOL_PROFILE, FAMILY_AUDIT):
+            raise ValueError("unsupported FullPool probe contract")
+    elif workload.get("schema") != SCHEMA:
+        raise ValueError("unsupported probe workload")
     plan = read(path)
     if plan.get("schema") != "current-actor-probe-compute-choice/v1":
         raise ValueError("unsupported probe allocation")
@@ -164,7 +180,18 @@ def require_choice(path, binary, manifest):
         checked(receipt["binary"]); checked(receipt["manifest"])
         if receipt["binary"]["sha256"] != binary["sha256"] or receipt["manifest"]["sha256"] != manifest["sha256"]:
             raise ValueError("qualification binary or full workload changed")
-        if receipt["exit_code"] != 0 or report["attempted_games"] != 4 or report["completed_games"] != 4 or report["ordinal_neutral_collisions"] != 0:
+        if report.get("schema") != workload["schema"] or any(
+                report.get(key) != workload.get(key) for key in ("runtime", "consumer_profile", "action_audit")):
+            raise ValueError("sample consumer/audit contract differs from workload")
+        collisions = report["ordinal_neutral_collisions"]
+        if v2:
+            explained = report["authenticated_revealed_discard_family_pairs"]
+            unexplained = report["unexplained_ordinal_neutral_collisions"]
+            if (any(type(n) is not int or n < 0 for n in (collisions, explained, unexplained))
+                    or collisions != explained + unexplained):
+                raise ValueError("invalid public-family collision accounting")
+            collisions = unexplained
+        if receipt["exit_code"] != 0 or report["attempted_games"] != 4 or report["completed_games"] != 4 or collisions != 0:
             raise ValueError("incomplete games cannot qualify throughput")
         if report["input_sha256"] != manifest["sha256"] or report["workers"] != receipt["workers"]:
             raise ValueError("receipt/report bindings differ")

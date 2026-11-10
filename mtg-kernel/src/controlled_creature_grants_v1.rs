@@ -375,6 +375,11 @@ pub(crate) fn validate_color_history(state: &GameState) -> Result<(), String> {
                         snapshot.source.source,
                         snapshot.source.zone_change_count,
                         snapshot.source.card_def,
+                    )
+                    && !crate::sampled_history_v1::allows_rebound_source(
+                        state,
+                        at,
+                        snapshot.source,
                     ))
             {
                 return Err("color departure changed original definition/owner/incarnation".into());

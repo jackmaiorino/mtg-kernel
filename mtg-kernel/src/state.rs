@@ -1307,6 +1307,46 @@ pub fn stack_target_contract_is_structurally_valid(
     target: Target,
     contract: StackTargetContractV4,
 ) -> bool {
+    stack_target_contract_shape(state, spec, target_index, target, contract, false)
+}
+
+/// Only a full native Storm snapshot can retain historical targets without
+/// reading a later hidden printing. Owner, generation, kind and current stack
+/// identity still use the ordinary structural checks below.
+pub(crate) fn stack_target_contract_for_storm_snapshot(
+    state: &GameState,
+    spell: &StackItem,
+    spec: TargetSpec,
+    target_index: usize,
+    target: Target,
+    contract: StackTargetContractV4,
+) -> bool {
+    crate::effect::thousand_year_storm_v1::owns_snapshot(state, spell)
+        && spell.targets.get(target_index) == Some(&target)
+        && spell.v4.target_contracts.get(target_index) == Some(&contract)
+        && stack_target_contract_shape(state, spec, target_index, target, contract, true)
+}
+
+pub(crate) fn stack_target_contract_for_sampled_snapshot(
+    state: &GameState,
+    item: &StackItem,
+    spec: TargetSpec,
+    slot: usize,
+    target: Target,
+    contract: StackTargetContractV4,
+) -> bool {
+    crate::sampled_history_v1::object_target_face(state, item, slot, contract).is_some()
+        && stack_target_contract_shape(state, spec, slot, target, contract, true)
+}
+
+fn stack_target_contract_shape(
+    state: &GameState,
+    spec: TargetSpec,
+    target_index: usize,
+    target: Target,
+    contract: StackTargetContractV4,
+    historical_storm: bool,
+) -> bool {
     if contract.target() != target {
         return false;
     }
@@ -1337,7 +1377,8 @@ pub fn stack_target_contract_is_structurally_valid(
             && stack_item_id.0 > 0
             && stack_item_id.0 <= state.engine.next_stack_item_id
             && state.objects.try_get(source).is_some_and(|live| {
-                live.card_def == card_def
+                (live.card_def == card_def
+                    || historical_storm && live.zone_change_count > source_zone_change_count)
                     && live.owner == owner
                     && live.zone_change_count >= source_zone_change_count
             })
@@ -1555,7 +1596,8 @@ pub fn stack_target_contract_is_structurally_valid(
         return true;
     };
     state.objects.try_get(object).is_some_and(|live| {
-        live.card_def == card_def
+        (live.card_def == card_def
+            || historical_storm && live.zone_change_count > zone_change_count)
             && live.owner == owner
             && live.spell_copy_origin == spell_copy_origin
             && if spell_copy_origin.is_some() {
@@ -2514,6 +2556,10 @@ pub struct GameState {
     /// Historical games and hands without this printing retain absence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub leyline_opening_v1: Option<crate::leyline_axe_v1::OpeningV1>,
+    /// Native opening answers retired before the disposable belief rewrite.
+    #[serde(skip)]
+    pub(crate) leyline_sampled_history_v1:
+        Option<crate::leyline_axe_v1::sampling::SampledHistoryV1>,
     /// Opt-in (issue #531): the other player reads a card leaving a hand by
     /// name, never by copy (see [`GameState::forget_departing_hand_object`]).
     /// Off in every historical session, whose rows, snapshot bytes and hashes
@@ -2539,6 +2585,26 @@ pub struct GameState {
     /// Compact public name ledger carried only in reveal-v4 search worlds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) reveal_knowledge_v4: Option<[RevealKnowledgeV3; 2]>,
+    #[serde(skip)]
+    pub(crate) sampled_history_v1: crate::sampled_history_v1::CustodyV1,
+    /// The declared Curator profile reveals the pile by name, without assigning
+    /// its publicly shown cards to the controller's private library positions.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) curator_unordered_reveal_v1: bool,
+    // Only the opaque owning search clone can detach a name-only arrival from
+    // its native opponent hand slot. Serialized live checkpoints cannot mint it.
+    #[serde(skip)]
+    pub(crate) curator_sampled_hand_arrivals_v1: crate::curator_receipts_v1::SampledHandArrivalsV1,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) greatwurm_commit_receipts_v1: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) harvester_commit_receipts_v1: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) fiend_artisan_receipts_v1: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) etali_commit_receipts_v1: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) thousand_year_storm_consumer_v1: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2803,6 +2869,10 @@ impl Hash for GameState {
             "leyline-opening/v1".hash(state);
             opening.hash(state);
         }
+        if let Some(history) = &self.leyline_sampled_history_v1 {
+            "leyline-sampled-opening/v1".hash(state);
+            history.hash(state);
+        }
         if self.hand_departures_by_name_v1 {
             "hand-departures-by-name/v1".hash(state);
         }
@@ -2815,6 +2885,26 @@ impl Hash for GameState {
         }
         if self.public_shroud_v1 {
             "public-shroud/v1".hash(state);
+        }
+        if self.curator_unordered_reveal_v1 {
+            "curator-unordered-reveal/v1".hash(state);
+        }
+        self.curator_sampled_hand_arrivals_v1.hash_if_sampled(state);
+        self.sampled_history_v1.hash_if_sampled(state);
+        if self.harvester_commit_receipts_v1 {
+            "harvester-commit-receipts/v1".hash(state);
+        }
+        if self.etali_commit_receipts_v1 {
+            "etali-primal-storm-commit-receipts/v1".hash(state);
+        }
+        if self.thousand_year_storm_consumer_v1 {
+            "thousand-year-storm-consumer/v1".hash(state);
+        }
+        if self.greatwurm_commit_receipts_v1 {
+            "greatwurm-commit-receipts/v1".hash(state);
+        }
+        if self.fiend_artisan_receipts_v1 {
+            "fiend-artisan-receipts/v1".hash(state);
         }
     }
 }
@@ -3028,12 +3118,21 @@ impl GameState {
             eternal_v1: None,
             nine_lives_delayed_v1: None,
             leyline_opening_v1: None,
+            leyline_sampled_history_v1: None,
             hand_departures_by_name_v1: false,
             hand_knowledge_by_name_v2: false,
             public_shroud_v1: false,
             observation_journal: ObservationJournalV1::default(),
             reveal_meaning_v3: Default::default(),
             reveal_knowledge_v4: None,
+            sampled_history_v1: Default::default(),
+            curator_unordered_reveal_v1: false,
+            curator_sampled_hand_arrivals_v1: Default::default(),
+            greatwurm_commit_receipts_v1: false,
+            harvester_commit_receipts_v1: false,
+            fiend_artisan_receipts_v1: false,
+            etali_commit_receipts_v1: false,
+            thousand_year_storm_consumer_v1: false,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         crate::life_loss_turn_v1::initialize_for_catalog(&mut state);
@@ -3405,7 +3504,7 @@ impl GameState {
 
     /// The legacy observation and sampler use object rows. Bind the public
     /// minima to deterministic representatives inside this sampled world.
-    fn bind_reveal_names_v4(&mut self, observer: PlayerId, owner: PlayerId) {
+    pub(crate) fn bind_reveal_names_v4(&mut self, observer: PlayerId, owner: PlayerId) {
         let Some(knowledge) = &self.reveal_knowledge_v4 else {
             return;
         };

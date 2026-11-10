@@ -2,7 +2,7 @@
 //! Use the guarded Python launcher after serial/parallel qualification. Reports
 //! contain actor-visible fingerprints and classified failures, not native state.
 use crate::{
-    current_mixed_policy_v1::{KaitoSession, NumericTree, Packet, Source},
+    current_mixed_policy_v1::{KaitoSession, NumericTree, Packet, Source, ProbeCaptureV2, RevealedDiscardFamilyV2},
     current_tree_learner_v1::{AuthenticatedInputV1, ModelV1},
     ids::PlayerId,
     rl::{
@@ -19,6 +19,9 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, time::Instant};
 
 const SCHEMA: &str = "current-actor-coverage-probe/v1";
+const SCHEMA_V2: &str = "current-actor-coverage-probe/v2";
+const FULL_POOL_RUNTIME: &str = "FullPoolV1/reveal-minima-v3/Foundations-combat/London/environment-v2";
+const FAMILY_AUDIT: &str = "ordinal-neutral-with-authenticated-revealed-discard-families/v2";
 const SELECTOR: &str = "splitmix64-rejection-uniform/v1;seed=environment_seed^0x454a11;all-current-tree-fixture-logits-checked";
 
 #[derive(Clone, Deserialize)]
@@ -52,6 +55,8 @@ struct Manifest {
     cohort: String,
     selector: String,
     runtime: String,
+    consumer_profile: Option<String>,
+    action_audit: Option<String>,
     provenance: serde_json::Value,
     max_physical_decisions: u64,
     max_policy_steps: u64,
@@ -110,6 +115,7 @@ struct GameResult {
     flags_seen: [[bool; 2]; 6],
     equal_full_ingress_distinct_actions: u64,
     equal_ordinal_neutral_ingress_distinct_actions: u64,
+    authenticated_revealed_discard_family_pairs: u64,
     collision_examples: Vec<[u32; 2]>,
     terminal: Option<RlSessionTerminalV1>,
     failure: Option<Failure>,
@@ -130,6 +136,7 @@ impl GameResult {
             flags_seen: [[false; 2]; 6],
             equal_full_ingress_distinct_actions: 0,
             equal_ordinal_neutral_ingress_distinct_actions: 0,
+            authenticated_revealed_discard_family_pairs: 0,
             collision_examples: Vec::new(),
             terminal: None,
             failure: None,
@@ -286,17 +293,14 @@ fn update_trace(
 fn audit(
     input: &AuthenticatedInputV1,
     actions: &[ActionSemanticV1],
+    families: &[Option<RevealedDiscardFamilyV2>],
     row: &mut GameResult,
 ) -> Result<(), String> {
-    let packet = input.packet();
-    if actions.len() != packet.actions().len() || actions.len() != input.action_flags().len() {
-        return Err("action/input count mismatch".into());
-    }
-    let signatures = packet
-        .actions()
-        .iter()
-        .map(|tree| signature(tree, packet.source() == Source::KaitoV75))
-        .collect::<Result<Vec<_>, _>>()?;
+    let counts = collision_counts_v2(input, actions, families)?;
+    row.equal_full_ingress_distinct_actions += counts.full;
+    row.equal_ordinal_neutral_ingress_distinct_actions += counts.neutral;
+    row.authenticated_revealed_discard_family_pairs += counts.explained;
+    row.collision_examples.extend(counts.examples.into_iter().take(8 - row.collision_examples.len()));
     for (i, action) in actions.iter().enumerate() {
         let value = serde_json::to_value(action).map_err(|e| e.to_string())?;
         let kind = value["action_kind"].as_str().ok_or("action kind absent")?;
@@ -304,22 +308,53 @@ fn audit(
         for (slot, &value) in input.action_flags()[i].iter().enumerate() {
             row.flags_seen[slot][usize::from(value)] = true;
         }
+    }
+    Ok(())
+}
+
+pub(crate) struct CollisionCountsV2 {
+    pub(crate) full: u64,
+    pub(crate) neutral: u64,
+    pub(crate) explained: u64,
+    examples: Vec<[u32; 2]>,
+}
+
+/// Counts every raw collision. Only a same-prompt typed native family witness
+/// can explain a pair; equality of numeric input never creates that witness.
+pub(crate) fn collision_counts_v2(
+    input: &AuthenticatedInputV1,
+    actions: &[ActionSemanticV1],
+    families: &[Option<RevealedDiscardFamilyV2>],
+) -> Result<CollisionCountsV2, String> {
+    let packet = input.packet();
+    if actions.len() != packet.actions().len() || actions.len() != input.action_flags().len()
+        || families.len() != actions.len() {
+        return Err("action/input/family count mismatch".into());
+    }
+    let signatures = packet.actions().iter()
+        .map(|tree| signature(tree, packet.source() == Source::KaitoV75))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut counts = CollisionCountsV2 { full: 0, neutral: 0, explained: 0, examples: Vec::new() };
+    for (i, action) in actions.iter().enumerate() {
         for j in 0..i {
             if action == &actions[j] || input.action_flags()[i] != input.action_flags()[j] {
                 continue;
             }
             if packet.actions()[i] == packet.actions()[j] {
-                row.equal_full_ingress_distinct_actions += 1;
+                counts.full += 1;
             }
             if signatures[i] == signatures[j] {
-                row.equal_ordinal_neutral_ingress_distinct_actions += 1;
-                if row.collision_examples.len() < 8 {
-                    row.collision_examples.push([j as u32, i as u32]);
+                counts.neutral += 1;
+                if matches!((&families[i], &families[j]), (Some(a), Some(b))
+                    if a.equivalent_actions(action, b, &actions[j])) {
+                    counts.explained += 1;
+                } else if counts.examples.len() < 8 {
+                    counts.examples.push([j as u32, i as u32]);
                 }
             }
         }
     }
-    Ok(())
+    Ok(counts)
 }
 
 enum Owner {
@@ -340,19 +375,19 @@ impl Owner {
     fn encode(
         &self,
         h: FastActorDecisionV1,
-    ) -> Result<(Decision, AuthenticatedInputV1, Vec<ActionSemanticV1>), String> {
+    ) -> Result<(Decision, ProbeCaptureV2), String> {
         match self {
             Self::Limited(s) => {
                 let d = s.encode(h).map_err(|e| e.to_string())?;
-                let input = s.training_input_v1(&d).map_err(|e| e.to_string())?;
-                let actions = d.probe_actions_v1().to_vec();
-                Ok((Decision::Limited(Box::new(d)), input, actions))
+                let capture = s.probe_capture_v2(&d).map_err(|e| e.to_string())?;
+                Ok((Decision::Limited(Box::new(d)), capture))
             }
             Self::Eternal(s) => {
                 let d = s.encode(h).map_err(|e| e.to_string())?;
                 let input = s.training_input_v1(&d).map_err(|e| e.to_string())?;
                 let actions = d.probe_actions_v1();
-                Ok((Decision::Eternal(d), input, actions))
+                let families = vec![None; actions.len()];
+                Ok((Decision::Eternal(d), ProbeCaptureV2 { input, actions, families }))
             }
         }
     }
@@ -388,7 +423,16 @@ fn play(manifest: &Manifest, game: &Game) -> GameResult {
         PlayerSeatV1::P1 => PlayerId::P1,
     };
     let limits = (manifest.max_physical_decisions, manifest.max_policy_steps);
-    let session = if manifest.pool == "limited" {
+    let session = if manifest.schema == SCHEMA_V2 {
+        crate::limited_full_pool_consumer_v1::reset_numeric_reveal_facts_v3(
+            &crate::limited_full_pool_consumer_v1::ResetV1 {
+                expected_card_db_hash: crate::card_def::KERNEL_CARDDB_HASH,
+                episode_id: 1, env_seed: game.seed, starting_player: game.starting_player,
+                deck_ids: game.decks.clone(), mainboards: boards,
+                max_physical_decisions: limits.0, max_policy_steps: limits.1,
+            },
+        ).map(Owner::Limited)
+    } else if manifest.pool == "limited" {
         KaitoSession::reset_explicit_mainboards(
             1,
             game.seed,
@@ -398,6 +442,7 @@ fn play(manifest: &Manifest, game: &Game) -> GameResult {
             player,
         )
         .map(Owner::Limited)
+        .map_err(|e| e.to_string())
     } else {
         EternalActorSessionV1::reset_explicit_mainboards(
             1,
@@ -408,6 +453,7 @@ fn play(manifest: &Manifest, game: &Game) -> GameResult {
             player,
         )
         .map(Owner::Eternal)
+        .map_err(|e| e.to_string())
     };
     let mut owner = match session {
         Ok(s) => s,
@@ -446,7 +492,7 @@ fn play(manifest: &Manifest, game: &Game) -> GameResult {
                 break;
             }
         };
-        let (decision, input, actions) = match owner.encode(header) {
+        let (decision, ProbeCaptureV2 { input, actions, families }) = match owner.encode(header) {
             Ok(v) => v,
             Err(e) => {
                 row.fail(Stage::Encoding, e, Some(header));
@@ -457,7 +503,7 @@ fn play(manifest: &Manifest, game: &Game) -> GameResult {
             row.fail(Stage::Encoding, "header/action arity differs", Some(header));
             break;
         }
-        if let Err(e) = audit(&input, &actions, &mut row) {
+        if let Err(e) = audit(&input, &actions, &families, &mut row) {
             row.fail(Stage::ActionAudit, e, Some(header));
             break;
         }
@@ -556,7 +602,22 @@ fn reported_pool_digest_free_terminal_probe() {
         std::fs::read(std::env::var("MTG_CURRENT_ACTOR_PROBE_INPUT").expect("manifest path"))
             .unwrap();
     let manifest: Manifest = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(manifest.schema, SCHEMA);
+    match manifest.schema.as_str() {
+        SCHEMA => {
+            assert!(manifest.consumer_profile.is_none() && manifest.action_audit.is_none());
+            assert_eq!(manifest.runtime, if manifest.pool == "limited" {
+                "KaitoV75/Foundations-combat/London/environment-v2"
+            } else { "EternalActorV1/native-Full/environment-v2" });
+        }
+        SCHEMA_V2 => {
+            assert_eq!(manifest.pool, "limited");
+            assert_eq!(manifest.cohort, "original_limited");
+            assert_eq!(manifest.runtime, FULL_POOL_RUNTIME);
+            assert_eq!(manifest.consumer_profile.as_deref(), Some(crate::limited_full_pool_consumer_v1::PROFILE_V1));
+            assert_eq!(manifest.action_audit.as_deref(), Some(FAMILY_AUDIT));
+        }
+        _ => panic!("unsupported actor probe contract"),
+    }
     assert_eq!(manifest.selector, SELECTOR);
     assert!(matches!(manifest.pool.as_str(), "limited" | "eternal"));
     assert!(matches!(
@@ -599,6 +660,9 @@ fn reported_pool_digest_free_terminal_probe() {
         .iter()
         .map(|g| g.equal_ordinal_neutral_ingress_distinct_actions)
         .sum();
+    let explained: u64 = games.iter().map(|g| g.authenticated_revealed_discard_family_pairs).sum();
+    assert!(manifest.schema == SCHEMA_V2 || explained == 0);
+    let unexplained = collisions.checked_sub(explained).expect("invalid family collision accounting");
     let missing = manifest
         .requirements
         .iter()
@@ -631,14 +695,16 @@ fn reported_pool_digest_free_terminal_probe() {
         })
         .collect::<Vec<_>>();
     let primary = serde_json::to_vec(&games).unwrap();
-    let report = serde_json::json!({"schema":SCHEMA, "input_sha256":format!("{:x}",Sha256::digest(&bytes)),
+    let report = serde_json::json!({"schema":manifest.schema, "input_sha256":format!("{:x}",Sha256::digest(&bytes)),
         "selector":SELECTOR, "runtime":manifest.runtime, "provenance":manifest.provenance,
+        "consumer_profile":manifest.consumer_profile,"action_audit":manifest.action_audit,
         "feature_identity":crate::current_tree_learner_v1::feature_identity_v1(),
         "card_db_hash":crate::card_def::KERNEL_CARDDB_HASH, "pool":manifest.pool,"cohort":manifest.cohort,
         "workers":workers,"seconds":started.elapsed().as_secs_f64(),"planned_games":60,"attempted_games":count,
         "completed_games":completed,"ordinal_neutral_collisions":collisions,
+        "authenticated_revealed_discard_family_pairs":explained,"unexplained_ordinal_neutral_collisions":unexplained,
         "deck_inventory":inventory, "missing_reported_pair_kinds":missing,
-        "terminal_panel_accepted":count==60 && completed==60 && collisions==0 && missing.is_empty(),
+        "terminal_panel_accepted":count==60 && completed==60 && unexplained==0 && missing.is_empty(),
         "primary_sha256":format!("{:x}",Sha256::digest(&primary)),"games":games});
     use std::io::Write;
     let mut output = std::fs::OpenOptions::new()
@@ -654,8 +720,8 @@ fn reported_pool_digest_free_terminal_probe() {
         "coverage requires natural terminal games; see classified report"
     );
     assert_eq!(
-        collisions, 0,
-        "distinct typed actions remain indistinguishable after ordinal neutralization"
+        unexplained, 0,
+        "unexplained typed action collisions remain after ordinal neutralization"
     );
     if count == 60 {
         assert!(

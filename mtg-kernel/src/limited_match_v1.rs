@@ -30,7 +30,12 @@ use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 use crate::state::{GameState, ObjectStateV4, SplitMix64, Zone};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
+
+pub(crate) mod closed_list_v2;
+pub(crate) mod curator_sampling_v1;
+mod full_pool_match_v1;
+pub(crate) mod library_minima_v1;
 
 pub const LIMITED_MATCH_SCHEMA_V1: &str = "mtg-kernel-limited-match/v1";
 /// UCB1 exploration constant on values in [-1, 1].
@@ -58,6 +63,8 @@ pub enum SessionKindV1 {
     /// Rules-only self-play (`rl_session::rules_only_v1`): Full cards plus
     /// admitted executable Partial cards, no consumer contract.
     RulesOnly(RulesAdmissionV1),
+    /// Authenticated numeric owner for the exact 286 Foundations printings.
+    FullPoolV1,
 }
 
 /// Which executable Partial cards a rules-only game admits.
@@ -72,6 +79,13 @@ pub enum RulesAdmissionV1 {
 impl SessionKindV1 {
     /// `None` when `id` may play in this session, else why not.
     pub fn refusal(self, id: u16) -> Option<&'static str> {
+        if self == Self::FullPoolV1 {
+            return match crate::limited_full_pool_consumer_v1::declared_printings_v1() {
+                Ok(printings) if printings.contains(&id) => None,
+                Ok(_) => Some("outside the frozen Foundations pool"),
+                Err(_) => Some("full-pool registry unavailable"),
+            };
+        }
         let card = &CARD_DEFS[id as usize];
         if card.is_token {
             return Some("token");
@@ -81,6 +95,7 @@ impl SessionKindV1 {
         }
         match self {
             Self::PreparedV57 => Some("not full"),
+            Self::FullPoolV1 => unreachable!("full pool checked before catalog capability"),
             Self::RulesOnly(_) if !card.is_executable() => Some("not executable"),
             Self::RulesOnly(RulesAdmissionV1::AllExecutable) => None,
             Self::RulesOnly(RulesAdmissionV1::Admitted) => {
@@ -142,18 +157,26 @@ impl DeckFileV1 {
 pub struct LimitedBeliefV1 {
     /// Sorted card-definition multiset per deck.
     decks: Vec<Vec<u16>>,
+    v2_executable: bool,
 }
 
 impl LimitedBeliefV1 {
     pub fn new(decks: impl IntoIterator<Item = Vec<u16>>) -> Self {
+        let decks: Vec<_> = decks
+            .into_iter()
+            .map(|mut cards| {
+                cards.sort_unstable();
+                cards
+            })
+            .collect();
+        let v2_executable = decks.iter().flatten().all(|&id| {
+            CARD_DEFS
+                .get(usize::from(id))
+                .is_some_and(|card| !card.is_token && card.is_executable())
+        });
         Self {
-            decks: decks
-                .into_iter()
-                .map(|mut cards| {
-                    cards.sort_unstable();
-                    cards
-                })
-                .collect(),
+            decks,
+            v2_executable,
         }
     }
 
@@ -192,18 +215,29 @@ pub(crate) fn unknown_slots_v1(
             }
         }
     }
-    for (position, &id) in player.library.iter().enumerate() {
-        let generation = state.objects.get(id).zone_change_count;
-        let known = state.known_library_cards(actor, owner).iter().any(|k| {
-            usize::try_from(k.position).ok() == Some(position)
-                && k.object == id
-                && k.zone_change_count == generation
-        });
-        if !known && !pinned.contains(&id) {
-            slots.push(id);
-        }
-    }
+    slots.extend(unknown_library_slots_v1(state, actor, owner, pinned));
     slots
+}
+
+fn unknown_library_slots_v1<'a>(
+    state: &'a GameState,
+    actor: PlayerId,
+    owner: PlayerId,
+    pinned: &'a [ObjectId],
+) -> impl Iterator<Item = ObjectId> + 'a {
+    state.players[owner.index()]
+        .library
+        .iter()
+        .enumerate()
+        .filter_map(move |(position, &id)| {
+            let generation = state.objects.get(id).zone_change_count;
+            let known = state.known_library_cards(actor, owner).iter().any(|k| {
+                usize::try_from(k.position).ok() == Some(position)
+                    && k.object == id
+                    && k.zone_change_count == generation
+            });
+            (!known && !pinned.contains(&id)).then_some(id)
+        })
 }
 
 /// The opponent's physical cards outside `unknown` (public zones and cards the
@@ -332,15 +366,36 @@ pub(crate) fn apply_belief_v1(
         })
         .count();
     let total = observed.len() + slots.len() + face_down;
+    let (rest, kind) = belief_remainder(belief, &observed, total, seed)?;
+    // A nearest deck can be smaller than the remaining slots: cycle it.
+    for (k, &id) in slots.iter().enumerate() {
+        let def = rest[k % rest.len()];
+        let object = state.objects.get_mut(id);
+        object.card_def = def;
+        object.name = CARD_DEFS[def as usize].name.to_string();
+        object.v4 = ObjectStateV4::from_card_def(def);
+    }
+    Ok(kind)
+}
+
+fn belief_remainder(
+    belief: &LimitedBeliefV1,
+    observed: &[u16],
+    total: usize,
+    seed: u64,
+) -> Result<(Vec<u16>, BeliefDrawV1), String> {
+    if belief.is_empty() {
+        return Err("empty belief corpus".into());
+    }
     let mut rng = SplitMix64::seed(derive_seed(b"mtg-kernel/limited-belief/v1\0", &[seed]));
     let consistent: Vec<usize> = (0..belief.decks.len())
-        .filter(|&d| belief.decks[d].len() == total && is_submultiset(&observed, &belief.decks[d]))
+        .filter(|&d| belief.decks[d].len() == total && is_submultiset(observed, &belief.decks[d]))
         .collect();
     let (deck, kind) = if consistent.is_empty() {
         let shared: Vec<usize> = belief
             .decks
             .iter()
-            .map(|deck| remainder(deck, &observed).1)
+            .map(|deck| remainder(deck, observed).1)
             .collect();
         let best = *shared.iter().max().expect("nonempty corpus");
         let nearest: Vec<usize> = (0..shared.len()).filter(|&d| shared[d] == best).collect();
@@ -354,7 +409,7 @@ pub(crate) fn apply_belief_v1(
             BeliefDrawV1::Consistent,
         )
     };
-    let (mut rest, _) = remainder(&belief.decks[deck], &observed);
+    let (mut rest, _) = remainder(&belief.decks[deck], observed);
     if rest.is_empty() {
         return Err("belief deck has no cards left for the unknown slots".into());
     }
@@ -362,22 +417,42 @@ pub(crate) fn apply_belief_v1(
         let j = draw(&mut rng, i + 1);
         rest.swap(i, j);
     }
-    // A nearest deck can be smaller than the remaining slots: cycle it.
-    for (k, &id) in slots.iter().enumerate() {
-        let def = rest[k % rest.len()];
-        let object = state.objects.get_mut(id);
-        object.card_def = def;
-        object.name = CARD_DEFS[def as usize].name.to_string();
-        object.v4 = ObjectStateV4::from_card_def(def);
-    }
-    Ok(kind)
+    Ok((rest, kind))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorldModeV1 {
     ClosedList,
+    ClosedListV2,
+    ClosedListV3,
+    FullPoolClosedListV1,
     TrueList,
     Peek,
+}
+
+fn executable_belief_v2(belief: Option<&LimitedBeliefV1>) -> Result<&LimitedBeliefV1, String> {
+    let belief = belief.ok_or("closedlist needs a belief corpus")?;
+    if belief.is_empty() {
+        return Err("empty belief corpus".into());
+    }
+    if !belief.v2_executable {
+        return Err("belief corpus contains a non-executable printing".into());
+    }
+    Ok(belief)
+}
+
+pub(crate) fn full_pool_belief_v1(belief: &LimitedBeliefV1) -> Result<&LimitedBeliefV1, String> {
+    let belief = executable_belief_v2(Some(belief))?;
+    let printings = crate::limited_full_pool_consumer_v1::declared_printings_v1()?;
+    if belief
+        .decks
+        .iter()
+        .flatten()
+        .any(|id| !printings.contains(id))
+    {
+        return Err("full-pool belief contains a printing outside the frozen pool".into());
+    }
+    Ok(belief)
 }
 
 /// One world of the current actor's information set (see the module docs).
@@ -388,6 +463,7 @@ pub fn sample_world_v1(
     belief: Option<&LimitedBeliefV1>,
     seed: u64,
 ) -> Result<FastActorSessionV1, String> {
+    session.refuse_curator_sampling_v1()?;
     match mode {
         WorldModeV1::Peek => Ok(session.clone()),
         WorldModeV1::TrueList => session.limited_belief_clone_v1(seed, |_, _, _| Ok(())),
@@ -396,6 +472,19 @@ pub fn sample_world_v1(
             session.limited_belief_clone_v1(seed, |state, actor, pinned| {
                 apply_belief_v1(state, actor, pinned, belief, seed).map(|_| ())
             })
+        }
+        WorldModeV1::ClosedListV2 => {
+            let belief = belief.ok_or("closedlist-v2 needs a belief corpus")?;
+            let belief = executable_belief_v2(Some(belief))?;
+            session.limited_closed_list_clone_v2(seed, belief)
+        }
+        WorldModeV1::ClosedListV3 => {
+            let belief = executable_belief_v2(belief)?;
+            let root = session.limited_closed_list_root_v3()?;
+            session.limited_closed_list_clone_v3(&root, seed, belief)
+        }
+        WorldModeV1::FullPoolClosedListV1 => {
+            Err("closedlist-full-pool-v1 requires the sealed numeric owner".into())
         }
     }
 }
@@ -438,6 +527,15 @@ impl PolicySpecV1 {
                         None if part == "closedlist" => {
                             set_world(WorldModeV1::ClosedList, &mut world)?
                         }
+                        None if part == "closedlist-v2" => {
+                            set_world(WorldModeV1::ClosedListV2, &mut world)?
+                        }
+                        None if part == "closedlist-v3" => {
+                            set_world(WorldModeV1::ClosedListV3, &mut world)?
+                        }
+                        None if part == "closedlist-full-pool-v1" => {
+                            set_world(WorldModeV1::FullPoolClosedListV1, &mut world)?
+                        }
                         None if part == "truelist" => set_world(WorldModeV1::TrueList, &mut world)?,
                         None if part == "peek" => set_world(WorldModeV1::Peek, &mut world)?,
                         _ => return Err(format!("{spec:?}: unknown field {part:?}")),
@@ -450,7 +548,7 @@ impl PolicySpecV1 {
                     sims,
                     depth,
                     world: world.ok_or_else(|| {
-                        format!("{spec:?}: name a world mode (closedlist, truelist or peek)")
+                        format!("{spec:?}: name a world mode (closedlist, closedlist-v2, closedlist-v3, closedlist-full-pool-v1, truelist or peek)")
                     })?,
                 })
             }
@@ -462,10 +560,62 @@ impl PolicySpecV1 {
         matches!(
             self,
             Self::Pimc {
-                world: WorldModeV1::ClosedList,
+                world: WorldModeV1::ClosedList
+                    | WorldModeV1::ClosedListV2
+                    | WorldModeV1::ClosedListV3
+                    | WorldModeV1::FullPoolClosedListV1,
                 ..
             }
         )
+    }
+
+    pub fn uses_closed_list_v2(&self) -> bool {
+        matches!(
+            self,
+            Self::Pimc {
+                world: WorldModeV1::ClosedListV2,
+                ..
+            }
+        )
+    }
+
+    pub fn uses_closed_list_v3(&self) -> bool {
+        matches!(
+            self,
+            Self::Pimc {
+                world: WorldModeV1::ClosedListV3,
+                ..
+            }
+        )
+    }
+
+    pub fn uses_versioned_closed_list(&self) -> bool {
+        self.uses_closed_list_v2() || self.uses_closed_list_v3()
+    }
+
+    /// Keep the sealed FullPool policy and raw match policies on their own sessions.
+    pub fn validate_full_pool_session_v1(&self, session: SessionKindV1) -> Result<(), String> {
+        match (session, self) {
+            (SessionKindV1::FullPoolV1, Self::Random)
+            | (
+                SessionKindV1::FullPoolV1,
+                Self::Pimc {
+                    world: WorldModeV1::FullPoolClosedListV1,
+                    ..
+                },
+            ) => Ok(()),
+            (
+                _,
+                Self::Pimc {
+                    world: WorldModeV1::FullPoolClosedListV1,
+                    ..
+                },
+            ) => Err("closedlist-full-pool-v1 requires -session full-pool".into()),
+            (SessionKindV1::FullPoolV1, _) => {
+                Err("full-pool requires random or closedlist-full-pool-v1".into())
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -477,6 +627,7 @@ pub struct PimcStatsV1 {
     pub rejected: u32,
     pub rollout_errors: u32,
     pub first_rollout_error: Option<String>,
+    pub rejection_reasons: BTreeMap<String, u32>,
 }
 
 fn seat(player: PlayerSeatV1) -> PlayerId {
@@ -546,10 +697,55 @@ pub fn pimc_choose_v1(
     belief: Option<&LimitedBeliefV1>,
     seed: u64,
 ) -> Result<(u32, PimcStatsV1), String> {
+    if world == WorldModeV1::FullPoolClosedListV1 {
+        return Err("closedlist-full-pool-v1 requires the sealed numeric owner".into());
+    }
+    session.refuse_curator_sampling_v1()?;
     let FastActorResponseV1::Decision(decision) = session.current_response() else {
         return Err("no current decision".into());
     };
     let legal = decision.legal_action_count;
+    let root = seat(decision.acting_player);
+    let prepared_v3 = (legal > 1 && world == WorldModeV1::ClosedListV3).then(|| {
+        let belief = executable_belief_v2(belief)?;
+        let public_root = session.limited_closed_list_root_v3()?;
+        Ok::<_, String>((public_root, belief))
+    });
+    Ok(pimc_choose_with_v1(
+        legal,
+        sims,
+        seed,
+        matches!(world, WorldModeV1::ClosedListV2 | WorldModeV1::ClosedListV3),
+        |world_seed| match &prepared_v3 {
+            Some(Ok((public_root, corpus))) => {
+                session.limited_closed_list_clone_v3(public_root, world_seed, corpus)
+            }
+            Some(Err(error)) => Err(error.clone()),
+            None => sample_world_v1(session, world, belief, world_seed),
+        },
+        |mut sampled, action, rng| {
+            // The world was redetermined: its root step revalidates.
+            step_index(&mut sampled, action, false)?;
+            for _ in 0..depth {
+                let FastActorResponseV1::Decision(d) = sampled.current_response() else {
+                    break;
+                };
+                let pick = random_index(rng, d.legal_action_count);
+                step_index(&mut sampled, pick, true)?;
+            }
+            rollout_value(&sampled, root)
+        },
+    ))
+}
+
+fn pimc_choose_with_v1<W>(
+    legal: u32,
+    sims: u32,
+    seed: u64,
+    record_rejections: bool,
+    mut sample: impl FnMut(u64) -> Result<W, String>,
+    mut rollout: impl FnMut(W, u32, &mut SplitMix64) -> Result<f64, String>,
+) -> (u32, PimcStatsV1) {
     let n = legal as usize;
     let mut stats = PimcStatsV1 {
         visits: vec![0; n],
@@ -557,9 +753,8 @@ pub fn pimc_choose_v1(
         ..Default::default()
     };
     if legal <= 1 {
-        return Ok((0, stats));
+        return (0, stats);
     }
-    let root = seat(decision.acting_player);
     for sim in 0..sims {
         let total: u32 = stats.visits.iter().sum();
         let action = match stats.visits.iter().position(|&v| v == 0) {
@@ -578,10 +773,13 @@ pub fn pimc_choose_v1(
             b"mtg-kernel/limited-pimc-world/v1\0",
             &[seed, u64::from(sim)],
         );
-        let mut world_session = match sample_world_v1(session, world, belief, world_seed) {
+        let world_session = match sample(world_seed) {
             Ok(w) => w,
-            Err(_) => {
+            Err(error) => {
                 stats.rejected += 1;
+                if record_rejections {
+                    *stats.rejection_reasons.entry(error).or_default() += 1;
+                }
                 continue;
             }
         };
@@ -589,19 +787,7 @@ pub fn pimc_choose_v1(
             b"mtg-kernel/limited-pimc-rollout/v1\0",
             &[world_seed],
         ));
-        let value = (|| {
-            // The world was redeterminized: its root step revalidates.
-            step_index(&mut world_session, action as u32, false)?;
-            for _ in 0..depth {
-                let FastActorResponseV1::Decision(d) = world_session.current_response() else {
-                    break;
-                };
-                let pick = random_index(&mut rng, d.legal_action_count);
-                step_index(&mut world_session, pick, true)?;
-            }
-            rollout_value(&world_session, root)
-        })();
-        let value = value.unwrap_or_else(|error| {
+        let value = rollout(world_session, action as u32, &mut rng).unwrap_or_else(|error| {
             stats.rollout_errors += 1;
             stats.first_rollout_error.get_or_insert(error);
             0.0
@@ -615,7 +801,7 @@ pub fn pimc_choose_v1(
             b"mtg-kernel/limited-pimc-fallback/v1\0",
             &[seed],
         ));
-        return Ok((random_index(&mut rng, legal), stats));
+        return (random_index(&mut rng, legal), stats);
     }
     let best = (1..n).fold(0, |best, a| {
         if stats.visits[a] > stats.visits[best] {
@@ -624,7 +810,7 @@ pub fn pimc_choose_v1(
             best
         }
     });
-    Ok((best as u32, stats))
+    (best as u32, stats)
 }
 
 // ---------------------------------------------------------------------------
@@ -659,6 +845,25 @@ pub struct GameResultV1 {
     /// halted. They score 0, so a nonzero count weakens the search.
     pub rollout_errors: u64,
     pub first_rollout_error: Option<String>,
+    pub searched_decisions: u64,
+    pub search_fallbacks: u64,
+    pub rejection_reasons: BTreeMap<String, u64>,
+}
+
+impl GameResultV1 {
+    fn empty() -> Self {
+        Self {
+            outcome: GameOutcomeV1::Stall,
+            turns: 0,
+            decisions: 0,
+            rejected_worlds: 0,
+            rollout_errors: 0,
+            first_rollout_error: None,
+            searched_decisions: 0,
+            search_fallbacks: 0,
+            rejection_reasons: BTreeMap::new(),
+        }
+    }
 }
 
 /// `MTG_LIMITED_MATCH_TRACE` set: every step of `play_game_v1` prints its
@@ -678,6 +883,16 @@ pub fn play_game_v1(
     starting_player: PlayerId,
     limits: GameLimitsV1,
 ) -> GameResultV1 {
+    if limits.session == SessionKindV1::FullPoolV1 {
+        return full_pool_match_v1::play_game(
+            decks,
+            policies,
+            beliefs,
+            env_seed,
+            starting_player,
+            limits,
+        );
+    }
     play_game_observed_v1(
         decks,
         policies,
@@ -700,14 +915,26 @@ pub(crate) fn play_game_observed_v1(
     limits: GameLimitsV1,
     observe: &mut dyn FnMut(&FastActorSessionV1),
 ) -> GameResultV1 {
-    let mut result = GameResultV1 {
-        outcome: GameOutcomeV1::Stall,
-        turns: 0,
-        decisions: 0,
-        rejected_worlds: 0,
-        rollout_errors: 0,
-        first_rollout_error: None,
-    };
+    let mut result = GameResultV1::empty();
+    for policy in policies {
+        if let Err(error) = policy.validate_full_pool_session_v1(limits.session) {
+            result.outcome = GameOutcomeV1::Error(error);
+            return result;
+        }
+    }
+    let uses_closed_list_v2 = policies.iter().any(|policy| policy.uses_closed_list_v2());
+    let uses_closed_list_v3 = policies.iter().any(|policy| policy.uses_closed_list_v3());
+    if (uses_closed_list_v2 || uses_closed_list_v3)
+        && !matches!(limits.session, SessionKindV1::RulesOnly(_))
+    {
+        let version = if uses_closed_list_v3 {
+            "closedlist-v3"
+        } else {
+            "closedlist-v2"
+        };
+        result.outcome = GameOutcomeV1::Error(format!("{version} requires a rules-only session"));
+        return result;
+    }
     let identities = decks.map(|deck| {
         let mut hash = Sha256::new();
         hash.update(b"kernel_limited_common_deck/v1");
@@ -725,6 +952,11 @@ pub(crate) fn play_game_observed_v1(
     );
     let mainboards = [decks[0].to_vec(), decks[1].to_vec()];
     let reset = match limits.session {
+        SessionKindV1::FullPoolV1 => {
+            result.outcome =
+                GameOutcomeV1::Error("raw session observer does not own full-pool matches".into());
+            return result;
+        }
         SessionKindV1::PreparedV57 => FastActorSessionV1::reset_prepared_v57(
             env_seed,
             env_seed,
@@ -750,6 +982,18 @@ pub(crate) fn play_game_observed_v1(
             return result;
         }
     };
+    if uses_closed_list_v2 {
+        if let Err(error) = session.enable_hand_knowledge_by_name_v2() {
+            result.outcome = GameOutcomeV1::Error(error);
+            return result;
+        }
+    }
+    if uses_closed_list_v3 {
+        if let Err(error) = session.enable_limited_reveals_v3() {
+            result.outcome = GameOutcomeV1::Error(error);
+            return result;
+        }
+    }
     let mut rng = SplitMix64::seed(derive_seed(
         b"mtg-kernel/limited-match-policy/v1\0",
         &[env_seed],
@@ -798,6 +1042,18 @@ pub(crate) fn play_game_observed_v1(
                         result.rollout_errors += u64::from(stats.rollout_errors);
                         if result.first_rollout_error.is_none() {
                             result.first_rollout_error = stats.first_rollout_error;
+                        }
+                        if matches!(
+                            *world,
+                            WorldModeV1::ClosedListV2 | WorldModeV1::ClosedListV3
+                        ) && decision.legal_action_count > 1
+                        {
+                            result.searched_decisions += 1;
+                            result.search_fallbacks += u64::from(stats.rejected == *sims);
+                            for (reason, count) in stats.rejection_reasons {
+                                *result.rejection_reasons.entry(reason).or_default() +=
+                                    u64::from(count);
+                            }
                         }
                         index
                     }

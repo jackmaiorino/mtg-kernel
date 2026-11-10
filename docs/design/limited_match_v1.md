@@ -6,10 +6,10 @@ Issue #110 milestones 6 (fair Limited search) and 7 (DraftZero integration). Sou
 
 ## Games
 
-Every game runs on the Prepared V57 session (`FastActorSessionV1::reset_prepared_v57`), the
-newest general Limited session on main. It accepts any mainboard of 40 or more Full cards, with
-Foundations combat, London mulligans and engine priority windows. Coverage therefore follows the
-card registry: a deck plays once every card in it is Full.
+The default Prepared V57 session accepts mainboards of 40 or more Full cards. The `rules-only`
+and `rules-only-all` sessions use the engine's current Limited candidate builder and admit
+executable Partial cards according to [the rules-only tier](limited_rules_only_v1.md). Both use
+Foundations combat, London mulligans and engine priority windows.
 
 ## Policies
 
@@ -17,6 +17,8 @@ card registry: a deck plays once every card in it is Full.
 | --- | --- |
 | `random` | Uniform over the legal actions |
 | `pimc:sims=N:depth=D:closedlist` | Fair root-level determinized search (below) |
+| `pimc:sims=N:depth=D:closedlist-v2` | Rules-only search with name-level hand facts and independently seeded future shuffles |
+| `pimc:sims=N:depth=D:closedlist-v3` | Rules-only search with hand minima from the acting viewer's public reveal stream and a rebuilt sampled menu |
 | `pimc:...:truelist` | The same search over the opponent's real unseen cards, shuffled. Leaks the decklist; for comparison only |
 | `pimc:...:peek` | The same search with no redetermination. Sees every hidden card; for comparison only |
 
@@ -66,6 +68,72 @@ Acceptance tests (`limited_match_v1::tests`):
 Known approximation: seen cards are those the actor can see now. A card seen earlier and then
 shuffled back into a hidden zone is not remembered, so the belief uses less than the full public
 history, never more.
+
+### Closed-list v2 for rules-only search
+
+`-session rules-only` or `-session rules-only-all` with `closedlist-v2` enables name-level hand
+knowledge from the start of the match. The sampler fills the opponent's unknown hand and library
+from the corpus directly. It assigns known hand names to sampled hand slots, preserves visible
+library positions and current selection pins, and seeds future shuffles from the simulation seed.
+The belief corpus for an evaluation split must be disjoint by deck name and card multiset. The
+summary includes hashes of the exact resolved game and belief decks in input order.
+
+The game rows distinguish searched decisions, all-rejected roots that fell back to a uniform
+pick, rejection reasons and rollout errors. Roots that bind physical copies in an opponent's
+hand, refer to hidden frozen sources or contain an unknown face-down identity are rejected.
+V2 keeps native object bindings and history for rule execution. The paired opening test varies
+the hidden composition, reveal copy, own library order and future RNG while keeping the public
+decision fixed. A second probe attempts opening search in rules-only decks containing each of the
+286 frozen printings. Constructed main-phase fixtures exercise the cast or land action of each
+Partial printing. Later decisions and canonical history across distinct but publicly equivalent
+native trajectories remain acceptance work for #552.
+
+At Curator of Destinies' final order decision, the controller knows which library positions were
+publicly revealed for the face-up pile. The sampled world reconstructs the receipts for those
+positions from the pending choice. Unrelated private library knowledge of the other seat is
+discarded. A paired active Curator fixture exercises the order decision with and without that
+extra private knowledge.
+
+### Closed-list FullPool terminal search
+
+Select `-session full-pool` and
+`pimc:sims=N:depth=D:closedlist-full-pool-v1` in the match binary. The session
+admits the exact 286 Foundations printings and starts the numeric FullPool
+owner with V3 reveal minima. Both seats use either this search policy or
+`random`. The same sealed numeric actions drive live play and all rollout
+steps. The sampler draws from the supplied public belief corpus and
+authenticates each rebuilt root before applying its action index. The
+match output records the resolved belief deck hash and checks held-out
+overlap by both deck name and card multiset.
+
+UCB1 uses the existing seeded action selection. A natural rollout win or
+loss scores +1 or -1 for the search root. Draws and depth, turn or session
+cutoffs score zero. The match rows retain separate counts for rejected
+worlds, rollout errors and uniform fallbacks. A capped live game is a
+`stall`, distinct from a natural `draw`. Its reported turn is the most
+recent turn visible in an authenticated decision.
+
+The FullPool match mode is separate from the rules-only search probes and
+the pinned DraftZero training and fixed-opponent evaluation.
+
+### Closed-list v3 for rules-only search
+
+The successor reduces the acting viewer's event-time reveal stream once per
+search root. Repeated unlinked shows establish one name minimum. Distinct
+visible arrivals and departures update that minimum during each simulation.
+The sampler drops the other viewer's live hand ledger. A retained rule source
+is pinned only if its recorded epoch is inside the same current visible span.
+Otherwise the search records a refusal independently of the source's hidden
+copy assignment. Each sampled world rebuilds the rules-only decision and must
+match the live action semantics and bindings before an index can be used.
+Native acceptance across the 286 printings is pending. Interactive roots that
+need unresolved hidden identity or source correspondence still refuse.
+
+The `smoke` command runs a bounded pair on the original DraftZero evaluation decks and replays
+it at a second worker count. Its turn-limited or decision-limited rows are engineering checks.
+For a substantial evaluation, qualify the complete collection path first with identical deck
+hashes, policy specification and seed schedule at one and multiple workers. Compare completed
+natural games per second, retain failures and replay the deterministic result rows.
 
 ## DraftZero driver (milestone 7)
 

@@ -149,23 +149,18 @@ fn every_frozen_fdn_printing_in_own_hand_has_current_numeric_coverage_both_seats
     assert_eq!(names.len(), 286);
     const KNOWN_GAPS: &[&str] = &[
         "Abyssal Harvester",
-        "Adventuring Gear",
         "Arbiter of Woe",
         "Banner of Kinship",
         "Blasphemous Edict",
         "Cat Collector",
-        "Celestial Armor",
         "Consuming Aberration",
         "Curator of Destinies",
         "Drakuseth, Maw of Flames",
-        "Dwynen, Gilt-Leaf Daen",
         "Electroduplicate",
-        "Elvish Archdruid",
         "Embercleave",
         "Etali, Primal Storm",
         "Exemplar of Light",
         "Fiend Artisan",
-        "Goblin Bushwhacker",
         "Imprisoned in the Moon",
         "Kiora, the Rising Tide",
         "Kykar, Zephyr Awakener",
@@ -1102,10 +1097,10 @@ fn paid_numeric_foreign_forged_packet_and_action_refusals_leave_native_unchanged
         assert!(b.apply(&d, 0).is_err());
         assert!(a.restore(&b.snapshot()).is_err());
         let mut erased = d.clone();
-        erased.packet.actions.clear();
+        erased.current.packet.actions.clear();
         assert!(a.apply(&erased, 0).is_err());
         let mut changed = d.clone();
-        changed.packet.state = crate::current_mixed_policy_v1::NumericTree::encode(
+        changed.current.packet.state = crate::current_mixed_policy_v1::NumericTree::encode(
             &serde_json::json!({"replacement":"forged"}),
         )
         .unwrap();
@@ -1113,7 +1108,7 @@ fn paid_numeric_foreign_forged_packet_and_action_refusals_leave_native_unchanged
         let mut forged = d.backend.candidates_v75().clone();
         forged.observation.kaito.activations.clear();
         forged.observation.kaito.authorized_printings.clear();
-        assert!(packet_from_current(&forged, d.backend.actions()).is_err());
+        assert!(packet_from_current(&forged, d.backend.actions(), &HandFacts::CopyRows).is_err());
         assert!(a.apply(&d, u32::MAX).is_err());
         assert_eq!(a.fixture_state(), &before);
         assert_eq!(a.fixture_counts(), counts);

@@ -122,7 +122,8 @@ pub(crate) fn copiable_nightmare(state: &GameState, object: ObjectId) -> Result<
 }
 
 pub(crate) fn require_legacy_absence(state: &GameState) -> Result<(), String> {
-    if crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, definition)
+    if state.harvester_commit_receipts_v1
+        || crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, definition)
         || state.objects.iter().any(|(_, o)| {
             matches!(o.zone, Zone::Battlefield | Zone::Stack | Zone::Graveyard)
                 && o.v4.face_down_v1.is_none()
@@ -137,7 +138,8 @@ pub(crate) fn require_legacy_absence(state: &GameState) -> Result<(), String> {
             .engine
             .event_history
             .iter()
-            .any(|e| matches!(e, event::CommittedEvent::HarvesterResolvedV1 { .. })
+            .any(|e| matches!(e, event::CommittedEvent::HarvesterResolvedV1 { .. }
+                | event::CommittedEvent::HarvesterCommitReceiptV1 { .. })
                 || matches!(e, event::CommittedEvent::HarvesterCastAnnouncedV1 { cast } if definition(cast.card_def)))
     {
         return Err("Abyssal Harvester requires a distinct complete consumer".into());
@@ -364,7 +366,7 @@ fn reversal_at(
     { return Err("Harvester native cast reversal changed".into()); }
     Ok((*announcement, cast, *restored))
 }
-pub(super) fn graveyard_entry(state: &GameState, at: usize) -> Result<GraveyardEntryV1, String> {
+pub(crate) fn graveyard_entry(state: &GameState, at: usize) -> Result<GraveyardEntryV1, String> {
     let Some(event::CommittedEvent::HarvesterGraveyardEntryV1 { entry }) =
         state.engine.event_history.get(at)
     else {
@@ -752,20 +754,31 @@ pub(super) fn execute(
     };
     // One target: if it left/reentered or is otherwise illegal, the whole
     // ability fizzles. No token or other-Nightmare cleanup occurs.
-    if crate::engine::target_contract_matches_live(state, ctx.targets[0], ctx.target_contracts[0])
-        && crate::engine::effect_target_is_legal_from_ability_source(
-            state,
-            source,
-            ctx.controller,
-            target_spec(),
-            &ctx.targets,
-            0,
-        )
-        && eligible(state, target)
-    {
+    let legal =
+        crate::engine::target_contract_matches_live(state, ctx.targets[0], ctx.target_contracts[0])
+            && crate::engine::effect_target_is_legal_from_ability_source(
+                state,
+                source,
+                ctx.controller,
+                target_spec(),
+                &ctx.targets,
+                0,
+            )
+            && eligible(state, target);
+    let outcome = if legal {
+        crate::harvester_receipts_v1::OutcomeV1::Resolved
+    } else {
+        crate::harvester_receipts_v1::OutcomeV1::NoLegalTarget
+    };
+    crate::harvester_receipts_v1::record_dispatch(state, item, outcome);
+    let receipt_owner = state
+        .harvester_commit_receipts_v1
+        .then_some(item.v4.stack_item_id);
+    if legal {
         let definition = state.objects.get(target).card_def;
         let mut proposal = event::ProposedEvent::create_token(definition, ctx.controller);
         if let event::ProposedEvent::CreateToken(token) = &mut proposal {
+            token.harvester_owner = receipt_owner;
             token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
                 copied: true,
                 copied_nightmare_v1: true,
@@ -781,7 +794,7 @@ pub(super) fn execute(
         crate::doubling_season_v48::preflight_entry_roster(state, std::slice::from_ref(&proposal))?;
         event::propose_and_commit(
             state,
-            event::ProposedEvent::zone_change(target, Zone::Exile),
+            crate::harvester_receipts_v1::move_proposal(target, receipt_owner),
         );
         if state.engine.halted.is_some() {
             return Err("Harvester exile halted".into());
@@ -833,7 +846,22 @@ pub(super) fn execute(
                 })
             })
             .collect();
-        super::commit_zone_change_batch(state, &exiled_others, Zone::Exile, false)?;
+        if receipt_owner.is_some() {
+            for &binding in &exiled_others {
+                validate_effect_object_binding(state, binding)?;
+            }
+            event::propose_and_commit_batch(
+                state,
+                exiled_others
+                    .iter()
+                    .map(|binding| {
+                        crate::harvester_receipts_v1::move_proposal(binding.object, receipt_owner)
+                    })
+                    .collect(),
+            );
+        } else {
+            super::commit_zone_change_batch(state, &exiled_others, Zone::Exile, false)?;
+        }
         if state.engine.halted.is_some() {
             return Err("Harvester other Nightmare exile halted".into());
         }
@@ -848,6 +876,7 @@ pub(super) fn execute(
                 exiled_others,
             },
         });
+    crate::harvester_receipts_v1::record_finished(state, item, outcome);
     Ok(())
 }
 

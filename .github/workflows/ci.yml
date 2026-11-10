@@ -269,6 +269,10 @@ jobs:
     # Pull requests from forks never run on the self-hosted runners.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
     steps:
+      - name: Limit affected hosted builds to one Cargo job
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux' && (matrix.group == 'trace' || matrix.group == 'limited-store')
+        run: echo 'CARGO_BUILD_JOBS=1' >> "$GITHUB_ENV"
+
       # Windows can resolve `bash` to the WSL launcher in System32 first;
       # put Git Bash ahead of it for every later step.
       - name: Use Git Bash for bash steps on Windows
@@ -376,6 +380,11 @@ jobs:
       - name: Validate the eternal catalog
         if: matrix.group == 'eternal'
         run: |
+          # Bound concurrent compiler work after repeated hosted Linux
+          # shutdowns while compiling the large feature catalogs.
+          if [ "$RUNNER_OS" = Linux ]; then
+            export CARGO_BUILD_JOBS=1
+          fi
           cargo clippy --release --locked -p mtg-kernel --all-targets --features eternal-fixtures -- -D warnings
           python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_
           python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures
@@ -516,6 +525,9 @@ jobs:
 
       - name: Build the shared Limited ${{ matrix.part }}
         run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            export CARGO_BUILD_JOBS=1
+          fi
           if [ '${{ matrix.part }}' = tests ]; then
             cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib --no-run
           else

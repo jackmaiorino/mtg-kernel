@@ -350,11 +350,19 @@ pub enum EventKindV1 {
     KaitoCunningV75,
     DrakusethDamageSourceV76,
     NishobaDamageSourceV1,
+    NivMizzetVisionaryDrawEndedV1,
+    LathrilReceiptV1,
+    BlasphemousEdictReceiptV1,
+    CuratorReceiptV1,
+    GreatwurmCommitReceiptV1,
+    HarvesterCommitReceiptV1,
+    FiendArtisanConsumerReceiptV1,
+    EtaliPrimalStormReceiptV1,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 315;
-const _: () = assert!(EventKindV1::NishobaDamageSourceV1 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 323;
+const _: () = assert!(EventKindV1::EtaliPrimalStormReceiptV1 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -769,6 +777,18 @@ impl CommittedEvent {
             Self::KaitoCunningV75 { .. } => EventKindV1::KaitoCunningV75,
             Self::DrakusethDamageSourceV76 { .. } => EventKindV1::DrakusethDamageSourceV76,
             Self::NishobaDamageSourceV1 { .. } => EventKindV1::NishobaDamageSourceV1,
+            Self::NivMizzetVisionaryDrawEndedV1 { .. } => {
+                EventKindV1::NivMizzetVisionaryDrawEndedV1
+            }
+            Self::LathrilReceiptV1 { .. } => EventKindV1::LathrilReceiptV1,
+            Self::BlasphemousEdictReceiptV1 { .. } => EventKindV1::BlasphemousEdictReceiptV1,
+            Self::CuratorReceiptV1 { .. } => EventKindV1::CuratorReceiptV1,
+            Self::GreatwurmCommitReceiptV1 { .. } => EventKindV1::GreatwurmCommitReceiptV1,
+            Self::HarvesterCommitReceiptV1 { .. } => EventKindV1::HarvesterCommitReceiptV1,
+            Self::FiendArtisanConsumerReceiptV1 { .. } => {
+                EventKindV1::FiendArtisanConsumerReceiptV1
+            }
+            Self::EtaliPrimalStormReceiptV1 { .. } => EventKindV1::EtaliPrimalStormReceiptV1,
         }
     }
 }

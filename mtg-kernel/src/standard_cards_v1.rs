@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "drakuseth_v1_tests.rs"]
-mod drakuseth_tests;
+pub(crate) mod drakuseth_tests;
 
 /// Per-game state for this module's cards. Absent until one of them needs
 /// it, so other catalogs keep their snapshots and hashes.

@@ -479,6 +479,28 @@ fn closed_fields(d: &CardDef) {
     } = d;
 }
 pub(crate) fn ordinary_foreign_fields_absent(d: &CardDef) -> bool {
+    d.activated_abilities.is_empty() && ordinary_foreign_fields_except_activated_absent(d)
+}
+
+pub(crate) fn ordinary_foreign_fields_except_activated_absent(d: &CardDef) -> bool {
+    d.attachment.is_none() && ordinary_foreign_fields_core_absent(d)
+}
+
+pub(crate) fn ordinary_foreign_fields_except_attachment_absent(d: &CardDef) -> bool {
+    d.activated_abilities.is_empty() && ordinary_foreign_fields_core_absent(d)
+}
+
+fn ordinary_foreign_fields_core_absent(d: &CardDef) -> bool {
+    d.alt_cost.is_none() && ordinary_foreign_fields_core_except_alt_cost_absent(d)
+}
+
+pub(crate) fn ordinary_foreign_fields_except_alt_cost_absent(d: &CardDef) -> bool {
+    d.activated_abilities.is_empty()
+        && d.attachment.is_none()
+        && ordinary_foreign_fields_core_except_alt_cost_absent(d)
+}
+
+fn ordinary_foreign_fields_core_except_alt_cost_absent(d: &CardDef) -> bool {
     closed_fields(d);
     d.object_name == d.name
         && !d.is_land
@@ -492,9 +514,7 @@ pub(crate) fn ordinary_foreign_fields_absent(d: &CardDef) -> bool {
         && d.controlled_counter_keyword.is_none()
         && d.game_outcome_protection_v1.is_none()
         && d.controlled_creature_grant.is_none()
-        && d.activated_abilities.is_empty()
         && (d.mana_ability)().is_none()
-        && d.alt_cost.is_none()
         && d.kicker_cost.is_none()
         && d.additional_cost.is_none()
         && d.flashback.is_none()
@@ -514,7 +534,6 @@ pub(crate) fn ordinary_foreign_fields_absent(d: &CardDef) -> bool {
         && d.as_enters_choose_color_other_than.is_none()
         && d.additional_mana_abilities.is_empty()
         && d.enters_battlefield_tapped_unless.is_none()
-        && d.attachment.is_none()
         && d.transform_face.is_none()
         && d.saga.is_none()
         && d.optional_additional_cost.is_none()

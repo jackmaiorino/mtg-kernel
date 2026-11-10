@@ -235,6 +235,7 @@ fn ability(
     targets: &[Target],
     contracts: &[StackTargetContractV4],
     payment_complete: bool,
+    published: Option<&crate::state::StackItem>,
 ) -> Result<AbilityV65, String> {
     if source.card_def != meaning::selected_id()?
         || source.zone != Zone::Battlefield
@@ -252,7 +253,16 @@ fn ability(
             index,
             target,
             contract,
-        ) {
+        ) && !published.is_some_and(|item| {
+            crate::state::stack_target_contract_for_sampled_snapshot(
+                state,
+                item,
+                TargetSpec::ControlledCreature,
+                index,
+                target,
+                contract,
+            )
+        }) {
             return Err("V65 original target contract changed".into());
         }
         let StackTargetContractV4::Object {
@@ -319,11 +329,19 @@ fn ability(
     })
 }
 pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV65, String> {
+    capture_scoped(state, viewer, public::ConsumerV1::Legacy)
+}
+
+pub(crate) fn capture_scoped(
+    state: &GameState,
+    viewer: PlayerId,
+    consumer: public::ConsumerV1,
+) -> Result<FactsV65, String> {
     let selected = meaning::selected_id()?;
     if state.engine.halted.is_some() {
         return Err("V65 native state halted".into());
     }
-    public::validate_state_checked(state)?;
+    public::validate_state_for_consumer(state, true, consumer)?;
     state
         .validate_attachment_relations()
         .map_err(|_| "V65 invalid native attachment relation")?;
@@ -432,6 +450,7 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV65, String> 
                 &p.targets,
                 &p.target_contracts,
                 true,
+                None,
             )?);
         }
     }
@@ -450,6 +469,7 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV65, String> 
                 &p.targets_chosen,
                 &p.target_contracts,
                 false,
+                None,
             )?);
         }
     }
@@ -496,6 +516,7 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV65, String> 
                 &item.targets,
                 &item.v4.target_contracts,
                 true,
+                Some(item),
             )?);
         }
     }
@@ -532,4 +553,4 @@ pub fn validate(state: &GameState, viewer: PlayerId, value: &FactsV65) -> Result
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-mod tests;
+pub(crate) mod tests;

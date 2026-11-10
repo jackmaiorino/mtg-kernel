@@ -989,13 +989,24 @@ pub(crate) fn bind_wave(state: &mut GameState, start: usize) -> Result<(), Strin
     }
     Ok(())
 }
+pub(crate) fn archived_sources_v1(event: &E) -> Vec<AbilitySourceContractV4> {
+    match event {
+        E::KaitoCunningV75 { journal } => match journal.as_ref() {
+            JournalV75::Combat { capture } => vec![capture.source, capture.creature],
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
 fn combat(state: &GameState, index: u64) -> Result<&CombatV75, String> {
     let JournalV75::Combat { capture } = at(state, index)? else {
         return Err("Kaito combat origin kind changed".into());
     };
     if capture.damage>=index||capture.amount<=0||capture.source.zone!=Zone::Battlefield||capture.creature.zone!=Zone::Battlefield||!definition(capture.source.card_def)||capture.source.controller!=capture.creature.controller||state.engine.event_history.get(capture.damage as usize)!=Some(&E::Damage{source:capture.creature.source,target:Target::Player(capture.player),amount:capture.amount})||rows(state).filter(|(_,j)|matches!(j,JournalV75::Bound{capture:i,original}if *i==index&&original.as_ref()==capture.as_ref())).count()!=1{return Err("Kaito combat original event/source/bound roster changed".into())}
-    crate::engine::validate_historical_ability_source_contract(state, capture.source)?;
-    crate::engine::validate_historical_ability_source_contract(state, capture.creature)?;
+    let at = usize::try_from(index).map_err(|_| "Kaito combat history index width")?;
+    crate::sampled_history_v1::validate_source(state, at, capture.source)?;
+    crate::sampled_history_v1::validate_source(state, at, capture.creature)?;
     Ok(capture)
 }
 pub(crate) fn record_cast(state: &mut GameState, cast: usize) -> Result<(), String> {
@@ -1766,6 +1777,18 @@ pub(crate) fn public_facts_v75(
         };
         Ok(r)
     }
+    fn archived_combat_root(
+        state: &GameState,
+        at: usize,
+        source: AbilitySourceContractV4,
+        viewer: PlayerId,
+    ) -> Result<public::RootV1, String> {
+        let mut root = public::archived_root(state, at, source, Some(viewer))?;
+        root.original_source.identity = public::IdentityV1::Known {
+            card_id: source.card_def,
+        };
+        Ok(root)
+    }
     fn stage(state: &GameState, item: &StackItem) -> Result<StageV75, String> {
         if crate::engine::time_stop_v1::disposed(state, item)? {
             return Ok(StageV75::Disposed);
@@ -2076,7 +2099,7 @@ pub(crate) fn public_facts_v75(
             let original_creature = incarnation(capture.creature);
             f.combats.push(CombatV75 {
                 occurrence,
-                observer: root(state, capture.source, viewer)?,
+                observer: archived_combat_root(state, at, capture.source, viewer)?,
                 current_original_creature: original_current(state, &original_creature, viewer),
                 original_creature,
                 damaged_player: capture.player.into(),
@@ -2194,10 +2217,15 @@ pub(crate) fn public_facts_v75(
         if let Some((p, _)) = publication {
             publications.insert(p as u64, PublicationV75::Trigger(occurrence));
         }
+        let source = if matches!(origin_kind, OriginV75::Combat(_)) {
+            archived_combat_root(state, at, source, viewer)?
+        } else {
+            root(state, source, viewer)?
+        };
         f.triggers.push(TriggerV75 {
             occurrence,
             origin: origin_kind,
-            source: root(state, source, viewer)?,
+            source,
             stage,
             native_position: position,
         });

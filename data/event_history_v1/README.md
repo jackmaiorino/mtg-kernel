@@ -54,6 +54,15 @@ Insert that line where the variant sits in `CommittedEvent`. When no test
 commits the kind, build the event by hand from its fields, reusing a harvested
 sibling's payload where the types match.
 
+`NivMizzetVisionaryDrawEndedV1` was harvested from the passing paid Niv
+native-index/privacy/restore fixture at `8ff554f6`: resolved stack item 3
+actually drew three cards. The retained test executable SHA-256 is
+`405bef3fcd4a06e955f3b950d72d34fe2790bf35360eea965f96bcb29eed71b4`;
+the original 120-byte event sample SHA-256 is
+`4d75cfd341cf61e9fb067c23fd66bffaa579976a9f15436541131dda35ad8a2a`.
+The separate declared-deck Niv fixture exhausted its decision bound, so
+this event does not establish whole-profile acceptance.
+
 ## Appended FDN event samples (October 21, 2026)
 
 The original 237 rows retain their exact byte prefix. The next 76 rows follow `EventKindV1` order and were harvested from native tests that completed successfully. These are serialization fixtures, not complete replay worlds or gameplay/profile acceptance. Labelled native setup and counter primitives retain that limited provenance. Snapshot-bearing events retain the actual emitted payload, including private synthetic fixture state.
@@ -159,3 +168,36 @@ under `fdn110-ward-20261025/ci40272003668`; the E: root is
 kind order. This standalone event fragment tests serialization; it does not
 make the artificial mixed fixture a valid native replay or qualify a gameplay
 profile or Drakuseth consumers.
+
+## Appended FullPool event samples (November 9, 2026)
+
+The final seven rows were emitted by the passing native producers below at source
+1eee5416d3d3f9c395bcdb6cc5ec2da1e2b4e8b1. The preceding 316 payloads retain
+their bytes and order. The archived Windows MSVC test binary has SHA-256
+b315034c3589cbd6854a2d7e59703996d26eab3230a91ef98f8d0bc242c9eca4.
+It used pinned Rust 1.94.1, LTO disabled and 16 codegen units for correctness.
+
+The original 47-case run had 36 passes, ten failures and one timed-out case.
+Its receipt SHA-256 is 4832239d0f8630f786a4731394ab14d7379dc25e51daf44bab902c7718514df8.
+The original Lathril and Curator producers failed and are preserved. Two distinct
+native producer cases passed afterward; their receipt SHA-256 is
+82ed2ffcc57af0153c3ade84635970d9819f5847cf4d3e17c313c0e748365ab2.
+These rows test event serialization and guarded scans. They do not qualify the
+remaining failed cases, full-pool gameplay, training, or playing strength.
+
+Against fixture-only commit `28a6f3f81966ddfecbaa19c79661212b51419f6f`, the
+archived binary passed both event-history consumers: all 323 kinds in order,
+and record/digest/compare/print parity with the plain event vector. The guarded-scan
+consumer failed on the original Fiend Artisan refusal under a forced-open scan;
+the production repair still requires a fresh binary. This consumer receipt has
+SHA-256 `25dd7a46c36a01c5dc92eaccddbc58479a4e7d4753aa4becf010c2ddc233f8e5`.
+
+| Kind | Passing producer | Payload SHA-256 |
+| --- | --- | --- |
+| LathrilReceiptV1 | lathril_consumer_v1::tests::declared_forty_card_v3_reset_pays_lathril_and_real_combat_creates_two_elves_both_seats | 0aa8be2c8d1f7e016091001edde94f9d2c89e82e6b6b0fde1e38f489724e771c |
+| BlasphemousEdictReceiptV1 | edict_consumer_v1::tests::paid_alternate_apnap_hidden_pairs_original_indices_and_restore_both_seats | 558f868d8c492e1ff19c6347788ad3d1cceaa115b340c2878cc10cdae8aa645d |
+| CuratorReceiptV1 | curator_consumer_v1::tests::chosen_concealed_hand_cards_stay_unidentified_and_countered_entry_never_looks | 6a606daee03c2398b587c3bcafbb77769f5734b00962c8187d8ccc3298b8bfb2 |
+| GreatwurmCommitReceiptV1 | greatwurm_consumer_v1::tests::genuine_graveyard_cast_keeps_private_units_original_indices_and_full_width_debits_both_seats | 625780cbea0cb0d1b16a6b57627628567c68b386168beba6309df415233bc69b |
+| HarvesterCommitReceiptV1 | harvester_consumer_v1::tests::paid_activation_targets_other_graveyard_and_preserves_hidden_pairs_indices_and_actual_cleanup | c9eb52a9984c76f5801518551aea511cc175755c8489f415e8f951a83ac60184 |
+| FiendArtisanConsumerReceiptV1 | fiend_artisan_consumer_v1::tests::real_paid_x_sacrifice_search_private_worlds_index_and_source_departure_both_seats | a7252dd6efa0966bbf3ba9ef762dc3210c0477c8c5cc595b932481caceaaef40 |
+| EtaliPrimalStormReceiptV1 | etali_primal_storm_consumer_v1::tests::paid_attack_repeated_free_casts_source_departure_hidden_pair_and_index_parity_both_seats | 9129727aebc9208355f74f26daa17c46a7e35a5d613e2c4e1da1e2405681ac3d |

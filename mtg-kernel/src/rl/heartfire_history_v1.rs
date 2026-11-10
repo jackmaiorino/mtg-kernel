@@ -253,13 +253,23 @@ fn build_history_parts(
     let own_hand = state.players[acting_player.index()]
         .hand
         .iter()
-        .map(|&id| private_card(state, id, text_mode))
+        .map(|&id| private_card(state, id, text_mode, LimitedAppendixV1::Legacy))
         .collect::<Result<Vec<_>>>()?;
     Ok(HistoryParts {
         projection,
         own_hand,
-        known_library_cards: known_library_cards_v4(state, acting_player, text_mode)?,
-        known_hand_cards: known_hand_cards_v4(state, acting_player, text_mode)?,
+        known_library_cards: known_library_cards_v4(
+            state,
+            acting_player,
+            text_mode,
+            LimitedAppendixV1::Legacy,
+        )?,
+        known_hand_cards: known_hand_cards_v4(
+            state,
+            acting_player,
+            text_mode,
+            LimitedAppendixV1::Legacy,
+        )?,
         known_face_down_cards: known_face_down_cards_v1(state, acting_player, text_mode)?,
     })
 }
@@ -353,7 +363,11 @@ fn build(
             },
             creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
                 .then(|| state.creatures_attacked_this_turn_v1()),
-            restricted_mana: public_restricted_mana_v1(state, text_mode)?,
+            restricted_mana: public_restricted_mana_v1(
+                state,
+                text_mode,
+                LimitedAppendixV1::Legacy,
+            )?,
             surface: base.projection,
             policy_surface_context,
             foundations_combat: public_foundations_combat_v1(state)?,
@@ -612,7 +626,12 @@ pub(super) fn normalization_common(
                             ));
                         }
                         if seen.insert(id) {
-                            cards.push(private_card(state, id, text_mode)?);
+                            cards.push(private_card(
+                                state,
+                                id,
+                                text_mode,
+                                LimitedAppendixV1::Legacy,
+                            )?);
                         }
                     }
                     // Only observable card identity determines class order.

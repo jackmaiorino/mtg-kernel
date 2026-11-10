@@ -4,6 +4,7 @@
 //! and complete ordinary semantics, with mandatory typed
 //! Kaito V75 and inherited family context. This is not a session, restore capability or action dispatcher.
 use crate::{
+    artist_consumer_v1 as artist, chosen_type_consumer_v1 as chosen_type,
     graveyard_return_public_v61::{
         DeathV61, ProgramV61, ScheduleV61, StageV61, TargetV61, TriggerV61,
     },
@@ -32,6 +33,52 @@ pub struct CandidateMeaningV75 {
     /// public incarnation. Private PolicyActionV5 operands are never serialized.
     #[serde(deserialize_with = "strict_action")]
     pub action: A,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist_payment: Option<artist::PaymentActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chosen_type_answer: Option<chosen_type::AnswerV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drakuseth_target: Option<crate::drakuseth_consumer_v1::TargetActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embercleave_action: Option<crate::embercleave_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zimone_action: Option<crate::zimone_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omniscience_action: Option<crate::omniscience_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tutelage_action: Option<crate::tutelage_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moon_action: Option<crate::moon_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leyline_axe_action: Option<crate::leyline_axe_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progenitus_action: Option<crate::progenitus_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aberration_action: Option<crate::aberration_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lathril_action: Option<crate::lathril_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub electroduplicate_action: Option<crate::electroduplicate_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edict_action: Option<crate::edict_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loot_action: Option<crate::loot_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub curator_action: Option<crate::curator_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kykar_action: Option<crate::kykar_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sphinx_lore_action: Option<crate::sphinx_lore_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub greatwurm_action: Option<crate::greatwurm_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harvester_action: Option<crate::harvester_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fiend_artisan_action: Option<crate::fiend_artisan_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub etali_action: Option<crate::etali_primal_storm_consumer_v1::ActionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thousand_year_storm_action: Option<crate::thousand_year_storm_consumer_v1::ActionV1>,
     #[serde(deserialize_with = "required_optional")]
     pub drake_activation: Option<crate::next_five_observation_v59::NextFiveActivationV59>,
     /// Complete current programs at this genuine decision, in native stage and
@@ -120,6 +167,83 @@ pub fn producer_sha256() -> String {
             inherited.as_str(),
             include_str!("tinybones_candidates_v72.rs"),
             include_str!("kaito_candidates_v75.rs"),
+            include_str!("artist_consumer_v1.rs"),
+            include_str!("chosen_type_consumer_v1.rs"),
+            include_str!("niv_consumer_v1.rs"),
+            include_str!("embercleave_consumer_v1.rs"),
+            include_str!("human_bo3_v1/embercleave_consumer_v1.rs"),
+            include_str!("zimone_consumer_v1.rs"),
+            include_str!("zimone_public_v1.rs"),
+            include_str!("human_bo3_v1/zimone_consumer_v1.rs"),
+            include_str!("omniscience_consumer_v1.rs"),
+            include_str!("omniscience_public_v1.rs"),
+            include_str!("human_bo3_v1/omniscience_consumer_v1.rs"),
+            include_str!("tutelage_consumer_v1.rs"),
+            include_str!("limited_mixed_consumer_v1.rs"),
+            include_str!("limited_full_pool_consumer_v1.rs"),
+            crate::limited_full_pool_consumer_v1::FROZEN_POOL_JSON_V1,
+            include_str!("tutelage_public_v1.rs"),
+            include_str!("human_bo3_v1/tutelage_consumer_v1.rs"),
+            include_str!("moon_consumer_v1.rs"),
+            include_str!("moon_public_v1.rs"),
+            include_str!("human_bo3_v1/moon_consumer_v1.rs"),
+            include_str!("leyline_axe_consumer_v1.rs"),
+            include_str!("leyline_axe_public_v1.rs"),
+            include_str!("human_bo3_v1/leyline_axe_consumer_v1.rs"),
+            include_str!("progenitus_consumer_v1.rs"),
+            include_str!("sphinx_lore_public_v1.rs"),
+            include_str!("sphinx_lore_consumer_v1.rs"),
+            include_str!("human_bo3_v1/sphinx_lore_consumer_v1.rs"),
+            include_str!("kykar_public_v1.rs"),
+            include_str!("kykar_consumer_v1.rs"),
+            include_str!("human_bo3_v1/kykar_consumer_v1.rs"),
+            include_str!("loot_public_v1.rs"),
+            include_str!("loot_consumer_v1.rs"),
+            include_str!("human_bo3_v1/loot_consumer_v1.rs"),
+            include_str!("progenitus_public_v1.rs"),
+            include_str!("human_bo3_v1/progenitus_consumer_v1.rs"),
+            include_str!("aberration_consumer_v1.rs"),
+            include_str!("aberration_public_v1.rs"),
+            include_str!("human_bo3_v1/aberration_consumer_v1.rs"),
+            include_str!("lathril_consumer_v1.rs"),
+            include_str!("lathril_public_v1.rs"),
+            include_str!("lathril_receipts_v1.rs"),
+            include_str!("human_bo3_v1/lathril_consumer_v1.rs"),
+            include_str!("electroduplicate_consumer_v1.rs"),
+            include_str!("electroduplicate_public_v1.rs"),
+            include_str!("human_bo3_v1/electroduplicate_consumer_v1.rs"),
+            include_str!("edict_consumer_v1.rs"),
+            include_str!("edict_public_v1.rs"),
+            include_str!("edict_receipts_v1.rs"),
+            include_str!("human_bo3_v1/edict_consumer_v1.rs"),
+            include_str!("curator_consumer_v1.rs"),
+            include_str!("curator_public_v1.rs"),
+            include_str!("curator_receipts_v1.rs"),
+            include_str!("harvester_consumer_v1.rs"),
+            include_str!("harvester_public_v1.rs"),
+            include_str!("thousand_year_storm_public_v1.rs"),
+            include_str!("thousand_year_storm_consumer_v1.rs"),
+            include_str!("human_bo3_v1/thousand_year_storm_consumer_v1.rs"),
+            include_str!("harvester_receipts_v1.rs"),
+            include_str!("etali_primal_storm_consumer_v1.rs"),
+            include_str!("etali_primal_storm_public_v1.rs"),
+            include_str!("etali_primal_storm_receipts_v1.rs"),
+            include_str!("human_bo3_v1/etali_primal_storm_consumer_v1.rs"),
+            include_str!("human_bo3_v1/harvester_consumer_v1.rs"),
+            include_str!("greatwurm_consumer_v1.rs"),
+            include_str!("greatwurm_public_v1.rs"),
+            include_str!("greatwurm_receipts_v1.rs"),
+            include_str!("human_bo3_v1/greatwurm_consumer_v1.rs"),
+            include_str!("fiend_artisan_consumer_v1.rs"),
+            include_str!("fiend_artisan_public_v1.rs"),
+            include_str!("fiend_artisan_receipts_v1.rs"),
+            include_str!("human_bo3_v1/fiend_artisan_consumer_v1.rs"),
+            include_str!("human_bo3_v1/curator_consumer_v1.rs"),
+            include_str!("drakuseth_consumer_v1.rs"),
+            include_str!("drakuseth_consumer_v1/damage.rs"),
+            include_str!("human_bo3_v1/drakuseth_consumer_v1.rs"),
+            include_str!("fdn_family_source_v76.rs"),
+            include_str!("drakuseth_damage_source_v76.rs"),
             include_str!("kaito_observation_v75.rs"),
             include_str!("rl_session/kaito_v75.rs"),
             include_str!("current_mixed_policy_v1/kaito.rs"),
@@ -156,6 +280,8 @@ pub fn producer_sha256() -> String {
             include_str!("human_bo3_v1/labels.rs"),
             include_str!("human_bo3_v1/visible.rs"),
             include_str!("effect/thousand_year_storm_v1.rs"),
+            include_str!("effect/thousand_year_storm_v1/casts.rs"),
+            include_str!("effect/thousand_year_storm_v1/targets.rs"),
             include_str!("effect/standard_copy.rs"),
             include_str!("standard_spell_copy.rs"),
             include_str!("event_history_v1.rs"),
@@ -470,6 +596,32 @@ fn visible_action(value: &KaitoObservationV75, mut action: A) -> Result<A, RlCon
         // native choice index, selected count and trigger permutation, survives.
         _ => {}
     }
+    // A Fiend activation can have a genuine singleton X=0 menu.
+    // Publish it as the existing numeric semantic, retaining the original
+    // ChooseEffectOption(0) transition in the private candidate map.
+    if let A::ChooseEffectOption {
+        actor,
+        source,
+        option_index: 0,
+        option_count: 1,
+    } = &action
+    {
+        if matches!(
+            value
+                .fiend_artisan
+                .as_ref()
+                .and_then(|facts| facts.chooser.as_ref()),
+            Some(crate::fiend_artisan_public_v1::ChoiceV1::PayX { maximum: 0, .. })
+        ) {
+            return Ok(A::ChooseEffectNumber {
+                actor: *actor,
+                source: source.clone(),
+                number: 0,
+                minimum: 0,
+                maximum: 0,
+            });
+        }
+    }
     Ok(action)
 }
 
@@ -607,6 +759,9 @@ pub(crate) fn project_parts_v75(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<(KaitoCandidatesV75, NativeCandidateProjectionV75), RlContractError> {
+    if surface.limited_appendix_v1() != crate::policy_surface_v5::LimitedAppendixV1::Legacy {
+        return Err(error("Appendix candidates require their owning profile"));
+    }
     observation::validate_state(state).map_err(error)?;
     // Exact-bound source surfaces authenticate their own private scan. Owned
     // revision surfaces do not gain authority through this source-only API.
@@ -647,8 +802,9 @@ fn project_authenticated_parts_v75(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<(KaitoCandidatesV75, NativeCandidateProjectionV75), RlContractError> {
-    let observation =
-        observation::observe_v75(state, surface, actor_and_origin, step, physical, substep)?;
+    let (observation, _) =
+        observation::observe_parts_v75(state, surface, actor_and_origin, step, physical, substep)?;
+    let (schema, annotation_schema) = schemas(&observation);
     let authorized = authorized_references(&observation)?;
     // No native action or original semantic enters the public value. Keep the
     // original vector intact so index i continues to bind its exact native pair.
@@ -684,8 +840,103 @@ fn project_authenticated_parts_v75(
         projected.push((
             index,
             CandidateMeaningV75 {
-                schema: ANNOTATION_SCHEMA.into(),
+                schema: annotation_schema.into(),
                 ordinal: 0,
+                embercleave_action: crate::embercleave_consumer_v1::action(
+                    observation.embercleave.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                zimone_action: crate::zimone_consumer_v1::action(
+                    observation.zimone.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                omniscience_action: crate::omniscience_consumer_v1::action(
+                    observation.omniscience.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                tutelage_action: crate::tutelage_consumer_v1::action(
+                    observation.tutelage.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                moon_action: crate::moon_consumer_v1::action(observation.moon.as_ref(), &action)
+                    .map_err(error)?,
+                leyline_axe_action: crate::leyline_axe_consumer_v1::action(
+                    observation.leyline_axe.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                progenitus_action: crate::progenitus_consumer_v1::action(
+                    observation.progenitus.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                aberration_action: crate::aberration_consumer_v1::action(
+                    observation.aberration.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                lathril_action: crate::lathril_consumer_v1::action(
+                    observation.lathril.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                electroduplicate_action: crate::electroduplicate_consumer_v1::action(
+                    observation.electroduplicate.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                edict_action: crate::edict_consumer_v1::action(observation.edict.as_ref(), &action)
+                    .map_err(error)?,
+                loot_action: crate::loot_consumer_v1::action(observation.loot.as_ref(), &action)
+                    .map_err(error)?,
+                curator_action: crate::curator_consumer_v1::action(
+                    observation.curator.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                harvester_action: crate::harvester_consumer_v1::action(
+                    observation.harvester.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                thousand_year_storm_action: crate::thousand_year_storm_consumer_v1::action(
+                    observation.thousand_year_storm.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                greatwurm_action: crate::greatwurm_consumer_v1::action(
+                    observation.greatwurm.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                sphinx_lore_action: crate::sphinx_lore_consumer_v1::action(
+                    observation.sphinx_lore.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                kykar_action: crate::kykar_consumer_v1::action(observation.kykar.as_ref(), &action)
+                    .map_err(error)?,
+                fiend_artisan_action: crate::fiend_artisan_consumer_v1::action(
+                    observation.fiend_artisan.as_ref(),
+                    &action,
+                ),
+                etali_action: crate::etali_primal_storm_consumer_v1::action(
+                    observation.etali.as_ref(),
+                    &action,
+                ),
+                drakuseth_target: crate::drakuseth_consumer_v1::target_action(
+                    observation.drakuseth.as_ref(),
+                    &action,
+                )
+                .map_err(error)?,
+                artist_payment: artist::payment_action(observation.artist.as_ref(), &action)
+                    .map_err(error)?,
+                chosen_type_answer: chosen_type::answer(observation.chosen_type.as_ref(), &action)
+                    .map_err(error)?,
                 selected_graveyard_target: selected_graveyard_target(&observation, &action)?,
                 drake_activation: drake_activation(&observation, &action)?,
                 vivien_activation: crate::vivien_public_v70::activation_cost(
@@ -762,7 +1013,7 @@ fn project_authenticated_parts_v75(
         })
         .collect::<Result<Vec<_>, RlContractError>>()?;
     let mut value = KaitoCandidatesV75 {
-        schema: SCHEMA.into(),
+        schema: schema.into(),
         producer_sha256: producer_sha256(),
         observation,
         candidates,
@@ -781,11 +1032,143 @@ fn project_authenticated_parts_v75(
     ))
 }
 
+fn schemas(observation: &KaitoObservationV75) -> (&'static str, &'static str) {
+    if observation.schema == crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA {
+        return (
+            crate::limited_full_pool_consumer_v1::CANDIDATES_SCHEMA,
+            crate::limited_full_pool_consumer_v1::ACTION_SCHEMA,
+        );
+    }
+    if observation.schema == crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA {
+        (
+            crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA,
+            crate::limited_mixed_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.chosen_type.is_some() {
+        (chosen_type::CANDIDATES_SCHEMA, chosen_type::ACTION_SCHEMA)
+    } else if observation.drakuseth.is_some() {
+        (
+            crate::drakuseth_consumer_v1::CANDIDATES_SCHEMA,
+            crate::drakuseth_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.artist.is_some() {
+        (artist::CANDIDATES_SCHEMA, artist::ACTION_SCHEMA)
+    } else if observation.niv.is_some() {
+        (
+            crate::niv_consumer_v1::CANDIDATES_SCHEMA,
+            crate::niv_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.embercleave.is_some() {
+        (
+            crate::embercleave_consumer_v1::CANDIDATES_SCHEMA,
+            crate::embercleave_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.zimone.is_some() {
+        (
+            crate::zimone_consumer_v1::CANDIDATES_SCHEMA,
+            crate::zimone_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.omniscience.is_some() {
+        (
+            crate::omniscience_consumer_v1::CANDIDATES_SCHEMA,
+            crate::omniscience_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.tutelage.is_some() {
+        (
+            crate::tutelage_consumer_v1::CANDIDATES_SCHEMA,
+            crate::tutelage_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.moon.is_some() {
+        (
+            crate::moon_consumer_v1::CANDIDATES_SCHEMA,
+            crate::moon_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.leyline_axe.is_some() {
+        (
+            crate::leyline_axe_consumer_v1::CANDIDATES_SCHEMA,
+            crate::leyline_axe_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.progenitus.is_some() {
+        (
+            crate::progenitus_consumer_v1::CANDIDATES_SCHEMA,
+            crate::progenitus_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.aberration.is_some() {
+        (
+            crate::aberration_consumer_v1::CANDIDATES_SCHEMA,
+            crate::aberration_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.lathril.is_some() {
+        (
+            crate::lathril_consumer_v1::CANDIDATES_SCHEMA,
+            crate::lathril_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.electroduplicate.is_some() {
+        (
+            crate::electroduplicate_consumer_v1::CANDIDATES_SCHEMA,
+            crate::electroduplicate_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.edict.is_some() {
+        (
+            crate::edict_consumer_v1::CANDIDATES_SCHEMA,
+            crate::edict_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.loot.is_some() {
+        (
+            crate::loot_consumer_v1::CANDIDATES_SCHEMA,
+            crate::loot_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.curator.is_some() {
+        (
+            crate::curator_consumer_v1::CANDIDATES_SCHEMA,
+            crate::curator_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.kykar.is_some() {
+        (
+            crate::kykar_consumer_v1::CANDIDATES_SCHEMA,
+            crate::kykar_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.sphinx_lore.is_some() {
+        (
+            crate::sphinx_lore_consumer_v1::CANDIDATES_SCHEMA,
+            crate::sphinx_lore_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.greatwurm.is_some() {
+        (
+            crate::greatwurm_consumer_v1::CANDIDATES_SCHEMA,
+            crate::greatwurm_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.harvester.is_some() {
+        (
+            crate::harvester_consumer_v1::CANDIDATES_SCHEMA,
+            crate::harvester_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.fiend_artisan.is_some() {
+        (
+            crate::fiend_artisan_consumer_v1::CANDIDATES_SCHEMA,
+            crate::fiend_artisan_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.etali.is_some() {
+        (
+            crate::etali_primal_storm_consumer_v1::CANDIDATES_SCHEMA,
+            crate::etali_primal_storm_consumer_v1::ACTION_SCHEMA,
+        )
+    } else if observation.thousand_year_storm.is_some() {
+        (
+            crate::thousand_year_storm_consumer_v1::CANDIDATES_SCHEMA,
+            crate::thousand_year_storm_consumer_v1::ACTION_SCHEMA,
+        )
+    } else {
+        (SCHEMA, ANNOTATION_SCHEMA)
+    }
+}
+
 /// Supplemental closed-shape checks. Only validate_current authenticates this
 /// artifact against the native world; neither function grants execution/restore.
 pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractError> {
     observation::validate_artifact(&value.observation)?;
-    if value.schema != SCHEMA
+    let (schema, annotation_schema) = schemas(&value.observation);
+    if value.schema != schema
         || value.producer_sha256 != producer_sha256()
         || value.owning_consumer_admitted
         || !value.alesha_optional_resolution_supported
@@ -795,6 +1178,74 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
         return Err(error("V75 candidate artifact identity changed"));
     }
     let authorized = authorized_references(&value.observation)?;
+    if let Some(facts) = &value.observation.edict {
+        crate::edict_consumer_v1::validate_candidate_order(
+            facts,
+            value.candidates.iter().map(|row| &row.action),
+        )
+        .map_err(error)?;
+    }
+    if let Some(facts) = &value.observation.thousand_year_storm {
+        crate::thousand_year_storm_consumer_v1::validate_candidate_order(
+            facts,
+            value.candidates.iter().map(|r| &r.action),
+        )
+        .map_err(error)?;
+    }
+    if let Some(facts) = &value.observation.harvester {
+        crate::harvester_consumer_v1::validate_candidate_order(
+            facts,
+            value.candidates.iter().map(|row| &row.action),
+        )
+        .map_err(error)?;
+    }
+    if let Some(facts) = &value.observation.greatwurm {
+        crate::greatwurm_consumer_v1::validate_candidate_order(
+            facts,
+            value.candidates.iter().map(|row| &row.action),
+        )
+        .map_err(error)?;
+    }
+    if let Some(facts) = &value.observation.curator {
+        crate::curator_consumer_v1::validate_candidate_order(
+            facts,
+            value.candidates.iter().map(|row| &row.action),
+        )
+        .map_err(error)?;
+    }
+    if let Some(facts) = &value.observation.fiend_artisan {
+        crate::fiend_artisan_consumer_v1::validate_candidate_order(
+            facts,
+            value.candidates.iter().map(|row| &row.action),
+        )
+        .map_err(error)?;
+    }
+    if let Some(facts) = &value.observation.etali {
+        crate::etali_primal_storm_consumer_v1::validate_candidate_order(
+            facts,
+            value.candidates.iter().map(|row| &row.action),
+        )
+        .map_err(error)?;
+    }
+    if let Some(active) = value
+        .observation
+        .chosen_type
+        .as_ref()
+        .and_then(|facts| facts.native.active_entry_choice.as_ref())
+    {
+        if value.candidates.len() != active.domain.len()
+            || !value
+                .candidates
+                .iter()
+                .zip(&active.domain)
+                .all(|(row, creature_type)| {
+                    row.chosen_type_answer
+                        .is_some_and(|answer| answer.creature_type == *creature_type)
+                })
+        {
+            return Err(error("incomplete chosen-type candidate domain"));
+        }
+    }
     let facts = &value.observation.graveyard_return;
     let genesis_context =
         crate::genesis_wave_public_v69::choice_contexts(&value.observation.genesis_wave);
@@ -856,7 +1307,122 @@ pub fn validate_artifact(value: &KaitoCandidatesV75) -> Result<(), RlContractErr
                 .map_err(error)?
             || row.liliana_choices
                 != crate::liliana_public_v73::choice_contexts(&value.observation.liliana)
-            || row.schema != ANNOTATION_SCHEMA
+            || row.schema != annotation_schema
+            || row.embercleave_action
+                != crate::embercleave_consumer_v1::action(
+                    value.observation.embercleave.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.zimone_action
+                != crate::zimone_consumer_v1::action(value.observation.zimone.as_ref(), &row.action)
+                    .map_err(error)?
+            || row.omniscience_action
+                != crate::omniscience_consumer_v1::action(
+                    value.observation.omniscience.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.drakuseth_target
+                != crate::drakuseth_consumer_v1::target_action(
+                    value.observation.drakuseth.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.artist_payment
+                != artist::payment_action(value.observation.artist.as_ref(), &row.action)
+                    .map_err(error)?
+            || row.tutelage_action
+                != crate::tutelage_consumer_v1::action(
+                    value.observation.tutelage.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.moon_action
+                != crate::moon_consumer_v1::action(value.observation.moon.as_ref(), &row.action)
+                    .map_err(error)?
+            || row.leyline_axe_action
+                != crate::leyline_axe_consumer_v1::action(
+                    value.observation.leyline_axe.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.progenitus_action
+                != crate::progenitus_consumer_v1::action(
+                    value.observation.progenitus.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.aberration_action
+                != crate::aberration_consumer_v1::action(
+                    value.observation.aberration.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.lathril_action
+                != crate::lathril_consumer_v1::action(
+                    value.observation.lathril.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.electroduplicate_action
+                != crate::electroduplicate_consumer_v1::action(
+                    value.observation.electroduplicate.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.harvester_action
+                != crate::harvester_consumer_v1::action(
+                    value.observation.harvester.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.thousand_year_storm_action
+                != crate::thousand_year_storm_consumer_v1::action(
+                    value.observation.thousand_year_storm.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.greatwurm_action
+                != crate::greatwurm_consumer_v1::action(
+                    value.observation.greatwurm.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.sphinx_lore_action
+                != crate::sphinx_lore_consumer_v1::action(
+                    value.observation.sphinx_lore.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.kykar_action
+                != crate::kykar_consumer_v1::action(value.observation.kykar.as_ref(), &row.action)
+                    .map_err(error)?
+            || row.loot_action
+                != crate::loot_consumer_v1::action(value.observation.loot.as_ref(), &row.action)
+                    .map_err(error)?
+            || row.edict_action
+                != crate::edict_consumer_v1::action(value.observation.edict.as_ref(), &row.action)
+                    .map_err(error)?
+            || row.curator_action
+                != crate::curator_consumer_v1::action(
+                    value.observation.curator.as_ref(),
+                    &row.action,
+                )
+                .map_err(error)?
+            || row.fiend_artisan_action
+                != crate::fiend_artisan_consumer_v1::action(
+                    value.observation.fiend_artisan.as_ref(),
+                    &row.action,
+                )
+            || row.etali_action
+                != crate::etali_primal_storm_consumer_v1::action(
+                    value.observation.etali.as_ref(),
+                    &row.action,
+                )
+            || row.chosen_type_answer
+                != chosen_type::answer(value.observation.chosen_type.as_ref(), &row.action)
+                    .map_err(error)?
             || usize::try_from(row.ordinal).ok() != Some(ordinal)
             || row.vivien_activation
                 != crate::vivien_public_v70::activation_cost(&value.observation.vivien, &row.action)
