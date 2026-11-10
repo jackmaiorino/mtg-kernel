@@ -14804,10 +14804,10 @@ pub(crate) fn validate_pending_cast(
                 .is_some_and(|origin| {
                     matches!(origin.route, SpellCastRouteV4::GraveyardAdventure { .. })
                 })
-            || (cfg!(feature = "eternal-fixtures")
-                && resolution_cast_v1::graveyard_resolution_cast(state, pending.spell))
-            || (crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
-                && pending_has_ordinary_graveyard_permission(pending, state)))
+                || (cfg!(feature = "eternal-fixtures")
+                    && resolution_cast_v1::graveyard_resolution_cast(state, pending.spell))
+                || (crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
+                    && pending_has_ordinary_graveyard_permission(pending, state)))
         {
             return Err("graveyard creature permission cannot cast the Adventure form".to_string());
         }
