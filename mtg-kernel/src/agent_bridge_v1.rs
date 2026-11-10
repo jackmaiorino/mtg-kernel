@@ -2419,6 +2419,7 @@ fn neutral_semantic_v1(
         // targets) and non-Pauper catalogs. The Pauper bridge never enables
         // them, so reaching one is an engine fault, never a guessed kind.
         ActionSemanticV1::ChooseAttackTarget { .. }
+        | ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 { .. }
         | ActionSemanticV1::ChooseCombatDamageRange { .. }
         | ActionSemanticV1::ChooseDivineKickerV44 { .. }
         | ActionSemanticV1::ChooseDivineTargetV44 { .. }

@@ -24085,6 +24085,76 @@
     "counters"
    ],
    "java_file": "Mage.Sets/src/mage/cards/p/PhyrexianDevourer.java"
+  },
+  {
+   "name": "Birchlore Rangers",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf",
+    "Druid"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "premodern-elves"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "morph"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BirchloreRangers.java"
+  },
+  {
+   "name": "Thornscape Battlemage",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "kicker",
+    "etb_trigger",
+    "direct_damage",
+    "destroy_artifact"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThornscapeBattlemage.java"
   }
  ]
 }

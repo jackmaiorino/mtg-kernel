@@ -516,6 +516,7 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
         | A::PlayLand { actor, .. }
         | A::CastSpell { actor, .. }
         | A::ActivateManaAbility { actor, .. }
+        | A::ActivateManaAbilityWithTwoCostTargetsV1 { actor, .. }
         | A::ActivateAbility { actor, .. }
         | A::TurnFaceUp { actor, .. }
         | A::PlotSpell { actor, .. }
@@ -566,6 +567,139 @@ pub(super) fn label(
     human: PlayerSeatV1,
 ) -> Result<String, Error> {
     label_common(action, &LabelInput::from_v6(observation), handles, human)
+}
+
+#[cfg(all(test, feature = "eternal-fixtures"))]
+#[test]
+fn birchlore_pair_has_a_fixed_seat_human_prompt() {
+    use crate::engine::{self, Action};
+    use crate::ids::PlayerId;
+    use crate::policy_observation_v6::tests::{put, ready_state_for};
+    use crate::policy_surface_v5::PolicySurfaceV5;
+    use crate::rl::{legal_action_candidates_v1, observe_policy_v6};
+    use crate::surface::{SurfaceAction, SurfaceDecision};
+
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let ranger = put(&mut state, actor, "Birchlore Rangers", Zone::Battlefield);
+        let elf = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        for object in [ranger, elf] {
+            state.objects.get_mut(object).summoning_sick = true;
+        }
+        let decision = SurfaceDecision::Decision(engine::advance_until_decision(&mut state));
+        let rows = legal_action_candidates_v1(&decision, &state).unwrap();
+        let actions = rows
+            .iter()
+            .map(|row| row.record.semantic.clone())
+            .collect::<Vec<_>>();
+        let expected =
+            Action::ActivateManaAbilityWithTwoCostTargetsV1(ranger, ManaColor::R, [ranger, elf]);
+        let original = rows
+            .iter()
+            .position(|row| row.surface_action == SurfaceAction::Action(expected.clone()))
+            .unwrap() as u32;
+        let observation =
+            observe_policy_v6(&state, &PolicySurfaceV5::new(), actor, 0, 0, 0, 1).unwrap();
+        let (prompt, indices) =
+            super::visible::project_decision(&observation, &actions, actor.into(), 1).unwrap();
+        let selected = indices.iter().position(|&index| index == original).unwrap();
+        let label = &prompt.actions[selected].label;
+        assert!(label.starts_with("Activate Birchlore Rangers ["));
+        assert!(label.contains("to add {R} by tapping Birchlore Rangers ["));
+        assert!(label.contains("and Llanowar Elves ["));
+        assert!(matches!(
+            super::visible::project_decision(&observation, &actions, actor.opponent().into(), 1),
+            Err(Error::NotHumanTurn)
+        ));
+
+        let SurfaceAction::Action(action) = rows[indices[selected] as usize].surface_action.clone()
+        else {
+            unreachable!();
+        };
+        engine::step(&mut state, action).unwrap();
+        assert!(state.objects.get(ranger).tapped && state.objects.get(elf).tapped);
+        assert_eq!(
+            state.players[actor.index()].mana_pool[ManaColor::R.pool_index()],
+            1
+        );
+        assert!(state.stack.is_empty());
+    }
+}
+
+#[cfg(all(test, feature = "eternal-fixtures"))]
+#[test]
+fn thornscape_white_kicker_has_a_fixed_seat_human_prompt() {
+    use crate::engine::{self, Action, Decision};
+    use crate::ids::PlayerId;
+    use crate::policy_observation_v6::tests::{put, ready_state_for};
+    use crate::policy_surface_v5::PolicySurfaceV5;
+    use crate::rl::{legal_action_candidates_v1, observe_policy_v6};
+    use crate::surface::SurfaceDecision;
+
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let spell = put(&mut state, actor, "Thornscape Battlemage", Zone::Hand);
+        put(&mut state, actor, "Aluren", Zone::Battlefield);
+        let pool = &mut state.players[actor.index()].mana_pool;
+        for color in [ManaColor::G, ManaColor::R, ManaColor::W] {
+            pool[color.pool_index()] = 1;
+        }
+        pool[ManaColor::C.pool_index()] = 2;
+        engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseKicker { spell: source, .. } if source == spell
+        ));
+        engine::step(&mut state, Action::ChooseKicker(true)).unwrap();
+        let decision = engine::advance_until_decision(&mut state);
+        assert!(matches!(
+            decision,
+            Decision::ChooseEffectOption { source, option_count: 2, .. } if source == spell
+        ));
+        let actions = legal_action_candidates_v1(&SurfaceDecision::Decision(decision), &state)
+            .unwrap()
+            .into_iter()
+            .map(|row| row.record.semantic)
+            .collect::<Vec<_>>();
+        let observation =
+            observe_policy_v6(&state, &PolicySurfaceV5::new(), actor, 0, 0, 0, 1).unwrap();
+        let (prompt, indices) =
+            super::visible::project_decision(&observation, &actions, actor.into(), 1).unwrap();
+        assert_eq!(indices, [0, 1]);
+        assert!(prompt.actions[0]
+            .label
+            .starts_with("Decline the additional kicker cost {W} for Thornscape Battlemage ["));
+        assert!(prompt.actions[1]
+            .label
+            .starts_with("Pay the additional kicker cost {W} for Thornscape Battlemage ["));
+
+        engine::step(&mut state, Action::ChooseEffectOption(indices[1] as u16)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseEffectOption { source, option_count: 2, .. } if source == spell
+        ));
+        assert_eq!(
+            state
+                .engine
+                .pending_cast
+                .as_ref()
+                .unwrap()
+                .thornscape_white_kicker_v1,
+            Some(true)
+        );
+        engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(state.stack.last().unwrap().v4.battlemage_kickers_v1.0, 3);
+    }
 }
 
 pub(super) fn label_v8(
@@ -1628,6 +1762,20 @@ fn label_common(
                 mana(cost)
             )
         }
+        A::ActivateManaAbilityWithTwoCostTargetsV1 {
+            source,
+            mana_choice,
+            cost_targets: [first, second],
+            ..
+        } => {
+            format!(
+                "Activate {} to add {{{}}} by tapping {} and {}",
+                handles.name(source)?,
+                color(*mana_choice),
+                handles.name(first)?,
+                handles.name(second)?
+            )
+        }
         A::ActivateManaAbility {
             source,
             mana_choice,
@@ -1740,6 +1888,9 @@ fn label_common(
                                 handles
                                     .name(cost_target.as_ref().ok_or(Error::UnsupportedPrompt)?)?
                             )
+                        }
+                        ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(_) => {
+                            return Err(Error::UnsupportedPrompt);
                         }
                     };
                     if !matches!(
@@ -1872,10 +2023,26 @@ fn label_common(
             option_count,
             ..
         } => {
-            let pending = observation
-                .projection
-                .surface
-                .engine_context
+            let context = &observation.projection.surface.engine_context;
+            if context.pending_effect.is_none()
+                && *option_count == 2
+                && *option_index < *option_count
+                && crate::eternal_premodern_p2b_v1::is_thornscape(definition(source)?)
+                && context.pending_cast.as_ref().is_some_and(|pending| {
+                    pending.source.as_ref() == Some(source)
+                        && pending.controller == human
+                        && pending.kicked.is_some()
+                        && pending.thornscape_white_kicker_v1.is_none()
+                })
+            {
+                let payment = if *option_index == 1 { "Pay" } else { "Decline" };
+                return Ok(format!(
+                    "{payment} the additional kicker cost {} for {}",
+                    mana(crate::eternal_premodern_p2b_v1::THORNSCAPE_WHITE_KICKER),
+                    handles.name(source)?
+                ));
+            }
+            let pending = context
                 .pending_effect
                 .as_ref()
                 .ok_or(Error::UnsupportedPrompt)?;
