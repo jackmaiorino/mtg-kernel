@@ -1263,9 +1263,12 @@ fn reanimated_metamorph_chooses_copy_and_mage_name_before_entry_both_seats() {
             let generation = state.objects.get(metamorph).zone_change_count;
             let reanimate = put(&mut state, actor, "Reanimate", Zone::Hand);
             let mage_history_count = |state: &GameState| {
-                state.engine.event_history.iter().filter(|event| {
-                    matches!(event, CommittedEvent::MeddlingMageEntryV1 { .. })
-                }).count()
+                state
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|event| matches!(event, CommittedEvent::MeddlingMageEntryV1 { .. }))
+                    .count()
             };
             let history_before_copy = mage_history_count(&state);
             pool(&mut state, actor, &[ManaColor::B], 0);
@@ -1279,7 +1282,8 @@ fn reanimated_metamorph_chooses_copy_and_mage_name_before_entry_both_seats() {
                 can_finish: true,
                 ref legal_targets,
                 ..
-            } = choice else {
+            } = choice
+            else {
                 panic!("unexpected copy menu {choice:?}");
             };
             assert_eq!((player, source), (actor, metamorph));
@@ -1297,8 +1301,8 @@ fn reanimated_metamorph_chooses_copy_and_mage_name_before_entry_both_seats() {
 
             let mut forged = serde_json::to_value(&state).unwrap();
             let candidate = &mut forged["engine"]["linked_aura_operation_v1"]
-                ["pending_meddling_mage_v1"]["choice"]["ReanimateMetamorphV1"]
-                ["choice"]["candidates"][0]["zone_change_count"];
+                ["pending_meddling_mage_v1"]["choice"]["ReanimateMetamorphV1"]["choice"]
+                ["candidates"][0]["zone_change_count"];
             *candidate = serde_json::json!(candidate.as_u64().unwrap() + 1);
             let mut forged: GameState = serde_json::from_value(forged).unwrap();
             let forged_hash = forged.state_hash();
@@ -1306,7 +1310,10 @@ fn reanimated_metamorph_chooses_copy_and_mage_name_before_entry_both_seats() {
             assert_eq!(forged.state_hash(), forged_hash);
 
             let copy_snapshot = serde_json::to_vec(&state).unwrap();
-            for selected in std::iter::once(Some(mage)).chain(wall.map(Some)).chain([None]) {
+            for selected in std::iter::once(Some(mage))
+                .chain(wall.map(Some))
+                .chain([None])
+            {
                 let mut restored: GameState = serde_json::from_slice(&copy_snapshot).unwrap();
                 assert_eq!(next(&mut restored), choice);
                 let command = selected.map_or(Action::FinishEffectSelection, |object| {
@@ -1335,18 +1342,34 @@ fn reanimated_metamorph_chooses_copy_and_mage_name_before_entry_both_seats() {
                 if let Some(donor) = selected {
                     assert_eq!(zone(&restored, metamorph), Zone::Battlefield);
                     assert_eq!(restored.objects.get(metamorph).controller, actor);
-                    assert_eq!(restored.objects.get(metamorph).card_def, restored.objects.get(donor).card_def);
-                    assert_eq!(restored.objects.get(metamorph).zone_change_count, generation + 1);
+                    assert_eq!(
+                        restored.objects.get(metamorph).card_def,
+                        restored.objects.get(donor).card_def
+                    );
+                    assert_eq!(
+                        restored.objects.get(metamorph).zone_change_count,
+                        generation + 1
+                    );
                     assert!(!restored.objects.get(metamorph).v4.is_token);
-                    assert!(engine::object_has_type(&restored, metamorph, CardType::Artifact));
+                    assert!(engine::object_has_type(
+                        &restored,
+                        metamorph,
+                        CardType::Artifact
+                    ));
                     assert_eq!(
                         restored.eternal_v1.as_ref().unwrap().s1b.mage_names.len(),
                         if donor == mage { 2 } else { 1 }
                     );
                 } else {
                     assert_eq!(zone(&restored, metamorph), Zone::Graveyard);
-                    assert_eq!(restored.objects.get(metamorph).card_def, id("Phyrexian Metamorph"));
-                    assert_eq!(restored.objects.get(metamorph).zone_change_count, generation + 2);
+                    assert_eq!(
+                        restored.objects.get(metamorph).card_def,
+                        id("Phyrexian Metamorph")
+                    );
+                    assert_eq!(
+                        restored.objects.get(metamorph).zone_change_count,
+                        generation + 2
+                    );
                 }
                 assert!(restored.engine.event_history.iter().any(|event| matches!(event,
                     CommittedEvent::ZoneChange { object, from: Zone::Graveyard, to: Zone::Battlefield, .. }

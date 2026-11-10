@@ -779,7 +779,10 @@ fn potential_operation(state: &GameState) -> bool {
         return true;
     }
     crate::effect::needs_electroduplicate_entry_owner_v1(state)
-        || state.stack.last().is_some_and(|item| mage_entry::reanimate_metamorph_waiting(state, item))
+        || state
+            .stack
+            .last()
+            .is_some_and(|item| mage_entry::reanimate_metamorph_waiting(state, item))
         || ((!state.stack.is_empty() || state.engine.pending_effect.is_some())
             && mage_entry::potentially_enters(state))
         || crate::drake_hatcher_v1::custody::relevant(state)
@@ -1443,8 +1446,9 @@ pub fn validate(state: &GameState) -> Result<(), String> {
         .linked_aura_operation_v1
         .pending_meddling_mage_v1
     {
-        let names_v2 = if let GeneralChoiceV36::ReanimateMetamorphV1 { original_sha256, .. } =
-            &pending.choice
+        let names_v2 = if let GeneralChoiceV36::ReanimateMetamorphV1 {
+            original_sha256, ..
+        } = &pending.choice
         {
             if pending.operation_history_index.is_some()
                 || !origin_digest_matches(original_sha256, &pending.original)
@@ -1453,13 +1457,23 @@ pub fn validate(state: &GameState) -> Result<(), String> {
             }
             true
         } else {
-            let started = pending.operation_history_index
+            let started = pending
+                .operation_history_index
                 .and_then(|at| mage_entry::journal(state, at));
-            let names_v2 = matches!(started, Some(mage_entry::JournalV1::StartedWithNamesV2 { .. }));
+            let names_v2 = matches!(
+                started,
+                Some(mage_entry::JournalV1::StartedWithNamesV2 { .. })
+            );
             match started {
                 Some(
-                    mage_entry::JournalV1::Started { operation, original_sha256 }
-                    | mage_entry::JournalV1::StartedWithNamesV2 { operation, original_sha256 },
+                    mage_entry::JournalV1::Started {
+                        operation,
+                        original_sha256,
+                    }
+                    | mage_entry::JournalV1::StartedWithNamesV2 {
+                        operation,
+                        original_sha256,
+                    },
                 ) if **operation == pending.operation
                     && origin_digest_matches(original_sha256, &pending.original) => {}
                 _ => return Err("Meddling Mage checkpoint lost its original operation".into()),
@@ -2263,27 +2277,50 @@ pub(crate) fn prepare_reanimated_metamorph(
     if crate::eternal_legacy_e7a_v1::prevents_zone_change(state, &proposal) {
         return Ok(true);
     }
-    let runner = state.engine.linked_aura_operation_v1.runtime.as_ref()
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
         .ok_or("noncast Metamorph has no actual Reanimate replay owner")?;
-    if !matches!(runner.operation, OperationV1::Advance | OperationV1::Step(_))
-        || state.stack.iter().any(|row| Some(row.v4.stack_item_id) == ctx.stack_item_id)
+    if !matches!(
+        runner.operation,
+        OperationV1::Advance | OperationV1::Step(_)
+    ) || state
+        .stack
+        .iter()
+        .any(|row| Some(row.v4.stack_item_id) == ctx.stack_item_id)
     {
         return Err("noncast Metamorph requires the actual resolving Reanimate".into());
     }
-    let parent = runner.original_stack.last()
+    let parent = runner
+        .original_stack
+        .last()
         .ok_or("noncast Metamorph lost its original Reanimate stack row")?;
-    let Some(choice) = mage_entry::ReanimateCopyChoiceV1::capture(state, ctx, object, parent)? else {
+    let Some(choice) = mage_entry::ReanimateCopyChoiceV1::capture(state, ctx, object, parent)?
+    else {
         return Ok(true);
     };
     if let Some(answer) = runner.answers.get(runner.cursor) {
-        let GeneralAnswerV36::ReanimateMetamorphV1 { choice: expected, copied } = answer else {
+        let GeneralAnswerV36::ReanimateMetamorphV1 {
+            choice: expected,
+            copied,
+        } = answer
+        else {
             return Err("Metamorph replay changed its confirmed copy choice kind".into());
         };
-        if **expected != choice || copied.is_some_and(|source| !choice.candidates.contains(&source)) {
+        if **expected != choice || copied.is_some_and(|source| !choice.candidates.contains(&source))
+        {
             return Err("Metamorph replay changed its confirmed copy candidate".into());
         }
         let copy = copied.map(|copied| choice.copy(copied));
-        state.engine.linked_aura_operation_v1.runtime.as_mut().unwrap().cursor += 1;
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .cursor += 1;
         if let Some(copy) = copy {
             stage_metamorph_mage_copy(state, copy)?;
         }
@@ -2291,9 +2328,18 @@ pub(crate) fn prepare_reanimated_metamorph(
     }
     let snapshot = mage_checkpoint_world(state, runner);
     let original_sha256 = runner.original_sha256.clone();
-    state.engine.linked_aura_operation_v1.runtime.as_mut().unwrap().checkpoint = Some((
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .checkpoint = Some((
         Box::new(snapshot),
-        GeneralChoiceV36::ReanimateMetamorphV1 { choice: Box::new(choice), original_sha256 },
+        GeneralChoiceV36::ReanimateMetamorphV1 {
+            choice: Box::new(choice),
+            original_sha256,
+        },
     ));
     Ok(false)
 }
@@ -2909,15 +2955,21 @@ pub(crate) fn commit_entry_color(
 fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String> {
     match choice {
         GeneralChoiceV36::MeddlingMageV1 { choice, group } => mage_entry::decision(choice, *group),
-        GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. } => Ok(Decision::ChooseEffectTargets {
-            player: choice.producer.controller,
-            source: choice.physical.source,
-            selected_count: 0,
-            min_targets: 0,
-            max_targets: 1,
-            can_finish: true,
-            legal_targets: choice.candidates.iter().map(|source| Target::Object(source.source)).collect(),
-        }),
+        GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. } => {
+            Ok(Decision::ChooseEffectTargets {
+                player: choice.producer.controller,
+                source: choice.physical.source,
+                selected_count: 0,
+                min_targets: 0,
+                max_targets: 1,
+                can_finish: true,
+                legal_targets: choice
+                    .candidates
+                    .iter()
+                    .map(|source| Target::Object(source.source))
+                    .collect(),
+            })
+        }
         GeneralChoiceV36::KinshipV1 { choice, .. } => Ok(Decision::ChooseEntryCreatureTypeV1 {
             player: choice.controller,
             entry_ordinal: choice.ordinal,
@@ -2975,12 +3027,24 @@ fn answer_equipment_checkpoint_v48(
 ) -> Result<GeneralAnswerV36, String> {
     match (choice, action) {
         (GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. }, Action::FinishEffectSelection) => {
-            Ok(GeneralAnswerV36::ReanimateMetamorphV1 { choice: choice.clone(), copied: None })
+            Ok(GeneralAnswerV36::ReanimateMetamorphV1 {
+                choice: choice.clone(),
+                copied: None,
+            })
         }
-        (GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. }, Action::ChooseEffectTarget(Target::Object(object))) => {
-            let source = choice.candidates.iter().find(|source| source.source == object)
+        (
+            GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. },
+            Action::ChooseEffectTarget(Target::Object(object)),
+        ) => {
+            let source = choice
+                .candidates
+                .iter()
+                .find(|source| source.source == object)
                 .ok_or("Metamorph copy answer is outside its original menu")?;
-            Ok(GeneralAnswerV36::ReanimateMetamorphV1 { choice: choice.clone(), copied: Some(*source) })
+            Ok(GeneralAnswerV36::ReanimateMetamorphV1 {
+                choice: choice.clone(),
+                copied: Some(*source),
+            })
         }
         (GeneralChoiceV36::MeddlingMageV1 { choice, group }, Action::ChooseEffectOption(index))
             if mage_entry::valid_index(choice, *group, index) =>

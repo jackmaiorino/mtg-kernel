@@ -92,8 +92,7 @@ pub(crate) fn reanimate_metamorph_waiting(
     item.kind == StackItemKind::Spell
         && !item.is_copy
         && item.v4.source_contract.is_some_and(|source| {
-            source.zone == Zone::Stack
-                && card_id_by_name("Reanimate") == Some(source.card_def)
+            source.zone == Zone::Stack && card_id_by_name("Reanimate") == Some(source.card_def)
         })
         && matches!(item.targets.as_slice(), [Target::Object(object)]
             if physical_graveyard_metamorph(state, *object))
@@ -118,7 +117,8 @@ impl ReanimateCopyChoiceV1 {
         {
             return Err("noncast Metamorph lost its actual paid Reanimate target".into());
         }
-        if crate::eternal_legacy_e7a_v1::active_dress_down_timestamp(state, Some(object)).is_some() {
+        if crate::eternal_legacy_e7a_v1::active_dress_down_timestamp(state, Some(object)).is_some()
+        {
             return Ok(None);
         }
         let mut candidates = Vec::new();
@@ -132,12 +132,15 @@ impl ReanimateCopyChoiceV1 {
                 || crate::eternal_vintage_v1::active_copy(state, binding.object)
                 || !(owns_definition(live.card_def)
                     || definition.has_full_support()
-                        && (definition.spell_effect)() == Some(EffectOp::MoveObject {
-                            object: ObjectRef::ThisSource,
-                            to_zone: Zone::Battlefield,
-                        }))
+                        && (definition.spell_effect)()
+                            == Some(EffectOp::MoveObject {
+                                object: ObjectRef::ThisSource,
+                                to_zone: Zone::Battlefield,
+                            }))
             {
-                return Err("noncast Metamorph copy menu contains an unsupported entry form".into());
+                return Err(
+                    "noncast Metamorph copy menu contains an unsupported entry form".into(),
+                );
             }
             candidates.push(AbilitySourceContractV4::capture(state, binding.object));
         }
@@ -177,10 +180,15 @@ fn paid_cast_index(state: &GameState, stack_item: StackItemId) -> Result<usize, 
         .enumerate()
         .filter_map(|(index, event)| match event {
             CommittedEvent::PublishedCastIdentityV1 { receipt }
-                if receipt.stack_item_id == stack_item => Some(index + 1),
+                if receipt.stack_item_id == stack_item =>
+            {
+                Some(index + 1)
+            }
             _ => None,
         });
-    let cast = casts.next().ok_or("Metamorph copy has no paid cast receipt")?;
+    let cast = casts
+        .next()
+        .ok_or("Metamorph copy has no paid cast receipt")?;
     if casts.next().is_some() {
         return Err("Metamorph copy has duplicate cast receipts".into());
     }
@@ -262,8 +270,10 @@ impl MetamorphCopyV1 {
         self.copied.zone == Zone::Battlefield
             && self.copied.source != self.physical.source
             && (owns_definition(self.copied.card_def)
-                || self.reanimated_by.is_some() && CARD_DEFS.get(usize::from(self.copied.card_def))
-                    .is_some_and(CardDef::has_full_support))
+                || self.reanimated_by.is_some()
+                    && CARD_DEFS
+                        .get(usize::from(self.copied.card_def))
+                        .is_some_and(CardDef::has_full_support))
             && entrant.source == self.physical.source
             && entrant.card_def == self.copied.card_def
             && entrant.zone == Zone::Battlefield
@@ -647,7 +657,11 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         .scan_for_v1(&[crate::event_history_v1::EventKindV1::MeddlingMageEntryV1])
         .iter()
         .any(|event| matches!(event, CommittedEvent::MeddlingMageEntryV1 { .. }))
-        || state.engine.linked_aura_operation_v1.pending_meddling_mage_v1.is_some()
+        || state
+            .engine
+            .linked_aura_operation_v1
+            .pending_meddling_mage_v1
+            .is_some()
         || super::read_state(state).is_some_and(|s1b| !s1b.mage_names.is_empty())
 }
 
