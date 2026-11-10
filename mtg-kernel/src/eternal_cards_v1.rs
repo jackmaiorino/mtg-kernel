@@ -30,6 +30,7 @@ use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
 pub mod e3;
+pub(crate) mod owned_draws_v1;
 pub use e3::{
     dark_ritual, doomsday, edge_of_autumn, flusterstorm, jace_minus_eight, jace_plus_one,
     misdirection, personal_tutor, show_and_tell, sink_into_stupor, sneak_attack, the_one_ring_draw,
@@ -439,6 +440,8 @@ pub enum EternalOpV1 {
     S1cV1(crate::eternal_sideboard_s1c_v1::S1cOpV1),
     /// A leaf owned by wave S1d's module.
     S1dV1(crate::eternal_sideboard_s1d_v1::S1dOpV1),
+    /// Internal completion of one native draw attempt in an owned instruction.
+    OwnedDrawCompletedV1 { ordinal: u32 },
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -512,6 +515,8 @@ impl EternalOpV1 {
     /// choice.
     pub(crate) fn drives_in_resumable(&self) -> bool {
         self.contains_player_choice()
+            || owned_draws_v1::recognizes(self)
+            || matches!(self, EternalOpV1::OwnedDrawCompletedV1 { .. })
             || matches!(self, EternalOpV1::DelayedUpkeepDrawV1)
             || matches!(
                 self,
@@ -1088,21 +1093,12 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
             normal,
             from_graveyard,
         } => {
-            let cast_from_graveyard = state.objects.try_get(ctx.source).is_some_and(|source| {
-                source.zone == Zone::Stack
-                    && source
-                        .v4
-                        .spell_cast_origin
-                        .is_some_and(|origin| origin.origin_zone == Zone::Graveyard)
-            });
             crate::effect::execute(
                 &EffectOp::DrawCards {
                     player: PlayerRef::Controller,
-                    count: u32::from(if cast_from_graveyard {
-                        *from_graveyard
-                    } else {
-                        *normal
-                    }),
+                    count: owned_draws_v1::graveyard_cast_count(
+                        state, ctx.source, *normal, *from_graveyard,
+                    ),
                 },
                 ctx,
                 state,
@@ -1335,8 +1331,9 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         EternalOpV1::DrawHalfLibraryThenNoMaximumHandSizeV1 => {
-            let library = state.players[ctx.controller.index()].library.len();
-            let count = u32::try_from(library.div_ceil(2)).unwrap_or(u32::MAX);
+            let count = owned_draws_v1::half_library_count(
+                state.players[ctx.controller.index()].library.len(),
+            );
             crate::effect::execute(
                 &EffectOp::DrawCards {
                     player: PlayerRef::Controller,
@@ -1345,10 +1342,13 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 ctx,
                 state,
             );
-            state
-                .eternal_v1
-                .get_or_insert_with(Default::default)
-                .no_maximum_hand_size[ctx.controller.index()] = true;
+            owned_draws_v1::remove_maximum_hand_size(state, ctx.controller);
+        }
+        EternalOpV1::OwnedDrawCompletedV1 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EternalOpV1::ProtectionFromEverythingUntilYourNextTurnV1
         | EternalOpV1::LoseLifePerBurdenCounterV1

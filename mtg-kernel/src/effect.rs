@@ -8068,6 +8068,11 @@ pub(crate) fn jace_draw_replacement_origin(
     path: &[u16],
     remaining: &[EffectFrame],
 ) -> bool {
+    if state.eternal_owned_draw_progress_v1.is_some() {
+        return crate::eternal_cards_v1::owned_draws_v1::draw_stage_matches(
+            state, pending, drawer, path, remaining,
+        );
+    }
     let root = match pending.resolving_item.inline_effect.as_ref() {
         Some(EffectOp::ResolveMonarchTrigger { binding }) => {
             return path.is_empty()
@@ -10664,6 +10669,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         if state.paradoxical_outcome_draw_progress_v1.is_some() {
             return Err("Paradoxical Outcome draw progress lost its continuation".into());
         }
+        if state.eternal_owned_draw_progress_v1.is_some() {
+            return Err("Eternal draw progress lost its continuation".into());
+        }
         return Ok(());
     };
     if matches!(
@@ -10725,6 +10733,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::eternal_vintage_e7b_v1::dredge::validate_coveted_jewel_draw(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_vintage_v1::paradoxical_outcome_v1::validate(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::owned_draws_v1::validate(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
     if let Some(EffectOp::ResolveMonarchTrigger { binding }) =
         pending.resolving_item.inline_effect.as_ref()
@@ -12985,6 +12995,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
     if result.is_err() || state.engine.halted.is_some() {
         state.coveted_jewel_draw_progress_v1 = None;
         state.paradoxical_outcome_draw_progress_v1 = None;
+        state.eternal_owned_draw_progress_v1 = None;
     }
     result
 }

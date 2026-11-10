@@ -85,6 +85,9 @@ fn draws(op: &EffectOp) -> bool {
         EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::VintageV1(
             VintageOpV1::CovetedJewelChangesHandsV1 | VintageOpV1::ParadoxicalOutcomeV1,
         ))) => true,
+        EffectOp::StandardV1(StandardOpV1::EternalV1(op)) => {
+            crate::eternal_cards_v1::owned_draws_v1::recognizes(op)
+        }
         _ => false,
     }
 }
@@ -434,6 +437,7 @@ pub(crate) fn finish_jace_or_hullbreacher(
             pending.frames.clear();
             abandon_coveted_jewel_draws(state, &pending.ctx);
             crate::eternal_vintage_v1::paradoxical_outcome_v1::abandon(state, &pending.ctx);
+            crate::eternal_cards_v1::owned_draws_v1::abandon(state, &pending.ctx);
         }
     } else {
         event::propose_and_commit(state, ProposedEvent::draw(player));

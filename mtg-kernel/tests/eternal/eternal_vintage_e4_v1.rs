@@ -1012,6 +1012,215 @@ fn restore_draw_answer(state: &GameState) -> GameState {
 }
 
 #[test]
+fn eternal_draw_spells_preserve_paid_cast_origins_and_replacements_both_seats() {
+    for drawer in [P0, P1] {
+        for name in ["Plunder the Trollshaws", "Twinned Vision"] {
+            let opponent = drawer.opponent();
+            let mut state = islands();
+            state.active_player = drawer;
+            state.priority_player = drawer;
+            put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+            let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+            let spell = put(&mut state, drawer, name, Zone::Hand);
+            let library = state.players[drawer.index()].library.clone();
+            pool(&mut state, drawer, &[ManaColor::U], 1);
+            cast(&mut state, spell, &[]);
+            let first = settle(&mut state).expect("one replacement choice for the paid hand cast");
+            assert_draw_replacement_prompt(&first, drawer, spell, thug);
+            act(&mut state, Action::FinishEffectSelection);
+            settled(&mut state);
+            assert_eq!(treasure_count(&state, opponent), 1);
+            assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
+
+            if name == "Twinned Vision" {
+                let discard = put(&mut state, drawer, "Island", Zone::Hand);
+                let kept = put(&mut state, drawer, "Lightning Bolt", Zone::Hand);
+                pool(&mut state, drawer, &[ManaColor::U, ManaColor::R], 1);
+                cast(&mut state, spell, &[]);
+                assert!(matches!(next(&mut state),
+                    Decision::Discard { ref choices, .. }
+                        if choices.contains(&discard) && choices.contains(&kept)));
+                act(&mut state, Action::Discard(vec![discard]));
+                assert_eq!(state.objects.get(discard).zone, Zone::Graveyard);
+            } else {
+                pool(&mut state, drawer, &[ManaColor::U], 3);
+                cast(&mut state, spell, &[]);
+            }
+            let first = settle(&mut state).expect("first draw of the paid flashback cast");
+            assert_draw_replacement_prompt(&first, drawer, spell, thug);
+            assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
+            act(&mut state, Action::FinishEffectSelection);
+            let mut declined = restore_draw_answer(&state);
+            let second = settle(&mut state).expect("second draw of the paid flashback cast");
+            assert_draw_replacement_prompt(&second, drawer, spell, thug);
+            assert_eq!(settle(&mut declined), Some(second));
+            assert_eq!(state.state_hash(), declined.state_hash());
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+            let mut dredged = restore_draw_answer(&state);
+            for branch in [&mut state, &mut dredged] {
+                settled(branch);
+                assert_eq!(branch.players[drawer.index()].library, library[4..]);
+                assert_eq!(branch.objects.get(thug).zone, Zone::Hand);
+                assert_eq!(branch.objects.get(spell).zone, Zone::Exile);
+                assert_eq!(treasure_count(branch, opponent), 2);
+            }
+            assert_eq!(state.state_hash(), dredged.state_hash());
+        }
+    }
+}
+
+#[test]
+fn paid_psychic_frog_combat_draw_offers_replacements_both_seats() {
+    for drawer in [P0, P1] {
+        let opponent = drawer.opponent();
+        let mut state = islands();
+        state.active_player = drawer;
+        state.priority_player = drawer;
+        let frog = put(&mut state, drawer, "Psychic Frog", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::U, ManaColor::B], 0);
+        cast(&mut state, frog, &[]);
+        settled(&mut state);
+        assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
+
+        let cast_turn = state.turn;
+        pass_until(&mut state, |s| {
+            s.active_player == drawer && s.turn != cast_turn && s.step == Step::DeclareAttackers
+        });
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+        let library = state.players[drawer.index()].library.clone();
+        act(&mut state, Action::DeclareAttackers(vec![frog]));
+        pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
+        act(&mut state, Action::DeclareBlockers(vec![]));
+        pass_until(&mut state, |s| {
+            s.engine.pending_effect.as_ref().is_some_and(|pending| pending.ctx.source == frog)
+        });
+        assert_eq!(state.players[opponent.index()].life, 19);
+        assert_draw_replacement_prompt(&next(&mut state), drawer, frog, thug);
+        let mut declined = state.clone();
+        act(&mut declined, Action::FinishEffectSelection);
+        settled(&mut declined);
+        assert_eq!(declined.players[drawer.index()].library, library);
+        assert_eq!(treasure_count(&declined, opponent), 1);
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+        let mut restored = restore_draw_answer(&state);
+        for branch in [&mut state, &mut restored] {
+            settled(branch);
+            assert_eq!(branch.players[drawer.index()].library, library[4..]);
+            assert_eq!(branch.objects.get(thug).zone, Zone::Hand);
+            assert_eq!(treasure_count(branch, opponent), 0);
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
+    }
+}
+
+#[test]
+fn paid_tamiyo_ultimate_keeps_its_starting_draw_count_and_tail_both_seats() {
+    for drawer in [P0, P1] {
+        let opponent = drawer.opponent();
+        let mut state = islands();
+        state.active_player = drawer;
+        state.priority_player = drawer;
+        let tamiyo = put(&mut state, drawer, "Tamiyo, Inquisitive Student", Zone::Hand);
+        let recall = put(&mut state, drawer, "Ancestral Recall", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::U, ManaColor::U], 0);
+        cast(&mut state, tamiyo, &[]);
+        settled(&mut state);
+        cast(&mut state, recall, &[Target::Player(drawer)]);
+        settled(&mut state);
+        assert_eq!(state.objects.get(tamiyo).v4.face_index, 1);
+        assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
+        mtg_kernel::planeswalker_v1::change_loyalty(&mut state, tamiyo, 5);
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+        let imp = put(&mut state, drawer, "Stinkweed Imp", Zone::Graveyard);
+        let library = state.players[drawer.index()].library.clone();
+        let total = library.len().div_ceil(2);
+        assert_eq!(total, 9);
+        activate(&mut state, tamiyo, 2, &[]);
+        let first = settle(&mut state).expect("first draw of the actual -7 activation");
+        assert!(matches!(first, Decision::ChooseEffectTargets { player, source, legal_targets, .. }
+            if player == drawer && source == tamiyo && legal_targets.contains(&Target::Object(thug))));
+        assert_eq!(state.objects.get(tamiyo).zone, Zone::Graveyard);
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+        let mut restored = restore_draw_answer(&state);
+        let second = settle(&mut state).expect("dredge leaves another replacement choice");
+        assert_eq!(settle(&mut restored), Some(second.clone()));
+        assert_eq!(state.state_hash(), restored.state_hash());
+        assert_draw_replacement_prompt(&second, drawer, tamiyo, imp);
+        assert_eq!(state.players[drawer.index()].library, library[4..]);
+
+        let mut forged = serde_json::to_value(&state).unwrap();
+        forged["eternal_owned_draw_progress_v1"]["total"] = serde_json::json!(total - 1);
+        let forged: GameState = serde_json::from_value(forged).unwrap();
+        assert_eq!(
+            mtg_kernel::effect::validate_pending_effect_choice(&forged).unwrap_err(),
+            "Eternal draw changed its original count",
+        );
+
+        let mut later = state.clone();
+        act(&mut later, Action::FinishEffectSelection);
+        assert!(settle(&mut later).is_some());
+        let mut skipped = state.clone();
+        skipped.engine.pending_effect = later.engine.pending_effect.clone();
+        let skipped: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&skipped).unwrap()).unwrap();
+        assert_eq!(
+            mtg_kernel::effect::validate_pending_effect_choice(&skipped).unwrap_err(),
+            "Eternal draw changed its progress or remaining effects",
+        );
+
+        for completed in 1..total {
+            assert_eq!(treasure_count(&state, opponent), completed - 1);
+            assert!(!state.eternal_v1.as_ref().is_some_and(|eternal| {
+                eternal.no_maximum_hand_size[drawer.index()]
+            }));
+            act(&mut state, Action::FinishEffectSelection);
+            if completed + 1 < total {
+                assert!(settle(&mut state).is_some());
+            }
+        }
+        settled(&mut state);
+        assert_eq!(treasure_count(&state, opponent), total - 1);
+        assert_eq!(state.players[drawer.index()].library, library[4..]);
+        assert!(state.eternal_v1.as_ref().unwrap().no_maximum_hand_size[drawer.index()]);
+        assert!(serde_json::to_value(&state).unwrap().get("eternal_owned_draw_progress_v1").is_none());
+    }
+}
+
+#[test]
+fn paid_plunder_offers_jace_or_hullbreacher_and_stops_on_win_both_seats() {
+    for drawer in [P0, P1] {
+        let opponent = drawer.opponent();
+        let mut state = game(&[]);
+        state.active_player = drawer;
+        state.priority_player = drawer;
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let jace = put(&mut state, drawer, "Jace, Wielder of Mysteries", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::U, ManaColor::U, ManaColor::U], 1);
+        cast(&mut state, jace, &[]);
+        settled(&mut state);
+        let plunder = put(&mut state, drawer, "Plunder the Trollshaws", Zone::Graveyard);
+        pool(&mut state, drawer, &[ManaColor::U], 3);
+        cast(&mut state, plunder, &[]);
+        let first = settle(&mut state).expect("Jace and Hullbreacher compete for the first draw");
+        assert_draw_replacement_prompt(&first, drawer, plunder, jace);
+        act(&mut state, Action::FinishEffectSelection);
+        let second = settle(&mut state).expect("the second attempted draw");
+        assert_draw_replacement_prompt(&second, drawer, plunder, jace);
+        assert_eq!(treasure_count(&state, opponent), 1);
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(jace)));
+        let mut restored = restore_draw_answer(&state);
+        for branch in [&mut state, &mut restored] {
+            assert!(matches!(next(branch), Decision::GameOver { winner: Some(player) } if player == drawer));
+            assert_eq!(treasure_count(branch, opponent), 1);
+            assert!(serde_json::to_value(&*branch).unwrap().get("eternal_owned_draw_progress_v1").is_none());
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
+    }
+}
+
+#[test]
 fn coveted_jewel_combat_draws_finish_before_transfer_both_seats() {
     use mtg_kernel::effect::{EffectTargetSelectionPurpose, PendingEffectChoice};
 

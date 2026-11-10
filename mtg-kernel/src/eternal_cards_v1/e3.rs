@@ -828,6 +828,14 @@ pub(crate) fn drive(
     path: Vec<u16>,
 ) -> Result<bool, String> {
     match op {
+        op if super::owned_draws_v1::recognizes(op) => {
+            super::owned_draws_v1::begin(state, continuation, op, &path)?;
+            Ok(false)
+        }
+        EternalOpV1::OwnedDrawCompletedV1 { ordinal } => {
+            super::owned_draws_v1::complete(state, continuation, *ordinal, &path)?;
+            Ok(false)
+        }
         EternalOpV1::MayImprintFromHandV1 => {
             let Some(contract) = continuation.ctx.ability_source_contract else {
                 return Err("imprint lost its source".to_string());
