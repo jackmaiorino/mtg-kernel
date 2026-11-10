@@ -48,7 +48,8 @@ retain their refusal.
 
 Use `--features eternal-fixtures --lib` for
 `graveyard_order_v1::tests::`, `full_text_v1::tests::`, and
-`premodern_ordered_public_v1::tests::`. The registered-card fixtures under
+`premodern_ordered_public_v1::`, including the nested `feb::tests::` terminal
+and Human-owner fixtures. CI uses the same complete module filter. The registered-card fixtures under
 `full_text_v1::tests::registered` exercise paid casts and abilities, both-seat
 order and native menu binding, and restored state. The four native sample
 producers are the mixed entry batch, Palinchron-text cast, donated Wall of
