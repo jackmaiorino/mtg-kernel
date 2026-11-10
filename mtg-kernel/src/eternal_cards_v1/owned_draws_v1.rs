@@ -335,7 +335,9 @@ impl JournalV1 {
             Self::Started(started) | Self::StartedWithRiddlerV1 { started, .. } => {
                 Some(started.item)
             }
-            Self::CurieDrawCount { item, .. } | Self::MinscDamageCompleted { item, .. } => Some(item),
+            Self::CurieDrawCount { item, .. } | Self::MinscDamageCompleted { item, .. } => {
+                Some(item)
+            }
             _ => None,
         }
     }

@@ -1296,11 +1296,20 @@ fn curie_draw_uses_departure_base_power_and_replacement_attempts_both_seats() {
         // The genuine count capture remains after removing the active draw
         // start. Restoring the original root cannot start Curie's draws again.
         let mut rewind = serde_json::to_value(&state).unwrap();
-        rewind.as_object_mut().unwrap().remove("eternal_owned_draw_progress_v1").unwrap();
+        rewind
+            .as_object_mut()
+            .unwrap()
+            .remove("eternal_owned_draw_progress_v1")
+            .unwrap();
         let history = rewind["engine"]["event_history"].as_array_mut().unwrap();
-        let started_at = history.iter().position(|event| {
-            event["EternalOwnedDrawV1"]["journal"].get("Started").is_some()
-        }).unwrap();
+        let started_at = history
+            .iter()
+            .position(|event| {
+                event["EternalOwnedDrawV1"]["journal"]
+                    .get("Started")
+                    .is_some()
+            })
+            .unwrap();
         history.remove(started_at);
         let pending = &mut rewind["engine"]["pending_effect"];
         let root = pending["resolving_item"]["inline_effect"].clone();
