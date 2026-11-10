@@ -95,7 +95,9 @@ pub(super) fn paid_matches(
         source: paid_source,
         item: paid_item,
         tap_at,
-    }) = u32::try_from(paid_at).ok().and_then(|at| journal(state, at))
+    }) = u32::try_from(paid_at)
+        .ok()
+        .and_then(|at| journal(state, at))
     else {
         return false;
     };
