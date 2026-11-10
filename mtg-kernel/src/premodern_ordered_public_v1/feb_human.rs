@@ -162,9 +162,9 @@ struct CabalTherapyMenu {
 }
 
 fn cabal_therapy_name(option: &EffectOp) -> Option<&'static str> {
-    let EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E7aV1(
-        E7aOpV1::TherapyV1 { named },
-    ))) = option
+    let EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E7aV1(E7aOpV1::TherapyV1 {
+        named,
+    }))) = option
     else {
         return None;
     };
@@ -229,7 +229,9 @@ fn cabal_therapy_menu(state: &GameState, viewer: PlayerId) -> Option<CabalTherap
                     .chars()
                     .next()?
                     .to_ascii_uppercase();
-                Some(format!("Choose names starting with {letter} for Cabal Therapy"))
+                Some(format!(
+                    "Choose names starting with {letter} for Cabal Therapy"
+                ))
             } else {
                 let name = cabal_therapy_name(option)?;
                 Some(format!("Name {name} for Cabal Therapy"))
@@ -411,25 +413,27 @@ impl FebSessionV1 {
                     .zip(action_values)
                     .enumerate()
                     .map(|(native_ordinal, (row, action))| {
-                        Ok(match label(
-                            state,
-                            row,
-                            viewer,
-                            &view.observation.ordered.graveyards,
-                            cabal_therapy.as_ref(),
-                        )? {
-                            Some(label) => FebHumanActionV1::Supported {
-                                native_ordinal,
-                                label,
+                        Ok(
+                            match label(
+                                state,
+                                row,
+                                viewer,
+                                &view.observation.ordered.graveyards,
+                                cabal_therapy.as_ref(),
+                            )? {
+                                Some(label) => FebHumanActionV1::Supported {
+                                    native_ordinal,
+                                    label,
+                                },
+                                None => FebHumanActionV1::Unsupported {
+                                    native_ordinal,
+                                    action_kind: action["action"]["action_kind"]
+                                        .as_str()
+                                        .unwrap_or("unknown")
+                                        .into(),
+                                },
                             },
-                            None => FebHumanActionV1::Unsupported {
-                                native_ordinal,
-                                action_kind: action["action"]["action_kind"]
-                                    .as_str()
-                                    .unwrap_or("unknown")
-                                    .into(),
-                            },
-                        })
+                        )
                     })
                     .collect::<Result<Vec<_>, String>>()?
             }

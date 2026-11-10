@@ -352,8 +352,10 @@ fn frozen_feb_human_names_and_resolves_paid_cabal_therapy_both_seats() {
             assert_eq!(human.actions.len(), numeric.actions.len());
             assert!(human.actions.len() > 1);
             for (ordinal, row) in human.actions.iter().enumerate() {
-                assert!(matches!(row, FebHumanActionV1::Supported { native_ordinal, .. }
-                    if *native_ordinal == ordinal));
+                assert!(
+                    matches!(row, FebHumanActionV1::Supported { native_ordinal, .. }
+                    if *native_ordinal == ordinal)
+                );
             }
             for rendered in [serde_json::to_string(&human).unwrap(), format!("{human:?}")] {
                 assert!(!rendered.contains("arena_id"));
@@ -393,16 +395,24 @@ fn frozen_feb_human_names_and_resolves_paid_cabal_therapy_both_seats() {
             choose_label(&mut owner, seat, expected);
         }
 
-        for _ in 1..matching.len() {
+        let order = crate::graveyard_order_v1::public_boundary(&owner.inner.game, opponent)
+            .unwrap()
+            .unwrap()
+            .choice
+            .unwrap();
+        assert_eq!(order.native_candidates.len(), matching.len());
+        let expected_order = [1, 2, 0].map(|index| ObjectId(order.native_candidates[index].arena_id));
+        // Choose the second available card twice, leaving the first card forced last.
+        for _ in 0..2 {
             assert_eq!(acting(&owner), other_viewer);
-            choose_label(&mut owner, other_viewer, "Place Wall of Roots next");
+            let (_, token) = issued(&owner, other_viewer);
+            owner.step_human(&token.unwrap(), 1).unwrap();
         }
         let state = &owner.inner.game;
         assert!(state.stack.is_empty());
         assert_eq!(state.objects.get(therapy).zone, Zone::Graveyard);
         let target = &state.players[opponent.index()];
-        assert_eq!(target.graveyard.len(), matching.len());
-        assert!(matching.iter().all(|card| target.graveyard.contains(card)));
+        assert_eq!(target.graveyard, expected_order);
         for card in matching {
             assert!(state.engine.event_history.iter().any(|event| matches!(
                 event,
