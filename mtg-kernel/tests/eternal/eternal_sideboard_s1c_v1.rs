@@ -1015,6 +1015,118 @@ fn paid_gush_applies_riddler_once_before_individual_draw_replacements_both_seats
 }
 
 #[test]
+fn paid_gush_with_riddler_resumes_the_original_fixed_count_both_seats() {
+    for drawer in [P0, P1] {
+        let opponent = drawer.opponent();
+        let mut state = plains();
+        paid_riddler(&mut state, drawer, true, 1);
+        let treasures_before = named(&state, opponent, "Treasure Token").len();
+        let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+        let gush = put(&mut state, drawer, "Gush", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::U], 4);
+        cast(&mut state, gush, &[]);
+        let first = settle(&mut state).expect("Dredge on the first of three attempts");
+        assert!(matches!(&first, Decision::ChooseEffectTargets {
+            player, source, legal_targets, can_finish: true, ..
+        } if *player == drawer && *source == gush
+            && legal_targets.as_slice() == [Target::Object(thug)]));
+        assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
+        let first_snapshot = serde_json::to_value(&state).unwrap();
+
+        act(&mut state, Action::FinishEffectSelection);
+        let second = settle(&mut state).expect("Dredge on the second of three attempts");
+        assert_eq!(
+            named(&state, opponent, "Treasure Token").len(),
+            treasures_before + 1
+        );
+        let second_snapshot = serde_json::to_value(&state).unwrap();
+        let mut skipped = first_snapshot.clone();
+        skipped["eternal_owned_draw_progress_v1"] =
+            second_snapshot["eternal_owned_draw_progress_v1"].clone();
+        skipped["engine"]["pending_effect"] = second_snapshot["engine"]["pending_effect"].clone();
+        let skipped: GameState = serde_json::from_value(skipped).unwrap();
+        assert_eq!(
+            mtg_kernel::effect::validate_pending_effect_choice(&skipped).unwrap_err(),
+            "Eternal draw changed its native completed attempts",
+        );
+
+        for corrupt_start in [false, true] {
+            let mut removed = first_snapshot.clone();
+            let progress = removed
+                .as_object_mut()
+                .unwrap()
+                .remove("eternal_owned_draw_progress_v1")
+                .unwrap();
+            if corrupt_start {
+                let started_at = progress["started_at"].as_u64().unwrap() as usize;
+                let started = &mut removed["engine"]["event_history"][started_at]
+                    ["EternalOwnedDrawV1"]["journal"]["StartedWithRiddlerV1"];
+                assert_eq!(started["extra"], 1);
+                started["extra"] = serde_json::json!(0);
+            }
+            let removed: GameState = serde_json::from_value(removed).unwrap();
+            assert_eq!(
+                mtg_kernel::effect::validate_pending_effect_choice(&removed).unwrap_err(),
+                "Eternal draw already started its original instruction",
+            );
+        }
+
+        let mut restored: GameState = serde_json::from_value(second_snapshot).unwrap();
+        assert_eq!(next(&mut restored), second);
+        act(&mut state, Action::FinishEffectSelection);
+        assert!(settle(&mut state).is_some(), "Dredge on the third attempt");
+        act(&mut state, Action::FinishEffectSelection);
+        settled(&mut state);
+        assert_eq!(
+            named(&state, opponent, "Treasure Token").len(),
+            treasures_before + 3
+        );
+        assert_eq!(restored.players[drawer.index()].library.len(), 20);
+
+        act(
+            &mut restored,
+            Action::ChooseEffectTarget(Target::Object(thug)),
+        );
+        let mut answered: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
+        for branch in [&mut restored, &mut answered] {
+            settled(branch);
+            assert_eq!(zone(branch, gush), Zone::Graveyard);
+            assert_eq!(zone(branch, thug), Zone::Hand);
+            assert_eq!(branch.players[drawer.index()].library.len(), 16);
+            assert_eq!(
+                named(branch, opponent, "Treasure Token").len(),
+                treasures_before + 2
+            );
+        }
+        assert_eq!(restored.state_hash(), answered.state_hash());
+    }
+}
+
+#[test]
+fn paid_riddler_entry_keeps_its_second_attempt_after_dredge_both_seats() {
+    for drawer in [P0, P1] {
+        let mut state = plains();
+        state.active_player = drawer;
+        state.priority_player = drawer;
+        let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+        let riddler = put(&mut state, drawer, "Quantum Riddler", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::U], 1);
+        cast(&mut state, riddler, &[]);
+        let prompt = settle(&mut state).expect("Riddler's first attempt can dredge");
+        assert!(matches!(prompt, Decision::ChooseEffectTargets {
+            player, source, legal_targets, can_finish: true, ..
+        } if player == drawer && source == riddler && legal_targets == [Target::Object(thug)]));
+        assert_eq!(zone(&state, riddler), Zone::Battlefield);
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+        settled(&mut state);
+        assert_eq!(state.players[drawer.index()].hand.len(), 2);
+        assert_eq!(state.players[drawer.index()].library.len(), 15);
+        assert_eq!(zone(&state, thug), Zone::Hand);
+    }
+}
+
+#[test]
 fn paid_flame_riddler_freezes_three_individual_attempts_across_restore_both_seats() {
     use mtg_kernel::event::CommittedEvent;
 

@@ -7901,7 +7901,7 @@ fn validate_counter_target_unless_pays_frame(
     Ok(())
 }
 
-fn validated_definition_owned_root_effect(
+pub(crate) fn validated_definition_owned_root_effect(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Result<Box<EffectOp>, String> {
@@ -17177,6 +17177,15 @@ fn drive_resumable_inner_with_native_row_v1(
                         player,
                     )) =>
             {
+                if crate::eternal_cards_v1::owned_draws_v1::fixed::begin(
+                    state,
+                    &mut continuation,
+                    player,
+                    count,
+                    &path,
+                )? {
+                    continue;
+                }
                 if crate::eternal_vintage_e7b_v1::dredge::drive_draws(
                     state,
                     &mut continuation,

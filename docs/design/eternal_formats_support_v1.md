@@ -581,12 +581,13 @@ New, each built once in the first wave that needs it:
   draws from Bonder's Ornament, the Premodern draw leaves, Standstill, Arcane
   Denial and Accumulated Knowledge still need their Jace/Hullbreacher origins.
   Quantum Riddler adjusts the whole count once for uninterrupted fixed and
-  dynamic draw instructions and for the named draws using the shared native
-  start and completion receipts. Each attempt can be replaced individually.
-  Generic suspended draw tails, the specialized Coveted Jewel and Paradoxical
-  Outcome progress owners, and suspended turn-based draws still need a bound
-  Riddler count. Native qualification of the Flame, Curie and Riddler repairs
-  is pending.
+  dynamic draw instructions. Named draws and top-level fixed draw instructions
+  from physical spells or printed triggers retain the adjusted count across
+  replacement choices using native start and completion receipts.
+  Nested or dynamic suspended draws, copies, the Coveted Jewel and Paradoxical
+  Outcome owners, and turn-based draws with replacement choices still need
+  count ownership. Native qualification of the Flame, Curie and Riddler
+  repairs is pending.
 - S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
   S1c, S1a, S1b and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload

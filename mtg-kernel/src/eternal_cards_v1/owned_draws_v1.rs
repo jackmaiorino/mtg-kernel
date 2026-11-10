@@ -22,6 +22,8 @@ use crate::state::{
 };
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod fixed;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum InstructionV1 {
     Frog,
@@ -46,6 +48,11 @@ enum InstructionV1 {
     },
     Curie {
         combat_at: usize,
+    },
+    FixedRoot {
+        player: PlayerRef,
+        drawer: PlayerId,
+        count: u32,
     },
 }
 
@@ -118,6 +125,7 @@ impl InstructionV1 {
                 super::e3::opponent_cast_blue_or_black_spell_this_turn(state, ctx.controller),
             ),
             Self::DragonEngine => 3,
+            Self::FixedRoot { count, .. } => count,
             Self::Curie { combat_at } => {
                 eternal_legacy_e7a_v1::curie::draw_count(state, ctx, combat_at).unwrap_or(0)
             }
@@ -134,18 +142,19 @@ impl InstructionV1 {
     fn draw_player(self) -> PlayerRef {
         match self {
             Self::FlameOfAnor { draw, .. } => PlayerRef::Target(draw),
+            Self::FixedRoot { player, .. } => player,
             _ => PlayerRef::Controller,
         }
     }
 
     fn drawer(self, ctx: &ExecCtx) -> Option<PlayerId> {
-        if let Self::FlameOfAnor { draw, .. } = self {
-            let Target::Player(player) = *ctx.targets.get(usize::from(draw))? else {
-                return None;
-            };
-            Some(player)
-        } else {
-            Some(ctx.controller)
+        match self {
+            Self::FlameOfAnor { draw, .. } => match ctx.targets.get(usize::from(draw))? {
+                Target::Player(player) => Some(*player),
+                _ => None,
+            },
+            Self::FixedRoot { drawer, .. } => Some(drawer),
+            _ => Some(ctx.controller),
         }
     }
 
@@ -291,9 +300,23 @@ pub enum JournalV1 {
 impl JournalV1 {
     fn start(self) -> Option<(StartedV1, u32)> {
         match self {
+            Self::Started(started)
+                if matches!(started.instruction, InstructionV1::FixedRoot { .. }) =>
+            {
+                None
+            }
             Self::Started(started) => Some((started, started.total)),
             Self::StartedWithRiddlerV1 { started, extra } if started.total != 0 && extra != 0 => {
                 Some((started, started.total.checked_add(extra)?))
+            }
+            _ => None,
+        }
+    }
+
+    fn started_item(self) -> Option<StackItemId> {
+        match self {
+            Self::Started(started) | Self::StartedWithRiddlerV1 { started, .. } => {
+                Some(started.item)
             }
             _ => None,
         }
@@ -317,7 +340,7 @@ fn has_started(state: &GameState, item: StackItemId) -> bool {
         .iter()
         .any(|event| {
             matches!(event, CommittedEvent::EternalOwnedDrawV1 { journal }
-            if journal.start().is_some_and(|(started, _)| started.item == item))
+            if journal.started_item() == Some(item))
         })
 }
 
@@ -512,6 +535,22 @@ pub(crate) fn begin(
             },
         );
     }
+    let drawer = instruction
+        .drawer(&pending.ctx)
+        .ok_or("Eternal draw lost its original drawer")?;
+    let extra = crate::event::draw_instruction_extra(state, drawer, total);
+    start_instruction(state, pending, instruction, source, total, extra);
+    Ok(())
+}
+
+fn start_instruction(
+    state: &mut GameState,
+    pending: &mut EffectContinuation,
+    instruction: InstructionV1,
+    source: SourceV1,
+    total: u32,
+    extra: u32,
+) {
     let started_at = state.engine.event_history.len();
     let started = StartedV1 {
         item: pending.resolving_item.v4.stack_item_id,
@@ -522,10 +561,6 @@ pub(crate) fn begin(
         initial_library_len: (instruction == InstructionV1::Tamiyo)
             .then_some(state.players[pending.ctx.controller.index()].library.len()),
     };
-    let drawer = instruction
-        .drawer(&pending.ctx)
-        .ok_or("Eternal draw lost its original drawer")?;
-    let extra = crate::event::draw_instruction_extra(state, drawer, total);
     let journal = if extra == 0 {
         JournalV1::Started(started)
     } else {
@@ -537,7 +572,6 @@ pub(crate) fn begin(
         completed: 0,
     });
     stage(pending, instruction, 0);
-    Ok(())
 }
 
 fn progress(
@@ -551,7 +585,12 @@ fn progress(
         return None;
     };
     let (started, attempts) = journal.start()?;
-    (Some((started.instruction, started.source)) == selected(state, pending)
+    let actual = if matches!(started.instruction, InstructionV1::FixedRoot { .. }) {
+        fixed::selected(state, pending)
+    } else {
+        selected(state, pending)
+    };
+    (Some((started.instruction, started.source)) == actual
         && started.item == pending.resolving_item.v4.stack_item_id
         && started.controller == pending.ctx.controller
         && progress.completed < attempts)
@@ -800,25 +839,27 @@ fn dragon_before_start(pending: &EffectContinuation) -> bool {
 }
 
 pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Result<(), String> {
-    let Some((instruction, _)) = selected(state, pending) else {
-        return if state.eternal_owned_draw_progress_v1.is_none() {
-            Ok(())
-        } else {
-            Err("Eternal draw progress lost its original source".into())
+    if state.eternal_owned_draw_progress_v1.is_none() {
+        let named = selected(state, pending);
+        if (named.is_some() || fixed::selected(state, pending).is_some())
+            && has_started(state, pending.resolving_item.v4.stack_item_id)
+        {
+            return Err("Eternal draw already started its original instruction".into());
+        }
+        let Some((instruction, _)) = named else {
+            return Ok(());
         };
-    };
-    let before_start = if instruction == InstructionV1::DragonEngine {
-        dragon_before_start(pending)
-    } else {
-        matches!((&pending.choice, pending.frames.as_slice()),
-            (None, [EffectFrame::Program { op, path }]) if InstructionV1::from_program(op) == Some(instruction) && path.is_empty())
-    };
-    if state.eternal_owned_draw_progress_v1.is_none() && before_start {
-        return if has_started(state, pending.resolving_item.v4.stack_item_id) {
-            Err("Eternal draw already started its original instruction".into())
+        let before_start = if instruction == InstructionV1::DragonEngine {
+            dragon_before_start(pending)
         } else {
-            Ok(())
+            matches!((&pending.choice, pending.frames.as_slice()),
+                (None, [EffectFrame::Program { op, path }]) if InstructionV1::from_program(op) == Some(instruction) && path.is_empty())
         };
+        if before_start {
+            return Ok(());
+        }
+    } else if selected(state, pending).is_none() && fixed::selected(state, pending).is_none() {
+        return Err("Eternal draw progress lost its original source".into());
     }
     let (progress, started, attempts) =
         progress(state, pending).ok_or("Eternal draw lost its native start")?;
