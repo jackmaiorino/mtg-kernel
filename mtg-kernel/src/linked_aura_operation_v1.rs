@@ -3725,9 +3725,6 @@ pub(crate) fn tamper_drake_saved_output_runtime_for_test(state: &mut GameState) 
         attachment_input_v48: None,
         original_world_v50: None,
         active_fake_aura_entry_v50: None,
-        mage_start: None,
-        mage_plans: Vec::new(),
-        mage_names_v2: true,
         metamorph_mage_copies: Vec::new(),
         show_and_tell_entries: Vec::new(),
     };
