@@ -1,8 +1,8 @@
 # Volrath's Shapeshifter and ordered graveyards
 
 This work supports the Full English Breakfast mainboard in #460. The
-Shapeshifter remains absent from the registry pending native qualification of
-the foundation. The mainboard still fails the playable catalog check.
+Shapeshifter is appended to the Eternal registry as Partial for scoped
+native gameplay. The mainboard still fails the playable catalog check.
 
 Full-text changes apply in layer 3 and copies use layer 1. The battlefield
 object retains its physical definition. The public top card in its current
@@ -41,16 +41,18 @@ retain their refusal.
 
 Use `--features eternal-fixtures --lib` for
 `graveyard_order_v1::tests::`, `full_text_v1::tests::`, and
-`premodern_ordered_public_v1::tests::`. Source fixtures exercise paid abilities
-on an ordinary public host, both-seat order and hidden-world pairs, native
-menu binding, and restored/tampered order state. Formatting and diff checks
-do not establish native behavior. The new event kinds require genuine sample
-harvest before the every-kind event-history checks can qualify.
+`premodern_ordered_public_v1::tests::`. The registered-card fixtures under
+`full_text_v1::tests::registered` exercise paid casts and abilities, both-seat
+order and native menu binding, and restored state. The four native sample
+producers are the mixed entry batch, Palinchron-text cast, donated Wall of
+Roots mana activation, and Dack Fayden's paid control transfer. The mixed
+entry fixture drives a native batch with a real owner order and an actual
+battlefield entry. Formatting and diff checks do not establish native
+behavior. The new event kinds require genuine sample harvest before the
+every-kind event-history checks can qualify.
 
-After foundation qualification, the Partial registration needs real native
-tests for no donor, another Shapeshifter on top, unsupported public donor
-text, and a paid donated activation on the registered physical card. Qualify
-ordinary copy, activation and frozen observation compatibility on the exact
-delivery head. Mainboard playability still requires actual owning gameplay
-and catalog evidence. This work grants no hidden-world search or research
-admission.
+The fixtures also check no donor, another Shapeshifter on top, unsupported
+public donor text, the printed discard cost, and legacy observation refusal.
+Ordinary copy and activation compatibility need qualification on the exact
+delivery head. Mainboard playability still requires owning gameplay and
+catalog evidence.

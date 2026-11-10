@@ -4,6 +4,9 @@ use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{FaceDownV1, GameObject, ObjectStateV4};
 
+#[path = "registered.rs"]
+mod registered;
+
 fn id(name: &str) -> u16 {
     card_id_by_name(name).unwrap_or_else(|| panic!("{name}"))
 }
@@ -46,8 +49,7 @@ fn put(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> Objec
     object
 }
 
-// The card remains unregistered. These tests exercise the layer primitive
-// on an ordinary host; they do not claim Volrath can be cast or played.
+// These lower-level tests exercise the layer primitive on an ordinary host.
 fn host(state: &mut GameState) -> AbilitySourceContractV4 {
     let object = put(state, PlayerId::P0, "Tireless Tribe", Zone::Battlefield);
     AbilitySourceContractV4::capture(state, object)
@@ -613,9 +615,11 @@ fn full_text_rejects_graveyard_only_ability_and_out_of_range_selectors() {
 }
 
 #[test]
-fn full_text_source_preparation_does_not_admit_volrath_or_the_breakfast_deck() {
-    assert!(card_id_by_name("Volrath's Shapeshifter")
-        .is_none_or(|id| CARD_DEFS[usize::from(id)].capability != CardCapability::Full));
+fn full_text_registration_is_partial() {
+    assert_eq!(
+        CARD_DEFS[usize::from(id(VOLRATH))].capability,
+        CardCapability::Partial
+    );
 }
 
 // A resolution fixture starts after payment. It exercises the actual stack

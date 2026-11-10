@@ -280,14 +280,19 @@ fn eternal_registry_follows_the_pauper_and_standard_ids() {
     let standard = registry_names("data/standard/magezero_v1/cards_v1.json");
     let eternal = registry_names("data/eternal_v1/cards_v1.json");
     assert_eq!(standard.len(), STANDARD_DEFINITIONS);
+    let partial = "Volrath's Shapeshifter";
+    assert_eq!(eternal.last().map(String::as_str), Some(partial));
     let expected: Vec<&String> = pauper.iter().chain(&standard).chain(&eternal).collect();
     assert_eq!(CARD_DEFS.len(), expected.len());
     for (id, name) in expected.into_iter().enumerate() {
         assert_eq!(CARD_DEFS[id].name, name, "id {id}");
+        let capability = if name == partial {
+            CardCapability::Partial
+        } else {
+            CardCapability::Full
+        };
+        assert_eq!(CARD_DEFS[id].capability, capability, "id {id} ({name})");
     }
-    assert!(CARD_DEFS
-        .iter()
-        .all(|def| def.capability == CardCapability::Full));
     println!("eternal catalog hash {KERNEL_CARDDB_HASH:#018x}");
 }
 
