@@ -1199,11 +1199,13 @@ fn curie_draw_uses_departure_base_power_and_replacement_attempts_both_seats() {
 
         pool(&mut state, actor, &[ManaColor::U], 1);
         activate(&mut state, curie, 0, &[]);
+        // The only controlled legal material is selected and exiled by the
+        // native cost owner without asking for a redundant choice.
         assert!(
-            matches!(settle(&mut state), Some(Decision::ChooseCostTargets {
-            player, candidates, .. }) if player == actor && candidates.contains(&donor))
+            matches!(next(&mut state), Decision::CastSpellOrPass {
+            player, .. } if player == actor)
         );
-        act(&mut state, Action::ChooseCostTarget(donor));
+        assert_eq!(zone(&state, donor), Zone::Exile);
         pass_until(&mut state, |state| {
             state.stack.len() == 1
                 && state.objects.get(curie).card_def == id("Phyrexian Dreadnought")
