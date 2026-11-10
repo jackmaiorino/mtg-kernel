@@ -96,6 +96,7 @@ pub enum FullTextProgramV1 {
     KarmicGuideReturnCreature,
     KarmicGuideEcho,
     DevourerSacrifice,
+    RavenousRatsDiscard,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -116,6 +117,8 @@ pub enum DonatedActivationV1 {
     PsychatogDiscardPump,
     /// Exile two graveyard cards to give the host +1/+1 this turn.
     PsychatogExilePump,
+    /// Sacrifice the physical host to deal one damage to any target.
+    MoggFanaticSacrificeForDamage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

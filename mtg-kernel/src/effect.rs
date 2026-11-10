@@ -20506,6 +20506,25 @@ fn execute_with_native_row_v1(
             }
             let target = ctx.resolve_target(*target);
             let mut proposal = event::damage_from_exec_ctx_v1(ctx, target, *amount);
+            match crate::fixed_source_damage_v3::donated_fanatic_damage(state, ctx, op) {
+                Ok(Some(id)) if native_proof.is_some_and(|proof| {
+                    proof.ctx == ctx
+                        && proof.owner.item.v4.stack_item_id == id
+                        && crate::fixed_source_damage_v3::donated_fanatic(&proof.owner.item)
+                }) => {
+                    if let event::ProposedEvent::Damage(damage) = &mut proposal {
+                        damage.historical_source = Some(id);
+                    }
+                }
+                Ok(None) => {}
+                Ok(Some(_)) | Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            }
             if let Some(origin) = ctx.niv_damage_origin_v1 {
                 if !crate::event::niv_damage_origin_matches_context_v1(
                     origin,
@@ -27523,7 +27542,9 @@ pub(crate) mod vivien_reid_v1;
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
     if ctx.stack_item_id.is_some_and(|id| {
         state.stack.iter().any(|item| {
-            item.v4.stack_item_id == id && crate::full_text_v1::is_donated_trigger(item)
+            item.v4.stack_item_id == id
+                && (crate::full_text_v1::is_donated_trigger(item)
+                    || crate::fixed_source_damage_v3::donated_fanatic(item))
         })
     }) {
         return true;

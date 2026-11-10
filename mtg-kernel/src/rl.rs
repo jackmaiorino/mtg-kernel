@@ -2710,7 +2710,13 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         crate::effect::temporary_control_v1::refuse_legacy_observation(state)
             .map_err(RlContractError)?;
     }
-    if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(state) {
+    let ordered_full_text = text_mode == ObservationTextModeV2::PremodernOrderedV1Artifact;
+    if ordered_full_text {
+        crate::fixed_source_damage_v3::validate_state(state).map_err(RlContractError)?;
+    }
+    if !accept_crystal
+        && crate::effect::crystal_prevention_v1::requires_successor_with_full_text(state, ordered_full_text)
+    {
         return Err(RlContractError(
             "Crystal requires its selected public/Human successor".into(),
         ));
@@ -2758,7 +2764,6 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             acting_player,
             (accept_cant_block, accept_gourmand),
             accept_temporary_control,
-            accept_crystal,
         )?,
         object_relations: object_relations_public_v4(state, acting_player)?,
         exile_play_permissions: exile_play_permissions_public_v2(state)?,
@@ -11137,14 +11142,8 @@ fn continuous_effects_common_v2(
     acting_player: PlayerId,
     accept_cant_block: (bool, bool),
     accept_temporary_control: bool,
-    accept_crystal: bool,
 ) -> Result<Vec<ContinuousEffectPublicV2>> {
     let (accept_cant_block, accept_gourmand) = accept_cant_block;
-    if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(state) {
-        return Err(RlContractError(
-            "player hexproof and controlled-creature noncombat prevention require a public successor".into(),
-        ));
-    }
     if accept_temporary_control {
         crate::effect::temporary_control_v1::authority::validate(state).map_err(RlContractError)?;
     } else {

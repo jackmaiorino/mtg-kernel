@@ -1296,9 +1296,17 @@ fn supported(op: &EffectOp) -> bool {
     }
 }
 pub(crate) fn requires_successor(state: &GameState) -> bool {
+    requires_successor_with_full_text(state, false)
+}
+
+pub(crate) fn requires_successor_with_full_text(state: &GameState, ordered_full_text: bool) -> bool {
     crate::crystal_barricade_v1::active(state)
         || crate::equipment_damage_source_v4::requires_successor(state)
-        || crate::fixed_source_damage_v3::requires_successor(state)
+        || if ordered_full_text {
+            crate::fixed_source_damage_v3::requires_other_successor(state)
+        } else {
+            crate::fixed_source_damage_v3::requires_successor(state)
+        }
         || boundaries(state).next().is_some()
         || state
             .engine
@@ -1354,7 +1362,7 @@ pub(crate) fn acquire_owner(
         || excess_root
         || mixed_environment(state)
         || crate::twinflame_tyrant_v1::has_active_source(state)
-        || crate::fixed_source_damage_v3::tracked(state, item)
+        || crate::fixed_source_damage_v3::requires_crystal_execution(state, item)
         || crate::equipment_damage_source_v4::tracked(state, item)
         || (crate::gorehorn_damage_v1::selected(item)
             && crate::crystal_barricade_v1::active(state))

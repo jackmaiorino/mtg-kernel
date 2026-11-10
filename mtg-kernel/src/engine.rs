@@ -29078,7 +29078,28 @@ fn finalize_activation(state: &mut GameState) {
             _ => false,
         }
     } else if let Some(owner) = fixed_payment_owner.as_ref() {
-        if !pay_cost_components_with_x(
+        if !owner.requires_tap() {
+            // The donated cost is a single sacrifice. Publish its departure
+            // only with the successful native cost transaction.
+            let mut transaction = state.clone();
+            match crate::fixed_source_damage_v3::capture_departure(&mut transaction, owner) {
+                Ok(index)
+                    if pay_cost_components_with_x(
+                        &mut transaction,
+                        pending.controller,
+                        pending.source,
+                        ability.cost,
+                        &object_cost_ids,
+                        x_value,
+                    ) && transaction.engine.halted.is_none() =>
+                {
+                    frozen.fixed_departure = Some(index);
+                    *state = transaction;
+                    true
+                }
+                _ => false,
+            }
+        } else if !pay_cost_components_with_x(
             state,
             pending.controller,
             pending.source,
@@ -29088,7 +29109,7 @@ fn finalize_activation(state: &mut GameState) {
         ) {
             false
         } else {
-            match crate::fixed_source_damage_v3::capture_after_tap(state, owner) {
+            match crate::fixed_source_damage_v3::capture_departure(state, owner) {
                 Ok(index) => {
                     frozen.fixed_departure = Some(index);
                     pay_cost_components_with_x(
