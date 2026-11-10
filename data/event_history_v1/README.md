@@ -179,3 +179,24 @@ the integration binary SHA-256 is
 The full 28-case run had 24 passes and four fixture failures; its evidence is
 retained. This passing producer does not imply that the whole batch or the
 event-history consumers passed. Consumer checks remain pending.
+
+## Appended Mage and opening samples (November 10, 2026)
+
+Rows 317 and 318 append the first native `MeddlingMageEntryV1` and
+`EternalOpeningV1` events from source
+`db7764a1caf15b63083ad2ef25d6384024ffd524`. Their producers were
+`eternal_sideboard_s1b_v1::meddling_mage_names_a_card_that_then_cannot_be_cast`
+and `eternal_opening_v1::native_leyline_and_chancellor_order_restore_and_first_spell_both_seats`.
+Both passed in the guarded Rust 1.94.1/MSVC integration batch. The original
+316-event prefix is unchanged; these rows are the actual emitted payloads.
+
+The original payload SHA-256 values are
+`0f3c4d3d80341b2836e9e43f0bc2fe70288fedd873adfbd8796f72fc00578d77`
+and `3b25b7a9f3e9f02dbbd3c2a662944c355c2d5f766e3bc935b6f05d8269154e7e`.
+They remain under
+`D:/codex-mixed21-52f25-20261108/verify-limited-fullpool-s1-db77/event-samples/`
+in `mage-producer/MeddlingMageEntryV1.json` and
+`opening-producer/EternalOpeningV1.json`. The manifest SHA-256 is
+`2443309bc6f5430868ffccc7fc1dc8528d215d8ec0aef812709e7b580781c11e`.
+The batch had 49 passes and four failures. Passing producers do not establish
+the still-pending every-kind consumer checks or complete card admission.
