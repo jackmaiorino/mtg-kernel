@@ -587,11 +587,20 @@ fn paid_portent_parent_cannot_skip_look_shuffle_or_replay_completed_cast() {
         state.active_player = actor;
         state.priority_player = actor;
         portent(&mut state, actor);
+        let mut borrowed_live = state.clone();
         assert!(matches!(
             settle(&mut state),
             Some(Decision::ChooseEffectTargets { .. })
         ));
         let original = state.engine.pending_effect.clone().unwrap();
+        assert!(effect::begin_resumable_resolution(
+            &mtg_kernel::eternal_premodern_p1a_v1::portent(),
+            &original.ctx,
+            original.resolving_item.clone(),
+            &mut borrowed_live,
+        ).is_err());
+        assert_eq!(receipt_count(&borrowed_live, "Look"), 0);
+
         for mutation in 0..3 {
             let mut forged = state.clone();
             let pending = forged.engine.pending_effect.as_mut().unwrap();
