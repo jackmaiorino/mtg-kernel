@@ -2142,9 +2142,10 @@ fn serras_emissary_dungeon_choice_filters_native_room_targets_both_seats() {
     use mtg_kernel::state::{UndercityRoomV1, UNDERCITY_DUNGEON_ID_V1};
 
     for actor in [P0, P1] {
-        for (dungeon, room) in [
-            (LOST_MINE, 3),
-            (UNDERCITY_DUNGEON_ID_V1, UndercityRoomV1::Forge.stable_id()),
+        for (dungeon, room, route, player_target) in [
+            (LOST_MINE, 3, 1, false),
+            (UNDERCITY_DUNGEON_ID_V1, UndercityRoomV1::Forge.stable_id(), 1, false),
+            (UNDERCITY_DUNGEON_ID_V1, UndercityRoomV1::Forge.stable_id(), 0, true),
         ] {
             for choice in [1, 7] { // Creature is not the dungeon's type.
                 let mut state = islands();
@@ -2165,18 +2166,24 @@ fn serras_emissary_dungeon_choice_filters_native_room_targets_both_seats() {
                 let acererak = put(&mut state, actor, ACERERAK, Zone::Hand);
                 pool(&mut state, actor, &[ManaColor::B], 2);
                 cast(&mut state, acererak, &[]);
-                choose_venture_route(&mut state, 1); // Fungi Cavern or Arena.
+                choose_venture_route(&mut state, route); // Fungi Cavern, Arena or Trap.
+                let protected_target = if player_target { Target::Player(actor) } else { Target::Object(own) };
+                let other_target = if player_target { Target::Player(actor.opponent()) } else { Target::Object(other) };
                 match next(&mut state) {
                     Decision::ChooseTargets { legal_targets, .. } => {
-                        assert_eq!(legal_targets.contains(&Target::Object(own)), choice != 7);
-                        assert_eq!(legal_targets.contains(&Target::Object(emissary)), choice != 7);
-                        assert!(legal_targets.contains(&Target::Object(other)));
+                        assert_eq!(legal_targets.contains(&protected_target), choice != 7);
+                        if !player_target {
+                            assert_eq!(legal_targets.contains(&Target::Object(emissary)), choice != 7);
+                        }
+                        assert!(legal_targets.contains(&other_target));
                     }
                     other => panic!("expected room targets, got {other:?}"),
                 }
-                act(&mut state, Action::ChooseTarget(Target::Object(other)));
+                act(&mut state, Action::ChooseTarget(other_target));
                 settled(&mut state);
-                if dungeon == LOST_MINE {
+                if player_target {
+                    assert_eq!(state.players[actor.opponent().index()].life, 15);
+                } else if dungeon == LOST_MINE {
                     assert_eq!(engine::effective_power(&state, other), -3);
                 } else {
                     assert_eq!(state.objects.get(other).v4.goaded_by.len(), 1);
