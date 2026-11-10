@@ -492,7 +492,7 @@ jobs:
             expanded_deck_training_v1::public_features:: \
             expanded_deck_training_v1::stack_features:: \
             expanded_deck_training_v1::tests::ordinary_trainer_v4_update_rejects_fixed_partition_backward_on_cuda \
-            learned_bo3_v1::public_evaluation:: \
+            learned_bo3_v1::public_evaluation::             regret_census_v1::stage4a::blunder_census:: \
             paired_bo1_harness_v1::continuation_capture_tests:: \
             phase1_bo3_collection_v1::combat_audit:: \
             phase1_bo3_collection_v1::continuation:: \
