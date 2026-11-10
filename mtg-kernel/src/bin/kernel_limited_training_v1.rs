@@ -9,12 +9,14 @@ use mtg_kernel::current_tree_learner_v1::{
 use mtg_kernel::ids::PlayerId;
 use mtg_kernel::limited_match_v1::{DeckFileV1, SessionKindV1};
 use mtg_kernel::limited_return_consumer_v1::ResetV1;
-use mtg_kernel::{limited_full_pool_consumer_v1 as full_pool, limited_return_consumer_v1 as returns};
 use mtg_kernel::rl::{PlayerSeatV1, TerminalClassificationV1, TerminalOutcomeV1};
 use mtg_kernel::rl_session::{FastActorDecisionKindV1, FastActorResponseV1};
 use mtg_kernel::state::SplitMix64;
 use mtg_kernel::unclamped_softmax_sampler_v1::{
     unclamped_softmax_select_v1, unclamped_softmax_unit_v1,
+};
+use mtg_kernel::{
+    limited_full_pool_consumer_v1 as full_pool, limited_return_consumer_v1 as returns,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};

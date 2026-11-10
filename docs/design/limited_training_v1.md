@@ -3,12 +3,12 @@
 Issue #552 uses the authenticated #454 Kaito tree learner on exact DraftZero
 registrations. The four engineering fixtures below are 40-card lists without
 Drake Hatcher. The original Return-mode attempt at `08243cba` stopped in the
-legacy Full-only deck parser before opening a game. Its exact three-printing
-profile also excludes Flamewake Phoenix in the train roster and Arbiter of Woe
-and Scrawling Crawler in the evaluation roster. The opt-in `full-pool` learner
-resolves the unchanged rosters against the frozen Foundations set and uses
-that profile's sealed V3 owner. The actor can still refuse a decision during
-play.
+legacy Full-only deck parser before opening a game. The Return owner has
+exact Alesha support, while the evaluation roster includes Arbiter of Woe
+and Scrawling Crawler, whose exact numeric meanings are in the FullPool owner.
+The opt-in `full-pool` learner resolves the unchanged rosters against the
+frozen Foundations set and uses that profile's sealed V3 owner. The actor
+can still refuse a decision during play.
 
 | Stage | Original decks | Environment seed |
 | --- | --- | --- |
