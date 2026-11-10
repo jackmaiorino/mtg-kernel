@@ -10,13 +10,17 @@ use crate::ids::ObjectId;
 use crate::state::{AbilitySourceContractV4, GameState, Zone};
 
 fn base_power(state: &GameState, object: ObjectId) -> u32 {
-    crate::engine::effective_base_power(state, object).unwrap_or(0).max(0) as u32
+    crate::engine::effective_base_power(state, object)
+        .unwrap_or(0)
+        .max(0) as u32
 }
 
 fn curie(state: &GameState, object: ObjectId) -> bool {
     cfg!(feature = "eternal-fixtures")
         && own_definition(state, object).is_some_and(|id| {
-            CARD_DEFS.get(usize::from(id)).is_some_and(|definition| definition.name == CURIE)
+            CARD_DEFS
+                .get(usize::from(id))
+                .is_some_and(|definition| definition.name == CURIE)
         })
 }
 
@@ -68,21 +72,29 @@ pub(super) fn collect(state: &mut GameState, events: &[CommittedEvent]) {
     }
 }
 
-pub(crate) fn combat_source(state: &GameState, combat_at: usize) -> Option<AbilitySourceContractV4> {
+pub(crate) fn combat_source(
+    state: &GameState,
+    combat_at: usize,
+) -> Option<AbilitySourceContractV4> {
     let history = &state.engine.event_history;
     let CommittedEvent::EternalOwnedDrawV1 { journal } = history.get(combat_at.checked_add(1)?)?
     else {
         return None;
     };
-    let JournalV1::CurieCombat { combat_at: original, source } = **journal else {
+    let JournalV1::CurieCombat {
+        combat_at: original,
+        source,
+    } = **journal
+    else {
         return None;
     };
-    (original == combat_at && source.zone == Zone::Battlefield
+    (original == combat_at
+        && source.zone == Zone::Battlefield
         && matches!(history.get(combat_at), Some(CommittedEvent::CombatDamageToPlayer {
             source: object, source_zone_change_count, amount, ..
         }) if *object == source.source
             && *source_zone_change_count == source.zone_change_count && *amount > 0))
-        .then_some(source)
+    .then_some(source)
 }
 
 #[derive(Clone, Copy)]
@@ -96,8 +108,12 @@ pub(crate) fn departure(state: &GameState, object: ObjectId) -> Option<Departure
     if live.zone != Zone::Battlefield || !curie(state, object) {
         return None;
     }
-    let original_combat = state.engine.event_history
-        .scan_for_v1(&[EventKindV1::EternalOwnedDrawV1]).iter().any(|event| {
+    let original_combat = state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::EternalOwnedDrawV1])
+        .iter()
+        .any(|event| {
             matches!(event, CommittedEvent::EternalOwnedDrawV1 { journal }
                 if matches!(**journal, JournalV1::CurieCombat { combat_at, source }
                     if source.source == object && source.zone_change_count == live.zone_change_count
@@ -110,23 +126,30 @@ pub(crate) fn departure(state: &GameState, object: ObjectId) -> Option<Departure
 }
 
 pub(crate) fn capture_batch(state: &GameState, events: &[ProposedEvent]) -> Vec<DepartureV1> {
-    events.iter().filter_map(|event| match event {
-        ProposedEvent::ZoneChange(change) => departure(state, change.object),
-        _ => None,
-    }).collect()
+    events
+        .iter()
+        .filter_map(|event| match event {
+            ProposedEvent::ZoneChange(change) => departure(state, change.object),
+            _ => None,
+        })
+        .collect()
 }
 
 pub(crate) fn record_departure(state: &mut GameState, at: usize, departure: DepartureV1) {
-    record(state, JournalV1::CurieDeparture {
-        at,
-        source: departure.source,
-        power: departure.power,
-    });
+    record(
+        state,
+        JournalV1::CurieDeparture {
+            at,
+            source: departure.source,
+            power: departure.power,
+        },
+    );
 }
 
 pub(crate) fn draw_count(state: &GameState, ctx: &ExecCtx, combat_at: usize) -> Option<u32> {
     let source = combat_source(state, combat_at)?;
-    if ctx.ability_source_contract != Some(source) || ctx.controller != source.controller
+    if ctx.ability_source_contract != Some(source)
+        || ctx.controller != source.controller
         || ctx.source != source.source
     {
         return None;
@@ -149,16 +172,21 @@ pub(crate) fn departed_count_before(
 ) -> Option<Option<u32>> {
     let history = &state.engine.event_history;
     let tail = combat_at.checked_add(2)?;
-    let first_departure = history.get(tail..end)?.iter().enumerate().find_map(|(offset, event)| {
-        match event {
+    let first_departure = history
+        .get(tail..end)?
+        .iter()
+        .enumerate()
+        .find_map(|(offset, event)| match event {
             CommittedEvent::ZoneChange {
-                object, from: Zone::Battlefield, to, controller_before,
+                object,
+                from: Zone::Battlefield,
+                to,
+                controller_before,
             } if *object == source.source && *to != Zone::Battlefield => {
                 Some((tail + offset, *controller_before))
             }
             _ => None,
-        }
-    });
+        });
     let Some((departure_at, controller)) = first_departure else {
         return Some(None);
     };
@@ -166,16 +194,23 @@ pub(crate) fn departed_count_before(
     if receipt_at >= end {
         return None;
     }
-    let CommittedEvent::EternalOwnedDrawV1 { journal } = history.get(receipt_at)?
-    else {
+    let CommittedEvent::EternalOwnedDrawV1 { journal } = history.get(receipt_at)? else {
         return None;
     };
     match **journal {
-        JournalV1::CurieDeparture { at, source: departed, power }
-            if at == departure_at && departed.source == source.source
-                && departed.owner == source.owner && departed.controller == controller
-                && departed.zone == Zone::Battlefield
-                && departed.zone_change_count == source.zone_change_count => Some(Some(power)),
+        JournalV1::CurieDeparture {
+            at,
+            source: departed,
+            power,
+        } if at == departure_at
+            && departed.source == source.source
+            && departed.owner == source.owner
+            && departed.controller == controller
+            && departed.zone == Zone::Battlefield
+            && departed.zone_change_count == source.zone_change_count =>
+        {
+            Some(Some(power))
+        }
         _ => None,
     }
 }

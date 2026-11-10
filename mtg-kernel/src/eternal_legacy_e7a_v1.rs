@@ -1144,7 +1144,9 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         return false;
     };
     match op {
-        E7aOpV1::TabernacleV1 | E7aOpV1::CurieDrawV1 { .. } | E7aOpV1::CurieDrawBoundV1 { .. } => true,
+        E7aOpV1::TabernacleV1 | E7aOpV1::CurieDrawV1 { .. } | E7aOpV1::CurieDrawBoundV1 { .. } => {
+            true
+        }
         E7aOpV1::DarkDepthsV1 { .. } => name == DARK_DEPTHS,
         E7aOpV1::ShallowGraveExileV1 { .. } => name == SHALLOW_GRAVE,
         E7aOpV1::SuspendTickV1 { .. } => name == GAEAS_WILL,
@@ -1550,7 +1552,9 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
         E7aOpV1::CurieDrawBoundV1 { combat_at } => {
             if let Some(count) = curie::draw_count(state, ctx, *combat_at) {
                 crate::eternal_cards_v1::owned_draws_v1::draw_uninterrupted(
-                    state, ctx.controller, count,
+                    state,
+                    ctx.controller,
+                    count,
                 );
             } else {
                 state.engine.halted = Some((

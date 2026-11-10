@@ -4709,7 +4709,9 @@ fn commit_with_entry_batch_and_source_color(
     state.engine.event_history.push(committed);
     if let Some(departure) = curie_departure {
         crate::eternal_legacy_e7a_v1::curie::record_departure(
-            state, entry_history_index, departure,
+            state,
+            entry_history_index,
+            departure,
         );
     }
     if let Some(copy) = metamorph_mage_copy {
@@ -5112,10 +5114,13 @@ impl NativeMaterializationV1<'_> {
             Self::FinalScene(_) => None,
             Self::Commit(Some(plan)) => {
                 let generation = state.objects.get(id).zone_change_count;
-                plan.curie_departures.iter().find(|departure| {
-                    departure.source.source == id
-                        && departure.source.zone_change_count == generation
-                }).copied()
+                plan.curie_departures
+                    .iter()
+                    .find(|departure| {
+                        departure.source.source == id
+                            && departure.source.zone_change_count == generation
+                    })
+                    .copied()
             }
             Self::Commit(None) => crate::eternal_legacy_e7a_v1::curie::departure(state, id),
         }

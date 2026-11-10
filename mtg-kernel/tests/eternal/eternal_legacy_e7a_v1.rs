@@ -1170,7 +1170,7 @@ fn curie_draw_uses_departure_base_power_and_replacement_attempts_both_seats() {
         pool(&mut state, actor, &[ManaColor::U], 1);
         activate(&mut state, curie, 0, &[]);
         assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets {
-            player, legal_targets, .. } if player == actor
+            player, legal_targets, .. }) if player == actor
                 && legal_targets.contains(&Target::Object(donor))));
         act(&mut state, Action::ChooseEffectTarget(Target::Object(donor)));
         pass_until(&mut state, |state| state.stack.len() == 1

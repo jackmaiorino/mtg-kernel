@@ -59,9 +59,9 @@ impl InstructionV1 {
             EternalOpV1::E7aV1(E7aOpV1::DiscardHandThenDrawV1 { count: 3 }) => {
                 Some(Self::DragonEngine)
             }
-            EternalOpV1::E7aV1(E7aOpV1::CurieDrawBoundV1 { combat_at }) => {
-                Some(Self::Curie { combat_at: *combat_at })
-            }
+            EternalOpV1::E7aV1(E7aOpV1::CurieDrawBoundV1 { combat_at }) => Some(Self::Curie {
+                combat_at: *combat_at,
+            }),
             _ => None,
         }
     }
@@ -210,10 +210,24 @@ pub struct StartedV1 {
 #[serde(deny_unknown_fields)]
 pub enum JournalV1 {
     Started(StartedV1),
-    Completed { started_at: usize, ordinal: u32 },
-    CurieCombat { combat_at: usize, source: AbilitySourceContractV4 },
-    CurieDeparture { at: usize, source: AbilitySourceContractV4, power: u32 },
-    CurieDrawCount { item: StackItemId, combat_at: usize, count: u32 },
+    Completed {
+        started_at: usize,
+        ordinal: u32,
+    },
+    CurieCombat {
+        combat_at: usize,
+        source: AbilitySourceContractV4,
+    },
+    CurieDeparture {
+        at: usize,
+        source: AbilitySourceContractV4,
+        power: u32,
+    },
+    CurieDrawCount {
+        item: StackItemId,
+        combat_at: usize,
+        count: u32,
+    },
 }
 
 pub(crate) fn record(state: &mut GameState, journal: JournalV1) {
@@ -399,11 +413,14 @@ pub(crate) fn begin(
         return Ok(());
     }
     if let InstructionV1::Curie { combat_at } = instruction {
-        record(state, JournalV1::CurieDrawCount {
-            item: pending.resolving_item.v4.stack_item_id,
-            combat_at,
-            count: total,
-        });
+        record(
+            state,
+            JournalV1::CurieDrawCount {
+                item: pending.resolving_item.v4.stack_item_id,
+                combat_at,
+                count: total,
+            },
+        );
     }
     let started_at = state.engine.event_history.len();
     let started = StartedV1 {
@@ -559,13 +576,17 @@ fn validate_native_progress(
             SourceV1::Spell(_) => None,
         },
         (InstructionV1::Curie { combat_at }, None) => {
-            let count_at = progress.started_at.checked_sub(1)
+            let count_at = progress
+                .started_at
+                .checked_sub(1)
                 .ok_or("Curie draw lost its native count capture")?;
             match state.engine.event_history.get(count_at) {
                 Some(CommittedEvent::EternalOwnedDrawV1 { journal }) => match **journal {
-                    JournalV1::CurieDrawCount { item, combat_at: original, count }
-                        if item == started.item && original == combat_at =>
-                    {
+                    JournalV1::CurieDrawCount {
+                        item,
+                        combat_at: original,
+                        count,
+                    } if item == started.item && original == combat_at => {
                         let SourceV1::Ability(source) = started.source else {
                             return Err("Curie draw lost its original ability source".into());
                         };
