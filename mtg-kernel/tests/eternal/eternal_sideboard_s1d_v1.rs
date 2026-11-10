@@ -829,6 +829,13 @@ fn free_cascade_cannot_offer_overload_both_seats() {
                     let mut restored: GameState =
                         serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
                     act(&mut restored, Action::ChooseEffectOption(0));
+                    let permission = next(&mut restored);
+                    assert!(
+                        matches!(&permission, Decision::ChooseEffectTargets { legal_targets, .. }
+                            if legal_targets == &[Target::Object(spell)]),
+                        "cascade must select its original exiled spell: {permission:?}"
+                    );
+                    act(&mut restored, Action::ChooseEffectTarget(Target::Object(spell)));
                     assert!(matches!(
                         next(&mut restored),
                         Decision::ChooseTargets { legal_targets, can_finish: false, .. }
