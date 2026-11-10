@@ -167,7 +167,7 @@ pub(crate) fn finish(
         }
         let start = state.engine.event_history.len();
         crate::event::propose_and_commit_twinflame_fiery_equipment_owned(state, &original, owner)?;
-        let moves:Vec<_>=state.engine.event_history[start..].iter().enumerate().filter_map(|(offset,e)|
+        let moves:Vec<_>=state.engine.event_history.range_v2(start..).iter().enumerate().filter_map(|(offset,e)|
             matches!(e,E::ZoneChange{object,from:Zone::Battlefield,to:Zone::Exile,..} if *object==equipment).then_some(start+offset)).collect();
         let [at] = moves.as_slice() else {
             return Err("Fiery completion lost unique actual equipment exile".into());

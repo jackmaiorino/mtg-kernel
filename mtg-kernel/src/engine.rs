@@ -2866,8 +2866,7 @@ fn validate_historical_permanent_copy_source(
     let mut entries = state
         .engine
         .event_history
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::GarrukEntryObservationV1])
         .filter_map(|(at, event)| match event {
             CommittedEvent::GarrukEntryObservationV1 { entry, .. }
                 if entry.object == contract.source
@@ -2904,7 +2903,7 @@ fn validate_historical_permanent_copy_source(
         || origin.parent.0 >= contract.source.0
         || state.objects.try_get(origin.parent).is_none_or(|parent| parent.owner != origin.parent_owner)
         || state.stack.iter().any(|item| item.kind == StackItemKind::Spell && item.source == contract.source)
-        || state.engine.event_history[..original].iter().any(|event|
+        || state.engine.event_history.range_v2(..original).iter().any(|event|
             matches!(event, CommittedEvent::ZoneChange { object, .. } if *object == contract.source))
         || state.engine.event_history.iter().filter(|event|
             matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Battlefield, .. }
@@ -18274,8 +18273,10 @@ fn triggered_stack_item_expected_target_spec(
         let published = state
             .engine
             .event_history
-            .iter()
-            .filter(|entry| {
+            .of_kinds_v2(&[
+                crate::event_history_v1::EventKindV1::NivMizzetVisionaryTriggerStackedV1,
+            ])
+            .filter(|(_, entry)| {
                 matches!(entry,
                 crate::event::CommittedEvent::NivMizzetVisionaryTriggerStackedV1 {
                     stack_item_id,
@@ -18286,13 +18287,19 @@ fn triggered_stack_item_expected_target_spec(
                     && *found_index == damage_history_index)
             })
             .count();
-        let any_binding_for_item = state.engine.event_history.iter().any(|entry| {
-            matches!(entry,
+        let any_binding_for_item = state
+            .engine
+            .event_history
+            .of_kinds_v2(&[
+                crate::event_history_v1::EventKindV1::NivMizzetVisionaryTriggerStackedV1,
+            ])
+            .any(|(_, entry)| {
+                matches!(entry,
             crate::event::CommittedEvent::NivMizzetVisionaryTriggerStackedV1 {
                 stack_item_id,
                 ..
             } if *stack_item_id == item.v4.stack_item_id)
-        });
+            });
         if item.v4.stack_item_id.0 == 0 {
             if any_binding_for_item {
                 return Err("unpublished Niv-Mizzet trigger already has a stack binding".into());
@@ -31072,7 +31079,10 @@ mod tests {
                     &components,
                     &chosen
                 ));
-                let existing_order = state.engine.event_history[history_start..]
+                let existing_order = state
+                    .engine
+                    .event_history
+                    .range_v2(history_start..)
                     .iter()
                     .filter_map(|event| match event {
                         CommittedEvent::Sacrificed { object, .. } => Some((0, *object)),
@@ -35865,7 +35875,7 @@ mod tests {
         assert_eq!(state.objects.get(copy).zone, Zone::Stack);
         assert!(!state.players[1].graveyard.contains(&copy));
         assert!(
-            !state.engine.event_history[event_count..]
+            !state.engine.event_history.range_v2(event_count..)
                 .iter()
                 .any(|event| matches!(event, CommittedEvent::ZoneChange { object, .. } if *object == copy)),
             "a fizzled copy ceases without a zone-change event"

@@ -2342,7 +2342,7 @@ fn niv_mizzet_visionary_damage_amount_v1(
     if marker_index <= history_index
         || marker_count != 1
         || observer_receipt_count != 1
-        || state.engine.event_history[history_index + 1..marker_index]
+        || state.engine.event_history.range_v2(history_index + 1..marker_index)
             .iter()
             .any(|entry| {
                 !matches!(entry, CommittedEvent::NivMizzetVisionaryDamageV1 { damage_history_index: linked, .. } if *linked == damage_history_index)
@@ -3226,13 +3226,16 @@ pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(
         if *index as usize != at || installations.is_empty() {
             return Err(installations.first().map_or(ObjectId(0), |r| r.source));
         }
-        let expected: Vec<_> = state.engine.event_history[..at]
+        let expected: Vec<_> = state
+            .engine
+            .event_history
+            .range_v2(..at)
             .iter()
             .filter_map(|e| {
                 let CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement } = e else {
                     return None;
                 };
-                (!state.engine.event_history[..at].iter().any(|e| {
+                (!state.engine.event_history.range_v2(..at).iter().any(|e| {
                     matches!(e,
                 CommittedEvent::ExileIfDiesReplacementExpiredV1 { replacement: r, .. }
                 if r == replacement)
@@ -3254,7 +3257,7 @@ pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(
                 .map_or(installations[0].source, |r| r.source));
         }
         for replacement in installations {
-            let install = state.engine.event_history[..at].iter().filter(|e| matches!(e,
+            let install = state.engine.event_history.range_v2(..at).iter().filter(|e| matches!(e,
                 CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement: r } if r == replacement)).count();
             let expiry = state.engine.event_history.scan_for_v1(&[EventKindV1::ExileIfDiesReplacementExpiredV1]).iter().enumerate().filter(|(position, e)| matches!(e,
                 CommittedEvent::ExileIfDiesReplacementExpiredV1 {
@@ -9139,7 +9142,7 @@ mod arahbo_entry_tests {
                 equipment,
                 crate::card_def::CardType::Creature
             ));
-            assert!(state.engine.event_history[start..].iter().any(|event|matches!(event,CommittedEvent::ArahboTokenCaptureV1 {capture} if capture.root==RootV1::OtherNontokenCatEntry)));
+            assert!(state.engine.event_history.range_v2(start..).iter().any(|event|matches!(event,CommittedEvent::ArahboTokenCaptureV1 {capture} if capture.root==RootV1::OtherNontokenCatEntry)));
             settle(&mut state);
             assert_eq!(state.engine.event_history.iter().filter(|event|matches!(event,CommittedEvent::CreateToken {token_def,..} if Some(*token_def)==crate::card_def::card_id_by_name("Cat Token"))).count(),2);
         }
@@ -10418,7 +10421,10 @@ pub(crate) fn lathril_damage_v1(
         || *amount <= 0
         || amount != captured_amount
         || recipient != player
-        || !state.engine.event_history[damage_index + 1..index]
+        || !state
+            .engine
+            .event_history
+            .range_v2(damage_index + 1..index)
             .iter()
             .all(|entry| {
                 matches!(entry,
@@ -10757,8 +10763,7 @@ fn copied_token_entry_v1(
     let rows = state
         .engine
         .event_history
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::CopiedTokenAbilitiesEnteredV1])
         .filter_map(|(at, e)| match e {
             CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
                 source: actual,
@@ -11115,7 +11120,11 @@ pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<()
             return Err("copied abilities survived an ordinary zone change".into());
         }
     }
-    for event in &state.engine.event_history {
+    for (_, event) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::CopiedTokenAbilitiesEnteredV1])
+    {
         let CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
             source, instances, ..
         } = event

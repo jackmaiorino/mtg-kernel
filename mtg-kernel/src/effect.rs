@@ -20905,7 +20905,10 @@ fn execute_with_native_row_v1(
                 state,
                 event::ProposedEvent::life_loss(opponent, i32::from(ctx.x_value)),
             );
-            let lost = state.engine.event_history[start..]
+            let lost = state
+                .engine
+                .event_history
+                .range_v2(start..)
                 .iter()
                 .filter_map(|event| match event {
                     event::CommittedEvent::LifeLoss { player, amount } if *player == opponent => {
@@ -22694,7 +22697,10 @@ fn execute_with_native_row_v1(
                 if !source_live {
                     return;
                 }
-                let creations = state.engine.event_history[start..]
+                let creations = state
+                    .engine
+                    .event_history
+                    .range_v2(start..)
                     .iter()
                     .enumerate()
                     .filter_map(|(offset, event)| match event {
@@ -22802,7 +22808,7 @@ fn execute_with_native_row_v1(
                     ));
                     return;
                 }
-                let attachment=state.engine.event_history[attachment_start..].iter().enumerate().find_map(|(offset,event)| match event {
+                let attachment=state.engine.event_history.range_v2(attachment_start..).iter().enumerate().find_map(|(offset,event)| match event {
                     event::CommittedEvent::TokenAttachmentJournalV48 {journal} if matches!(journal.as_ref(),crate::season_token_attachment_v48::JournalV48::AttachmentCommitted {source:actual,host} if actual.object==source.source && actual.zone_change_count==source.zone_change_count && host.object==selected.object && host.zone_change_count==selected.expected_zone_change_count) => Some((attachment_start+offset) as u64), _=>None,
                 }).expect("actual attachment helper emits independent occurrence");
                 crate::season_token_attachment_v48::record(
@@ -25054,7 +25060,10 @@ mod tests {
                 assert_eq!(branch.objects.get(opponent_card).zone, Zone::Graveyard);
                 assert_eq!(branch.objects.get(retained_hand.unwrap()).zone, Zone::Hand);
                 assert_eq!(
-                    branch.engine.event_history[start..]
+                    branch
+                        .engine
+                        .event_history
+                        .range_v2(start..)
                         .iter()
                         .filter(|event| matches!(
                             event,
@@ -25189,7 +25198,10 @@ mod tests {
                     assert_eq!(branch.objects.get(id).zone, Zone::Graveyard);
                 }
                 assert_eq!(
-                    branch.engine.event_history[start..]
+                    branch
+                        .engine
+                        .event_history
+                        .range_v2(start..)
                         .iter()
                         .filter(|event| matches!(
                             event,
@@ -25338,7 +25350,10 @@ mod tests {
                 assert_eq!(branch.objects.get(second).damage, 4);
                 assert!(branch.objects.get(first).v4.deathtouch_damage);
                 assert_eq!(branch.players[player.index()].life, 24);
-                let damage = branch.engine.event_history[start..]
+                let damage = branch
+                    .engine
+                    .event_history
+                    .range_v2(start..)
                     .iter()
                     .filter_map(|event| match event {
                         CommittedEvent::Damage {
@@ -25527,7 +25542,10 @@ mod tests {
                             &mut state,
                         );
                         assert!(state.engine.halted.is_none());
-                        let created = state.engine.event_history[start..]
+                        let created = state
+                            .engine
+                            .event_history
+                            .range_v2(start..)
                             .iter()
                             .enumerate()
                             .filter_map(|(i, event)| match event {
@@ -25543,7 +25561,10 @@ mod tests {
                             })
                             .collect::<Vec<_>>();
                         assert_eq!(created.len(), count as usize);
-                        let observed = state.engine.event_history[start..]
+                        let observed = state
+                            .engine
+                            .event_history
+                            .range_v2(start..)
                             .iter()
                             .enumerate()
                             .filter_map(|(i, event)| match event {
@@ -27016,7 +27037,10 @@ fn tutelage_remaining_v1(
     let mut linked = None;
     let mut cursor = start_index + 1;
     while cursor < state.engine.event_history.len() {
-        let batch_index = state.engine.event_history[cursor..]
+        let batch_index = state
+            .engine
+            .event_history
+            .range_v2(cursor..)
             .iter()
             .position(|entry| {
                 matches!(
@@ -27292,7 +27316,7 @@ fn run_tutelage_batch_v1(
         live.v4.face_down_v1.is_none()
             && binding.expected_zone_change_count.checked_add(1)==Some(live.zone_change_count)
             && matches!(live.zone,Zone::Graveyard|Zone::Exile|Zone::Battlefield|Zone::Stack)
-            && state.engine.event_history[move_start as usize..].iter().any(|e|matches!(e,event::CommittedEvent::ZoneChange{object,from:Zone::Library,to,..}if *object==binding.object && *to==live.zone))
+            && state.engine.event_history.range_v2(move_start as usize..).iter().any(|e|matches!(e,event::CommittedEvent::ZoneChange{object,from:Zone::Library,to,..}if *object==binding.object && *to==live.zone))
     }).collect::<Vec<_>>();
     let repeat = tutelage_pair_repeats_v1(state, &visible);
     let batch_index = state.engine.event_history.len() as u64;
@@ -29528,7 +29552,10 @@ pub(crate) mod fiend_artisan_v1 {
             return Err("Fiend original selected activation changed".into());
         }
         let sacrificed = p.object_cost_chosen[0];
-        let segment = &state.engine.event_history[input_index as usize + 1..at];
+        let segment = state
+            .engine
+            .event_history
+            .range_v2(input_index as usize + 1..at);
         if sacrificed.object == item.source
             || sacrificed.expected_zone != Zone::Battlefield
             || !segment

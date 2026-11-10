@@ -1956,7 +1956,10 @@ pub(crate) fn drive(
                         &continuation.ctx,
                         state,
                     );
-                    let created = state.engine.event_history[start..]
+                    let created = state
+                        .engine
+                        .event_history
+                        .range_v2(start..)
                         .iter()
                         .find_map(|event| match event {
                             CommittedEvent::CreateToken { object, .. } => Some(*object),
