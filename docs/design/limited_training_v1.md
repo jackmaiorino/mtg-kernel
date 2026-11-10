@@ -79,6 +79,28 @@ one update, with no playing-strength threshold.
    bounded run covers those exact recipes. Active fair-search coverage of
    all 286 printings has its own acceptance work.
 
+Pass `--stage-diagnostics` before `-session` on an admitted sample to write
+`stage-diagnostics.jsonl` beside the primary artifacts. Each leg emits a
+start, a checkpoint after successful reset and after every 64 applied actions,
+and a final snapshot on return. Counters cover reset, current response,
+encode, authenticated learner input, forward, sample and apply. They report
+completed calls, their cumulative wall time and their longest wall time in
+nanoseconds. The pair, update, training write/reload, evaluation restore and
+evaluation write have separate start and return records. A return record
+means the call returned, including errors. After a timeout, read complete
+lines up to the last checkpoint. Unfinished calls and work since the last
+checkpoint can be missing. Leg durations overlap with two workers, so use
+pair elapsed time for wall-clock comparisons.
+
+Diagnostics are off by default and are excluded from the configuration and
+primary JSON. When running authorized deterministic replays, compare
+`training.json` and `evaluation.json` byte for byte with diagnostics on and
+off using the same binary. Compare different source revisions with
+`config.binary_source_sha256` accounted for in both artifacts and the
+derived `training_sha256` accounted for in evaluation. That provenance
+changes the raw hashes even when the actions, terminal outcomes and optimizer
+state match. A prior-source training file still fails exact-source resume.
+
 Native execution and exact replay are pending. The bounded binary does not
 accept a custom roster, game count or additional updates. A substantial
 training or evaluation launcher needs current resource inventory and matched

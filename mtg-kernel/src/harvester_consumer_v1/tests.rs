@@ -420,7 +420,7 @@ fn paid_activation_targets_other_graveyard_and_preserves_hidden_pairs_indices_an
                 }
                 _ => None,
             })
-            .last()
+            .next_back()
             .unwrap();
         let mut publication = earlier_payment.engine.event_history.remove(publication_at);
         let CommittedEvent::HarvesterCommitReceiptV1 { journal } = &mut publication else {

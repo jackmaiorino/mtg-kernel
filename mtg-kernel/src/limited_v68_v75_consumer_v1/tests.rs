@@ -482,7 +482,8 @@ fn exact_profile_gates_and_v3_learner_reset_are_separate_from_legacy() {
 
 #[test]
 fn all_eight_printings_cast_from_real_forty_card_reset_with_paid_consumer_parity() {
-    let cases: [(u16, &[(&str, usize)], usize, Option<u16>); 8] = [
+    type PaidCastCase = (u16, &'static [(&'static str, usize)], usize, Option<u16>);
+    let cases: [PaidCastCase; 8] = [
         (486, &[("Island", 36)], 6, None),
         (487, &[("Forest", 36)], 5, Some(2)),
         (488, &[("Forest", 36)], 5, None),
