@@ -549,10 +549,11 @@ New, each built once in the first wave that needs it:
   creature, enchantment or land), each returned independently. New target shapes
   are `StandardTargetV1::S1dV1`. Rhino and Flagbearer use new stable ids 361 and 362;
   Nylea's Disciple uses Centaur's existing stable id 281 from P2c.
-  Partial: Martyr of Sands awaits native payment, disclosure, restore and consumer
-  qualification. Standard Bearer and Coalition Honor Guard now share bounded
+  Partial: Martyr of Sands passed its native paid reveal and restore fixture;
+  event-history consumer qualification remains pending. Standard Bearer and Coalition Honor Guard now share bounded
   complete-assignment checks for optional target counts, including early Finish,
-  restored selections and payable activations. Goblin Welder uses the same check
+  restored selections and payable activations. All five optional-target native
+  cases passed. Goblin Welder uses the same check
   for its two dependent slots. An artifact Flagbearer is required only if its
   controller's graveyard contains a legal second target. Shatterskull Smashing
   checks whether its announced allocation can include a Flagbearer at a payable
