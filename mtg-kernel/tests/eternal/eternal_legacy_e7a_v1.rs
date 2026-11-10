@@ -1152,6 +1152,12 @@ fn curie_draw_uses_departure_base_power_and_replacement_attempts_both_seats() {
         let mut state = islands();
         state.active_player = actor;
         state.priority_player = actor;
+        let jace = put(&mut state, actor, "Jace, Wielder of Mysteries", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U; 3], 1);
+        cast(&mut state, jace, &[]);
+        settled(&mut state);
+        assert_eq!(zone(&state, jace), Zone::Battlefield);
+        assert_eq!(mtg_kernel::planeswalker_v1::loyalty(&state, jace), Some(4));
         let curie = put(
             &mut state,
             actor,
@@ -1194,14 +1200,10 @@ fn curie_draw_uses_departure_base_power_and_replacement_attempts_both_seats() {
         pool(&mut state, actor, &[ManaColor::U], 1);
         activate(&mut state, curie, 0, &[]);
         assert!(
-            matches!(settle(&mut state), Some(Decision::ChooseEffectTargets {
-            player, legal_targets, .. }) if player == actor
-                && legal_targets.contains(&Target::Object(donor)))
+            matches!(settle(&mut state), Some(Decision::ChooseCostTargets {
+            player, candidates, .. }) if player == actor && candidates.contains(&donor))
         );
-        act(
-            &mut state,
-            Action::ChooseEffectTarget(Target::Object(donor)),
-        );
+        act(&mut state, Action::ChooseCostTarget(donor));
         pass_until(&mut state, |state| {
             state.stack.len() == 1
                 && state.objects.get(curie).card_def == id("Phyrexian Dreadnought")
@@ -1349,12 +1351,8 @@ fn curie_draw_uses_departure_base_power_and_replacement_attempts_both_seats() {
                 .map(|card| mtg_kernel::event::ProposedEvent::zone_change(card, Zone::Exile))
                 .collect(),
         );
-        let jace = put(
-            &mut terminal,
-            actor,
-            "Jace, Wielder of Mysteries",
-            Zone::Battlefield,
-        );
+        assert_eq!(zone(&terminal, jace), Zone::Battlefield);
+        assert_eq!(mtg_kernel::planeswalker_v1::loyalty(&terminal, jace), Some(4));
         let prompt = settle(&mut terminal).expect("Curie chooses Jace or Hullbreacher");
         assert!(matches!(&prompt, Decision::ChooseEffectTargets {
             player, source, legal_targets, can_finish: true, .. }
@@ -1735,8 +1733,15 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
                 &mut state,
                 drawer,
                 "Jace, Wielder of Mysteries",
-                Zone::Battlefield,
+                Zone::Hand,
             );
+            // Seed either seat's replacement through native entry so the
+            // planeswalker has its printed loyalty before Echo resolves.
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(jace, Zone::Battlefield),
+            );
+            assert_eq!(mtg_kernel::planeswalker_v1::loyalty(&state, jace), Some(4));
             put(&mut state, drawer, "Quantum Riddler", Zone::Battlefield);
             put(&mut state, other, "Hullbreacher", Zone::Battlefield);
             if other == caster {
