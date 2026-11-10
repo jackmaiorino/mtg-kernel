@@ -1596,7 +1596,11 @@ pub(crate) mod statics {
         if matches!(
             spec,
             TargetSpec::KickerControlledCreatures
-                | TargetSpec::StandardV1(S::ArtifactThenArtifactCardInItsControllersGraveyardV1)
+                | TargetSpec::ControlledCreatureThenOpponentCreature
+                | TargetSpec::StandardV1(
+                    S::ArtifactThenArtifactCardInItsControllersGraveyardV1
+                        | S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1
+                )
         ) {
             return true;
         }
