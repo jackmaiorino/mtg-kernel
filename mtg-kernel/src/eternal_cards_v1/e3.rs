@@ -1156,6 +1156,10 @@ pub(crate) fn drive(
             1,
             path,
         ),
+        EternalOpV1::VintageV1(crate::eternal_vintage_v1::VintageOpV1::CovetedJewelChangesHandsV1) => {
+            crate::eternal_vintage_v1::begin_coveted_jewel_draws(state, continuation, &path)?;
+            Ok(false)
+        }
         EternalOpV1::P2bV1(op) => {
             crate::eternal_premodern_p2b_v1::drive(state, continuation, op, path)
         }

@@ -9,7 +9,7 @@
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::card_def::{CardType, Supertype, TargetSpec, CARD_DEFS};
-use crate::effect::{EffectOp, ExecCtx, PlayerRef};
+use crate::effect::{EffectContinuation, EffectFrame, EffectOp, ExecCtx, PlayerRef};
 use crate::event::{self, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
@@ -212,6 +212,17 @@ pub enum VintageOpV1 {
     /// The spell's controller pays {1} if able; otherwise the spell is
     /// countered.
     PayOneOrCounterV1 { spell: StackItemId },
+    /// Completes one attempted draw in the original combat trigger. The
+    /// third completion transfers and untaps that original source.
+    CovetedJewelDrawCompletedV1 { ordinal: u16 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct JewelDrawProgressV1 {
+    item: StackItemId,
+    source: AbilitySourceContractV4,
+    completed: u16,
 }
 
 fn vintage(op: VintageOpV1) -> EffectOp {
@@ -313,8 +324,70 @@ fn draw_three() -> EffectOp {
     }
 }
 
-fn coveted_jewel_changes_hands() -> EffectOp {
+pub(crate) fn coveted_jewel_changes_hands() -> EffectOp {
     vintage(VintageOpV1::CovetedJewelChangesHandsV1)
+}
+
+fn coveted_jewel_draw_frames() -> [EffectFrame; 6] {
+    let draw = |ordinal| EffectFrame::Program {
+        op: EffectOp::DrawCards { player: PlayerRef::Opponent, count: 1 },
+        path: vec![ordinal],
+    };
+    let completed = |ordinal| EffectFrame::Program {
+        op: vintage(VintageOpV1::CovetedJewelDrawCompletedV1 { ordinal }),
+        path: vec![ordinal + 3],
+    };
+    [completed(2), draw(2), completed(1), draw(1), completed(0), draw(0)]
+}
+
+pub(crate) fn begin_coveted_jewel_draws(
+    state: &mut GameState,
+    continuation: &mut EffectContinuation,
+    path: &[u16],
+) -> Result<(), String> {
+    if !path.is_empty()
+        || !continuation.frames.is_empty()
+        || state.coveted_jewel_draw_progress_v1.is_some()
+    {
+        return Err("Coveted Jewel lost its original combat trigger path".into());
+    }
+    let item = continuation.ctx.stack_item_id.ok_or("Coveted Jewel lost its stack item")?;
+    let source = continuation.ctx.ability_source_contract.ok_or("Coveted Jewel lost its original source")?;
+    state.coveted_jewel_draw_progress_v1 = Some(JewelDrawProgressV1 {
+        item, source, completed: 0,
+    });
+    continuation.frames.extend(coveted_jewel_draw_frames());
+    Ok(())
+}
+
+fn coveted_jewel_progress_matches(state: &GameState, ctx: &ExecCtx, ordinal: u16) -> bool {
+    state.coveted_jewel_draw_progress_v1.is_some_and(|progress| {
+        Some(progress.item) == ctx.stack_item_id
+            && Some(progress.source) == ctx.ability_source_contract
+            && progress.completed == ordinal
+    })
+}
+
+pub(crate) fn abandon_coveted_jewel_draws(state: &mut GameState, ctx: &ExecCtx) {
+    if state.coveted_jewel_draw_progress_v1.is_some_and(|progress| {
+        Some(progress.item) == ctx.stack_item_id
+            && Some(progress.source) == ctx.ability_source_contract
+    }) {
+        state.coveted_jewel_draw_progress_v1 = None;
+    }
+}
+
+pub(crate) fn coveted_jewel_draw_stage_matches(
+    state: &GameState,
+    ctx: &ExecCtx,
+    path: &[u16],
+    remaining: &[EffectFrame],
+) -> bool {
+    let [ordinal @ 0..=2] = path else {
+        return false;
+    };
+    coveted_jewel_progress_matches(state, ctx, *ordinal)
+        && remaining == &coveted_jewel_draw_frames()[..5 - 2 * usize::from(*ordinal)]
 }
 
 fn counter_cast_spell() -> EffectOp {
@@ -591,6 +664,13 @@ fn vintage_state(state: &mut GameState) -> &mut VintageStateV1 {
         .vintage
 }
 
+fn finish_coveted_jewel_transfer(ctx: &ExecCtx, state: &mut GameState) {
+    if let Some(jewel) = live_ability_source(ctx, state) {
+        crate::standard_cards_v1::gain_control(state, jewel, ctx.controller.opponent());
+        crate::engine::attempt_untap(state, jewel);
+    }
+}
+
 pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         VintageOpV1::FlipCoinLoseSourceDamagesControllerV1 { damage } => {
@@ -608,7 +688,6 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         VintageOpV1::CovetedJewelChangesHandsV1 => {
-            let player = ctx.controller.opponent();
             crate::effect::execute(
                 &EffectOp::DrawCards {
                     player: PlayerRef::Opponent,
@@ -617,9 +696,16 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 ctx,
                 state,
             );
-            if let Some(jewel) = live_ability_source(ctx, state) {
-                crate::standard_cards_v1::gain_control(state, jewel, player);
-                crate::engine::attempt_untap(state, jewel);
+            finish_coveted_jewel_transfer(ctx, state);
+        }
+        VintageOpV1::CovetedJewelDrawCompletedV1 { ordinal } => {
+            if *ordinal > 2 || !coveted_jewel_progress_matches(state, ctx, *ordinal) {
+                halt(state, ctx.source);
+            } else if *ordinal == 2 {
+                state.coveted_jewel_draw_progress_v1 = None;
+                finish_coveted_jewel_transfer(ctx, state);
+            } else {
+                state.coveted_jewel_draw_progress_v1.as_mut().unwrap().completed += 1;
             }
         }
         VintageOpV1::BindCounterCastSpellV1 => halt(state, ctx.source),

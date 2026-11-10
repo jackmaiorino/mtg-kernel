@@ -22,6 +22,10 @@ use crate::eternal_cards_v1::{
     e3::{E3ChoiceKindV1, E3ChoiceV1},
     EternalOpV1,
 };
+use crate::eternal_vintage_v1::{
+    abandon_coveted_jewel_draws, coveted_jewel_changes_hands, coveted_jewel_draw_stage_matches,
+    VintageOpV1,
+};
 use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::standard_cards_v1::StandardOpV1;
@@ -78,6 +82,9 @@ fn draws(op: &EffectOp) -> bool {
         // Graveborn Muse, Portent's delayed draw).
         EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::P1aV1(op))) => op.draws(),
         EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::DelayedUpkeepDrawV1)) => true,
+        EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::VintageV1(
+            VintageOpV1::CovetedJewelChangesHandsV1,
+        ))) => true,
         _ => false,
     }
 }
@@ -240,9 +247,63 @@ fn validate_single_draw(
     {
         return Ok(());
     }
-    let (kind, cards) = replacement_options(state, pending, drawer, &[], &[])
+    validate_draw_choice(state, pending, drawer, &[], &[], owner)
+}
+
+pub(crate) fn validate_coveted_jewel_draw(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    let root = coveted_jewel_changes_hands();
+    if pending.resolving_item.inline_effect.as_ref() != Some(&root) {
+        return if state.coveted_jewel_draw_progress_v1.is_none() {
+            Ok(())
+        } else {
+            Err("Coveted Jewel draw progress lost its original combat trigger".into())
+        };
+    }
+    let item = &pending.resolving_item;
+    if item.kind != crate::state::StackItemKind::TriggeredAbility
+        || !item.v4.ability_source_contract.is_some_and(|source| {
+            source.zone == Zone::Battlefield && source.controller == item.controller
+        })
+    {
+        return Err("Coveted Jewel changed its original combat trigger".into());
+    }
+    if state.coveted_jewel_draw_progress_v1.is_none()
+        && matches!((&pending.choice, pending.frames.as_slice()),
+        (None, [EffectFrame::Program { op, path }]) if *op == root && path.is_empty())
+    {
+        return Ok(());
+    }
+    let (path, remaining) = match (&pending.choice, pending.frames.split_last()) {
+        (Some(PendingEffectChoice::SelectTargets { path, .. }), _) => {
+            (path.as_slice(), pending.frames.as_slice())
+        }
+        (None, Some((EffectFrame::EternalSelectionV1 { choice, .. }, rest))) => {
+            (choice.path.as_slice(), rest)
+        }
+        _ => return Err("Coveted Jewel lost its original draw stage".into()),
+    };
+    if !coveted_jewel_draw_stage_matches(state, &pending.ctx, path, remaining) {
+        return Err("Coveted Jewel draw changed its progress or remaining effects".into());
+    }
+    validate_draw_choice(
+        state, pending, item.controller.opponent(), path, remaining, "Coveted Jewel draw",
+    )
+}
+
+fn validate_draw_choice(
+    state: &GameState,
+    pending: &EffectContinuation,
+    drawer: PlayerId,
+    path: &[u16],
+    remaining: &[EffectFrame],
+    owner: &str,
+) -> Result<(), String> {
+    let (kind, cards) = replacement_options(state, pending, drawer, path, remaining)
         .ok_or_else(|| format!("{owner} lost its replacement choices"))?;
-    let expected = choice(state, drawer, kind, &cards, Vec::new(), Vec::new());
+    let expected = choice(state, drawer, kind, &cards, path.to_vec(), remaining.to_vec());
     let valid = match (&pending.choice, pending.frames.as_slice()) {
         (
             Some(PendingEffectChoice::SelectTargets {
@@ -252,17 +313,19 @@ fn validate_single_draw(
                 min_targets: 0,
                 ..
             }),
-            [],
+            frames,
         ) => {
-            **choice == expected
+            frames == remaining
+                && **choice == expected
                 && selected.is_empty()
                 && legal
                     .iter()
                     .map(|candidate| candidate.target)
                     .eq(expected.candidates)
         }
-        (None, [EffectFrame::EternalSelectionV1 { choice, selected }]) => {
-            **choice == expected
+        (None, [frames @ .., EffectFrame::EternalSelectionV1 { choice, selected }]) => {
+            frames == remaining
+                && **choice == expected
                 && selected.len() <= 1
                 && selected
                     .iter()
@@ -352,6 +415,7 @@ pub(crate) fn finish_jace_or_hullbreacher(
             && !crate::game_outcome_protection_v1::cannot_lose(state, opponent)
         {
             pending.frames.clear();
+            abandon_coveted_jewel_draws(state, &pending.ctx);
         }
     } else {
         event::propose_and_commit(state, ProposedEvent::draw(player));

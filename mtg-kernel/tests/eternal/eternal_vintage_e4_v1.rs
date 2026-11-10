@@ -777,6 +777,167 @@ fn coveted_jewel_draws_three_taps_for_three_and_changes_hands_when_unblocked() {
 }
 
 #[test]
+fn coveted_jewel_etb_dredge_preserves_the_other_two_draws_both_seats() {
+    for drawer in [P0, P1] {
+        let opponent = drawer.opponent();
+        let mut state = islands();
+        state.active_player = drawer;
+        state.priority_player = drawer;
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let jewel = put(&mut state, drawer, "Coveted Jewel", Zone::Hand);
+        let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+        let library = state.players[drawer.index()].library.clone();
+        pool(&mut state, drawer, &[], 6);
+        cast(&mut state, jewel, &[]);
+        let prompt = settle(&mut state).expect("the first actual entry draw");
+        assert_jewel_dredge_prompt(&prompt, drawer, jewel, thug);
+        assert_eq!(state.objects.get(jewel).zone, Zone::Battlefield);
+        assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
+        assert_eq!(jewel_treasures(&state, opponent), 0);
+
+        let mut declined: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        for number in 0..3 {
+            let decision = next(&mut declined);
+            assert_jewel_dredge_prompt(&decision, drawer, jewel, thug);
+            assert_eq!(jewel_treasures(&declined, opponent), number);
+            act(&mut declined, Action::FinishEffectSelection);
+            if number < 2 {
+                assert!(settle(&mut declined).is_some());
+            }
+        }
+        settled(&mut declined);
+        assert_eq!(jewel_treasures(&declined, opponent), 3);
+        assert_eq!(declined.players[drawer.index()].library, library);
+        assert_eq!(declined.objects.get(thug).zone, Zone::Graveyard);
+
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+        settled(&mut state);
+        assert_eq!(state.players[drawer.index()].library, library[4..]);
+        assert_eq!(state.objects.get(thug).zone, Zone::Hand);
+        assert_eq!(jewel_treasures(&state, opponent), 2);
+        assert_eq!(state.players[drawer.index()].draws_this_turn, 0);
+    }
+}
+
+fn assert_jewel_dredge_prompt(decision: &Decision, drawer: PlayerId, jewel: ObjectId, thug: ObjectId) {
+    assert!(matches!(
+        decision,
+        Decision::ChooseEffectTargets {
+            player, source, min_targets: 0, max_targets: 1, legal_targets, can_finish: true, ..
+        } if *player == drawer && *source == jewel && legal_targets.as_slice() == [Target::Object(thug)]
+    ), "{decision:?}");
+}
+
+fn jewel_treasures(state: &GameState, player: PlayerId) -> usize {
+    let treasure = card_id_by_name("Treasure Token").unwrap();
+    state.players[player.index()].battlefield.iter()
+        .filter(|&&object| state.objects.get(object).card_def == treasure)
+        .count()
+}
+
+#[test]
+fn coveted_jewel_combat_draws_finish_before_transfer_both_seats() {
+    use mtg_kernel::effect::{EffectTargetSelectionPurpose, PendingEffectChoice};
+
+    for drawer in [P0, P1] {
+        for remove_jewel in [false, true] {
+            let defender = drawer.opponent();
+            let mut state = islands();
+            state.active_player = defender;
+            state.priority_player = defender;
+            put(&mut state, defender, "Hullbreacher", Zone::Battlefield);
+            let jewel = put(&mut state, defender, "Coveted Jewel", Zone::Hand);
+            let attacker = put(&mut state, drawer, "Llanowar Elves", Zone::Battlefield);
+            pool(&mut state, defender, &[], 6);
+            cast(&mut state, jewel, &[]);
+            settled(&mut state);
+            assert_eq!(state.players[defender.index()].hand.len(), 3);
+            act(&mut state, Action::ActivateManaAbilityChoice(jewel, ManaColor::G));
+            assert_eq!(mana(&state, defender, ManaColor::G), 3);
+            assert!(state.objects.get(jewel).tapped);
+            let jewel_generation = state.objects.get(jewel).zone_change_count;
+
+            pass_until(&mut state, |s| {
+                s.active_player == drawer && s.step == Step::DeclareAttackers
+            });
+            let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+            let library = state.players[drawer.index()].library.clone();
+            let draws_before = state.players[drawer.index()].draws_this_turn;
+            act(&mut state, Action::DeclareAttackers(vec![attacker]));
+            pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
+            act(&mut state, Action::DeclareBlockers(vec![]));
+            if remove_jewel {
+                let disenchant = put(&mut state, drawer, "Disenchant", Zone::Hand);
+                pool(&mut state, drawer, &[ManaColor::W], 1);
+                cast(&mut state, disenchant, &[Target::Object(jewel)]);
+            }
+
+            let prompt = settle(&mut state).expect("the combat trigger's first draw");
+            assert_jewel_dredge_prompt(&prompt, drawer, jewel, thug);
+            let source = state.engine.pending_effect.as_ref().unwrap()
+                .resolving_item.v4.ability_source_contract.unwrap();
+            assert_eq!((source.controller, source.zone_change_count), (defender, jewel_generation));
+            assert_eq!(state.objects.get(jewel).zone,
+                if remove_jewel { Zone::Graveyard } else { Zone::Battlefield });
+            assert_eq!(jewel_treasures(&state, defender), 0);
+
+            let mut forged = state.clone();
+            let pending = forged.engine.pending_effect.as_mut().unwrap();
+            pending.frames.truncate(1);
+            let Some(PendingEffectChoice::SelectTargets {
+                path,
+                purpose: EffectTargetSelectionPurpose::EternalV1 { choice },
+                ..
+            }) = pending.choice.as_mut()
+            else {
+                panic!("expected the original draw replacement choice");
+            };
+            *path = vec![2];
+            choice.path.clone_from(path);
+            choice.remaining.clone_from(&pending.frames);
+            let forged: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
+            assert_eq!(
+                mtg_kernel::effect::validate_pending_effect_choice(&forged).unwrap_err(),
+                "Coveted Jewel draw changed its progress or remaining effects",
+            );
+
+            act(&mut state, Action::FinishEffectSelection);
+            let second = settle(&mut state).expect("the combat trigger's second draw");
+            assert_jewel_dredge_prompt(&second, drawer, jewel, thug);
+            assert_eq!(jewel_treasures(&state, defender), 1);
+            assert_eq!(state.objects.get(jewel).controller, defender);
+            if !remove_jewel {
+                assert!(state.objects.get(jewel).tapped);
+            }
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(second, next(&mut restored));
+            for continued in [&mut state, &mut restored] {
+                act(continued, Action::ChooseEffectTarget(Target::Object(thug)));
+                settled(continued);
+                assert_eq!(continued.objects.get(thug).zone, Zone::Hand);
+                assert_eq!(continued.players[drawer.index()].library, library[4..]);
+                assert_eq!(continued.players[drawer.index()].draws_this_turn, draws_before);
+                assert_eq!(jewel_treasures(continued, defender), 2);
+                let live = continued.objects.get(jewel);
+                if remove_jewel {
+                    assert_eq!((live.zone, live.controller), (Zone::Graveyard, defender));
+                } else {
+                    assert_eq!((live.zone, live.controller), (Zone::Battlefield, drawer));
+                    assert_eq!(live.zone_change_count, jewel_generation);
+                    assert!(!live.tapped);
+                }
+                assert!(serde_json::to_value(&*continued).unwrap()
+                    .get("coveted_jewel_draw_progress_v1").is_none());
+            }
+            assert_eq!(state.state_hash(), restored.state_hash());
+        }
+    }
+}
+
+#[test]
 fn mishras_workshop_mana_casts_only_artifact_spells() {
     let mut state = islands();
     let workshop = put(&mut state, P0, "Mishra's Workshop", Zone::Battlefield);

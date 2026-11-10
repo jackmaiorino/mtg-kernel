@@ -513,6 +513,12 @@ impl EternalOpV1 {
     pub(crate) fn drives_in_resumable(&self) -> bool {
         self.contains_player_choice()
             || matches!(self, EternalOpV1::DelayedUpkeepDrawV1)
+            || matches!(
+                self,
+                EternalOpV1::VintageV1(
+                    crate::eternal_vintage_v1::VintageOpV1::CovetedJewelChangesHandsV1
+                )
+            )
             || matches!(self, EternalOpV1::P1aV1(op) if op.draws())
     }
 }

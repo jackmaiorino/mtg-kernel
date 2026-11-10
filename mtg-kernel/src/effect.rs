@@ -8080,6 +8080,12 @@ pub(crate) fn jace_draw_replacement_origin(
             // Bauble trigger before an answer can use this single draw.
             return path.is_empty() && remaining.is_empty() && drawer == pending.ctx.controller;
         }
+        Some(op) if *op == crate::eternal_vintage_v1::coveted_jewel_changes_hands() => {
+            return drawer == pending.ctx.controller.opponent()
+                && crate::eternal_vintage_v1::coveted_jewel_draw_stage_matches(
+                    state, &pending.ctx, path, remaining,
+                );
+        }
         Some(EffectOp::NivMizzetVisionaryDrawV1 {
             damage_history_index,
         }) => {
@@ -10643,6 +10649,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crystal_prevention_v1::validate(state)?;
     inspiration_resolution_v1::validate(state)?;
     let Some(pending) = state.engine.pending_effect.as_ref() else {
+        if state.coveted_jewel_draw_progress_v1.is_some() {
+            return Err("Coveted Jewel draw progress lost its continuation".into());
+        }
         return Ok(());
     };
     if matches!(
@@ -10700,6 +10709,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::eternal_vintage_e7b_v1::dredge::validate_jace_or_hullbreacher(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_vintage_e7b_v1::dredge::validate_bauble_draw(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_e7b_v1::dredge::validate_coveted_jewel_draw(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
     if let Some(EffectOp::ResolveMonarchTrigger { binding }) =
         pending.resolving_item.inline_effect.as_ref()
@@ -12956,7 +12967,11 @@ pub(crate) fn validate_resolution_play_authorization(
 }
 
 fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
-    inspiration_resolution_v1::drive(state)
+    let result = inspiration_resolution_v1::drive(state);
+    if result.is_err() || state.engine.halted.is_some() {
+        state.coveted_jewel_draw_progress_v1 = None;
+    }
+    result
 }
 
 fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, String> {
