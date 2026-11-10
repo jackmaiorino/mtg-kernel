@@ -1648,6 +1648,49 @@ fn lost_mine_completion_waits_for_all_room_triggers_both_seats() {
 }
 
 #[test]
+fn a_departed_acererak_still_publishes_its_room_before_priority_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        in_room(&mut state, actor, LOST_MINE, 5);
+        let acererak = put(&mut state, actor, ACERERAK, Zone::Hand);
+        let bounce = put(&mut state, opponent, "Echoing Truth", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::B], 2);
+        cast(&mut state, acererak, &[]);
+        pass_until(&mut state, |state| {
+            state.objects.get(acererak).zone == Zone::Battlefield && state.stack.len() == 1
+        });
+        act(&mut state, Action::Pass);
+        pool(&mut state, opponent, &[ManaColor::U], 1);
+        cast(&mut state, bounce, &[Target::Object(acererak)]);
+        pass_until(&mut state, |state| {
+            state.objects.get(acererak).zone == Zone::Hand && state.stack.len() == 1
+        });
+        let enter = state.stack[0].v4.stack_item_id;
+        let library = state.players[actor.index()].library.len();
+        for seat in [actor, opponent] {
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == seat));
+            act(&mut state, Action::Pass);
+        }
+
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor));
+        let [room] = state.stack.as_slice() else {
+            panic!("the room must be published before priority returns");
+        };
+        assert_eq!(room.source, acererak);
+        assert_ne!(room.v4.stack_item_id, enter);
+        let marker = &state.players[actor.index()].dungeon;
+        assert_eq!((marker.dungeon_id, marker.room_id), (Some(LOST_MINE), Some(7)));
+        assert!(marker.completed_dungeons.is_empty());
+        settled(&mut state);
+        assert_eq!(state.players[actor.index()].library.len(), library - 1);
+        assert_eq!(state.players[actor.index()].dungeon.completed_dungeons, vec![LOST_MINE]);
+    }
+}
+
+#[test]
 fn veils_of_fear_costs_two_life_unless_a_card_is_discarded() {
     let mut state = islands();
     in_room(&mut state, P0, TOMB, 1);
