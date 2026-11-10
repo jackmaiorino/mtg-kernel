@@ -835,7 +835,10 @@ fn free_cascade_cannot_offer_overload_both_seats() {
                             if legal_targets == &[Target::Object(spell)]),
                         "cascade must select its original exiled spell: {permission:?}"
                     );
-                    act(&mut restored, Action::ChooseEffectTarget(Target::Object(spell)));
+                    act(
+                        &mut restored,
+                        Action::ChooseEffectTarget(Target::Object(spell)),
+                    );
                     assert!(matches!(
                         next(&mut restored),
                         Decision::ChooseTargets { legal_targets, can_finish: false, .. }
