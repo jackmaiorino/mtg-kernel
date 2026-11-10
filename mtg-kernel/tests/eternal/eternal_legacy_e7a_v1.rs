@@ -1783,7 +1783,19 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
                     let journal = &event["EternalOwnedDrawV1"]["journal"];
                     journal.get("Started").is_none()
                         && journal.get("StartedWithRiddlerV1").is_none()
+                        && journal.get("EchoShuffledV1").is_none()
                 });
+            assert_eq!(
+                rewound["engine"]["event_history"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|event| event["EternalOwnedDrawV1"]["journal"]
+                        .get("EchoShuffleCommittedV1")
+                        .is_some())
+                    .count(),
+                2
+            );
             let rewound: GameState = serde_json::from_value(rewound).unwrap();
             assert!(mtg_kernel::effect::validate_pending_effect_choice(&rewound)
                 .unwrap_err()

@@ -336,7 +336,9 @@ impl JournalV1 {
             Self::Started(started) | Self::StartedWithRiddlerV1 { started, .. } => {
                 Some(started.item)
             }
-            Self::EchoShuffledV1 { item, .. } => Some(item),
+            Self::EchoShuffledV1 { item, .. } | Self::EchoShuffleCommittedV1 { item, .. } => {
+                Some(item)
+            }
             _ => None,
         }
     }
