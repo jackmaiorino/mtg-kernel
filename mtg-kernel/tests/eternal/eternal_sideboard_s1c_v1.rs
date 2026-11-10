@@ -1037,23 +1037,29 @@ fn paid_flame_riddler_freezes_three_individual_attempts_across_restore_both_seat
         } if *player == drawer && *source == flame
             && legal_targets.as_slice() == [Target::Object(dredger)]));
 
-        let mut forged = state.clone();
-        let changed = forged.engine.event_history.iter_mut().any(|event| {
-            if let CommittedEvent::EternalOwnedDrawV1 { journal } = event {
-                let mut row = serde_json::to_value(&**journal).unwrap();
-                if let Some(started) = row.get_mut("StartedWithRiddlerV1") {
-                    assert_eq!(started["extra"], 1);
-                    started["extra"] = serde_json::json!(2);
-                    **journal = serde_json::from_value(row).unwrap();
-                    return true;
+        for downgrade in [false, true] {
+            let mut forged = state.clone();
+            let changed = forged.engine.event_history.iter_mut().any(|event| {
+                if let CommittedEvent::EternalOwnedDrawV1 { journal } = event {
+                    let mut row = serde_json::to_value(&**journal).unwrap();
+                    if let Some(started) = row.get_mut("StartedWithRiddlerV1") {
+                        assert_eq!(started["extra"], 1);
+                        if downgrade {
+                            row = serde_json::json!({ "Started": started["started"].take() });
+                        } else {
+                            started["extra"] = serde_json::json!(2);
+                        }
+                        **journal = serde_json::from_value(row).unwrap();
+                        return true;
+                    }
                 }
-            }
-            false
-        });
-        assert!(changed);
-        assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged)
-            .unwrap_err()
-            .contains("original Riddler adjustment"));
+                false
+            });
+            assert!(changed);
+            assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged)
+                .unwrap_err()
+                .contains("original Riddler adjustment"));
+        }
 
         let mut restored: GameState =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();

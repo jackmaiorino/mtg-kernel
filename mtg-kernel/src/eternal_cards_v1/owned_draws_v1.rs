@@ -672,6 +672,7 @@ fn validate_native_progress(
     ctx: &ExecCtx,
     progress: ProgressV1,
     started: StartedV1,
+    attempts: u32,
 ) -> Result<(), String> {
     let tail = progress.started_at + 1;
     let total = match (started.instruction, started.initial_library_len) {
@@ -719,18 +720,13 @@ fn validate_native_progress(
         return Err("Eternal draw changed its original count".into());
     }
     if progress.completed == 0 {
-        if let CommittedEvent::EternalOwnedDrawV1 { journal } =
-            &state.engine.event_history[progress.started_at]
+        let drawer = started
+            .instruction
+            .drawer(ctx)
+            .ok_or("Eternal draw lost its original drawer")?;
+        if attempts - started.total != crate::event::draw_instruction_extra(state, drawer, started.total)
         {
-            if let JournalV1::StartedWithRiddlerV1 { extra, .. } = **journal {
-                let drawer = started
-                    .instruction
-                    .drawer(ctx)
-                    .ok_or("Eternal draw lost its original drawer")?;
-                if extra != crate::event::draw_instruction_extra(state, drawer, started.total) {
-                    return Err("Eternal draw changed its original Riddler adjustment".into());
-                }
-            }
+            return Err("Eternal draw changed its original Riddler adjustment".into());
         }
     }
     let completed = state.engine.event_history[tail..]
@@ -823,9 +819,9 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
             Ok(())
         };
     }
-    let (progress, started, _) =
+    let (progress, started, attempts) =
         progress(state, pending).ok_or("Eternal draw lost its native start")?;
-    validate_native_progress(state, &pending.ctx, progress, started)?;
+    validate_native_progress(state, &pending.ctx, progress, started, attempts)?;
     let (path, remaining) =
         dredge::draw_stage(pending).ok_or("Eternal draw lost its original stage")?;
     let drawer = started
