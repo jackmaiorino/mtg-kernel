@@ -127,6 +127,8 @@ def census(jobs: Path, source: Path, exe: str, out: Path, shards: int, win: bool
         lines = [x for x in lines if family(x) < families]
     out.mkdir(parents=True, exist_ok=True)
     tag = tag or ("win" if win else "bcd")
+    for stale in (out / f"census-{tag}.json", out / f"census-{tag}.failed.json"):
+        stale.unlink(missing_ok=True)
     parts = []
     for k in range(shards):
         part = lines[k::shards]
@@ -184,9 +186,13 @@ def ladder(jobs: Path, source: Path, exe: str, root: Path, shards: list[int], wi
                        "jobs_per_second": games / r["seconds"],
                        "score_mismatches": sum(json.loads(x).get("score_mismatches", 0) for x in rows[0]),
                        "score_checks": sum(json.loads(x).get("score_checks", 0) for x in rows[0])})
+    clean = [t for t in trials if t["parity"] and t["score_mismatches"] == 0 and t["score_checks"] > 0]
+    if not clean:
+        npp.write_json(root / "receipt.failed.json", {"trials": trials})
+        raise SystemExit("no shard count is parity-clean with matching score checks")
     receipt = {"schema": "census-20261110/census-ladder-v1", "exe_sha256": sha(exe), "jobs": npp.pin(jobs),
-               "win": win, "trials": trials, "selected_shards": max(
-                   (t for t in trials if t["parity"]), key=lambda t: t["jobs_per_second"])["shards"]}
+               "win": win, "trials": trials,
+               "selected_shards": max(clean, key=lambda t: t["jobs_per_second"])["shards"]}
     npp.write_json(root / "receipt.json", receipt)
     return receipt
 

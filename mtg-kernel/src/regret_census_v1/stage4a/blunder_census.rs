@@ -104,6 +104,16 @@ fn matches_record(d: &FastActorDecisionV1, r: &RecordedDecision, i: usize) -> Re
     Ok(())
 }
 
+/// The replay's end against the record: `ended` is None when the session is
+/// not terminal after the last recorded action, else its winner.
+fn end_check(ended: Option<Option<u8>>, recorded: Option<u8>) -> Result<Option<u8>, String> {
+    match ended {
+        None => Err("recorded actions end before the terminal".into()),
+        Some(winner) if winner != recorded => Err("replayed winner differs from the record".into()),
+        Some(winner) => Ok(winner),
+    }
+}
+
 /// The focal seat lost.
 fn focal_lost(s: &Session, focal: PlayerId) -> Option<bool> {
     let FastActorResponseV1::Terminal(t) = s.current_response() else {
@@ -824,11 +834,25 @@ fn census_job(
 
         // (b): the cast window.
         let m = if is_focal { menu(&s) } else { Vec::new() };
-        match window(
+        // An activation links target steps only while its own stack entry
+        // exists, so a self-trigger right after it cannot link.
+        let entry = cast.as_ref().is_some_and(|c| {
+            c.kind != "activate"
+                || s.game_state()
+                    .stack
+                    .iter()
+                    .skip(c.stack_len)
+                    .any(|x| x.source == ObjectId(c.source) && x.controller == focal)
+        });
+        let mut cast_window = window(
             cast.as_ref().map(|c| (c.source, !c.steps.is_empty())),
             is_focal,
             &m,
-        ) {
+        );
+        if cast_window == Window::Link && !entry {
+            cast_window = Window::Unlinked;
+        }
+        match cast_window {
             Window::Link => {
                 let own = m.iter().all(|x| match x {
                     ActionSemanticV1::ChooseTarget { target, .. } => own_target(target, fseat),
@@ -927,16 +951,14 @@ fn census_job(
         }
     }
 
-    let FastActorResponseV1::Terminal(t) = s.current_response() else {
-        return Err("recorded actions end before the terminal".into());
+    let ended = match s.current_response() {
+        FastActorResponseV1::Terminal(t) => Some(t.winner.map(|w| match w {
+            PlayerSeatV1::P0 => 0u8,
+            PlayerSeatV1::P1 => 1u8,
+        })),
+        FastActorResponseV1::Decision(_) => None,
     };
-    let winner = t.winner.map(|w| match w {
-        PlayerSeatV1::P0 => 0u8,
-        PlayerSeatV1::P1 => 1u8,
-    });
-    if winner != job.winner {
-        return Err("replayed winner differs from the record".into());
-    }
+    let winner = end_check(ended, job.winner)?;
     if let Some(c) = cast.take() {
         if let Some(w) = close_cast(job, c, &s, focal, &mut n, &mut out) {
             watches.push(w);
@@ -1405,6 +1427,22 @@ mod tests {
             assert_eq!(
                 matches_record(&d, &bad, 7),
                 Err("replay differs from the record at decision 7".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn a_replay_that_ends_early_or_with_another_winner_fails_closed() {
+        assert_eq!(end_check(Some(Some(1)), Some(1)), Ok(Some(1)));
+        assert_eq!(end_check(Some(None), None), Ok(None));
+        assert_eq!(
+            end_check(None, Some(1)),
+            Err("recorded actions end before the terminal".to_string())
+        );
+        for (ended, recorded) in [(Some(0), Some(1)), (None, Some(0)), (Some(1), None)] {
+            assert_eq!(
+                end_check(Some(ended), recorded),
+                Err("replayed winner differs from the record".to_string())
             );
         }
     }
