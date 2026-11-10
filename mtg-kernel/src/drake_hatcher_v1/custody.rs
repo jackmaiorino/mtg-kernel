@@ -844,8 +844,13 @@ fn check_checkpoint_serde_for_test(state: &GameState, first: usize) {
     // proves the full rows and the next writer actually skips their expansion.
     let expected = write_without_compaction(state).unwrap();
     let compacted = world_serde_v1::checkpoint_value(state).unwrap();
-    assert!(inner_event(&compacted, first).get("DrakeHistoryRefV1").is_some());
-    assert_eq!(serde_json::to_value(world(state).unwrap()).unwrap(), expected);
+    assert!(inner_event(&compacted, first)
+        .get("DrakeHistoryRefV1")
+        .is_some());
+    assert_eq!(
+        serde_json::to_value(world(state).unwrap()).unwrap(),
+        expected
+    );
 
     let mut different = state.clone();
     let CommittedEvent::DrakeJournalV1 { record } = &mut inner_history(&mut different)[first]
@@ -855,8 +860,13 @@ fn check_checkpoint_serde_for_test(state: &GameState, first: usize) {
     *record = Arc::new((**record).clone());
     // A value-equal but separately allocated row is still checked in full.
     let compacted = world_serde_v1::checkpoint_value(&different).unwrap();
-    assert!(inner_event(&compacted, first).get("DrakeJournalV1").is_some());
-    assert_eq!(serde_json::to_value(world(&different).unwrap()).unwrap(), expected);
+    assert!(inner_event(&compacted, first)
+        .get("DrakeJournalV1")
+        .is_some());
+    assert_eq!(
+        serde_json::to_value(world(&different).unwrap()).unwrap(),
+        expected
+    );
 
     let CommittedEvent::DrakeJournalV1 { record } = &mut inner_history(&mut different)[first]
     else {
@@ -864,14 +874,20 @@ fn check_checkpoint_serde_for_test(state: &GameState, first: usize) {
     };
     Arc::make_mut(record).value = JournalV1::CombatFinished { input: u64::MAX };
     let error = world(&different).unwrap_err();
-    assert_eq!(error, "Drake nested original differs from whole actual indexed record");
+    assert_eq!(
+        error,
+        "Drake nested original differs from whole actual indexed record"
+    );
     assert_eq!(error, write_without_compaction(&different).unwrap_err());
 
     let mut shifted = state.clone();
     assert!(first > 0);
     inner_history(&mut shifted).swap(first - 1, first);
     let error = world(&shifted).unwrap_err();
-    assert_eq!(error, "Drake nested original record shifted from its bound input position");
+    assert_eq!(
+        error,
+        "Drake nested original record shifted from its bound input position"
+    );
     assert_eq!(error, write_without_compaction(&shifted).unwrap_err());
 
     // A fresh full record is opaque even when its contents share certified
@@ -891,14 +907,23 @@ fn check_checkpoint_serde_for_test(state: &GameState, first: usize) {
     let shared_history = unproved.engine.event_history.clone();
     *inner_history(&mut unproved) = shared_history;
     let compacted = world_serde_v1::checkpoint_value(&unproved).unwrap();
-    assert_eq!(*inner_event(&compacted, index), serde_json::to_value(&row).unwrap());
+    assert_eq!(
+        *inner_event(&compacted, index),
+        serde_json::to_value(&row).unwrap()
+    );
     let expected = write_without_compaction(&unproved).unwrap();
-    assert_eq!(serde_json::to_value(world(&unproved).unwrap()).unwrap(), expected);
+    assert_eq!(
+        serde_json::to_value(world(&unproved).unwrap()).unwrap(),
+        expected
+    );
 
     // A full Drake row in the transient log still fails the positional check.
     unproved.engine.event_log.push(row);
     let error = world(&unproved).unwrap_err();
-    assert_eq!(error, "Drake nested original record shifted from its bound input position");
+    assert_eq!(
+        error,
+        "Drake nested original record shifted from its bound input position"
+    );
     assert_eq!(error, write_without_compaction(&unproved).unwrap_err());
 }
 
@@ -1018,11 +1043,8 @@ fn world(state: &GameState) -> Result<GameState, String> {
     );
     // Written as if cleared, without cloning the state and its history.
     let history = &state.engine.event_history;
-    let mut value = time_serde_phase!(
-        DrakeWorldSerialize,
-        world_serde_v1::checkpoint_value(state)
-    )
-    .map_err(|e| e.to_string())?;
+    let mut value = time_serde_phase!(DrakeWorldSerialize, world_serde_v1::checkpoint_value(state))
+        .map_err(|e| e.to_string())?;
     time_serde_phase!(DrakeWorldStrip, strip_nested_receipts(&mut value, history))?;
     time_serde_phase!(DrakeWorldDeserialize, serde_json::from_value(value))
         .map_err(|e| e.to_string())
@@ -1168,7 +1190,10 @@ fn restore_world(
     }
     let mut value = time_serde_phase!(DrakeRestoreSerialize, serde_json::to_value(saved))
         .map_err(|e| e.to_string())?;
-    time_serde_phase!(DrakeRestoreHydrate, restore(&mut value, history, start, None))?;
+    time_serde_phase!(
+        DrakeRestoreHydrate,
+        restore(&mut value, history, start, None)
+    )?;
     let mut input: GameState =
         time_serde_phase!(DrakeRestoreDeserialize, serde_json::from_value(value))
             .map_err(|e| e.to_string())?;

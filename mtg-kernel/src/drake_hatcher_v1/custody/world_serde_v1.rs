@@ -70,7 +70,9 @@ pub(super) fn serialize_full_journal<S: Serializer>(
     value: &JournalV1,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    let _restore = PREFIX.with(|slot| slot.take()).map(|prefix| RestorePrefix(Some(prefix)));
+    let _restore = PREFIX
+        .with(|slot| slot.take())
+        .map(|prefix| RestorePrefix(Some(prefix)));
     value.serialize(serializer)
 }
 
