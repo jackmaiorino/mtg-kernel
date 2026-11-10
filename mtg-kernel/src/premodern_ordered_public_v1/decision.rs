@@ -371,6 +371,7 @@ pub(super) fn activation_label(program: FullTextProgramV1) -> Result<&'static st
             }
             PsychatogDiscardPump => "Discard a card to give this creature +1/+1 this turn",
             PsychatogExilePump => "Exile two graveyard cards to give this creature +1/+1 this turn",
+            MoggFanaticSacrificeForDamage => "Sacrifice this creature to deal 1 damage to any target",
         },
         _ => return Err("full-text activation has a trigger-only program".into()),
     })

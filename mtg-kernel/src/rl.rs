@@ -2710,10 +2710,23 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         crate::effect::temporary_control_v1::refuse_legacy_observation(state)
             .map_err(RlContractError)?;
     }
-    if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(state) {
+    let ordered_full_text = text_mode == ObservationTextModeV2::PremodernOrderedV1Artifact;
+    if ordered_full_text {
+        crate::fixed_source_damage_v3::validate_state(state).map_err(RlContractError)?;
+    }
+    if !accept_crystal
+        && crate::effect::crystal_prevention_v1::requires_successor_with_full_text(
+            state,
+            ordered_full_text,
+        )
+    {
         return Err(RlContractError(
             "Crystal requires its selected public/Human successor".into(),
         ));
+    }
+    if ordered_full_text {
+        crate::effect::crystal_prevention_v1::validate_ordered_donated_archive(state)
+            .map_err(RlContractError)?;
     }
     let projection = PublicObservationProjectionV2 {
         turn: state.turn,
@@ -2758,7 +2771,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             acting_player,
             (accept_cant_block, accept_gourmand),
             accept_temporary_control,
-            accept_crystal,
+            accept_crystal || ordered_full_text,
         )?,
         object_relations: object_relations_public_v4(state, acting_player)?,
         exile_play_permissions: exile_play_permissions_public_v2(state)?,

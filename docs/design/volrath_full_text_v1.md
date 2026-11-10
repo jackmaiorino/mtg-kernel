@@ -66,10 +66,14 @@ batch have entered or left. The fixtures cover paid Palinchron and Karmic Guide
 text with Torpor Orb, and an Orb entering or departing in the same batch.
 A separate fixture covers a departing top donor in both batch member orders.
 
-Donor support is finite. It omits, for example, Mogg Fanatic's donated
-activation and Ravenous Rats' donated entry trigger. Mainboard qualification
-also requires terminal play and replay evidence from the actual snapshot
-list. Ordinary copy compatibility needs exact-head gameplay evidence.
+Donor support is finite. Mogg Fanatic's donated activation uses the physical
+host's actual sacrifice and captures its damage characteristics before the
+host leaves. Ravenous Rats uses the native targeted discard program with the
+existing immediate and final-batch entry suppression rules. Wall of Blossoms'
+donated draw and Academy Rector's donated death trigger remain outside this
+set. Mainboard qualification also requires terminal play and replay evidence
+from the actual snapshot list. Ordinary copy compatibility needs exact-head
+gameplay evidence.
 
 The in-process `premodern_ordered_public_v1::feb` owner resets both seats
 from the frozen 60-card mainboard in snapshot row order and uses native

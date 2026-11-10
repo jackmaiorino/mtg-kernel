@@ -481,6 +481,330 @@ fn volrath_native_cast_captures_and_pays_for_palinchron_text_both_seats() {
 }
 
 #[test]
+fn volrath_native_paid_fanatic_uses_original_damage_source_both_seats() {
+    use crate::fixed_source_damage_v3;
+    use crate::premodern_ordered_public_v1::{observe, DonatedActivationV1, FullTextProgramV1};
+
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let opponent = player.opponent();
+        for (protect, prevent) in [(false, false), (true, false), (false, true)] {
+            let mut state = ordered_game(player);
+            let donor = put(&mut state, player, "Mogg Fanatic", Zone::Graveyard);
+            let target = if protect {
+                Target::Object(put(
+                    &mut state,
+                    opponent,
+                    "Tireless Tribe",
+                    Zone::Battlefield,
+                ))
+            } else {
+                Target::Player(opponent)
+            };
+            let mother =
+                protect.then(|| put(&mut state, opponent, "Mother of Runes", Zone::Battlefield));
+            let strands =
+                prevent.then(|| put(&mut state, opponent, "Prismatic Strands", Zone::Hand));
+            let source = cast_volrath(&mut state, player);
+            settled(&mut state);
+            assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
+            let host = AbilitySourceContractV4::capture(&state, source);
+            let original_color = engine::object_color_mask(&state, source);
+            assert_eq!(
+                original_color,
+                crate::card_def::mana_color_mask(ManaColor::R)
+            );
+            let Decision::CastSpellOrPass {
+                activatable_abilities,
+                ..
+            } = next(&mut state)
+            else {
+                panic!("expected the paid Shapeshifter's native menu");
+            };
+            let donated = activatable_abilities
+                .into_iter()
+                .filter_map(|(object, index)| (object == source && index != 0).then_some(index))
+                .collect::<Vec<_>>();
+            let [index] = donated.as_slice() else {
+                panic!("expected one donated activation")
+            };
+            act(&mut state, Action::ActivateAbility(source, *index));
+            assert!(
+                matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&target))
+            );
+            assert!(observe(&state, player)
+                .unwrap()
+                .producers
+                .iter()
+                .any(|row| {
+                    row.native_ability_index == Some(*index)
+                        && row.program
+                            == (FullTextProgramV1::DonatedActivation {
+                                printed_index: 0,
+                                effect: DonatedActivationV1::MoggFanaticSacrificeForDamage,
+                            })
+                }));
+            act(&mut state, Action::ChooseTarget(target));
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            let item = state.stack.last().unwrap().clone();
+            assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+            assert_eq!(state.objects.get(donor).zone, Zone::Graveyard);
+            assert_eq!(item.v4.ability_source_contract, Some(host));
+            assert_eq!(
+                item.v4.full_text_activation_v1.0.unwrap().donor.source,
+                donor
+            );
+            assert_eq!(
+                fixed_source_damage_v3::damage_source(&state, source, item.v4.stack_item_id)
+                    .unwrap()
+                    .color_mask,
+                original_color,
+            );
+            let mut forged = state.clone();
+            forged.stack.last_mut().unwrap().v4.fixed_damage_paid_v3 = Default::default();
+            assert!(fixed_source_damage_v3::validate_state(&forged).is_err());
+            let ctx = crate::effect::crystal_prevention_v1::context(&item);
+            let mut forged = state.clone();
+            crate::effect::execute(&fixed_source_damage_v3::printed_root(), &ctx, &mut forged);
+            assert!(forged.engine.halted.is_some());
+            assert_eq!(forged.engine.event_history, state.engine.event_history);
+
+            let mut forged_damage = event::ProposedEvent::damage(source, target, 1);
+            let event::ProposedEvent::Damage(damage) = &mut forged_damage else {
+                unreachable!();
+            };
+            damage.historical_source = Some(item.v4.stack_item_id);
+            for apply in [event::propose_and_commit, event::commit] {
+                let mut forged = state.clone();
+                apply(&mut forged, forged_damage.clone());
+                assert!(forged.engine.halted.is_some());
+                assert_eq!(forged.engine.event_history, state.engine.event_history);
+            }
+
+            // A later incarnation now has the original blue physical text.
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            assert_ne!(engine::object_color_mask(&state, source), original_color);
+            assert!(state.objects.get(source).zone_change_count > host.zone_change_count);
+            let surface = crate::surface_v2::HarnessSurfaceV2::new();
+            for viewer in [player, opponent] {
+                crate::rl::observe_premodern_ordered_v1(&state, &surface, viewer, 2).unwrap();
+            }
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                if let Some(mother) = mother {
+                    act(branch, Action::Pass);
+                    assert!(matches!(next(branch), Decision::CastSpellOrPass {
+                        player: chooser, activatable_abilities, ..
+                    } if chooser == opponent && activatable_abilities.contains(&(mother, 0))));
+                    act(branch, Action::ActivateAbility(mother, 0));
+                    assert!(
+                        matches!(next(branch), Decision::ChooseTargets { legal_targets, .. }
+                        if legal_targets.contains(&target))
+                    );
+                    act(branch, Action::ChooseTarget(target));
+                    assert!(matches!(
+                        settle(branch),
+                        Some(Decision::ChooseEffectOption { .. })
+                    ));
+                    act(branch, Action::ChooseEffectOption(3)); // red in WUBRG order
+                    assert!(branch.objects.get(mother).tapped);
+                }
+                if let Some(strands) = strands {
+                    act(branch, Action::Pass);
+                    pool(branch, opponent, &[ManaColor::W], 2);
+                    cast(branch, strands);
+                    assert!(matches!(
+                        settle(branch),
+                        Some(Decision::ChooseEffectOption { player, source, option_count: 5 })
+                        if player == opponent && source == strands
+                    ));
+                    act(branch, Action::ChooseEffectOption(3)); // red in WUBRG order
+                }
+                let deals_damage = !protect && !prevent;
+                let life_before = branch.players[opponent.index()].life;
+                settled(branch);
+                assert_eq!(
+                    branch.players[opponent.index()].life,
+                    life_before - i32::from(deals_damage)
+                );
+                assert_eq!(
+                    branch
+                        .engine
+                        .event_history
+                        .iter()
+                        .filter(|event| {
+                            matches!(event, CommittedEvent::Damage {
+                        source: actual, target: recipient, amount: 1,
+                    } if *actual == source && *recipient == target)
+                        })
+                        .count(),
+                    usize::from(deals_damage)
+                );
+                let outcome = if protect {
+                    fixed_source_damage_v3::OutcomeV3::NoLegalTarget
+                } else {
+                    fixed_source_damage_v3::OutcomeV3::Resolved
+                };
+                assert!(branch.engine.event_history.iter().any(|event| {
+                    matches!(event, CommittedEvent::FixedDamageRemovedV3 { removal }
+                        if removal.item.v4.stack_item_id == item.v4.stack_item_id
+                            && removal.outcome == outcome)
+                }));
+                fixed_source_damage_v3::validate_state(branch).unwrap();
+                crate::effect::crystal_prevention_v1::validate(branch).unwrap();
+                for viewer in [player, opponent] {
+                    crate::rl::observe_premodern_ordered_v1(branch, &surface, viewer, 3).unwrap();
+                }
+
+                if prevent {
+                    assert_eq!(branch.objects.get(strands.unwrap()).zone, Zone::Graveyard);
+                    assert_eq!(branch.players[opponent.index()].mana_pool, [0; 6]);
+                    assert!(branch.engine.event_history.iter().any(|event| {
+                        matches!(event, CommittedEvent::CrystalDamageOperationV3 { operation }
+                            if operation.historical_source == Some(item.v4.stack_item_id)
+                                && operation.output.is_none()
+                                && operation.damage_history.is_none())
+                    }));
+                }
+                if protect {
+                    let mut forged: GameState =
+                        serde_json::from_slice(&serde_json::to_vec(branch).unwrap()).unwrap();
+                    let removal = forged
+                        .engine
+                        .event_history
+                        .iter_mut()
+                        .find_map(|event| match event {
+                            CommittedEvent::FixedDamageRemovedV3 { removal }
+                                if removal.item.v4.stack_item_id == item.v4.stack_item_id =>
+                            {
+                                Some(removal)
+                            }
+                            _ => None,
+                        })
+                        .unwrap();
+                    removal.outcome = fixed_source_damage_v3::OutcomeV3::Resolved;
+                    assert!(fixed_source_damage_v3::validate_state(&forged).is_err());
+                }
+            }
+            assert_eq!(state.state_hash(), restored.state_hash());
+        }
+    }
+}
+
+fn resolve_rats_discard(
+    state: &mut GameState,
+    player: PlayerId,
+    source: ObjectId,
+    hand: [ObjectId; 2],
+) {
+    let opponent = player.opponent();
+    let target = Target::Player(opponent);
+    let decision = settle(state);
+    let decision = if let Some(Decision::ChooseTargets {
+        player: chooser,
+        spell,
+        legal_targets,
+        ..
+    }) = &decision
+    {
+        assert_eq!((*chooser, *spell), (player, source));
+        assert_eq!(legal_targets.as_slice(), &[target]);
+        act(state, Action::ChooseTarget(target));
+        settle(state)
+    } else {
+        decision
+    };
+    assert!(
+        matches!(&decision, Some(Decision::Discard { player: chooser, count: 1, choices })
+        if *chooser == opponent && choices.as_slice() == &hand)
+    );
+    let mut restored: GameState =
+        serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
+    assert_eq!(Some(next(&mut restored)), decision);
+    for branch in [&mut *state, &mut restored] {
+        act(branch, Action::Discard(vec![hand[1]]));
+        settled(branch);
+        assert_eq!(branch.players[opponent.index()].hand, [hand[0]]);
+        assert_eq!(branch.players[opponent.index()].graveyard, [hand[1]]);
+    }
+    assert_eq!(state.state_hash(), restored.state_hash());
+}
+
+#[test]
+fn volrath_native_paid_rats_discards_for_the_opponent_unless_suppressed_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for suppressed in [false, true] {
+            let mut state = ordered_game(player);
+            let donor = put(&mut state, player, "Ravenous Rats", Zone::Graveyard);
+            let hand = [
+                put(&mut state, player.opponent(), "Forest", Zone::Hand),
+                put(&mut state, player.opponent(), "Island", Zone::Hand),
+            ];
+            if suppressed {
+                let orb = put(&mut state, player, "Torpor Orb", Zone::Hand);
+                pool(&mut state, player, &[], 2);
+                cast(&mut state, orb);
+                settled(&mut state);
+                assert_eq!(state.objects.get(orb).zone, Zone::Battlefield);
+            }
+            let source = cast_volrath(&mut state, player);
+            if suppressed {
+                settled(&mut state);
+                assert!(captured_entry(&state, source).is_none());
+                assert_eq!(state.players[player.opponent().index()].hand, hand);
+            } else {
+                resolve_rats_discard(&mut state, player, source, hand);
+                let capture = captured_entry(&state, source).unwrap();
+                assert_eq!(capture.donor.source, donor);
+                assert!(matches!(
+                    capture.kind,
+                    DonatedTriggerKindV1::RavenousRatsEntered { .. }
+                ));
+            }
+            assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+            assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
+        }
+    }
+}
+
+#[test]
+fn volrath_native_rats_uses_final_batch_text_after_donor_departure_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for donor_first in [false, true] {
+            let mut state = ordered_game(player);
+            let source = put(&mut state, player, VOLRATH, Zone::Hand);
+            let donor = put(&mut state, player, "Ravenous Rats", Zone::Graveyard);
+            let departed = put(&mut state, player, "Palinchron", Zone::Graveyard);
+            let hand = [
+                put(&mut state, player.opponent(), "Forest", Zone::Hand),
+                put(&mut state, player.opponent(), "Island", Zone::Hand),
+            ];
+            let mut changes = vec![
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+                ProposedEvent::zone_change(departed, Zone::Exile),
+            ];
+            if donor_first {
+                changes.reverse();
+            }
+            event::propose_and_commit_batch(&mut state, changes);
+            let capture = captured_entry(&state, source).unwrap();
+            assert_eq!(capture.donor.source, donor);
+            assert!(matches!(
+                capture.kind,
+                DonatedTriggerKindV1::RavenousRatsEnteredAfterBatch { .. }
+            ));
+            assert_eq!(state.objects.get(departed).zone, Zone::Exile);
+            resolve_rats_discard(&mut state, player, source, hand);
+        }
+    }
+}
+
+#[test]
 fn volrath_native_wall_mana_records_the_exact_restricted_use_both_seats() {
     for player in [PlayerId::P0, PlayerId::P1] {
         let mut state = ordered_game(player);

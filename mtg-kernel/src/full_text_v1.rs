@@ -12,6 +12,7 @@ use crate::card_def::{
 };
 use crate::effect::{EffectOp, PlayerRef};
 use crate::eternal_cards_v1::EternalOpV1;
+use crate::eternal_premodern_p2a_v1 as p2a;
 use crate::eternal_premodern_p2c_v1::{self as p2c, P2cOpV1};
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
@@ -294,6 +295,8 @@ pub enum DonatedTriggerKindV1 {
     KarmicGuideEntered { entry: u64 },
     KarmicGuideEnteredAfterBatch { entry: u64, marker: u64 },
     KarmicGuideEcho { upkeep: u64, control: u64 },
+    RavenousRatsEntered { entry: u64 },
+    RavenousRatsEnteredAfterBatch { entry: u64, marker: u64 },
 }
 
 impl DonatedTriggerKindV1 {
@@ -307,6 +310,10 @@ impl DonatedTriggerKindV1 {
             (p2c::KARMIC_GUIDE, Some(marker)) => {
                 Some(Self::KarmicGuideEnteredAfterBatch { entry, marker })
             }
+            (p2a::RAVENOUS_RATS, None) => Some(Self::RavenousRatsEntered { entry }),
+            (p2a::RAVENOUS_RATS, Some(marker)) => {
+                Some(Self::RavenousRatsEnteredAfterBatch { entry, marker })
+            }
             _ => None,
         }
     }
@@ -315,6 +322,9 @@ impl DonatedTriggerKindV1 {
         match self {
             Self::KarmicGuideEntered { .. } | Self::KarmicGuideEnteredAfterBatch { .. } => {
                 TargetSpec::CreatureCardInOwnGraveyard
+            }
+            Self::RavenousRatsEntered { .. } | Self::RavenousRatsEnteredAfterBatch { .. } => {
+                TargetSpec::TargetOpponent
             }
             _ => TargetSpec::None,
         }
@@ -365,6 +375,15 @@ impl DonatedTriggerCaptureV1 {
                     }) =>
             {
                 Ok(p2c::guide_enters())
+            }
+            DonatedTriggerKindV1::RavenousRatsEntered { entry }
+            | DonatedTriggerKindV1::RavenousRatsEnteredAfterBatch { entry, .. }
+                if donor.name == p2a::RAVENOUS_RATS
+                    && usize::try_from(entry).ok().is_some_and(|index| {
+                        entry_source(state, index) == Some(self.host.source)
+                    }) =>
+            {
+                Ok(p2a::rats_enters())
             }
             DonatedTriggerKindV1::DevourerPower { observed_power }
                 if donor.name == p2c::PHYREXIAN_DEVOURER && observed_power >= 7 =>
@@ -661,11 +680,13 @@ fn trigger_record(state: &GameState, index: u64) -> Result<DonatedTriggerCapture
         Some(CommittedEvent::FullTextTriggerCapturedV1 { capture }) => {
             match capture.kind {
                 DonatedTriggerKindV1::PalinchronEntered { entry }
-                | DonatedTriggerKindV1::KarmicGuideEntered { entry } => {
+                | DonatedTriggerKindV1::KarmicGuideEntered { entry }
+                | DonatedTriggerKindV1::RavenousRatsEntered { entry } => {
                     validate_entry_adjacency(state, entry, index, capture.host)?
                 }
                 DonatedTriggerKindV1::PalinchronEnteredAfterBatch { entry, marker }
-                | DonatedTriggerKindV1::KarmicGuideEnteredAfterBatch { entry, marker } => {
+                | DonatedTriggerKindV1::KarmicGuideEnteredAfterBatch { entry, marker }
+                | DonatedTriggerKindV1::RavenousRatsEnteredAfterBatch { entry, marker } => {
                     let (original_entry, text) = batch_entry(state, marker)?;
                     if marker >= index || entry != original_entry || capture.host != text.host
                         || capture.donor.source != text.donor.object
@@ -676,6 +697,7 @@ fn trigger_record(state: &GameState, index: u64) -> Result<DonatedTriggerCapture
                                 if matches!(capture.kind,
                                     DonatedTriggerKindV1::PalinchronEnteredAfterBatch { marker: used, .. }
                                     | DonatedTriggerKindV1::KarmicGuideEnteredAfterBatch { marker: used, .. }
+                                    | DonatedTriggerKindV1::RavenousRatsEnteredAfterBatch { marker: used, .. }
                                     if used == marker))
                         }).count() != 1
                     {
@@ -791,6 +813,11 @@ impl FullTextAbilityV1 {
                     ("Hermit Druid", 0) => DonatedActivationV1::HermitDruidRevealThroughBasic,
                     ("Psychatog", 0) => DonatedActivationV1::PsychatogDiscardPump,
                     ("Psychatog", 1) => DonatedActivationV1::PsychatogExilePump,
+                    ("Mogg Fanatic", 0)
+                        if crate::fixed_source_damage_v3::fanatic_recipe(definition) =>
+                    {
+                        DonatedActivationV1::MoggFanaticSacrificeForDamage
+                    }
                     _ => return None,
                 };
                 Some(FullTextProgramV1::DonatedActivation {
@@ -915,6 +942,19 @@ pub struct FullTextActivationRecordV1(Option<FullTextActivationV1>);
 impl FullTextActivationRecordV1 {
     pub fn is_empty(&self) -> bool {
         self.0.is_none()
+    }
+
+    pub(crate) fn is_donated_fanatic(self) -> bool {
+        cfg!(feature = "eternal-fixtures")
+            && self.0.is_some_and(|record| {
+                record.selector == FullTextAbilityV1::Printed(0)
+                    && CARD_DEFS
+                        .get(usize::from(record.host.card_def))
+                        .is_some_and(owns_definition)
+                    && CARD_DEFS
+                        .get(usize::from(record.donor.card_def))
+                        .is_some_and(crate::fixed_source_damage_v3::fanatic_recipe)
+            })
     }
 
     /// The native pending owner checks the exact current donor before costs
@@ -1097,6 +1137,10 @@ fn trigger_producer(
         }
         DonatedTriggerKindV1::KarmicGuideEcho { .. } => FullTextProgramV1::KarmicGuideEcho,
         DonatedTriggerKindV1::DevourerPower { .. } => FullTextProgramV1::DevourerSacrifice,
+        DonatedTriggerKindV1::RavenousRatsEntered { .. }
+        | DonatedTriggerKindV1::RavenousRatsEnteredAfterBatch { .. } => {
+            FullTextProgramV1::RavenousRatsDiscard
+        }
     };
     FullTextProducerV1 {
         stage,
