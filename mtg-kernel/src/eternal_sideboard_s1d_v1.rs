@@ -752,6 +752,8 @@ fn stacked_delayed_source_link(effect: &EffectOp) -> Option<ObjectLinkV4> {
 /// CR 609.7a. A public zone alone does not make a graveyard or exile card a
 /// source choice. Require an exact active reference or a direct eligible zone.
 fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
+    use crate::eternal_legacy_e8a_v1::{link_live_in, E8aOpV1};
+
     let mask = blue_mask();
     let mut sources = Vec::new();
     let mut include_live = |source: ObjectLinkV4| {
@@ -818,6 +820,29 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
             {
                 include_live(source);
             }
+        }
+    }
+    let published_returns = state.stack.iter().filter_map(|item| {
+        if item.kind != StackItemKind::TriggeredAbility {
+            return None;
+        }
+        match item.inline_effect.as_ref()? {
+            EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E8aV1(
+                E8aOpV1::ReturnExiledV1 { cards },
+            ))) => Some(cards),
+            _ => None,
+        }
+    });
+    let waiting_returns = state.eternal_v1.iter().flat_map(|eternal| {
+        eternal
+            .e8a
+            .end_step_returns
+            .iter()
+            .map(|pending| &pending.cards)
+    });
+    for &card in waiting_returns.chain(published_returns).flatten() {
+        if link_live_in(state, card, Zone::Exile) {
+            include_live(card);
         }
     }
     for replacement in &state.engine.active_replacements {
