@@ -1060,7 +1060,7 @@ fn overload_from_future_sight_can_be_the_only_legal_form_both_seats() {
         state.active_player = actor;
         state.priority_player = actor;
         put(&mut state, actor, "Future Sight", Zone::Battlefield);
-        let own_artifact = put(&mut state, actor, "Sol Ring", Zone::Battlefield);
+        let own_artifact = put(&mut state, actor, "Relic of Progenitus", Zone::Battlefield);
         let spell = put(&mut state, actor, "Vandalblast", Zone::Library);
         let other = actor.opponent();
         let commandeer = put(&mut state, other, "Commandeer", Zone::Hand);
