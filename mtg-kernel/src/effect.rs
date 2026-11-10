@@ -20782,30 +20782,34 @@ fn execute_with_native_row_v1(
             }
             let target = ctx.resolve_target(*target);
             let mut proposal = event::damage_from_exec_ctx_v1(ctx, target, *amount);
-            if let Some(proof) = native_proof.filter(|proof| {
-                proof.ctx == ctx
-                    && crate::source_power_activation_v1::bombardment::selected(
-                        state,
-                        &proof.owner.item,
-                    )
-            }) {
-                match crate::source_power_activation_v1::bombardment::departed_source(
+            if let Some(proof) = native_proof.filter(|proof| proof.ctx == ctx) {
+                let origin = if crate::source_power_activation_v1::bombardment::selected(
                     state,
                     &proof.owner.item,
                 ) {
-                    Ok(Some(facts)) => {
-                        if let event::ProposedEvent::Damage(damage) = &mut proposal {
-                            damage.eternal_damage_lki_v1 = Some(EternalDamageLkiV1(facts));
+                    match crate::source_power_activation_v1::bombardment::departed_source(
+                        state,
+                        &proof.owner.item,
+                    ) {
+                        Ok(facts) => facts.map(|facts| {
+                            EternalDamageLkiV1(EternalDamageOriginV1::Historical(facts))
+                        }),
+                        Err(_) => {
+                            state.engine.halted = Some((
+                                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                ctx.source,
+                            ));
+                            return;
                         }
                     }
-                    Ok(None) => {}
-                    Err(_) => {
-                        state.engine.halted = Some((
-                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                            ctx.source,
-                        ));
-                        return;
-                    }
+                } else {
+                    None
+                };
+                if let event::ProposedEvent::Damage(damage) = &mut proposal {
+                    damage.eternal_damage_lki_v1 = origin.or_else(|| {
+                        crate::fixed_source_damage_v3::waiting_bombardment_source(state, ctx.source)
+                            .then_some(EternalDamageLkiV1(EternalDamageOriginV1::Live(ctx.source)))
+                    });
                 }
             }
             match crate::fixed_source_damage_v3::native_fanatic_damage(state, ctx, op) {
@@ -27928,16 +27932,44 @@ struct NativeExecutionProofV1<'a> {
     ctx: &'a ExecCtx,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct EternalDamageLkiV1(crate::event::HistoricalDamageSourceV1);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EternalDamageLkiV1(EternalDamageOriginV1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EternalDamageOriginV1 {
+    Historical(crate::event::HistoricalDamageSourceV1),
+    Live(ObjectId),
+}
+
+impl std::hash::Hash for EternalDamageLkiV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self.0 {
+            EternalDamageOriginV1::Historical(facts) => std::hash::Hash::hash(&facts, state),
+            EternalDamageOriginV1::Live(source) => {
+                std::hash::Hash::hash(b"native-live-damage/v1", state);
+                std::hash::Hash::hash(&source, state);
+            }
+        }
+    }
+}
 
 impl EternalDamageLkiV1 {
     pub(crate) fn for_minsc(proof: crate::eternal_vintage_e7b_v1::minsc::DamageLoanV1) -> Self {
-        Self(proof.facts())
+        Self(EternalDamageOriginV1::Historical(proof.facts()))
     }
 
-    pub(crate) fn source(self) -> crate::event::HistoricalDamageSourceV1 {
-        self.0
+    pub(crate) fn source(self) -> ObjectId {
+        match self.0 {
+            EternalDamageOriginV1::Historical(facts) => facts.source.source,
+            EternalDamageOriginV1::Live(source) => source,
+        }
+    }
+
+    pub(crate) fn facts(self) -> Option<crate::event::HistoricalDamageSourceV1> {
+        match self.0 {
+            EternalDamageOriginV1::Historical(facts) => Some(facts),
+            EternalDamageOriginV1::Live(_) => None,
+        }
     }
 }
 

@@ -10,12 +10,26 @@ use crate::state::{
     AbilitySourceContractV4, GameObject, GameState, StackItem, StackItemKind, Target, Zone,
 };
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DepartureV3 {
     pub history_index: u32,
     pub snapshot: GameObject,
     pub facts: HistoricalDamageSourceV1,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metamorph_physical_def: Option<u16>,
+}
+impl Hash for DepartureV3 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.history_index.hash(state);
+        self.snapshot.hash(state);
+        self.facts.hash(state);
+        if let Some(definition) = self.metamorph_physical_def {
+            b"bombardment-metamorph/v1".hash(state);
+            definition.hash(state);
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PaidV3 {
@@ -41,6 +55,7 @@ pub(crate) struct PaymentOwnerV3 {
     source: AbilitySourceContractV4,
     tap: bool,
     bombardment_self: bool,
+    metamorph_physical_def: Option<u16>,
 }
 pub(crate) struct RemovalOwnerV3 {
     item: StackItem,
@@ -105,6 +120,22 @@ pub(crate) fn paid_bombardment_self(item: &StackItem) -> bool {
             .is_some_and(|(s, i)| bombardment::printed(s.card_def, i))
 }
 
+pub(crate) fn waiting_bombardment_source(state: &GameState, source: ObjectId) -> bool {
+    if !cfg!(feature = "eternal-fixtures") {
+        return false;
+    }
+    state
+        .stack
+        .iter()
+        .chain(state.engine.pending_effect.iter().map(|p| &p.resolving_item))
+        .any(|item| {
+            item.source == source
+                && (paid_bombardment_self(item)
+                    || (bombardment::selected(state, item)
+                        && has_payment(state, item.v4.stack_item_id)))
+        })
+}
+
 fn native_ordinary_damage(item: &StackItem) -> bool {
     paid_fanatic(item) || paid_bombardment_self(item)
 }
@@ -152,17 +183,16 @@ pub(crate) fn acquire_payment(state: &GameState) -> Result<Option<PaymentOwnerV3
     let fanatic_recipe = fanatic(source.card_def, p.ability_index);
     let bombardment_recipe = bombardment::printed(source.card_def, p.ability_index)
         && matches!(p.object_cost_chosen.as_slice(), [cost] if cost.object == p.source);
-    let physical = (fanatic_recipe || bombardment_recipe)
-        && !live.v4.is_token
-        && live.spell_copy_origin.is_none()
-        && !state.eternal_v1.as_ref().is_some_and(|eternal| {
-            eternal.vintage.copies.iter().any(|copy| {
-                copy.host.object == p.source
-                    && copy.host.zone_change_count == source.zone_change_count
-            })
-        });
-    let physical_fanatic = physical && fanatic_recipe;
-    let bombardment_self = physical && bombardment_recipe;
+    let eligible_card = !live.v4.is_token && live.spell_copy_origin.is_none();
+    let physical_fanatic = fanatic_recipe
+        && eligible_card
+        && !crate::eternal_vintage_v1::active_copy(state, p.source);
+    let bombardment_self = bombardment_recipe && eligible_card;
+    let metamorph_physical_def = if bombardment_self {
+        capture_metamorph_definition(state, source)?
+    } else {
+        None
+    };
     let tap = firebrand(source.card_def, p.ability_index);
     if !physical_fanatic && !tap && !bombardment_self {
         // A borrowed Firebrand recipe needs its own departing-source capture.
@@ -195,7 +225,38 @@ pub(crate) fn acquire_payment(state: &GameState) -> Result<Option<PaymentOwnerV3
         source,
         tap,
         bombardment_self,
+        metamorph_physical_def,
     }))
+}
+
+fn recorded_metamorph_definition(state: &GameState, source: AbilitySourceContractV4) -> Option<u16> {
+    crate::card_def::card_id_by_name("Phyrexian Metamorph").filter(|&physical| {
+        [physical, source.card_def].into_iter().all(|definition| {
+            crate::standard_cards_v1::had_card_def(
+                state,
+                source.source,
+                source.zone_change_count,
+                definition,
+            )
+        })
+    })
+}
+
+fn capture_metamorph_definition(
+    state: &GameState,
+    source: AbilitySourceContractV4,
+) -> Result<Option<u16>, String> {
+    let mut copies = state.eternal_v1.iter().flat_map(|eternal| {
+        eternal.vintage.copies.iter().filter(|copy| {
+            copy.host.object == source.source
+                && copy.host.zone_change_count == source.zone_change_count
+        })
+    });
+    let active = copies.next().map(|copy| copy.card_def);
+    if copies.next().is_some() || active != recorded_metamorph_definition(state, source) {
+        return Err("Bombardment has no unique original Metamorph copy form".into());
+    }
+    Ok(active)
 }
 impl PaymentOwnerV3 {
     pub(crate) fn requires_tap(&self) -> bool {
@@ -227,6 +288,7 @@ pub(crate) fn capture_departure(
         history_index,
         snapshot: state.objects.get(owner.source.source).clone(),
         facts,
+        metamorph_physical_def: owner.metamorph_physical_def,
     };
     state
         .engine
@@ -301,6 +363,15 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
         .ability_source_contract
         .ok_or("fixed damage has no captured source")?;
     let snapshot = &departure.snapshot;
+    let metamorph_physical_def = if paid_bombardment_self(&p.item) {
+        recorded_metamorph_definition(state, s)
+    } else {
+        None
+    };
+    if departure.metamorph_physical_def != metamorph_physical_def {
+        return Err("Bombardment has no retained original Metamorph copy form".into());
+    }
+    let paid_definition = metamorph_physical_def.unwrap_or(s.card_def);
     let mut normalized = departure.facts.source;
     normalized.attached_to = None;
     if departure.history_index != p.departure
@@ -367,7 +438,7 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
             || snapshot.spell_copy_origin.is_some()
             || !p.item.v4.paid_cost_refs.iter().any(|r| {
                 r.object == s.source
-                    && r.card_def == s.card_def
+                    && r.card_def == paid_definition
                     && r.owner == s.owner
                     && r.zone == departure_to
                     && s.zone_change_count.checked_add(1) == Some(r.zone_change_count)

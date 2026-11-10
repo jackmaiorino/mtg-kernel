@@ -2158,19 +2158,18 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
     use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
     use mtg_kernel::standard_cards_v1::StandardOpV1;
 
-    for actor in [P0, P1] {
+    for (actor, copy) in [(P0, false), (P1, false), (P0, true), (P1, true)] {
         let opponent = actor.opponent();
         let mut state = plains();
         state.active_player = actor;
         state.priority_player = actor;
-        let source = put(
+        let template = put(
             &mut state,
             opponent,
             "Goblin Bombardment",
             Zone::Battlefield,
         );
         let alternative = put(&mut state, opponent, "Llanowar Elves", Zone::Battlefield);
-        let original = state.objects.get(source).zone_change_count;
         let circle = put(&mut state, actor, "Circle of Protection: Blue", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::W], 1);
         cast(&mut state, circle, &[]);
@@ -2179,17 +2178,42 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
         pool(&mut state, actor, &[ManaColor::W, ManaColor::W], 2);
         cast(&mut state, opalescence, &[]);
         settled(&mut state);
-        assert!(engine::object_has_type(&state, source, CardType::Creature));
-        assert_eq!(power_toughness(&state, source), (2, 2));
+        assert!(engine::object_has_type(&state, template, CardType::Creature));
+        assert_eq!(power_toughness(&state, template), (2, 2));
         let painter = put(&mut state, actor, "Painter's Servant", Zone::Hand);
         pool(&mut state, actor, &[], 2);
         cast(&mut state, painter, &[]);
         settle_option(&mut state, 1);
         let blue = mtg_kernel::card_def::mana_color_mask(ManaColor::U);
-        assert_ne!(engine::object_color_mask(&state, source) & blue, 0);
         put(&mut state, actor, "Mulldrifter", Zone::Battlefield);
-
-        act(&mut state, Action::Pass);
+        let source = if copy {
+            run_until(
+                &mut state,
+                |s| s.active_player == opponent && s.priority_player == opponent && s.step == Step::Main1,
+                |_, _| None,
+            );
+            let metamorph = put(&mut state, opponent, "Phyrexian Metamorph", Zone::Hand);
+            pool(&mut state, opponent, &[ManaColor::U], 3);
+            cast(&mut state, metamorph, &[]);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                    if legal_targets.contains(&Target::Object(template))
+            ));
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(template)));
+            settled(&mut state);
+            assert_eq!(zone(&state, metamorph), Zone::Battlefield);
+            assert_eq!(state.objects.get(metamorph).card_def, id("Goblin Bombardment"));
+            assert!(engine::object_has_type(&state, metamorph, CardType::Artifact));
+            metamorph
+        } else {
+            act(&mut state, Action::Pass);
+            template
+        };
+        let physical = id(if copy { "Phyrexian Metamorph" } else { "Goblin Bombardment" });
+        let original = state.objects.get(source).zone_change_count;
+        assert!(engine::object_has_type(&state, source, CardType::Creature));
+        assert_ne!(engine::object_color_mask(&state, source) & blue, 0);
         activate(&mut state, source, 0, &[Target::Player(actor)]);
         let payment_choice = next(&mut state);
         assert!(matches!(
@@ -2204,6 +2228,7 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
             matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == opponent)
         );
         assert_eq!(zone(&state, source), Zone::Graveyard);
+        assert_eq!(state.objects.get(source).card_def, physical);
         assert_eq!(zone(&state, alternative), Zone::Battlefield);
         let item = state.stack[0].clone();
         let paid_at = item.v4.fixed_damage_paid_v3.0.unwrap();
@@ -2214,12 +2239,15 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
         };
         let departure_at = payment.departure as usize;
         assert_eq!(payment.item.as_ref(), &item);
+        assert_eq!(item.v4.paid_cost_refs[0].card_def, physical);
         let CommittedEvent::FixedDamageDepartureV3 { departure } =
             &state.engine.event_history[departure_at]
         else {
             panic!("missing prepayment source facts");
         };
         assert_eq!(departure.facts.source.zone_change_count, original);
+        assert_eq!(departure.facts.source.card_def, id("Goblin Bombardment"));
+        assert_eq!(departure.metamorph_physical_def, copy.then_some(physical));
         assert_ne!(departure.facts.color_mask & blue, 0);
         let move_at = (departure_at + 1..paid_at as usize)
             .find(|&at| matches!(
@@ -2228,7 +2256,8 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
             ))
             .expect("missing native sacrifice departure");
 
-        for mutation in 0..4 {
+        let mutations = if copy { 6 } else { 4 };
+        for mutation in 0..mutations {
             let mut forged: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             if mutation == 0 {
@@ -2242,9 +2271,25 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
                     panic!("missing restored source facts");
                 };
                 departure.facts.source.zone_change_count += 1;
-            } else {
+            } else if mutation == 3 {
                 forged.engine.event_history[move_at] =
                     state.engine.event_history[departure_at + 1].clone();
+            } else if mutation == 4 {
+                let CommittedEvent::FixedDamageDepartureV3 { departure } =
+                    &mut forged.engine.event_history[departure_at]
+                else {
+                    panic!("missing restored copy source facts");
+                };
+                departure.metamorph_physical_def = None;
+            } else {
+                let CommittedEvent::FixedDamagePaidV3 { payment } =
+                    &mut forged.engine.event_history[paid_at as usize]
+                else {
+                    panic!("missing restored paid copy");
+                };
+                let copied = id("Goblin Bombardment");
+                payment.item.v4.paid_cost_refs[0].card_def = copied;
+                forged.stack[0].v4.paid_cost_refs[0].card_def = copied;
             }
             let hash = forged.state_hash();
             assert!(engine::step(&mut forged, Action::Pass).is_err());
@@ -2258,18 +2303,40 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
         assert!(direct.engine.halted.is_some());
         assert_eq!(life(&direct, actor), 20);
         assert_eq!(direct.engine.event_history, state.engine.event_history);
-        let mut damage = ProposedEvent::damage(source, Target::Player(actor), 1);
-        let ProposedEvent::Damage(proposal) = &mut damage else {
-            panic!("missing damage proposal");
-        };
-        proposal.historical_source = Some(item.v4.stack_item_id);
-        for commit in [event::propose_and_commit, event::commit] {
-            let mut raw = state.clone();
-            commit(&mut raw, damage.clone());
-            assert!(raw.engine.halted.is_some());
-            assert_eq!(life(&raw, actor), 20);
-            assert_eq!(raw.engine.event_history, state.engine.event_history);
+        let mut raw_sources = vec![state.clone()];
+        if copy {
+            let mut later = state.clone();
+            let revival = put(&mut later, opponent, "Noxious Revival", Zone::Hand);
+            pool(&mut later, opponent, &[ManaColor::G], 0);
+            cast(&mut later, revival, &[Target::Object(source)]);
+            run_until(&mut later, |s| zone(s, source) == Zone::Library, |_, _| None);
+            assert!(later.objects.get(source).zone_change_count > original + 1);
+            assert_eq!(later.stack.as_slice(), std::slice::from_ref(&item));
+            raw_sources.push(later);
         }
+        for historical in [None, Some(item.v4.stack_item_id)] {
+            let mut damage = ProposedEvent::damage(source, Target::Player(actor), 1);
+            let ProposedEvent::Damage(proposal) = &mut damage else {
+                panic!("missing damage proposal");
+            };
+            proposal.historical_source = historical;
+            for original in &raw_sources {
+                for commit in [event::propose_and_commit, event::commit] {
+                    let mut raw = original.clone();
+                    commit(&mut raw, damage.clone());
+                    assert!(raw.engine.halted.is_some());
+                    assert_eq!(life(&raw, actor), 20);
+                    assert_eq!(raw.engine.event_history, original.engine.event_history);
+                }
+            }
+        }
+        let mut unrelated = state.clone();
+        event::propose_and_commit(
+            &mut unrelated,
+            ProposedEvent::damage(alternative, Target::Player(actor), 1),
+        );
+        assert!(unrelated.engine.halted.is_none());
+        assert_eq!(life(&unrelated, actor), 19);
 
         act(&mut state, Action::Pass);
         let removal = put(&mut state, actor, "Cast Down", Zone::Hand);
@@ -2281,11 +2348,14 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
             |_, _| None,
         );
         assert_eq!(state.stack.as_slice(), &[item]);
-        assert_eq!(engine::object_color_mask(&state, source) & blue, 0);
+        assert_eq!(engine::object_color_mask(&state, source) & blue != 0, copy);
         let mut unprotected = state.clone();
         settled(&mut unprotected);
         assert_eq!(life(&unprotected, actor), 19);
 
+        if state.priority_player != actor {
+            act(&mut state, Action::Pass);
+        }
         pool(&mut state, actor, &[], 1);
         activate(&mut state, circle, 0, &[]);
         let decision = settle(&mut state).expect("paid Circle source choice");

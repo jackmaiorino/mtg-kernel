@@ -107,8 +107,9 @@ impl DamageProposed {
         state: &GameState,
     ) -> Result<Option<HistoricalDamageSourceV1>, String> {
         match (self.eternal_damage_lki_v1, self.historical_source) {
-            (Some(facts), None) if facts.source().source.source == self.source => {
-                Ok(Some(facts.source()))
+            (Some(origin), None) if origin.source() == self.source => Ok(origin.facts()),
+            (None, _) if crate::fixed_source_damage_v3::waiting_bombardment_source(state, self.source) => {
+                Err("waiting Bombardment damage needs a lexical native source".into())
             }
             (None, Some(id)) => {
                 crate::source_power_activation_v1::damage_source(state, self.source, id).map(Some)
