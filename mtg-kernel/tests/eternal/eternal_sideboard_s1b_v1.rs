@@ -1262,6 +1262,12 @@ fn reanimated_metamorph_chooses_copy_and_mage_name_before_entry_both_seats() {
             let metamorph = put(&mut state, opponent, "Phyrexian Metamorph", Zone::Graveyard);
             let generation = state.objects.get(metamorph).zone_change_count;
             let reanimate = put(&mut state, actor, "Reanimate", Zone::Hand);
+            let mage_history_count = |state: &GameState| {
+                state.engine.event_history.iter().filter(|event| {
+                    matches!(event, CommittedEvent::MeddlingMageEntryV1 { .. })
+                }).count()
+            };
+            let history_before_copy = mage_history_count(&state);
             pool(&mut state, actor, &[ManaColor::B], 0);
             cast(&mut state, reanimate, &[Target::Object(metamorph)]);
             let choice = settle(&mut state).expect("native noncast Metamorph copy menu");
@@ -1286,6 +1292,7 @@ fn reanimated_metamorph_chooses_copy_and_mage_name_before_entry_both_seats() {
             assert_eq!(zone(&state, reanimate), Zone::Stack);
             assert_eq!(life(&state, actor), 20);
             assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+            assert_eq!(mage_history_count(&state), history_before_copy);
             let frozen_hand = state.players[actor.index()].hand.len();
 
             let mut forged = serde_json::to_value(&state).unwrap();

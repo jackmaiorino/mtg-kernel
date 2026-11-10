@@ -4686,8 +4686,8 @@ fn commit_with_entry_batch_and_source_color(
     state.engine.event_history.push(committed);
     if let Some(copy) = metamorph_mage_copy {
         if matches!(state.engine.event_history.get(entry_history_index),
-            Some(CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Battlefield, .. })
-                if *object == copy.physical.source)
+            Some(CommittedEvent::ZoneChange { object, from, to: Zone::Battlefield, .. })
+                if *object == copy.physical.source && *from == copy.physical.zone)
             && crate::eternal_sideboard_s1b_v1::meddling_mage_entry::record_metamorph_copy(
                 state,
                 copy,
