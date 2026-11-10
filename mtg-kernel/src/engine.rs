@@ -29711,6 +29711,19 @@ fn push_paid_activation(
             ..StackStateV4::default()
         },
     });
+    if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::vial::record_paid(
+        state,
+        stack_item_id,
+        frozen.payment_history_start,
+    )
+    .is_err()
+    {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
     if let Some(revealed) = frozen.martyr_revealed {
         state
             .engine

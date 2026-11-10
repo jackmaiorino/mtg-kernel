@@ -88,7 +88,11 @@ pub enum GeneralAnswerV36 {
         index: u16,
     },
     ReanimateMetamorphV1 {
-        choice: Box<mage_entry::ReanimateCopyChoiceV1>,
+        choice: Box<mage_entry::NoncastCopyChoiceV1>,
+        copied: Option<crate::state::AbilitySourceContractV4>,
+    },
+    VialMetamorphV1 {
+        choice: Box<mage_entry::NoncastCopyChoiceV1>,
         copied: Option<crate::state::AbilitySourceContractV4>,
     },
 }
@@ -119,7 +123,11 @@ pub enum GeneralChoiceV36 {
         group: Option<u16>,
     },
     ReanimateMetamorphV1 {
-        choice: Box<mage_entry::ReanimateCopyChoiceV1>,
+        choice: Box<mage_entry::NoncastCopyChoiceV1>,
+        original_sha256: String,
+    },
+    VialMetamorphV1 {
+        choice: Box<mage_entry::NoncastCopyChoiceV1>,
         original_sha256: String,
     },
 }
@@ -778,7 +786,8 @@ fn potential_operation(state: &GameState) -> bool {
     {
         return true;
     }
-    crate::effect::needs_electroduplicate_entry_owner_v1(state)
+    mage_entry::vial::waiting(state)
+        || crate::effect::needs_electroduplicate_entry_owner_v1(state)
         || state
             .stack
             .last()
@@ -1084,7 +1093,11 @@ fn replay_general_current_slots_v69(
                     used_banner: runner.used_banner,
                 }));
         } else if runner.mage_start.is_some()
-            || matches!(choice, GeneralChoiceV36::ReanimateMetamorphV1 { .. })
+            || matches!(
+                choice,
+                GeneralChoiceV36::ReanimateMetamorphV1 { .. }
+                    | GeneralChoiceV36::VialMetamorphV1 { .. }
+            )
         {
             checkpoint
                 .engine
@@ -1448,6 +1461,9 @@ pub fn validate(state: &GameState) -> Result<(), String> {
     {
         let names_v2 = if let GeneralChoiceV36::ReanimateMetamorphV1 {
             original_sha256, ..
+        }
+        | GeneralChoiceV36::VialMetamorphV1 {
+            original_sha256, ..
         } = &pending.choice
         {
             if pending.operation_history_index.is_some()
@@ -1674,7 +1690,8 @@ fn decision(state: &GameState) -> Result<Decision, String> {
             | GeneralChoiceV36::FakeAuraV50 { .. }
             | GeneralChoiceV36::KinshipV1 { .. }
             | GeneralChoiceV36::MeddlingMageV1 { .. }
-            | GeneralChoiceV36::ReanimateMetamorphV1 { .. } => {
+            | GeneralChoiceV36::ReanimateMetamorphV1 { .. }
+            | GeneralChoiceV36::VialMetamorphV1 { .. } => {
                 return Err("successor choice cannot use frozen Banner checkpoint".into())
             }
             GeneralChoiceV36::Color { choice, .. } => Decision::ChooseEntryColorV36 {
@@ -2297,17 +2314,53 @@ pub(crate) fn prepare_reanimated_metamorph(
         .original_stack
         .last()
         .ok_or("noncast Metamorph lost its original Reanimate stack row")?;
-    let Some(choice) = mage_entry::ReanimateCopyChoiceV1::capture(state, ctx, object, parent)?
-    else {
+    let Some(choice) = mage_entry::NoncastCopyChoiceV1::capture(state, ctx, object, parent)? else {
         return Ok(true);
     };
+    prepare_noncast_metamorph(state, choice, false)
+}
+
+pub(crate) fn prepare_vial_metamorph(
+    state: &mut GameState,
+    pending: &crate::effect::EffectContinuation,
+    paid_at: usize,
+    object: crate::ids::ObjectId,
+) -> Result<bool, String> {
+    if !mage_entry::vial::is_physical_metamorph_in_hand(state, object) {
+        return Ok(true);
+    }
+    let Some(choice) = mage_entry::vial::capture(state, pending, paid_at, object)? else {
+        return Ok(true);
+    };
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("Vial Metamorph has no native hand-answer owner")?;
+    // The hand answer advances through a native answered-choice frame.
+    if !matches!(&runner.operation, OperationV1::Advance) {
+        return Err("Vial Metamorph lost its actual private hand answer".into());
+    }
+    prepare_noncast_metamorph(state, choice, true)
+}
+
+fn prepare_noncast_metamorph(
+    state: &mut GameState,
+    choice: mage_entry::NoncastCopyChoiceV1,
+    vial: bool,
+) -> Result<bool, String> {
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("noncast Metamorph has no entry owner")?;
     if let Some(answer) = runner.answers.get(runner.cursor) {
-        let GeneralAnswerV36::ReanimateMetamorphV1 {
-            choice: expected,
-            copied,
-        } = answer
-        else {
-            return Err("Metamorph replay changed its confirmed copy choice kind".into());
+        let (expected, copied) = match (vial, answer) {
+            (false, GeneralAnswerV36::ReanimateMetamorphV1 { choice, copied })
+            | (true, GeneralAnswerV36::VialMetamorphV1 { choice, copied }) => (choice, copied),
+            _ => return Err("Metamorph replay changed its confirmed copy choice kind".into()),
         };
         if **expected != choice || copied.is_some_and(|source| !choice.candidates.contains(&source))
         {
@@ -2322,25 +2375,34 @@ pub(crate) fn prepare_reanimated_metamorph(
             .unwrap()
             .cursor += 1;
         if let Some(copy) = copy {
+            if vial {
+                mage_entry::vial::record_hand_answer(state, copy)?;
+            }
             stage_metamorph_mage_copy(state, copy)?;
         }
         return Ok(true);
     }
     let snapshot = mage_checkpoint_world(state, runner);
     let original_sha256 = runner.original_sha256.clone();
+    let choice = Box::new(choice);
+    let checkpoint = if vial {
+        GeneralChoiceV36::VialMetamorphV1 {
+            choice,
+            original_sha256,
+        }
+    } else {
+        GeneralChoiceV36::ReanimateMetamorphV1 {
+            choice,
+            original_sha256,
+        }
+    };
     state
         .engine
         .linked_aura_operation_v1
         .runtime
         .as_mut()
         .unwrap()
-        .checkpoint = Some((
-        Box::new(snapshot),
-        GeneralChoiceV36::ReanimateMetamorphV1 {
-            choice: Box::new(choice),
-            original_sha256,
-        },
-    ));
+        .checkpoint = Some((Box::new(snapshot), checkpoint));
     Ok(false)
 }
 
@@ -2955,21 +3017,20 @@ pub(crate) fn commit_entry_color(
 fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String> {
     match choice {
         GeneralChoiceV36::MeddlingMageV1 { choice, group } => mage_entry::decision(choice, *group),
-        GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. } => {
-            Ok(Decision::ChooseEffectTargets {
-                player: choice.producer.controller,
-                source: choice.physical.source,
-                selected_count: 0,
-                min_targets: 0,
-                max_targets: 1,
-                can_finish: true,
-                legal_targets: choice
-                    .candidates
-                    .iter()
-                    .map(|source| Target::Object(source.source))
-                    .collect(),
-            })
-        }
+        GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. }
+        | GeneralChoiceV36::VialMetamorphV1 { choice, .. } => Ok(Decision::ChooseEffectTargets {
+            player: choice.producer.controller,
+            source: choice.decision_source(),
+            selected_count: 0,
+            min_targets: 0,
+            max_targets: 1,
+            can_finish: true,
+            legal_targets: choice
+                .candidates
+                .iter()
+                .map(|source| Target::Object(source.source))
+                .collect(),
+        }),
         GeneralChoiceV36::KinshipV1 { choice, .. } => Ok(Decision::ChooseEntryCreatureTypeV1 {
             player: choice.controller,
             entry_ordinal: choice.ordinal,
@@ -3026,25 +3087,35 @@ fn answer_equipment_checkpoint_v48(
     action: Action,
 ) -> Result<GeneralAnswerV36, String> {
     match (choice, action) {
-        (GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. }, Action::FinishEffectSelection) => {
-            Ok(GeneralAnswerV36::ReanimateMetamorphV1 {
-                choice: choice.clone(),
-                copied: None,
-            })
-        }
         (
-            GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. },
-            Action::ChooseEffectTarget(Target::Object(object)),
+            GeneralChoiceV36::ReanimateMetamorphV1 { choice: copy, .. }
+            | GeneralChoiceV36::VialMetamorphV1 { choice: copy, .. },
+            action,
         ) => {
-            let source = choice
-                .candidates
-                .iter()
-                .find(|source| source.source == object)
-                .ok_or("Metamorph copy answer is outside its original menu")?;
-            Ok(GeneralAnswerV36::ReanimateMetamorphV1 {
-                choice: choice.clone(),
-                copied: Some(*source),
-            })
+            let copied = match action {
+                Action::FinishEffectSelection => None,
+                Action::ChooseEffectTarget(Target::Object(object)) => Some(
+                    copy.candidates
+                        .iter()
+                        .find(|source| source.source == object)
+                        .copied()
+                        .ok_or("Metamorph copy answer is outside its original menu")?,
+                ),
+                _ => return Err("Metamorph copy needs a native choice answer".into()),
+            };
+            Ok(
+                if matches!(choice, GeneralChoiceV36::VialMetamorphV1 { .. }) {
+                    GeneralAnswerV36::VialMetamorphV1 {
+                        choice: copy.clone(),
+                        copied,
+                    }
+                } else {
+                    GeneralAnswerV36::ReanimateMetamorphV1 {
+                        choice: copy.clone(),
+                        copied,
+                    }
+                },
+            )
         }
         (GeneralChoiceV36::MeddlingMageV1 { choice, group }, Action::ChooseEffectOption(index))
             if mage_entry::valid_index(choice, *group, index) =>

@@ -1668,6 +1668,28 @@ pub struct StackStateV4 {
     pub high_society_hunter_started_v45: HighSocietyHunterStartedV45,
     #[serde(default, skip_serializing_if = "BombardmentLkiV1::is_empty")]
     pub bombardment_lki_v1: BombardmentLkiV1,
+    #[serde(default, skip_serializing_if = "VialMetamorphPaidV1::is_empty")]
+    pub vial_metamorph_paid_v1: VialMetamorphPaidV1,
+}
+
+/// Native paid Vial index. Absence preserves the historical bytes and Hash.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct VialMetamorphPaidV1(pub(crate) Option<usize>);
+
+impl VialMetamorphPaidV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+impl Hash for VialMetamorphPaidV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(at) = self.0 {
+            b"vial-metamorph-paid/v1".hash(state);
+            at.hash(state);
+        }
+    }
 }
 
 /// Native paid Bombardment activations after the departure-LKI contract.

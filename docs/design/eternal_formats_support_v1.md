@@ -490,10 +490,16 @@ New, each built once in the first wave that needs it:
   Mage name choice or the Wall's draw trigger. An unsupported legal copy
   refuses the entire prompt. The saved copy binds the actual Reanimate cast
   and entry window. The native runner authenticates its original graveyard
-  target during execution. Aether Vial and other noncast producers remain
-  outside this path.
-  Dress Down suppresses the physical copy choice before entry. Other copy-entry
-  routes are outside this repair. Native qualification is pending.
+  target during execution. Under the public native Eternal opening profile,
+  Aether Vial with four charge counters uses the same prospective copy owner.
+  The native replay binds the actual paid tap, reads the original live or
+  last-known charge count at resolution, and authenticates the controller's
+  private hand choice. Its supported face-up donors are Mage, Wall of Blossoms and the
+  printed Aether Vial. A Vial copy enters with zero counters. Frozen viewers
+  refuse the native profile from setup, independently of the hand or its
+  choice. Other noncast copy-entry producers remain outside this path.
+  Dress Down suppresses the physical copy choice before entry. Native
+  qualification is pending.
   Extirpate uses the shared extraction continuation to require all
   public graveyard matches, offer any subset of the hidden matches, and provide the caster
   a private look at the full searched hand and library. Native qualification of this
