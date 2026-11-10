@@ -33,6 +33,81 @@ fn tap(state: &mut GameState, actor: PlayerId, name: &str) -> ObjectId {
 }
 
 #[test]
+fn lavinia_counter_trigger_follows_its_controller_after_paid_exchange_both_seats() {
+    use mtg_kernel::planeswalker_v1::loyalty;
+    use mtg_kernel::state::StackItemKind;
+
+    for controller in [P0, P1] {
+        let owner = controller.opponent();
+        let mut state = paid_lavinia(controller, &["Island"; 20]);
+        let lavinia = state.players[owner.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .find(|&card| state.objects.get(card).card_def == id("Lavinia, Azorius Renegade"))
+            .unwrap();
+        let oko = put(&mut state, controller, "Oko, Thief of Crowns", Zone::Hand);
+        for name in ["Forest", "Island", "Island"] {
+            tap(&mut state, controller, name);
+        }
+        cast(&mut state, oko, &[]);
+        settled(&mut state);
+        assert_eq!(state.players[controller.index()].mana_pool, [0; 6]);
+        activate(&mut state, oko, 0, &[]);
+        settled(&mut state);
+        assert_eq!(loyalty(&state, oko), Some(6));
+        let food = state.players[controller.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .find(|&card| state.objects.get(card).card_def == id("Food Token"))
+            .unwrap();
+        let turn = state.turn;
+        run_until(
+            &mut state,
+            |s| s.turn > turn && s.active_player == controller && s.step == Step::Main1,
+            |_, _| None,
+        );
+        activate(&mut state, oko, 2, &[Target::Object(food), Target::Object(lavinia)]);
+        settled(&mut state);
+        assert_eq!(loyalty(&state, oko), Some(1));
+        assert_eq!(state.objects.get(food).controller, owner);
+        assert_eq!(state.objects.get(lavinia).owner, owner);
+        assert_eq!(state.objects.get(lavinia).controller, controller);
+
+        run_until(
+            &mut state,
+            |s| s.active_player == owner && s.step == Step::Main1 && s.priority_player == owner,
+            |_, _| None,
+        );
+        let mox = put(&mut state, owner, "Mox Pearl", Zone::Hand);
+        assert_eq!(state.players[owner.index()].mana_pool, [0; 6]);
+        cast(&mut state, mox, &[]);
+        let priority = next(&mut state);
+        assert!(matches!(priority, Decision::CastSpellOrPass { .. }));
+        assert_eq!(zone(&state, mox), Zone::Stack);
+        assert_eq!(state.players[owner.index()].mana_pool, [0; 6]);
+        let trigger = state.stack.last().expect("Lavinia's published counter trigger");
+        assert_eq!(trigger.kind, StackItemKind::TriggeredAbility);
+        assert_eq!(trigger.source, lavinia);
+        assert_eq!(trigger.controller, controller);
+        let source = trigger.v4.ability_source_contract.unwrap();
+        assert_eq!(source.owner, owner);
+        assert_eq!(source.controller, controller);
+
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut restored), priority);
+        for branch in [&mut state, &mut restored] {
+            settled(branch);
+            assert_eq!(zone(branch, mox), Zone::Graveyard);
+            assert_eq!(branch.objects.get(lavinia).controller, controller);
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
+    }
+}
+
+#[test]
 fn lavinia_caps_announced_x_and_restored_actions_both_seats() {
     for actor in [P0, P1] {
         let mut state = paid_lavinia(actor, &["Island"; 20]);

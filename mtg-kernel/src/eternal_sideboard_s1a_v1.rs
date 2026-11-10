@@ -787,7 +787,7 @@ fn lavinia_triggers(state: &mut GameState, events: &[CommittedEvent]) -> Vec<Pen
             let source = AbilitySourceContractV4::capture(state, lavinia);
             triggers.push(crate::eternal_cards_v1::delayed_trigger(
                 source,
-                source.owner,
+                source.controller,
                 s1a(S1aOpV1::CounterSpellItemV1 { spell: item }),
             ));
         }
