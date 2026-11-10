@@ -15436,6 +15436,12 @@ fn drive_resumable_inner_with_native_row_v1(
                 continuation.answered_choice_guard = None;
                 put_returning_aura_attached(state, aura, host)?;
             }
+            EffectOp::Sequence(ops)
+                if !continuation.resolving_item.is_copy
+                    && crate::eternal_cards_v1::owned_draws_v1::knowledge::recipe(&EffectOp::Sequence(ops.clone())) =>
+            {
+                crate::eternal_cards_v1::owned_draws_v1::knowledge::begin(state, &mut continuation, &path)?;
+            }
             EffectOp::Sequence(ops) => {
                 for (index, inner) in ops.into_iter().enumerate().rev() {
                     let mut inner_path = path.clone();
@@ -20723,6 +20729,11 @@ fn execute_with_native_row_v1(
                     ctx.source,
                 ));
             }
+        }
+        EffectOp::Sequence(ops) if crate::eternal_cards_v1::owned_draws_v1::knowledge::recipe(&EffectOp::Sequence(ops.clone())) => {
+            // Actual casts, including native copies, enter the resumable root.
+            // A raw recipe/context cannot manufacture the paid draw owner.
+            state.engine.halted = Some((crate::engine::UnsupportedMechanic::InvalidEffectContinuation, ctx.source));
         }
         EffectOp::Sequence(ops) => {
             for inner in ops {

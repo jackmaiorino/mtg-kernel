@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) mod bonder;
 pub(crate) mod echo;
 pub(crate) mod fixed;
+pub(crate) mod knowledge;
 pub(crate) mod portent;
 pub(crate) mod rooms;
 pub(crate) mod standstill;
@@ -81,6 +82,7 @@ enum InstructionV1 {
         triggered_at: usize,
         drawer: PlayerId,
     },
+    Knowledge { paid_at: usize, second_at: Option<usize> },
 }
 
 impl InstructionV1 {
@@ -183,6 +185,7 @@ impl InstructionV1 {
             Self::Echo { .. } => 7,
             Self::Bonder { .. } | Self::Portent { .. } => 1,
             Self::Room { kind, .. } => kind.count(),
+            Self::Knowledge { second_at, .. } => knowledge::count(state, second_at).unwrap_or(0),
             Self::Curie { combat_at } => {
                 eternal_legacy_e7a_v1::curie::draw_count(state, ctx, combat_at).unwrap_or(0)
             }
@@ -410,6 +413,7 @@ pub enum JournalV1 {
     },
     PortentV1(portent::JournalV1),
     StandstillV1(standstill::JournalV1),
+    KnowledgeV1(knowledge::JournalV1),
 }
 
 impl JournalV1 {
@@ -749,6 +753,10 @@ fn progress(
     let (started, attempts) = journal.start()?;
     let actual = match started.instruction {
         InstructionV1::FixedRoot { .. } => fixed::selected(state, pending),
+        InstructionV1::Knowledge { .. } => {
+            knowledge::matches_start(state, pending, started, progress.started_at)
+                .then_some((started.instruction, started.source))
+        }
         InstructionV1::Bonder { .. } => {
             bonder::matches_start(state, pending, started, progress.started_at)
                 .then_some((started.instruction, started.source))
@@ -818,6 +826,9 @@ pub(crate) fn complete(
         state.eternal_owned_draw_progress_v1 = None;
         if !terminal {
             match started.instruction {
+                InstructionV1::Knowledge { paid_at, second_at: None } => {
+                    knowledge::finish_first(state, pending, paid_at, progress.started_at, started.source)?;
+                }
                 InstructionV1::Bonder {
                     resolution_at,
                     drawer,
@@ -1060,6 +1071,9 @@ fn dragon_before_start(pending: &EffectContinuation) -> bool {
 pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Result<(), String> {
     portent::validate_parent(state, pending)?;
     if state.eternal_owned_draw_progress_v1.is_none() {
+        if knowledge::validate_idle(state, pending)? {
+            return Ok(());
+        }
         if rooms::validate_idle(state, pending)? {
             return Ok(());
         }
@@ -1092,6 +1106,7 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
         && fixed::selected(state, pending).is_none()
         && echo::selected(state, pending).is_none()
         && bonder::selected(state, pending).is_none()
+        && knowledge::selected(state, pending).is_none()
     {
         return Err("Eternal draw progress lost its original source".into());
     }

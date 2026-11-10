@@ -657,8 +657,18 @@ New, each built once in the first wave that needs it:
   successor. Source review verified the ordinary V5/Human compatibility repair
   and authenticated historical source projection. Native qualification of this
   successor remains pending.
-  Generated draws from the remaining Premodern leaves, Arcane Denial and
-  Accumulated Knowledge still need their Jace/Hullbreacher origins.
+  Accumulated Knowledge's physical paid spell now owns its two sequential
+  instructions. A native paid-row receipt binds the original root; completing
+  the first instruction captures the count in both graveyards for the second.
+  Later dredges cannot change that captured count. Each instruction applies
+  Riddler once and uses the common per-attempt replacement and terminal stop.
+  Actual paid both-seat fixtures cover first-draw milling of another Knowledge,
+  later milling after count capture, Jace/Hull without Dredge, ordinary V5/Human,
+  restore/tamper and a genuine Chandra spell copy's predecessor route. Copies'
+  replacement/count ownership remains outside this component. Source review,
+  pinned formatting and native qualification of this component are pending.
+  Generated draws from the remaining Premodern leaves and Arcane Denial still
+  need their Jace/Hullbreacher origins.
   Quantum Riddler adjusts the whole count once for uninterrupted fixed and
   dynamic draw instructions. Named draws and top-level fixed draw instructions
   from physical spells or printed triggers retain the adjusted count across

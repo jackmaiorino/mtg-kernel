@@ -2722,6 +2722,8 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         .map_err(RlContractError)?;
     crate::eternal_cards_v1::owned_draws_v1::bonder::refuse_legacy(state)
         .map_err(RlContractError)?;
+    crate::eternal_cards_v1::owned_draws_v1::knowledge::refuse_legacy(state)
+        .map_err(RlContractError)?;
     if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(state) {
         return Err(RlContractError(
             "Crystal requires its selected public/Human successor".into(),
@@ -5483,6 +5485,8 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
     crate::eternal_cards_v1::owned_draws_v1::standstill::refuse_legacy(request.state)
         .map_err(RlContractError)?;
     crate::eternal_cards_v1::owned_draws_v1::bonder::refuse_legacy(request.state)
+        .map_err(RlContractError)?;
+    crate::eternal_cards_v1::owned_draws_v1::knowledge::refuse_legacy(request.state)
         .map_err(RlContractError)?;
     if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(request.state) {
         return Err(RlContractError(
@@ -11138,6 +11142,8 @@ fn continuous_effects_common_v2(
     crate::eternal_cards_v1::owned_draws_v1::standstill::refuse_legacy(state)
         .map_err(RlContractError)?;
     crate::eternal_cards_v1::owned_draws_v1::bonder::refuse_legacy(state)
+        .map_err(RlContractError)?;
+    crate::eternal_cards_v1::owned_draws_v1::knowledge::refuse_legacy(state)
         .map_err(RlContractError)?;
     if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(state) {
         return Err(RlContractError(

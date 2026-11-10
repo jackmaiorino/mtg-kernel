@@ -69,3 +69,6 @@ mod portent_owned_draws_v1;
 
 #[path = "eternal/standstill_owned_draws_v1.rs"]
 mod standstill_owned_draws_v1;
+
+#[path = "eternal/knowledge_owned_draws_v1.rs"]
+mod knowledge_owned_draws_v1;

@@ -29184,6 +29184,7 @@ fn finalize_owned_cast(
     );
     event::log_spell_cast(state, pending.spell, pending.controller);
     crate::eternal_cards_v1::owned_draws_v1::portent::record_cast(state, stack_item_id)?;
+    crate::eternal_cards_v1::owned_draws_v1::knowledge::record_cast(state, stack_item_id)?;
     crate::extra_turn_v1::record_publication(state, stack_item_id);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::e3::note_cast(state, stack_item_id);

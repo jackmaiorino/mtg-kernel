@@ -133,6 +133,9 @@ pub(crate) fn forces_resumable(state: &GameState, program: &EffectOp, ctx: &Exec
     ) {
         return crate::effect::resumable_program_supported(program);
     }
+    if owned_draws_v1::knowledge::recipe(program) {
+        return crate::effect::resumable_program_supported(program);
+    }
     let needs_choice = match owned_draws_v1::starting_draws(state, program, ctx) {
         Some((drawer, count)) => owned_draw_needs_choice(state, drawer, count),
         None => {

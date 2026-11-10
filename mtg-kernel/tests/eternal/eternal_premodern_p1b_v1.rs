@@ -612,10 +612,15 @@ fn accumulated_knowledge_counts_its_name_in_all_graveyards() {
     let knowledge = put(&mut state, P0, "Accumulated Knowledge", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U], 1);
     cast(&mut state, knowledge, &[]);
-    settled(&mut state);
-    // One, then one for each of the two in graveyards.
-    assert_eq!(state.players[0].hand.len(), 3);
-    assert_eq!(zone(&state, knowledge), Zone::Graveyard);
+    let mut replay: GameState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    for branch in [&mut state, &mut replay] {
+        settled(branch);
+        // One, then one for each of the two in graveyards. The resolving
+        // physical Knowledge does not join its graveyard until both finish.
+        assert_eq!(branch.players[0].hand.len(), 3);
+        assert_eq!(zone(branch, knowledge), Zone::Graveyard);
+    }
+    assert_eq!(state.state_hash(), replay.state_hash());
 }
 
 #[test]
