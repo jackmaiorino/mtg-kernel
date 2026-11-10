@@ -200,6 +200,7 @@ impl BoundDecisionV1 {
         }
     }
 
+    #[cfg(feature = "eternal-fixtures")]
     pub(super) fn view(
         &self,
         state: &GameState,
@@ -210,6 +211,7 @@ impl BoundDecisionV1 {
         view(&self.menu, state, surface, self.actor, step, viewer)
     }
 
+    #[cfg(feature = "eternal-fixtures")]
     pub(super) fn choose(
         &self,
         state: &mut GameState,
