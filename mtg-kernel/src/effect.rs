@@ -9191,29 +9191,15 @@ fn enter_undercity_room(
     if from_room != expected_from || !legal_rooms.contains(&room) {
         return Err("Undercity entry no longer follows the exact room graph".to_string());
     }
-    let dungeon = &mut state.players[binding.player.index()].dungeon;
-    if room == UndercityRoomV1::ThroneOfTheDeadThree {
-        match dungeon
-            .completed_dungeons
-            .binary_search(&crate::state::UNDERCITY_DUNGEON_ID_V1)
-        {
-            Ok(_) => {}
-            Err(index) => dungeon
-                .completed_dungeons
-                .insert(index, crate::state::UNDERCITY_DUNGEON_ID_V1),
-        }
-        dungeon.dungeon_id = None;
-        dungeon.room_id = None;
-    } else {
-        dungeon.dungeon_id = Some(crate::state::UNDERCITY_DUNGEON_ID_V1);
-        dungeon.room_id = Some(room.stable_id());
-    }
     event::log_initiative_trigger(
         state,
         binding.player,
         binding.source,
         InitiativeTriggerKindV1::UndercityRoom(room),
     )?;
+    let dungeon = &mut state.players[binding.player.index()].dungeon;
+    dungeon.dungeon_id = Some(crate::state::UNDERCITY_DUNGEON_ID_V1);
+    dungeon.room_id = Some(room.stable_id());
     Ok(())
 }
 
@@ -9323,7 +9309,7 @@ fn take_initiative(
 }
 
 fn stage_undercity_venture(
-    state: &GameState,
+    state: &mut GameState,
     continuation: &mut EffectContinuation,
     binding: InitiativeTriggerBindingV1,
     path: Vec<u16>,
@@ -9331,6 +9317,7 @@ fn stage_undercity_venture(
     if !path.is_empty() || !continuation.frames.is_empty() {
         return Err("venture trigger is not a root-only effect".to_string());
     }
+    crate::eternal_cards_v1::e3::dungeons::occurrences::complete_bottommost(state, binding.player);
     let (from_room, legal_rooms) = undercity_next_rooms(state, binding.player)?;
     match legal_rooms.as_slice() {
         [] => Err("Undercity route has no next room".to_string()),

@@ -2,10 +2,9 @@
 //! Forgotten Realms dungeons, and Acererak the Archlich.
 //!
 //! A player's dungeon and room live in `PlayerState::dungeon`, beside the
-//! Undercity (dungeon id 1, which only the initiative ventures into). As for
-//! the Undercity, a room's ability is a triggered ability whose source is the
-//! card whose ability made the player venture, and a dungeon is completed as
-//! its bottommost room is entered.
+//! Undercity (dungeon id 1). Room abilities use the venturing card as the
+//! engine's proxy source. Native room occurrences retain the dungeon
+//! identity independently, including while a room ability is resolving.
 
 use super::super::{eternal, EternalOpV1};
 use super::super::owned_draws_v1::rooms;
@@ -114,6 +113,7 @@ pub(super) fn venture(
     continuation: &mut EffectContinuation,
     path: Vec<u16>,
 ) -> Result<(), String> {
+    occurrences::complete_bottommost(state, continuation.ctx.controller);
     let options = next_rooms(state, continuation.ctx.controller)?;
     if let [(dungeon, room)] = options.as_slice() {
         return enter_room(state, &continuation.ctx, *dungeon, *room);
@@ -147,18 +147,9 @@ pub(super) fn enter_room(
         return Err("venture chose a room the marker cannot reach".to_string());
     }
     let entered_at = occurrences::entered(state, player, source, dungeon, room)?;
-    let bottommost = leads_to(dungeon, room).is_some_and(<[u16]>::is_empty);
     let marker = &mut state.players[player.index()].dungeon;
-    if bottommost {
-        if let Err(index) = marker.completed_dungeons.binary_search(&dungeon) {
-            marker.completed_dungeons.insert(index, dungeon);
-        }
-        marker.dungeon_id = None;
-        marker.room_id = None;
-    } else {
-        marker.dungeon_id = Some(dungeon);
-        marker.room_id = Some(room);
-    }
+    marker.dungeon_id = Some(dungeon);
+    marker.room_id = Some(room);
     e3_mut(state).room_triggers.push(RoomTriggerV1 {
         player,
         source,

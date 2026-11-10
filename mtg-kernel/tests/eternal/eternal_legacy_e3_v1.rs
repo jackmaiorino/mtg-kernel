@@ -1560,6 +1560,94 @@ fn completing_tomb_of_annihilation_makes_the_atropal_and_stops_acererak() {
 }
 
 #[test]
+fn lost_mine_completion_waits_for_all_room_triggers_both_seats() {
+    let marker = |state: &GameState, player: PlayerId| {
+        let dungeon = &state.players[player.index()].dungeon;
+        (dungeon.dungeon_id, dungeon.room_id, dungeon.completed_dungeons.clone())
+    };
+    let bottom = (Some(LOST_MINE), Some(7), Vec::new());
+    let completed = (None, None, vec![LOST_MINE]);
+
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let aluren = put(&mut state, actor, "Aluren", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::G; 2], 2);
+        cast(&mut state, aluren, &[]);
+        settled(&mut state);
+        let acererak = put(&mut state, actor, ACERERAK, Zone::Hand);
+        cast(&mut state, acererak, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption { player, option_count: 3, .. }) if player == actor
+        ));
+        act(&mut state, Action::ChooseEffectOption(0));
+        let cave_top = state.players[actor.index()].library[0];
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { player, ref legal_targets, .. })
+                if player == actor && legal_targets.as_slice() == [Target::Object(cave_top)]
+        ));
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(cave_top)));
+        settled(&mut state);
+
+        cast(&mut state, acererak, &[]);
+        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { option_count: 2, .. })));
+        act(&mut state, Action::ChooseEffectOption(0)); // Goblin Lair.
+        settled(&mut state);
+        cast(&mut state, acererak, &[]);
+        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { option_count: 2, .. })));
+        act(&mut state, Action::ChooseEffectOption(1)); // Dark Pool.
+        pass_until(&mut state, |state| {
+            marker(state, actor).1 == Some(5) && state.stack.len() == 1
+        });
+
+        // Aluren lets the same Acererak advance again above the older room.
+        cast(&mut state, acererak, &[]);
+        pass_until(&mut state, |state| marker(state, actor) == bottom && state.stack.len() == 2);
+        assert_eq!(state.players[actor.opponent().index()].life, 20);
+        let before_draw = state.players[actor.index()].library.len();
+        let snapshot = serde_json::to_vec(&state).unwrap();
+        let mut resolved: GameState = serde_json::from_slice(&snapshot).unwrap();
+        pass_until(&mut resolved, |state| state.stack.len() == 1);
+        assert_eq!(marker(&resolved, actor), bottom);
+        assert_eq!(resolved.players[actor.index()].library.len(), before_draw - 1);
+        settled(&mut resolved);
+        assert_eq!(marker(&resolved, actor), completed);
+        assert_eq!(resolved.players[actor.opponent().index()].life, 19);
+
+        let mut countered: GameState = serde_json::from_slice(&snapshot).unwrap();
+        let temple = Target::StackItem(countered.stack.last().unwrap().v4.stack_item_id);
+        let stifle = put(&mut countered, actor, "Stifle", Zone::Hand);
+        pool(&mut countered, actor, &[ManaColor::U], 0);
+        cast(&mut countered, stifle, &[temple]);
+        pass_until(&mut countered, |state| state.stack.len() == 1);
+        assert_eq!(marker(&countered, actor), bottom);
+        settled(&mut countered);
+        assert_eq!(marker(&countered, actor), completed);
+        assert_eq!(countered.players[actor.index()].library.len(), before_draw);
+
+        // A new venture completes the old instance before a new room is
+        // chosen. The original Temple and Dark Pool remain on the stack.
+        cast(&mut state, acererak, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption { player, option_count: 3, .. }) if player == actor
+        ));
+        assert_eq!(marker(&state, actor), completed);
+        act(&mut state, Action::ChooseEffectOption(0));
+        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { .. })));
+        assert_eq!(marker(&state, actor), (Some(LOST_MINE), Some(1), vec![LOST_MINE]));
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(cave_top)));
+        settled(&mut state);
+        assert_eq!(marker(&state, actor), (Some(LOST_MINE), Some(1), vec![LOST_MINE]));
+        assert_eq!(state.players[actor.index()].library.len(), before_draw - 1);
+        assert_eq!(state.players[actor.opponent().index()].life, 19);
+    }
+}
+
+#[test]
 fn veils_of_fear_costs_two_life_unless_a_card_is_discarded() {
     let mut state = islands();
     in_room(&mut state, P0, TOMB, 1);
@@ -1662,8 +1750,14 @@ fn mad_wizards_lair_casts_a_drawn_card_for_free_and_completes_the_dungeon() {
     let ritual = state.players[0].library[0];
     in_room(&mut state, P0, MAD_MAGE, 8);
     cast_acererak(&mut state);
-    match settle(&mut state) {
-        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+    let decision = settle(&mut state).expect("Mad Wizard's Lair choice");
+    let marker = &state.players[0].dungeon;
+    assert_eq!((marker.dungeon_id, marker.room_id), (Some(MAD_MAGE), Some(9)));
+    assert!(marker.completed_dungeons.is_empty());
+    state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    assert_eq!(next(&mut state), decision);
+    match decision {
+        Decision::ChooseEffectTargets { legal_targets, .. } => {
             assert_eq!(legal_targets, vec![Target::Object(ritual)]);
             assert!(state
                 .known_hand_cards(P1, P0)
