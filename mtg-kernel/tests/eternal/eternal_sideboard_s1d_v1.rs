@@ -1060,7 +1060,10 @@ fn overload_from_future_sight_can_be_the_only_legal_form_both_seats() {
         state.active_player = actor;
         state.priority_player = actor;
         put(&mut state, actor, "Future Sight", Zone::Battlefield);
+        let own_artifact = put(&mut state, actor, "Sol Ring", Zone::Battlefield);
         let spell = put(&mut state, actor, "Vandalblast", Zone::Library);
+        let other = actor.opponent();
+        let commandeer = put(&mut state, other, "Commandeer", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::R], 3);
         assert!(!castable(&mut state, spell));
         pool(&mut state, actor, &[], 1);
@@ -1071,8 +1074,16 @@ fn overload_from_future_sight_can_be_the_only_legal_form_both_seats() {
         assert_eq!(item.v4.cast_method, Some(CastMethodV4::Omen));
         assert!(item.targets.is_empty());
         assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        act(&mut state, Action::Pass);
+        assert!(matches!(
+            next(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == other
+        ));
+        pool(&mut state, other, &[ManaColor::U; 2], 5);
+        cast(&mut state, commandeer, &[Target::Object(spell)]);
         settled(&mut state);
         assert_eq!(zone(&state, spell), Zone::Graveyard);
+        assert_eq!(zone(&state, own_artifact), Zone::Graveyard);
     }
 }
 

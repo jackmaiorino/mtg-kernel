@@ -172,7 +172,7 @@ pub(crate) fn library_overload_allowed(
     if live.zone != Zone::Stack
         || origin.origin_zone != Zone::Library
         || live.owner != player
-        || live.controller != player
+        || (origin.finalized_method.is_none() && live.controller != player)
         || origin.origin_zone_change_count.checked_add(1) != Some(live.zone_change_count)
         || !matches!(origin.route, SpellCastRouteV4::LibraryPermissionV1 {
             holder, permission_zone_change_count
