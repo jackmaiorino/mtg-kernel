@@ -2101,6 +2101,9 @@ pub enum CommittedEvent {
     EternalOpeningV1 {
         record: crate::eternal_opening_v1::RecordV1,
     },
+    EternalOwnedDrawV1 {
+        journal: Box<crate::eternal_cards_v1::owned_draws_v1::JournalV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

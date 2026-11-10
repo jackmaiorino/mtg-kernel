@@ -7,6 +7,7 @@ use crate::eternal_lurrus_v1::LurrusOpV1;
 use crate::eternal_pauper_e8b_v1::{self, E8bOpV1};
 use crate::eternal_vintage_e7b_v1::dredge;
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{
@@ -102,25 +103,44 @@ enum SourceV1 {
     Ability(AbilitySourceContractV4),
 }
 
-impl SourceV1 {
-    fn object(self) -> ObjectId {
-        match self {
-            Self::Spell(source) => source.source,
-            Self::Ability(source) => source.source,
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProgressV1 {
+    started_at: usize,
+    completed: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ProgressV1 {
+pub struct StartedV1 {
     item: StackItemId,
     source: SourceV1,
     controller: PlayerId,
     instruction: InstructionV1,
     total: u32,
-    completed: u32,
-    library_history_start: Option<usize>,
+    initial_library_len: Option<usize>,
+}
+
+/// Native resolution evidence. A completed attempt can produce no Draw or
+/// Treasure event because replacement can prevent both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum JournalV1 {
+    Started(StartedV1),
+    Completed { started_at: usize, ordinal: u32 },
+}
+
+fn record(state: &mut GameState, journal: JournalV1) {
+    state.engine.event_history.push(CommittedEvent::EternalOwnedDrawV1 {
+        journal: Box::new(journal),
+    });
+}
+
+fn has_started(state: &GameState, item: StackItemId) -> bool {
+    state.engine.event_history.scan_for_v1(&[EventKindV1::EternalOwnedDrawV1]).iter().any(|event| {
+        matches!(event, CommittedEvent::EternalOwnedDrawV1 { journal }
+            if matches!(**journal, JournalV1::Started(started) if started.item == item))
+    })
 }
 
 fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(InstructionV1, SourceV1)> {
@@ -203,6 +223,7 @@ pub(crate) fn begin(
         || !path.is_empty()
         || !pending.frames.is_empty()
         || state.eternal_owned_draw_progress_v1.is_some()
+        || has_started(state, pending.resolving_item.v4.stack_item_id)
     {
         return Err("Eternal draw lost its original instruction".into());
     }
@@ -213,27 +234,43 @@ pub(crate) fn begin(
         }
         return Ok(());
     }
-    state.eternal_owned_draw_progress_v1 = Some(ProgressV1 {
+    let started_at = state.engine.event_history.len();
+    let started = StartedV1 {
         item: pending.resolving_item.v4.stack_item_id,
         source,
         controller: pending.ctx.controller,
         instruction,
         total,
+        initial_library_len: (instruction == InstructionV1::Tamiyo)
+            .then_some(state.players[pending.ctx.controller.index()].library.len()),
+    };
+    record(state, JournalV1::Started(started));
+    state.eternal_owned_draw_progress_v1 = Some(ProgressV1 {
+        started_at,
         completed: 0,
-        library_history_start: (instruction == InstructionV1::Tamiyo)
-            .then_some(state.engine.event_history.len()),
     });
     stage(pending, 0);
     Ok(())
 }
 
-fn progress(state: &GameState, pending: &EffectContinuation) -> Option<ProgressV1> {
+fn progress(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Option<(ProgressV1, StartedV1)> {
     let progress = state.eternal_owned_draw_progress_v1?;
-    (Some((progress.instruction, progress.source)) == selected(state, pending)
-        && progress.item == pending.resolving_item.v4.stack_item_id
-        && progress.controller == pending.ctx.controller
-        && progress.completed < progress.total)
-        .then_some(progress)
+    let CommittedEvent::EternalOwnedDrawV1 { journal } =
+        state.engine.event_history.get(progress.started_at)?
+    else {
+        return None;
+    };
+    let JournalV1::Started(started) = **journal else {
+        return None;
+    };
+    (Some((started.instruction, started.source)) == selected(state, pending)
+        && started.item == pending.resolving_item.v4.stack_item_id
+        && started.controller == pending.ctx.controller
+        && progress.completed < started.total)
+        .then_some((progress, started))
 }
 
 pub(crate) fn complete(
@@ -242,15 +279,20 @@ pub(crate) fn complete(
     ordinal: u32,
     path: &[u16],
 ) -> Result<(), String> {
-    let progress = progress(state, pending).ok_or("Eternal draw lost its progress owner")?;
+    let (progress, started) =
+        progress(state, pending).ok_or("Eternal draw lost its native start")?;
     if ordinal != progress.completed || path != [1] || !pending.frames.is_empty() {
         return Err("Eternal draw completed the wrong attempt".into());
     }
     let completed = ordinal + 1;
-    if completed == progress.total {
+    record(state, JournalV1::Completed { started_at: progress.started_at, ordinal });
+    let opponent = started.controller.opponent();
+    let terminal = state.players[opponent.index()].has_lost
+        && !crate::game_outcome_protection_v1::cannot_lose(state, opponent);
+    if terminal || completed == started.total {
         state.eternal_owned_draw_progress_v1 = None;
-        if progress.instruction == InstructionV1::Tamiyo {
-            remove_maximum_hand_size(state, progress.controller);
+        if !terminal && started.instruction == InstructionV1::Tamiyo {
+            remove_maximum_hand_size(state, started.controller);
         }
     } else {
         state
@@ -261,19 +303,6 @@ pub(crate) fn complete(
         stage(pending, completed);
     }
     Ok(())
-}
-
-pub(crate) fn abandon(state: &mut GameState, ctx: &ExecCtx) {
-    if state
-        .eternal_owned_draw_progress_v1
-        .is_some_and(|progress| {
-            Some(progress.item) == ctx.stack_item_id
-                && progress.source.object() == ctx.source
-                && progress.controller == ctx.controller
-        })
-    {
-        state.eternal_owned_draw_progress_v1 = None;
-    }
 }
 
 fn initial_library_len(state: &GameState, player: PlayerId, start: usize) -> Option<usize> {
@@ -308,14 +337,38 @@ fn initial_library_len(state: &GameState, player: PlayerId, start: usize) -> Opt
         })
 }
 
-fn expected_total(state: &GameState, ctx: &ExecCtx, progress: ProgressV1) -> Option<u32> {
-    match (progress.instruction, progress.library_history_start) {
-        (InstructionV1::Tamiyo, Some(start)) => {
-            initial_library_len(state, progress.controller, start).map(half_library_count)
+fn validate_native_progress(
+    state: &GameState,
+    ctx: &ExecCtx,
+    progress: ProgressV1,
+    started: StartedV1,
+) -> Result<(), String> {
+    let tail = progress.started_at + 1;
+    let total = match (started.instruction, started.initial_library_len) {
+        (InstructionV1::Tamiyo, Some(library_len))
+            if initial_library_len(state, started.controller, tail) == Some(library_len) =>
+        {
+            Some(half_library_count(library_len))
         }
-        (InstructionV1::Tamiyo, None) | (_, Some(_)) => None,
+        (InstructionV1::Tamiyo, _) | (_, Some(_)) => None,
         (instruction, None) => Some(instruction.count(state, ctx)),
+    };
+    if total != Some(started.total) {
+        return Err("Eternal draw changed its original count".into());
     }
+    let completed = state.engine.event_history[tail..].iter().filter_map(|event| match event {
+        CommittedEvent::EternalOwnedDrawV1 { journal } => match **journal {
+            JournalV1::Completed { started_at, ordinal } if started_at == progress.started_at => Some(ordinal),
+            _ => None,
+        },
+        _ => None,
+    }).try_fold(0u32, |count, ordinal| {
+        if count == ordinal { count.checked_add(1) } else { None }
+    });
+    if completed != Some(progress.completed) {
+        return Err("Eternal draw changed its native completed attempts".into());
+    }
+    Ok(())
 }
 
 pub(crate) fn draw_stage_matches(
@@ -325,8 +378,8 @@ pub(crate) fn draw_stage_matches(
     path: &[u16],
     remaining: &[EffectFrame],
 ) -> bool {
-    progress(state, pending).is_some_and(|progress| {
-        drawer == progress.controller
+    progress(state, pending).is_some_and(|(progress, started)| {
+        drawer == started.controller
             && path == [0]
             && remaining == [completion(progress.completed)]
     })
@@ -344,21 +397,24 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
         && matches!((&pending.choice, pending.frames.as_slice()),
             (None, [EffectFrame::Program { op, path }]) if InstructionV1::from_program(op) == Some(instruction) && path.is_empty())
     {
-        return Ok(());
+        return if has_started(state, pending.resolving_item.v4.stack_item_id) {
+            Err("Eternal draw already started its original instruction".into())
+        } else {
+            Ok(())
+        };
     }
-    let progress = progress(state, pending).ok_or("Eternal draw lost its progress owner")?;
-    if expected_total(state, &pending.ctx, progress) != Some(progress.total) {
-        return Err("Eternal draw changed its original count".into());
-    }
+    let (progress, started) =
+        progress(state, pending).ok_or("Eternal draw lost its native start")?;
+    validate_native_progress(state, &pending.ctx, progress, started)?;
     let (path, remaining) =
         dredge::draw_stage(pending).ok_or("Eternal draw lost its original stage")?;
-    if !draw_stage_matches(state, pending, progress.controller, path, remaining) {
+    if !draw_stage_matches(state, pending, started.controller, path, remaining) {
         return Err("Eternal draw changed its progress or remaining effects".into());
     }
     dredge::validate_draw_choice(
         state,
         pending,
-        progress.controller,
+        started.controller,
         path,
         remaining,
         "Eternal draw",

@@ -433,11 +433,11 @@ pub(crate) fn finish_jace_or_hullbreacher(
         let opponent = player.opponent();
         if state.players[opponent.index()].has_lost
             && !crate::game_outcome_protection_v1::cannot_lose(state, opponent)
+            && state.eternal_owned_draw_progress_v1.is_none()
         {
             pending.frames.clear();
             abandon_coveted_jewel_draws(state, &pending.ctx);
             crate::eternal_vintage_v1::paradoxical_outcome_v1::abandon(state, &pending.ctx);
-            crate::eternal_cards_v1::owned_draws_v1::abandon(state, &pending.ctx);
         }
     } else {
         event::propose_and_commit(state, ProposedEvent::draw(player));

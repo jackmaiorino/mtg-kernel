@@ -527,7 +527,10 @@ New, each built once in the first wave that needs it:
   original-incarnation arrivals into the spell controller's hand. Both progress
   checks validate continuation consistency. Plunder and Twinned Vision retain
   their cast-origin conditions. Tamiyo's count uses the library size when her
-  ability starts, and the hand-size effect follows the last draw attempt.
+  ability starts, and the hand-size effect follows the last draw attempt if
+  play continues. The four owned draw instructions journal their start and
+  actual completed attempts when the replacement continuation runs. Restore
+  checks saved progress against that native evidence.
   An affected player can also choose between Jace's empty-library win and
   Hullbreacher on fixed-count draw instructions and the covered owned draws.
   Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
