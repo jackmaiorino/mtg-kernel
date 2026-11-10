@@ -542,10 +542,10 @@ New, each built once in the first wave that needs it:
   creature, enchantment or land), each returned independently. New target shapes
   are `StandardTargetV1::S1dV1`. Rhino and Flagbearer use new stable ids 361 and 362;
   Nylea's Disciple uses Centaur's existing stable id 281 from P2c.
-  Partial: Martyr of Sands awaits native payment, disclosure, restore and consumer
-  qualification. Standard Bearer and Coalition Honor Guard now share bounded
+  Partial: Martyr of Sands passed its native paid reveal and restore fixture;
+  event-history consumer qualification remains pending. Standard Bearer and Coalition Honor Guard now share bounded
   complete-assignment checks for optional target counts, including early Finish,
-  restored selections and payable activations. Native qualification is pending.
+  restored selections and payable activations. All five optional-target native cases passed.
   Fixed-slot dependencies such as Goblin Welder and separate damage-allocation
   target paths still need qualification and repairs. Vandalblast and Electrickery omit overload on the normal
   graveyard permission path. The shared free-resolution path can offer the overload
