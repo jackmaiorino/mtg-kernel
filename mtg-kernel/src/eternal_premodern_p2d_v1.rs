@@ -308,8 +308,10 @@ pub(crate) fn execute(op: &P2dOpV1, ctx: &ExecCtx, state: &mut GameState) {
                     source.source == ctx.source
                         && source.controller == ctx.controller
                         && source.zone == Zone::Battlefield
-                        && crate::engine::validate_historical_ability_source_contract(state, *source)
-                            .is_ok()
+                        && crate::engine::validate_historical_ability_source_contract(
+                            state, *source,
+                        )
+                        .is_ok()
                 })
                 .and_then(|source| CARD_DEFS.get(usize::from(source.card_def)))
                 .and_then(|definition| echo_cost(definition.name));

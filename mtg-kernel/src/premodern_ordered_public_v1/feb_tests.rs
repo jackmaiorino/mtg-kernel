@@ -762,7 +762,10 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
                 assert_eq!(state.objects.get(source).zone, zone);
                 assert_eq!(state.players[player.index()].mana_pool, mana);
                 if departed {
-                    assert_eq!(state.objects.get(source).zone_change_count, departed_generation);
+                    assert_eq!(
+                        state.objects.get(source).zone_change_count,
+                        departed_generation
+                    );
                     assert!(!state.engine.event_history.iter().any(|event| matches!(
                         event,
                         crate::event::CommittedEvent::Sacrificed { object, .. } if *object == source
