@@ -184,6 +184,7 @@ fn processed_first_spells(
             .filter(|at| *at < first_queued)
     });
     let mut processed = [None; 2];
+    let mut previous_cast = None;
     for (at, event) in history.iter().enumerate().skip(end) {
         let CommittedEvent::EternalOpeningV1 {
             record: RecordV1::FirstSpellProcessed { cast_at },
@@ -194,11 +195,13 @@ fn processed_first_spells(
         let caster =
             cast_player(state, *cast_at).ok_or("invalid Eternal first spell occurrence")?;
         if *cast_at >= at
+            || previous_cast.is_some_and(|previous| *cast_at <= previous)
             || expected[caster.index()] != Some(*cast_at)
             || processed[caster.index()].replace(*cast_at).is_some()
         {
             return Err("invalid Eternal first spell processing receipt".into());
         }
+        previous_cast = Some(*cast_at);
     }
     if processed != expected {
         return Err("missing actual Eternal first spell processing receipt".into());
