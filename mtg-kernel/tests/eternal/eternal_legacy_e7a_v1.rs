@@ -1659,6 +1659,245 @@ fn echo_of_eons_refills_both_hands_and_flashes_back() {
 }
 
 #[test]
+fn paid_echo_draws_for_the_active_player_first_and_applies_riddler_per_player() {
+    use mtg_kernel::event::CommittedEvent;
+
+    for caster in [P0, P1] {
+        let active = caster.opponent();
+        let mut state = islands();
+        state.active_player = caster;
+        state.priority_player = caster;
+        let teferi = put(&mut state, caster, "Teferi, Time Raveler", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::W, ManaColor::U], 1);
+        cast(&mut state, teferi, &[]);
+        settled(&mut state);
+        activate(&mut state, teferi, 0, &[]);
+        settled(&mut state);
+        pass_until(&mut state, |s| {
+            s.active_player == active && s.step == Step::Main1
+        });
+        let thug = put(&mut state, active, "Golgari Thug", Zone::Graveyard);
+        for player in [caster, active] {
+            put(&mut state, player, "Quantum Riddler", Zone::Battlefield);
+            put(&mut state, player, "Lightning Bolt", Zone::Hand);
+            put(&mut state, player, "Island", Zone::Hand);
+        }
+        act(&mut state, Action::Pass);
+        assert_eq!(state.priority_player, caster);
+        let echo = put(&mut state, caster, "Echo of Eons", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::U; 2], 4);
+        let start = state.engine.event_history.len();
+        cast(&mut state, echo, &[]);
+        settled(&mut state);
+        assert_eq!(zone(&state, echo), Zone::Graveyard);
+        assert_eq!(state.players[caster.index()].mana_pool, [0; 6]);
+        assert_ne!(zone(&state, thug), Zone::Graveyard);
+        let mut draws =
+            state.engine.event_history[start..]
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::Draw {
+                        player,
+                        object: Some(_),
+                    } => Some(*player),
+                    _ => None,
+                });
+        assert!(draws.by_ref().take(8).eq([active; 8]));
+        assert!(draws.eq([caster; 8]));
+        assert_eq!(hand_len(&state, caster), 8);
+        assert_eq!(hand_len(&state, active), 8);
+        assert!(!state.engine.event_history[start..]
+            .iter()
+            .any(|event| matches!(event, CommittedEvent::EternalOwnedDrawV1 { .. })));
+    }
+}
+
+#[test]
+fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
+    use mtg_kernel::effect::EffectFrame;
+    use mtg_kernel::event::CommittedEvent;
+
+    for caster in [P0, P1] {
+        for drawer in [caster, caster.opponent()] {
+            let other = drawer.opponent();
+            let mut state = GameState::new_from_libraries_environment_v2_with_starting_player_v1(
+                &[],
+                &[],
+                |id| CARD_DEFS[id as usize].object_name.into(),
+                0x4537_4121_0002,
+                caster,
+            );
+            state.step = Step::Main1;
+            for _ in 0..12 {
+                put(&mut state, other, "Island", Zone::Library);
+            }
+            let jace = put(
+                &mut state,
+                drawer,
+                "Jace, Wielder of Mysteries",
+                Zone::Battlefield,
+            );
+            put(&mut state, drawer, "Quantum Riddler", Zone::Battlefield);
+            put(&mut state, other, "Hullbreacher", Zone::Battlefield);
+            if other == caster {
+                put(&mut state, other, "Quantum Riddler", Zone::Battlefield);
+            }
+            let other_draws = if other == caster { 8 } else { 7 };
+            let thug = put(&mut state, other, "Golgari Thug", Zone::Graveyard);
+            let returned = put(&mut state, other, "Lightning Bolt", Zone::Hand);
+            let echo = put(&mut state, caster, "Echo of Eons", Zone::Graveyard);
+            pool(&mut state, caster, &[ManaColor::U], 2);
+            cast(&mut state, echo, &[]);
+            let first = settle(&mut state).expect("Jace competes with Hullbreacher");
+            assert!(matches!(&first, Decision::ChooseEffectTargets {
+                player, source, legal_targets, can_finish: true, ..
+            } if *player == drawer && *source == echo
+                && legal_targets.as_slice() == [Target::Object(jace)]));
+            assert_eq!(state.players[caster.index()].mana_pool, [0; 6]);
+            assert_eq!(zone(&state, echo), Zone::Stack);
+            assert_ne!(zone(&state, thug), Zone::Graveyard);
+            assert_eq!(
+                hand_len(&state, other),
+                if drawer == caster { 0 } else { other_draws }
+            );
+            assert!(state.engine.event_history.iter().any(|event|
+                matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Hand, to: Zone::Library, .. }
+                    if *object == returned)));
+            let saved = serde_json::to_value(&state).unwrap();
+            let shuffle_ordinals = |saved: &serde_json::Value| {
+                saved["environment_randomization_v2"]["next_live_shuffle_ordinal"].clone()
+            };
+            assert_eq!(shuffle_ordinals(&saved), serde_json::json!([1, 1]));
+            let (marker_at, marker) = saved["engine"]["event_history"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .enumerate()
+                .find_map(|(at, row)| {
+                    row.get("EternalOwnedDrawV1")?.get("journal")?
+                        .get("EchoShuffledV1").map(|marker| (at, marker))
+                })
+                .expect("Echo's native shuffle marker");
+            let shuffles = [
+                marker["shuffles"][0].as_u64().unwrap() as usize,
+                marker["shuffles"][1].as_u64().unwrap() as usize,
+            ];
+            for [missing, substitute] in [shuffles, [shuffles[1], shuffles[0]]] {
+                let mut replaced = saved.clone();
+                let events = replaced["engine"]["event_history"].as_array_mut().unwrap();
+                events[missing] = events[substitute].clone();
+                let replaced: GameState = serde_json::from_value(replaced).unwrap();
+                assert!(mtg_kernel::effect::validate_pending_effect_choice(&replaced).is_err());
+            }
+
+            let mut rewound = state.clone();
+            let pending = rewound.engine.pending_effect.as_mut().unwrap();
+            pending.choice = None;
+            pending.frames = vec![EffectFrame::Program {
+                op: mtg_kernel::eternal_legacy_e7a_v1::echo_of_eons(),
+                path: Vec::new(),
+            }];
+            let mut rewound = serde_json::to_value(&rewound).unwrap();
+            rewound
+                .as_object_mut()
+                .unwrap()
+                .remove("eternal_owned_draw_progress_v1");
+            rewound["engine"]["event_history"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|event| {
+                    let journal = &event["EternalOwnedDrawV1"]["journal"];
+                    journal.get("Started").is_none()
+                        && journal.get("StartedWithRiddlerV1").is_none()
+                        && journal.get("EchoShuffledV1").is_none()
+                });
+            assert_eq!(
+                rewound["engine"]["event_history"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|event| event["EternalOwnedDrawV1"]["journal"]
+                        .get("EchoShuffleCommittedV1")
+                        .is_some())
+                    .count(),
+                2
+            );
+            let rewound: GameState = serde_json::from_value(rewound).unwrap();
+            assert!(mtg_kernel::effect::validate_pending_effect_choice(&rewound)
+                .unwrap_err()
+                .contains("already started"));
+
+            if drawer != caster {
+                let mut changed_count = saved.clone();
+                let extra = &mut changed_count["engine"]["event_history"][marker_at]
+                    ["EternalOwnedDrawV1"]["journal"]["EchoShuffledV1"]["first_extra"];
+                assert_eq!(*extra, serde_json::json!(1));
+                *extra = serde_json::json!(0);
+                let changed_count: GameState = serde_json::from_value(changed_count).unwrap();
+                assert!(mtg_kernel::effect::validate_pending_effect_choice(&changed_count).is_err());
+
+                let mut skipped = saved.clone();
+                let completed = skipped["engine"]["event_history"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find_map(|event| {
+                        event
+                            .get_mut("EternalOwnedDrawV1")?
+                            .get_mut("journal")?
+                            .get_mut("Completed")?
+                            .get_mut("ordinal")
+                    })
+                    .expect("the active player's actual completed attempts");
+                *completed = serde_json::json!(1);
+                let skipped: GameState = serde_json::from_value(skipped).unwrap();
+                assert!(mtg_kernel::effect::validate_pending_effect_choice(&skipped).is_err());
+            }
+
+            let mut restored: GameState = serde_json::from_value(saved).unwrap();
+            assert_eq!(next(&mut restored), first);
+            act(&mut restored, Action::FinishEffectSelection);
+            let mut answered: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
+            for branch in [&mut restored, &mut answered] {
+                assert_eq!(next(branch), first);
+                assert_eq!(named(branch, other, "Treasure Token").len(), 1);
+                act(branch, Action::ChooseEffectTarget(Target::Object(jace)));
+                assert!(
+                    matches!(next(branch), Decision::GameOver { winner: Some(p) } if p == drawer)
+                );
+                assert_eq!(named(branch, other, "Treasure Token").len(), 1);
+                assert_eq!(
+                    shuffle_ordinals(&serde_json::to_value(branch).unwrap()),
+                    serde_json::json!([1, 1])
+                );
+                assert_eq!(
+                    hand_len(branch, other),
+                    if drawer == caster { 0 } else { other_draws }
+                );
+            }
+            assert_eq!(restored.state_hash(), answered.state_hash());
+
+            for completed in 1..=8 {
+                act(&mut state, Action::FinishEffectSelection);
+                assert_eq!(
+                    settle(&mut state).as_ref(),
+                    (completed < 8).then_some(&first)
+                );
+                assert_eq!(named(&state, other, "Treasure Token").len(), completed);
+            }
+            assert_eq!(zone(&state, echo), Zone::Exile);
+            assert_eq!(hand_len(&state, drawer), 0);
+            assert_eq!(hand_len(&state, other), other_draws);
+            assert_eq!(
+                shuffle_ordinals(&serde_json::to_value(&state).unwrap()),
+                serde_json::json!([1, 1])
+            );
+        }
+    }
+}
+
+#[test]
 fn burning_wish_exiles_itself() {
     let mut state = islands();
     let wish = put(&mut state, P0, "Burning Wish", Zone::Hand);

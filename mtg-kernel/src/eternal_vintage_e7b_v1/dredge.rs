@@ -82,6 +82,9 @@ fn draws(op: &EffectOp) -> bool {
         // Graveborn Muse, Portent's delayed draw).
         EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::P1aV1(op))) => op.draws(),
         EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::DelayedUpkeepDrawV1)) => true,
+        EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E7aV1(
+            crate::eternal_legacy_e7a_v1::E7aOpV1::EchoOfEonsV1,
+        ))) => true,
         EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::VintageV1(
             VintageOpV1::CovetedJewelChangesHandsV1 | VintageOpV1::ParadoxicalOutcomeV1,
         ))) => true,

@@ -582,8 +582,15 @@ New, each built once in the first wave that needs it:
   Historical serialized Minsc triggers retain their existing behavior.
   Circle of Protection: Blue does not yet offer a departed blue Minsc
   as a source choice from its waiting reflexive trigger.
-  Remaining specialized draws include Echo of Eons after both shuffles
-  and the two drawing dungeon rooms. Generated
+  Echo of Eons finishes both native shuffles before drawing in turn order.
+  Interrupted draws retain both native shuffle commits and each player's
+  completed attempts. The kernel has no generic shuffle event, so Echo
+  records its successful shuffle commits only when it owns a draw choice.
+  Each player applies Riddler once at the start of their draws. The first
+  player's event-time adjustment remains bound when the second player draws.
+  The shuffles normally remove Dredge cards from both graveyards before any
+  draw can use them. Echo's native qualification is pending.
+  Remaining specialized draws include the two drawing dungeon rooms. Generated
   draws from Bonder's Ornament, the Premodern draw leaves, Standstill, Arcane
   Denial and Accumulated Knowledge still need their Jace/Hullbreacher origins.
   Quantum Riddler adjusts the whole count once for uninterrupted fixed and

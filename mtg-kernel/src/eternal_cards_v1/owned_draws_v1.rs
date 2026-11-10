@@ -22,6 +22,7 @@ use crate::state::{
 };
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod echo;
 pub(crate) mod fixed;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -56,6 +57,10 @@ enum InstructionV1 {
     },
     Minsc {
         sacrifice: usize,
+    },
+    Echo {
+        shuffled_at: usize,
+        drawer: PlayerId,
     },
 }
 
@@ -133,6 +138,7 @@ impl InstructionV1 {
             Self::DragonEngine => 3,
             Self::FixedRoot { count, .. } => count,
             Self::Minsc { sacrifice } => minsc::count(state, ctx, sacrifice).unwrap_or(0),
+            Self::Echo { .. } => 7,
             Self::Curie { combat_at } => {
                 eternal_legacy_e7a_v1::curie::draw_count(state, ctx, combat_at).unwrap_or(0)
             }
@@ -146,10 +152,11 @@ impl InstructionV1 {
         }
     }
 
-    fn draw_player(self) -> PlayerRef {
+    fn draw_player(self, ctx: &ExecCtx) -> PlayerRef {
         match self {
             Self::FlameOfAnor { draw, .. } => PlayerRef::Target(draw),
             Self::FixedRoot { player, .. } => player,
+            Self::Echo { drawer, .. } if drawer != ctx.controller => PlayerRef::Opponent,
             _ => PlayerRef::Controller,
         }
     }
@@ -160,7 +167,7 @@ impl InstructionV1 {
                 Target::Player(player) => Some(*player),
                 _ => None,
             },
-            Self::FixedRoot { drawer, .. } => Some(drawer),
+            Self::FixedRoot { drawer, .. } | Self::Echo { drawer, .. } => Some(drawer),
             _ => Some(ctx.controller),
         }
     }
@@ -312,6 +319,17 @@ pub enum JournalV1 {
         at: usize,
         departure: minsc::DepartureV1,
     },
+    EchoShuffledV1 {
+        item: StackItemId,
+        source: StackSourceContractV4,
+        first: PlayerId,
+        shuffles: [usize; 2],
+        first_extra: u32,
+    },
+    EchoShuffleCommittedV1 {
+        item: StackItemId,
+        commit: echo::ShuffleCommitV1,
+    },
 }
 
 impl JournalV1 {
@@ -335,7 +353,10 @@ impl JournalV1 {
             Self::Started(started) | Self::StartedWithRiddlerV1 { started, .. } => {
                 Some(started.item)
             }
-            Self::CurieDrawCount { item, .. } | Self::MinscDamageCompleted { item, .. } => {
+            Self::CurieDrawCount { item, .. }
+            | Self::MinscDamageCompleted { item, .. }
+            | Self::EchoShuffledV1 { item, .. }
+            | Self::EchoShuffleCommittedV1 { item, .. } => {
                 Some(item)
             }
             _ => None,
@@ -499,7 +520,7 @@ fn stage(pending: &mut EffectContinuation, instruction: InstructionV1, ordinal: 
     pending.frames.push(completion(instruction, ordinal));
     pending.frames.push(EffectFrame::Program {
         op: EffectOp::DrawCards {
-            player: instruction.draw_player(),
+            player: instruction.draw_player(&pending.ctx),
             count: 1,
         },
         path: instruction.draw_path().to_vec(),
@@ -611,10 +632,13 @@ fn progress(
         return None;
     };
     let (started, attempts) = journal.start()?;
-    let actual = if matches!(started.instruction, InstructionV1::FixedRoot { .. }) {
-        fixed::selected(state, pending)
-    } else {
-        selected(state, pending)
+    let actual = match started.instruction {
+        InstructionV1::FixedRoot { .. } => fixed::selected(state, pending),
+        InstructionV1::Echo { .. } => {
+            echo::matches_start(state, pending, started, progress.started_at)
+                .then_some((started.instruction, started.source))
+        }
+        _ => selected(state, pending),
     };
     if let InstructionV1::Minsc { sacrifice } = started.instruction {
         if !minsc::completed_damage(
@@ -674,7 +698,21 @@ pub(crate) fn complete(
     if terminal || completed == attempts {
         state.eternal_owned_draw_progress_v1 = None;
         if !terminal {
-            finish_instruction(state, pending, started.instruction);
+            match started.instruction {
+                InstructionV1::Echo {
+                    shuffled_at,
+                    drawer,
+                } if drawer == state.active_player => {
+                    echo::start_draws(
+                        state,
+                        pending,
+                        shuffled_at,
+                        drawer.opponent(),
+                        started.source,
+                    );
+                }
+                _ => finish_instruction(state, pending, started.instruction),
+            }
         }
     } else {
         state
@@ -805,14 +843,22 @@ fn validate_native_progress(
             return Err("Eternal draw changed its original Riddler adjustment".into());
         }
     }
-    let completed = state.engine.event_history[tail..]
+    let completed = completed_attempts(&state.engine.event_history[tail..], progress.started_at);
+    if completed != Some(progress.completed) {
+        return Err("Eternal draw changed its native completed attempts".into());
+    }
+    Ok(())
+}
+
+fn completed_attempts(events: &[CommittedEvent], start: usize) -> Option<u32> {
+    events
         .iter()
         .filter_map(|event| match event {
             CommittedEvent::EternalOwnedDrawV1 { journal } => match **journal {
                 JournalV1::Completed {
                     started_at,
                     ordinal,
-                } if started_at == progress.started_at => Some(ordinal),
+                } if started_at == start => Some(ordinal),
                 _ => None,
             },
             _ => None,
@@ -823,11 +869,7 @@ fn validate_native_progress(
             } else {
                 None
             }
-        });
-    if completed != Some(progress.completed) {
-        return Err("Eternal draw changed its native completed attempts".into());
-    }
-    Ok(())
+        })
 }
 
 pub(crate) fn draw_stage_matches(
@@ -877,10 +919,14 @@ fn dragon_before_start(pending: &EffectContinuation) -> bool {
 pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Result<(), String> {
     if state.eternal_owned_draw_progress_v1.is_none() {
         let named = selected(state, pending);
-        if (named.is_some() || fixed::selected(state, pending).is_some())
+        let is_echo = named.is_none() && echo::selected(state, pending).is_some();
+        if (named.is_some() || is_echo || fixed::selected(state, pending).is_some())
             && has_started(state, pending.resolving_item.v4.stack_item_id)
         {
             return Err("Eternal draw already started its original instruction".into());
+        }
+        if is_echo && !echo::before_start(pending) {
+            return Err("Echo of Eons lost its original shuffle stage".into());
         }
         let Some((instruction, _)) = named else {
             return Ok(());
@@ -894,7 +940,10 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
         if before_start {
             return Ok(());
         }
-    } else if selected(state, pending).is_none() && fixed::selected(state, pending).is_none() {
+    } else if selected(state, pending).is_none()
+        && fixed::selected(state, pending).is_none()
+        && echo::selected(state, pending).is_none()
+    {
         return Err("Eternal draw progress lost its original source".into());
     }
     let (progress, started, attempts) =

@@ -518,6 +518,7 @@ impl EternalOpV1 {
             || owned_draws_v1::recognizes(self)
             || matches!(self, EternalOpV1::OwnedDrawCompletedV1 { .. })
             || matches!(self, EternalOpV1::DelayedUpkeepDrawV1)
+            || matches!(self, EternalOpV1::E7aV1(crate::eternal_legacy_e7a_v1::E7aOpV1::EchoOfEonsV1))
             || matches!(
                 self,
                 EternalOpV1::VintageV1(
