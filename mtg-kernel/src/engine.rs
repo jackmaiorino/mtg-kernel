@@ -12325,7 +12325,9 @@ fn advance_until_decision_historical(state: &mut GameState) -> Decision {
         .and_then(|()| effect::liliana_dreadhorde_v1::validate_state(state))
         .and_then(|()| muldrotha_v1::validate_state(state))
         .and_then(|()| tinybones_v72::validate_state(state))
-        .and_then(|()| crate::eternal_e5a_v1::permissions::validate_published_library_overloads(state))
+        .and_then(|()| {
+            crate::eternal_e5a_v1::permissions::validate_published_library_overloads(state)
+        })
     {
         #[cfg(test)]
         eprintln!("Native prework validation rejected: {_error}");
@@ -28335,9 +28337,13 @@ fn finalize_owned_cast(
     payment: spell_costs_v1::PreparedSpellPaymentV1,
 ) -> Result<(), String> {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-    let library_overload = crate::eternal_e5a_v1::permissions::prepare_library_overload_publication(
-        state, pending.spell, pending.controller, cast_method,
-    )?;
+    let library_overload =
+        crate::eternal_e5a_v1::permissions::prepare_library_overload_publication(
+            state,
+            pending.spell,
+            pending.controller,
+            cast_method,
+        )?;
     let x_value = pending.selected_x_v59().unwrap_or(0);
     // The complete local plan was prepared before any real discard or mana
     // payment. Capture provenance inputs before consuming it exactly once.
@@ -28584,7 +28590,10 @@ fn finalize_owned_cast(
     .spells_cast_this_turn
     .saturating_add(1);
     crate::cast_identity_v1::publish(
-        state, finalized_source_contract, stack_item_id, library_overload,
+        state,
+        finalized_source_contract,
+        stack_item_id,
+        library_overload,
     );
     event::log_spell_cast(state, pending.spell, pending.controller);
     crate::extra_turn_v1::record_publication(state, stack_item_id);
