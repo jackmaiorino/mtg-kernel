@@ -1293,6 +1293,23 @@ fn curie_draw_uses_departure_base_power_and_replacement_attempts_both_seats() {
         let wrong_lki: GameState = serde_json::from_value(wrong_lki).unwrap();
         assert!(mtg_kernel::effect::validate_pending_effect_choice(&wrong_lki).is_err());
 
+        // The genuine count capture remains after removing the active draw
+        // start. Restoring the original root cannot start Curie's draws again.
+        let mut rewind = serde_json::to_value(&state).unwrap();
+        rewind.as_object_mut().unwrap().remove("eternal_owned_draw_progress_v1").unwrap();
+        let history = rewind["engine"]["event_history"].as_array_mut().unwrap();
+        let started_at = history.iter().position(|event| {
+            event["EternalOwnedDrawV1"]["journal"].get("Started").is_some()
+        }).unwrap();
+        history.remove(started_at);
+        let pending = &mut rewind["engine"]["pending_effect"];
+        let root = pending["resolving_item"]["inline_effect"].clone();
+        pending["frames"] = serde_json::json!([{"Program":{"op":root,"path":[]}}]);
+        pending["choice"] = serde_json::Value::Null;
+        pending["answered_choice_guard"] = serde_json::Value::Null;
+        let rewind: GameState = serde_json::from_value(rewind).unwrap();
+        assert!(mtg_kernel::effect::validate_pending_effect_choice(&rewind).is_err());
+
         act(
             &mut restored,
             Action::ChooseEffectTarget(Target::Object(thug)),

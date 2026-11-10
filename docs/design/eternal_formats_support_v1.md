@@ -580,6 +580,8 @@ New, each built once in the first wave that needs it:
   effective power. It resolves its actual target and damage before draw
   replacement attempts begin. An illegal target stops the whole trigger.
   Historical serialized Minsc triggers retain their existing behavior.
+  Circle of Protection: Blue does not yet offer a departed blue Minsc
+  as a source choice from its waiting reflexive trigger.
   Remaining specialized draws include Echo of Eons after both shuffles
   and the two drawing dungeon rooms. Generated
   draws from Bonder's Ornament, the Premodern draw leaves, Standstill, Arcane
