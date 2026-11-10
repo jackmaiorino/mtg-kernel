@@ -65,11 +65,7 @@ fn fixture_serial_inputs_v1(
     }
 }
 
-fn assert_verified_replay_v1(
-    root: &Path,
-    manifest: &FixtureManifestV1,
-    batch: &FixtureBatchV1,
-) {
+fn assert_verified_replay_v1(root: &Path, manifest: &FixtureManifestV1, batch: &FixtureBatchV1) {
     // The census counts live payload. Include the slot's headers and leave
     // headroom for ragged retained capacities.
     let cap = 2 * batch.census.learner_row_tape_bytes.max + 4096;
@@ -121,7 +117,10 @@ fn assert_verified_replay_refusals_v1(
     .unwrap();
     assert_eq!(fallback["verified_replay"]["used"], false);
     assert_eq!(fallback["verified_replay"]["fallback"], "tape_capacity");
-    assert_eq!(verify_v1(manifest, batch, &fallback).unwrap()["verified"], true);
+    assert_eq!(
+        verify_v1(manifest, batch, &fallback).unwrap()["verified"],
+        true
+    );
 
     for (pairing, message) in [
         (false, "stored tensor does not reproduce rollout outputs"),
@@ -144,7 +143,10 @@ fn assert_verified_replay_refusals_v1(
         let path = root.join(format!("corrupt-{pairing}.json"));
         fs::write(&path, serde_json::to_vec(&trajectory).unwrap()).unwrap();
         let pin = pin_file_v1(&path).unwrap();
-        for cap in [None, Some(2 * batch.census.learner_row_tape_bytes.max + 4096)] {
+        for cap in [
+            None,
+            Some(2 * batch.census.learner_row_tape_bytes.max + 4096),
+        ] {
             let out = root.join(format!("refused-{pairing}-{cap:?}"));
             let mut inputs = fixture_serial_inputs_v1(manifest, batch, out.clone(), cap);
             inputs.trajectories[1] = pin.clone();

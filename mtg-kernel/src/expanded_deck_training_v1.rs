@@ -3441,7 +3441,8 @@ fn authenticate_serial_replay_row_v1(
     stage: crate::s_transformer_v1::update_profile_v1::StageV1,
 ) -> Result<(), String> {
     let span = crate::s_transformer_v1::update_profile_v1::span_v1(stage);
-    let output = acting.score_replay_tensor_v1(generation, input, &row.tensor.pairing_node_indices)?;
+    let output =
+        acting.score_replay_tensor_v1(generation, input, &row.tensor.pairing_node_indices)?;
     span.finish_v1(&output.logits, output.value);
     ensure(
         bits(&output.logits) == row.logits && output.value.to_bits() == row.value,

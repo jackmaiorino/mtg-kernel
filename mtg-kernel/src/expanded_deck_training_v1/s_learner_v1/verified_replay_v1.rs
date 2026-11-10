@@ -54,7 +54,9 @@ pub(super) fn gradient_v1(
 
     // The policy owns an immutable clone of the loaded train-state model.
     // Bind the candidate's borrowed model to the actual replay generation.
-    let expected = policy.s_model_v1().ok_or("native S is not installed".to_owned())?;
+    let expected = policy
+        .s_model_v1()
+        .ok_or("native S is not installed".to_owned())?;
     let mut work = SerialVerifiedGaeV1::new(
         model,
         expected.cache_namespace_v1(),

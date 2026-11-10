@@ -62,8 +62,8 @@ use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4};
 use crate::s_transformer_v1::{
-    decode_checkpoint_v1, encode_checkpoint_v1, SGroupV1, SInputV1, SModelV1, SStepV1,
-    SSubstepV1, STapeV1, STrainStateV1, SWorkV1, S_ARCHITECTURE_V1,
+    decode_checkpoint_v1, encode_checkpoint_v1, SGroupV1, SInputV1, SModelV1, SStepV1, SSubstepV1,
+    STapeV1, STrainStateV1, SWorkV1, S_ARCHITECTURE_V1,
 };
 use crate::sideboard_play_policy_v1::{
     FrozenPlayPolicyV1, PlayPolicyOriginV1, FRESH_FEATURE_IDENTITY_V4,
@@ -585,8 +585,10 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
                     };
                     (
                         None,
-                        Some(json!({"used":false, "fallback":reason, "tape_cap_bytes":tape_cap,
-                            "replay_and_gradient_seconds":replay_and_gradient_seconds})),
+                        Some(
+                            json!({"used":false, "fallback":reason, "tape_cap_bytes":tape_cap,
+                            "replay_and_gradient_seconds":replay_and_gradient_seconds}),
+                        ),
                     )
                 }
             }
@@ -611,7 +613,8 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
             (prepared.groups, Some(prepared.telemetry))
         } else {
             let mut tensor_groups = Vec::new();
-            let mut opponent_cache = OpponentCacheV1::default().with_training_math_v1(training_math);
+            let mut opponent_cache =
+                OpponentCacheV1::default().with_training_math_v1(training_math);
             for (episode_ordinal, episode) in episodes.iter().enumerate() {
                 let opponent = episode
                     .episode
@@ -710,7 +713,8 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
                     &input,
                     &mut SWorkV1::default(),
                 )?;
-                let movement = s_movement_v1(rows, state.model_v1(), auxiliary.ordinary_only.as_ref())?;
+                let movement =
+                    s_movement_v1(rows, state.model_v1(), auxiliary.ordinary_only.as_ref())?;
                 let mut exposure = json!({"rows":rows.len(),
                     "denominator":crate::ex1_v1::EX1_DENOMINATOR_V1,
                     "coefficient":options.coefficient,

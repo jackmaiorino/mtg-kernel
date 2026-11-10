@@ -91,11 +91,7 @@ impl TapeSlotV1 {
         bytes
     }
 
-    fn reserve_v1(
-        &mut self,
-        config: &SConfigV1,
-        counts: CountsV1,
-    ) -> Result<usize, ReplayErrorV1> {
+    fn reserve_v1(&mut self, config: &SConfigV1, counts: CountsV1) -> Result<usize, ReplayErrorV1> {
         // Guard the shared sizing visitor's products before evaluating any
         // shape, even for an unrealistically large but structurally valid row.
         let rows = counts
@@ -119,7 +115,10 @@ impl TapeSlotV1 {
             .checked_mul(width)
             .ok_or(ReplayErrorV1::Capacity)?;
 
-        if self.bytes_v1(config, counts, true).is_none_or(|bytes| bytes > self.cap) {
+        if self
+            .bytes_v1(config, counts, true)
+            .is_none_or(|bytes| bytes > self.cap)
+        {
             return Err(ReplayErrorV1::Capacity);
         }
         let reservation = (|| {
@@ -143,7 +142,9 @@ impl TapeSlotV1 {
         })();
         // The allocator may grant extra capacity. Measure the actual slot
         // before forward, including after a failed reservation.
-        let Some(bytes) = self.bytes_v1(config, counts, false).filter(|bytes| *bytes <= self.cap)
+        let Some(bytes) = self
+            .bytes_v1(config, counts, false)
+            .filter(|bytes| *bytes <= self.cap)
         else {
             self.tape = STapeV1::default();
             return Err(ReplayErrorV1::Capacity);
@@ -160,7 +161,14 @@ impl TapeSlotV1 {
         expected_logits: &[u32],
         expected_value: u32,
     ) -> Result<VerifiedRowV1<'model, 'input, 'slot>, ReplayErrorV1> {
-        self.authenticate_recycling_v1(generation, step, index, expected_logits, expected_value, false)
+        self.authenticate_recycling_v1(
+            generation,
+            step,
+            index,
+            expected_logits,
+            expected_value,
+            false,
+        )
     }
 
     fn authenticate_recycling_v1<'model, 'input, 'slot>(
@@ -195,7 +203,9 @@ impl TapeSlotV1 {
                 .all(|(actual, expected)| actual.to_bits() == *expected)
             || self.tape.value_v1().to_bits() != expected_value
         {
-            return Err("stored tensor does not reproduce rollout outputs".to_owned().into());
+            return Err("stored tensor does not reproduce rollout outputs"
+                .to_owned()
+                .into());
         }
         Ok(VerifiedRowV1 {
             model,
