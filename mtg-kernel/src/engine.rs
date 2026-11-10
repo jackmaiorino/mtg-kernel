@@ -19151,7 +19151,16 @@ pub(crate) fn stack_targets_still_legal(
                         live.zone_change_count != source_contract.zone_change_count
                             || live.zone != source_contract.zone
                     });
-                    if crate::fixed_source_damage_v3::tracked(state, item) {
+                    if source_departed
+                        && crate::source_power_activation_v1::bombardment::selected(state, item)
+                        && crate::source_power_activation_v1::bombardment::needs_lki(state, item)
+                    {
+                        let facts = crate::source_power_activation_v1::bombardment::departed_source(state, item)?
+                            .ok_or("departed Bombardment lost its source facts")?;
+                        crate::fixed_source_damage_v3::legal_targets_with_controller(
+                            state, facts, item.controller,
+                        ).contains(&target)
+                    } else if crate::fixed_source_damage_v3::tracked(state, item) {
                         crate::fixed_source_damage_v3::legal_targets(
                             state,
                             crate::fixed_source_damage_v3::damage_source(

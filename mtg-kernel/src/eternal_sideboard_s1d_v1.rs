@@ -961,18 +961,22 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
         let Some(source) = item.v4.ability_source_contract else {
             continue;
         };
-        if source.zone == Zone::Battlefield
-            && state
-                .objects
-                .try_get(source.source)
-                .is_some_and(|live| live.zone_change_count > source.zone_change_count)
-            && crate::source_power_activation_v1::damage_source(
-                state,
-                source.source,
-                item.v4.stack_item_id,
-            )
-            .is_ok_and(|facts| facts.source == source && facts.color_mask & mask != 0)
+        if source.zone != Zone::Battlefield
+            || state.objects.try_get(source.source).is_none_or(|live| {
+                live.zone_change_count <= source.zone_change_count
+            })
         {
+            continue;
+        }
+        let historical = if crate::source_power_activation_v1::bombardment::selected(state, item) {
+            crate::source_power_activation_v1::bombardment::departed_source(state, item)
+                .ok().flatten()
+        } else {
+            crate::source_power_activation_v1::damage_source(
+                state, source.source, item.v4.stack_item_id,
+            ).ok().filter(|facts| facts.source == source)
+        };
+        if historical.is_some_and(|facts| facts.color_mask & mask != 0) {
             sources.push(ObjectLinkV4 {
                 object: source.source,
                 zone_change_count: source.zone_change_count,
@@ -1474,12 +1478,10 @@ pub(crate) mod statics {
         if s1d.cop_shields.is_empty() {
             return false;
         }
-        let (source, color_mask) = if let Some(item) = damage.historical_source {
-            let Ok(facts) =
-                crate::source_power_activation_v1::damage_source(state, damage.source, item)
-            else {
-                return false;
-            };
+        let Ok(historical) = damage.historical_facts(state) else {
+            return false;
+        };
+        let (source, color_mask) = if let Some(facts) = historical {
             (
                 ObjectLinkV4 {
                     object: facts.source.source,

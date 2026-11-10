@@ -69,6 +69,7 @@ impl ChoiceV1 {
             is_combat: false,
             historical_source: self.historical_source,
             niv_damage_origin_v1: self.niv_damage_origin_v1,
+            bombardment_source: None,
         }
     }
 }
@@ -173,6 +174,7 @@ impl BatchDamageV2 {
             is_combat: false,
             historical_source: None,
             niv_damage_origin_v1: None,
+            bombardment_source: None,
         }
     }
 
@@ -976,6 +978,7 @@ fn original_damage(
         is_combat: false,
         historical_source,
         niv_damage_origin_v1: ctx.niv_damage_origin_v1,
+        bombardment_source: None,
     })
 }
 /// Equipment owns the grant recipe; the host owns the resulting trigger.
@@ -4939,18 +4942,14 @@ fn applicable_after(
                         .map(PreventionV1::Barricade),
                 );
             }
-            let protected = match damage.historical_source {
-                Some(id) => {
-                    crate::source_power_activation_v1::damage_source(state, damage.source, id)
-                        .is_ok_and(|facts| {
-                            crate::source_power_activation_v1::protected(state, facts, target)
-                        })
-                }
-                None => crate::engine::damage_is_prevented_by_protection(
+            let protected = match damage.historical_facts(state) {
+                Ok(Some(facts)) => crate::source_power_activation_v1::protected(state, facts, target),
+                Ok(None) => crate::engine::damage_is_prevented_by_protection(
                     state,
                     damage.source,
                     damage.target,
                 ),
+                Err(_) => false,
             };
             if protected {
                 let o = state.objects.get(target);

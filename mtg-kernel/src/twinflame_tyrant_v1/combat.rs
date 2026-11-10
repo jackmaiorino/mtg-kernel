@@ -106,6 +106,7 @@ fn proposed(choice: &ChoiceV1) -> DamageProposed {
         is_combat: true,
         historical_source: None,
         niv_damage_origin_v1: None,
+        bombardment_source: None,
     }
 }
 fn publication(state: &GameState, index: u32) -> Result<&PublicationV38, String> {
@@ -337,6 +338,7 @@ fn survivors(outcomes: &[BatchOutcomeV2]) -> Result<Vec<ProposedEvent>, String> 
                 is_combat: true,
                 historical_source: None,
                 niv_damage_origin_v1: None,
+                bombardment_source: None,
             }))),
         })
         .collect()

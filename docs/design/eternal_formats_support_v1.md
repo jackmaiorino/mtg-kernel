@@ -622,8 +622,14 @@ New, each built once in the first wave that needs it:
   It uses the original incarnation and retained color for authenticated departed
   damage sources. Eternal records the physical Mogg Fanatic's source immediately
   before paying its sacrifice cost, even if Circle is absent. A later color or
-  zone change cannot affect that damage. Legacy unmarked activations retain the
-  earlier execution path. Unrelated graveyard and exile cards are excluded. Other
+  zone change cannot affect that damage. Legacy unmarked Fanatic activations retain
+  the earlier execution path. Goblin Bombardment's native activation sacrificing
+  another creature uses its live source while it remains on the battlefield.
+  If it leaves with that activation waiting, the actual departure captures its
+  last-known color and other damage characteristics, including when Circle enters
+  later. A restored activation that already lost its source needs that departure
+  receipt. An animated Bombardment sacrificed as its own cost is outside this
+  capture path. Unrelated graveyard and exile cards are excluded. Other
   embedded effect references need explicit bindings, departed references need
   last-known color and visibility evidence, and contextual hand and library
   sources remain unsupported. An in-flight saved Circle menu with the old

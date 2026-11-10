@@ -590,10 +590,18 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 pub(crate) fn legal_targets(state: &GameState, facts: HistoricalDamageSourceV1) -> Vec<Target> {
+    legal_targets_with_controller(state, facts, facts.source.controller)
+}
+
+pub(crate) fn legal_targets_with_controller(
+    state: &GameState,
+    facts: HistoricalDamageSourceV1,
+    controller: crate::ids::PlayerId,
+) -> Vec<Target> {
     crate::engine::legal_targets_for_controller(
         TargetSpec::AnyTarget,
         &[],
-        facts.source.controller,
+        controller,
         state,
     )
     .into_iter()
@@ -605,7 +613,7 @@ pub(crate) fn legal_targets(state: &GameState, facts: HistoricalDamageSourceV1) 
                 && !crate::source_type_hexproof_v1::protects_from_source(
                     state,
                     id,
-                    facts.source.controller,
+                    controller,
                     facts.source,
                 )
                 .unwrap_or(true)
@@ -613,7 +621,7 @@ pub(crate) fn legal_targets(state: &GameState, facts: HistoricalDamageSourceV1) 
                     state,
                     id,
                     facts.color_mask,
-                    facts.source.controller,
+                    controller,
                 )
         }
     })
