@@ -404,6 +404,7 @@ mod tests {
                 counter_distribution: None,
                 counter_transfer: None,
                 granted_ability: None,
+                thornscape_kickers_v1: None,
             };
             let projected = capture_v1(&state, std::slice::from_ref(&view)).unwrap();
             assert_eq!(
