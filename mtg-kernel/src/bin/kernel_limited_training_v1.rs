@@ -214,7 +214,8 @@ fn measure_phase<T>(
     let started = Instant::now();
     let result = operation();
     let duration_ns = elapsed_ns(started);
-    diagnostics.record(json!({"phase": phase, "checkpoint": "returned", "duration_ns": duration_ns}));
+    diagnostics
+        .record(json!({"phase": phase, "checkpoint": "returned", "duration_ns": duration_ns}));
     result
 }
 
@@ -555,14 +556,16 @@ fn train(
         })
         .collect::<Vec<_>>();
     let initial_parameters = learner.model().parameters().to_vec();
-    let updated = measure_phase(diagnostics, "terminal_update", || learner.update_terminal(&batch))
-        .map_err(|error| error.to_string())
-        .and_then(|loss| {
-            if learner.model().parameters() == initial_parameters.as_slice() {
-                return Err("terminal batch did not change any parameter".into());
-            }
-            Ok(loss)
-        });
+    let updated = measure_phase(diagnostics, "terminal_update", || {
+        learner.update_terminal(&batch)
+    })
+    .map_err(|error| error.to_string())
+    .and_then(|loss| {
+        if learner.model().parameters() == initial_parameters.as_slice() {
+            return Err("terminal batch did not change any parameter".into());
+        }
+        Ok(loss)
+    });
     match updated {
         Ok(loss) => Ok(Training {
             config: config(session),
