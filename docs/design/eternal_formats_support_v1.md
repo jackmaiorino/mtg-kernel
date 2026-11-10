@@ -482,6 +482,11 @@ New, each built once in the first wave that needs it:
   and the frozen observation paths remain outside this change. A pre-entry-owner
   save without authenticated choice evidence still requires its historical engine. Leyline has
   the same native opening path as Leyline of the Void.
+  A paid physical Phyrexian Metamorph copying a visible Mage chooses its own name
+  before entry. The entry keeps Metamorph's physical cast receipt, commits the Mage
+  characteristics and artifact type, and restores Metamorph's printing on departure.
+  Dress Down suppresses the physical copy choice before entry. Other copy-entry
+  routes are outside this repair. Native qualification is pending.
   Extirpate uses the shared extraction continuation to require all
   public graveyard matches, offer any subset of the hidden matches, and provide the caster
   a private look at the full searched hand and library. Native qualification of this

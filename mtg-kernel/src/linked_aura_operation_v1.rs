@@ -187,6 +187,8 @@ struct RunnerV1 {
     mage_plans: Vec<MagePlanV1>,
     #[serde(skip)]
     mage_names_v2: bool,
+    #[serde(skip)]
+    metamorph_mage_copy: Option<mage_entry::MetamorphCopyV1>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -494,6 +496,7 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
         mage_start: None,
         mage_plans: Vec::new(),
         mage_names_v2: true,
+        metamorph_mage_copy: None,
         original_stack: enclosing.original_stack.clone(),
         original_history_len: enclosing.original_history_len,
         batch_depth: 0,
@@ -527,6 +530,7 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
         || !runner.kinship_plans.is_empty()
         || runner.mage_start.is_some()
         || !runner.mage_plans.is_empty()
+        || runner.metamorph_mage_copy.is_some()
         || runner.banner_start.is_some()
         || !runner.color_plans.is_empty()
         || runner.attachment_input_v48.is_some()
@@ -988,6 +992,7 @@ fn replay_general_current_slots_v69(
         active_fake_aura_entry_v50: None,
         mage_start: None,
         mage_plans: Vec::new(),
+        metamorph_mage_copy: None,
         mage_names_v2: mage_names_v2
             .or_else(|| {
                 answers.iter().find_map(|answer| match answer {
@@ -2170,6 +2175,38 @@ fn capture_mage_plans(
     Ok(range.collect())
 }
 
+pub(crate) fn stage_metamorph_mage_copy(
+    state: &mut GameState,
+    copy: mage_entry::MetamorphCopyV1,
+) -> Result<(), String> {
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .ok_or("Metamorph copy has no native entry replay owner")?;
+    if runner.metamorph_mage_copy.is_some() {
+        return Err("Metamorph copy already owns a prospective entry".into());
+    }
+    runner.metamorph_mage_copy = Some(copy);
+    Ok(())
+}
+
+pub(crate) fn metamorph_mage_copy(
+    state: &GameState,
+    object: crate::ids::ObjectId,
+) -> Option<mage_entry::MetamorphCopyV1> {
+    let copy = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()?
+        .metamorph_mage_copy?;
+    (copy.physical.source == object
+        && copy.physical == crate::state::AbilitySourceContractV4::capture(state, object))
+    .then_some(copy)
+}
+
 fn mage_answer(
     state: &mut GameState,
     choice: &mage_entry::ChoiceV1,
@@ -3211,6 +3248,10 @@ pub(crate) fn tamper_drake_saved_output_runtime_for_test(state: &mut GameState) 
         attachment_input_v48: None,
         original_world_v50: None,
         active_fake_aura_entry_v50: None,
+        mage_start: None,
+        mage_plans: Vec::new(),
+        mage_names_v2: true,
+        metamorph_mage_copy: None,
     };
     state.engine.linked_aura_operation_v1.runtime = Some(Box::new(runner));
 }
