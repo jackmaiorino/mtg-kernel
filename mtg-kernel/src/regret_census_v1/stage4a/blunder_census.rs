@@ -834,15 +834,17 @@ fn census_job(
 
         // (b): the cast window.
         let m = if is_focal { menu(&s) } else { Vec::new() };
-        // An activation links target steps only while its own stack entry
-        // exists, so a self-trigger right after it cannot link.
+        // An activation links target steps only while the engine's pending
+        // activation is its own (an activation has no stack entry until its
+        // targets and costs are done), so a self-trigger right after it
+        // cannot link.
         let entry = cast.as_ref().is_some_and(|c| {
             c.kind != "activate"
                 || s.game_state()
-                    .stack
-                    .iter()
-                    .skip(c.stack_len)
-                    .any(|x| x.source == ObjectId(c.source) && x.controller == focal)
+                    .engine
+                    .pending_activation
+                    .as_ref()
+                    .is_some_and(|p| p.source == ObjectId(c.source) && p.controller == focal)
         });
         let mut cast_window = window(
             cast.as_ref().map(|c| (c.source, !c.steps.is_empty())),
@@ -850,6 +852,7 @@ fn census_job(
             &m,
         );
         if cast_window == Window::Link && !entry {
+            bump(&mut n, "b_unlinked_without_pending_activation");
             cast_window = Window::Unlinked;
         }
         match cast_window {
