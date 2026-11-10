@@ -3389,7 +3389,7 @@ fn validate_ability_source_contract(
         || !source_card_def_matches(state, contract, source.card_def)
         || contract.owner != source.owner
         || contract.controller != item.controller
-        || contract.zone == Zone::Stack
+        || (contract.zone == Zone::Stack && !ceased_copy_trigger_source(state, item, contract))
         || source.zone_change_count < contract.zone_change_count
         || (source.zone_change_count == contract.zone_change_count && source.zone != contract.zone)
     {
@@ -3400,6 +3400,28 @@ fn validate_ability_source_contract(
     // generation. Keep that historical host for effect-specific provenance
     // checks even when the live attachment changes while the ability waits.
     Ok(())
+}
+
+/// A delayed trigger set up by a resolved Eternal spell copy (Portent,
+/// Arcane Denial) keeps that copy as its source (603.7). A ceased virtual copy
+/// retains its final Stack marker and generation after losing stack
+/// membership. A live spell can never source an ability this way.
+fn ceased_copy_trigger_source(
+    state: &GameState,
+    item: &StackItem,
+    contract: AbilitySourceContractV4,
+) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && item.kind == StackItemKind::TriggeredAbility
+        && state.objects.try_get(item.source).is_some_and(|source| {
+            source.zone == Zone::Stack
+                && source.spell_copy_origin.is_some()
+                && source.zone_change_count == contract.zone_change_count
+        })
+        && !state
+            .stack
+            .iter()
+            .any(|row| row.kind == StackItemKind::Spell && row.source == item.source)
 }
 
 /// Validates a spell source at a live stack/RL boundary, including exact and

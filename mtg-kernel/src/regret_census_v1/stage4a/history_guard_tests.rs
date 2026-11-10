@@ -270,9 +270,16 @@ fn base_sessions() -> Vec<(FastActorSessionV1, u32)> {
         let mut game_bases = Vec::new();
         let mut last_step = 0;
         drive_native(game, |session, decision, _, action| {
+            let state = session.game_state();
             let take = match game_bases.len() {
                 0 => decision.step >= 10,
-                1 => session.game_state().creatures_attacked_this_turn_v1() > 0,
+                // Only Standard-catalog builds record which creatures
+                // attacked this turn; declared attackers stay in combat
+                // until the end of combat in every build.
+                1 => {
+                    state.creatures_attacked_this_turn_v1() > 0
+                        || !state.engine.combat.attackers.is_empty()
+                }
                 _ => decision.step >= last_step + 25,
             };
             if take {

@@ -738,6 +738,10 @@ fn fixed_continuation_action(decision: &SurfaceDecision) -> Result<SurfaceAction
         | SurfaceDecision::Decision(Decision::ChooseLondonBottom { .. }) => {
             Err("continuation:unsupported-london-mulligan-protocol".to_string())
         }
+        SurfaceDecision::Decision(Decision::ChooseEternalOpeningV1 { .. })
+        | SurfaceDecision::Decision(Decision::ChooseMeddlingMageNameV1 { .. }) => {
+            Err("continuation:unsupported-eternal-opening-or-mage-name-protocol".to_string())
+        }
         SurfaceDecision::Decision(Decision::CastSpellOrPass { .. }) => {
             Ok(SurfaceAction::Action(Action::Pass))
         }

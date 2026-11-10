@@ -1823,8 +1823,7 @@ fn frozen_opening_refusal(state: &GameState, viewer: PlayerId) -> String {
         0,
         1,
     )
-    .err()
-    .expect("public native opening profile refuses frozen V5")
+    .expect_err("public native opening profile refuses frozen V5")
     .to_string()
 }
 

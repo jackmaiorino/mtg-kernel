@@ -159,6 +159,19 @@ fn cast(
     colorless: u8,
 ) -> ObjectId {
     let card = put(state, actor, name, Zone::Hand);
+    cast_held(state, actor, card, target, colored, colorless)
+}
+
+/// Casts `card` from `actor`'s hand with the given mana added to the pool.
+fn cast_held(
+    state: &mut GameState,
+    actor: PlayerId,
+    card: ObjectId,
+    target: Option<PlayerId>,
+    colored: &[ManaColor],
+    colorless: u8,
+) -> ObjectId {
+    let name = state.objects.get(card).name.clone();
     pool(state, actor, colored, colorless);
     assert!(
         matches!(next(state), Decision::CastSpellOrPass { player, castable_spells, .. } if player == actor && castable_spells.contains(&card))
@@ -599,28 +612,108 @@ fn paid_standstill_restore_rejects_cast_source_sacrifice_and_progress_tampering(
     }
 }
 
+/// The public native Eternal opening that the paid Aether Vial route
+/// requires. Both players keep seven cards drawn from libraries with `own`
+/// and `other` on top, and `owner` starts with priority in its first main
+/// phase.
+fn native_opening(owner: PlayerId, own: &[&str], other: &[&str]) -> GameState {
+    use mtg_kernel::event::{self, ProposedEvent};
+
+    let deck = |top: &[&str]| {
+        let mut ids = vec![id("Plains"); 60];
+        for (slot, name) in ids.iter_mut().zip(top) {
+            *slot = id(name);
+        }
+        ids
+    };
+    let (own, other) = (deck(own), deck(other));
+    let (zero, one) = if owner == P0 {
+        (&own, &other)
+    } else {
+        (&other, &own)
+    };
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
+        zero,
+        one,
+        mtg_kernel::rl::card_name,
+        0x4539_4221_0002,
+        owner,
+    );
+    for _ in 0..7 {
+        for player in [P0, P1] {
+            event::propose_and_commit(&mut state, ProposedEvent::draw(player));
+        }
+    }
+    mtg_kernel::eternal_opening_v1::enable_eternal_opening_v1(&mut state).unwrap();
+    for player in [owner, owner.opponent()] {
+        assert!(matches!(next(&mut state), Decision::ChooseLondonMulligan {
+            player: chooser, .. } if chooser == player));
+        act(&mut state, Action::ChooseLondonMulligan { mulligan: false });
+    }
+    for player in [owner, owner.opponent()] {
+        assert!(
+            matches!(next(&mut state), Decision::ChooseEternalOpeningV1 {
+            player: chooser, legal_cards } if chooser == player && legal_cards.is_empty())
+        );
+        act(&mut state, Action::FinishEffectSelection);
+    }
+    for _ in 0..40 {
+        match next(&mut state) {
+            Decision::CastSpellOrPass { player, .. }
+                if player == owner && state.step == Step::Main1 && state.stack.is_empty() =>
+            {
+                return state;
+            }
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => panic!("opening: {other:?}"),
+        }
+    }
+    panic!("the starting player's first main phase never began");
+}
+
+fn held(state: &GameState, player: PlayerId, name: &str) -> ObjectId {
+    state.players[player.index()]
+        .hand
+        .iter()
+        .copied()
+        .find(|&object| state.objects.get(object).card_def == id(name))
+        .unwrap_or_else(|| panic!("{name} is not in hand"))
+}
+
 #[test]
 fn native_vial_metamorph_of_animated_standstill_keeps_ordinary_copied_source_route() {
     for owner in [P0, P1] {
-        let mut state = plains();
-        state.active_player = owner;
-        state.priority_player = owner;
-        let vial = cast(&mut state, owner, "Aether Vial", None, &[], 1);
+        let mut state = native_opening(
+            owner,
+            &[
+                "Aether Vial",
+                "Opalescence",
+                "Standstill",
+                "Phyrexian Metamorph",
+            ],
+            &["Lightning Bolt"],
+        );
+        let vial = held(&state, owner, "Aether Vial");
+        cast_held(&mut state, owner, vial, None, &[], 1);
         settled(&mut state);
-        cast(
+        let opalescence = held(&state, owner, "Opalescence");
+        cast_held(
             &mut state,
             owner,
-            "Opalescence",
+            opalescence,
             None,
             &[ManaColor::W, ManaColor::W],
             2,
         );
         settled(&mut state);
-        let source = paid_standstill(&mut state, owner);
+        let source = held(&state, owner, "Standstill");
+        cast_held(&mut state, owner, source, None, &[ManaColor::U], 1);
+        settled(&mut state);
+        assert_eq!(zone(&state, source), Zone::Battlefield);
         // Charge-counter setup control. The Vial activation still pays its
         // actual tap cost and follows the native hand/Metamorph entry choices.
         state.objects.get_mut(vial).counters.charge = 4;
-        let copy = put(&mut state, owner, "Phyrexian Metamorph", Zone::Hand);
+        let copy = held(&state, owner, "Phyrexian Metamorph");
         assert!(
             matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(vial, 0)))
         );
@@ -648,7 +741,11 @@ fn native_vial_metamorph_of_animated_standstill_keeps_ordinary_copied_source_rou
             .copies
             .iter()
             .any(|entry| entry.host.object == copy));
-        bolt(&mut state, owner.opponent());
+        let hand = state.players[owner.index()].hand.len();
+        let opponent = owner.opponent();
+        priority(&mut state, opponent);
+        let bolt = held(&state, opponent, "Lightning Bolt");
+        cast_held(&mut state, opponent, bolt, Some(owner), &[ManaColor::R], 0);
         assert_eq!(source_triggers(&state, source), 1);
         assert_eq!(source_triggers(&state, copy), 1);
         let mut replay = restored(&state);
@@ -656,7 +753,7 @@ fn native_vial_metamorph_of_animated_standstill_keeps_ordinary_copied_source_rou
             settled(branch);
             assert_eq!(sacrifices(branch, source), 1);
             assert_eq!(sacrifices(branch, copy), 1);
-            assert_eq!(branch.players[owner.index()].hand.len(), 6);
+            assert_eq!(branch.players[owner.index()].hand.len(), hand + 6);
             assert_eq!(
                 receipt_count(branch, "Started"),
                 1,

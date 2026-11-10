@@ -127,7 +127,9 @@ enum NoncastProducer {
 }
 
 /// Some registered definitions require an as-enters choice or a copy overlay
-/// that this entry path cannot install.
+/// that this entry path cannot install. An Opalescence-animated Standstill
+/// needs neither. Only Vial puts Metamorph in without casting a spell, which
+/// would sacrifice Standstill first.
 fn noncast_copy_definition(card_def: u16, producer: NoncastProducer) -> bool {
     owns_definition(card_def)
         || CARD_DEFS
@@ -135,7 +137,8 @@ fn noncast_copy_definition(card_def: u16, producer: NoncastProducer) -> bool {
             .is_some_and(|definition| {
                 (definition.name == "Wall of Blossoms"
                     || producer == NoncastProducer::Vial
-                        && definition.name == crate::eternal_legacy_e8a_v1::AETHER_VIAL
+                        && (definition.name == crate::eternal_legacy_e8a_v1::AETHER_VIAL
+                            || definition.name == "Standstill")
                     || producer == NoncastProducer::ShowAndTell
                         && definition.name == "Containment Priest")
                     && definition.has_full_support()

@@ -494,8 +494,9 @@ New, each built once in the first wave that needs it:
   Aether Vial with four charge counters uses the same prospective copy owner.
   The native replay binds the actual paid tap, reads the original live or
   last-known charge count at resolution, and authenticates the controller's
-  private hand choice. Its supported face-up donors are Mage, Wall of Blossoms and the
-  printed Aether Vial. A Vial copy enters with zero counters. Frozen viewers
+  private hand choice. Its supported face-up donors are Mage, Wall of Blossoms, the
+  printed Aether Vial and an Opalescence-animated Standstill, which needs no
+  as-enters choice. A Vial copy enters with zero counters. Frozen viewers
   refuse the native profile from setup, independently of the hand or its
   choice. Dress Down suppresses the physical copy choice before entry. The
   selected paid-cast, Reanimate and Vial cases passed at `4d8cd0bb9`.
@@ -638,8 +639,12 @@ New, each built once in the first wave that needs it:
   stop and restored progress validation. Raw or borrowed-ID scheduling cannot
   replace the completed native parent. Genuine native spell copies retain the
   historical Portent schedule and ordinary draw; their replacement ownership
-  remains outside this successor. Ordinary pending and published triggers retain
-  their public meaning through authenticated original source contracts; suspended
+  remains outside this successor. That delayed draw names the ceased copy,
+  which keeps its final Stack marker and generation; a live spell still cannot
+  source an ability. Arcane Denial's predecessor draw records use the same
+  capture; no copied Arcane Denial fixture exists yet. Ordinary
+  pending and published triggers retain their public meaning through
+  authenticated original source contracts; suspended
   owned replacement choices require an observation successor. Native1330 exposed
   start/resume guards and an unavailable copy fixture producer; both source fixes
   are committed, with native requalification pending.
@@ -650,7 +655,9 @@ New, each built once in the first wave that needs it:
   Riddler adjustment, per-attempt replacements and terminal stop. A sacrifice
   replaced by exile still qualifies; a source that departed, returned, or
   changed controller cannot be sacrificed by the old trigger. Native copied
-  permanents retain the ordinary predecessor route. Generic copied triggered
+  permanents retain the ordinary predecessor route. Every Metamorph spell
+  sacrifices Standstill first, so the control copy comes from a paid Vial under
+  the native Eternal opening. Generic copied triggered
   abilities have no shipped producer in this slice and are not authorized by
   a copied bound receipt. Ordinary pending and published triggers retain existing
   observations; suspended owned replacement choices require an observation

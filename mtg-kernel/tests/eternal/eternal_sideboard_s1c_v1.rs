@@ -1153,7 +1153,7 @@ fn paid_flame_riddler_freezes_three_individual_attempts_across_restore_both_seat
             let mut forged = state.clone();
             let changed = forged.engine.event_history.iter_mut().any(|event| {
                 if let CommittedEvent::EternalOwnedDrawV1 { journal } = event {
-                    let mut row = serde_json::to_value(&**journal).unwrap();
+                    let mut row = serde_json::to_value(**journal).unwrap();
                     if let Some(started) = row.get_mut("StartedWithRiddlerV1") {
                         assert_eq!(started["extra"], 1);
                         if downgrade {
