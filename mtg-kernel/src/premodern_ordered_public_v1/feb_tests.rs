@@ -1,10 +1,19 @@
 use super::*;
 use crate::{engine::Action, rl::ActionSemanticV1, surface::SurfaceAction};
-use crate::{mana::ManaColor, state::{Step, Zone}};
+use crate::{
+    mana::ManaColor,
+    state::{Step, Zone},
+};
 
-fn issued(owner: &FebSessionV1, viewer: PlayerSeatV1) -> (Box<FebNumericViewV1>, Option<FebDecisionV1>) {
+fn issued(
+    owner: &FebSessionV1,
+    viewer: PlayerSeatV1,
+) -> (Box<FebNumericViewV1>, Option<FebDecisionV1>) {
     let FebCurrentV1::Decision { numeric, decision } = owner.current(viewer).unwrap() else {
-        panic!("FEB did not issue a decision: {:?}", owner.inner.current.as_ref().err());
+        panic!(
+            "FEB did not issue a decision: {:?}",
+            owner.inner.current.as_ref().err()
+        );
     };
     (numeric, decision)
 }
@@ -16,12 +25,22 @@ fn frozen_feb_opening_step_and_same_owner_restore_match_native_both_seats() {
     assert_eq!(rows.len(), 27);
     assert_eq!(rows[0].name, "Brushland");
     assert_eq!(rows.last().unwrap().name, "Survival of the Fittest");
-    assert_eq!(deck.as_slice(), rows.iter().flat_map(|row| {
-        std::iter::repeat_n(card_id_by_name(&row.name).unwrap(), row.count as usize)
-    }).collect::<Vec<_>>());
+    assert_eq!(
+        deck.as_slice(),
+        rows.iter()
+            .flat_map(|row| {
+                std::iter::repeat_n(card_id_by_name(&row.name).unwrap(), row.count as usize)
+            })
+            .collect::<Vec<_>>()
+    );
     let volrath = card_id_by_name("Volrath's Shapeshifter").unwrap();
     assert_eq!(deck.iter().filter(|&&id| id == volrath).count(), 2);
-    assert!(crate::limited_session_v1::CustomDeckV1 { cards: rows.to_vec(), companion: None }.resolve().is_err());
+    assert!(crate::limited_session_v1::CustomDeckV1 {
+        cards: rows.to_vec(),
+        companion: None
+    }
+    .resolve()
+    .is_err());
 
     for first in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
         let first_player = native_seat(first);
@@ -30,7 +49,12 @@ fn frozen_feb_opening_step_and_same_owner_restore_match_native_both_seats() {
         let foreign = FebSessionV1::reset(460_615, first).unwrap();
         let mut native = owner.inner.clone();
         assert_eq!(owner.inner.game.starting_player, first_player);
-        assert!(owner.inner.game.players.iter().all(|p| p.hand.len() == 7 && p.library.len() == 53));
+        assert!(owner
+            .inner
+            .game
+            .players
+            .iter()
+            .all(|p| p.hand.len() == 7 && p.library.len() == 53));
         let (initial, token) = issued(&owner, first);
         let token = token.unwrap();
         assert_eq!(initial.actor, first);
@@ -47,13 +71,32 @@ fn frozen_feb_opening_step_and_same_owner_restore_match_native_both_seats() {
 
         let native_opening = native.surface.next_decision(&mut native.game);
         let menu = rl::legal_action_candidates_v1(&native_opening, &native.game).unwrap();
-        let keep = menu.iter().position(|row| matches!(row.record.semantic,
-            ActionSemanticV1::ChooseLondonMulligan { mulligan: false, .. })).unwrap();
-        assert_eq!(menu[keep].surface_action, SurfaceAction::Action(Action::ChooseLondonMulligan { mulligan: false }));
+        let keep = menu
+            .iter()
+            .position(|row| {
+                matches!(
+                    row.record.semantic,
+                    ActionSemanticV1::ChooseLondonMulligan {
+                        mulligan: false,
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            menu[keep].surface_action,
+            SurfaceAction::Action(Action::ChooseLondonMulligan { mulligan: false })
+        );
         owner.step(&token, keep).unwrap();
-        native.surface.apply(&mut native.game, menu[keep].surface_action.clone()).unwrap();
+        native
+            .surface
+            .apply(&mut native.game, menu[keep].surface_action.clone())
+            .unwrap();
         let next = native.surface.next_decision(&mut native.game);
-        assert_eq!(rl::acting_player_for_surface_decision(&next, &native.game), Some(first_player.opponent()));
+        assert_eq!(
+            rl::acting_player_for_surface_decision(&next, &native.game),
+            Some(first_player.opponent())
+        );
         assert_eq!(owner.inner.game.state_hash(), native.game.state_hash());
 
         owner.restore(&saved).unwrap();
@@ -67,16 +110,33 @@ fn frozen_feb_opening_step_and_same_owner_restore_match_native_both_seats() {
         let mut played_land = false;
         for _ in 0..32 {
             let native_decision = native.surface.next_decision(&mut native.game);
-            let chooser = rl::acting_player_for_surface_decision(&native_decision, &native.game).unwrap();
+            let chooser =
+                rl::acting_player_for_surface_decision(&native_decision, &native.game).unwrap();
             let menu = rl::legal_action_candidates_v1(&native_decision, &native.game).unwrap();
-            let land = menu.iter().position(|row| matches!(row.record.semantic, ActionSemanticV1::PlayLand { .. }));
-            let ordinal = land.or_else(|| menu.iter().position(|row| matches!(row.record.semantic,
-                ActionSemanticV1::Pass { .. } | ActionSemanticV1::ChooseLondonMulligan { mulligan: false, .. }
-            ))).unwrap_or_else(|| panic!("unhandled native opening menu {native_decision:?}"));
+            let land = menu
+                .iter()
+                .position(|row| matches!(row.record.semantic, ActionSemanticV1::PlayLand { .. }));
+            let ordinal = land
+                .or_else(|| {
+                    menu.iter().position(|row| {
+                        matches!(
+                            row.record.semantic,
+                            ActionSemanticV1::Pass { .. }
+                                | ActionSemanticV1::ChooseLondonMulligan {
+                                    mulligan: false,
+                                    ..
+                                }
+                        )
+                    })
+                })
+                .unwrap_or_else(|| panic!("unhandled native opening menu {native_decision:?}"));
             let (numeric, token) = issued(&owner, chooser.into());
             assert_eq!(numeric.actions.len(), menu.len());
             owner.step(&token.unwrap(), ordinal).unwrap();
-            native.surface.apply(&mut native.game, menu[ordinal].surface_action.clone()).unwrap();
+            native
+                .surface
+                .apply(&mut native.game, menu[ordinal].surface_action.clone())
+                .unwrap();
             let _ = native.surface.next_decision(&mut native.game);
             assert_eq!(owner.inner.game.state_hash(), native.game.state_hash());
             if land.is_some() {
@@ -94,9 +154,12 @@ fn frozen_feb_opening_packet_is_inert_to_opponent_hidden_copy_assignment() {
     let mut paired = FebSessionV1::reset(460_616, PlayerSeatV1::P0).unwrap();
     let state = &mut paired.inner.game;
     let hand = state.players[1].hand[0];
-    let library = state.players[1].library.iter().copied().find(|&id| {
-        state.objects.get(id).card_def != state.objects.get(hand).card_def
-    }).unwrap();
+    let library = state.players[1]
+        .library
+        .iter()
+        .copied()
+        .find(|&id| state.objects.get(id).card_def != state.objects.get(hand).card_def)
+        .unwrap();
     let a = state.objects.get(hand).card_def;
     let b = state.objects.get(library).card_def;
     for (id, definition) in [(hand, b), (library, a)] {
@@ -109,22 +172,40 @@ fn frozen_feb_opening_packet_is_inert_to_opponent_hidden_copy_assignment() {
     let (other, _) = issued(&paired, PlayerSeatV1::P0);
     assert_eq!(actual.observation, other.observation);
     assert_eq!(actual.actions, other.actions);
-    assert_eq!(owner.human_current(PlayerSeatV1::P0).unwrap(), paired.human_current(PlayerSeatV1::P0).unwrap());
+    assert_eq!(
+        owner.human_current(PlayerSeatV1::P0).unwrap(),
+        paired.human_current(PlayerSeatV1::P0).unwrap()
+    );
 }
 
 fn choose_label(owner: &mut FebSessionV1, viewer: PlayerSeatV1, starts_with: &str) {
     let human = owner.human_current(viewer).unwrap().unwrap();
-    let ordinal = human.actions.iter().find_map(|row| match row {
-        FebHumanActionV1::Supported { native_ordinal, label } if label.starts_with(starts_with) => Some(*native_ordinal),
-        _ => None,
-    }).unwrap_or_else(|| panic!("missing Human action {starts_with:?} in {:?}", human.actions));
+    let ordinal = human
+        .actions
+        .iter()
+        .find_map(|row| match row {
+            FebHumanActionV1::Supported {
+                native_ordinal,
+                label,
+            } if label.starts_with(starts_with) => Some(*native_ordinal),
+            _ => None,
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "missing Human action {starts_with:?} in {:?}",
+                human.actions
+            )
+        });
     let (_, token) = issued(owner, viewer);
     owner.step_human(&token.unwrap(), ordinal).unwrap();
 }
 
 fn acting(owner: &FebSessionV1) -> PlayerSeatV1 {
     let Ok(BoundBoundaryV1::Decision(binding)) = &owner.inner.current else {
-        panic!("FEB fixture boundary absent: {:?}", owner.inner.current.as_ref().err());
+        panic!(
+            "FEB fixture boundary absent: {:?}",
+            owner.inner.current.as_ref().err()
+        );
     };
     binding.actor.into()
 }
@@ -132,8 +213,13 @@ fn acting(owner: &FebSessionV1) -> PlayerSeatV1 {
 fn stage_deck_card(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> ObjectId {
     let id = card_id_by_name(name).unwrap();
     let objects = &state.players[player.index()];
-    let object = objects.hand.iter().chain(&objects.library).copied()
-        .find(|&object| state.objects.get(object).card_def == id).unwrap();
+    let object = objects
+        .hand
+        .iter()
+        .chain(&objects.library)
+        .copied()
+        .find(|&object| state.objects.get(object).card_def == id)
+        .unwrap();
     if state.objects.get(object).zone != zone {
         propose_and_commit(state, ProposedEvent::zone_change(object, zone));
     }
@@ -156,12 +242,23 @@ fn frozen_feb_human_paid_volrath_discard_and_wall_mana_both_seats() {
                 choose_label(&mut owner, viewer, "Pass priority");
             }
             assert_eq!(owner.inner.game.step, Step::Main1);
-            let source = stage_deck_card(&mut owner.inner.game, p, "Volrath's Shapeshifter", Zone::Hand);
-            let donor = with_donor.then(|| stage_deck_card(&mut owner.inner.game, p, "Wall of Roots", Zone::Graveyard));
+            let source = stage_deck_card(
+                &mut owner.inner.game,
+                p,
+                "Volrath's Shapeshifter",
+                Zone::Hand,
+            );
+            let donor = with_donor.then(|| {
+                stage_deck_card(&mut owner.inner.game, p, "Wall of Roots", Zone::Graveyard)
+            });
             let mana = &mut owner.inner.game.players[p.index()].mana_pool;
             mana[ManaColor::U.pool_index()] = 2;
             mana[ManaColor::C.pool_index()] = if with_donor { 1 } else { 3 };
-            owner.inner.current = bind_next(&mut owner.inner.game, &mut owner.inner.surface, owner.inner.step);
+            owner.inner.current = bind_next(
+                &mut owner.inner.game,
+                &mut owner.inner.surface,
+                owner.inner.step,
+            );
             choose_label(&mut owner, seat, "Begin casting Volrath's Shapeshifter");
             for _ in 0..8 {
                 if owner.inner.game.stack.is_empty() {
@@ -173,7 +270,12 @@ fn frozen_feb_human_paid_volrath_discard_and_wall_mana_both_seats() {
             assert_eq!(owner.inner.game.objects.get(source).zone, Zone::Battlefield);
             let human = owner.human_current(seat).unwrap().unwrap();
             assert!(!serde_json::to_string(&human).unwrap().contains("arena_id"));
-            assert!(owner.human_current(p.opponent().into()).unwrap().unwrap().actions.is_empty());
+            assert!(owner
+                .human_current(p.opponent().into())
+                .unwrap()
+                .unwrap()
+                .actions
+                .is_empty());
             let snapshot = owner.snapshot();
             let (_, stale) = issued(&owner, seat);
             owner.restore(&snapshot).unwrap();
@@ -181,16 +283,33 @@ fn frozen_feb_human_paid_volrath_discard_and_wall_mana_both_seats() {
             assert_eq!(owner.human_current(seat).unwrap().unwrap(), human);
 
             if let Some(donor) = donor {
-                assert_eq!(full_text_v1::active_text(&owner.inner.game, source).unwrap().donor().object, donor);
-                choose_label(&mut owner, seat, "Put a -0/-1 counter on Volrath's Shapeshifter");
+                assert_eq!(
+                    full_text_v1::active_text(&owner.inner.game, source)
+                        .unwrap()
+                        .donor()
+                        .object,
+                    donor
+                );
+                choose_label(
+                    &mut owner,
+                    seat,
+                    "Put a -0/-1 counter on Volrath's Shapeshifter",
+                );
                 let state = &owner.inner.game;
-                assert_eq!(state.players[p.index()].mana_pool[ManaColor::G.pool_index()], 1);
+                assert_eq!(
+                    state.players[p.index()].mana_pool[ManaColor::G.pool_index()],
+                    1
+                );
                 assert_eq!(state.objects.get(source).counters.minus0_minus1, 1);
                 assert_eq!(state.objects.get(donor).counters.minus0_minus1, 0);
             } else {
                 assert!(full_text_v1::active_text(&owner.inner.game, source).is_none());
                 let before = owner.inner.game.players[p.index()].hand.len();
-                choose_label(&mut owner, seat, "Volrath's Shapeshifter: Pay {2} to discard a card");
+                choose_label(
+                    &mut owner,
+                    seat,
+                    "Volrath's Shapeshifter: Pay {2} to discard a card",
+                );
                 for _ in 0..8 {
                     if owner.inner.game.engine.pending_discard.is_some() {
                         break;

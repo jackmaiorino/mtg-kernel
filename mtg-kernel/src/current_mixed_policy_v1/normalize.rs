@@ -399,11 +399,17 @@ pub(crate) fn visible_numeric_parts_v1(
         timestamps(action, "", &mut times);
     }
     let mut refs = References {
-        timestamps: times.into_iter().enumerate().map(|(i, time)| (time, i as u64)).collect(),
+        timestamps: times
+            .into_iter()
+            .enumerate()
+            .map(|(i, time)| (time, i as u64))
+            .collect(),
         ..Default::default()
     };
     let state = NumericTree::encode(&rewrite(state, &mut refs, "")?)?;
-    let actions = actions.iter().map(|action| NumericTree::encode(&rewrite(action, &mut refs, "")?))
+    let actions = actions
+        .iter()
+        .map(|action| NumericTree::encode(&rewrite(action, &mut refs, "")?))
         .collect::<Result<Vec<_>>>()?;
     Ok((state, actions))
 }

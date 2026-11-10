@@ -166,40 +166,64 @@ fn view(
     step_index: u64,
     viewer: PlayerId,
 ) -> Result<NumericDecisionViewV1, String> {
-        let observation =
-            rl::observe_premodern_ordered_v1(state, surface, viewer, step_index)
-                .map_err(|e| e.to_string())?;
-        let menu = (viewer == actor).then(|| match bound {
-            BoundMenu::GraveyardOrder(_) => NumericMenuV1::GraveyardOrder,
-            BoundMenu::Native(candidates) => NumericMenuV1::Native {
-                actions: candidates
-                    .iter()
-                    .map(|candidate| NumericNativeActionV1 {
-                        full_text: activation_program(state, &candidate.record.semantic)
-                            .map(|(_, program)| program),
-                        action: candidate.record.clone(),
-                    })
-                    .collect(),
-            },
-        });
-        Ok(NumericDecisionViewV1 { observation, menu })
+    let observation = rl::observe_premodern_ordered_v1(state, surface, viewer, step_index)
+        .map_err(|e| e.to_string())?;
+    let menu = (viewer == actor).then(|| match bound {
+        BoundMenu::GraveyardOrder(_) => NumericMenuV1::GraveyardOrder,
+        BoundMenu::Native(candidates) => NumericMenuV1::Native {
+            actions: candidates
+                .iter()
+                .map(|candidate| NumericNativeActionV1 {
+                    full_text: activation_program(state, &candidate.record.semantic)
+                        .map(|(_, program)| program),
+                    action: candidate.record.clone(),
+                })
+                .collect(),
+        },
+    });
+    Ok(NumericDecisionViewV1 { observation, menu })
 }
 
 impl BoundDecisionV1 {
-    fn borrow<'a>(self, state: &'a mut GameState, surface: &'a mut HarnessSurfaceV2, step_index: u64) -> NumericDecisionV1<'a> {
-        NumericDecisionV1 { state, surface, actor: self.actor, step_index, menu: Some(self.menu) }
+    fn borrow<'a>(
+        self,
+        state: &'a mut GameState,
+        surface: &'a mut HarnessSurfaceV2,
+        step_index: u64,
+    ) -> NumericDecisionV1<'a> {
+        NumericDecisionV1 {
+            state,
+            surface,
+            actor: self.actor,
+            step_index,
+            menu: Some(self.menu),
+        }
     }
 
-    pub(super) fn view(&self, state: &GameState, surface: &HarnessSurfaceV2, viewer: PlayerId, step: u64) -> Result<NumericDecisionViewV1, String> {
+    pub(super) fn view(
+        &self,
+        state: &GameState,
+        surface: &HarnessSurfaceV2,
+        viewer: PlayerId,
+        step: u64,
+    ) -> Result<NumericDecisionViewV1, String> {
         view(&self.menu, state, surface, self.actor, step, viewer)
     }
 
-    pub(super) fn choose(&self, state: &mut GameState, surface: &mut HarnessSurfaceV2, step: u64, ordinal: usize) -> Result<(), String> {
+    pub(super) fn choose(
+        &self,
+        state: &mut GameState,
+        surface: &mut HarnessSurfaceV2,
+        step: u64,
+        ordinal: usize,
+    ) -> Result<(), String> {
         let mut bound = self.clone().borrow(state, surface, step);
         match &self.menu {
             BoundMenu::GraveyardOrder(_) => bound.choose_order(self.actor, step, ordinal),
             BoundMenu::Native(actions) => {
-                let action = actions.get(ordinal).ok_or("Premodern native ordinal is outside the menu")?;
+                let action = actions
+                    .get(ordinal)
+                    .ok_or("Premodern native ordinal is outside the menu")?;
                 bound.choose_native(self.actor, step, ordinal, &action.record.stable_id)
             }
         }
@@ -209,7 +233,14 @@ impl BoundDecisionV1 {
 impl NumericDecisionV1<'_> {
     pub fn view(&self, viewer: PlayerId) -> Result<NumericDecisionViewV1, String> {
         let menu = self.menu.as_ref().ok_or("Premodern decision was used")?;
-        view(menu, self.state, self.surface, self.actor, self.step_index, viewer)
+        view(
+            menu,
+            self.state,
+            self.surface,
+            self.actor,
+            self.step_index,
+            viewer,
+        )
     }
 
     pub fn human_view(&self, viewer: PlayerId) -> Result<HumanDecisionViewV1, String> {
