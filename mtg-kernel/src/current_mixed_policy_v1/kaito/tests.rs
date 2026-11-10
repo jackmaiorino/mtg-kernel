@@ -1097,10 +1097,10 @@ fn paid_numeric_foreign_forged_packet_and_action_refusals_leave_native_unchanged
         assert!(b.apply(&d, 0).is_err());
         assert!(a.restore(&b.snapshot()).is_err());
         let mut erased = d.clone();
-        erased.packet.actions.clear();
+        erased.current.packet.actions.clear();
         assert!(a.apply(&erased, 0).is_err());
         let mut changed = d.clone();
-        changed.packet.state = crate::current_mixed_policy_v1::NumericTree::encode(
+        changed.current.packet.state = crate::current_mixed_policy_v1::NumericTree::encode(
             &serde_json::json!({"replacement":"forged"}),
         )
         .unwrap();
