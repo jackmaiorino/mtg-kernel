@@ -19,7 +19,7 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
 /// deck's companion is part of the deck the session plays.
-const PLAYABLE: [(&str, &str); 135] = [
+const PLAYABLE: [(&str, &str); 136] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -181,6 +181,7 @@ const PLAYABLE: [(&str, &str); 135] = [
     ("premodern", "premodern-goblins"),
     ("premodern", "premodern-mono-black-aggro"),
     ("premodern", "premodern-rg-aggro"),
+    ("premodern", "premodern-elves"),
     ("premodern", "premodern-stiflenought"),
     ("premodern", "premodern-oath-of-druids"),
     ("premodern", "premodern-landstill-uw-control"),
