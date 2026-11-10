@@ -12,7 +12,11 @@ The historical generator receipt SHA-256 is
 `25727e984f5d21006e6f6ce6d28ece47ce7ab7c8d77cebf9c43e5f66c6e8aae8`.
 The accepted Elves integration preserves Birchlore Rangers and Thornscape
 Battlemage at IDs 1198 and 1199, then appends the unchanged Partial Volrath
-record. The combined catalog fingerprint still awaits guarded generation.
+record at ID 1200. Guarded generation at `e95be3cbd` emitted combined catalog
+fingerprint `945fa0cefae39583`, generated source SHA-256
+`718718fff466f37cb362a6f2f1ba846c79e586ee61bfdb34392b9ca282395b7f`.
+Receipt: `D:/codex-eternal-feb-hash-e95b-20261110/receipt.json`, SHA-256
+`30f3cc8133fd503be3a454bff7932ffb1d14abe5fef901b34ce2ade6dc3b6d0a`.
 
 Full-text changes apply in layer 3 and copies use layer 1. The battlefield
 object retains its physical definition. The public top card in its current
