@@ -3,6 +3,9 @@
 //! root independence, and strict arguments.
 
 use super::*;
+use crate::expanded_deck_training_v1::s_learner_v1::{
+    execute_s_update_v1, SUnsupportedOptionsV1, SUpdateInputsV1,
+};
 
 fn on_large_stack(body: fn()) {
     let run = std::thread::Builder::new()
@@ -29,6 +32,132 @@ fn temp_root(label: &str) -> PathBuf {
 
 fn args(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
+}
+
+fn fixture_serial_inputs_v1(
+    manifest: &FixtureManifestV1,
+    batch: &FixtureBatchV1,
+    output_directory: PathBuf,
+    verified_tape_cap: Option<usize>,
+) -> SUpdateInputsV1 {
+    SUpdateInputsV1 {
+        source: batch.source.clone(),
+        trajectories: batch.trajectories.clone(),
+        learning_rate: manifest.learning.learning_rate,
+        value_coefficient: manifest.learning.value_coefficient,
+        update_backend: ExpandedUpdateBackendV1::Cpu,
+        backward_execution: UpdateBackwardExecutionV1::Sequential,
+        loss_selection: manifest.learning.loss_selection,
+        output_directory,
+        preparation_workers: None,
+        max_prepared_tensor_mebibytes: manifest.options.max_prepared_tensor_mebibytes,
+        verified_tape_cap,
+        unsupported: SUnsupportedOptionsV1 {
+            line_b: false,
+            e_supported: false,
+            soft_q: false,
+            search_targets: false,
+        },
+        ex1: None,
+        training_math: TrainingMathV1::PlatformLibm,
+        record_format: CheckpointRecordFormatV1::default(),
+        started: Instant::now(),
+    }
+}
+
+fn assert_verified_replay_v1(
+    root: &Path,
+    manifest: &FixtureManifestV1,
+    batch: &FixtureBatchV1,
+) {
+    // The census counts live payload. Include the slot's headers and leave
+    // headroom for ragged retained capacities.
+    let cap = 2 * batch.census.learner_row_tape_bytes.max + 4096;
+    let profile = s_update_profile::arm_v1();
+    let result = execute_s_update_v1(fixture_serial_inputs_v1(
+        manifest,
+        batch,
+        root.join(format!("verified-{}", batch.name)),
+        Some(cap),
+    ))
+    .unwrap();
+    let verification = verify_v1(manifest, batch, &result).unwrap();
+    assert_eq!(verification["verified"], true, "{verification}");
+    let replay = &result["verified_replay"];
+    assert_eq!(replay["used"], true, "{replay}");
+    let peak = replay["peak_tape_bytes"].as_u64().unwrap() as usize;
+    assert!(peak > batch.census.learner_row_tape_bytes.max);
+    assert!(peak <= cap);
+    if let Some(totals) = profile.totals_v1() {
+        use s_update_profile::StageV1;
+
+        assert_eq!(
+            totals[StageV1::ReplayLearnerRow as usize].calls,
+            batch.census.learner_rows as u64
+        );
+        assert_eq!(
+            totals[StageV1::ReplayOtherRow as usize].calls,
+            batch.census.other_rows as u64
+        );
+        assert_eq!(totals[StageV1::LearnerForward as usize].calls, 0);
+        assert_eq!(
+            totals[StageV1::LearnerBackward as usize].calls,
+            batch.census.learner_rows as u64
+        );
+    }
+}
+
+fn assert_verified_replay_refusals_v1(
+    root: &Path,
+    manifest: &FixtureManifestV1,
+    batch: &FixtureBatchV1,
+) {
+    let fallback = execute_s_update_v1(fixture_serial_inputs_v1(
+        manifest,
+        batch,
+        root.join("verified-fallback"),
+        Some(1024),
+    ))
+    .unwrap();
+    assert_eq!(fallback["verified_replay"]["used"], false);
+    assert_eq!(fallback["verified_replay"]["fallback"], "tape_capacity");
+    assert_eq!(verify_v1(manifest, batch, &fallback).unwrap()["verified"], true);
+
+    for (pairing, message) in [
+        (false, "stored tensor does not reproduce rollout outputs"),
+        (true, "only a FlatV8 policy replays a pairing relation"),
+    ] {
+        let mut trajectory: ExpandedTrajectoryV1 = read_pinned(&batch.trajectories[1]).unwrap();
+        let seat = trajectory.episode.learner_seat;
+        let row = trajectory
+            .decisions
+            .iter_mut()
+            .rev()
+            .find(|row| (row.actor == seat) == pairing)
+            .unwrap();
+        if pairing {
+            row.tensor.pairing_node_indices.extend([0, 1]);
+        } else {
+            // A stored value mismatch leaves the action-sampler check intact.
+            row.value ^= 1;
+        }
+        let path = root.join(format!("corrupt-{pairing}.json"));
+        fs::write(&path, serde_json::to_vec(&trajectory).unwrap()).unwrap();
+        let pin = pin_file_v1(&path).unwrap();
+        for cap in [None, Some(2 * batch.census.learner_row_tape_bytes.max + 4096)] {
+            let out = root.join(format!("refused-{pairing}-{cap:?}"));
+            let mut inputs = fixture_serial_inputs_v1(manifest, batch, out.clone(), cap);
+            inputs.trajectories[1] = pin.clone();
+            // Invalid targets must not mask a later replay error.
+            inputs.loss_selection = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: -0.25,
+                lambda: 1.0,
+                entropy_coefficient: 0.0,
+            };
+            assert_eq!(execute_s_update_v1(inputs).unwrap_err(), message);
+            assert!(!out.exists());
+        }
+    }
 }
 
 #[test]
@@ -154,7 +283,9 @@ fn fixture_end_to_end_v1() {
                 assert!(sample["attribution_verified"].is_null());
             }
         }
+        assert_verified_replay_v1(&root, &manifest, batch);
     }
+    assert_verified_replay_refusals_v1(&root, &manifest, initial);
     // A bench refuses an existing directory and a serial path with workers.
     let existing = BenchOptionsV1 {
         batch: "warmed".into(),

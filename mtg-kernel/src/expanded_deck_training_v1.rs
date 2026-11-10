@@ -3371,6 +3371,43 @@ fn replay_learner_groups_v1<'a>(
     learner: &FrozenPlayPolicyV1,
     opponent: Option<&FrozenPlayPolicyV1>,
 ) -> Result<Vec<LearnerTensorGroupV1<'a>>, String> {
+    let mut groups = Vec::new();
+    let mut group = Vec::new();
+    visit_serial_replay_rows_v1(t, learner, opponent, |generation, acting, row| {
+        let common = row.tensor.tensor();
+        let stage = if row.actor == t.episode.learner_seat {
+            S_UPDATE_REPLAY_LEARNER_ROW_V1
+        } else {
+            S_UPDATE_REPLAY_OTHER_ROW_V1
+        };
+        authenticate_serial_replay_row_v1(generation, acting, row, common.clone(), stage)?;
+        if row.actor == t.episode.learner_seat {
+            group.push((row, common));
+            if row.substep_index + 1 == row.substep_count {
+                groups.push((
+                    t.terminal.terminal_reward[row.actor as usize] as i8,
+                    episode_ordinal,
+                    std::mem::take(&mut group),
+                ));
+            }
+        }
+        Ok::<_, String>(())
+    })?;
+    Ok(groups)
+}
+
+/// Shared serial replay validation and ordered actor dispatch. An optional
+/// fused learner consumes the same rows without retaining their decoded tensors.
+fn visit_serial_replay_rows_v1<'a, E: From<String>>(
+    t: &'a ExpandedTrajectoryV1,
+    learner: &FrozenPlayPolicyV1,
+    opponent: Option<&FrozenPlayPolicyV1>,
+    mut visit: impl FnMut(
+        FreshLineageGenerationV1,
+        &FrozenPlayPolicyV1,
+        &'a DecisionRecordV1,
+    ) -> Result<(), E>,
+) -> Result<(), E> {
     validate_trajectory(t)?;
     ensure(
         t.episode.opponent.is_some() == opponent.is_some(),
@@ -3385,45 +3422,31 @@ fn replay_learner_groups_v1<'a>(
         )?;
     }
     let generation = contract.generation;
-    let mut groups = Vec::new();
-    let mut index = 0;
-    while index < t.decisions.len() {
-        let first = &t.decisions[index];
-        let count = first.substep_count as usize;
-        let mut group = Vec::new();
-        for row in &t.decisions[index..index + count] {
-            let common = row.tensor.tensor();
-            let (acting, stage) = if row.actor == t.episode.learner_seat {
-                (learner, S_UPDATE_REPLAY_LEARNER_ROW_V1)
-            } else {
-                (opponent.unwrap_or(learner), S_UPDATE_REPLAY_OTHER_ROW_V1)
-            };
-            let input = common.clone();
-            let span = crate::s_transformer_v1::update_profile_v1::span_v1(stage);
-            let output = acting.score_replay_tensor_v1(
-                generation,
-                input,
-                &row.tensor.pairing_node_indices,
-            )?;
-            span.finish_v1(&output.logits, output.value);
-            ensure(
-                bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
-                "stored tensor does not reproduce rollout outputs",
-            )?;
-            if row.actor == t.episode.learner_seat {
-                group.push((row, common));
-            }
-        }
-        if !group.is_empty() {
-            groups.push((
-                t.terminal.terminal_reward[first.actor as usize] as i8,
-                episode_ordinal,
-                group,
-            ));
-        }
-        index += count;
+    for row in &t.decisions {
+        let acting = if row.actor == t.episode.learner_seat {
+            learner
+        } else {
+            opponent.unwrap_or(learner)
+        };
+        visit(generation, acting, row)?;
     }
-    Ok(groups)
+    Ok(())
+}
+
+fn authenticate_serial_replay_row_v1(
+    generation: FreshLineageGenerationV1,
+    acting: &FrozenPlayPolicyV1,
+    row: &DecisionRecordV1,
+    input: NativeFlatDecisionTensorV2,
+    stage: crate::s_transformer_v1::update_profile_v1::StageV1,
+) -> Result<(), String> {
+    let span = crate::s_transformer_v1::update_profile_v1::span_v1(stage);
+    let output = acting.score_replay_tensor_v1(generation, input, &row.tensor.pairing_node_indices)?;
+    span.finish_v1(&output.logits, output.value);
+    ensure(
+        bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
+        "stored tensor does not reproduce rollout outputs",
+    )
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -4464,6 +4487,8 @@ fn execute_update_inner_v1(
             output_directory,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            #[cfg(test)]
+            verified_tape_cap: None,
             unsupported: s_learner_v1::SUnsupportedOptionsV1 {
                 line_b: line_b.is_some(),
                 e_supported: e_supported.is_some(),
