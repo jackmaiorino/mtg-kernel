@@ -1682,6 +1682,160 @@ fn mad_wizards_lair_casts_a_drawn_card_for_free_and_completes_the_dungeon() {
     assert_eq!(state.players[0].dungeon.completed_dungeons, vec![MAD_MAGE]);
 }
 
+fn pay_for_acererak(state: &mut GameState, player: PlayerId, acererak: ObjectId) {
+    pool(state, player, &[ManaColor::B], 2);
+    cast(state, acererak, &[]);
+}
+
+fn approach_draw_room(state: &mut GameState, player: PlayerId, dungeon: u16) -> ObjectId {
+    state.active_player = player;
+    state.priority_player = player;
+    let acererak = put(state, player, ACERERAK, Zone::Hand);
+    let route = match dungeon {
+        LOST_MINE => &[Some(0), Some(0), Some(1)][..],
+        MAD_MAGE => &[Some(1), None, Some(0), None, Some(1), None][..],
+        _ => panic!("drawing dungeon"),
+    };
+    for &option in route {
+        pay_for_acererak(state, player, acererak);
+        let mut room = option;
+        while let Some(decision) = settle(state) {
+            match decision {
+                Decision::ChooseEffectOption { .. } => {
+                    act(state, Action::ChooseEffectOption(room.take().unwrap()));
+                }
+                // Keep each scry card on top in its original order.
+                Decision::ChooseEffectTargets { legal_targets, .. } => {
+                    act(state, Action::ChooseEffectTarget(legal_targets[0]));
+                }
+                other => panic!("unexpected approach to drawing room: {other:?}"),
+            }
+        }
+        assert!(room.is_none());
+    }
+    assert_eq!(state.objects.get(acererak).zone, Zone::Hand);
+    assert_eq!(state.players[player.index()].dungeon.dungeon_id, Some(dungeon));
+    assert_eq!(state.players[player.index()].dungeon.room_id,
+        Some(if dungeon == LOST_MINE { 5 } else { 8 }));
+    acererak
+}
+
+fn treasure_count(state: &GameState, player: PlayerId) -> usize {
+    state.players[player.index()].battlefield.iter().filter(|&&object|
+        state.objects.get(object).name == "Treasure Token"
+    ).count()
+}
+
+#[test]
+fn paid_temple_room_owns_each_replacement_and_stops_after_jace_both_seats() {
+    for player in [P0, P1] {
+        let opponent = player.opponent();
+        for terminal in [false, true] {
+            let mut state = if terminal { game(&[]) } else { islands() };
+            let acererak = approach_draw_room(&mut state, player, LOST_MINE);
+            put(&mut state, player, "Quantum Riddler", Zone::Battlefield);
+            put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+            let alternative = if terminal {
+                put(&mut state, player, "Jace, Wielder of Mysteries", Zone::Battlefield)
+            } else {
+                put(&mut state, player, "Golgari Thug", Zone::Graveyard)
+            };
+            let library_before = state.players[player.index()].library.len();
+            pay_for_acererak(&mut state, player, acererak);
+            let first = settle(&mut state).expect("actual Temple replacement");
+            assert!(matches!(&first, Decision::ChooseEffectTargets {
+                player: drawer, source, legal_targets, can_finish: true, ..
+            } if *drawer == player && *source == acererak
+                && legal_targets.as_slice() == [Target::Object(alternative)]));
+            assert_eq!(state.objects.get(acererak).zone, Zone::Hand);
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(next(&mut restored), first);
+            act(&mut restored, Action::ChooseEffectTarget(Target::Object(alternative)));
+            let mut answered: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
+            for branch in [&mut restored, &mut answered] {
+                if terminal {
+                    assert!(matches!(next(branch), Decision::GameOver { winner: Some(winner) }
+                        if winner == player));
+                    assert_eq!(treasure_count(branch, opponent), 0);
+                } else {
+                    settled(branch);
+                    assert_eq!(branch.objects.get(alternative).zone, Zone::Hand);
+                    assert_eq!(branch.players[player.index()].library.len(), library_before - 4);
+                    assert_eq!(treasure_count(branch, opponent), 1);
+                }
+            }
+            assert_eq!(restored.state_hash(), answered.state_hash());
+            act(&mut state, Action::FinishEffectSelection);
+            assert_eq!(settle(&mut state), Some(first));
+            act(&mut state, Action::FinishEffectSelection);
+            settled(&mut state);
+            assert_eq!(treasure_count(&state, opponent), 2);
+        }
+    }
+}
+
+#[test]
+fn paid_mad_wizard_room_reveals_and_casts_only_actual_draws_both_seats() {
+    for player in [P0, P1] {
+        let opponent = player.opponent();
+        let mut state = game(&[
+            "Island", "Island", "Island", "Island", "Lightning Bolt", "Island", "Island", "Island",
+        ]);
+        let acererak = approach_draw_room(&mut state, player, MAD_MAGE);
+        put(&mut state, player, "Quantum Riddler", Zone::Battlefield);
+        let library = state.players[player.index()].library.clone();
+        let bolt = library[4];
+
+        let mut replaced = state.clone();
+        put(&mut replaced, opponent, "Hullbreacher", Zone::Battlefield);
+        pay_for_acererak(&mut replaced, player, acererak);
+        settled(&mut replaced);
+        assert_eq!(treasure_count(&replaced, opponent), 4);
+        assert_eq!(replaced.players[player.index()].hand, vec![acererak]);
+        assert_eq!(replaced.players[player.index()].library, library);
+
+        let thug = put(&mut state, player, "Golgari Thug", Zone::Graveyard);
+        pay_for_acererak(&mut state, player, acererak);
+        let first = settle(&mut state).expect("Lair's actual Dredge menu");
+        assert!(matches!(first, Decision::ChooseEffectTargets { legal_targets, .. }
+            if legal_targets == [Target::Object(thug)]));
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+        let cast_menu = settle(&mut state).expect("Lair's actual drawn spell is castable");
+        assert!(matches!(&cast_menu, Decision::ChooseEffectTargets { legal_targets, .. }
+            if legal_targets.as_slice() == [Target::Object(bolt)]));
+        assert_eq!(state.objects.get(thug).zone, Zone::Hand);
+        assert_eq!(state.players[player.index()].library, library[7..]);
+        assert!(library[4..7].iter().all(|drawn| state.known_hand_cards(opponent, player)
+            .iter().any(|entry| entry.object == *drawn)));
+
+        let saved = serde_json::to_value(&state).unwrap();
+        let mut forged = saved.clone();
+        let card = forged["engine"]["event_history"].as_array_mut().unwrap().iter_mut()
+            .find_map(|row| row.get_mut("EternalOwnedDrawV1")?.get_mut("journal")?
+                .get_mut("RoomDrawRevealedV1")?.get_mut("card")?.get_mut("object"))
+            .expect("native Lair reveal receipt");
+        *card = serde_json::json!(thug);
+        let forged: GameState = serde_json::from_value(forged).unwrap();
+        assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err());
+
+        let mut restored: GameState = serde_json::from_value(saved).unwrap();
+        assert_eq!(next(&mut restored), cast_menu);
+        act(&mut restored, Action::ChooseEffectTarget(Target::Object(bolt)));
+        let mut answered: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
+        for branch in [&mut restored, &mut answered] {
+            choose_target(branch, Target::Player(opponent));
+            settled(branch);
+            assert_eq!(branch.objects.get(bolt).zone, Zone::Graveyard);
+            assert_eq!(branch.players[opponent.index()].life, 17);
+            assert_eq!(branch.players[player.index()].mana_pool, [0; 6]);
+        }
+        assert_eq!(restored.state_hash(), answered.state_hash());
+    }
+}
+
 #[test]
 fn fungi_cavern_shrinks_a_creature_until_its_controllers_next_turn() {
     let mut state = islands();

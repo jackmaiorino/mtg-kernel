@@ -856,7 +856,7 @@ pub(crate) fn drive(
         }
         EternalOpV1::OwnedDrawCompletedV1 { ordinal } => {
             super::owned_draws_v1::complete(state, continuation, *ordinal, &path)?;
-            Ok(false)
+            Ok(continuation.choice.is_some())
         }
         EternalOpV1::MayImprintFromHandV1 => {
             let Some(contract) = continuation.ctx.ability_source_contract else {

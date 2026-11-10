@@ -12953,6 +12953,9 @@ pub(crate) fn validate_resolution_play_authorization(
     permission: crate::engine::resolution_cast_v1::ResolutionPermissionV1,
 ) -> Result<(), String> {
     if let EffectFrame::EternalSelectionV1 { choice, selected } = answer {
+        crate::eternal_cards_v1::owned_draws_v1::rooms::validate_child(
+            state, suspended, choice, permission.card,
+        )?;
         return crate::eternal_cards_v1::e3::dungeons::validate_resolution_cast(
             suspended, choice, selected, permission,
         );
@@ -13127,6 +13130,14 @@ fn drive_resumable_inner_with_native_row_v1(
         let EffectFrame::Program { op, path } = frame else {
             match frame {
                 EffectFrame::EternalSelectionV1 { choice, selected } => {
+                    if matches!(
+                        &choice.kind,
+                        crate::eternal_cards_v1::e3::E3ChoiceKindV1::MadWizardV1 { .. }
+                    ) {
+                        crate::eternal_cards_v1::owned_draws_v1::rooms::record_answer(
+                            state, &continuation, &choice, &selected,
+                        )?;
+                    }
                     // Mad Wizard's Lair: a chosen card is cast during this
                     // resolution (608.2g).
                     if let Some(card) = crate::eternal_cards_v1::e3::dungeons::resolution_cast_card(

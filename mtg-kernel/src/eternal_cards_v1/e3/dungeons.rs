@@ -8,6 +8,7 @@
 //! its bottommost room is entered.
 
 use super::super::{eternal, EternalOpV1};
+use super::super::owned_draws_v1::rooms;
 use super::{
     bind, binding_live, e3_mut, link, offer, printed, E3ChoiceKindV1, E3ChoiceV1, UntilNextTurnV1,
 };
@@ -426,13 +427,12 @@ pub(super) fn resolve_room(
             }
         }
         // Temple of Dumathoin: "Draw a card."
-        (LOST_MINE_OF_PHANDELVER, 7) => run(
-            state,
-            EffectOp::DrawCards {
-                player: PlayerRef::Controller,
-                count: 1,
-            },
-        ),
+        (LOST_MINE_OF_PHANDELVER, 7) => {
+            if crate::eternal_vintage_e7b_v1::dredge::owned_draw_needs_choice(state, player, 1) {
+                return Err("Temple draw choice needs its native room entry".into());
+            }
+            super::super::owned_draws_v1::draw_uninterrupted(state, player, 1);
+        }
         // Yawning Portal: "You gain 1 life."
         (DUNGEON_OF_THE_MAD_MAGE, 1) => run(
             state,
@@ -644,29 +644,33 @@ fn mad_wizards_lair(
     path: Vec<u16>,
 ) -> Result<bool, String> {
     let player = continuation.ctx.controller;
-    let before = state.players[player.index()].hand.clone();
-    crate::effect::execute(
-        &EffectOp::DrawCards {
-            player: PlayerRef::Controller,
-            count: 3,
-        },
-        &continuation.ctx,
-        state,
-    );
-    let drawn = state.players[player.index()]
-        .hand
-        .iter()
-        .copied()
-        .filter(|card| !before.contains(card))
-        .collect::<Vec<_>>();
-    for &card in &drawn {
-        // spellbench-public-reveal: hand card revealed by the card rules.
-        state.reveal_distinct_hand_card(player.opponent(), player, card)?;
+    if crate::eternal_vintage_e7b_v1::dredge::owned_draw_needs_choice(state, player, 3) {
+        return Err("Mad Wizard draw choice needs its native room entry".into());
     }
-    let drawn = drawn
-        .into_iter()
-        .map(|card| bind(state, card))
-        .collect::<Vec<_>>();
+    let start = state.engine.event_history.len();
+    if !super::super::owned_draws_v1::draw_uninterrupted(state, player, 3) {
+        return Ok(false);
+    }
+    let drawn = rooms::live_drawn(state, player, start..state.engine.event_history.len())?;
+    for &(_, card) in &drawn {
+        // spellbench-public-reveal: hand card revealed by the card rules.
+        state.reveal_distinct_hand_card(player.opponent(), player, card.object)?;
+    }
+    let drawn = drawn.into_iter().map(|(_, card)| card).collect();
+    let Some(choice) = mad_wizard_choice(state, continuation, drawn, path) else {
+        return Ok(false);
+    };
+    offer(continuation, choice);
+    Ok(true)
+}
+
+pub(crate) fn mad_wizard_choice(
+    state: &GameState,
+    continuation: &EffectContinuation,
+    drawn: Vec<EffectObjectBinding>,
+    path: Vec<u16>,
+) -> Option<E3ChoiceV1> {
+    let player = continuation.ctx.controller;
     let castable = drawn
         .iter()
         .copied()
@@ -676,12 +680,7 @@ fn mad_wizards_lair(
             )
         })
         .collect::<Vec<_>>();
-    if castable.is_empty() {
-        return Ok(false);
-    }
-    offer(
-        continuation,
-        E3ChoiceV1 {
+    (!castable.is_empty()).then(|| E3ChoiceV1 {
             kind: E3ChoiceKindV1::MadWizardV1 { drawn },
             player,
             candidates: targets(&castable),
@@ -691,9 +690,7 @@ fn mad_wizards_lair(
             ordered: false,
             path,
             remaining: continuation.frames.clone(),
-        },
-    );
-    Ok(true)
+        })
 }
 
 /// The card a Mad Wizard's Lair answer casts, if any.
