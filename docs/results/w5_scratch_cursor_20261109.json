@@ -1,0 +1,378 @@
+{
+ "schema": "w5-scratch-work-result/v1",
+ "date": "2026-11-09",
+ "issue": "jackmaiorino/mtg-kernel#601 (T7, umbrella #594), milestone 2",
+ "change": "The reaper thread ticks a completion cursor (chains.Reaper): each tick probes past the last completed iteration it saw and reaps only the iterations newer completions released. persist keeps the full scan (chains.reap).",
+ "bench": {
+  "path": "tools/w5/tests/scratch_bench.py",
+  "commit": "82429c9230008f07bf52df4017f3a093d47eaf13",
+  "sha256": "45875f73dc10aa9339f1027af633a0b5c70ff4d4cb0750dd4a727e71cb2a7aeb",
+  "dirty_paths": []
+ },
+ "variants": {
+  "A": {
+   "tree": "main",
+   "commit": "0b8c0fa814d376efab56a227e62e8bedc00603ce",
+   "files": {"chains.py": "63307eb2fbfda9760ae91a91e6670e236d944aaeed609f733f6e710c1e05ddcb", "retention.py": "446f231d05b862488262d497dc18031587908e291539e475a44cd960230a7bb4"},
+   "dirty_paths": []
+  },
+  "B": {
+   "tree": "cursor (this branch)",
+   "commit": "82429c9230008f07bf52df4017f3a093d47eaf13",
+   "files": {"chains.py": "96d1bd523d27cd3145b5c1b6f560e1786445cada014ee066f328b565519d2f71", "retention.py": "446f231d05b862488262d497dc18031587908e291539e475a44cd960230a7bb4"},
+   "dirty_paths": []
+  }
+ },
+ "toolchain": {"python": "3.13.18 (main, Oct 26 2026, 14:08:19) [Clang 23.1.3 ]", "rust": "not used"},
+ "machine": {"cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz", "cpus": 4, "affinity": 4, "mem_total_kb": 16472400, "platform": "Linux-6.18.44-fc-v310-x86_64-with-glibc2.39"},
+ "dirs": {
+  "scratch": {"fstype": "tmpfs", "mount": "/dev/shm", "options": "rw,relatime,size=16472400k", "source": "tmpfs"},
+  "work": {"fstype": "ext4", "mount": "/", "options": "rw,relatime,discard,no_prefetch_block_bitmaps,resv_strict,resuid=65534,resgid=65534", "source": "/dev/vda"}
+ },
+ "seed": 601,
+ "profile": {
+  "checkpoint_bytes": 65536,
+  "complete_bytes": 3072,
+  "completion_bytes": 1024,
+  "config_bytes_per_update": 4096,
+  "episodes": 10,
+  "name": "small",
+  "records": {"attempt-000000/collect-command.json": 8192, "attempt-000000/collect/collection.json": 3072, "attempt-000000/update-command.json": 2048, "attempt-000000/update-input.json": 3072, "attempt-000000/update/update.json": 2048},
+  "run_bytes": 32768,
+  "trajectory_bytes": 4096
+ },
+ "cache_policy": "warm: each sample is a fresh worker process that builds its fixture untimed; tmpfs scratch has no cold-read state; persist fsyncs its own writes; no sample dropped or treated as warm-up",
+ "order": "balanced rounds (odd rounds reversed): A-B-B-A for each segment length; every sample kept",
+ "receipts": [
+  {
+   "path": "docs/results/w5_scratch_cursor_20261109/main_cursor.json",
+   "sha256": "359dec98f4fe68753919344ed6803944f218f050a5c5c3036c79a1795f6757f3",
+   "complete": true,
+   "wall_seconds": 125.087,
+   "sizes": [64, 256],
+   "rounds": 4,
+   "profile": "small",
+   "variants": ["A", "B"],
+   "argv": ["--out", "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/m2/main_cursor.json", "--sizes", "64,256", "--rounds", "4", "--src", "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/main-0b8c0fa/tools/w5", "--candidate-src", "/home/user/mtg-kernel/tools/w5", "--scratch-dir", "/dev/shm", "--work-dir", "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/work", "--max-wall-seconds", "2400"],
+   "note": "A = main, B = cursor; counts and timings"
+  },
+  {
+   "path": "docs/results/w5_scratch_cursor_20261109/scale_1024.json",
+   "sha256": "57cd50a70c869d2227038f5b64cb143d90c2b7f09226b7e40e7dd8c0d5ab65ec",
+   "complete": true,
+   "wall_seconds": 314.635,
+   "sizes": [1024],
+   "rounds": 2,
+   "profile": "small",
+   "variants": ["A", "B"],
+   "argv": ["--out", "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/m2/scale_1024.json", "--sizes", "1024", "--rounds", "2", "--no-counts", "--src", "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/main-0b8c0fa/tools/w5", "--candidate-src", "/home/user/mtg-kernel/tools/w5", "--scratch-dir", "/dev/shm", "--work-dir", "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/work", "--max-wall-seconds", "2400"],
+   "note": "A = main, B = cursor; timings only"
+  },
+  {
+   "path": "docs/results/w5_scratch_cursor_20261109/cursor_4096.json",
+   "sha256": "a7d06ff7230a65652e15d8c6fb2445ba907ab47451ea4a9bb478a31efcbec79a",
+   "complete": true,
+   "wall_seconds": 157.843,
+   "sizes": [4096],
+   "rounds": 1,
+   "profile": "small",
+   "variants": ["A"],
+   "argv": ["--out", "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/m2/cursor_4096.json", "--sizes", "4096", "--rounds", "1", "--src", "/home/user/mtg-kernel/tools/w5", "--scratch-dir", "/dev/shm", "--work-dir", "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/work", "--max-wall-seconds", "2400"],
+   "note": "one variant, named A in the receipt: the cursor tree (B elsewhere)"
+  }
+ ],
+ "reaper": {
+  "A": {
+   "64": {
+    "tick": ["reap"],
+    "measured_ticks": {"productive": 64, "idle": 64},
+    "idle_ticks_total_s": {"mean": 0.2576, "min": 0.2513, "max": 0.263, "n": 4},
+    "productive_ticks_total_s": {"mean": 0.2744, "min": 0.2663, "max": 0.2836, "n": 4},
+    "all_ticks_total_s": {"mean": 0.5321, "min": 0.5176, "max": 0.5466, "n": 4},
+    "idle_ticks_cpu_s": {"mean": 0.2565, "min": 0.2514, "max": 0.2626, "n": 4},
+    "mean_idle_tick_us": {"mean": 4025.5, "min": 3926.7, "max": 4109.4, "n": 4},
+    "last_idle_tick_us": {"mean": 7734.0, "min": 7626, "max": 7929, "n": 4},
+    "core_share_at_reap_every_0p5s": {"mean": 0.00799, "min": 0.00779, "max": 0.00815, "n": 4},
+    "counts": {
+     "deterministic": true,
+     "calls_per_segment": 176912,
+     "calls_on_reaped_history_or_listing": 171240,
+     "share_on_reaped_history": 0.9679,
+     "calls_on_new_bulk": 5418,
+     "files_deleted": 693,
+     "last_idle_tick_calls": 2713,
+     "last_productive_tick_calls": 2757,
+     "idle_tick_calls_fit": {"a": 6.0596, "b": 42.9971, "max_abs_residual": 1.8779},
+     "segment_totals": {
+      "idle": {"scandir": 16192, "entry": 38431, "stat": 20351, "lstat": 12096, "unlink": 0, "open": 0},
+      "productive": {"scandir": 16192, "entry": 39124, "stat": 21044, "lstat": 12789, "unlink": 693, "open": 0}
+     }
+    }
+   },
+   "256": {
+    "tick": ["reap"],
+    "measured_ticks": {"productive": 256, "idle": 256},
+    "idle_ticks_total_s": {"mean": 4.2873, "min": 4.249, "max": 4.3386, "n": 4},
+    "productive_ticks_total_s": {"mean": 4.3724, "min": 4.3563, "max": 4.3821, "n": 4},
+    "all_ticks_total_s": {"mean": 8.6597, "min": 8.6176, "max": 8.7207, "n": 4},
+    "idle_ticks_cpu_s": {"mean": 4.2556, "min": 4.2245, "max": 4.3061, "n": 4},
+    "mean_idle_tick_us": {"mean": 16747.1, "min": 16597.7, "max": 16947.8, "n": 4},
+    "last_idle_tick_us": {"mean": 33064, "min": 31773, "max": 35392, "n": 4},
+    "core_share_at_reap_every_0p5s": {"mean": 0.03241, "min": 0.03213, "max": 0.03278, "n": 4},
+    "counts": {
+     "deterministic": true,
+     "calls_per_segment": 2821328,
+     "calls_on_reaped_history_or_listing": 2798376,
+     "share_on_reaped_history": 0.9919,
+     "calls_on_new_bulk": 21930,
+     "files_deleted": 2805,
+     "last_idle_tick_calls": 10969,
+     "last_productive_tick_calls": 11013,
+     "idle_tick_calls_fit": {"a": 6.0154, "b": 42.9998, "max_abs_residual": 1.9689},
+     "segment_totals": {
+      "idle": {"scandir": 261376, "entry": 620671, "stat": 327167, "lstat": 195840, "unlink": 0, "open": 0},
+      "productive": {"scandir": 261376, "entry": 623476, "stat": 329972, "lstat": 198645, "unlink": 2805, "open": 0}
+     }
+    }
+   },
+   "1024": {
+    "tick": ["reap"],
+    "measured_ticks": {"productive": 1024, "idle": 1024},
+    "idle_ticks_total_s": {"mean": 68.9594, "min": 68.7042, "max": 69.2145, "n": 2},
+    "productive_ticks_total_s": {"mean": 69.1669, "min": 68.7686, "max": 69.5651, "n": 2},
+    "all_ticks_total_s": {"mean": 138.1262, "min": 137.4728, "max": 138.7796, "n": 2},
+    "idle_ticks_cpu_s": {"mean": 68.3815, "min": 68.1171, "max": 68.646, "n": 2},
+    "mean_idle_tick_us": {"mean": 67343.1, "min": 67094.0, "max": 67592.3, "n": 2},
+    "last_idle_tick_us": {"mean": 129613, "min": 127714, "max": 131512, "n": 2},
+    "core_share_at_reap_every_0p5s": {"mean": 0.1187, "min": 0.11831, "max": 0.11909, "n": 2}
+   }
+  },
+  "B": {
+   "64": {
+    "tick": ["Reaper.tick"],
+    "measured_ticks": {"productive": 64, "idle": 64},
+    "idle_ticks_total_s": {"mean": 0.0014, "min": 0.0012, "max": 0.0015, "n": 4},
+    "productive_ticks_total_s": {"mean": 0.0247, "min": 0.0232, "max": 0.0263, "n": 4},
+    "all_ticks_total_s": {"mean": 0.0261, "min": 0.0244, "max": 0.0278, "n": 4},
+    "idle_ticks_cpu_s": {"mean": 0.0014, "min": 0.0013, "max": 0.0016, "n": 4},
+    "mean_idle_tick_us": {"mean": 21.3, "min": 19.4, "max": 24.1, "n": 4},
+    "last_idle_tick_us": {"mean": 19.0, "min": 17, "max": 20, "n": 4},
+    "core_share_at_reap_every_0p5s": {"mean": 4e-05, "min": 4e-05, "max": 5e-05, "n": 4},
+    "counts": {
+     "deterministic": true,
+     "calls_per_segment": 5547,
+     "calls_on_reaped_history_or_listing": 0,
+     "share_on_reaped_history": 0.0,
+     "calls_on_new_bulk": 5355,
+     "files_deleted": 693,
+     "last_idle_tick_calls": 1,
+     "last_productive_tick_calls": 87,
+     "idle_tick_calls_fit": {"a": 1.0, "b": 0.0, "max_abs_residual": 0.0},
+     "segment_totals": {
+      "idle": {"scandir": 0, "entry": 0, "stat": 64, "lstat": 0, "unlink": 0, "open": 0},
+      "productive": {"scandir": 504, "entry": 1827, "stat": 1388, "lstat": 1071, "unlink": 693, "open": 0}
+     }
+    }
+   },
+   "256": {
+    "tick": ["Reaper.tick"],
+    "measured_ticks": {"productive": 256, "idle": 256},
+    "idle_ticks_total_s": {"mean": 0.0059, "min": 0.0054, "max": 0.0064, "n": 4},
+    "productive_ticks_total_s": {"mean": 0.1026, "min": 0.0949, "max": 0.1103, "n": 4},
+    "all_ticks_total_s": {"mean": 0.1084, "min": 0.1006, "max": 0.1167, "n": 4},
+    "idle_ticks_cpu_s": {"mean": 0.0058, "min": 0.0052, "max": 0.0065, "n": 4},
+    "mean_idle_tick_us": {"mean": 23.0, "min": 21.2, "max": 25.0, "n": 4},
+    "last_idle_tick_us": {"mean": 20.0, "min": 18, "max": 22, "n": 4},
+    "core_share_at_reap_every_0p5s": {"mean": 5e-05, "min": 4e-05, "max": 5e-05, "n": 4},
+    "counts": {
+     "deterministic": true,
+     "calls_per_segment": 22443,
+     "calls_on_reaped_history_or_listing": 0,
+     "share_on_reaped_history": 0.0,
+     "calls_on_new_bulk": 21675,
+     "files_deleted": 2805,
+     "last_idle_tick_calls": 1,
+     "last_productive_tick_calls": 87,
+     "idle_tick_calls_fit": {"a": 1.0, "b": 0.0, "max_abs_residual": 0.0},
+     "segment_totals": {
+      "idle": {"scandir": 0, "entry": 0, "stat": 256, "lstat": 0, "unlink": 0, "open": 0},
+      "productive": {"scandir": 2040, "entry": 7395, "stat": 5612, "lstat": 4335, "unlink": 2805, "open": 0}
+     }
+    }
+   },
+   "1024": {
+    "tick": ["Reaper.tick"],
+    "measured_ticks": {"productive": 1024, "idle": 1024},
+    "idle_ticks_total_s": {"mean": 0.0213, "min": 0.0207, "max": 0.0219, "n": 2},
+    "productive_ticks_total_s": {"mean": 0.3794, "min": 0.3743, "max": 0.3845, "n": 2},
+    "all_ticks_total_s": {"mean": 0.4007, "min": 0.3951, "max": 0.4064, "n": 2},
+    "idle_ticks_cpu_s": {"mean": 0.0217, "min": 0.0212, "max": 0.0222, "n": 2},
+    "mean_idle_tick_us": {"mean": 20.8, "min": 20.3, "max": 21.4, "n": 2},
+    "last_idle_tick_us": {"mean": 17, "min": 16, "max": 18, "n": 2},
+    "core_share_at_reap_every_0p5s": {"mean": 4e-05, "min": 4e-05, "max": 4e-05, "n": 2}
+   },
+   "4096": {
+    "tick": ["Reaper.tick"],
+    "measured_ticks": {"productive": 4096, "idle": 4096},
+    "idle_ticks_total_s": {"mean": 0.0792, "min": 0.0792, "max": 0.0792, "n": 1},
+    "productive_ticks_total_s": {"mean": 1.4428, "min": 1.4428, "max": 1.4428, "n": 1},
+    "all_ticks_total_s": {"mean": 1.522, "min": 1.522, "max": 1.522, "n": 1},
+    "idle_ticks_cpu_s": {"mean": 0.0812, "min": 0.0812, "max": 0.0812, "n": 1},
+    "mean_idle_tick_us": {"mean": 19.3, "min": 19.3, "max": 19.3, "n": 1},
+    "last_idle_tick_us": {"mean": 18, "min": 18, "max": 18, "n": 1},
+    "core_share_at_reap_every_0p5s": {"mean": 4e-05, "min": 4e-05, "max": 4e-05, "n": 1},
+    "counts": {
+     "deterministic": true,
+     "calls_per_segment": 360363,
+     "calls_on_reaped_history_or_listing": 0,
+     "share_on_reaped_history": 0.0,
+     "calls_on_new_bulk": 348075,
+     "files_deleted": 45045,
+     "last_idle_tick_calls": 1,
+     "last_productive_tick_calls": 87,
+     "idle_tick_calls_fit": {"a": 1.0, "b": 0.0, "max_abs_residual": 0.0},
+     "segment_totals": {
+      "idle": {"scandir": 0, "entry": 0, "stat": 4096, "lstat": 0, "unlink": 0, "open": 0},
+      "productive": {"scandir": 32760, "entry": 118755, "stat": 90092, "lstat": 69615, "unlink": 45045, "open": 0}
+     }
+    }
+   }
+  }
+ },
+ "persist": {
+  "A": {
+   "64": {
+    "members": 387,
+    "fsyncs": 648,
+    "physical_bytes": 915871,
+    "logical_bytes": 1509699,
+    "identical_to_fixture_all_samples": true,
+    "logical_digests": ["c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865"],
+    "wall_s": {"mean": 0.6317, "min": 0.6057, "max": 0.6503, "n": 4},
+    "fsync_s": {"mean": 0.2371, "min": 0.2286, "max": 0.2448, "n": 4},
+    "worker_maxrss_kb": {"mean": 25160, "min": 25096, "max": 25192, "n": 4}
+   },
+   "256": {
+    "members": 1539,
+    "fsyncs": 2568,
+    "physical_bytes": 3416948,
+    "logical_bytes": 5740834,
+    "identical_to_fixture_all_samples": true,
+    "logical_digests": ["e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322"],
+    "wall_s": {"mean": 2.0053, "min": 1.4871, "max": 2.2382, "n": 4},
+    "fsync_s": {"mean": 0.8945, "min": 0.8409, "max": 1.0002, "n": 4},
+    "worker_maxrss_kb": {"mean": 29330, "min": 29228, "max": 29420, "n": 4}
+   }
+  },
+  "B": {
+   "64": {
+    "members": 387,
+    "fsyncs": 648,
+    "physical_bytes": 915871,
+    "logical_bytes": 1509699,
+    "identical_to_fixture_all_samples": true,
+    "logical_digests": ["c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865"],
+    "wall_s": {"mean": 0.5892, "min": 0.4703, "max": 0.6998, "n": 4},
+    "fsync_s": {"mean": 0.2288, "min": 0.2082, "max": 0.2642, "n": 4},
+    "worker_maxrss_kb": {"mean": 24670, "min": 24580, "max": 24752, "n": 4}
+   },
+   "256": {
+    "members": 1539,
+    "fsyncs": 2568,
+    "physical_bytes": 3416948,
+    "logical_bytes": 5740834,
+    "identical_to_fixture_all_samples": true,
+    "logical_digests": ["e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322"],
+    "wall_s": {"mean": 2.1175, "min": 1.7516, "max": 2.4572, "n": 4},
+    "fsync_s": {"mean": 0.8671, "min": 0.8394, "max": 0.8927, "n": 4},
+    "worker_maxrss_kb": {"mean": 28918, "min": 28844, "max": 28976, "n": 4}
+   },
+   "4096": {
+    "members": 24579,
+    "fsyncs": 40968,
+    "physical_bytes": 53314785,
+    "logical_bytes": 90497957,
+    "identical_to_fixture_all_samples": true,
+    "logical_digests": ["d17dc20198f86d71c5406795507b6bb2a0c0f2d95e89a35fd6e54aec457ba97b"],
+    "wall_s": {"mean": 23.0151, "min": 23.0151, "max": 23.0151, "n": 1},
+    "fsync_s": {"mean": 12.297, "min": 12.297, "max": 12.297, "n": 1},
+    "worker_maxrss_kb": {"mean": 116236, "min": 116236, "max": 116236, "n": 1}
+   }
+  }
+ },
+ "paired": {
+  "main_cursor": {
+   "256": {
+    "persist_ns": {
+     "a": [2180.0, 1487.1, 2238.2, 2115.9],
+     "b": [2291.9, 2457.2, 1969.4, 1751.6],
+     "ratio_of_means_b_over_a": 1.0559,
+     "difference_of_means_ms": 112.2,
+     "larger_arm_range_ms": 751.2,
+     "verdict": "inconclusive"
+    },
+    "reap_ns": {
+     "a": [8678.1, 8617.6, 8720.7, 8622.4],
+     "b": [116.7, 106.2, 110.3, 100.6],
+     "ratio_of_means_b_over_a": 0.0125,
+     "difference_of_means_ms": -8551.3,
+     "larger_arm_range_ms": 103.1,
+     "verdict": "b_faster"
+    }
+   },
+   "64": {
+    "persist_ns": {
+     "a": [650.3, 639.8, 605.7, 631.0],
+     "b": [595.6, 470.3, 699.8, 591.1],
+     "ratio_of_means_b_over_a": 0.9327,
+     "difference_of_means_ms": -42.5,
+     "larger_arm_range_ms": 229.5,
+     "verdict": "inconclusive"
+    },
+    "reap_ns": {
+     "a": [517.6, 543.3, 520.8, 546.6],
+     "b": [24.4, 25.6, 26.5, 27.8],
+     "ratio_of_means_b_over_a": 0.049,
+     "difference_of_means_ms": -506.0,
+     "larger_arm_range_ms": 28.9,
+     "verdict": "b_faster"
+    }
+   }
+  },
+  "scale_1024": {
+   "1024": {
+    "persist_ns": {
+     "a": [5330.6, 6000.0],
+     "b": [6025.4, 6428.2],
+     "ratio_of_means_b_over_a": 1.0991,
+     "difference_of_means_ms": 561.5,
+     "larger_arm_range_ms": 669.4,
+     "verdict": "inconclusive"
+    },
+    "reap_ns": {
+     "a": [137472.8, 138779.6],
+     "b": [406.4, 395.1],
+     "ratio_of_means_b_over_a": 0.0029,
+     "difference_of_means_ms": -137725.5,
+     "larger_arm_range_ms": 1306.8,
+     "verdict": "b_faster"
+    }
+   }
+  }
+ },
+ "parity": {
+  "main_cursor": {
+   "A/64": ["c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865"],
+   "A/256": ["e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322"],
+   "B/64": ["c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865"],
+   "B/256": ["e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322"]
+  },
+  "scale_1024": {
+   "A/1024": ["ba5801e4ab5c900235d885c3c7fcf84264ab55f8ba30e5fea8eac67bcea47385"],
+   "B/1024": ["ba5801e4ab5c900235d885c3c7fcf84264ab55f8ba30e5fea8eac67bcea47385"]
+  },
+  "cursor_4096": {
+   "A/4096": ["d17dc20198f86d71c5406795507b6bb2a0c0f2d95e89a35fd6e54aec457ba97b"]
+  }
+ }
+}

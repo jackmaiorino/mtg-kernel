@@ -115,16 +115,21 @@ pub(crate) fn discard_cost_allows(state: &GameState, source: ObjectId, card: Obj
 
 // ---- Morph ---------------------------------------------------------------------------
 
-/// Nantuko Vigilante: "Morph {1}{G}".
+/// Whether this printing has a morph cost.
 pub(crate) fn is_morph(name: &str) -> bool {
-    name == NANTUKO_VIGILANTE
+    morph_cost_of(name).is_some()
 }
 
 /// The morph cost of the card named `name`, if it has one.
 pub(crate) fn morph_cost_of(name: &str) -> Option<Cost> {
-    (name == NANTUKO_VIGILANTE).then_some(Cost {
+    let generic = match name {
+        "Birchlore Rangers" => 0,
+        NANTUKO_VIGILANTE => 1,
+        _ => return None,
+    };
+    Some(Cost {
         pips: &[Pip::Colored(G)],
-        generic: 1,
+        generic,
         x_count: 0,
     })
 }

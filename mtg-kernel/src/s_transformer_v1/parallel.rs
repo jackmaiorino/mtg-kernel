@@ -260,6 +260,22 @@ fn replay_v1(
     )
 }
 
+#[cfg(test)]
+pub(super) fn replay_verified_test_terms_v1(
+    layout: &LayoutV1,
+    gradient: &mut [f32],
+    terms: Vec<SGradientTermsV1>,
+) -> Result<(), String> {
+    let block: Vec<_> = terms
+        .into_iter()
+        .map(|terms| PreparedGaeV1 {
+            terms,
+            ..PreparedGaeV1::default()
+        })
+        .collect();
+    replay_v1(layout, gradient, &block, 1)
+}
+
 /// Fixed-size, scoped workers. The caller also drains jobs, including any
 /// work left when the OS cannot start all requested helpers. `kind` only
 /// labels the measurement-only census (`profile`).

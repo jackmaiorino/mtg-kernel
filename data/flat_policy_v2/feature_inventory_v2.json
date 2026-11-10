@@ -2,14 +2,14 @@
   "schema": "flat-policy-feature-inventory-v2",
   "base_inventory": {
     "schema": "flat-policy-feature-inventory-v1",
-    "source_sha256": "7564d3eb3c4cbdc087385b0a62a9da705c9fe9b45a54af1ad0ab37587d70a26a",
-    "canonical_sha256": "5f6dbb1f4dde3f9999191fd9a30f58c39269279267bb51b61fcfa2c6d059faf2"
+    "source_sha256": "f796d1053f2f4ba33b7a9066740970c77d97a2dfeb795d94a3b03875cc76581e",
+    "canonical_sha256": "dc57be5367e623b2972545e057878425fc18ad3df46c753a9599e60f20881648"
   },
   "typed_layout": {
     "domain": "mtg-kernel-flat-policy-typed-layout-v2\u0000",
-    "base_sha256": "b57ca386ca0312fa85ef4d3022b9a86c0a36b3162e66579c5d7c11ecb25c64cd",
-    "overlay_sha256": "c28741236a76577f58ec9bf8a068e626c665741dae5c58517e0fbffbb87b0b73",
-    "composite_sha256": "79b7c0f4a0f0d4941cceeecd9348c72babd43907ae55624c86e1262974d9a78c"
+    "base_sha256": "b93c39b91ccff7483a66d43232027a0598cedaa233603db208328071ca117a1d",
+    "overlay_sha256": "b9eabbd3379d78d2ebd2177f800b3338bb84e14400ce5f57d3d7197ea289a7fe",
+    "composite_sha256": "476a97d76fdab05b2f3b72db3fd10b975cd7edcf71a8e6f6fbd061584f56a27c"
   },
   "action_contract": {
     "path": "data/flat_policy_v2/action_contract_v2.json",

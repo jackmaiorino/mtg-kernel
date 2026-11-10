@@ -1,0 +1,3247 @@
+{
+ "argv": [
+  "--out",
+  "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/m2/main_cursor.json",
+  "--sizes",
+  "64,256",
+  "--rounds",
+  "4",
+  "--src",
+  "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/main-0b8c0fa/tools/w5",
+  "--candidate-src",
+  "/home/user/mtg-kernel/tools/w5",
+  "--scratch-dir",
+  "/dev/shm",
+  "--work-dir",
+  "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/work",
+  "--max-wall-seconds",
+  "2400"
+ ],
+ "attempts": [
+  {
+   "count": true,
+   "n": 64,
+   "process_wall_ns": 2277995302,
+   "repeat": 0,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "A"
+  },
+  {
+   "count": true,
+   "n": 64,
+   "process_wall_ns": 2369790193,
+   "repeat": 1,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "A"
+  },
+  {
+   "count": true,
+   "n": 256,
+   "process_wall_ns": 19733788802,
+   "repeat": 0,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "A"
+  },
+  {
+   "count": true,
+   "n": 256,
+   "process_wall_ns": 20515011483,
+   "repeat": 1,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "A"
+  },
+  {
+   "count": true,
+   "n": 64,
+   "process_wall_ns": 1119500750,
+   "repeat": 0,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "B"
+  },
+  {
+   "count": true,
+   "n": 64,
+   "process_wall_ns": 1036869046,
+   "repeat": 1,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "B"
+  },
+  {
+   "count": true,
+   "n": 256,
+   "process_wall_ns": 4169523641,
+   "repeat": 0,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "B"
+  },
+  {
+   "count": true,
+   "n": 256,
+   "process_wall_ns": 4440855307,
+   "repeat": 1,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "B"
+  },
+  {
+   "count": false,
+   "n": 64,
+   "position": 0,
+   "process_wall_ns": 1376177415,
+   "round": 0,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "A"
+  },
+  {
+   "count": false,
+   "n": 64,
+   "position": 1,
+   "process_wall_ns": 813894279,
+   "round": 0,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "B"
+  },
+  {
+   "count": false,
+   "n": 256,
+   "position": 2,
+   "process_wall_ns": 11495962068,
+   "round": 0,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "A"
+  },
+  {
+   "count": false,
+   "n": 256,
+   "position": 3,
+   "process_wall_ns": 3051044004,
+   "round": 0,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "B"
+  },
+  {
+   "count": false,
+   "n": 256,
+   "position": 4,
+   "process_wall_ns": 3158865556,
+   "round": 1,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "B"
+  },
+  {
+   "count": false,
+   "n": 256,
+   "position": 5,
+   "process_wall_ns": 10759995020,
+   "round": 1,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "A"
+  },
+  {
+   "count": false,
+   "n": 64,
+   "position": 6,
+   "process_wall_ns": 691685691,
+   "round": 1,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "B"
+  },
+  {
+   "count": false,
+   "n": 64,
+   "position": 7,
+   "process_wall_ns": 1411597768,
+   "round": 1,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "A"
+  },
+  {
+   "count": false,
+   "n": 64,
+   "position": 8,
+   "process_wall_ns": 1323706147,
+   "round": 2,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "A"
+  },
+  {
+   "count": false,
+   "n": 64,
+   "position": 9,
+   "process_wall_ns": 930223384,
+   "round": 2,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "B"
+  },
+  {
+   "count": false,
+   "n": 256,
+   "position": 10,
+   "process_wall_ns": 11613923110,
+   "round": 2,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "A"
+  },
+  {
+   "count": false,
+   "n": 256,
+   "position": 11,
+   "process_wall_ns": 2700834194,
+   "round": 2,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "B"
+  },
+  {
+   "count": false,
+   "n": 256,
+   "position": 12,
+   "process_wall_ns": 2414027795,
+   "round": 3,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "B"
+  },
+  {
+   "count": false,
+   "n": 256,
+   "position": 13,
+   "process_wall_ns": 11350792685,
+   "round": 3,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "A"
+  },
+  {
+   "count": false,
+   "n": 64,
+   "position": 14,
+   "process_wall_ns": 839378052,
+   "round": 3,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "B"
+  },
+  {
+   "count": false,
+   "n": 64,
+   "position": 15,
+   "process_wall_ns": 1389713829,
+   "round": 3,
+   "scenario": "segment",
+   "status": "complete",
+   "variant": "A"
+  }
+ ],
+ "bench": {
+  "commit": "82429c9230008f07bf52df4017f3a093d47eaf13",
+  "dirty_paths": [],
+  "path": "/home/user/mtg-kernel/tools/w5/tests/scratch_bench.py",
+  "sha256": "45875f73dc10aa9339f1027af633a0b5c70ff4d4cb0750dd4a727e71cb2a7aeb"
+ },
+ "complete": true,
+ "counts": {
+  "A": {
+   "256": {
+    "chains": "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/main-0b8c0fa/tools/w5/chains.py",
+    "compress_config": {
+     "bytes": {
+      "gzip_in": 1048742
+     },
+     "counts": {
+      "config:open": 2,
+      "config:replace": 1,
+      "config:stat": 2,
+      "config:unlink": 1
+     },
+     "cpu_ns": 9915156,
+     "in_bytes": 1048742,
+     "out_bytes": 360082,
+     "wall_ns": 9912117
+    },
+    "deterministic": true,
+    "fixture_bytes_written": 32938274,
+    "maxrss_kb": 35144,
+    "persist": {
+     "bytes": {
+      "gzip_in": 3499705,
+      "sendfile": 2241129
+     },
+     "counts": {
+      "chain_dir:fsync_dir": 1,
+      "chain_dir:open": 1,
+      "lock:flock": 1,
+      "lock:funlock": 1,
+      "lock:open": 1,
+      "marker:fsync_file": 1,
+      "marker:open": 2,
+      "scratch:copy2": 770,
+      "scratch:entry": 7978,
+      "scratch:lstat": 1550,
+      "scratch:open": 2567,
+      "scratch:rmdir": 1026,
+      "scratch:rmtree": 1,
+      "scratch:scandir": 3079,
+      "scratch:stat": 6678,
+      "scratch:unlink": 1549,
+      "scratch:xattr": 770,
+      "segment:entry": 4846,
+      "segment:lstat": 1530,
+      "segment:scandir": 2041,
+      "segment:stat": 2552,
+      "staging:entry": 5128,
+      "staging:fsync_dir": 1027,
+      "staging:fsync_file": 1539,
+      "staging:lstat": 1,
+      "staging:meta": 1540,
+      "staging:mkdir": 2566,
+      "staging:open": 4106,
+      "staging:rename": 1,
+      "staging:rmtree": 1,
+      "staging:scandir": 2052,
+      "staging:stat": 7441
+     },
+     "cpu_ns": 2146131227,
+     "fixture_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+     "fsyncs": {
+      "dir": 1028,
+      "file": 1540
+     },
+     "identical": true,
+     "io": {
+      "cancelled_write_bytes": 0,
+      "rchar": 5933245,
+      "read_bytes": 0,
+      "syscr": 3864,
+      "syscw": 2312,
+      "wchar": 3417119,
+      "write_bytes": 11907072
+     },
+     "logical_bytes": 5740834,
+     "logical_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+     "members": 1539,
+     "ns": {
+      "copy2": 229734005,
+      "fsync": 909014470,
+      "gzip": 18334432,
+      "lock_hold": 622324,
+      "lock_wait": 8680,
+      "rmtree": 106873437
+     },
+     "physical_bytes": 3416948,
+     "py_peak_bytes": 3474342,
+     "returned_bytes": 3416948,
+     "rusage": {
+      "inblock": 0,
+      "minflt": 1413,
+      "nivcsw": 12,
+      "nvcsw": 9457,
+      "oublock": 23256,
+      "sys_ns": 326896000,
+      "user_ns": 1821697000
+     },
+     "wall_ns": 2910351006
+    },
+    "process_wall_ns": 19733788802,
+    "reap": {
+     "idle": {
+      "first": {
+       "deleted": 0,
+       "entry": 2,
+       "in_flight": 1,
+       "listing": 4,
+       "lstat": 0,
+       "new": 0,
+       "newest": 1,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 1,
+       "stat": 3,
+       "unlink": 0
+      },
+      "last": {
+       "deleted": 0,
+       "entry": 4846,
+       "in_flight": 0,
+       "listing": 258,
+       "lstat": 1530,
+       "new": 0,
+       "newest": 1,
+       "open": 0,
+       "other": 0,
+       "reaped": 10710,
+       "scandir": 2041,
+       "stat": 2552,
+       "unlink": 0
+      },
+      "ticks": 256,
+      "totals": {
+       "deleted": 0,
+       "entry": 620671,
+       "in_flight": 255,
+       "listing": 33663,
+       "lstat": 195840,
+       "new": 0,
+       "newest": 256,
+       "open": 0,
+       "other": 0,
+       "reaped": 1370880,
+       "scandir": 261376,
+       "stat": 327167,
+       "unlink": 0
+      }
+     },
+     "last_tick": {
+      "idle": {
+       "bytes": {},
+       "counts": {
+        "listing:entry": 256,
+        "listing:scandir": 1,
+        "listing:stat": 1,
+        "newest:stat": 1,
+        "reaped:entry": 4590,
+        "reaped:lstat": 1530,
+        "reaped:scandir": 2040,
+        "reaped:stat": 2550
+       }
+      },
+      "productive": {
+       "bytes": {},
+       "counts": {
+        "listing:entry": 256,
+        "listing:scandir": 1,
+        "listing:stat": 1,
+        "new:entry": 29,
+        "new:lstat": 17,
+        "new:scandir": 8,
+        "new:stat": 21,
+        "new:unlink": 11,
+        "newest:stat": 1,
+        "reaped:entry": 4572,
+        "reaped:lstat": 1524,
+        "reaped:scandir": 2032,
+        "reaped:stat": 2540
+       }
+      }
+     },
+     "productive": {
+      "first": {
+       "deleted": 0,
+       "entry": 2,
+       "in_flight": 1,
+       "listing": 4,
+       "lstat": 0,
+       "new": 0,
+       "newest": 1,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 1,
+       "stat": 3,
+       "unlink": 0
+      },
+      "last": {
+       "deleted": 11,
+       "entry": 4857,
+       "in_flight": 0,
+       "listing": 258,
+       "lstat": 1541,
+       "new": 86,
+       "newest": 1,
+       "open": 0,
+       "other": 0,
+       "reaped": 10668,
+       "scandir": 2041,
+       "stat": 2563,
+       "unlink": 11
+      },
+      "ticks": 256,
+      "totals": {
+       "deleted": 2805,
+       "entry": 623476,
+       "in_flight": 255,
+       "listing": 33663,
+       "lstat": 198645,
+       "new": 21930,
+       "newest": 256,
+       "open": 0,
+       "other": 0,
+       "reaped": 1360170,
+       "scandir": 261376,
+       "stat": 329972,
+       "unlink": 2805
+      }
+     }
+    },
+    "reaper": "reap"
+   },
+   "64": {
+    "chains": "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/main-0b8c0fa/tools/w5/chains.py",
+    "compress_config": {
+     "bytes": {
+      "gzip_in": 262159
+     },
+     "counts": {
+      "config:open": 2,
+      "config:replace": 1,
+      "config:stat": 2,
+      "config:unlink": 1
+     },
+     "cpu_ns": 4452869,
+     "in_bytes": 262159,
+     "out_bytes": 90655,
+     "wall_ns": 4449381
+    },
+    "deterministic": true,
+    "fixture_bytes_written": 8259907,
+    "maxrss_kb": 38184,
+    "persist": {
+     "bytes": {
+      "gzip_in": 896411,
+      "sendfile": 613288
+     },
+     "counts": {
+      "chain_dir:fsync_dir": 1,
+      "chain_dir:open": 1,
+      "lock:flock": 1,
+      "lock:funlock": 1,
+      "lock:open": 1,
+      "marker:fsync_file": 1,
+      "marker:open": 2,
+      "scratch:copy2": 194,
+      "scratch:entry": 2026,
+      "scratch:lstat": 398,
+      "scratch:open": 647,
+      "scratch:rmdir": 258,
+      "scratch:rmtree": 1,
+      "scratch:scandir": 775,
+      "scratch:stat": 1686,
+      "scratch:unlink": 397,
+      "scratch:xattr": 194,
+      "segment:entry": 1198,
+      "segment:lstat": 378,
+      "segment:scandir": 505,
+      "segment:stat": 632,
+      "staging:entry": 1288,
+      "staging:fsync_dir": 259,
+      "staging:fsync_file": 387,
+      "staging:lstat": 1,
+      "staging:meta": 388,
+      "staging:mkdir": 646,
+      "staging:open": 1034,
+      "staging:rename": 1,
+      "staging:rmtree": 1,
+      "staging:scandir": 516,
+      "staging:stat": 1873
+     },
+     "cpu_ns": 699596148,
+     "fixture_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+     "fsyncs": {
+      "dir": 260,
+      "file": 388
+     },
+     "identical": true,
+     "io": {
+      "cancelled_write_bytes": 0,
+      "rchar": 1702266,
+      "read_bytes": 0,
+      "syscr": 984,
+      "syscw": 584,
+      "wchar": 916040,
+      "write_bytes": 3022848
+     },
+     "logical_bytes": 1509699,
+     "logical_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+     "members": 387,
+     "ns": {
+      "copy2": 98692191,
+      "fsync": 204355759,
+      "gzip": 5146881,
+      "lock_hold": 977032,
+      "lock_wait": 9464,
+      "rmtree": 47566173
+     },
+     "physical_bytes": 915871,
+     "py_peak_bytes": 1265257,
+     "returned_bytes": 915871,
+     "rusage": {
+      "inblock": 0,
+      "minflt": 27,
+      "nivcsw": 5,
+      "nvcsw": 2403,
+      "oublock": 5904,
+      "sys_ns": 196086000,
+      "user_ns": 505898000
+     },
+     "wall_ns": 867348779
+    },
+    "process_wall_ns": 2277995302,
+    "reap": {
+     "idle": {
+      "first": {
+       "deleted": 0,
+       "entry": 2,
+       "in_flight": 1,
+       "listing": 4,
+       "lstat": 0,
+       "new": 0,
+       "newest": 1,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 1,
+       "stat": 3,
+       "unlink": 0
+      },
+      "last": {
+       "deleted": 0,
+       "entry": 1198,
+       "in_flight": 0,
+       "listing": 66,
+       "lstat": 378,
+       "new": 0,
+       "newest": 1,
+       "open": 0,
+       "other": 0,
+       "reaped": 2646,
+       "scandir": 505,
+       "stat": 632,
+       "unlink": 0
+      },
+      "ticks": 64,
+      "totals": {
+       "deleted": 0,
+       "entry": 38431,
+       "in_flight": 63,
+       "listing": 2271,
+       "lstat": 12096,
+       "new": 0,
+       "newest": 64,
+       "open": 0,
+       "other": 0,
+       "reaped": 84672,
+       "scandir": 16192,
+       "stat": 20351,
+       "unlink": 0
+      }
+     },
+     "last_tick": {
+      "idle": {
+       "bytes": {},
+       "counts": {
+        "listing:entry": 64,
+        "listing:scandir": 1,
+        "listing:stat": 1,
+        "newest:stat": 1,
+        "reaped:entry": 1134,
+        "reaped:lstat": 378,
+        "reaped:scandir": 504,
+        "reaped:stat": 630
+       }
+      },
+      "productive": {
+       "bytes": {},
+       "counts": {
+        "listing:entry": 64,
+        "listing:scandir": 1,
+        "listing:stat": 1,
+        "new:entry": 29,
+        "new:lstat": 17,
+        "new:scandir": 8,
+        "new:stat": 21,
+        "new:unlink": 11,
+        "newest:stat": 1,
+        "reaped:entry": 1116,
+        "reaped:lstat": 372,
+        "reaped:scandir": 496,
+        "reaped:stat": 620
+       }
+      }
+     },
+     "productive": {
+      "first": {
+       "deleted": 0,
+       "entry": 2,
+       "in_flight": 1,
+       "listing": 4,
+       "lstat": 0,
+       "new": 0,
+       "newest": 1,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 1,
+       "stat": 3,
+       "unlink": 0
+      },
+      "last": {
+       "deleted": 11,
+       "entry": 1209,
+       "in_flight": 0,
+       "listing": 66,
+       "lstat": 389,
+       "new": 86,
+       "newest": 1,
+       "open": 0,
+       "other": 0,
+       "reaped": 2604,
+       "scandir": 505,
+       "stat": 643,
+       "unlink": 11
+      },
+      "ticks": 64,
+      "totals": {
+       "deleted": 693,
+       "entry": 39124,
+       "in_flight": 63,
+       "listing": 2271,
+       "lstat": 12789,
+       "new": 5418,
+       "newest": 64,
+       "open": 0,
+       "other": 0,
+       "reaped": 82026,
+       "scandir": 16192,
+       "stat": 21044,
+       "unlink": 693
+      }
+     }
+    },
+    "reaper": "reap"
+   }
+  },
+  "B": {
+   "256": {
+    "chains": "/home/user/mtg-kernel/tools/w5/chains.py",
+    "compress_config": {
+     "bytes": {
+      "gzip_in": 1048742
+     },
+     "counts": {
+      "config:open": 2,
+      "config:replace": 1,
+      "config:stat": 2,
+      "config:unlink": 1
+     },
+     "cpu_ns": 10325277,
+     "in_bytes": 1048742,
+     "out_bytes": 360082,
+     "wall_ns": 10322586
+    },
+    "deterministic": true,
+    "fixture_bytes_written": 32938274,
+    "maxrss_kb": 33960,
+    "persist": {
+     "bytes": {
+      "gzip_in": 3499705,
+      "sendfile": 2241129
+     },
+     "counts": {
+      "chain_dir:fsync_dir": 1,
+      "chain_dir:open": 1,
+      "lock:flock": 1,
+      "lock:funlock": 1,
+      "lock:open": 1,
+      "marker:fsync_file": 1,
+      "marker:open": 2,
+      "scratch:copy2": 770,
+      "scratch:entry": 7978,
+      "scratch:lstat": 1550,
+      "scratch:open": 2567,
+      "scratch:rmdir": 1026,
+      "scratch:rmtree": 1,
+      "scratch:scandir": 3079,
+      "scratch:stat": 6678,
+      "scratch:unlink": 1549,
+      "scratch:xattr": 770,
+      "segment:entry": 4846,
+      "segment:lstat": 1530,
+      "segment:scandir": 2041,
+      "segment:stat": 2552,
+      "staging:entry": 5128,
+      "staging:fsync_dir": 1027,
+      "staging:fsync_file": 1539,
+      "staging:lstat": 1,
+      "staging:meta": 1540,
+      "staging:mkdir": 2566,
+      "staging:open": 4106,
+      "staging:rename": 1,
+      "staging:rmtree": 1,
+      "staging:scandir": 2052,
+      "staging:stat": 7441
+     },
+     "cpu_ns": 2534946102,
+     "fixture_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+     "fsyncs": {
+      "dir": 1028,
+      "file": 1540
+     },
+     "identical": true,
+     "io": {
+      "cancelled_write_bytes": 0,
+      "rchar": 5933245,
+      "read_bytes": 0,
+      "syscr": 3864,
+      "syscw": 2312,
+      "wchar": 3417119,
+      "write_bytes": 10833920
+     },
+     "logical_bytes": 5740834,
+     "logical_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+     "members": 1539,
+     "ns": {
+      "copy2": 345533876,
+      "fsync": 1008532774,
+      "gzip": 18531737,
+      "lock_hold": 908250,
+      "lock_wait": 7583,
+      "rmtree": 110269656
+     },
+     "physical_bytes": 3416948,
+     "py_peak_bytes": 3474330,
+     "returned_bytes": 3416948,
+     "rusage": {
+      "inblock": 0,
+      "minflt": 1856,
+      "nivcsw": 17,
+      "nvcsw": 9097,
+      "oublock": 21160,
+      "sys_ns": 730442000,
+      "user_ns": 1806829001
+     },
+     "wall_ns": 3401641904
+    },
+    "process_wall_ns": 4169523641,
+    "reap": {
+     "idle": {
+      "first": {
+       "deleted": 0,
+       "entry": 0,
+       "in_flight": 1,
+       "listing": 0,
+       "lstat": 0,
+       "new": 0,
+       "newest": 0,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 0,
+       "stat": 1,
+       "unlink": 0
+      },
+      "last": {
+       "deleted": 0,
+       "entry": 0,
+       "in_flight": 1,
+       "listing": 0,
+       "lstat": 0,
+       "new": 0,
+       "newest": 0,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 0,
+       "stat": 1,
+       "unlink": 0
+      },
+      "ticks": 256,
+      "totals": {
+       "deleted": 0,
+       "entry": 0,
+       "in_flight": 256,
+       "listing": 0,
+       "lstat": 0,
+       "new": 0,
+       "newest": 0,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 0,
+       "stat": 256,
+       "unlink": 0
+      }
+     },
+     "last_tick": {
+      "idle": {
+       "bytes": {},
+       "counts": {
+        "in_flight:stat": 1
+       }
+      },
+      "productive": {
+       "bytes": {},
+       "counts": {
+        "in_flight:stat": 1,
+        "new:entry": 29,
+        "new:lstat": 17,
+        "new:scandir": 8,
+        "new:stat": 20,
+        "new:unlink": 11,
+        "newest:stat": 1
+       }
+      }
+     },
+     "productive": {
+      "first": {
+       "deleted": 0,
+       "entry": 0,
+       "in_flight": 1,
+       "listing": 0,
+       "lstat": 0,
+       "new": 0,
+       "newest": 1,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 0,
+       "stat": 2,
+       "unlink": 0
+      },
+      "last": {
+       "deleted": 11,
+       "entry": 29,
+       "in_flight": 1,
+       "listing": 0,
+       "lstat": 17,
+       "new": 85,
+       "newest": 1,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 8,
+       "stat": 22,
+       "unlink": 11
+      },
+      "ticks": 256,
+      "totals": {
+       "deleted": 2805,
+       "entry": 7395,
+       "in_flight": 256,
+       "listing": 0,
+       "lstat": 4335,
+       "new": 21675,
+       "newest": 256,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 2040,
+       "stat": 5612,
+       "unlink": 2805
+      }
+     }
+    },
+    "reaper": "Reaper.tick"
+   },
+   "64": {
+    "chains": "/home/user/mtg-kernel/tools/w5/chains.py",
+    "compress_config": {
+     "bytes": {
+      "gzip_in": 262159
+     },
+     "counts": {
+      "config:open": 2,
+      "config:replace": 1,
+      "config:stat": 2,
+      "config:unlink": 1
+     },
+     "cpu_ns": 3730382,
+     "in_bytes": 262159,
+     "out_bytes": 90655,
+     "wall_ns": 3726124
+    },
+    "deterministic": true,
+    "fixture_bytes_written": 8259907,
+    "maxrss_kb": 27556,
+    "persist": {
+     "bytes": {
+      "gzip_in": 896411,
+      "sendfile": 613288
+     },
+     "counts": {
+      "chain_dir:fsync_dir": 1,
+      "chain_dir:open": 1,
+      "lock:flock": 1,
+      "lock:funlock": 1,
+      "lock:open": 1,
+      "marker:fsync_file": 1,
+      "marker:open": 2,
+      "scratch:copy2": 194,
+      "scratch:entry": 2026,
+      "scratch:lstat": 398,
+      "scratch:open": 647,
+      "scratch:rmdir": 258,
+      "scratch:rmtree": 1,
+      "scratch:scandir": 775,
+      "scratch:stat": 1686,
+      "scratch:unlink": 397,
+      "scratch:xattr": 194,
+      "segment:entry": 1198,
+      "segment:lstat": 378,
+      "segment:scandir": 505,
+      "segment:stat": 632,
+      "staging:entry": 1288,
+      "staging:fsync_dir": 259,
+      "staging:fsync_file": 387,
+      "staging:lstat": 1,
+      "staging:meta": 388,
+      "staging:mkdir": 646,
+      "staging:open": 1034,
+      "staging:rename": 1,
+      "staging:rmtree": 1,
+      "staging:scandir": 516,
+      "staging:stat": 1873
+     },
+     "cpu_ns": 681527183,
+     "fixture_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+     "fsyncs": {
+      "dir": 260,
+      "file": 388
+     },
+     "identical": true,
+     "io": {
+      "cancelled_write_bytes": 0,
+      "rchar": 1702265,
+      "read_bytes": 0,
+      "syscr": 984,
+      "syscw": 584,
+      "wchar": 916040,
+      "write_bytes": 1822720
+     },
+     "logical_bytes": 1509699,
+     "logical_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+     "members": 387,
+     "ns": {
+      "copy2": 96946845,
+      "fsync": 200192999,
+      "gzip": 5016343,
+      "lock_hold": 717594,
+      "lock_wait": 7717,
+      "rmtree": 28311728
+     },
+     "physical_bytes": 915871,
+     "py_peak_bytes": 1265633,
+     "returned_bytes": 915871,
+     "rusage": {
+      "inblock": 0,
+      "minflt": 574,
+      "nivcsw": 5,
+      "nvcsw": 2322,
+      "oublock": 3560,
+      "sys_ns": 203584000,
+      "user_ns": 480263000
+     },
+     "wall_ns": 844449545
+    },
+    "process_wall_ns": 1119500750,
+    "reap": {
+     "idle": {
+      "first": {
+       "deleted": 0,
+       "entry": 0,
+       "in_flight": 1,
+       "listing": 0,
+       "lstat": 0,
+       "new": 0,
+       "newest": 0,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 0,
+       "stat": 1,
+       "unlink": 0
+      },
+      "last": {
+       "deleted": 0,
+       "entry": 0,
+       "in_flight": 1,
+       "listing": 0,
+       "lstat": 0,
+       "new": 0,
+       "newest": 0,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 0,
+       "stat": 1,
+       "unlink": 0
+      },
+      "ticks": 64,
+      "totals": {
+       "deleted": 0,
+       "entry": 0,
+       "in_flight": 64,
+       "listing": 0,
+       "lstat": 0,
+       "new": 0,
+       "newest": 0,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 0,
+       "stat": 64,
+       "unlink": 0
+      }
+     },
+     "last_tick": {
+      "idle": {
+       "bytes": {},
+       "counts": {
+        "in_flight:stat": 1
+       }
+      },
+      "productive": {
+       "bytes": {},
+       "counts": {
+        "in_flight:stat": 1,
+        "new:entry": 29,
+        "new:lstat": 17,
+        "new:scandir": 8,
+        "new:stat": 20,
+        "new:unlink": 11,
+        "newest:stat": 1
+       }
+      }
+     },
+     "productive": {
+      "first": {
+       "deleted": 0,
+       "entry": 0,
+       "in_flight": 1,
+       "listing": 0,
+       "lstat": 0,
+       "new": 0,
+       "newest": 1,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 0,
+       "stat": 2,
+       "unlink": 0
+      },
+      "last": {
+       "deleted": 11,
+       "entry": 29,
+       "in_flight": 1,
+       "listing": 0,
+       "lstat": 17,
+       "new": 85,
+       "newest": 1,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 8,
+       "stat": 22,
+       "unlink": 11
+      },
+      "ticks": 64,
+      "totals": {
+       "deleted": 693,
+       "entry": 1827,
+       "in_flight": 64,
+       "listing": 0,
+       "lstat": 1071,
+       "new": 5355,
+       "newest": 64,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 504,
+       "stat": 1388,
+       "unlink": 693
+      }
+     }
+    },
+    "reaper": "Reaper.tick"
+   }
+  }
+ },
+ "created_unix": 1794259982.826,
+ "dirs": {
+  "scratch": {
+   "fstype": "tmpfs",
+   "mount": "/dev/shm",
+   "options": "rw,relatime,size=16472400k",
+   "source": "tmpfs"
+  },
+  "work": {
+   "fstype": "ext4",
+   "mount": "/",
+   "options": "rw,relatime,discard,no_prefetch_block_bitmaps,resv_strict,resuid=65534,resgid=65534",
+   "source": "/dev/vda"
+  }
+ },
+ "machine": {
+  "affinity": 4,
+  "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "cpus": 4,
+  "machine": "x86_64",
+  "mem_total_kb": 16472400,
+  "platform": "Linux-6.18.44-fc-v310-x86_64-with-glibc2.39",
+  "python": "3.13.18 (main, Oct 26 2026, 14:08:19) [Clang 23.1.3 ]",
+  "python_executable": "/usr/local/bin/python3"
+ },
+ "max_fixture_bytes_per_sample": 15219748,
+ "order": [
+  {
+   "n": 64,
+   "round": 0,
+   "variant": "A"
+  },
+  {
+   "n": 64,
+   "round": 0,
+   "variant": "B"
+  },
+  {
+   "n": 256,
+   "round": 0,
+   "variant": "A"
+  },
+  {
+   "n": 256,
+   "round": 0,
+   "variant": "B"
+  },
+  {
+   "n": 256,
+   "round": 1,
+   "variant": "B"
+  },
+  {
+   "n": 256,
+   "round": 1,
+   "variant": "A"
+  },
+  {
+   "n": 64,
+   "round": 1,
+   "variant": "B"
+  },
+  {
+   "n": 64,
+   "round": 1,
+   "variant": "A"
+  },
+  {
+   "n": 64,
+   "round": 2,
+   "variant": "A"
+  },
+  {
+   "n": 64,
+   "round": 2,
+   "variant": "B"
+  },
+  {
+   "n": 256,
+   "round": 2,
+   "variant": "A"
+  },
+  {
+   "n": 256,
+   "round": 2,
+   "variant": "B"
+  },
+  {
+   "n": 256,
+   "round": 3,
+   "variant": "B"
+  },
+  {
+   "n": 256,
+   "round": 3,
+   "variant": "A"
+  },
+  {
+   "n": 64,
+   "round": 3,
+   "variant": "B"
+  },
+  {
+   "n": 64,
+   "round": 3,
+   "variant": "A"
+  }
+ ],
+ "profile": {
+  "checkpoint_bytes": 65536,
+  "complete_bytes": 3072,
+  "completion_bytes": 1024,
+  "config_bytes_per_update": 4096,
+  "episodes": 10,
+  "name": "small",
+  "records": {
+   "attempt-000000/collect-command.json": 8192,
+   "attempt-000000/collect/collection.json": 3072,
+   "attempt-000000/update-command.json": 2048,
+   "attempt-000000/update-input.json": 3072,
+   "attempt-000000/update/update.json": 2048
+  },
+  "run_bytes": 32768,
+  "trajectory_bytes": 4096
+ },
+ "purpose": "mtg-kernel#601 milestone 1: scratch reaper and persistence work",
+ "rounds": 4,
+ "samples": [
+  {
+   "chains": "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/main-0b8c0fa/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 3187618,
+    "in_bytes": 262159,
+    "out_bytes": 90655,
+    "wall_ns": 3185223
+   },
+   "fixture_bytes_written": 8259907,
+   "maxrss_kb": 25096,
+   "n": 64,
+   "persist": {
+    "cpu_ns": 458068053,
+    "fixture_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "fsyncs": 648,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 1580670,
+     "read_bytes": 0,
+     "syscr": 976,
+     "syscw": 584,
+     "wchar": 916040,
+     "write_bytes": 1658880
+    },
+    "logical_bytes": 1509699,
+    "logical_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "members": 387,
+    "ns": {
+     "copy2": 98050491,
+     "fsync": 232824806,
+     "gzip": 2635967,
+     "lock_hold": 656863,
+     "lock_wait": 3946,
+     "rmtree": 4242290
+    },
+    "physical_bytes": 915871,
+    "returned_bytes": 915871,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 143,
+     "nivcsw": 0,
+     "nvcsw": 2132,
+     "oublock": 3240,
+     "sys_ns": 318249000,
+     "user_ns": 139920000
+    },
+    "wall_ns": 650275330
+   },
+   "position": 0,
+   "process_wall_ns": 1376177415,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 251374634,
+     "wall_ns_total": 251309191,
+     "wall_us": [45, 198, 359, 489, 583, 690, 788, 964, 1107, 1174, 1345, 1511, 1591, 1640, 1935, 1902, 2440, 2191, 2348, 2514, 2510, 2565, 2854, 2886, 2866, 3016, 3274, 3225, 3291, 3069, 3631, 3655, 3853, 4236, 4196, 4128, 4388, 4549, 4690, 4992, 5066, 5165, 5299, 6382, 5487, 5515, 5604, 5885, 5581, 6016, 5961, 5777, 6357, 6586, 6675, 7084, 6693, 7043, 8001, 7139, 7132, 7679, 7763, 7731]
+    },
+    "productive": {
+     "cpu_ns_total": 266111839,
+     "wall_ns_total": 266321133,
+     "wall_us": [79, 492, 595, 637, 742, 912, 1002, 1081, 1295, 1400, 1523, 1630, 1756, 2055, 2214, 2195, 2288, 2477, 2621, 2764, 3716, 2809, 2934, 3087, 3194, 3392, 3582, 3501, 3545, 3367, 3905, 3855, 4229, 4269, 4529, 4350, 4420, 4795, 5254, 5037, 5319, 5394, 5524, 5629, 5860, 5930, 5808, 5918, 6310, 6445, 6279, 6539, 6281, 6951, 7045, 7231, 6804, 7452, 7361, 7503, 7434, 7511, 7980, 8287]
+    }
+   },
+   "reaper": "reap",
+   "round": 0,
+   "variant": "A"
+  },
+  {
+   "chains": "/home/user/mtg-kernel/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 3151166,
+    "in_bytes": 262159,
+    "out_bytes": 90655,
+    "wall_ns": 3148365
+   },
+   "fixture_bytes_written": 8259907,
+   "maxrss_kb": 24580,
+   "n": 64,
+   "persist": {
+    "cpu_ns": 411615864,
+    "fixture_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "fsyncs": 648,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 1580670,
+     "read_bytes": 0,
+     "syscr": 976,
+     "syscw": 584,
+     "wchar": 916040,
+     "write_bytes": 2039808
+    },
+    "logical_bytes": 1509699,
+    "logical_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "members": 387,
+    "ns": {
+     "copy2": 87628153,
+     "fsync": 218234276,
+     "gzip": 2414250,
+     "lock_hold": 713208,
+     "lock_wait": 4793,
+     "rmtree": 4165195
+    },
+    "physical_bytes": 915871,
+    "returned_bytes": 915871,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 139,
+     "nivcsw": 1,
+     "nvcsw": 2136,
+     "oublock": 3984,
+     "sys_ns": 293136999,
+     "user_ns": 118573000
+    },
+    "wall_ns": 595643743
+   },
+   "position": 1,
+   "process_wall_ns": 813894279,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 1279120,
+     "wall_ns_total": 1244515,
+     "wall_us": [16, 22, 18, 19, 19, 18, 20, 19, 18, 18, 22, 19, 21, 19, 19, 19, 20, 18, 20, 21, 19, 18, 24, 16, 17, 20, 16, 20, 21, 34, 17, 17, 26, 26, 23, 21, 20, 19, 19, 22, 18, 18, 16, 19, 17, 18, 16, 19, 17, 18, 34, 16, 16, 18, 17, 16, 18, 16, 17, 25, 17, 18, 18, 18]
+    },
+    "productive": {
+     "cpu_ns_total": 23138322,
+     "wall_ns_total": 23165670,
+     "wall_us": [54, 450, 361, 394, 374, 356, 424, 386, 362, 358, 458, 400, 390, 382, 354, 357, 436, 355, 339, 366, 460, 345, 372, 327, 319, 405, 329, 351, 390, 332, 335, 335, 322, 394, 483, 374, 426, 361, 378, 409, 360, 335, 330, 411, 339, 364, 331, 348, 359, 376, 323, 312, 330, 314, 331, 326, 389, 325, 346, 357, 357, 355, 378, 364]
+    }
+   },
+   "reaper": "Reaper.tick",
+   "round": 0,
+   "variant": "B"
+  },
+  {
+   "chains": "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/main-0b8c0fa/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 10746144,
+    "in_bytes": 1048742,
+    "out_bytes": 360082,
+    "wall_ns": 10742524
+   },
+   "fixture_bytes_written": 32938274,
+   "maxrss_kb": 29320,
+   "n": 256,
+   "persist": {
+    "cpu_ns": 1444397309,
+    "fixture_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "fsyncs": 2568,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 5811650,
+     "read_bytes": 0,
+     "syscr": 3856,
+     "syscw": 2312,
+     "wchar": 3417119,
+     "write_bytes": 7786496
+    },
+    "logical_bytes": 5740834,
+    "logical_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "members": 1539,
+    "ns": {
+     "copy2": 296678385,
+     "fsync": 873437161,
+     "gzip": 8973084,
+     "lock_hold": 558984,
+     "lock_wait": 5235,
+     "rmtree": 17433038
+    },
+    "physical_bytes": 3416948,
+    "returned_bytes": 3416948,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 489,
+     "nivcsw": 5,
+     "nvcsw": 8691,
+     "oublock": 15208,
+     "sys_ns": 992684000,
+     "user_ns": 451827000
+    },
+    "wall_ns": 2180048139
+   },
+   "position": 2,
+   "process_wall_ns": 11495962068,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 4260815964,
+     "wall_ns_total": 4300036585,
+     "wall_us": [75, 216, 316, 468, 563, 657, 785, 1021, 1116, 1272, 1362, 1428, 1557, 1761, 1893, 1995, 2240, 2167, 2338, 2364, 2483, 2642, 2933, 3095, 3085, 3330, 3452, 3516, 3527, 3769, 3865, 4005, 4083, 4209, 4174, 4592, 4975, 5076, 5375, 5307, 5526, 5230, 5396, 6068, 5460, 5715, 6036, 6009, 6453, 6229, 6456, 6236, 6304, 6881, 6984, 7030, 6902, 7252, 8031, 7158, 7523, 7460, 7505, 6780, 8462, 8122, 8421, 8403, 8093, 8643, 8756, 8685, 9055, 9240, 9552, 9172, 9214, 9857, 10108, 10140, 10310, 10279, 10389, 10888, 10675, 10783, 11468, 11431, 10912, 11545, 11356, 11066, 11619, 11977, 11868, 12151, 11930, 12290, 12386, 12472, 12654, 13123, 13358, 12947, 13178, 13644, 13344, 13280, 13406, 13480, 14721, 15309, 15066, 14448, 14511, 14134, 14750, 14526, 14745, 15407, 15478, 15747, 15342, 15597, 15838, 15729, 15962, 16374, 16123, 16764, 16527, 16917, 17559, 16996, 16928, 17103, 17610, 17808, 18374, 25177, 28507, 26508, 18989, 26330, 18555, 18560, 22711, 19324, 18867, 19989, 19024, 19138, 19097, 19325, 19109, 18637, 20453, 19478, 20908, 21233, 20293, 20347, 20731, 21767, 21536, 20814, 23796, 21905, 21438, 21129, 21149, 20804, 21874, 30772, 22099, 21805, 23231, 21737, 22997, 23818, 22243, 23689, 33420, 35296, 34207, 22659, 24979, 30302, 24247, 24358, 24770, 24555, 22883, 24151, 26109, 25261, 26865, 25918, 26206, 26243, 25509, 27161, 29491, 25119, 24093, 24440, 25937, 27846, 26790, 26462, 26459, 26978, 26548, 28512, 29533, 32941, 28128, 27859, 29234, 28185, 28255, 29092, 28809, 29175, 27925, 29489, 29914, 32114, 28901, 30566, 27674, 28957, 29838, 29483, 36137, 29994, 28595, 28065, 27914, 30636, 30313, 32612, 33335, 31717, 30958, 31342, 31285, 30812, 31461, 35486, 30777, 31616, 32186, 44054, 32307, 32454]
+    },
+    "productive": {
+     "cpu_ns_total": 4306581296,
+     "wall_ns_total": 4378076811,
+     "wall_us": [93, 458, 599, 652, 717, 954, 1116, 1103, 1274, 1423, 1559, 1687, 1700, 1930, 2020, 2214, 2448, 2349, 2555, 2787, 2950, 2908, 3832, 3232, 3307, 3482, 3615, 3890, 3770, 4011, 4116, 4052, 4277, 4509, 4379, 4818, 4939, 5303, 5733, 6015, 5684, 5550, 5988, 5808, 5868, 5811, 6189, 6462, 6445, 6703, 6676, 6674, 6575, 7121, 7099, 7863, 7340, 7445, 7840, 7387, 7942, 7346, 7745, 7673, 8000, 8956, 8641, 8437, 8679, 8796, 9198, 8752, 8867, 9599, 9613, 9618, 9718, 9748, 10019, 10217, 10037, 11012, 10767, 10882, 11141, 10599, 11241, 12024, 11029, 11785, 11630, 12095, 11508, 12328, 12391, 12354, 12133, 12476, 12678, 13032, 12646, 13579, 13605, 13205, 13524, 13654, 13709, 13432, 13880, 13857, 14376, 16319, 17797, 15244, 15137, 15132, 15003, 15617, 15144, 15278, 16003, 15554, 15720, 15922, 16017, 16096, 17047, 16449, 16661, 16964, 16356, 16571, 17896, 18644, 17381, 18168, 18001, 17698, 18631, 18732, 19887, 27066, 27007, 21035, 18918, 18873, 23936, 18997, 20148, 19691, 18973, 19844, 19409, 19903, 19620, 19323, 20224, 19699, 20551, 22271, 20879, 20829, 21211, 21696, 22643, 63051, 23292, 22567, 22435, 22764, 22721, 21892, 21836, 23350, 21739, 22312, 23205, 22760, 23339, 23073, 22922, 23075, 26707, 34286, 35648, 24774, 24266, 33027, 23803, 25007, 24966, 24241, 23869, 23797, 24632, 26301, 25496, 25972, 24602, 28160, 25467, 27097, 27878, 26854, 25727, 23425, 24721, 27099, 27809, 27544, 26544, 27046, 26090, 28995, 28724, 33535, 29386, 31593, 29245, 28048, 27876, 28166, 28774, 30068, 29514, 27824, 30522, 28953, 30941, 28147, 29137, 30696, 29481, 29551, 31751, 30455, 29923, 29216, 27878, 29694, 30689, 30790, 35455, 35969, 32341, 31486, 31152, 30004, 32135, 34972, 30959, 32909, 33655, 31987, 33184, 33814]
+    }
+   },
+   "reaper": "reap",
+   "round": 0,
+   "variant": "A"
+  },
+  {
+   "chains": "/home/user/mtg-kernel/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 11347061,
+    "in_bytes": 1048742,
+    "out_bytes": 360082,
+    "wall_ns": 11343403
+   },
+   "fixture_bytes_written": 32938274,
+   "maxrss_kb": 28908,
+   "n": 256,
+   "persist": {
+    "cpu_ns": 1576204453,
+    "fixture_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "fsyncs": 2568,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 5811650,
+     "read_bytes": 0,
+     "syscr": 3856,
+     "syscw": 2312,
+     "wchar": 3417119,
+     "write_bytes": 7151616
+    },
+    "logical_bytes": 5740834,
+    "logical_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "members": 1539,
+    "ns": {
+     "copy2": 334796861,
+     "fsync": 854763551,
+     "gzip": 8583128,
+     "lock_hold": 541566,
+     "lock_wait": 4442,
+     "rmtree": 15601710
+    },
+    "physical_bytes": 3416948,
+    "returned_bytes": 3416948,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 559,
+     "nivcsw": 8,
+     "nvcsw": 8475,
+     "oublock": 13968,
+     "sys_ns": 1139253000,
+     "user_ns": 437076999
+    },
+    "wall_ns": 2291947064
+   },
+   "position": 3,
+   "process_wall_ns": 3051044004,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 6507438,
+     "wall_ns_total": 6409122,
+     "wall_us": [24, 21, 21, 31, 23, 22, 19, 18, 20, 28, 20, 33, 20, 19, 18, 18, 21, 33, 20, 22, 20, 21, 18, 23, 19, 17, 20, 19, 20, 19, 19, 18, 25, 19, 16, 21, 18, 22, 17, 22, 32, 48, 16, 18, 18, 18, 20, 16, 18, 17, 18, 21, 20, 19, 19, 21, 19, 17, 18, 17, 17, 21, 16, 18, 18, 16, 19, 16, 18, 18, 17, 18, 19, 27, 20, 48, 19, 21, 19, 25, 17, 18, 18, 29, 18, 16, 18, 17, 17, 17, 17, 17, 20, 17, 24, 32, 20, 34, 18, 30, 35, 28, 23, 25, 35, 20, 31, 21, 31, 152, 19, 20, 20, 18, 21, 24, 20, 23, 24, 19, 27, 38, 33, 34, 36, 33, 35, 22, 26, 35, 32, 33, 37, 32, 34, 45, 34, 36, 25, 19, 19, 26, 27, 32, 34, 29, 40, 35, 29, 31, 32, 32, 33, 35, 38, 32, 38, 36, 46, 38, 35, 29, 30, 37, 34, 33, 33, 34, 36, 38, 40, 35, 34, 31, 36, 25, 36, 34, 33, 33, 30, 30, 35, 26, 28, 22, 21, 21, 18, 28, 40, 20, 21, 21, 51, 22, 20, 19, 27, 21, 22, 19, 21, 20, 20, 20, 25, 18, 19, 21, 17, 17, 20, 20, 27, 41, 28, 27, 22, 17, 22, 19, 17, 18, 20, 18, 19, 20, 19, 22, 22, 39, 20, 18, 20, 18, 17, 19, 40, 16, 18, 19, 21, 17, 21, 42, 27, 20, 29, 21, 18, 20, 21, 19, 20, 19]
+    },
+    "productive": {
+     "cpu_ns_total": 109890169,
+     "wall_ns_total": 110274430,
+     "wall_us": [74, 456, 442, 455, 420, 352, 373, 338, 347, 428, 373, 413, 393, 416, 351, 371, 425, 571, 385, 417, 397, 391, 362, 386, 392, 335, 427, 337, 384, 352, 338, 353, 385, 393, 329, 497, 367, 392, 329, 451, 544, 348, 330, 351, 394, 322, 328, 312, 351, 387, 340, 349, 411, 352, 382, 349, 389, 359, 342, 326, 331, 331, 320, 378, 322, 324, 370, 320, 339, 357, 331, 343, 378, 388, 390, 442, 363, 451, 371, 364, 342, 330, 358, 711, 356, 318, 341, 334, 323, 356, 317, 358, 407, 336, 365, 493, 383, 518, 369, 501, 557, 466, 599, 521, 556, 420, 495, 432, 447, 377, 359, 366, 364, 345, 400, 466, 404, 411, 600, 381, 391, 675, 560, 577, 565, 579, 628, 503, 543, 576, 556, 533, 621, 459, 570, 582, 571, 449, 507, 360, 372, 361, 417, 509, 569, 590, 646, 585, 559, 580, 433, 561, 541, 663, 588, 555, 563, 539, 637, 502, 556, 588, 567, 620, 520, 569, 701, 608, 554, 608, 608, 578, 582, 510, 648, 536, 656, 651, 522, 599, 581, 531, 536, 605, 451, 395, 404, 414, 352, 429, 498, 446, 420, 390, 360, 453, 404, 369, 467, 400, 347, 345, 389, 343, 364, 394, 338, 340, 370, 348, 345, 334, 442, 409, 669, 353, 584, 370, 405, 338, 418, 360, 326, 345, 386, 359, 376, 403, 387, 412, 356, 418, 354, 335, 393, 347, 340, 362, 425, 329, 349, 345, 452, 331, 369, 392, 339, 421, 437, 411, 356, 364, 398, 395, 362, 371]
+    }
+   },
+   "reaper": "Reaper.tick",
+   "round": 0,
+   "variant": "B"
+  },
+  {
+   "chains": "/home/user/mtg-kernel/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 11563872,
+    "in_bytes": 1048742,
+    "out_bytes": 360082,
+    "wall_ns": 11700343
+   },
+   "fixture_bytes_written": 32938274,
+   "maxrss_kb": 28844,
+   "n": 256,
+   "persist": {
+    "cpu_ns": 1699057563,
+    "fixture_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "fsyncs": 2568,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 5811650,
+     "read_bytes": 0,
+     "syscr": 3856,
+     "syscw": 2312,
+     "wchar": 3417119,
+     "write_bytes": 6496256
+    },
+    "logical_bytes": 5740834,
+    "logical_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "members": 1539,
+    "ns": {
+     "copy2": 370476005,
+     "fsync": 881569441,
+     "gzip": 9086174,
+     "lock_hold": 893832,
+     "lock_wait": 6348,
+     "rmtree": 17824853
+    },
+    "physical_bytes": 3416948,
+    "returned_bytes": 3416948,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 558,
+     "nivcsw": 6,
+     "nvcsw": 8454,
+     "oublock": 12688,
+     "sys_ns": 1239546000,
+     "user_ns": 459615999
+    },
+    "wall_ns": 2457174137
+   },
+   "position": 4,
+   "process_wall_ns": 3158865556,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 5589102,
+     "wall_ns_total": 5428233,
+     "wall_us": [16, 21, 20, 22, 17, 18, 19, 19, 19, 22, 20, 19, 18, 20, 19, 17, 20, 22, 40, 29, 18, 19, 19, 21, 18, 18, 19, 18, 19, 20, 19, 18, 20, 18, 21, 18, 21, 21, 20, 22, 21, 20, 21, 20, 20, 31, 21, 19, 18, 18, 17, 16, 18, 19, 19, 19, 18, 19, 17, 20, 18, 19, 19, 23, 22, 21, 18, 24, 21, 20, 17, 19, 19, 21, 27, 22, 20, 19, 19, 21, 19, 19, 23, 31, 19, 18, 18, 20, 20, 32, 19, 18, 20, 19, 20, 22, 21, 19, 24, 22, 22, 19, 18, 18, 21, 19, 24, 28, 19, 19, 22, 21, 24, 19, 18, 21, 20, 55, 20, 35, 22, 26, 23, 23, 21, 19, 24, 22, 48, 18, 18, 21, 18, 17, 19, 21, 20, 19, 21, 20, 20, 24, 22, 18, 19, 21, 20, 18, 47, 21, 21, 21, 22, 22, 18, 22, 19, 19, 17, 20, 17, 21, 19, 21, 20, 18, 20, 18, 18, 18, 19, 19, 59, 21, 24, 18, 19, 21, 20, 18, 17, 20, 20, 19, 20, 33, 17, 17, 21, 20, 16, 19, 16, 18, 18, 16, 19, 17, 17, 18, 17, 17, 19, 16, 18, 19, 19, 16, 21, 22, 18, 18, 21, 20, 17, 19, 20, 34, 52, 18, 22, 107, 21, 19, 20, 37, 19, 20, 22, 21, 19, 31, 20, 18, 20, 20, 37, 18, 20, 22, 21, 20, 17, 20, 20, 18, 19, 18, 19, 20, 18, 22, 18, 19, 21, 22]
+    },
+    "productive": {
+     "cpu_ns_total": 99526677,
+     "wall_ns_total": 100747098,
+     "wall_us": [73, 434, 386, 365, 347, 355, 378, 386, 356, 430, 369, 374, 340, 371, 427, 340, 388, 488, 355, 365, 347, 361, 378, 446, 346, 356, 384, 355, 375, 350, 385, 348, 477, 368, 411, 356, 413, 429, 385, 417, 350, 350, 423, 415, 404, 406, 377, 400, 370, 376, 333, 326, 378, 338, 414, 375, 357, 372, 340, 405, 351, 355, 369, 549, 364, 388, 366, 424, 401, 393, 341, 371, 378, 415, 488, 393, 344, 385, 342, 420, 384, 360, 414, 727, 382, 339, 362, 383, 387, 930, 375, 363, 410, 394, 425, 352, 429, 399, 399, 405, 401, 357, 358, 349, 396, 405, 415, 462, 359, 394, 396, 422, 438, 355, 356, 387, 414, 368, 370, 372, 408, 519, 415, 434, 396, 358, 538, 433, 422, 352, 352, 395, 349, 349, 366, 393, 409, 389, 381, 421, 420, 382, 351, 350, 365, 404, 393, 356, 773, 420, 428, 470, 420, 527, 366, 396, 375, 391, 349, 374, 346, 337, 389, 344, 435, 359, 417, 383, 361, 364, 371, 403, 445, 429, 396, 358, 408, 388, 380, 351, 345, 382, 377, 362, 396, 352, 334, 362, 357, 419, 339, 362, 323, 366, 370, 334, 356, 337, 328, 368, 321, 321, 367, 330, 350, 370, 365, 322, 410, 373, 338, 345, 380, 435, 352, 383, 404, 918, 763, 366, 437, 1017, 383, 397, 384, 343, 371, 397, 448, 390, 374, 425, 393, 355, 391, 411, 409, 351, 353, 434, 424, 392, 341, 367, 370, 418, 353, 357, 329, 352, 361, 410, 372, 363, 461, 431]
+    }
+   },
+   "reaper": "Reaper.tick",
+   "round": 1,
+   "variant": "B"
+  },
+  {
+   "chains": "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/main-0b8c0fa/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 10683325,
+    "in_bytes": 1048742,
+    "out_bytes": 360082,
+    "wall_ns": 10821757
+   },
+   "fixture_bytes_written": 32938274,
+   "maxrss_kb": 29352,
+   "n": 256,
+   "persist": {
+    "cpu_ns": 785252221,
+    "fixture_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "fsyncs": 2568,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 5811650,
+     "read_bytes": 0,
+     "syscr": 3856,
+     "syscw": 2312,
+     "wchar": 3417119,
+     "write_bytes": 9764864
+    },
+    "logical_bytes": 5740834,
+    "logical_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "members": 1539,
+    "ns": {
+     "copy2": 98077877,
+     "fsync": 840869268,
+     "gzip": 8194671,
+     "lock_hold": 723223,
+     "lock_wait": 4615,
+     "rmtree": 19062915
+    },
+    "physical_bytes": 3416948,
+    "returned_bytes": 3416948,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 493,
+     "nivcsw": 1,
+     "nvcsw": 9546,
+     "oublock": 19072,
+     "sys_ns": 407079000,
+     "user_ns": 378282000
+    },
+    "wall_ns": 1487058374
+   },
+   "position": 5,
+   "process_wall_ns": 10759995020,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 4224543078,
+     "wall_ns_total": 4261319175,
+     "wall_us": [57, 188, 300, 674, 523, 748, 863, 1237, 1565, 1666, 1730, 1421, 1607, 1909, 1930, 1894, 4028, 2248, 3048, 2638, 3130, 2657, 3848, 2885, 5512, 3335, 4059, 3692, 3785, 5859, 3708, 4079, 5934, 6109, 4447, 4659, 5289, 7143, 5505, 5235, 5102, 5237, 6644, 8500, 5615, 5770, 5873, 5715, 5886, 5930, 5862, 6523, 6149, 6233, 6380, 6488, 6838, 7073, 7611, 7089, 7529, 7281, 7692, 8453, 8043, 7939, 8952, 7591, 11105, 8628, 8169, 8676, 10170, 8368, 9395, 10026, 11747, 10856, 10918, 16161, 11953, 10210, 19384, 10703, 11985, 12176, 11429, 11715, 16586, 11148, 11191, 12297, 11022, 11152, 12075, 12138, 12265, 12349, 12520, 12939, 12697, 13172, 13608, 13089, 12882, 13438, 13510, 13022, 13574, 13880, 22168, 14225, 14498, 14021, 14330, 14210, 13868, 14523, 14303, 15774, 15076, 15285, 15305, 14433, 14963, 15234, 15142, 14936, 15859, 15978, 15511, 15857, 16947, 17514, 16802, 16260, 16603, 18187, 17329, 17481, 19632, 17816, 18501, 18762, 18233, 17666, 16298, 22117, 18560, 19837, 20501, 19032, 18019, 19058, 17350, 20254, 20197, 19484, 19376, 20227, 19540, 20312, 21908, 21601, 20487, 22158, 20466, 19825, 20725, 21154, 19692, 21408, 21056, 22016, 22267, 22415, 21462, 22596, 20292, 23164, 22632, 22123, 23874, 23058, 23919, 22917, 24331, 23469, 25578, 24664, 23713, 22250, 24486, 24452, 24886, 25275, 24396, 24194, 24674, 25267, 28741, 39881, 37764, 24712, 26982, 26072, 26245, 27017, 26153, 27892, 33396, 32939, 27023, 25650, 26281, 24804, 30311, 29281, 26394, 26589, 26968, 27242, 26547, 26693, 28549, 27965, 27098, 28780, 29269, 28718, 28993, 31693, 30666, 29813, 29864, 30584, 30710, 30947, 32447, 29527, 35807, 29484, 30494, 30642, 32683, 35534, 38818, 31692, 32807, 34621, 36004, 34235, 32393, 32389, 31026, 31773]
+    },
+    "productive": {
+     "cpu_ns_total": 4313319638,
+     "wall_ns_total": 4356273132,
+     "wall_us": [87, 483, 459, 997, 867, 892, 991, 1069, 2779, 2053, 2217, 1854, 1783, 1851, 3651, 2213, 2651, 2456, 2502, 3328, 3372, 4165, 3046, 3188, 3332, 3607, 5650, 3774, 5338, 4339, 4354, 6116, 5455, 4448, 4756, 7578, 6966, 4925, 5029, 5738, 7909, 8192, 6318, 5622, 5736, 5999, 6053, 6148, 6040, 6027, 6303, 6533, 6438, 6541, 6669, 6677, 7074, 7294, 7263, 7460, 7727, 7663, 7702, 8335, 7549, 8227, 13207, 8084, 9276, 8887, 8761, 8344, 9135, 8838, 8603, 9825, 11610, 16304, 10567, 11608, 11937, 10917, 22998, 11660, 12025, 11700, 16939, 11841, 11520, 13204, 11527, 15131, 19152, 11407, 12112, 12901, 12286, 12279, 13383, 13319, 13156, 13190, 13180, 13455, 13880, 13152, 13868, 13571, 13697, 14033, 17204, 14738, 14662, 14476, 14628, 14789, 14375, 14561, 14500, 15897, 15429, 15593, 15563, 15318, 15177, 15510, 15929, 14895, 15783, 15257, 16400, 16319, 16268, 16947, 16625, 16754, 16938, 16714, 18778, 18051, 18313, 19230, 17855, 19721, 17714, 18392, 17233, 19832, 19788, 19168, 19336, 19434, 18816, 17787, 18795, 20037, 20494, 20106, 19347, 20804, 19638, 21353, 21382, 20631, 22803, 20862, 21197, 20288, 21062, 21926, 20240, 21583, 21058, 21161, 22208, 22137, 22359, 22407, 25802, 22374, 23285, 22801, 23565, 23437, 23630, 30491, 23331, 24309, 24023, 24866, 24631, 24202, 23166, 23994, 25329, 26169, 25447, 25125, 25462, 24763, 24861, 41701, 39042, 29490, 31438, 26079, 25866, 26698, 27948, 31053, 30693, 36513, 26988, 26433, 27039, 25548, 30574, 27706, 29503, 26560, 28069, 26466, 28481, 26283, 27147, 28754, 26744, 29220, 29391, 28963, 29358, 29692, 30165, 29322, 30864, 30911, 29198, 30255, 37526, 37895, 33123, 29703, 30402, 32327, 31428, 34697, 38179, 32245, 33487, 34470, 34992, 34182, 33572, 33173, 32384, 34366]
+    }
+   },
+   "reaper": "reap",
+   "round": 1,
+   "variant": "A"
+  },
+  {
+   "chains": "/home/user/mtg-kernel/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 2851715,
+    "in_bytes": 262159,
+    "out_bytes": 90655,
+    "wall_ns": 2849504
+   },
+   "fixture_bytes_written": 8259907,
+   "maxrss_kb": 24752,
+   "n": 64,
+   "persist": {
+    "cpu_ns": 300964403,
+    "fixture_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "fsyncs": 648,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 1580670,
+     "read_bytes": 0,
+     "syscr": 976,
+     "syscw": 584,
+     "wchar": 916040,
+     "write_bytes": 2019328
+    },
+    "logical_bytes": 1509699,
+    "logical_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "members": 387,
+    "ns": {
+     "copy2": 54139390,
+     "fsync": 208184215,
+     "gzip": 2335587,
+     "lock_hold": 466548,
+     "lock_wait": 4571,
+     "rmtree": 4222004
+    },
+    "physical_bytes": 915871,
+    "returned_bytes": 915871,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 138,
+     "nivcsw": 2,
+     "nvcsw": 2396,
+     "oublock": 3944,
+     "sys_ns": 186320001,
+     "user_ns": 114734000
+    },
+    "wall_ns": 470275130
+   },
+   "position": 6,
+   "process_wall_ns": 691685691,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 1381707,
+     "wall_ns_total": 1354464,
+     "wall_us": [17, 22, 18, 18, 19, 20, 21, 22, 20, 19, 20, 37, 18, 18, 21, 20, 20, 20, 25, 22, 20, 21, 20, 19, 19, 17, 19, 19, 25, 20, 20, 25, 21, 17, 19, 19, 22, 22, 18, 19, 19, 18, 19, 20, 19, 20, 21, 18, 23, 19, 19, 42, 19, 20, 20, 72, 22, 20, 19, 18, 17, 18, 20, 17]
+    },
+    "productive": {
+     "cpu_ns_total": 24129354,
+     "wall_ns_total": 24210713,
+     "wall_us": [48, 467, 347, 334, 381, 364, 401, 374, 438, 361, 380, 351, 334, 348, 408, 383, 328, 397, 530, 519, 410, 434, 400, 341, 357, 341, 374, 329, 544, 372, 411, 343, 371, 334, 344, 365, 425, 451, 351, 351, 367, 347, 369, 355, 372, 395, 413, 353, 438, 367, 378, 356, 369, 351, 382, 447, 411, 475, 348, 378, 333, 350, 367, 345]
+    }
+   },
+   "reaper": "Reaper.tick",
+   "round": 1,
+   "variant": "B"
+  },
+  {
+   "chains": "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/main-0b8c0fa/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 2554164,
+    "in_bytes": 262159,
+    "out_bytes": 90655,
+    "wall_ns": 2551745
+   },
+   "fixture_bytes_written": 8259907,
+   "maxrss_kb": 25176,
+   "n": 64,
+   "persist": {
+    "cpu_ns": 432562624,
+    "fixture_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "fsyncs": 648,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 1580670,
+     "read_bytes": 0,
+     "syscr": 976,
+     "syscw": 584,
+     "wchar": 916040,
+     "write_bytes": 1761280
+    },
+    "logical_bytes": 1509699,
+    "logical_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "members": 387,
+    "ns": {
+     "copy2": 92658320,
+     "fsync": 244780479,
+     "gzip": 2526842,
+     "lock_hold": 985538,
+     "lock_wait": 5356,
+     "rmtree": 4198858
+    },
+    "physical_bytes": 915871,
+    "returned_bytes": 915871,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 142,
+     "nivcsw": 1,
+     "nvcsw": 2141,
+     "oublock": 3440,
+     "sys_ns": 307174000,
+     "user_ns": 125475999
+    },
+    "wall_ns": 639820871
+   },
+   "position": 7,
+   "process_wall_ns": 1411597768,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 262570714,
+     "wall_ns_total": 262604203,
+     "wall_us": [74, 324, 553, 429, 535, 680, 785, 906, 1030, 1152, 1253, 1355, 1540, 1734, 1783, 1872, 2086, 2151, 2403, 2601, 2432, 2518, 2832, 3485, 3063, 3188, 3223, 3442, 3632, 3567, 3958, 4747, 4921, 4950, 5842, 6349, 5993, 4701, 4837, 5001, 5024, 5008, 5253, 6031, 5129, 5392, 5805, 5996, 6170, 6056, 6208, 6428, 6532, 6568, 6829, 6888, 7022, 6871, 7946, 7503, 7232, 7422, 7740, 7626]
+    },
+    "productive": {
+     "cpu_ns_total": 280475317,
+     "wall_ns_total": 280721058,
+     "wall_us": [139, 740, 891, 720, 749, 881, 997, 1065, 1183, 1380, 1528, 1569, 1612, 1863, 2022, 2188, 2272, 2434, 2426, 2954, 3636, 2812, 2895, 3938, 4590, 3279, 3440, 3524, 3806, 3802, 3847, 5871, 4942, 5992, 5333, 6483, 6802, 6570, 5181, 5254, 5203, 5365, 5537, 5553, 5442, 5571, 6007, 6306, 6113, 6579, 6455, 6687, 6809, 6808, 7049, 7121, 7274, 7131, 7341, 7570, 7490, 7902, 7734, 8062]
+    }
+   },
+   "reaper": "reap",
+   "round": 1,
+   "variant": "A"
+  },
+  {
+   "chains": "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/main-0b8c0fa/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 3450787,
+    "in_bytes": 262159,
+    "out_bytes": 90655,
+    "wall_ns": 3448228
+   },
+   "fixture_bytes_written": 8259907,
+   "maxrss_kb": 25192,
+   "n": 64,
+   "persist": {
+    "cpu_ns": 405839990,
+    "fixture_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "fsyncs": 648,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 1580670,
+     "read_bytes": 0,
+     "syscr": 976,
+     "syscw": 584,
+     "wchar": 916040,
+     "write_bytes": 1662976
+    },
+    "logical_bytes": 1509699,
+    "logical_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "members": 387,
+    "ns": {
+     "copy2": 87605856,
+     "fsync": 228564497,
+     "gzip": 2642019,
+     "lock_hold": 792501,
+     "lock_wait": 4641,
+     "rmtree": 4224869
+    },
+    "physical_bytes": 915871,
+    "returned_bytes": 915871,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 142,
+     "nivcsw": 1,
+     "nvcsw": 2134,
+     "oublock": 3248,
+     "sys_ns": 281565000,
+     "user_ns": 124388000
+    },
+    "wall_ns": 605696743
+   },
+   "position": 8,
+   "process_wall_ns": 1323706147,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 253302909,
+     "wall_ns_total": 253618439,
+     "wall_us": [57, 236, 331, 426, 578, 662, 771, 930, 1111, 1283, 1346, 1496, 1519, 1647, 1800, 2097, 2045, 2137, 2075, 2406, 2510, 2470, 2584, 2719, 2936, 3232, 3326, 3356, 3391, 3617, 3591, 3872, 4151, 4179, 4242, 4317, 4509, 4689, 4785, 4797, 5213, 5194, 5483, 6310, 5517, 5708, 5832, 5644, 5830, 6032, 6239, 6091, 6015, 6378, 7126, 6884, 7135, 6947, 7877, 7483, 7571, 7476, 7758, 7648]
+    },
+    "productive": {
+     "cpu_ns_total": 266645545,
+     "wall_ns_total": 267134147,
+     "wall_us": [82, 513, 494, 685, 760, 886, 1036, 1173, 1270, 1356, 1485, 1767, 1880, 2051, 1973, 2119, 2249, 2250, 2487, 2490, 3539, 2791, 2783, 2956, 3091, 3383, 3493, 3625, 3645, 3754, 3880, 4002, 4340, 4429, 4535, 4498, 4770, 4850, 4917, 5302, 5199, 5751, 5447, 5616, 5744, 5761, 6155, 6092, 5942, 6449, 6667, 6337, 6409, 6506, 6772, 6819, 7258, 7476, 7541, 7846, 7818, 7815, 8048, 8078]
+    }
+   },
+   "reaper": "reap",
+   "round": 2,
+   "variant": "A"
+  },
+  {
+   "chains": "/home/user/mtg-kernel/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 3842109,
+    "in_bytes": 262159,
+    "out_bytes": 90655,
+    "wall_ns": 3839196
+   },
+   "fixture_bytes_written": 8259907,
+   "maxrss_kb": 24736,
+   "n": 64,
+   "persist": {
+    "cpu_ns": 472322282,
+    "fixture_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "fsyncs": 648,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 1580670,
+     "read_bytes": 0,
+     "syscr": 976,
+     "syscw": 584,
+     "wchar": 916040,
+     "write_bytes": 1658880
+    },
+    "logical_bytes": 1509699,
+    "logical_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "members": 387,
+    "ns": {
+     "copy2": 99308219,
+     "fsync": 264213140,
+     "gzip": 2785794,
+     "lock_hold": 1037587,
+     "lock_wait": 4490,
+     "rmtree": 4683811
+    },
+    "physical_bytes": 915871,
+    "returned_bytes": 915871,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 138,
+     "nivcsw": 4,
+     "nvcsw": 2136,
+     "oublock": 3240,
+     "sys_ns": 343213000,
+     "user_ns": 129233000
+    },
+    "wall_ns": 699808367
+   },
+   "position": 9,
+   "process_wall_ns": 930223384,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 1353339,
+     "wall_ns_total": 1316891,
+     "wall_us": [16, 23, 21, 22, 18, 21, 19, 20, 22, 18, 18, 19, 20, 20, 20, 19, 18, 20, 18, 18, 19, 21, 20, 23, 17, 19, 18, 18, 20, 17, 19, 34, 21, 22, 20, 18, 34, 22, 22, 25, 29, 22, 20, 18, 18, 21, 17, 21, 20, 29, 17, 17, 19, 19, 19, 19, 21, 18, 18, 18, 22, 32, 26, 20]
+    },
+    "productive": {
+     "cpu_ns_total": 24815342,
+     "wall_ns_total": 25183886,
+     "wall_us": [49, 530, 415, 415, 350, 411, 402, 390, 401, 342, 362, 404, 393, 397, 407, 351, 364, 416, 344, 361, 356, 423, 392, 383, 339, 344, 343, 377, 342, 329, 363, 628, 389, 469, 423, 347, 390, 461, 412, 509, 431, 419, 353, 356, 358, 391, 329, 337, 378, 485, 340, 336, 351, 365, 407, 347, 411, 340, 333, 351, 417, 722, 682, 420]
+    }
+   },
+   "reaper": "Reaper.tick",
+   "round": 2,
+   "variant": "B"
+  },
+  {
+   "chains": "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/main-0b8c0fa/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 11331376,
+    "in_bytes": 1048742,
+    "out_bytes": 360082,
+    "wall_ns": 11352529
+   },
+   "fixture_bytes_written": 32938274,
+   "maxrss_kb": 29228,
+   "n": 256,
+   "persist": {
+    "cpu_ns": 1511225736,
+    "fixture_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "fsyncs": 2568,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 5811650,
+     "read_bytes": 0,
+     "syscr": 3856,
+     "syscw": 2312,
+     "wchar": 3417119,
+     "write_bytes": 7122944
+    },
+    "logical_bytes": 5740834,
+    "logical_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "members": 1539,
+    "ns": {
+     "copy2": 319058001,
+     "fsync": 863665173,
+     "gzip": 8195269,
+     "lock_hold": 1076717,
+     "lock_wait": 4415,
+     "rmtree": 16685367
+    },
+    "physical_bytes": 3416948,
+    "returned_bytes": 3416948,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 493,
+     "nivcsw": 2,
+     "nvcsw": 8490,
+     "oublock": 13912,
+     "sys_ns": 1023653000,
+     "user_ns": 487742000
+    },
+    "wall_ns": 2238249078
+   },
+   "position": 10,
+   "process_wall_ns": 11613923110,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 4306090421,
+     "wall_ns_total": 4338636838,
+     "wall_us": [45, 234, 311, 416, 557, 700, 826, 1089, 1114, 1188, 1291, 1645, 1486, 1748, 1741, 1733, 1864, 1982, 2142, 2552, 2748, 2697, 2945, 3177, 3159, 3360, 3694, 3585, 3751, 4244, 4135, 4119, 4159, 4417, 4138, 4560, 5217, 4867, 5121, 5377, 5478, 5473, 5555, 6115, 5824, 5654, 6071, 5986, 6545, 6400, 6542, 8089, 10891, 10136, 10877, 11324, 7844, 7734, 7591, 7703, 8215, 7749, 8211, 7865, 11918, 8314, 8396, 8562, 9191, 9128, 8994, 8664, 8600, 8893, 9290, 9537, 9655, 8695, 9557, 10076, 11096, 10260, 10428, 10707, 10831, 10975, 10892, 11128, 11250, 11293, 11398, 11725, 11767, 12051, 12019, 12310, 12575, 12488, 12110, 13139, 12757, 12969, 13279, 13406, 13574, 14009, 13512, 13954, 14558, 14277, 13909, 17653, 18721, 14432, 14610, 17203, 14102, 14634, 14205, 15322, 14824, 14996, 14745, 14628, 14896, 15876, 15480, 15553, 15673, 16217, 16741, 16056, 15763, 17177, 16349, 16971, 16643, 16818, 17440, 17276, 16826, 17595, 17651, 17810, 17992, 18625, 19239, 19684, 18280, 25967, 19153, 18748, 20165, 19388, 19394, 21024, 24845, 27316, 19983, 19453, 17664, 20182, 19861, 21448, 21020, 20039, 20182, 20025, 21042, 20217, 19582, 20939, 21631, 22480, 22175, 22135, 23416, 23222, 35129, 33506, 22468, 22003, 22644, 23273, 30876, 23476, 23580, 25709, 24574, 24460, 24027, 24451, 25406, 26395, 25531, 26050, 24249, 25771, 25416, 31052, 25824, 25660, 27620, 26291, 27048, 24665, 25702, 25757, 24890, 25321, 26081, 26030, 25598, 26400, 26512, 26917, 27300, 28696, 27665, 28584, 26441, 29513, 29479, 29927, 28656, 27696, 28181, 27328, 30025, 28121, 28726, 34223, 33438, 53976, 34455, 35028, 31878, 42560, 35265, 31609, 32548, 34050, 34851, 34282, 35566, 33074, 34647, 32884, 33570, 33517, 33445, 33185, 33086, 32732, 37162, 35392]
+    },
+    "productive": {
+     "cpu_ns_total": 4355285291,
+     "wall_ns_total": 4382059032,
+     "wall_us": [95, 543, 641, 634, 760, 898, 1226, 1444, 1578, 1482, 1590, 1606, 1658, 1743, 2058, 2012, 1905, 2132, 2385, 2663, 3020, 3038, 3075, 3373, 3790, 3464, 3751, 3849, 4564, 4114, 4129, 4392, 4373, 4566, 4526, 4468, 4853, 5092, 5357, 5743, 5506, 5938, 5412, 6069, 6160, 6172, 6346, 6684, 7023, 6636, 7104, 8883, 10773, 11328, 10691, 11747, 11665, 7673, 7725, 7786, 7935, 8042, 8180, 8426, 9602, 9066, 8968, 8635, 9639, 9670, 9001, 9720, 8612, 9859, 9421, 9698, 9959, 9691, 9453, 10455, 10279, 10866, 10663, 10734, 10939, 11450, 11340, 11403, 11559, 11546, 11633, 11866, 12010, 12223, 12620, 12541, 12522, 13227, 12917, 13055, 13893, 13118, 13949, 13624, 13757, 13850, 13855, 14048, 14154, 15242, 15205, 14757, 20838, 18369, 16507, 15646, 14647, 14387, 14643, 14518, 15034, 14459, 15593, 15413, 14889, 15562, 16033, 16260, 15812, 15965, 16477, 16209, 16788, 17235, 16875, 17141, 17119, 16941, 18121, 17448, 17799, 17257, 18085, 17776, 18504, 18422, 19393, 20200, 19703, 20409, 19217, 19566, 19398, 21359, 20118, 18740, 18727, 31205, 21122, 20434, 17818, 20198, 20676, 21319, 21881, 20428, 20704, 21473, 22053, 20661, 18926, 21060, 21197, 22173, 22326, 22498, 23953, 23128, 27704, 33677, 22504, 22404, 22937, 23107, 23713, 26988, 23319, 23954, 25160, 24626, 24810, 24808, 29250, 25271, 25229, 26459, 26425, 26310, 25400, 25721, 25619, 26201, 25783, 26869, 26263, 25081, 26045, 26177, 25781, 25507, 25393, 25157, 26689, 26933, 26375, 27528, 27558, 27872, 28869, 29498, 27555, 28678, 29121, 30774, 27486, 28108, 29124, 26238, 28748, 28668, 29642, 29424, 33670, 36938, 37234, 35252, 31188, 33002, 54010, 31590, 31324, 34300, 49113, 34359, 36324, 35931, 32788, 33447, 34219, 31493, 34001, 33581, 34364, 32248, 32328, 41195]
+    }
+   },
+   "reaper": "reap",
+   "round": 2,
+   "variant": "A"
+  },
+  {
+   "chains": "/home/user/mtg-kernel/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 10596089,
+    "in_bytes": 1048742,
+    "out_bytes": 360082,
+    "wall_ns": 10593174
+   },
+   "fixture_bytes_written": 32938274,
+   "maxrss_kb": 28976,
+   "n": 256,
+   "persist": {
+    "cpu_ns": 1216670100,
+    "fixture_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "fsyncs": 2568,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 5811650,
+     "read_bytes": 0,
+     "syscr": 3856,
+     "syscw": 2312,
+     "wchar": 3417119,
+     "write_bytes": 8409088
+    },
+    "logical_bytes": 5740834,
+    "logical_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "members": 1539,
+    "ns": {
+     "copy2": 223303613,
+     "fsync": 892743138,
+     "gzip": 8089186,
+     "lock_hold": 747370,
+     "lock_wait": 5404,
+     "rmtree": 24948957
+    },
+    "physical_bytes": 3416948,
+    "returned_bytes": 3416948,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 559,
+     "nivcsw": 3,
+     "nvcsw": 9166,
+     "oublock": 16424,
+     "sys_ns": 779882999,
+     "user_ns": 436912000
+    },
+    "wall_ns": 1969352204
+   },
+   "position": 11,
+   "process_wall_ns": 2700834194,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 5919657,
+     "wall_ns_total": 6063067,
+     "wall_us": [17, 23, 23, 23, 21, 33, 24, 22, 33, 25, 22, 19, 23, 20, 25, 20, 20, 20, 21, 17, 21, 30, 18, 32, 27, 39, 20, 21, 18, 17, 19, 38, 18, 18, 19, 19, 18, 19, 20, 21, 19, 19, 19, 18, 17, 36, 20, 19, 17, 19, 19, 19, 18, 18, 18, 22, 17, 18, 19, 35, 20, 18, 33, 19, 19, 19, 20, 18, 20, 19, 19, 24, 204, 20, 27, 22, 18, 19, 19, 62, 22, 19, 39, 42, 37, 33, 37, 80, 38, 28, 19, 20, 18, 35, 19, 18, 18, 42, 19, 19, 17, 20, 20, 18, 22, 20, 22, 20, 20, 20, 19, 20, 19, 20, 18, 18, 19, 20, 18, 23, 19, 20, 20, 23, 22, 21, 20, 18, 17, 26, 20, 21, 29, 21, 22, 19, 24, 19, 20, 19, 21, 21, 18, 20, 21, 18, 19, 20, 20, 18, 26, 18, 22, 23, 19, 17, 20, 20, 17, 20, 19, 17, 18, 18, 18, 18, 19, 17, 17, 18, 18, 20, 25, 32, 25, 28, 21, 19, 20, 26, 29, 21, 21, 25, 23, 47, 19, 217, 31, 18, 20, 17, 17, 28, 26, 18, 17, 30, 19, 34, 21, 20, 21, 27, 20, 18, 18, 18, 17, 38, 20, 18, 22, 17, 22, 19, 24, 20, 21, 18, 18, 19, 22, 23, 18, 18, 20, 22, 21, 18, 18, 21, 20, 49, 21, 19, 19, 18, 19, 48, 32, 41, 21, 20, 20, 18, 22, 19, 18, 17, 19, 18, 16, 18, 21, 18]
+    },
+    "productive": {
+     "cpu_ns_total": 101623267,
+     "wall_ns_total": 104271769,
+     "wall_us": [55, 494, 455, 465, 412, 433, 438, 452, 478, 503, 464, 373, 398, 384, 448, 372, 383, 404, 365, 376, 379, 410, 375, 401, 391, 487, 417, 381, 343, 353, 375, 342, 340, 364, 371, 358, 357, 366, 406, 373, 388, 346, 378, 342, 344, 596, 390, 374, 349, 342, 352, 383, 337, 347, 368, 424, 364, 345, 388, 339, 383, 366, 486, 372, 368, 393, 391, 348, 346, 362, 388, 439, 424, 390, 573, 388, 370, 394, 344, 410, 447, 360, 630, 1049, 645, 555, 771, 580, 557, 381, 382, 399, 349, 386, 355, 389, 373, 364, 366, 357, 344, 396, 443, 351, 452, 392, 429, 396, 395, 393, 339, 387, 427, 386, 365, 347, 386, 392, 345, 377, 379, 360, 345, 347, 384, 379, 397, 357, 344, 397, 396, 389, 466, 373, 357, 372, 385, 358, 365, 399, 379, 475, 344, 374, 347, 320, 359, 395, 382, 379, 396, 372, 425, 361, 333, 338, 387, 388, 339, 426, 415, 341, 344, 365, 406, 331, 367, 339, 325, 381, 368, 411, 356, 945, 654, 1127, 375, 375, 376, 581, 884, 425, 374, 419, 427, 366, 363, 826, 874, 360, 393, 334, 329, 635, 406, 393, 325, 437, 364, 483, 417, 357, 407, 400, 397, 345, 360, 329, 330, 609, 371, 361, 398, 332, 439, 356, 451, 418, 354, 352, 333, 389, 423, 481, 362, 347, 384, 455, 396, 349, 358, 388, 412, 391, 400, 332, 370, 405, 368, 844, 474, 552, 381, 348, 381, 346, 340, 362, 351, 340, 362, 349, 335, 361, 376, 368]
+    }
+   },
+   "reaper": "Reaper.tick",
+   "round": 2,
+   "variant": "B"
+  },
+  {
+   "chains": "/home/user/mtg-kernel/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 10255383,
+    "in_bytes": 1048742,
+    "out_bytes": 360082,
+    "wall_ns": 10251782
+   },
+   "fixture_bytes_written": 32938274,
+   "maxrss_kb": 28944,
+   "n": 256,
+   "persist": {
+    "cpu_ns": 1047632487,
+    "fixture_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "fsyncs": 2568,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 5811650,
+     "read_bytes": 0,
+     "syscr": 3856,
+     "syscw": 2312,
+     "wchar": 3417119,
+     "write_bytes": 11956224
+    },
+    "logical_bytes": 5740834,
+    "logical_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "members": 1539,
+    "ns": {
+     "copy2": 180732596,
+     "fsync": 839375828,
+     "gzip": 7822490,
+     "lock_hold": 777396,
+     "lock_wait": 6138,
+     "rmtree": 16641921
+    },
+    "physical_bytes": 3416948,
+    "returned_bytes": 3416948,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 563,
+     "nivcsw": 8,
+     "nvcsw": 9223,
+     "oublock": 23352,
+     "sys_ns": 702980000,
+     "user_ns": 344764000
+    },
+    "wall_ns": 1751556664
+   },
+   "position": 12,
+   "process_wall_ns": 2414027795,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 5228270,
+     "wall_ns_total": 5663738,
+     "wall_us": [44, 30, 29, 639, 19, 33, 30, 18, 15, 19, 16, 16, 16, 17, 15, 17, 19, 19, 15, 17, 16, 15, 18, 15, 23, 16, 16, 16, 19, 16, 18, 17, 21, 19, 18, 17, 17, 16, 18, 16, 18, 16, 16, 18, 17, 15, 18, 15, 19, 14, 15, 17, 16, 17, 19, 19, 22, 19, 17, 18, 19, 18, 17, 19, 26, 27, 20, 19, 17, 19, 20, 17, 19, 17, 20, 18, 17, 16, 18, 17, 20, 18, 18, 29, 33, 18, 19, 16, 18, 20, 17, 18, 17, 18, 19, 16, 17, 17, 16, 16, 17, 15, 18, 16, 16, 16, 20, 17, 17, 18, 16, 16, 16, 19, 80, 16, 16, 18, 18, 16, 20, 16, 17, 17, 18, 18, 16, 18, 18, 20, 17, 16, 18, 16, 19, 18, 17, 18, 25, 89, 19, 41, 18, 17, 18, 25, 48, 19, 19, 17, 18, 19, 21, 27, 21, 19, 19, 26, 19, 18, 26, 19, 21, 19, 19, 20, 19, 18, 18, 19, 18, 17, 25, 19, 18, 18, 18, 20, 19, 19, 18, 18, 18, 19, 17, 19, 19, 17, 19, 18, 17, 19, 18, 17, 19, 19, 18, 18, 21, 25, 19, 18, 18, 21, 19, 36, 17, 19, 20, 18, 19, 18, 18, 16, 19, 18, 17, 19, 18, 17, 19, 19, 19, 19, 19, 18, 17, 19, 18, 24, 19, 21, 30, 19, 20, 38, 19, 20, 18, 19, 17, 18, 17, 28, 18, 20, 18, 17, 20, 17, 22, 34, 22, 27, 20, 19]
+    },
+    "productive": {
+     "cpu_ns_total": 91310151,
+     "wall_ns_total": 94932596,
+     "wall_us": [48, 1140, 544, 520, 371, 928, 1553, 379, 303, 317, 315, 322, 307, 342, 300, 352, 424, 347, 293, 304, 319, 313, 323, 296, 314, 303, 293, 300, 410, 323, 350, 326, 373, 380, 330, 346, 322, 330, 362, 305, 368, 291, 316, 388, 314, 333, 332, 283, 287, 284, 289, 327, 313, 346, 416, 363, 348, 372, 328, 343, 368, 359, 337, 328, 527, 509, 374, 385, 344, 379, 395, 334, 373, 326, 398, 360, 329, 348, 337, 322, 407, 344, 345, 686, 1008, 377, 365, 320, 396, 362, 365, 372, 324, 316, 357, 310, 337, 311, 339, 317, 338, 326, 325, 302, 333, 294, 333, 329, 330, 395, 308, 312, 312, 340, 312, 331, 299, 356, 326, 300, 311, 305, 355, 319, 340, 331, 318, 356, 331, 354, 336, 315, 354, 313, 353, 331, 322, 352, 449, 335, 368, 346, 323, 351, 381, 363, 347, 349, 359, 338, 382, 359, 424, 667, 361, 338, 394, 336, 330, 353, 463, 387, 390, 352, 370, 374, 342, 341, 353, 375, 324, 327, 506, 357, 371, 345, 337, 366, 370, 338, 333, 330, 371, 383, 328, 372, 362, 345, 361, 344, 325, 382, 334, 334, 397, 433, 328, 379, 421, 337, 397, 372, 391, 358, 362, 343, 342, 373, 393, 442, 336, 367, 346, 325, 372, 342, 323, 369, 328, 334, 361, 381, 377, 435, 358, 340, 340, 372, 375, 570, 353, 436, 497, 371, 395, 656, 366, 368, 345, 323, 346, 372, 325, 497, 347, 407, 354, 315, 374, 324, 432, 700, 334, 465, 361, 347]
+    }
+   },
+   "reaper": "Reaper.tick",
+   "round": 3,
+   "variant": "B"
+  },
+  {
+   "chains": "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/main-0b8c0fa/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 10798756,
+    "in_bytes": 1048742,
+    "out_bytes": 360082,
+    "wall_ns": 10794550
+   },
+   "fixture_bytes_written": 32938274,
+   "maxrss_kb": 29420,
+   "n": 256,
+   "persist": {
+    "cpu_ns": 1277425566,
+    "fixture_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "fsyncs": 2568,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 5811650,
+     "read_bytes": 0,
+     "syscr": 3856,
+     "syscw": 2312,
+     "wchar": 3417119,
+     "write_bytes": 8605696
+    },
+    "logical_bytes": 5740834,
+    "logical_digest": "e32b5ca8b30a12660447cc7108e46d714d84cb4da7ae28687e8b867808a5d322",
+    "members": 1539,
+    "ns": {
+     "copy2": 233273390,
+     "fsync": 1000162534,
+     "gzip": 8902595,
+     "lock_hold": 624784,
+     "lock_wait": 6042,
+     "rmtree": 16236431
+    },
+    "physical_bytes": 3416948,
+    "returned_bytes": 3416948,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 493,
+     "nivcsw": 1,
+     "nvcsw": 9427,
+     "oublock": 16808,
+     "sys_ns": 813301000,
+     "user_ns": 464257000
+    },
+    "wall_ns": 2115915514
+   },
+   "position": 13,
+   "process_wall_ns": 11350792685,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 4230957205,
+     "wall_ns_total": 4249020449,
+     "wall_us": [51, 185, 319, 441, 578, 719, 815, 1012, 1051, 1162, 1389, 1503, 1571, 1685, 1881, 1868, 2106, 2152, 2384, 2400, 2772, 2721, 2926, 2982, 3202, 3334, 3332, 3818, 3557, 3786, 3839, 3987, 4112, 3991, 4357, 4445, 4597, 4929, 4976, 5081, 5131, 5243, 5385, 6148, 5803, 5788, 5788, 5885, 6001, 6230, 6220, 6484, 6637, 6791, 6810, 6783, 9205, 10990, 7830, 7709, 7689, 7724, 7600, 8103, 7685, 7853, 8769, 9320, 13643, 8708, 9548, 8999, 9120, 9093, 9057, 8940, 9446, 9087, 9549, 9978, 10402, 9941, 9924, 10319, 11029, 10499, 10935, 11434, 10964, 11024, 10782, 11009, 10679, 11424, 11666, 10916, 11925, 12110, 12698, 12964, 12882, 13203, 12382, 13316, 13388, 12920, 13234, 14151, 13788, 13727, 20545, 14754, 14284, 16271, 15588, 13747, 14975, 15255, 14799, 16720, 15346, 16839, 15876, 16130, 15521, 17162, 15804, 16269, 15841, 16098, 16514, 16165, 17634, 19330, 15915, 14619, 22243, 17863, 19769, 18112, 17154, 19528, 19077, 17469, 16615, 17126, 20236, 17229, 17254, 18416, 21117, 18948, 17781, 17891, 18475, 20728, 18713, 18335, 18183, 18337, 21392, 19518, 19680, 19439, 21024, 19167, 20895, 19230, 20890, 21816, 20297, 21137, 21300, 20366, 20639, 20772, 20905, 20557, 21468, 20851, 23496, 20984, 22314, 23363, 22864, 23483, 23077, 23355, 23168, 23671, 24512, 24056, 23091, 23266, 23647, 25555, 24980, 25438, 26410, 27021, 26207, 41981, 31195, 26328, 26770, 27116, 26986, 28095, 26755, 27562, 26352, 27119, 26561, 26316, 26828, 26240, 27990, 27655, 28131, 27867, 29082, 28468, 28520, 29085, 28652, 29096, 29038, 29212, 35339, 45978, 46023, 33353, 29874, 31850, 30284, 32629, 30386, 31312, 32568, 33387, 33660, 39292, 33755, 33009, 30611, 31505, 31442, 33053, 32890, 32202, 31351, 31740, 30915, 31264, 31390, 32637]
+    },
+    "productive": {
+     "cpu_ns_total": 4348679769,
+     "wall_ns_total": 4373388214,
+     "wall_us": [80, 444, 509, 579, 826, 958, 1142, 1126, 1235, 1383, 1617, 1781, 1893, 2012, 2102, 2225, 2297, 2816, 2592, 2699, 3130, 2899, 3146, 3381, 3325, 3558, 3571, 3783, 3788, 3901, 3949, 4123, 4506, 4383, 4347, 4719, 4954, 4975, 5302, 5623, 5654, 5583, 5636, 5658, 5673, 5988, 5891, 5953, 6371, 6396, 6368, 6858, 7540, 7015, 7076, 7028, 7843, 11861, 7804, 8167, 7944, 7914, 7969, 8147, 8352, 8060, 9089, 8529, 13412, 10895, 9037, 9240, 9361, 9353, 9258, 9489, 9489, 9762, 9404, 10114, 10162, 10624, 10737, 10954, 10617, 10546, 10738, 11212, 11255, 10999, 11627, 11306, 11340, 11429, 11735, 11793, 17737, 12113, 13026, 13850, 13391, 13226, 14956, 13017, 13606, 13937, 13518, 14051, 13984, 14201, 19469, 17627, 14612, 14325, 17819, 14652, 14245, 16479, 15538, 15390, 16292, 17365, 18077, 16503, 17855, 16069, 16449, 16446, 15721, 20566, 15703, 16796, 18826, 16877, 17024, 16493, 16997, 20013, 18500, 18666, 18593, 17848, 16620, 18106, 18433, 17578, 19363, 17133, 18493, 21118, 18280, 19034, 19751, 18745, 21684, 17265, 18227, 19978, 19167, 19905, 19039, 20346, 20103, 20542, 20836, 19210, 20674, 21536, 19999, 22246, 23727, 20374, 20850, 21671, 21386, 21696, 29566, 22752, 22911, 21435, 23272, 22738, 19630, 22281, 24167, 24980, 23456, 23593, 26300, 23573, 24246, 27508, 23439, 24287, 24180, 26532, 25308, 25505, 25823, 31576, 26346, 28788, 37789, 27472, 26791, 26976, 28263, 27393, 27008, 34651, 26048, 27794, 27822, 26816, 26548, 26653, 44107, 28083, 28320, 28833, 28452, 28861, 28552, 28541, 29584, 29573, 30972, 29966, 29966, 45142, 45373, 46448, 31945, 30785, 30683, 30874, 31286, 31840, 33514, 33582, 33281, 33779, 34200, 36590, 31184, 31781, 30647, 35344, 32143, 32452, 31252, 31622, 33047, 31219, 31275, 34573]
+    }
+   },
+   "reaper": "reap",
+   "round": 3,
+   "variant": "A"
+  },
+  {
+   "chains": "/home/user/mtg-kernel/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 3019877,
+    "in_bytes": 262159,
+    "out_bytes": 90655,
+    "wall_ns": 3017187
+   },
+   "fixture_bytes_written": 8259907,
+   "maxrss_kb": 24612,
+   "n": 64,
+   "persist": {
+    "cpu_ns": 408381275,
+    "fixture_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "fsyncs": 648,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 1580670,
+     "read_bytes": 0,
+     "syscr": 976,
+     "syscw": 584,
+     "wchar": 916040,
+     "write_bytes": 1675264
+    },
+    "logical_bytes": 1509699,
+    "logical_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "members": 387,
+    "ns": {
+     "copy2": 81416304,
+     "fsync": 224455876,
+     "gzip": 2733365,
+     "lock_hold": 442649,
+     "lock_wait": 4256,
+     "rmtree": 4864670
+    },
+    "physical_bytes": 915871,
+    "returned_bytes": 915871,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 138,
+     "nivcsw": 2,
+     "nvcsw": 2176,
+     "oublock": 3272,
+     "sys_ns": 241172001,
+     "user_ns": 167306000
+    },
+    "wall_ns": 591051175
+   },
+   "position": 14,
+   "process_wall_ns": 839378052,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 1578433,
+     "wall_ns_total": 1539455,
+     "wall_us": [17, 22, 18, 21, 18, 22, 22, 23, 22, 60, 24, 21, 26, 21, 41, 33, 21, 29, 30, 21, 19, 17, 20, 30, 38, 35, 35, 69, 21, 21, 22, 33, 30, 25, 21, 19, 18, 18, 20, 21, 17, 19, 18, 19, 17, 20, 19, 17, 19, 21, 18, 20, 19, 19, 20, 18, 19, 18, 19, 52, 20, 26, 22, 20]
+    },
+    "productive": {
+     "cpu_ns_total": 26214242,
+     "wall_ns_total": 26296007,
+     "wall_us": [51, 486, 353, 374, 409, 410, 494, 462, 451, 489, 522, 356, 409, 416, 620, 629, 375, 394, 508, 374, 385, 346, 383, 460, 485, 652, 589, 557, 380, 375, 383, 560, 558, 537, 422, 362, 342, 371, 397, 335, 333, 365, 353, 342, 339, 397, 336, 335, 372, 362, 343, 334, 373, 350, 380, 374, 359, 344, 339, 408, 384, 521, 428, 369]
+    }
+   },
+   "reaper": "Reaper.tick",
+   "round": 3,
+   "variant": "B"
+  },
+  {
+   "chains": "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/main-0b8c0fa/tools/w5/chains.py",
+   "compress_config": {
+    "cpu_ns": 3126446,
+    "in_bytes": 262159,
+    "out_bytes": 90655,
+    "wall_ns": 3123785
+   },
+   "fixture_bytes_written": 8259907,
+   "maxrss_kb": 25176,
+   "n": 64,
+   "persist": {
+    "cpu_ns": 424449820,
+    "fixture_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "fsyncs": 648,
+    "identical": true,
+    "io": {
+     "cancelled_write_bytes": 0,
+     "rchar": 1580670,
+     "read_bytes": 0,
+     "syscr": 976,
+     "syscw": 584,
+     "wchar": 916040,
+     "write_bytes": 1728512
+    },
+    "logical_bytes": 1509699,
+    "logical_digest": "c370e50c56b9de2e6ae2d7de48702797b40599fa263d4ea0fd34234783bad865",
+    "members": 387,
+    "ns": {
+     "copy2": 92117608,
+     "fsync": 242337534,
+     "gzip": 2707013,
+     "lock_hold": 764049,
+     "lock_wait": 3878,
+     "rmtree": 4576396
+    },
+    "physical_bytes": 915871,
+    "returned_bytes": 915871,
+    "rusage": {
+     "inblock": 0,
+     "minflt": 142,
+     "nivcsw": 3,
+     "nvcsw": 2135,
+     "oublock": 3376,
+     "sys_ns": 290890000,
+     "user_ns": 133648001
+    },
+    "wall_ns": 630964601
+   },
+   "position": 15,
+   "process_wall_ns": 1389713829,
+   "reap": {
+    "idle": {
+     "cpu_ns_total": 258949834,
+     "wall_ns_total": 262999667,
+     "wall_us": [47, 228, 336, 615, 556, 780, 928, 995, 1232, 1346, 2258, 1431, 1599, 1717, 1717, 2041, 2027, 2240, 2376, 2538, 3919, 2773, 2832, 2812, 2979, 3145, 3323, 3525, 3558, 3687, 3828, 3954, 4015, 4165, 4337, 4768, 4621, 4863, 4993, 5073, 4892, 5013, 5134, 5987, 5298, 5657, 5543, 5866, 6260, 6087, 6178, 7337, 6551, 6599, 6866, 6974, 7154, 7236, 8120, 7378, 7782, 7332, 9649, 7929]
+    },
+    "productive": {
+     "cpu_ns_total": 274196194,
+     "wall_ns_total": 283562863,
+     "wall_us": [124, 463, 506, 644, 884, 883, 1142, 1165, 1538, 1484, 1762, 1844, 2028, 2456, 2113, 2132, 2292, 2369, 2554, 2808, 10966, 3124, 3363, 3159, 3259, 4568, 3483, 3671, 3915, 4058, 4094, 4224, 4225, 4415, 4706, 4721, 4746, 4998, 5207, 5209, 5289, 5186, 5377, 5325, 5436, 5906, 5755, 6262, 6442, 6310, 6524, 7143, 7674, 6741, 7105, 7166, 7285, 7325, 7294, 7485, 7549, 7931, 7840, 9913]
+    }
+   },
+   "reaper": "reap",
+   "round": 3,
+   "variant": "A"
+  }
+ ],
+ "schema": "w5-scratch-bench/v1",
+ "seed": 601,
+ "settle": {},
+ "sizes": [64, 256],
+ "summary": {
+  "A": {
+   "256": {
+    "counts": {
+     "deterministic": true,
+     "idle_tick_ops_vs_reaped": {
+      "a": 6.0154426070039335,
+      "b": 42.99981760700389,
+      "max_abs_residual": 1.9689323929960665
+     },
+     "last_idle_tick": {
+      "entry": 4846,
+      "in_flight": 0,
+      "listing": 258,
+      "lstat": 1530,
+      "new": 0,
+      "newest": 1,
+      "open": 0,
+      "other": 0,
+      "reaped": 10710,
+      "scandir": 2041,
+      "stat": 2552,
+      "unlink": 0
+     },
+     "last_productive_tick": {
+      "entry": 4857,
+      "in_flight": 0,
+      "listing": 258,
+      "lstat": 1541,
+      "new": 86,
+      "newest": 1,
+      "open": 0,
+      "other": 0,
+      "reaped": 10668,
+      "scandir": 2041,
+      "stat": 2563,
+      "unlink": 11
+     },
+     "persist_fsyncs": {
+      "dir": 1028,
+      "file": 1540
+     },
+     "persist_identical": true,
+     "persist_logical_bytes": 5740834,
+     "persist_members": 1539,
+     "persist_physical_bytes": 3416948,
+     "segment_totals": {
+      "idle": {
+       "entry": 620671,
+       "in_flight": 255,
+       "listing": 33663,
+       "lstat": 195840,
+       "new": 0,
+       "newest": 256,
+       "open": 0,
+       "other": 0,
+       "reaped": 1370880,
+       "scandir": 261376,
+       "stat": 327167,
+       "unlink": 0
+      },
+      "productive": {
+       "entry": 623476,
+       "in_flight": 255,
+       "listing": 33663,
+       "lstat": 198645,
+       "new": 21930,
+       "newest": 256,
+       "open": 0,
+       "other": 0,
+       "reaped": 1360170,
+       "scandir": 261376,
+       "stat": 329972,
+       "unlink": 2805
+      }
+     }
+    },
+    "time": {
+     "compress_config_wall_ns": {
+      "max": 11352529,
+      "mean": 10927840.0,
+      "min": 10742524,
+      "n": 4,
+      "range_over_mean": 0.055821186986632305,
+      "sd": 285027.8311358384
+     },
+     "persist_copy2_ns": {
+      "max": 319058001,
+      "mean": 236771913.25,
+      "min": 98077877,
+      "n": 4,
+      "range_over_mean": 0.9333037899924982,
+      "sd": 99344620.64111532
+     },
+     "persist_cpu_ns": {
+      "max": 1511225736,
+      "mean": 1254575208.0,
+      "min": 785252221,
+      "n": 4,
+      "range_over_mean": 0.5786608171201801,
+      "sd": 327967543.3830119
+     },
+     "persist_fsync_ns": {
+      "max": 1000162534,
+      "mean": 894533534.0,
+      "min": 840869268,
+      "n": 4,
+      "range_over_mean": 0.17807411342949162,
+      "sd": 71729240.32057454
+     },
+     "persist_gzip_ns": {
+      "max": 8973084,
+      "mean": 8566404.75,
+      "min": 8194671,
+      "n": 4,
+      "range_over_mean": 0.09086810893449787,
+      "sd": 429860.2960624727
+     },
+     "persist_lock_hold_ns": {
+      "max": 1076717,
+      "mean": 745927.0,
+      "min": 558984,
+      "n": 4,
+      "range_over_mean": 0.6940799836981367,
+      "sd": 230622.92991952616
+     },
+     "persist_rmtree_ns": {
+      "max": 19062915,
+      "mean": 17354437.75,
+      "min": 16236431,
+      "n": 4,
+      "range_over_mean": 0.16286808254563015,
+      "sd": 1241325.5381001325
+     },
+     "persist_wall_ns": {
+      "max": 2238249078,
+      "mean": 2005317776.25,
+      "min": 1487058374,
+      "n": 4,
+      "range_over_mean": 0.3745993342784541,
+      "sd": 349099965.9207666
+     },
+     "reap_idle_cpu_total_ns": {
+      "max": 4306090421,
+      "mean": 4255601667.0,
+      "min": 4224543078,
+      "n": 4,
+      "range_over_mean": 0.0191623533829206,
+      "sd": 37185519.724829674
+     },
+     "reap_idle_first_tick_ns": {
+      "max": 1328739.0,
+      "mean": 1132608.125,
+      "min": 1031469.5,
+      "n": 4,
+      "range_over_mean": 0.26246456602101453,
+      "sd": 133836.7357855427
+     },
+     "reap_idle_last_tick_ns": {
+      "max": 33543467.0,
+      "mean": 32429679.625,
+      "min": 31666558.5,
+      "n": 4,
+      "range_over_mean": 0.05787625785094385,
+      "sd": 825596.2493146367
+     },
+     "reap_idle_ns_per_reaped_iteration": {
+      "max": 135127.4476360437,
+      "mean": 132315.99214056061,
+      "min": 128617.2420716268,
+      "n": 4,
+      "range_over_mean": 0.04920195555425423,
+      "sd": 2706.7031501168362
+     },
+     "reap_idle_total_ns": {
+      "max": 4338636838,
+      "mean": 4287253261.75,
+      "min": 4249020449,
+      "n": 4,
+      "range_over_mean": 0.020902984621771512,
+      "sd": 40570966.991543114
+     },
+     "reap_productive_total_ns": {
+      "max": 4382059032,
+      "mean": 4372449297.25,
+      "min": 4356273132,
+      "n": 4,
+      "range_over_mean": 0.0058973582646727855,
+      "sd": 11351443.371227214
+     },
+     "worker_maxrss_kb": {
+      "max": 29420,
+      "mean": 29330.0,
+      "min": 29228,
+      "n": 4,
+      "range_over_mean": 0.0065461984316399595,
+      "sd": 79.7663253927788
+     }
+    }
+   },
+   "64": {
+    "counts": {
+     "deterministic": true,
+     "idle_tick_ops_vs_reaped": {
+      "a": 6.059615384615427,
+      "b": 42.997115384615384,
+      "max_abs_residual": 1.8778846153845734
+     },
+     "last_idle_tick": {
+      "entry": 1198,
+      "in_flight": 0,
+      "listing": 66,
+      "lstat": 378,
+      "new": 0,
+      "newest": 1,
+      "open": 0,
+      "other": 0,
+      "reaped": 2646,
+      "scandir": 505,
+      "stat": 632,
+      "unlink": 0
+     },
+     "last_productive_tick": {
+      "entry": 1209,
+      "in_flight": 0,
+      "listing": 66,
+      "lstat": 389,
+      "new": 86,
+      "newest": 1,
+      "open": 0,
+      "other": 0,
+      "reaped": 2604,
+      "scandir": 505,
+      "stat": 643,
+      "unlink": 11
+     },
+     "persist_fsyncs": {
+      "dir": 260,
+      "file": 388
+     },
+     "persist_identical": true,
+     "persist_logical_bytes": 1509699,
+     "persist_members": 387,
+     "persist_physical_bytes": 915871,
+     "segment_totals": {
+      "idle": {
+       "entry": 38431,
+       "in_flight": 63,
+       "listing": 2271,
+       "lstat": 12096,
+       "new": 0,
+       "newest": 64,
+       "open": 0,
+       "other": 0,
+       "reaped": 84672,
+       "scandir": 16192,
+       "stat": 20351,
+       "unlink": 0
+      },
+      "productive": {
+       "entry": 39124,
+       "in_flight": 63,
+       "listing": 2271,
+       "lstat": 12789,
+       "new": 5418,
+       "newest": 64,
+       "open": 0,
+       "other": 0,
+       "reaped": 82026,
+       "scandir": 16192,
+       "stat": 21044,
+       "unlink": 693
+      }
+     }
+    },
+    "time": {
+     "compress_config_wall_ns": {
+      "max": 3448228,
+      "mean": 3077245.25,
+      "min": 2551745,
+      "n": 4,
+      "range_over_mean": 0.2913264712976647,
+      "sd": 377537.5726876951
+     },
+     "persist_copy2_ns": {
+      "max": 98050491,
+      "mean": 92608068.75,
+      "min": 87605856,
+      "n": 4,
+      "range_over_mean": 0.11278320713280181,
+      "sd": 4277272.077659418
+     },
+     "persist_cpu_ns": {
+      "max": 458068053,
+      "mean": 430230121.75,
+      "min": 405839990,
+      "n": 4,
+      "range_over_mean": 0.12139564470185775,
+      "sd": 21669343.92276635
+     },
+     "persist_fsync_ns": {
+      "max": 244780479,
+      "mean": 237126829.0,
+      "min": 228564497,
+      "n": 4,
+      "range_over_mean": 0.0683852690494166,
+      "sd": 7693086.422025904
+     },
+     "persist_gzip_ns": {
+      "max": 2707013,
+      "mean": 2627960.25,
+      "min": 2526842,
+      "n": 4,
+      "range_over_mean": 0.06855925617596385,
+      "sd": 74690.4595932439
+     },
+     "persist_lock_hold_ns": {
+      "max": 985538,
+      "mean": 799737.75,
+      "min": 656863,
+      "n": 4,
+      "range_over_mean": 0.4109784738809691,
+      "sd": 136944.00864921644
+     },
+     "persist_rmtree_ns": {
+      "max": 4576396,
+      "mean": 4310603.25,
+      "min": 4198858,
+      "n": 4,
+      "range_over_mean": 0.08758356501494309,
+      "sd": 178091.59497175415
+     },
+     "persist_wall_ns": {
+      "max": 650275330,
+      "mean": 631689386.25,
+      "min": 605696743,
+      "n": 4,
+      "range_over_mean": 0.07057042269562115,
+      "sd": 19041193.643414576
+     },
+     "reap_idle_cpu_total_ns": {
+      "max": 262570714,
+      "mean": 256549522.75,
+      "min": 251374634,
+      "n": 4,
+      "range_over_mean": 0.04364100887808024,
+      "sd": 5142509.523002648
+     },
+     "reap_idle_first_tick_ns": {
+      "max": 376438.0,
+      "mean": 305221.125,
+      "min": 278881.0,
+      "n": 4,
+      "range_over_mean": 0.3196272866106499,
+      "sd": 47517.64430604524
+     },
+     "reap_idle_last_tick_ns": {
+      "max": 7855648.0,
+      "mean": 7673449.875,
+      "min": 7523942.5,
+      "n": 4,
+      "range_over_mean": 0.043227688380514766,
+      "sd": 142139.88213339643
+     },
+     "reap_idle_ns_per_reaped_iteration": {
+      "max": 126316.7801510989,
+      "mean": 124151.68945741758,
+      "min": 121988.2372481685,
+      "n": 4,
+      "range_over_mean": 0.03486495368566874,
+      "sd": 1767.5610910594187
+     },
+     "reap_idle_total_ns": {
+      "max": 262999667,
+      "mean": 257632875.0,
+      "min": 251309191,
+      "n": 4,
+      "range_over_mean": 0.04537649164533059,
+      "sd": 6044866.532433394
+     },
+     "reap_productive_total_ns": {
+      "max": 283562863,
+      "mean": 274434800.25,
+      "min": 266321133,
+      "n": 4,
+      "range_over_mean": 0.06282632517557328,
+      "sd": 8980900.106853262
+     },
+     "worker_maxrss_kb": {
+      "max": 25192,
+      "mean": 25160.0,
+      "min": 25096,
+      "n": 4,
+      "range_over_mean": 0.0038155802861685214,
+      "sd": 43.32820482472512
+     }
+    }
+   }
+  },
+  "B": {
+   "256": {
+    "counts": {
+     "deterministic": true,
+     "idle_tick_ops_vs_reaped": {
+      "a": 1.0,
+      "b": 0.0,
+      "max_abs_residual": 0.0
+     },
+     "last_idle_tick": {
+      "entry": 0,
+      "in_flight": 1,
+      "listing": 0,
+      "lstat": 0,
+      "new": 0,
+      "newest": 0,
+      "open": 0,
+      "other": 0,
+      "reaped": 0,
+      "scandir": 0,
+      "stat": 1,
+      "unlink": 0
+     },
+     "last_productive_tick": {
+      "entry": 29,
+      "in_flight": 1,
+      "listing": 0,
+      "lstat": 17,
+      "new": 85,
+      "newest": 1,
+      "open": 0,
+      "other": 0,
+      "reaped": 0,
+      "scandir": 8,
+      "stat": 22,
+      "unlink": 11
+     },
+     "persist_fsyncs": {
+      "dir": 1028,
+      "file": 1540
+     },
+     "persist_identical": true,
+     "persist_logical_bytes": 5740834,
+     "persist_members": 1539,
+     "persist_physical_bytes": 3416948,
+     "segment_totals": {
+      "idle": {
+       "entry": 0,
+       "in_flight": 256,
+       "listing": 0,
+       "lstat": 0,
+       "new": 0,
+       "newest": 0,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 0,
+       "stat": 256,
+       "unlink": 0
+      },
+      "productive": {
+       "entry": 7395,
+       "in_flight": 256,
+       "listing": 0,
+       "lstat": 4335,
+       "new": 21675,
+       "newest": 256,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 2040,
+       "stat": 5612,
+       "unlink": 2805
+      }
+     }
+    },
+    "time": {
+     "compress_config_wall_ns": {
+      "max": 11700343,
+      "mean": 10972175.5,
+      "min": 10251782,
+      "n": 4,
+      "range_over_mean": 0.13202131154391397,
+      "sd": 665994.6688117456
+     },
+     "persist_copy2_ns": {
+      "max": 370476005,
+      "mean": 277327268.75,
+      "min": 180732596,
+      "n": 4,
+      "range_over_mean": 0.684185907340567,
+      "sd": 89867545.64844757
+     },
+     "persist_cpu_ns": {
+      "max": 1699057563,
+      "mean": 1384891150.75,
+      "min": 1047632487,
+      "n": 4,
+      "range_over_mean": 0.4703799830385334,
+      "sd": 304052102.1106451
+     },
+     "persist_fsync_ns": {
+      "max": 892743138,
+      "mean": 867112989.5,
+      "min": 839375828,
+      "n": 4,
+      "range_over_mean": 0.06154596995574128,
+      "sd": 24411419.878452167
+     },
+     "persist_gzip_ns": {
+      "max": 9086174,
+      "mean": 8395244.5,
+      "min": 7822490,
+      "n": 4,
+      "range_over_mean": 0.15052378760380355,
+      "sd": 558092.9750005818
+     },
+     "persist_lock_hold_ns": {
+      "max": 893832,
+      "mean": 740041.0,
+      "min": 541566,
+      "n": 4,
+      "range_over_mean": 0.4760087616767179,
+      "sd": 146620.94844871247
+     },
+     "persist_rmtree_ns": {
+      "max": 24948957,
+      "mean": 18754360.25,
+      "min": 15601710,
+      "n": 4,
+      "range_over_mean": 0.4984039378256051,
+      "sd": 4228420.343606611
+     },
+     "persist_wall_ns": {
+      "max": 2457174137,
+      "mean": 2117507517.25,
+      "min": 1751556664,
+      "n": 4,
+      "range_over_mean": 0.33323020922087826,
+      "sd": 317108074.0490773
+     },
+     "reap_idle_cpu_total_ns": {
+      "max": 6507438,
+      "mean": 5811116.75,
+      "min": 5228270,
+      "n": 4,
+      "range_over_mean": 0.22012429882775975,
+      "sd": 543336.9587633902
+     },
+     "reap_idle_first_tick_ns": {
+      "max": 22855.5,
+      "mean": 20289.5,
+      "min": 18436.5,
+      "n": 4,
+      "range_over_mean": 0.21779738288277187,
+      "sd": 1954.5699868086926
+     },
+     "reap_idle_last_tick_ns": {
+      "max": 19880.0,
+      "mean": 19362.75,
+      "min": 19041.5,
+      "n": 4,
+      "range_over_mean": 0.043304799163341984,
+      "sd": 361.95683444300374
+     },
+     "reap_idle_ns_per_reaped_iteration": {
+      "max": 17.50725995651179,
+      "mean": -6.664563723105973,
+      "min": -48.233596789883265,
+      "n": 4,
+      "range_over_mean": -9.864240102990117,
+      "sd": 29.213762149291746
+     },
+     "reap_idle_total_ns": {
+      "max": 6409122,
+      "mean": 5891040.0,
+      "min": 5428233,
+      "n": 4,
+      "range_over_mean": 0.16650523506885032,
+      "sd": 433535.37568307697
+     },
+     "reap_productive_total_ns": {
+      "max": 110274430,
+      "mean": 102556473.25,
+      "min": 94932596,
+      "n": 4,
+      "range_over_mean": 0.1495940091719174,
+      "sd": 6426674.594304034
+     },
+     "worker_maxrss_kb": {
+      "max": 28976,
+      "mean": 28918.0,
+      "min": 28844,
+      "n": 4,
+      "range_over_mean": 0.004564631025658759,
+      "sd": 56.615663321499056
+     }
+    }
+   },
+   "64": {
+    "counts": {
+     "deterministic": true,
+     "idle_tick_ops_vs_reaped": {
+      "a": 1.0,
+      "b": 0.0,
+      "max_abs_residual": 0.0
+     },
+     "last_idle_tick": {
+      "entry": 0,
+      "in_flight": 1,
+      "listing": 0,
+      "lstat": 0,
+      "new": 0,
+      "newest": 0,
+      "open": 0,
+      "other": 0,
+      "reaped": 0,
+      "scandir": 0,
+      "stat": 1,
+      "unlink": 0
+     },
+     "last_productive_tick": {
+      "entry": 29,
+      "in_flight": 1,
+      "listing": 0,
+      "lstat": 17,
+      "new": 85,
+      "newest": 1,
+      "open": 0,
+      "other": 0,
+      "reaped": 0,
+      "scandir": 8,
+      "stat": 22,
+      "unlink": 11
+     },
+     "persist_fsyncs": {
+      "dir": 260,
+      "file": 388
+     },
+     "persist_identical": true,
+     "persist_logical_bytes": 1509699,
+     "persist_members": 387,
+     "persist_physical_bytes": 915871,
+     "segment_totals": {
+      "idle": {
+       "entry": 0,
+       "in_flight": 64,
+       "listing": 0,
+       "lstat": 0,
+       "new": 0,
+       "newest": 0,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 0,
+       "stat": 64,
+       "unlink": 0
+      },
+      "productive": {
+       "entry": 1827,
+       "in_flight": 64,
+       "listing": 0,
+       "lstat": 1071,
+       "new": 5355,
+       "newest": 64,
+       "open": 0,
+       "other": 0,
+       "reaped": 0,
+       "scandir": 504,
+       "stat": 1388,
+       "unlink": 693
+      }
+     }
+    },
+    "time": {
+     "compress_config_wall_ns": {
+      "max": 3839196,
+      "mean": 3213563.0,
+      "min": 2849504,
+      "n": 4,
+      "range_over_mean": 0.30797342389117627,
+      "sd": 434653.0872431484
+     },
+     "persist_copy2_ns": {
+      "max": 99308219,
+      "mean": 80623016.5,
+      "min": 54139390,
+      "n": 4,
+      "range_over_mean": 0.5602473209371917,
+      "sd": 19150461.330377024
+     },
+     "persist_cpu_ns": {
+      "max": 472322282,
+      "mean": 398320956.0,
+      "min": 300964403,
+      "n": 4,
+      "range_over_mean": 0.43020051146894717,
+      "sd": 71256483.35159945
+     },
+     "persist_fsync_ns": {
+      "max": 264213140,
+      "mean": 228771876.75,
+      "min": 208184215,
+      "n": 4,
+      "range_over_mean": 0.24491176885884422,
+      "sd": 24560156.413241174
+     },
+     "persist_gzip_ns": {
+      "max": 2785794,
+      "mean": 2567249.0,
+      "min": 2335587,
+      "n": 4,
+      "range_over_mean": 0.17536553719565184,
+      "sd": 225412.52458991713
+     },
+     "persist_lock_hold_ns": {
+      "max": 1037587,
+      "mean": 664998.0,
+      "min": 442649,
+      "n": 4,
+      "range_over_mean": 0.8946462996881194,
+      "sd": 276868.3485714224
+     },
+     "persist_rmtree_ns": {
+      "max": 4864670,
+      "mean": 4483920.0,
+      "min": 4165195,
+      "n": 4,
+      "range_over_mean": 0.15599631572374173,
+      "sd": 344050.67023235594
+     },
+     "persist_wall_ns": {
+      "max": 699808367,
+      "mean": 589194603.75,
+      "min": 470275130,
+      "n": 4,
+      "range_over_mean": 0.3895711799448061,
+      "sd": 93847898.41578092
+     },
+     "reap_idle_cpu_total_ns": {
+      "max": 1578433,
+      "mean": 1398149.75,
+      "min": 1279120,
+      "n": 4,
+      "range_over_mean": 0.214077926917342,
+      "sd": 127734.74985133582
+     },
+     "reap_idle_first_tick_ns": {
+      "max": 21288.5,
+      "mean": 19355.375,
+      "min": 17671.0,
+      "n": 4,
+      "range_over_mean": 0.1868989880072073,
+      "sd": 1523.2856689297207
+     },
+     "reap_idle_last_tick_ns": {
+      "max": 24091.5,
+      "mean": 20222.125,
+      "min": 17882.0,
+      "n": 4,
+      "range_over_mean": 0.3070646630856055,
+      "sd": 2954.477685790389
+     },
+     "reap_idle_ns_per_reaped_iteration": {
+      "max": 48.94885531135531,
+      "mean": -6.099112866300366,
+      "min": -92.40061813186813,
+      "n": 4,
+      "range_over_mean": -23.17541526805094,
+      "sd": 63.724029875226016
+     },
+     "reap_idle_total_ns": {
+      "max": 1539455,
+      "mean": 1363831.25,
+      "min": 1244515,
+      "n": 4,
+      "range_over_mean": 0.21625842639989368,
+      "sd": 125659.86036486221
+     },
+     "reap_productive_total_ns": {
+      "max": 26296007,
+      "mean": 24714069.0,
+      "min": 23165670,
+      "n": 4,
+      "range_over_mean": 0.12666214535534395,
+      "sd": 1338427.2580495363
+     },
+     "worker_maxrss_kb": {
+      "max": 24752,
+      "mean": 24670.0,
+      "min": 24580,
+      "n": 4,
+      "range_over_mean": 0.00697203080664775,
+      "sd": 86.68717706020117
+     }
+    }
+   }
+  },
+  "paired": {
+   "a": "A",
+   "b": "B",
+   "by_size": {
+    "256": {
+     "persist_ns": {
+      "a": [2180048139, 1487058374, 2238249078, 2115915514],
+      "b": [2291947064, 2457174137, 1969352204, 1751556664],
+      "difference_of_means_ns": 112189741.0,
+      "larger_arm_range_ns": 751190704,
+      "paired_ratios_b_over_a": [1.0513286486652211, 1.652372347960027, 0.879862846077759, 0.8278008514096088],
+      "ratio_of_means_b_over_a": 1.055946116036431,
+      "verdict": "inconclusive"
+     },
+     "reap_ns": {
+      "a": [8678113396, 8617592307, 8720695870, 8622408663],
+      "b": [116683552, 106175331, 110334836, 100596334],
+      "difference_of_means_ns": -8551255045.75,
+      "larger_arm_range_ns": 103103563,
+      "paired_ratios_b_over_a": [0.013445727968222092, 0.012320765153133857, 0.012652067867606991, 0.011666848317184661],
+      "ratio_of_means_b_over_a": 0.012523237664472766,
+      "verdict": "b_faster"
+     }
+    },
+    "64": {
+     "persist_ns": {
+      "a": [650275330, 639820871, 605696743, 630964601],
+      "b": [595643743, 470275130, 699808367, 591051175],
+      "difference_of_means_ns": -42494782.5,
+      "larger_arm_range_ns": 229533237,
+      "paired_ratios_b_over_a": [0.9159869912333903, 0.7350106120561359, 1.155377464197459, 0.9367422103605461],
+      "ratio_of_means_b_over_a": 0.9327283575995021,
+      "verdict": "inconclusive"
+     },
+     "reap_ns": {
+      "a": [517630324, 543325261, 520752586, 546562530],
+      "b": [24410185, 25565177, 26500777, 27835462],
+      "difference_of_means_ns": -505989775.0,
+      "larger_arm_range_ns": 28932206,
+      "paired_ratios_b_over_a": [0.04715756374427554, 0.04705317207771056, 0.05088938146914934, 0.05092822956597482],
+      "ratio_of_means_b_over_a": 0.049012374671599634,
+      "verdict": "b_faster"
+     }
+    }
+   }
+  }
+ },
+ "variants": {
+  "A": {
+   "commit": "0b8c0fa814d376efab56a227e62e8bedc00603ce",
+   "dirty_paths": [],
+   "files": {
+    "chains.py": "63307eb2fbfda9760ae91a91e6670e236d944aaeed609f733f6e710c1e05ddcb",
+    "retention.py": "446f231d05b862488262d497dc18031587908e291539e475a44cd960230a7bb4"
+   },
+   "path": "/tmp/claude-0/-home-user-mtg-kernel/48b8e927-e546-5dae-b84d-573e9051289c/scratchpad/main-0b8c0fa/tools/w5"
+  },
+  "B": {
+   "commit": "82429c9230008f07bf52df4017f3a093d47eaf13",
+   "dirty_paths": [],
+   "files": {
+    "chains.py": "96d1bd523d27cd3145b5c1b6f560e1786445cada014ee066f328b565519d2f71",
+    "retention.py": "446f231d05b862488262d497dc18031587908e291539e475a44cd960230a7bb4"
+   },
+   "path": "/home/user/mtg-kernel/tools/w5"
+  }
+ },
+ "wall_seconds": 125.087
+}

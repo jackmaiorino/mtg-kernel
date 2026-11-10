@@ -252,6 +252,11 @@ pub struct EngineState {
     /// persistent id-keyed marker could falsely survive a later, unkicked
     /// cast of the same physical card) -- see `EffectCond::WasKicked`'s doc.
     pub pending_kicked_source: Option<ObjectId>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_premodern_p2b_v1::BattlemageEntryV1::is_empty"
+    )]
+    pub battlemage_entry_v1: crate::eternal_premodern_p2b_v1::BattlemageEntryV1,
     /// Exile-zone "you may play/cast this" grants from an impulse-draw
     /// effect (Clockwork Percussionist, Experimental Synthesizer, Reckless
     /// Impulse) -- see `PlayPermission`'s doc.
@@ -1036,6 +1041,9 @@ pub struct PendingCast {
     /// it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hand_free_cast_v1: Option<HandFreeCastV1>,
+    /// The second printed kicker of Thornscape Battlemage, independently paid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thornscape_white_kicker_v1: Option<bool>,
 }
 impl PendingCast {
     pub(crate) fn selected_x_v59(&self) -> Option<u16> {
@@ -1119,6 +1127,10 @@ impl std::hash::Hash for PendingCast {
         if let Some(choice) = self.hand_free_cast_v1 {
             std::hash::Hash::hash(&"hand-free-cast/v1", state);
             std::hash::Hash::hash(&choice, state);
+        }
+        if let Some(paid) = self.thornscape_white_kicker_v1 {
+            std::hash::Hash::hash(&"thornscape-white-kicker/v1", state);
+            std::hash::Hash::hash(&paid, state);
         }
     }
 }
@@ -1867,6 +1879,8 @@ pub enum Action {
     ChooseLondonBottom(ObjectId),
     /// Answers `Decision::ChooseAttackTarget`.
     ChooseAttackTarget(Target),
+    /// Activates a mana ability by tapping both selected permanents atomically.
+    ActivateManaAbilityWithTwoCostTargetsV1(ObjectId, ManaColor, [ObjectId; 2]),
 }
 
 const CHAIN_COPY_COST: Cost = Cost {
@@ -2701,6 +2715,15 @@ fn validate_spell_source_contract_fields(
             );
         }
         validate_optional_additional_paid_refs(kind, item.controller, &item.v4.paid_cost_refs)?;
+    }
+    let battlemage_kickers = item.v4.battlemage_kickers_v1.0;
+    let bad_kicker_receipt = if crate::eternal_premodern_p2b_v1::is_thornscape(def) {
+        battlemage_kickers > 3 || item.kicked != (battlemage_kickers != 0)
+    } else {
+        battlemage_kickers != 0
+    };
+    if bad_kicker_receipt {
+        return Err("spell's paid Battlemage kickers do not match its source".into());
     }
     let origin_generation = source
         .v4
@@ -6162,7 +6185,7 @@ pub(crate) fn pay_effect_mana(
     for (id, color) in plan.treasures {
         // Use the real printed tap/sacrifice activation and committed events.
         // Resolution remains atomic: queued triggers/SBAs wait for completion.
-        if activate_mana_ability_for_with_checkpoint(state, player, id, color, None, false).is_err()
+        if activate_mana_ability_for_with_checkpoint(state, player, id, color, &[], false).is_err()
         {
             return false;
         }
@@ -9801,6 +9824,26 @@ fn pending_cast_quote_v1(
     )
 }
 
+fn thornscape_white_kicker_payable(
+    state: &GameState,
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+) -> bool {
+    let mut projected = state.clone();
+    let mut paying = pending.clone();
+    paying.thornscape_white_kicker_v1 = Some(true);
+    projected.engine.pending_cast = Some(paying.clone());
+    pending_cast_quote_v1(
+        def,
+        &paying,
+        finalized_cast_method(&paying, paying.source_contract.cast_method, def),
+        paying.kicked == Some(true),
+        0,
+        &projected,
+    )
+    .is_some()
+}
+
 /// Records the pay-or-skip answer of a hand cast under a free-cast
 /// permission. Skipping the mana cost makes X zero, except Sickening
 /// Dreams' X, which counts an additional cost's discards.
@@ -10765,7 +10808,94 @@ fn rich_mana_ability_is_payable(
         ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(subtype) => {
             !sacrificeable_mana_cost_subtype(player, subtype, state).is_empty()
         }
+        ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(subtype) => {
+            untapped_subtype_mana_cost_objects(state, player, subtype)
+                .take(2)
+                .count()
+                == 2
+        }
     }
+}
+
+fn untapped_subtype_mana_cost_objects(
+    state: &GameState,
+    player: PlayerId,
+    subtype: card_def::Subtype,
+) -> impl Iterator<Item = ObjectId> + '_ {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .chain(state.players[player.opponent().index()].battlefield.iter())
+        .copied()
+        .filter(move |&candidate| {
+            let object = state.objects.get(candidate);
+            object.controller == player
+                && object.zone == Zone::Battlefield
+                && !object.tapped
+                && has_effective_subtype(state, candidate, subtype)
+        })
+}
+
+/// The unordered two-object payment menu for the printed primary ability.
+/// One sorted sequence of candidates makes each payment pair unique.
+pub(crate) fn two_object_mana_cost_candidates(
+    state: &GameState,
+    player: PlayerId,
+    source: ObjectId,
+) -> Option<Vec<ObjectId>> {
+    let object = state.objects.try_get(source)?;
+    let definition = card_def::CARD_DEFS.get(usize::from(object.card_def))?;
+    let ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(subtype) =
+        definition.mana_ability_def?.cost
+    else {
+        return None;
+    };
+    if !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+        || !crate::standard_cards_v1::mana_abilities_active(state, source, definition)
+    {
+        return None;
+    }
+    let mut candidates =
+        untapped_subtype_mana_cost_objects(state, player, subtype).collect::<Vec<_>>();
+    candidates.sort_unstable();
+    Some(candidates)
+}
+
+/// Two-object mana costs use the printed colors. Effects that replace what
+/// the source adds when tapped for mana apply only to its {T} abilities.
+pub(crate) fn two_object_mana_cost_choices(
+    state: &GameState,
+    player: PlayerId,
+    source: ObjectId,
+) -> ManaColorSetV1 {
+    let mut choices = ManaColorSetV1::new();
+    available_mana_ability_choices_unreplaced_into(player, source, state, &mut choices);
+    let object = state.objects.get(source);
+    let printed = card_def::CARD_DEFS[usize::from(object.card_def)]
+        .primary_mana_ability_choices(object.v4.chosen_color);
+    let mut result = ManaColorSetV1::new();
+    for &color in choices.as_slice() {
+        if printed.contains(&color) {
+            result.push(color);
+        }
+    }
+    result
+}
+
+pub(crate) fn granted_tap_mana_choices(state: &GameState, source: ObjectId) -> Vec<ManaColor> {
+    let object = state.objects.get(source);
+    let definition = &card_def::CARD_DEFS[usize::from(object.card_def)];
+    if object.tapped || creature_summoning_sick(state, source, definition) {
+        return Vec::new();
+    }
+    let colors = crate::standard_legends_v1::katilda_mana_colors(state, source);
+    #[cfg(feature = "eternal-fixtures")]
+    if !colors.is_empty()
+        && crate::eternal_premodern_p2a_v1::statics::produces_only_black(state, source)
+    {
+        return vec![ManaColor::B];
+    }
+    colors
 }
 
 /// The permanents `player` may sacrifice for "Sacrifice a Goblin" (Skirk
@@ -11201,7 +11331,14 @@ fn activate_mana_ability_for(
     choice: ManaColor,
     cost_target: Option<ObjectId>,
 ) -> Result<(), String> {
-    activate_mana_ability_for_with_checkpoint(state, player, source, choice, cost_target, true)
+    activate_mana_ability_for_with_checkpoint(
+        state,
+        player,
+        source,
+        choice,
+        cost_target.as_slice(),
+        true,
+    )
 }
 
 fn activate_mana_ability_for_with_checkpoint(
@@ -11209,21 +11346,30 @@ fn activate_mana_ability_for_with_checkpoint(
     player: PlayerId,
     source: ObjectId,
     choice: ManaColor,
-    cost_target: Option<ObjectId>,
+    cost_targets: &[ObjectId],
     checkpoint: bool,
 ) -> Result<(), String> {
     // Contamination: the land taps for its own ability, but the mana it
     // adds is one {B} instead (Premodern wave P2a).
     #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_premodern_p2a_v1::statics::produces_only_black(state, source) {
-        return activate_contaminated_land(state, player, source, choice, cost_target, checkpoint);
+    if cost_targets.len() != 2
+        && crate::eternal_premodern_p2a_v1::statics::produces_only_black(state, source)
+    {
+        return activate_contaminated_land(
+            state,
+            player,
+            source,
+            choice,
+            cost_targets.first().copied(),
+            checkpoint,
+        );
     }
     activate_mana_ability_unreplaced_for_with_checkpoint(
         state,
         player,
         source,
         choice,
-        cost_target,
+        cost_targets,
         checkpoint,
     )
 }
@@ -11258,7 +11404,12 @@ fn activate_contaminated_land(
     let pool_before = seat.mana_pool;
     let restricted_before = seat.restricted_mana_pool.0.len();
     activate_mana_ability_unreplaced_for_with_checkpoint(
-        state, player, source, underlying, None, false,
+        state,
+        player,
+        source,
+        underlying,
+        &[],
+        false,
     )?;
     let seat = &mut state.players[player.index()];
     let produced = seat
@@ -11283,7 +11434,7 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
     player: PlayerId,
     source: ObjectId,
     choice: ManaColor,
-    cost_target: Option<ObjectId>,
+    cost_targets: &[ObjectId],
     checkpoint: bool,
 ) -> Result<(), String> {
     let available_choices = {
@@ -11297,6 +11448,16 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
     let card_def = state.objects.get(source).card_def;
     let chosen_color = state.objects.get(source).v4.chosen_color;
     let definition = &card_def::CARD_DEFS[card_def as usize];
+    let cost_target = cost_targets.first().copied();
+    let printed_pair_cost = matches!(
+        definition.mana_ability_def.map(|ability| ability.cost),
+        Some(ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(
+            _
+        ))
+    );
+    if cost_targets.len() > 1 && !printed_pair_cost {
+        return Err("this mana ability does not have a two-object cost".into());
+    }
     if crate::continuous_characteristics_v1::land_grants_colorless_mana(state, source) {
         if cost_target.is_some() || choice != ManaColor::C {
             return Err("land override mana has no other cost or color".into());
@@ -11311,9 +11472,17 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
         }
         return Ok(());
     }
-    if crate::standard_legends_v1::katilda_mana_colors(state, source).contains(&choice) {
+    if cost_targets.len() != 2
+        && crate::standard_legends_v1::katilda_mana_colors(state, source).contains(&choice)
+    {
         if cost_target.is_some() {
             return Err("Katilda's granted mana has no other cost target".into());
+        }
+        if printed_pair_cost
+            && (state.objects.get(source).tapped
+                || creature_summoning_sick(state, source, definition))
+        {
+            return Err("granted tap mana source cannot tap".into());
         }
         event::propose_and_commit(state, ProposedEvent::tap(source));
         event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![choice]));
@@ -11414,6 +11583,16 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
         let legal_cost_targets =
             mana_ability_cost_targets_for_choice(player, source, choice, state);
         match rich.cost {
+            ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(_) => {
+                let [first, second] = cost_targets else {
+                    return Err("this mana ability needs two untapped controlled permanents".into());
+                };
+                let candidates = two_object_mana_cost_candidates(state, player, source)
+                    .ok_or("the two-object mana cost lost its source definition")?;
+                if first == second || !candidates.contains(first) || !candidates.contains(second) {
+                    return Err("the two selected permanents cannot pay this mana ability".into());
+                }
+            }
             ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature
             | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1
             | ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_) => {
@@ -11531,6 +11710,11 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
         }
 
         match rich.cost {
+            ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(_) => {
+                let mut objects = [cost_targets[0], cost_targets[1]];
+                objects.sort_unstable();
+                event::propose_and_commit_batch(state, objects.map(ProposedEvent::tap).to_vec());
+            }
             ManaAbilityCostDef::TapSelf => {
                 event::propose_and_commit(state, ProposedEvent::tap(source));
             }
@@ -11608,9 +11792,11 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_vintage_v1::restrict_produced_mana(state, player, source, choice);
     #[cfg(feature = "eternal-fixtures")]
-    crate::eternal_e5a_v1::note_tapped_for_mana(state, player, source);
+    if cost_targets.len() != 2 {
+        crate::eternal_e5a_v1::note_tapped_for_mana(state, player, source);
+    }
     #[cfg(feature = "eternal-fixtures")]
-    if state.objects.get(source).tapped {
+    if cost_targets.len() != 2 && state.objects.get(source).tapped {
         crate::eternal_pauper_e6b_v1::after_tapped_for_mana(state, source);
     }
     if state.objects.get(source).zone_change_count == source_zone_change_count {
@@ -14174,6 +14360,11 @@ pub(crate) fn validate_pending_cast(
     let def = card_def::CARD_DEFS
         .get(source.card_def as usize)
         .ok_or("pending cast source definition is missing")?;
+    if pending.thornscape_white_kicker_v1.is_some()
+        && (!crate::eternal_premodern_p2b_v1::is_thornscape(def) || pending.kicked.is_none())
+    {
+        return Err("white kicker selection has no matching red kicker stage".into());
+    }
     if pending.wide_x_value_v59.is_some()
         && !supports_wide_cast_x_v59(pending.source_contract.card_def, def)
     {
@@ -14235,6 +14426,7 @@ pub(crate) fn validate_pending_cast(
         || placeholder.v4.x_value != 0
         || !placeholder.v4.paid_cost_refs.is_empty()
         || placeholder.v4.optional_additional_cost_paid.is_some()
+        || !placeholder.v4.battlemage_kickers_v1.is_empty()
         || placeholder.v4.target_spec.is_some()
         || !placeholder.v4.target_contracts.is_empty()
         || placeholder.v4.activated_ability_index.is_some()
@@ -15129,15 +15321,15 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         return None;
     }
 
-    // Kicker (Goblin Bushwhacker) is decided before targets/modes, same as
-    // any other cast-time cost choice -- only asked when paying the base
-    // cost *and* the kicker cost together is currently affordable; every
-    // card in this pool with `kicker_cost` has no `alt_cost`, so checking
-    // against the effective normal cost (never `def.alt_cost`) is exhaustive
-    // here.
+    // Kicker precedes targets and modes and is offered when the selected
+    // spell form can pay for it together with the base cost.
     if def.kicker_cost.is_some() && pending.kicked.is_none() {
-        let payable =
-            pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, true, 0, state).is_some();
+        let method = if crate::eternal_premodern_p2b_v1::is_thornscape(def) {
+            finalized_cast_method(&pending, staged_method, def)
+        } else {
+            CastMethodV4::Normal
+        };
+        let payable = pending_cast_quote_v1(def, &pending, method, true, 0, state).is_some();
         if payable
             && def.kicked_target_spec.is_some()
             && !kicker_targets_complete(state, def, &pending, false)
@@ -15173,6 +15365,25 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 .variable_targeting_kicked = Some(false);
         }
         state.engine.pending_cast.as_mut().unwrap().kicked = Some(false);
+        return drain_pending_cast_or_decide(state);
+    }
+
+    if crate::eternal_premodern_p2b_v1::is_thornscape(def)
+        && pending.thornscape_white_kicker_v1.is_none()
+    {
+        if thornscape_white_kicker_payable(state, &pending, def) {
+            return Some(Decision::ChooseEffectOption {
+                player: pending.controller,
+                source: pending.spell,
+                option_count: 2,
+            });
+        }
+        state
+            .engine
+            .pending_cast
+            .as_mut()
+            .unwrap()
+            .thornscape_white_kicker_v1 = Some(false);
         return drain_pending_cast_or_decide(state);
     }
 
@@ -19655,6 +19866,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         .last()
         .expect("resolve_top_of_stack called with an empty stack");
     let resolving_source = item.source;
+    if item.kind != StackItemKind::Spell && !item.v4.battlemage_kickers_v1.is_empty() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
+    }
     let fake_death_owner =
         match crate::fake_your_own_death_v50::death_custody::acquire_resolution(state, item) {
             Ok(owner) => owner,
@@ -20176,6 +20394,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     // explicitly set every time (`Some` or `None`), never left stale from a
     // previous resolution. See `EngineState::pending_kicked_source`'s doc.
     state.engine.pending_kicked_source = if item.kicked { Some(item.source) } else { None };
+    state.engine.battlemage_entry_v1.0 = (!item.v4.battlemage_kickers_v1.is_empty())
+        .then_some((item.source, item.v4.battlemage_kickers_v1));
     let ctx = ExecCtx {
         niv_damage_origin_v1,
         stack_item_id: Some(item.v4.stack_item_id),
@@ -24060,6 +24280,7 @@ enum PendingCastActionStage {
     ChooseGreatwurmCost,
     ChooseSphinxLoreRoute,
     ChooseOmniscienceRoute,
+    ChooseThornscapeWhiteKicker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24099,6 +24320,11 @@ fn pending_cast_action_stage(
     }
     if pending.kicked.is_none() {
         return Ok(PendingCastActionStage::ChooseKicker);
+    }
+    if crate::eternal_premodern_p2b_v1::is_thornscape(def)
+        && pending.thornscape_white_kicker_v1.is_none()
+    {
+        return Ok(PendingCastActionStage::ChooseThornscapeWhiteKicker);
     }
     if pending.optional_additional_cost_paid.is_none() {
         return Ok(PendingCastActionStage::ChooseOptionalAdditionalCost);
@@ -24209,7 +24435,8 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
             PendingCastActionStage::ChooseKicker,
             Action::ChooseKicker(_)
         ) | (
-            PendingCastActionStage::ChooseOptionalAdditionalCost,
+            PendingCastActionStage::ChooseOptionalAdditionalCost
+                | PendingCastActionStage::ChooseThornscapeWhiteKicker,
             Action::ChooseEffectOption(_)
         ) | (
             PendingCastActionStage::ChooseSpellMode,
@@ -24614,6 +24841,12 @@ pub(crate) fn step_without_linked_aura_v1(
             let p = state.priority_player;
             activate_mana_ability_for(state, p, id, choice, Some(cost_target))
         }
+        Action::ActivateManaAbilityWithTwoCostTargetsV1(source, choice, cost_targets) => {
+            let player = state.priority_player;
+            activate_mana_ability_for_with_checkpoint(
+                state, player, source, choice, &cost_targets, true,
+            )
+        }
         Action::ActivateAbility(source, index) => {
             let p = state.priority_player;
             if !available_activatable_abilities(p, state).contains(&(source, index)) {
@@ -24739,8 +24972,12 @@ pub(crate) fn step_without_linked_aura_v1(
             def
                 .kicker_cost
                 .ok_or("this spell has no kicker choice")?;
-            if pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, true, 0, state).is_none()
-            {
+            let method = if crate::eternal_premodern_p2b_v1::is_thornscape(def) {
+                finalized_cast_method(&pending, pending.source_contract.cast_method, def)
+            } else {
+                CastMethodV4::Normal
+            };
+            if pending_cast_quote_v1(def, &pending, method, true, 0, state).is_none() {
                 return Err("the kicker choice is no longer payable".to_string());
             }
             if def.kicked_target_spec.is_some() && !kicker_targets_complete(state, def, &pending, kicked) {
@@ -27386,6 +27623,18 @@ fn apply_pending_cast_effect_option(
         PendingCastActionStage::ChooseOptionalAdditionalCost => {
             apply_choose_optional_additional_cost(state, option_index)
         }
+        PendingCastActionStage::ChooseThornscapeWhiteKicker => {
+            if option_index > 1 || !thornscape_white_kicker_payable(state, &pending, def) {
+                return Err("white kicker option is not currently offered".into());
+            }
+            state
+                .engine
+                .pending_cast
+                .as_mut()
+                .unwrap()
+                .thornscape_white_kicker_v1 = Some(option_index == 1);
+            Ok(())
+        }
         PendingCastActionStage::ChooseFreeCastV1 => {
             let choice = match option_index {
                 0 => HandFreeCastV1::PayManaCost,
@@ -27964,6 +28213,7 @@ fn materialize_begin_cast_with_quote_v1(
         convoke_finished: false,
         escape_exile_finished_v1: false,
         hand_free_cast_v1,
+        thornscape_white_kicker_v1: None,
         mandatory_additional_cost: mandatory_cast_cost_v1::seed(def),
     });
 }
@@ -28314,6 +28564,11 @@ fn finalize_owned_cast(
         pending.mode_chosen.unwrap_or(0)
     };
     item.kicked = was_kicked;
+    if crate::eternal_premodern_p2b_v1::is_thornscape(def) {
+        let white = pending.thornscape_white_kicker_v1 == Some(true);
+        item.kicked |= white;
+        item.v4.battlemage_kickers_v1.0 = u8::from(was_kicked) | (u8::from(white) << 1);
+    }
     if def
         .alt_cost
         .is_some_and(|alt| alt.condition == card_def::AltCostCondition::DisguiseFromHand)

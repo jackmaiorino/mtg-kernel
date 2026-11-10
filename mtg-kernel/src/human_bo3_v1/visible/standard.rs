@@ -509,6 +509,7 @@ mod tests {
                     counter_distribution: Some(counters.clone()),
                     counter_transfer: Some(transfer),
                     granted_ability: Some((other.clone(), 2)),
+                    thornscape_kickers_v1: None,
                 });
             let engine = &mut observation.projection.surface.engine_context;
             engine.pending_activation = Some(PendingActivationSemanticV2 {
