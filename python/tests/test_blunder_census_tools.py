@@ -7,9 +7,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(REPO / "tools" / "spy_reset"), str(REPO / "tools" / "blunder_census"), str(REPO / "python" / "tools")]
-import census  # noqa: E402
+import blunder_census as census  # noqa: E402
 import pilot  # noqa: E402
-import summarize  # noqa: E402
+import blunder_summary as summarize  # noqa: E402
 
 CENSUS = (pilot.CENSUS_PANEL_NS, pilot.CENSUS_SMOKE_NS)
 KEYS = [(o, t, k) for o in range(9) for t in range(9) for k in range(12)]

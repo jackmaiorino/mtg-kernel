@@ -1,6 +1,6 @@
 """Blunder census tables from `s4a-blunder-census` rows (collab LANES/census-20261110, DEFINITIONS.md). Measurement only.
 
-usage: summarize.py --root DIR --checkpoints b512=0,c1-u0065536=65536,... --json OUT.json --md OUT.md [--png OUT.png]
+usage: blunder_summary.py --root DIR --checkpoints b512=0,c1-u0065536=65536,... --json OUT.json --md OUT.md [--png OUT.png]
                     [--cases-md OUT.md]
 
 Each checkpoint's census directory is DIR/<checkpoint>/census with games-bcd-*.jsonl (counts (b), (c), (d) on every
