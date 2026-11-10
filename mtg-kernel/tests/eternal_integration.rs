@@ -18,6 +18,8 @@ mod eternal_legacy_e7a_v1;
 mod eternal_legacy_e8a_v1;
 #[path = "eternal/eternal_legacy_e9a_v1.rs"]
 mod eternal_legacy_e9a_v1;
+#[path = "eternal/eternal_opening_v1.rs"]
+mod eternal_opening_v1;
 #[path = "eternal/eternal_outside_game_v1.rs"]
 mod eternal_outside_game_v1;
 #[path = "eternal/eternal_pauper_e1_v1.rs"]
@@ -42,8 +44,6 @@ mod eternal_premodern_p2c_v1;
 mod eternal_premodern_p2d_v1;
 #[path = "eternal/eternal_public_shroud_v1.rs"]
 mod eternal_public_shroud_v1;
-#[path = "eternal/eternal_opening_v1.rs"]
-mod eternal_opening_v1;
 #[path = "eternal/eternal_sideboard_s1a_v1.rs"]
 mod eternal_sideboard_s1a_v1;
 #[path = "eternal/eternal_sideboard_s1b_v1.rs"]

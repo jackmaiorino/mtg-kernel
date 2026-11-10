@@ -78,7 +78,10 @@ fn initial_scene(state: &GameState) -> bool {
         && state.engine.pending_discard.is_none()
         && state.engine.pending_triggers.is_empty()
         && state.engine.halted.is_none()
-        && state.players.iter().all(|player| player.graveyard.is_empty() && !player.has_lost)
+        && state
+            .players
+            .iter()
+            .all(|player| player.graveyard.is_empty() && !player.has_lost)
 }
 
 fn record_at(state: &GameState, at: usize) -> Option<&RecordV1> {
@@ -89,12 +92,15 @@ fn record_at(state: &GameState, at: usize) -> Option<&RecordV1> {
 }
 
 fn initial_deal_precedes(state: &GameState, at: usize) -> bool {
-    let mut draws = state.engine.event_history.iter().take(at).filter_map(|event| {
-        match event {
+    let mut draws = state
+        .engine
+        .event_history
+        .iter()
+        .take(at)
+        .filter_map(|event| match event {
             CommittedEvent::Draw { player, object } => Some((*player, *object)),
             _ => None,
-        }
-    });
+        });
     let expected = (0..7).flat_map(|_| [PlayerId::P0, PlayerId::P1]);
     for player in expected {
         if !matches!(draws.next(), Some((actual, Some(_))) if actual == player) {
@@ -106,7 +112,10 @@ fn initial_deal_precedes(state: &GameState, at: usize) -> bool {
 
 fn publish(state: &mut GameState, record: RecordV1) -> usize {
     let at = state.engine.event_history.len();
-    state.engine.event_history.push(CommittedEvent::EternalOpeningV1 { record });
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::EternalOpeningV1 { record });
     at
 }
 
@@ -116,9 +125,12 @@ pub(crate) fn enabled(state: &GameState) -> bool {
 
 pub(crate) fn requires_successor(state: &GameState) -> bool {
     enabled(state)
-        || state.engine.event_history.scan_for_v1(&KINDS).iter().any(|event| {
-            matches!(event, CommittedEvent::EternalOpeningV1 { .. })
-        })
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&KINDS)
+            .iter()
+            .any(|event| matches!(event, CommittedEvent::EternalOpeningV1 { .. }))
 }
 
 /// Enable the shared Eternal opening window immediately after the native
@@ -130,7 +142,10 @@ pub fn enable_eternal_opening_v1(state: &mut GameState) -> Result<(), String> {
         || state.london_mulligans_v1.is_some()
         || state.leyline_opening_v1.is_some()
         || !state.exile.is_empty()
-        || state.players.iter().any(|player| !player.battlefield.is_empty())
+        || state
+            .players
+            .iter()
+            .any(|player| !player.battlefield.is_empty())
         || crate::leyline_axe_v1::verified_initial_deal(state)?.is_none()
         || !initial_deal_precedes(state, state.engine.event_history.len())
     {
@@ -139,13 +154,17 @@ pub fn enable_eternal_opening_v1(state: &mut GameState) -> Result<(), String> {
     crate::london_mulligan_v1::enable_london_mulligans_v1(state)?;
     let starting_player = state.starting_player;
     let enabled_at = publish(state, RecordV1::Enabled(starting_player));
-    state.eternal_opening_v1 = Some(OpeningV1 { enabled_at, phase: Phase::London });
+    state.eternal_opening_v1 = Some(OpeningV1 {
+        enabled_at,
+        phase: Phase::London,
+    });
     Ok(())
 }
 
-fn capture_candidates(state: &GameState, hands: &[Vec<ObjectLinkV4>; 2])
-    -> Vec<AbilitySourceContractV4>
-{
+fn capture_candidates(
+    state: &GameState,
+    hands: &[Vec<ObjectLinkV4>; 2],
+) -> Vec<AbilitySourceContractV4> {
     [state.starting_player, state.starting_player.opponent()]
         .into_iter()
         .flat_map(|player| &hands[player.index()])
@@ -164,16 +183,21 @@ struct Window<'a> {
 
 impl Window<'_> {
     fn legal(&self, player: PlayerId) -> impl Iterator<Item = AbilitySourceContractV4> + '_ {
-        self.input.candidates.iter().copied().filter(move |candidate| {
-            candidate.owner == player && !self.used.contains(candidate)
-        })
+        self.input
+            .candidates
+            .iter()
+            .copied()
+            .filter(move |candidate| candidate.owner == player && !self.used.contains(candidate))
     }
 }
 
 fn validate_window(state: &GameState, opening: OpeningV1) -> Result<Window<'_>, String> {
     let (input_at, finished_at) = match opening.phase {
         Phase::Choosing { input_at } => (input_at, None),
-        Phase::Complete { input_at, finished_at } => (input_at, Some(finished_at)),
+        Phase::Complete {
+            input_at,
+            finished_at,
+        } => (input_at, Some(finished_at)),
         Phase::London => return Err("Eternal opening still awaits London keeps".into()),
     };
     let Some(RecordV1::Kept(input)) = record_at(state, input_at) else {
@@ -195,7 +219,9 @@ fn validate_window(state: &GameState, opening: OpeningV1) -> Result<Window<'_>, 
                 object: source.source,
                 zone_change_count: source.zone_change_count,
             })
-            || input.candidates[..index].iter().any(|earlier| earlier.source == source.source)
+            || input.candidates[..index]
+                .iter()
+                .any(|earlier| earlier.source == source.source)
         {
             return Err("invalid Eternal opening candidate binding".into());
         }
@@ -206,10 +232,20 @@ fn validate_window(state: &GameState, opening: OpeningV1) -> Result<Window<'_>, 
     let mut revealed = Vec::new();
     let mut unclaimed_move = None;
     let end = finished_at.map_or(state.engine.event_history.len(), |at| at + 1);
-    for (at, event) in state.engine.event_history.iter().enumerate().take(end).skip(input_at + 1) {
+    for (at, event) in state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .take(end)
+        .skip(input_at + 1)
+    {
         let (source, is_entry) = match event {
-            CommittedEvent::EternalOpeningV1 { record: RecordV1::Finished(player) } => {
-                if current_player != Some(*player) || unclaimed_move.is_some()
+            CommittedEvent::EternalOpeningV1 {
+                record: RecordV1::Finished(player),
+            } => {
+                if current_player != Some(*player)
+                    || unclaimed_move.is_some()
                     || (*player != state.starting_player && finished_at != Some(at))
                 {
                     return Err("invalid Eternal opening finish order".into());
@@ -217,15 +253,19 @@ fn validate_window(state: &GameState, opening: OpeningV1) -> Result<Window<'_>, 
                 current_player = (*player == state.starting_player).then(|| player.opponent());
                 continue;
             }
-            CommittedEvent::EternalOpeningV1 { record: RecordV1::Entered { source, move_at } }
-                if unclaimed_move.take() == Some((*move_at, source.source, source.owner)) =>
-            {
+            CommittedEvent::EternalOpeningV1 {
+                record: RecordV1::Entered { source, move_at },
+            } if unclaimed_move.take() == Some((*move_at, source.source, source.owner)) => {
                 (*source, true)
             }
-            CommittedEvent::EternalOpeningV1 { record: RecordV1::Revealed(source) }
-                if unclaimed_move.is_none() => (*source, false),
+            CommittedEvent::EternalOpeningV1 {
+                record: RecordV1::Revealed(source),
+            } if unclaimed_move.is_none() => (*source, false),
             CommittedEvent::ZoneChange {
-                object, from: Zone::Hand, to: Zone::Battlefield, controller_before,
+                object,
+                from: Zone::Hand,
+                to: Zone::Battlefield,
+                controller_before,
             } if current_player.is_some() && unclaimed_move.is_none() => {
                 unclaimed_move = Some((at, *object, *controller_before));
                 continue;
@@ -240,7 +280,11 @@ fn validate_window(state: &GameState, opening: OpeningV1) -> Result<Window<'_>, 
             }
             _ => continue,
         };
-        let expected = if is_entry { OpeningAction::Enter } else { OpeningAction::Reveal };
+        let expected = if is_entry {
+            OpeningAction::Enter
+        } else {
+            OpeningAction::Reveal
+        };
         if current_player != Some(source.owner)
             || opening_action(source.card_def) != Some(expected)
             || !input.candidates.contains(&source)
@@ -263,15 +307,23 @@ fn validate_window(state: &GameState, opening: OpeningV1) -> Result<Window<'_>, 
         for player in [PlayerId::P0, PlayerId::P1] {
             let expected_hand = &mut original_cards[player.index()];
             expected_hand.retain(|link| !entered.iter().any(|source| source.source == link.object));
-            let expected_battlefield = entered.iter().filter(|source| source.owner == player)
+            let expected_battlefield = entered
+                .iter()
+                .filter(|source| source.owner == player)
                 .map(|source| source.source);
             let live = &state.players[player.index()];
             if !initial_scene(state)
                 || live.battlefield.iter().copied().ne(expected_battlefield)
-                || live.hand.iter().copied().ne(expected_hand.iter().map(|link| link.object))
+                || live
+                    .hand
+                    .iter()
+                    .copied()
+                    .ne(expected_hand.iter().map(|link| link.object))
                 || expected_hand.iter().any(|link| {
                     !state.objects.try_get(link.object).is_some_and(|card| {
-                        card.owner == player && card.controller == player && card.zone == Zone::Hand
+                        card.owner == player
+                            && card.controller == player
+                            && card.zone == Zone::Hand
                             && card.zone_change_count == link.zone_change_count
                     })
                 })
@@ -281,15 +333,21 @@ fn validate_window(state: &GameState, opening: OpeningV1) -> Result<Window<'_>, 
         }
         if entered.iter().any(|source| {
             !state.objects.try_get(source.source).is_some_and(|card| {
-                card.zone == Zone::Battlefield && card.owner == source.owner
-                    && card.controller == source.controller && card.card_def == source.card_def
+                card.zone == Zone::Battlefield
+                    && card.owner == source.owner
+                    && card.controller == source.controller
+                    && card.card_def == source.card_def
                     && source.zone_change_count.checked_add(1) == Some(card.zone_change_count)
             })
         }) {
             return Err("Eternal opening entry lost its exact incarnation".into());
         }
         let live_candidates = capture_candidates(state, &original_cards);
-        if input.candidates.iter().copied().filter(|source| !entered.contains(source))
+        if input
+            .candidates
+            .iter()
+            .copied()
+            .filter(|source| !entered.contains(source))
             .ne(live_candidates)
         {
             return Err("Eternal opening candidate roster changed".into());
@@ -305,12 +363,18 @@ fn validate_window(state: &GameState, opening: OpeningV1) -> Result<Window<'_>, 
     let still_armed = revealed.iter().copied().filter(|source| {
         !vintage.is_some_and(|vintage| vintage.cast_a_spell[source.owner.opponent().index()])
     });
-    if vintage.into_iter().flat_map(|vintage| vintage.chancellor_reveals.iter().copied())
+    if vintage
+        .into_iter()
+        .flat_map(|vintage| vintage.chancellor_reveals.iter().copied())
         .ne(still_armed)
     {
         return Err("Eternal opening reveal differs from its native delayed ability".into());
     }
-    Ok(Window { input, current_player, used })
+    Ok(Window {
+        input,
+        current_player,
+        used,
+    })
 }
 
 pub(crate) fn validate(state: &GameState) -> Result<(), String> {
@@ -332,9 +396,12 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     }
     if opening.phase == Phase::London {
         if !initial_scene(state)
-            || state.engine.event_history.iter().skip(opening.enabled_at + 1).any(|event| {
-                matches!(event, CommittedEvent::EternalOpeningV1 { .. })
-            })
+            || state
+                .engine
+                .event_history
+                .iter()
+                .skip(opening.enabled_at + 1)
+                .any(|event| matches!(event, CommittedEvent::EternalOpeningV1 { .. }))
         {
             return Err("invalid Eternal opening London boundary".into());
         }
@@ -348,7 +415,9 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
 }
 
 pub(crate) fn drain_or_decide(state: &mut GameState) -> Result<Option<Decision>, String> {
-    let Some(opening) = state.eternal_opening_v1 else { return Ok(None) };
+    let Some(opening) = state.eternal_opening_v1 else {
+        return Ok(None);
+    };
     if matches!(opening.phase, Phase::Complete { .. }) {
         return Ok(None);
     }
@@ -356,11 +425,19 @@ pub(crate) fn drain_or_decide(state: &mut GameState) -> Result<Option<Decision>,
         let hands = crate::london_mulligan_v1::kept_hands_for_opening_v1(state)?
             .ok_or("Eternal opening requires the native London keeps")?;
         let candidates = capture_candidates(state, &hands);
-        let input_at = publish(state, RecordV1::Kept(Box::new(InputV1 { hands, candidates })));
-        state.eternal_opening_v1 = Some(OpeningV1 { phase: Phase::Choosing { input_at }, ..opening });
+        let input_at = publish(
+            state,
+            RecordV1::Kept(Box::new(InputV1 { hands, candidates })),
+        );
+        state.eternal_opening_v1 = Some(OpeningV1 {
+            phase: Phase::Choosing { input_at },
+            ..opening
+        });
     }
     let window = validate_window(state, state.eternal_opening_v1.unwrap())?;
-    let player = window.current_player.ok_or("missing Eternal opening actor")?;
+    let player = window
+        .current_player
+        .ok_or("missing Eternal opening actor")?;
     Ok(Some(Decision::ChooseEternalOpeningV1 {
         player,
         legal_cards: window.legal(player).map(|source| source.source).collect(),
@@ -368,39 +445,57 @@ pub(crate) fn drain_or_decide(state: &mut GameState) -> Result<Option<Decision>,
 }
 
 pub(crate) fn owns_action(state: &GameState) -> bool {
-    state.eternal_opening_v1.is_some_and(|opening| match opening.phase {
-        Phase::London => !crate::london_mulligan_v1::has_pending(state),
-        Phase::Choosing { .. } => true,
-        Phase::Complete { .. } => false,
-    })
+    state
+        .eternal_opening_v1
+        .is_some_and(|opening| match opening.phase {
+            Phase::London => !crate::london_mulligan_v1::has_pending(state),
+            Phase::Choosing { .. } => true,
+            Phase::Complete { .. } => false,
+        })
 }
 
 pub(crate) fn answer(state: &mut GameState, action: Action) -> Result<(), String> {
-    let opening = state.eternal_opening_v1.ok_or("missing Eternal opening owner")?;
+    let opening = state
+        .eternal_opening_v1
+        .ok_or("missing Eternal opening owner")?;
     let Phase::Choosing { input_at } = opening.phase else {
         return Err("advance to the original Eternal opening menu first".into());
     };
     let window = validate_window(state, opening)?;
-    let player = window.current_player.ok_or("missing Eternal opening actor")?;
+    let player = window
+        .current_player
+        .ok_or("missing Eternal opening actor")?;
     let mut scene = state.clone();
     let record = match action {
         Action::FinishEffectSelection => RecordV1::Finished(player),
         Action::ChooseEffectTarget(Target::Object(object)) => {
-            let source = window.legal(player).find(|source| source.source == object)
+            let source = window
+                .legal(player)
+                .find(|source| source.source == object)
                 .ok_or("choice is outside the acting player's original opening roster")?;
             match opening_action(source.card_def) {
                 Some(OpeningAction::Enter) => {
                     let before = scene.engine.event_history.len();
-                    event::propose_and_commit(&mut scene, ProposedEvent::zone_change(object, Zone::Battlefield));
+                    event::propose_and_commit(
+                        &mut scene,
+                        ProposedEvent::zone_change(object, Zone::Battlefield),
+                    );
                     if scene.engine.halted.is_some() {
                         return Err("native Eternal opening entry halted".into());
                     }
-                    let move_at = scene.engine.event_history.iter().enumerate().skip(before)
+                    let move_at = scene
+                        .engine
+                        .event_history
+                        .iter()
+                        .enumerate()
+                        .skip(before)
                         .find_map(|(at, event)| {
                             matches!(event, CommittedEvent::ZoneChange {
                                 object: moved, from: Zone::Hand, to: Zone::Battlefield, ..
-                            } if *moved == object).then_some(at)
-                        }).ok_or("actual opening entry absent")?;
+                            } if *moved == object)
+                            .then_some(at)
+                        })
+                        .ok_or("actual opening entry absent")?;
                     RecordV1::Entered { source, move_at }
                 }
                 Some(OpeningAction::Reveal) => {
@@ -416,7 +511,10 @@ pub(crate) fn answer(state: &mut GameState, action: Action) -> Result<(), String
     let at = publish(&mut scene, record);
     if finish {
         scene.eternal_opening_v1 = Some(OpeningV1 {
-            phase: Phase::Complete { input_at, finished_at: at },
+            phase: Phase::Complete {
+                input_at,
+                finished_at: at,
+            },
             ..opening
         });
     }

@@ -295,6 +295,7 @@ pub mod eternal_legacy_e9a_v1;
 /// Vintage Lurrus card programs and companions of the eternal catalog (wave
 /// E4b).
 pub mod eternal_lurrus_v1;
+pub mod eternal_opening_v1;
 /// The eternal catalog's outside-the-game zone: each player's sideboard cards,
 /// private to their owner, and the wish and learn effects that read them.
 pub mod eternal_outside_game_v1;
@@ -337,7 +338,6 @@ pub mod eternal_sideboard_s1d_v1;
 pub mod eternal_vintage_e7b_v1;
 /// Vintage card programs of the eternal catalog (wave E4).
 pub mod eternal_vintage_v1;
-pub mod eternal_opening_v1;
 pub mod event;
 pub mod event_history_v1;
 pub mod expanded_deck_training_v1;

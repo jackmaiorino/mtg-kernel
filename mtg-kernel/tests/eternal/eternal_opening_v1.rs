@@ -28,9 +28,17 @@ fn deck(top: &[&str], fill: &str) -> Vec<u16> {
 }
 
 fn deal(start: PlayerId, own: &[u16], other: &[u16]) -> GameState {
-    let (zero, one) = if start == PlayerId::P0 { (own, other) } else { (other, own) };
+    let (zero, one) = if start == PlayerId::P0 {
+        (own, other)
+    } else {
+        (other, own)
+    };
     let mut state = GameState::new_from_libraries_with_starting_player_v1(
-        zero, one, mtg_kernel::rl::card_name, 196730, start,
+        zero,
+        one,
+        mtg_kernel::rl::card_name,
+        196730,
+        start,
     );
     for _ in 0..7 {
         for player in SEATS {
@@ -49,7 +57,11 @@ fn keep(state: &mut GameState, player: PlayerId, mulligan: bool) {
 
 fn choices(state: &mut GameState, player: PlayerId) -> Vec<ObjectId> {
     let decision = engine::advance_until_decision(state);
-    let Decision::ChooseEternalOpeningV1 { player: actual, legal_cards } = decision else {
+    let Decision::ChooseEternalOpeningV1 {
+        player: actual,
+        legal_cards,
+    } = decision
+    else {
         panic!("expected Eternal pregame menu, got {decision:?}");
     };
     assert_eq!(actual, player);
@@ -93,7 +105,8 @@ fn native_leyline_and_chancellor_order_restore_and_first_spell_both_seats() {
         assert!(engine::step(
             &mut state,
             Action::ChooseEffectTarget(Target::Object(chancellor)),
-        ).is_err());
+        )
+        .is_err());
         assert_eq!(serde_json::to_value(&state).unwrap(), encoded);
         state = restore(&state);
         assert_eq!(choices(&mut state, start), own);
@@ -101,30 +114,61 @@ fn native_leyline_and_chancellor_order_restore_and_first_spell_both_seats() {
         assert_eq!(choices(&mut state, start), vec![own[0]]);
         pick(&mut state, own[0]);
         assert!(choices(&mut state, start).is_empty());
-        assert_eq!(state.players[start.index()].battlefield, vec![own[1], own[0]]);
+        assert_eq!(
+            state.players[start.index()].battlefield,
+            vec![own[1], own[0]]
+        );
         finish(&mut state);
-        assert_eq!(choices(&mut state, other), vec![other_sanctity, chancellor, other_void]);
+        assert_eq!(
+            choices(&mut state, other),
+            vec![other_sanctity, chancellor, other_void]
+        );
         pick(&mut state, chancellor);
-        assert!(state.known_hand_cards(start, other).iter().any(|entry| entry.object == chancellor));
+        assert!(state
+            .known_hand_cards(start, other)
+            .iter()
+            .any(|entry| entry.object == chancellor));
         pick(&mut state, other_void);
         finish(&mut state);
         assert_eq!(state.objects.get(other_sanctity).zone, Zone::Hand);
-        assert!(!state.known_hand_cards(start, other).iter().any(|entry| entry.object == other_sanctity));
+        assert!(!state
+            .known_hand_cards(start, other)
+            .iter()
+            .any(|entry| entry.object == other_sanctity));
         for (player, objects) in [(start, vec![own[1], own[0]]), (other, vec![other_void])] {
             for object in objects {
                 let live = state.objects.get(object);
-                assert_eq!((live.zone, live.owner, live.controller, live.zone_change_count),
-                    (Zone::Battlefield, player, player, 2));
+                assert_eq!(
+                    (
+                        live.zone,
+                        live.owner,
+                        live.controller,
+                        live.zone_change_count
+                    ),
+                    (Zone::Battlefield, player, player, 2)
+                );
             }
         }
-        assert!(!state.engine.event_history.iter().any(|event| matches!(event, CommittedEvent::SpellCast { .. })));
+        assert!(!state
+            .engine
+            .event_history
+            .iter()
+            .any(|event| matches!(event, CommittedEvent::SpellCast { .. })));
         state = restore(&state);
         let mut cast = false;
         let mut countered = false;
         for _ in 0..28 {
             match engine::advance_until_decision(&mut state) {
-                Decision::CastSpellOrPass { player, castable_spells, .. } => {
-                    if !cast && player == start && castable_spells.contains(&mox) && state.step == Step::Main1 {
+                Decision::CastSpellOrPass {
+                    player,
+                    castable_spells,
+                    ..
+                } => {
+                    if !cast
+                        && player == start
+                        && castable_spells.contains(&mox)
+                        && state.step == Step::Main1
+                    {
                         state.players[start.index()].mana_pool[5] = 1;
                         engine::step(&mut state, Action::CastSpell(mox)).unwrap();
                         cast = true;
@@ -160,8 +204,11 @@ fn native_opening_only_uses_kept_cards_and_refuses_tampered_owner_both_seats() {
         let mut state = deal(start, &deck(&[], VOID), &deck(&[], "Island"));
         keep(&mut state, start, true);
         keep(&mut state, other, false);
-        let Decision::ChooseLondonBottom { player, remaining, candidates } =
-            engine::advance_until_decision(&mut state)
+        let Decision::ChooseLondonBottom {
+            player,
+            remaining,
+            candidates,
+        } = engine::advance_until_decision(&mut state)
         else {
             panic!("expected the native London bottom");
         };
@@ -172,15 +219,26 @@ fn native_opening_only_uses_kept_cards_and_refuses_tampered_owner_both_seats() {
         let legal = choices(&mut state, start);
         assert_eq!(legal.len(), 6);
         assert!(!legal.contains(&bottom));
-        assert!(engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(bottom))).is_err());
+        assert!(engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(bottom))
+        )
+        .is_err());
         pick(&mut state, legal[3]);
         let mut altered = serde_json::to_value(&state).unwrap();
-        altered.as_object_mut().unwrap().remove("eternal_opening_v1").unwrap();
+        altered
+            .as_object_mut()
+            .unwrap()
+            .remove("eternal_opening_v1")
+            .unwrap();
         let mut altered: GameState = serde_json::from_value(altered).unwrap();
         let before = serde_json::to_value(&altered).unwrap();
         assert!(engine::step(&mut altered, Action::FinishEffectSelection).is_err());
         assert_eq!(serde_json::to_value(&altered).unwrap(), before);
-        assert!(matches!(engine::advance_until_decision(&mut altered), Decision::Halted { .. }));
+        assert!(matches!(
+            engine::advance_until_decision(&mut altered),
+            Decision::Halted { .. }
+        ));
         finish(&mut state);
         assert!(choices(&mut state, other).is_empty());
         finish(&mut state);
@@ -198,9 +256,16 @@ fn native_opening_has_no_nonactor_menu_or_declined_public_identity_both_seats() 
             keep(state, start, false);
             keep(state, other, false);
         }
-        assert_eq!(choices(&mut has_leyline, start), choices(&mut has_land, start));
+        assert_eq!(
+            choices(&mut has_leyline, start),
+            choices(&mut has_land, start)
+        );
         for player in SEATS {
-            let refusal = |state| mtg_kernel::rl::observe_v1(state, player, 0).unwrap_err().to_string();
+            let refusal = |state| {
+                mtg_kernel::rl::observe_v1(state, player, 0)
+                    .unwrap_err()
+                    .to_string()
+            };
             assert_eq!(refusal(&has_leyline), refusal(&has_land));
         }
         finish(&mut has_leyline);
@@ -211,17 +276,30 @@ fn native_opening_has_no_nonactor_menu_or_declined_public_identity_both_seats() 
         finish(&mut has_land);
         for state in [&mut has_leyline, &mut has_land] {
             assert!(state.known_hand_cards(start, other).is_empty());
-            assert!(state.players.iter().all(|player| player.battlefield.is_empty()));
+            assert!(state
+                .players
+                .iter()
+                .all(|player| player.battlefield.is_empty()));
             let decision = engine::advance_until_decision(state);
-            assert!(matches!(decision, Decision::CastSpellOrPass { player, .. } if player == start));
+            assert!(
+                matches!(decision, Decision::CastSpellOrPass { player, .. } if player == start)
+            );
         }
         let disclosed = |state: &GameState| {
-            state.engine.event_history.iter().filter_map(|event| match event {
-                CommittedEvent::EternalOpeningV1 { record: record @ (
-                    RecordV1::Entered { .. } | RecordV1::Revealed(_) | RecordV1::Finished(_)
-                ) } => Some(record.clone()),
-                _ => None,
-            }).collect::<Vec<_>>()
+            state
+                .engine
+                .event_history
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::EternalOpeningV1 {
+                        record:
+                            record @ (RecordV1::Entered { .. }
+                            | RecordV1::Revealed(_)
+                            | RecordV1::Finished(_)),
+                    } => Some(record.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
         };
         assert_eq!(disclosed(&has_leyline), disclosed(&has_land));
     }
