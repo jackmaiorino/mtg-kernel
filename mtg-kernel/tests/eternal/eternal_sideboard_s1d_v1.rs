@@ -2090,7 +2090,15 @@ fn circle_of_protection_blue_uses_waiting_bombardments_actual_departure_both_sea
                         forged.stack[0].v4.paid_cost_refs[0].object = painter;
                     }
                     let before = forged.state_hash();
-                    assert!(engine::step(&mut forged, Action::Pass).is_err());
+                    assert!(matches!(
+                        engine::advance_until_decision(&mut forged),
+                        Decision::Halted {
+                            mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            ..
+                        }
+                    ));
+                    // Advance reports the refusal in the halt slot only.
+                    forged.engine.halted = None;
                     assert_eq!(forged.state_hash(), before);
                 }
                 let mut predecessor = state.clone();
