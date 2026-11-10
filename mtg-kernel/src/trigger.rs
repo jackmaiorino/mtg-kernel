@@ -5595,6 +5595,10 @@ fn triggers_from_events(
         new_triggers.extend(crate::eternal_premodern_p2a_v1::delayed_triggers(
             state, events,
         ));
+        // Coveted Jewel also queues its unblocked-attack trigger when
+        // blockers are declared, without adding a committed event.
+        #[cfg(feature = "eternal-fixtures")]
+        new_triggers.extend(crate::eternal_vintage_v1::delayed_triggers(state, events));
         uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
         state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
         return new_triggers;

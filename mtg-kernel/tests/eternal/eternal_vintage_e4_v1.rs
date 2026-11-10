@@ -782,10 +782,10 @@ fn paradoxical_outcome_draw_replacements_follow_actual_returns_both_seats() {
         if let Decision::ChooseTargets { .. } = next(&mut state) {
             act(&mut state, Action::FinishEffectSelection);
         }
-        assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
         assert!(
             matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == drawer)
         );
+        assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
         act(&mut state, Action::Pass);
         cast(&mut state, disenchant, &[Target::Object(departed)]);
 
@@ -1733,6 +1733,14 @@ fn coveted_jewel_combat_draws_finish_before_transfer_both_seats() {
             act(&mut state, Action::DeclareAttackers(vec![attacker]));
             pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
             act(&mut state, Action::DeclareBlockers(vec![]));
+            assert!(
+                state
+                    .engine
+                    .pending_triggers
+                    .iter()
+                    .any(|trigger| trigger.source == jewel),
+                "Jewel triggers at the declaration even without a committed event",
+            );
             if remove_jewel {
                 let disenchant = put(&mut state, drawer, "Disenchant", Zone::Hand);
                 pool(&mut state, drawer, &[ManaColor::W], 1);
