@@ -4,8 +4,8 @@
 //! and complete ordinary semantics, with mandatory typed
 //! Kaito V75 and inherited family context. This is not a session, restore capability or action dispatcher.
 use crate::{
-    akroma_family_public_v40::FamilyProjectionV40, artist_consumer_v1 as artist,
-    chosen_type_consumer_v1 as chosen_type,
+    akroma_family_public_v40::FamilyProjectionV40,
+    artist_consumer_v1 as artist, chosen_type_consumer_v1 as chosen_type,
     graveyard_return_public_v61::{
         DeathV61, ProgramV61, ScheduleV61, StageV61, TargetV61, TriggerV61,
     },
