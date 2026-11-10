@@ -55,8 +55,20 @@ fn full_pool_paid_pilfer_uses_public_names_and_exact_native_answers_both_seats()
         let mut paired_packets = None;
         let mut mapped_orders = Vec::new();
         for names in [
-            ["Forest", "Giant Growth", "Hero's Downfall", "Hero's Downfall", "Plains"],
-            ["Hero's Downfall", "Forest", "Hero's Downfall", "Plains", "Giant Growth"],
+            [
+                "Forest",
+                "Giant Growth",
+                "Hero's Downfall",
+                "Hero's Downfall",
+                "Plains",
+            ],
+            [
+                "Hero's Downfall",
+                "Forest",
+                "Hero's Downfall",
+                "Plains",
+                "Giant Growth",
+            ],
         ] {
             let (mut s, source) = scene(p);
             FastActorSessionV1::enable_limited_native_modes_v1(&mut s, LimitedAppendixV1::FullPool);
@@ -68,7 +80,10 @@ fn full_pool_paid_pilfer_uses_public_names_and_exact_native_answers_both_seats()
                 LimitedAppendixV1::FullPool,
             );
             let mut own = KaitoSession::from_session(
-                FastActorSessionV1::from_kaito_v75_fixture_state_scoped(s, LimitedAppendixV1::FullPool),
+                FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
+                    s,
+                    LimitedAppendixV1::FullPool,
+                ),
             )
             .unwrap();
             let before = packet(&own);
@@ -99,14 +114,23 @@ fn full_pool_paid_pilfer_uses_public_names_and_exact_native_answers_both_seats()
             }
             let order = d.current.name_order.as_ref().unwrap();
             mapped_orders.push(order.clone());
-            let expected = order.iter().map(|&i| match &d.backend.actions()[i as usize] {
-                A::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. } => object.card_db_id,
-                _ => panic!("incorrect Pilfer semantic"),
-            }).collect::<Vec<_>>();
+            let expected = order
+                .iter()
+                .map(|&i| match &d.backend.actions()[i as usize] {
+                    A::ChooseEffectTarget {
+                        target: TargetRefV1::Object { object },
+                        ..
+                    } => object.card_db_id,
+                    _ => panic!("incorrect Pilfer semantic"),
+                })
+                .collect::<Vec<_>>();
             assert!(expected.is_sorted());
             let downfall = crate::card_def::card_id_by_name("Hero's Downfall").unwrap();
             let revealed = &own.fixture_state().reveal_knowledge_v4.as_ref().unwrap()[p.index()];
-            assert_eq!(revealed.hand(opponent).find(|&(id, _)| id == downfall), Some((downfall, 2)));
+            assert_eq!(
+                revealed.hand(opponent).find(|&(id, _)| id == downfall),
+                Some((downfall, 2))
+            );
 
             let saved = own.snapshot();
             let raw = native.snapshot_v1();
@@ -119,23 +143,36 @@ fn full_pool_paid_pilfer_uses_public_names_and_exact_native_answers_both_seats()
                 };
                 let fresh = own.encode(restored).unwrap();
                 assert_eq!(fresh.packet(), d.packet());
-                let A::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. } = &fresh.backend.actions()[backend as usize] else {
+                let A::ChooseEffectTarget {
+                    target: TargetRefV1::Object { object },
+                    ..
+                } = &fresh.backend.actions()[backend as usize]
+                else {
                     panic!("incorrect restored Pilfer semantic");
                 };
                 let discarded = ObjectId(object.arena_id);
                 let native_index = fresh.backend.fixture_original_index_v75(backend).unwrap();
                 assert_eq!(
                     own.apply(&fresh, public as u32).unwrap(),
-                    native.step(restored.episode_id, restored.step, native_index).unwrap(),
+                    native
+                        .step(restored.episode_id, restored.step, native_index)
+                        .unwrap(),
                 );
                 settle(&mut own, &mut native);
                 let state = own.fixture_state();
                 assert_eq!(state, native.kaito_fixture_state());
                 assert_eq!(state.objects.get(discarded).zone, Zone::Graveyard);
-                assert!(hand.iter().filter(|&&id| id != discarded).all(|&id| state.objects.get(id).zone == Zone::Hand));
+                assert!(hand.iter().filter(|&&id| id != discarded).all(|&id| state
+                    .objects
+                    .get(id)
+                    .zone
+                    == Zone::Hand));
                 let retained = &state.reveal_knowledge_v4.as_ref().unwrap()[p.index()];
                 let copies = if object.card_db_id == downfall { 1 } else { 2 };
-                assert_eq!(retained.hand(opponent).find(|&(id, _)| id == downfall), Some((downfall, copies)));
+                assert_eq!(
+                    retained.hand(opponent).find(|&(id, _)| id == downfall),
+                    Some((downfall, copies))
+                );
             }
         }
         assert_ne!(mapped_orders[0], mapped_orders[1]);

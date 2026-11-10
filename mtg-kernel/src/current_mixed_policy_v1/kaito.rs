@@ -1,10 +1,10 @@
 //! Distinct numeric Kaito V75 owner. No predecessor artifact or executable is encoded.
 use super::{normalize, Error, NativeModel, Packet, Result, Source};
+use crate::rl::{ActionSemanticV1, PendingEffectChoiceSemanticV4, PlayerSeatV1, TargetRefV1};
 use crate::rl_session::{
     FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1, KaitoDecisionV75,
     KaitoSessionV75, KaitoSnapshotV75,
 };
-use crate::rl::{ActionSemanticV1, PendingEffectChoiceSemanticV4, PlayerSeatV1, TargetRefV1};
 use serde_json::{Map, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -104,7 +104,8 @@ fn revealed_discard_by_name(
     state: &mut Value,
 ) -> Result<Vec<u32>> {
     let observation = &candidates.observation.common.common;
-    let invalid = || Error::Projection("revealed discard menu differs from public hand names".into());
+    let invalid =
+        || Error::Projection("revealed discard menu differs from public hand names".into());
     let Some(PendingEffectChoiceSemanticV4::Targets {
         player,
         legal_targets,
@@ -136,7 +137,11 @@ fn revealed_discard_by_name(
         else {
             return Err(invalid());
         };
-        if actor != player || target != expected || object.owner != owner || object.zone != crate::state::Zone::Hand {
+        if actor != player
+            || target != expected
+            || object.owner != owner
+            || object.zone != crate::state::Zone::Hand
+        {
             return Err(invalid());
         }
         let copies = remaining.get_mut(&object.card_db_id).ok_or_else(invalid)?;
@@ -235,10 +240,20 @@ fn packet_from_current(
             serde_json::json!(counts);
     }
     let mut name_order = None;
-    if let HandFacts::RevealMinimaV3 { minima, discard_owner } = hand_facts {
+    if let HandFacts::RevealMinimaV3 {
+        minima,
+        discard_owner,
+    } = hand_facts
+    {
         if let Some(owner) = *discard_owner {
             let seat = usize::from(owner == PlayerSeatV1::P1);
-            name_order = Some(revealed_discard_by_name(candidates, actions, owner, &minima[seat], &mut state)?);
+            name_order = Some(revealed_discard_by_name(
+                candidates,
+                actions,
+                owner,
+                &minima[seat],
+                &mut state,
+            )?);
         }
         let opponent = match candidates.observation.common.common.acting_player {
             crate::rl::PlayerSeatV1::P0 => "p1",
@@ -476,7 +491,11 @@ impl KaitoSession {
         if index >= decision.packet().actions.len() {
             return Err(Error::ActionRange);
         }
-        let backend_index = decision.current.name_order.as_ref().map_or(selected_index, |order| order[index]);
+        let backend_index = decision
+            .current
+            .name_order
+            .as_ref()
+            .map_or(selected_index, |order| order[index]);
         let name_facts = self.hand_facts();
         self.inner.step_with_current_check(
             &decision.backend,
@@ -516,12 +535,18 @@ impl KaitoSession {
         let actions = decision.backend.actions();
         let ordered;
         let actions = if let Some(order) = &decision.current.name_order {
-            ordered = order.iter().map(|&index| actions[index as usize].clone()).collect::<Vec<_>>();
+            ordered = order
+                .iter()
+                .map(|&index| actions[index as usize].clone())
+                .collect::<Vec<_>>();
             &ordered
         } else {
             actions
         };
-        crate::current_tree_learner_v1::AuthenticatedInputV1::from_current(decision.packet().clone(), actions)
+        crate::current_tree_learner_v1::AuthenticatedInputV1::from_current(
+            decision.packet().clone(),
+            actions,
+        )
     }
 
     pub fn score_and_apply_tree_v1(
