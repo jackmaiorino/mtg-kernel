@@ -3,9 +3,12 @@ fixture of scratch_bench.py (mtg-kernel#601)."""
 import hashlib
 import json
 import os
+import random
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -203,9 +206,143 @@ class Scratch(unittest.TestCase):
         self.assertIn("recipe == 'C' and a != 'F' and stage == '0'", src)
 
 
+class ReaperCursor(unittest.TestCase):
+    """mtg-kernel#601 milestone 2: the reaper thread's completion cursor (chains.Reaper) deletes what the full scan
+    (chains.reap) deletes, keeps what it keeps, and starts again from the first iteration in a new process."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+
+    @staticmethod
+    def files(seg):
+        return sorted(p.relative_to(seg).as_posix() for p in seg.rglob('*') if p.is_file())
+
+    @staticmethod
+    def bulk(seg, i):
+        return sorted(p.relative_to(seg).as_posix() for p in (seg / 'iterations' / f'{i:06d}').rglob('*')
+                      if p.is_file() and chains.scratch_bulk(p))
+
+    def test_ticks_delete_what_the_full_scan_deletes(self):
+        """Seeded schedules of starts, completions (several between ticks at times) and ticks: one tree is reaped by
+        chains.reap on every tick, its twin by one Reaper."""
+        rng = random.Random(601)
+        for trial in range(12):
+            full, cur = self.base / f'full{trial}', self.base / f'cursor{trial}'
+            reaper, started, completed = chains.Reaper(cur), 0, 0
+            for step in range(48):
+                op = rng.choice(('start', 'complete', 'complete', 'tick', 'tick', 'tick'))
+                if op == 'start' and started == completed:  # the next iteration is in flight
+                    for seg in (full, cur):
+                        iteration(seg, started, done=False, s_state=started % 3 == 0)
+                    started += 1
+                elif op == 'complete':  # the in-flight iteration, or a new one, completes
+                    for seg in (full, cur):
+                        iteration(seg, completed, s_state=completed % 3 == 0)
+                    completed += 1
+                    started = completed
+                elif op == 'tick':
+                    self.assertEqual(reaper.tick(), chains.reap(full), (trial, step))
+                    self.assertEqual(self.files(cur), self.files(full), (trial, step))
+            self.assertEqual(reaper.tick(), chains.reap(full))
+            self.assertEqual(self.files(cur), self.files(full))
+            self.assertEqual(chains.reap(cur), 0)  # persist's full pass finds nothing the ticks left
+
+    def test_newest_in_flight_and_records_are_kept(self):
+        seg = self.base / 'seg'
+        for i in range(4):
+            iteration(seg, i, s_state=True)
+        iteration(seg, 4, done=False, s_state=True)
+        reaper = chains.Reaper(seg)
+        self.assertEqual(reaper.tick(), 3 * 5)  # three trajectories, a checkpoint and an S container each, 0 to 2
+        for i in range(3):
+            self.assertEqual(self.bulk(seg, i), [])
+            it = seg / 'iterations' / f'{i:06d}'
+            for rel in ('complete.json', 'attempt-000000/update/update.json', 'attempt-000000/collect/collection.json'):
+                self.assertTrue((it / rel).is_file(), (i, rel))
+        for i in (3, 4):  # the newest completed iteration (the next update's source) and the one in flight
+            self.assertEqual(len(self.bulk(seg, i)), 5, i)
+        self.assertEqual(reaper.tick(), 0)
+
+    def test_a_new_process_rescans_the_completed_prefix(self):
+        """A driver start or a resumed trainer gets a new Reaper. Its first tick, here in a new process, reaps every
+        completed iteration but the newest, whatever an earlier process left."""
+        seg, twin = self.base / 'seg', self.base / 'twin'
+        for i in range(3):
+            iteration(seg, i)
+        self.assertEqual(chains.Reaper(seg).tick(), 2 * 4)  # iterations 0 and 1
+        for i in range(3, 6):  # that process then stopped ticking: three more completions, one in flight
+            iteration(seg, i)
+        iteration(seg, 6, done=False)
+        write(seg / 'iterations' / '000001' / 'attempt-000000' / 'collect' / 'episode-0001.json', b'left' * 100)
+        shutil.copytree(seg, twin)
+        code = 'import sys; sys.path.insert(0, sys.argv[1]); import chains; print(chains.Reaper(sys.argv[2]).tick())'
+        r = subprocess.run([sys.executable, '-c', code, str(Path(chains.__file__).resolve().parent), str(seg)],
+                           capture_output=True, text=True, check=True)
+        self.assertEqual(int(r.stdout), 1 + 3 * 4)  # the left trajectory, then iterations 2 to 4
+        self.assertEqual(chains.reap(twin), 1 + 3 * 4)
+        self.assertEqual(self.files(seg), self.files(twin))
+        self.assertEqual((len(self.bulk(seg, 5)), len(self.bulk(seg, 6))), (4, 4))
+
+    def test_a_failed_deletion_is_raised_and_not_skipped(self):
+        """An unlink error reaches the caller (the reaper thread) and leaves the cursor before that iteration, so a
+        later tick, or persist's full pass, deletes the rest."""
+        seg = self.base / 'seg'
+        for i in range(3):
+            iteration(seg, i)
+        iteration(seg, 3, done=False)
+        reaper = chains.Reaper(seg)
+        bad = seg / 'iterations' / '000001' / 'attempt-000000' / 'update' / 'checkpoint.json'
+        unlink = os.unlink
+
+        def failing(path, *args, **kwargs):
+            if Path(path) == bad:
+                raise PermissionError(13, 'injected', str(path))
+            return unlink(path, *args, **kwargs)
+        with mock.patch.object(os, 'unlink', failing), self.assertRaises(PermissionError):
+            reaper.tick()
+        self.assertEqual((reaper.reaped, self.bulk(seg, 0)), (1, []))
+        self.assertTrue(bad.exists())
+        left = len(self.bulk(seg, 1))
+        self.assertEqual(reaper.tick(), left)
+        self.assertEqual((reaper.reaped, self.bulk(seg, 1), len(self.bulk(seg, 2))), (2, [], 4))
+
+    def test_a_gap_in_the_prefix_stops_the_cursor(self):
+        """The trainer refuses a prefix with a gap. Were one there, the cursor would stop at it and keep the
+        iteration before it: it reaps less than the full scan, never more."""
+        cur, full = self.base / 'cursor', self.base / 'full'
+        for seg in (cur, full):
+            for i in (0, 1, 3):
+                iteration(seg, i)
+            iteration(seg, 2, done=False)
+        self.assertEqual(chains.Reaper(cur).tick(), 4)  # iteration 0 only
+        self.assertEqual(chains.reap(full), 2 * 4)  # iterations 0 and 1: 3 counts as the newest
+        self.assertLess(set(self.files(full)), set(self.files(cur)))
+        self.assertEqual(len(self.bulk(cur, 1)), 4)
+
+    def test_run_reaped_ticks_one_reaper_beside_the_trainer(self):
+        """Each completion releases the iteration before it while the trainer runs; run_reaped returns the number
+        of files its ticks deleted."""
+        seg = self.base / 'seg'
+
+        def trainer(arm, config_path, deadline, logs):
+            for i in range(5):
+                iteration(seg, i)
+                until = time.monotonic() + 60
+                while i and self.bulk(seg, i - 1) and time.monotonic() < until:  # the reaper releases i - 1
+                    time.sleep(0.005)
+            return 0, False
+        with mock.patch.object(chains, 'run_trainer', trainer), mock.patch.object(chains, 'REAP_EVERY', 0.005):
+            code, killed, reaped = chains.run_reaped({}, self.base / 'config.json', None, self.base, seg)
+        self.assertEqual((code, killed, reaped), (0, False, 4 * 4))
+        self.assertEqual([self.bulk(seg, i) for i in range(4)], [[]] * 4)
+        self.assertEqual(len(self.bulk(seg, 4)), 4)
+
+
 @unittest.skipUnless(sys.platform.startswith('linux'), 'scratch segments are Linux only (rename onto an empty directory)')
 class ScratchWork(unittest.TestCase):
-    """mtg-kernel#601: the counting fixture behind scratch_bench.py (reap, persist, scratch_settle unchanged)."""
+    """mtg-kernel#601: the counting fixture behind scratch_bench.py, which ticks the tree's own reaper."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -249,6 +386,18 @@ class ScratchWork(unittest.TestCase):
         self.assertEqual(runs[0]['reap'], runs[1]['reap'])
         for scenario, field in scratch_bench.DETERMINISTIC:
             self.assertEqual(runs[0][scenario][field], runs[1][scenario][field], (scenario, field))
+
+    def test_reaper_ticks_do_not_grow_with_reaped_history(self):
+        """Milestone 2: no tick visits an already-reaped iteration, so each idle tick makes the same operations, and
+        so does each productive tick after the first."""
+        out = scratch_bench.run_segment(chains, 6, self.profile, 7, self.base / 'shm', self.base / 'work', True)
+        self.assertEqual(out['reaper'], 'Reaper.tick')
+        prod, idle = out['reap']['productive'], out['reap']['idle']
+        self.assertEqual((prod['reaped'], idle['reaped']), ([0] * 6, [0] * 6))
+        ops = {kind: [sum(rows[k][i] for k in scratch_bench.REAP_OPS) for i in range(6)]
+               for kind, rows in (('productive', prod), ('idle', idle))}
+        self.assertEqual(len(set(ops['idle'])), 1, ops)
+        self.assertEqual(len(set(ops['productive'][1:])), 1, ops)
 
     def test_persist_durability_operations_in_order(self):
         """Every staged member and staging directory is fsynced before the marker, the marker before the swap, the

@@ -955,21 +955,53 @@ def scratch_bulk(path):
 
 
 def reap(native):
-    """Deletes the transient bulk of every completed iteration except the newest; returns the number of files."""
+    """Deletes the transient bulk of every completed iteration except the newest; returns the number of files.
+    It visits every completed iteration (persist's final pass); the reaper thread's ticks use a Reaper."""
     its = Path(native) / 'iterations'
     if not its.exists():
         return 0
     done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists())
+    return sum(reap_iteration(d) for d in done[:-1])
+
+
+def reap_iteration(iteration):
+    """Deletes one completed iteration's transient bulk; returns the number of files."""
     n = 0
-    for d in done[:-1]:
-        for f in d.rglob('*'):
-            if f.is_file() and not f.is_symlink() and scratch_bulk(f):
-                try:
-                    f.unlink()
-                    n += 1
-                except FileNotFoundError:
-                    pass
+    for f in Path(iteration).rglob('*'):
+        if f.is_file() and not f.is_symlink() and scratch_bulk(f):
+            try:
+                f.unlink()
+                n += 1
+            except FileNotFoundError:
+                pass
     return n
+
+
+class Reaper:
+    """The reaper thread's position in one scratch segment, so that a tick visits only what changed since the last.
+
+    The trainer completes iterations as the contiguous prefix iterations/000000, 000001, ... (it refuses any other
+    layout) and does not write to a completed iteration again. A tick probes for completions past the last one it
+    saw and reaps the iterations they released: as with `reap`, every completed iteration but the newest, so the
+    newest and in-flight iterations are never touched. An iteration counts as reaped only once its deletion has
+    returned, so after an error it is visited again, by a later tick or by persist's full pass. A gap in the prefix
+    stops the probe, and a tick then reaps less than `reap` would, never more. Each run_reaped starts a new Reaper at
+    iteration 0, so a driver start, a resumed trainer or the next segment rescans the whole completed prefix."""
+
+    def __init__(self, native):
+        self.iterations = Path(native) / 'iterations'
+        self.completed = 0  # iterations below this have complete.json
+        self.reaped = 0  # iterations below this have had their bulk deleted
+
+    def tick(self):
+        """Deletes the bulk that completions since the last tick released; returns the number of files."""
+        while (self.iterations / f'{self.completed:06d}' / 'complete.json').exists():
+            self.completed += 1
+        n = 0
+        while self.reaped < self.completed - 1:
+            n += reap_iteration(self.iterations / f'{self.reaped:06d}')
+            self.reaped += 1
+        return n
 
 
 def scratch_kept_pins(newest, path_at=Path):
@@ -1117,11 +1149,11 @@ def run_reaped(arm, config_path, deadline, logs, native):
     """run_trainer with the reaper running beside it in this (the chain's) process; returns (code, killed,
     files reaped)."""
     import threading
-    stop, count = threading.Event(), [0]
+    stop, count, reaper = threading.Event(), [0], Reaper(native)
 
     def loop():
         while not stop.wait(REAP_EVERY):
-            count[0] += reap(native)
+            count[0] += reaper.tick()
     t = threading.Thread(target=loop, daemon=True)
     t.start()
     try:
