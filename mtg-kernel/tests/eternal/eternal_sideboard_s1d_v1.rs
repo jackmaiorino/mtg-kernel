@@ -2493,7 +2493,12 @@ fn flagbearers_bind_okos_first_exchange_slot_both_seats() {
         state.active_player = opponent;
         state.priority_player = opponent;
         let own = put(&mut state, actor, "Standard Bearer", Zone::Battlefield);
-        let opposing = put(&mut state, opponent, "Coalition Honor Guard", Zone::Battlefield);
+        let opposing = put(
+            &mut state,
+            opponent,
+            "Coalition Honor Guard",
+            Zone::Battlefield,
+        );
         let small = put(&mut state, opponent, "Mogg Fanatic", Zone::Battlefield);
         let rancor = put(&mut state, opponent, "Rancor", Zone::Hand);
         let oko = put(&mut state, actor, "Oko, Thief of Crowns", Zone::Hand);
@@ -2503,7 +2508,9 @@ fn flagbearers_bind_okos_first_exchange_slot_both_seats() {
         settled(&mut state);
         assert_eq!(engine::effective_power(&state, opposing), 4);
 
-        pass_until(&mut state, |s| s.active_player == actor && s.step == Step::Main1);
+        pass_until(&mut state, |s| {
+            s.active_player == actor && s.step == Step::Main1
+        });
         pool(&mut state, actor, &[ManaColor::G, ManaColor::U], 1);
         cast(&mut state, oko, &[]);
         settled(&mut state);
@@ -2553,7 +2560,10 @@ fn flagbearers_bind_okos_first_exchange_slot_both_seats() {
                 if player == actor && legal_targets == [small_target]
         ));
         choose_target(&mut restored, small_target);
-        assert!(matches!(next(&mut restored), Decision::CastSpellOrPass { .. }));
+        assert!(matches!(
+            next(&mut restored),
+            Decision::CastSpellOrPass { .. }
+        ));
         let paid = restored.stack.last().expect("paid Oko exchange");
         assert_eq!(paid.source, oko);
         assert_eq!(paid.targets, [own_target, small_target]);
