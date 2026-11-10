@@ -127,7 +127,10 @@ pub(crate) fn forces_resumable(state: &GameState, program: &EffectOp, ctx: &Exec
     }
     // Bonder's APNAP order and immediate terminal stop matter even without
     // competing replacements. Its paid native owner stages both instructions.
-    if matches!(program, EffectOp::EachPlayerControllingDefinitionDrawsCard { .. }) {
+    if matches!(
+        program,
+        EffectOp::EachPlayerControllingDefinitionDrawsCard { .. }
+    ) {
         return crate::effect::resumable_program_supported(program);
     }
     let needs_choice = match owned_draws_v1::starting_draws(state, program, ctx) {

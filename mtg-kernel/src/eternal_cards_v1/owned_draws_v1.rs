@@ -179,8 +179,9 @@ impl InstructionV1 {
         match self {
             Self::FlameOfAnor { draw, .. } => PlayerRef::Target(draw),
             Self::FixedRoot { player, .. } => player,
-            Self::Echo { drawer, .. } | Self::Bonder { drawer, .. }
-                if drawer != ctx.controller => PlayerRef::Opponent,
+            Self::Echo { drawer, .. } | Self::Bonder { drawer, .. } if drawer != ctx.controller => {
+                PlayerRef::Opponent
+            }
             _ => PlayerRef::Controller,
         }
     }
@@ -191,7 +192,9 @@ impl InstructionV1 {
                 Target::Player(player) => Some(*player),
                 _ => None,
             },
-            Self::FixedRoot { drawer, .. } | Self::Echo { drawer, .. } | Self::Bonder { drawer, .. } => Some(drawer),
+            Self::FixedRoot { drawer, .. }
+            | Self::Echo { drawer, .. }
+            | Self::Bonder { drawer, .. } => Some(drawer),
             _ => Some(ctx.controller),
         }
     }
@@ -763,7 +766,10 @@ pub(crate) fn complete(
         state.eternal_owned_draw_progress_v1 = None;
         if !terminal {
             match started.instruction {
-                InstructionV1::Bonder { resolution_at, drawer } => {
+                InstructionV1::Bonder {
+                    resolution_at,
+                    drawer,
+                } => {
                     bonder::finish_leg(state, pending, resolution_at, drawer, started.source)?;
                 }
                 InstructionV1::Echo {

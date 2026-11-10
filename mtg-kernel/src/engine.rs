@@ -29854,10 +29854,15 @@ fn push_paid_activation(
         return;
     }
     if crate::eternal_cards_v1::owned_draws_v1::bonder::record_paid(
-        state, stack_item_id, frozen.payment_history_start,
-    ).is_err() {
+        state,
+        stack_item_id,
+        frozen.payment_history_start,
+    )
+    .is_err()
+    {
         state.engine.halted = Some((
-            UnsupportedMechanic::InvalidEffectContinuation, pending.source,
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
         ));
         return;
     }

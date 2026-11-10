@@ -125,13 +125,19 @@ fn settled(state: &mut GameState) {
     }
 }
 
-
 fn cast_jace(state: &mut GameState, player: PlayerId) -> ObjectId {
     state.active_player = player;
     state.priority_player = player;
     let jace = put(state, player, "Jace, Wielder of Mysteries", Zone::Hand);
-    pool(state, player, &[ManaColor::U, ManaColor::U, ManaColor::U], 1);
-    assert!(matches!(next(state), Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&jace)));
+    pool(
+        state,
+        player,
+        &[ManaColor::U, ManaColor::U, ManaColor::U],
+        1,
+    );
+    assert!(
+        matches!(next(state), Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&jace))
+    );
     act(state, Action::CastSpell(jace));
     settled(state);
     jace
@@ -141,7 +147,9 @@ fn activate(state: &mut GameState, source: ObjectId, actor: PlayerId, active: Pl
     state.active_player = active;
     state.priority_player = actor;
     pool(state, actor, &[], 4);
-    assert!(matches!(next(state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(source, 0))));
+    assert!(
+        matches!(next(state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(source, 0)))
+    );
     act(state, Action::ActivateAbility(source, 0));
     assert!(state.objects.get(source).tapped);
     assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
@@ -154,8 +162,16 @@ fn restored(state: &GameState) -> GameState {
     restored
 }
 
-fn observation(state: &GameState, player: PlayerId) -> Result<mtg_kernel::rl::ObservationV2, mtg_kernel::rl::RlContractError> {
-    mtg_kernel::rl::observe_v2(state, &mtg_kernel::surface_v2::HarnessSurfaceV2::default(), player, 0)
+fn observation(
+    state: &GameState,
+    player: PlayerId,
+) -> Result<mtg_kernel::rl::ObservationV2, mtg_kernel::rl::RlContractError> {
+    mtg_kernel::rl::observe_v2(
+        state,
+        &mtg_kernel::surface_v2::HarnessSurfaceV2::default(),
+        player,
+        0,
+    )
 }
 
 #[test]
@@ -165,11 +181,21 @@ fn paid_bonder_ordinary_draws_preserve_current_observation() {
             for both in [false, true] {
                 let mut state = plains();
                 let source = put(&mut state, actor, "Bonder's Ornament", Zone::Battlefield);
-                if both { put(&mut state, actor.opponent(), "Bonder's Ornament", Zone::Battlefield); }
+                if both {
+                    put(
+                        &mut state,
+                        actor.opponent(),
+                        "Bonder's Ornament",
+                        Zone::Battlefield,
+                    );
+                }
                 activate(&mut state, source, actor, active);
                 settled(&mut state);
                 assert_eq!(state.players[actor.index()].hand.len(), 1);
-                assert_eq!(state.players[actor.opponent().index()].hand.len(), usize::from(both));
+                assert_eq!(
+                    state.players[actor.opponent().index()].hand.len(),
+                    usize::from(both)
+                );
                 assert!(observation(&state, actor).is_ok());
                 assert!(observation(&restored(&state), actor).is_ok());
             }
@@ -183,22 +209,38 @@ fn paid_bonder_empty_library_jace_hull_both_seats_and_apnap_orders() {
         for active in [actor, actor.opponent()] {
             let other = actor.opponent();
             let mut state = game(&[]);
-            for _ in 0..4 { put(&mut state, other, "Plains", Zone::Library); }
+            for _ in 0..4 {
+                put(&mut state, other, "Plains", Zone::Library);
+            }
             let jace = cast_jace(&mut state, actor);
             put(&mut state, other, "Hullbreacher", Zone::Battlefield);
             let source = put(&mut state, actor, "Bonder's Ornament", Zone::Battlefield);
             put(&mut state, other, "Bonder's Ornament", Zone::Battlefield);
             activate(&mut state, source, actor, active);
             let prompt = settle(&mut state).expect("Jace/Hull choice without Dredge");
-            assert!(matches!(&prompt, Decision::ChooseEffectTargets { player, source: found, legal_targets, .. } if *player == actor && *found == source && legal_targets == &[Target::Object(jace)]));
-            assert_eq!(state.players[other.index()].hand.len(), usize::from(active == other));
-            assert!(observation(&state, actor).unwrap_err().to_string().contains("Bonder"));
+            assert!(
+                matches!(&prompt, Decision::ChooseEffectTargets { player, source: found, legal_targets, .. } if *player == actor && *found == source && legal_targets == &[Target::Object(jace)])
+            );
+            assert_eq!(
+                state.players[other.index()].hand.len(),
+                usize::from(active == other)
+            );
+            assert!(observation(&state, actor)
+                .unwrap_err()
+                .to_string()
+                .contains("Bonder"));
             let mut replay = restored(&state);
             assert_eq!(prompt, next(&mut replay));
             for branch in [&mut state, &mut replay] {
                 act(branch, Action::ChooseEffectTarget(Target::Object(jace)));
-                assert!(matches!(next(branch), Decision::GameOver { winner: Some(winner) } if winner == actor));
-                assert_eq!(branch.players[other.index()].hand.len(), usize::from(active == other), "a first-player terminal win stops the second draw");
+                assert!(
+                    matches!(next(branch), Decision::GameOver { winner: Some(winner) } if winner == actor)
+                );
+                assert_eq!(
+                    branch.players[other.index()].hand.len(),
+                    usize::from(active == other),
+                    "a first-player terminal win stops the second draw"
+                );
                 assert!(named(branch, other, "Treasure Token").is_empty());
             }
             assert_eq!(state.state_hash(), replay.state_hash());
@@ -218,10 +260,14 @@ fn paid_bonder_second_player_restore_cannot_repeat_skip_or_rebind_first_draw() {
         let source = put(&mut state, actor, "Bonder's Ornament", Zone::Battlefield);
         put(&mut state, other, "Bonder's Ornament", Zone::Battlefield);
         activate(&mut state, source, actor, actor);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, .. }) if player == actor));
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, .. }) if player == actor)
+        );
         act(&mut state, Action::FinishEffectSelection);
         let prompt = settle(&mut state).expect("second player's own choice");
-        assert!(matches!(&prompt, Decision::ChooseEffectTargets { player, legal_targets, .. } if *player == other && legal_targets == &[Target::Object(other_jace)]));
+        assert!(
+            matches!(&prompt, Decision::ChooseEffectTargets { player, legal_targets, .. } if *player == other && legal_targets == &[Target::Object(other_jace)])
+        );
         assert_eq!(named(&state, other, "Treasure Token").len(), 1);
         let mut replay = restored(&state);
         assert_eq!(prompt, next(&mut replay));
@@ -229,15 +275,45 @@ fn paid_bonder_second_player_restore_cannot_repeat_skip_or_rebind_first_draw() {
             let mut forged = state.clone();
             let pending = forged.engine.pending_effect.as_mut().unwrap();
             match mutation {
-                0 => { pending.frames.clear(); }
-                1 => { pending.resolving_item.v4.activated_ability_index = Some(1); }
-                2 => { pending.resolving_item.inline_effect = Some(mtg_kernel::effect::EffectOp::DrawCards { player: mtg_kernel::effect::PlayerRef::Controller, count: 1 }); }
-                3 => { pending.resolving_item.v4.ability_source_contract.as_mut().unwrap().zone_change_count += 1; pending.ctx.ability_source_contract = pending.resolving_item.v4.ability_source_contract; }
-                4 => { forged.active_player = other; }
-                5 => { let ornament = named(&forged, other, "Bonder's Ornament")[0]; forged.objects.get_mut(ornament).controller = actor; }
-                _ => { pending.ctx.controller = other; }
+                0 => {
+                    pending.frames.clear();
+                }
+                1 => {
+                    pending.resolving_item.v4.activated_ability_index = Some(1);
+                }
+                2 => {
+                    pending.resolving_item.inline_effect =
+                        Some(mtg_kernel::effect::EffectOp::DrawCards {
+                            player: mtg_kernel::effect::PlayerRef::Controller,
+                            count: 1,
+                        });
+                }
+                3 => {
+                    pending
+                        .resolving_item
+                        .v4
+                        .ability_source_contract
+                        .as_mut()
+                        .unwrap()
+                        .zone_change_count += 1;
+                    pending.ctx.ability_source_contract =
+                        pending.resolving_item.v4.ability_source_contract;
+                }
+                4 => {
+                    forged.active_player = other;
+                }
+                5 => {
+                    let ornament = named(&forged, other, "Bonder's Ornament")[0];
+                    forged.objects.get_mut(ornament).controller = actor;
+                }
+                _ => {
+                    pending.ctx.controller = other;
+                }
             }
-            assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err(), "mutation {mutation}");
+            assert!(
+                mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err(),
+                "mutation {mutation}"
+            );
         }
         let mut json = serde_json::to_value(&state).unwrap();
         json["eternal_owned_draw_progress_v1"]["completed"] = 1.into();
@@ -250,7 +326,11 @@ fn paid_bonder_second_player_restore_cannot_repeat_skip_or_rebind_first_draw() {
                 match value {
                     serde_json::Value::Object(map) => {
                         if let Some(row) = map.get_mut(key) {
-                            let field = if key == "Completed" { "ordinal" } else { "total" };
+                            let field = if key == "Completed" {
+                                "ordinal"
+                            } else {
+                                "total"
+                            };
                             row[field] = 9.into();
                             return true;
                         }
@@ -262,14 +342,20 @@ fn paid_bonder_second_player_restore_cannot_repeat_skip_or_rebind_first_draw() {
             }
             assert!(alter(&mut json["engine"]["event_history"], key));
             let forged: GameState = serde_json::from_value(json).unwrap();
-            assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err(), "changed {key}");
+            assert!(
+                mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err(),
+                "changed {key}"
+            );
         }
         for branch in [&mut state, &mut replay] {
             act(branch, Action::FinishEffectSelection);
             settled(branch);
             assert_eq!(named(branch, actor, "Treasure Token").len(), 1);
             assert_eq!(named(branch, other, "Treasure Token").len(), 1);
-            assert!(branch.players.iter().all(|p| !p.has_lost && !p.drew_from_empty));
+            assert!(branch
+                .players
+                .iter()
+                .all(|p| !p.has_lost && !p.drew_from_empty));
             assert!(observation(branch, actor).is_ok());
         }
         assert_eq!(state.state_hash(), replay.state_hash());
@@ -289,7 +375,9 @@ fn paid_bonder_dredge_hull_choices_and_riddler_expand_once_per_player() {
             put(&mut state, other, "Quantum Riddler", Zone::Battlefield);
             let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
             activate(&mut state, source, actor, active);
-            assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, legal_targets, .. }) if player == actor && legal_targets == [Target::Object(thug)]));
+            assert!(
+                matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, legal_targets, .. }) if player == actor && legal_targets == [Target::Object(thug)])
+            );
             let mut replay = restored(&state);
             for branch in [&mut state, &mut replay] {
                 act(branch, Action::ChooseEffectTarget(Target::Object(thug)));
@@ -297,7 +385,11 @@ fn paid_bonder_dredge_hull_choices_and_riddler_expand_once_per_player() {
                 assert_eq!(zone(branch, thug), Zone::Hand);
                 assert_eq!(branch.players[actor.index()].library.len(), 16);
                 assert_eq!(branch.players[other.index()].hand.len(), 2);
-                assert_eq!(named(branch, other, "Treasure Token").len(), 1, "exactly one remaining adjusted attempt, despite the small hand");
+                assert_eq!(
+                    named(branch, other, "Treasure Token").len(),
+                    1,
+                    "exactly one remaining adjusted attempt, despite the small hand"
+                );
             }
             assert_eq!(state.state_hash(), replay.state_hash());
         }
@@ -309,12 +401,16 @@ fn paid_bonder_unopposed_jace_stops_apnap_without_dredge_or_hull() {
     for active in [P0, P1] {
         let other = active.opponent();
         let mut state = game(&[]);
-        for _ in 0..3 { put(&mut state, other, "Plains", Zone::Library); }
+        for _ in 0..3 {
+            put(&mut state, other, "Plains", Zone::Library);
+        }
         cast_jace(&mut state, active);
         let source = put(&mut state, active, "Bonder's Ornament", Zone::Battlefield);
         put(&mut state, other, "Bonder's Ornament", Zone::Battlefield);
         activate(&mut state, source, active, active);
-        assert!(matches!(settle(&mut state), Some(Decision::GameOver { winner: Some(winner) }) if winner == active));
+        assert!(
+            matches!(settle(&mut state), Some(Decision::GameOver { winner: Some(winner) }) if winner == active)
+        );
         assert!(state.players[other.index()].hand.is_empty());
         assert_eq!(state.players[other.index()].library.len(), 3);
     }
@@ -326,11 +422,23 @@ fn paid_metamorph(state: &mut GameState, actor: PlayerId, donor: ObjectId) -> Ob
     let metamorph = put(state, actor, "Phyrexian Metamorph", Zone::Hand);
     pool(state, actor, &[ManaColor::U], 3);
     act(state, Action::CastSpell(metamorph));
-    assert!(matches!(settle(state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(donor))));
+    assert!(
+        matches!(settle(state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(donor)))
+    );
     act(state, Action::ChooseEffectTarget(Target::Object(donor)));
     settled(state);
-    assert_eq!(state.objects.get(metamorph).card_def, id("Bonder's Ornament"));
-    assert!(state.eternal_v1.as_ref().unwrap().vintage.copies.iter().any(|copy| copy.host.object == metamorph));
+    assert_eq!(
+        state.objects.get(metamorph).card_def,
+        id("Bonder's Ornament")
+    );
+    assert!(state
+        .eternal_v1
+        .as_ref()
+        .unwrap()
+        .vintage
+        .copies
+        .iter()
+        .any(|copy| copy.host.object == metamorph));
     metamorph
 }
 
@@ -338,7 +446,12 @@ fn paid_metamorph(state: &mut GameState, actor: PlayerId, donor: ObjectId) -> Ob
 fn paid_metamorph_bonder_keeps_ordinary_native_draw_contract() {
     for actor in [P0, P1] {
         let mut state = plains();
-        let donor = put(&mut state, actor.opponent(), "Bonder's Ornament", Zone::Battlefield);
+        let donor = put(
+            &mut state,
+            actor.opponent(),
+            "Bonder's Ornament",
+            Zone::Battlefield,
+        );
         let source = paid_metamorph(&mut state, actor, donor);
         activate(&mut state, source, actor, actor.opponent());
         settled(&mut state);
@@ -358,35 +471,59 @@ fn paid_bonder_retains_original_source_after_departure_and_new_incarnation() {
             put(&mut state, other, "Hullbreacher", Zone::Battlefield);
             let donor = put(&mut state, actor, "Bonder's Ornament", Zone::Battlefield);
             put(&mut state, other, "Bonder's Ornament", Zone::Battlefield);
-            let source = if copied { paid_metamorph(&mut state, actor, donor) }
-                else { put(&mut state, actor, "Bonder's Ornament", Zone::Battlefield) };
+            let source = if copied {
+                paid_metamorph(&mut state, actor, donor)
+            } else {
+                put(&mut state, actor, "Bonder's Ornament", Zone::Battlefield)
+            };
             activate(&mut state, source, actor, actor);
             let original_generation = state.objects.get(source).zone_change_count;
             let removal = put(&mut state, actor, "Disenchant", Zone::Hand);
             pool(&mut state, actor, &[ManaColor::W], 1);
             act(&mut state, Action::CastSpell(removal));
-            assert!(matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(source))));
+            assert!(
+                matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(source)))
+            );
             act(&mut state, Action::ChooseTarget(Target::Object(source)));
             for _ in 0..12 {
                 let decision = next(&mut state);
-                if zone(&state, source) == Zone::Graveyard { break; }
+                if zone(&state, source) == Zone::Graveyard {
+                    break;
+                }
                 assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
                 act(&mut state, Action::Pass);
             }
             assert_eq!(zone(&state, source), Zone::Graveyard);
             assert!(state.engine.pending_effect.is_none());
             if copied {
-                assert_eq!(state.objects.get(source).card_def, id("Phyrexian Metamorph"));
-                assert!(!state.eternal_v1.as_ref().unwrap().vintage.copies.iter().any(|copy| copy.host.object == source));
+                assert_eq!(
+                    state.objects.get(source).card_def,
+                    id("Phyrexian Metamorph")
+                );
+                assert!(!state
+                    .eternal_v1
+                    .as_ref()
+                    .unwrap()
+                    .vintage
+                    .copies
+                    .iter()
+                    .any(|copy| copy.host.object == source));
             } else {
-                mtg_kernel::event::propose_and_commit(&mut state, mtg_kernel::event::ProposedEvent::zone_change(source, Zone::Battlefield));
+                mtg_kernel::event::propose_and_commit(
+                    &mut state,
+                    mtg_kernel::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+                );
             }
             assert!(state.objects.get(source).zone_change_count > original_generation);
-            assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, legal_targets, .. }) if player == actor && legal_targets == [Target::Object(jace)]));
+            assert!(
+                matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, legal_targets, .. }) if player == actor && legal_targets == [Target::Object(jace)])
+            );
             let mut replay = restored(&state);
             for branch in [&mut state, &mut replay] {
                 act(branch, Action::ChooseEffectTarget(Target::Object(jace)));
-                assert!(matches!(next(branch), Decision::GameOver { winner: Some(winner) } if winner == actor));
+                assert!(
+                    matches!(next(branch), Decision::GameOver { winner: Some(winner) } if winner == actor)
+                );
                 assert!(named(branch, other, "Treasure Token").is_empty());
             }
             assert_eq!(state.state_hash(), replay.state_hash());
