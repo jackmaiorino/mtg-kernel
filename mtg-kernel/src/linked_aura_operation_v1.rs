@@ -493,6 +493,7 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
         kinship_plans: Vec::new(),
         mage_start: None,
         mage_plans: Vec::new(),
+        mage_names_v2: enclosing.mage_names_v2,
         original_stack: enclosing.original_stack.clone(),
         original_history_len: enclosing.original_history_len,
         batch_depth: 0,
