@@ -20738,6 +20738,32 @@ fn execute_with_native_row_v1(
             }
             let target = ctx.resolve_target(*target);
             let mut proposal = event::damage_from_exec_ctx_v1(ctx, target, *amount);
+            if let Some(proof) = native_proof.filter(|proof| {
+                proof.ctx == ctx
+                    && crate::source_power_activation_v1::bombardment::selected(
+                        state,
+                        &proof.owner.item,
+                    )
+            }) {
+                match crate::source_power_activation_v1::bombardment::departed_source(
+                    state,
+                    &proof.owner.item,
+                ) {
+                    Ok(Some(facts)) => {
+                        if let event::ProposedEvent::Damage(damage) = &mut proposal {
+                            damage.bombardment_source = Some(BombardmentDamageFactsV1(facts));
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(_) => {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            ctx.source,
+                        ));
+                        return;
+                    }
+                }
+            }
             match crate::fixed_source_damage_v3::native_fanatic_damage(state, ctx, op) {
                 Ok(id) => {
                     if let event::ProposedEvent::Damage(damage) = &mut proposal {
@@ -27763,6 +27789,13 @@ pub(crate) mod kaito_cunning_v75;
 pub(crate) mod liliana_dreadhorde_v1;
 pub(crate) mod vivien_reid_v1;
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if state.stack.iter().any(|item| {
+        ctx.stack_item_id == Some(item.v4.stack_item_id)
+            && crate::source_power_activation_v1::bombardment::selected(state, item)
+            && crate::source_power_activation_v1::bombardment::needs_lki(state, item)
+    }) {
+        return true;
+    }
     if kaito_cunning_v75::waiting(state, ctx)
         || crate::engine::tinybones_v72::waiting(state, ctx)
         || liliana_dreadhorde_v1::waiting(state, ctx)
@@ -27851,6 +27884,15 @@ pub(crate) struct NativeExecutionOwnerV1 {
 struct NativeExecutionProofV1<'a> {
     owner: &'a NativeExecutionOwnerV1,
     ctx: &'a ExecCtx,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct BombardmentDamageFactsV1(crate::event::HistoricalDamageSourceV1);
+
+impl BombardmentDamageFactsV1 {
+    pub(crate) fn source(self) -> crate::event::HistoricalDamageSourceV1 {
+        self.0
+    }
 }
 
 fn validated_native_execution_root_v1(

@@ -1945,6 +1945,208 @@ fn circle_of_protection_blue_uses_fanatics_color_before_sacrifice_both_seats() {
 }
 
 #[test]
+fn circle_of_protection_blue_uses_waiting_bombardments_actual_departure_both_seats() {
+    use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_sideboard_s1d_v1::S1dOpV1;
+    use mtg_kernel::event::CommittedEvent;
+    use mtg_kernel::standard_cards_v1::StandardOpV1;
+
+    fn shield_option(state: &mut GameState, source: ObjectId, original: u32) -> (Decision, u16) {
+        let decision = settle(state).expect("paid Circle source choice");
+        let Some(PendingEffectChoice::ChooseOption { options, .. }) = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .and_then(|pending| pending.choice.as_ref())
+        else {
+            panic!("Circle source options missing");
+        };
+        let option = options
+            .iter()
+            .position(|op| {
+                matches!(op, EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
+                S1dOpV1::CopShieldV1 { source: link },
+            ))) if link.object == source && link.zone_change_count == original)
+            })
+            .expect("Circle must offer the original blue Bombardment");
+        (decision, u16::try_from(option).unwrap())
+    }
+
+    let blue = mtg_kernel::card_def::mana_color_mask(ManaColor::U);
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        for (bounce, painter_first) in [(false, false), (true, false), (true, true)] {
+            let mut state = plains();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let source = put(
+                &mut state,
+                opponent,
+                "Goblin Bombardment",
+                Zone::Battlefield,
+            );
+            let sacrifice = put(&mut state, opponent, "Llanowar Elves", Zone::Battlefield);
+            let original = state.objects.get(source).zone_change_count;
+            let circle = put(&mut state, actor, "Circle of Protection: Blue", Zone::Hand);
+            let late_circle = bounce && !painter_first;
+            if !late_circle {
+                pool(&mut state, actor, &[ManaColor::W], 1);
+                cast(&mut state, circle, &[]);
+                settled(&mut state);
+            }
+            let painter = put(&mut state, actor, "Painter's Servant", Zone::Hand);
+            let bounce_spell = put(&mut state, actor, "Echoing Truth", Zone::Hand);
+            let removal = put(&mut state, actor, "Cast Down", Zone::Hand);
+            pool(&mut state, actor, &[], 2);
+            cast(&mut state, painter, &[]);
+            settle_option(&mut state, 1);
+            assert_ne!(engine::object_color_mask(&state, source) & blue, 0);
+            put(&mut state, actor, "Mulldrifter", Zone::Battlefield);
+            act(&mut state, Action::Pass);
+            activate(&mut state, source, 0, &[Target::Player(actor)]);
+            assert!(
+                matches!(next(&mut state), Decision::ChooseCostTargets { candidates, .. }
+                if candidates == [sacrifice])
+            );
+            act(&mut state, Action::ChooseCostTarget(sacrifice));
+            assert!(
+                matches!(next(&mut state), Decision::CastSpellOrPass { player, .. }
+                if player == opponent)
+            );
+            assert_eq!(zone(&state, sacrifice), Zone::Graveyard);
+            assert_eq!(state.stack[0].v4.paid_cost_refs[0].object, sacrifice);
+            assert!(!state.stack[0].v4.bombardment_lki_v1.is_empty());
+            assert_eq!(zone(&state, source), Zone::Battlefield);
+            act(&mut state, Action::Pass);
+
+            if painter_first {
+                pool(&mut state, actor, &[], 1);
+                activate(&mut state, circle, 0, &[]);
+                let (_, option) = shield_option(&mut state, source, original);
+                act(&mut state, Action::ChooseEffectOption(option));
+                pool(&mut state, actor, &[ManaColor::B], 1);
+                cast(&mut state, removal, &[Target::Object(painter)]);
+                run_until(
+                    &mut state,
+                    |s| zone(s, painter) == Zone::Graveyard,
+                    |_, _| None,
+                );
+            }
+            if bounce {
+                pool(&mut state, actor, &[ManaColor::U], 1);
+                cast(&mut state, bounce_spell, &[Target::Object(source)]);
+                run_until(&mut state, |s| zone(s, source) == Zone::Hand, |_, _| None);
+                if !painter_first {
+                    pool(&mut state, actor, &[ManaColor::B], 1);
+                    cast(&mut state, removal, &[Target::Object(painter)]);
+                    run_until(
+                        &mut state,
+                        |s| zone(s, painter) == Zone::Graveyard,
+                        |_, _| None,
+                    );
+                }
+                assert_eq!(engine::object_color_mask(&state, source) & blue, 0);
+                // Recovery and a real draw add later incarnations of the
+                // sacrificed object without changing the indexed payment.
+                mtg_kernel::event::propose_and_commit(
+                    &mut state,
+                    mtg_kernel::event::ProposedEvent::zone_change(sacrifice, Zone::Library),
+                );
+                mtg_kernel::event::propose_and_commit(
+                    &mut state,
+                    mtg_kernel::event::ProposedEvent::draw(opponent),
+                );
+                assert_eq!(zone(&state, sacrifice), Zone::Hand);
+                let (capture_at, facts) = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, event)| match event {
+                        CommittedEvent::SourceDamageBeforeLeavingV1 { damage_source }
+                            if damage_source.source.source == source =>
+                        {
+                            Some((index, *damage_source))
+                        }
+                        _ => None,
+                    })
+                    .expect("native Bombardment departure");
+                assert_eq!(facts.source.zone_change_count, original);
+                assert_eq!(facts.color_mask & blue != 0, !painter_first);
+
+                for mutation in 0..3 {
+                    let mut forged: GameState =
+                        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                    if mutation == 0 {
+                        let paid = forged.engine.event_history.iter().find(|event| {
+                            matches!(event, CommittedEvent::Sacrificed { object, .. } if *object == sacrifice)
+                        }).unwrap().clone();
+                        forged.engine.event_history[capture_at] = paid;
+                    } else if mutation == 1 {
+                        let CommittedEvent::SourceDamageBeforeLeavingV1 { damage_source } =
+                            &mut forged.engine.event_history[capture_at]
+                        else {
+                            panic!("original source receipt absent")
+                        };
+                        damage_source.source.zone_change_count += 1;
+                    } else {
+                        forged.stack[0].v4.paid_cost_refs[0].object = painter;
+                    }
+                    let before = forged.state_hash();
+                    assert!(engine::step(&mut forged, Action::Pass).is_err());
+                    assert_eq!(forged.state_hash(), before);
+                }
+                let mut predecessor = state.clone();
+                predecessor.stack[0].v4.bombardment_lki_v1 = Default::default();
+                let paid = predecessor.engine.event_history.iter().find(|event| {
+                    matches!(event, CommittedEvent::Sacrificed { object, .. } if *object == sacrifice)
+                }).unwrap().clone();
+                predecessor.engine.event_history[capture_at] = paid;
+                let mut predecessor: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&predecessor).unwrap()).unwrap();
+                assert!(predecessor.stack[0].v4.bombardment_lki_v1.is_empty());
+                settled(&mut predecessor);
+                assert_eq!(life(&predecessor, actor), 19);
+            }
+            if late_circle {
+                // A native entry after the paid source has already left.
+                mtg_kernel::event::propose_and_commit(
+                    &mut state,
+                    mtg_kernel::event::ProposedEvent::zone_change(circle, Zone::Battlefield),
+                );
+                assert_eq!(zone(&state, circle), Zone::Battlefield);
+            }
+            let shield = if painter_first {
+                None
+            } else {
+                let mut unprotected = state.clone();
+                settled(&mut unprotected);
+                assert_eq!(life(&unprotected, actor), 19);
+                pool(&mut state, actor, &[], 1);
+                activate(&mut state, circle, 0, &[]);
+                Some(shield_option(&mut state, source, original))
+            };
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                if let Some((decision, option)) = &shield {
+                    assert_eq!(next(branch), *decision);
+                    act(branch, Action::ChooseEffectOption(*option));
+                }
+                settled(branch);
+                assert_eq!(life(branch, actor), if painter_first { 19 } else { 20 });
+                assert_eq!(
+                    branch.eternal_v1.as_ref().unwrap().s1d.cop_shields.len(),
+                    usize::from(painter_first),
+                );
+            }
+            assert_eq!(state.state_hash(), restored.state_hash());
+        }
+    }
+}
+
+#[test]
 fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
     use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
     use mtg_kernel::eternal_cards_v1::EternalOpV1;

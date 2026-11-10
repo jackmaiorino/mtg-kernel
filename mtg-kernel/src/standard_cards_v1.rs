@@ -3093,12 +3093,10 @@ pub(crate) fn replace_damage(state: &GameState, damage: &mut DamageProposed) {
     let Some(source) = state.objects.try_get(damage.source) else {
         return;
     };
-    let controller = damage.historical_source.map_or(source.controller, |id| {
-        crate::source_power_activation_v1::damage_source(state, damage.source, id)
-            .expect("validated historical source")
-            .source
-            .controller
-    });
+    let controller = damage
+        .historical_facts(state)
+        .expect("validated historical source")
+        .map_or(source.controller, |facts| facts.source.controller);
     if damaged != controller.opponent()
         || crate::event::damage_color_mask(state, damage)
             & crate::card_def::mana_colors_mask(&[ManaColor::R])

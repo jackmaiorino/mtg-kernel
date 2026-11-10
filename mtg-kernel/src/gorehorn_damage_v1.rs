@@ -668,6 +668,7 @@ pub(crate) fn execute_owned(
             touched_by: vec![],
             is_combat: false,
             historical_source: Some(owner.item.v4.stack_item_id),
+            bombardment_source: None,
             niv_damage_origin_v1: None,
         };
         damage_operation = Some(crate::event::propose_and_commit_gorehorn_owned(

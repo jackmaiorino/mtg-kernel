@@ -1084,6 +1084,7 @@ fn paid_suppressed_survivor_exposure_and_mixed_prevention_refuse_before_mutation
                             touched_by: vec![],
                             historical_source: None,
                             niv_damage_origin_v1: None,
+                            bombardment_source: None,
                         }),
                         zone,
                     ],

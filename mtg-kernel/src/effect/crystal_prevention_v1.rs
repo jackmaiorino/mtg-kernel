@@ -69,6 +69,7 @@ impl ChoiceV1 {
             is_combat: false,
             historical_source: self.historical_source,
             niv_damage_origin_v1: self.niv_damage_origin_v1,
+            bombardment_source: None,
         }
     }
 }
@@ -173,6 +174,7 @@ impl BatchDamageV2 {
             is_combat: false,
             historical_source: None,
             niv_damage_origin_v1: None,
+            bombardment_source: None,
         }
     }
 
@@ -976,6 +978,7 @@ fn original_damage(
         is_combat: false,
         historical_source,
         niv_damage_origin_v1: ctx.niv_damage_origin_v1,
+        bombardment_source: None,
     })
 }
 /// Equipment owns the grant recipe; the host owns the resulting trigger.
@@ -1367,6 +1370,11 @@ pub(crate) fn acquire_owner(
             })))
     {
         return Ok(None);
+    }
+    if crate::source_power_activation_v1::bombardment::selected(state, item)
+        && crate::source_power_activation_v1::bombardment::needs_lki(state, item)
+    {
+        return Err("Crystal execution cannot retain the departed Bombardment source loan".into());
     }
     validate(state)?;
     if state
@@ -4939,18 +4947,16 @@ fn applicable_after(
                         .map(PreventionV1::Barricade),
                 );
             }
-            let protected = match damage.historical_source {
-                Some(id) => {
-                    crate::source_power_activation_v1::damage_source(state, damage.source, id)
-                        .is_ok_and(|facts| {
-                            crate::source_power_activation_v1::protected(state, facts, target)
-                        })
+            let protected = match damage.historical_facts(state) {
+                Ok(Some(facts)) => {
+                    crate::source_power_activation_v1::protected(state, facts, target)
                 }
-                None => crate::engine::damage_is_prevented_by_protection(
+                Ok(None) => crate::engine::damage_is_prevented_by_protection(
                     state,
                     damage.source,
                     damage.target,
                 ),
+                Err(_) => false,
             };
             if protected {
                 let o = state.objects.get(target);

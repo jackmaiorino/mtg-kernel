@@ -19132,63 +19132,77 @@ pub(crate) fn stack_targets_still_legal(
         } else {
             target_contract_matches_live(state, target, contract)
         };
-        let legal_now =
-            match item.kind {
-                StackItemKind::ActivatedAbility => {
-                    let ability_index = item
-                        .v4
-                        .activated_ability_index
-                        .ok_or("activated stack item lost its definition-owned ability index")?;
-                    let source_contract = validated_ability_source_contract(state, item)?;
-                    let ability = resolved_stack_activated_ability(
+        let legal_now = match item.kind {
+            StackItemKind::ActivatedAbility => {
+                let ability_index = item
+                    .v4
+                    .activated_ability_index
+                    .ok_or("activated stack item lost its definition-owned ability index")?;
+                let source_contract = validated_ability_source_contract(state, item)?;
+                let ability = resolved_stack_activated_ability(
+                    state,
+                    source_contract,
+                    ability_index,
+                    item.v4.granted_by,
+                    item.v4.cauldron_grant,
+                )?;
+                let source_departed = state.objects.try_get(item.source).is_none_or(|live| {
+                    live.zone_change_count != source_contract.zone_change_count
+                        || live.zone != source_contract.zone
+                });
+                if source_departed
+                    && crate::source_power_activation_v1::bombardment::selected(state, item)
+                    && crate::source_power_activation_v1::bombardment::needs_lki(state, item)
+                {
+                    let facts = crate::source_power_activation_v1::bombardment::departed_source(
+                        state, item,
+                    )?
+                    .ok_or("departed Bombardment lost its source facts")?;
+                    crate::fixed_source_damage_v3::legal_targets_with_controller(
                         state,
-                        source_contract,
-                        ability_index,
-                        item.v4.granted_by,
-                        item.v4.cauldron_grant,
-                    )?;
-                    let source_departed = state.objects.try_get(item.source).is_none_or(|live| {
-                        live.zone_change_count != source_contract.zone_change_count
-                            || live.zone != source_contract.zone
-                    });
-                    if crate::fixed_source_damage_v3::tracked(state, item) {
-                        crate::fixed_source_damage_v3::legal_targets(
+                        facts,
+                        item.controller,
+                    )
+                    .contains(&target)
+                } else if crate::fixed_source_damage_v3::tracked(state, item) {
+                    crate::fixed_source_damage_v3::legal_targets(
+                        state,
+                        crate::fixed_source_damage_v3::damage_source(
                             state,
-                            crate::fixed_source_damage_v3::damage_source(
-                                state,
-                                item.source,
-                                item.v4.stack_item_id,
-                            )?,
-                        )
-                        .contains(&target)
-                    } else if matches!(
-                        item.inline_effect.as_ref(),
-                        Some(EffectOp::StandardV1(
-                            crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
-                        ))
-                    ) {
-                        crate::source_power_activation_v1::legal_targets(
-                            state,
-                            crate::source_power_activation_v1::damage_source(
-                                state,
-                                item.source,
-                                item.v4.stack_item_id,
-                            )?,
-                        )
-                        .contains(&target)
-                    } else {
-                        activation_legal_targets_with_source_lki(
                             item.source,
-                            &ability,
-                            &chosen,
-                            source_departed,
-                            Some(source_contract),
+                            item.v4.stack_item_id,
+                        )?,
+                    )
+                    .contains(&target)
+                } else if matches!(
+                    item.inline_effect.as_ref(),
+                    Some(EffectOp::StandardV1(
+                        crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
+                    ))
+                ) {
+                    crate::source_power_activation_v1::legal_targets(
+                        state,
+                        crate::source_power_activation_v1::damage_source(
                             state,
-                        )
-                        .contains(&target)
-                    }
+                            item.source,
+                            item.v4.stack_item_id,
+                        )?,
+                    )
+                    .contains(&target)
+                } else {
+                    activation_legal_targets_with_source_lki(
+                        item.source,
+                        &ability,
+                        &chosen,
+                        source_departed,
+                        Some(source_contract),
+                        state,
+                    )
+                    .contains(&target)
                 }
-                _ => legal_targets_for_controller_from_source(
+            }
+            _ => {
+                legal_targets_for_controller_from_source(
                     spec,
                     if spec == TargetSpec::KickerControlledCreatures {
                         &[]
@@ -19254,8 +19268,9 @@ pub(crate) fn stack_targets_still_legal(
                     },
                     state,
                 )
-                .contains(&target),
-            };
+                .contains(&target)
+            }
+        };
         any_legal |= same_incarnation && legal_now;
         chosen.push(target);
     }
@@ -29748,6 +29763,19 @@ fn push_paid_activation(
     #[cfg(feature = "eternal-fixtures")]
     crate::extra_turn_v1::record_publication(state, stack_item_id);
     crate::source_power_activation_v1::record_paid(state, stack_item_id);
+    if crate::source_power_activation_v1::bombardment::mark_paid(
+        state,
+        stack_item_id,
+        frozen.payment_history_start,
+    )
+    .is_err()
+    {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
     crate::librarian_activation_v1::record_paid(state, stack_item_id);
     if crate::krenko_v1::record_paid(
         state,
