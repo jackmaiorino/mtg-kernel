@@ -846,6 +846,15 @@ fn jewel_treasures(state: &GameState, player: PlayerId) -> usize {
         .count()
 }
 
+fn restore_draw_answer(state: &GameState) -> GameState {
+    let pending = state.engine.pending_effect.as_ref().unwrap();
+    assert!(pending.choice.is_none());
+    assert!(pending.answered_choice_guard.is_some());
+    let restored = serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
+    mtg_kernel::effect::validate_pending_effect_choice(&restored).unwrap();
+    restored
+}
+
 #[test]
 fn coveted_jewel_combat_draws_finish_before_transfer_both_seats() {
     use mtg_kernel::effect::{EffectTargetSelectionPurpose, PendingEffectChoice};
@@ -933,7 +942,10 @@ fn coveted_jewel_combat_draws_finish_before_transfer_both_seats() {
             );
 
             act(&mut state, Action::FinishEffectSelection);
+            let mut declined = restore_draw_answer(&state);
             let second = settle(&mut state).expect("the combat trigger's second draw");
+            assert_eq!(settle(&mut declined), Some(second.clone()));
+            assert_eq!(state.state_hash(), declined.state_hash());
             assert_jewel_dredge_prompt(&second, drawer, jewel, thug);
             assert_eq!(jewel_treasures(&state, defender), 1);
             assert_eq!(state.objects.get(jewel).controller, defender);
@@ -945,6 +957,9 @@ fn coveted_jewel_combat_draws_finish_before_transfer_both_seats() {
             assert_eq!(second, next(&mut restored));
             for continued in [&mut state, &mut restored] {
                 act(continued, Action::ChooseEffectTarget(Target::Object(thug)));
+            }
+            let mut accepted = restore_draw_answer(&state);
+            for continued in [&mut state, &mut restored, &mut accepted] {
                 settled(continued);
                 assert_eq!(continued.objects.get(thug).zone, Zone::Hand);
                 assert_eq!(continued.players[drawer.index()].library, library[4..]);
@@ -967,6 +982,7 @@ fn coveted_jewel_combat_draws_finish_before_transfer_both_seats() {
                     .is_none());
             }
             assert_eq!(state.state_hash(), restored.state_hash());
+            assert_eq!(state.state_hash(), accepted.state_hash());
         }
     }
 }
