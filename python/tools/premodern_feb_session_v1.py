@@ -20,11 +20,21 @@ def _packet(value: Any, fields: set[str], description: str) -> dict[str, Any]:
     return value
 
 
+def _u16_limbs(value: Any, width: int) -> bool:
+    return (type(value) is list and len(value) == width
+            and all(type(limb) is int and 0 <= limb <= 0xFFFF for limb in value))
+
+
 def _tree(value: Any) -> None:
     packet = _packet(value, {"rows", "topology"}, "FEB numeric tree")
     rows, topology = packet["rows"], packet["topology"]
     if type(rows) is not list or type(topology) is not list or not rows or len(rows) != len(topology):
         raise LimitedSessionError("invalid FEB numeric tree dimensions")
+    if not all(_u16_limbs(row, 12) for row in rows):
+        raise LimitedSessionError("invalid FEB numeric tree row")
+    for entry in topology:
+        if type(entry) is not list or len(entry) != 2 or not all(_u16_limbs(part, 4) for part in entry):
+            raise LimitedSessionError("invalid FEB numeric tree topology")
 
 
 def _snapshot_id(value: Any) -> str:
