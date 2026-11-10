@@ -10503,8 +10503,7 @@ fn copied_token_entry_v1(
     let rows = state
         .engine
         .event_history
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::CopiedTokenAbilitiesEnteredV1])
         .filter_map(|(at, e)| match e {
             CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
                 source: actual,
@@ -10861,7 +10860,11 @@ pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<()
             return Err("copied abilities survived an ordinary zone change".into());
         }
     }
-    for event in &state.engine.event_history {
+    for (_, event) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::CopiedTokenAbilitiesEnteredV1])
+    {
         let CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
             source, instances, ..
         } = event

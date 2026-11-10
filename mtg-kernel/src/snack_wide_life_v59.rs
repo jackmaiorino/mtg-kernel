@@ -511,7 +511,20 @@ pub(crate) fn has_wide_history(state: &GameState) -> bool {
                 | CommittedEvent::FiendishPandaWideGainCaptureV59 { .. }
         )
     };
-    state.engine.event_history.iter().any(selected)
+    state
+        .engine
+        .event_history
+        .of_kinds_v2(&[
+            crate::event_history_v1::EventKindV1::LifeLossWideV59,
+            crate::event_history_v1::EventKindV1::LifeGainWideV59,
+            crate::event_history_v1::EventKindV1::ConquerorObserverInputV59,
+            crate::event_history_v1::EventKindV1::ConquerorLossBatchV59,
+            crate::event_history_v1::EventKindV1::ConquerorCapturedV59,
+            crate::event_history_v1::EventKindV1::ConquerorCollectedV59,
+            crate::event_history_v1::EventKindV1::ConquerorJournalV59,
+            crate::event_history_v1::EventKindV1::FiendishPandaWideGainCaptureV59,
+        ])
+        .any(|(_, event)| selected(event))
         || state.engine.event_log.iter().any(selected)
         || state.stack.iter().any(|item| {
             item.inline_effect

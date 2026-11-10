@@ -1,5 +1,5 @@
 //! Untargeted Aura return under the genuine gained-death operation.
-use super::spell_custody::{emit, journal, JournalV50};
+use super::spell_custody::{emit, journal, row_events, rows, JournalV50};
 use crate::effect::EffectObjectBinding;
 use crate::event::{CommittedEvent, ProposedEvent};
 use crate::ids::PlayerId;
@@ -217,7 +217,7 @@ pub(crate) fn record_attachment(
             Some(JournalV50::AuraReturnInput { input }) if input.choice.aura.object == source.object
                 && input.choice.candidates.iter().any(|candidate| candidate.object == host.object
                     && candidate.expected_zone_change_count == host.zone_change_count))
-        || state.engine.event_history.iter().any(|event|
+        || row_events(state).any(|event|
             matches!(journal(event), Some(JournalV50::AuraAttachmentCommitted { input, .. }) if *input == loan.input))
     { return Err("Fake Aura attachment changed its private actual entry loan".into()); }
     emit(
@@ -232,17 +232,17 @@ pub(crate) fn record_attachment(
 }
 
 pub(crate) fn no_host_outcome(state: &GameState, resolution: u64) -> bool {
-    state.engine.event_history.iter().enumerate().any(|(at, event)| {
+    rows(state).any(|(at, event)| {
         matches!(journal(event), Some(JournalV50::AuraReturnInput { input })
             if input.choice.resolution == resolution && input.choice.candidates.is_empty())
-            && state.engine.event_history.iter().any(|event|
+            && row_events(state).any(|event|
                 matches!(journal(event), Some(JournalV50::AuraReturnCompleted { input, selected: None,
                     returned: None, attachment: None }) if *input == at as u64))
     })
 }
 
 pub(crate) fn validate_history(state: &GameState) -> Result<(), String> {
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in rows(state) {
         match journal(event) {
             Some(JournalV50::AuraReturnInput { input }) => {
                 let Some(JournalV50::DeathResolutionInput {
@@ -261,10 +261,7 @@ pub(crate) fn validate_history(state: &GameState) -> Result<(), String> {
                     return Err("Fake Aura input orphaned from actual death resolution".into());
                 };
                 let n = input.original.engine.event_history.len();
-                if state
-                    .engine
-                    .event_history
-                    .iter()
+                if row_events(state)
                     .filter(|event| {
                         matches!(journal(event), Some(JournalV50::AuraReturnInput { input: other })
                         if other.choice.resolution == input.choice.resolution)
@@ -299,11 +296,7 @@ pub(crate) fn validate_history(state: &GameState) -> Result<(), String> {
                 {
                     return Err("Fake Aura input changed original operation, source or complete host roster".into());
                 }
-                let closed = state
-                    .engine
-                    .event_history
-                    .iter()
-                    .enumerate()
+                let closed = rows(state)
                     .filter_map(|(i, event)| match journal(event) {
                         Some(JournalV50::AuraReturnCompleted {
                             input: original,
@@ -338,7 +331,7 @@ pub(crate) fn validate_history(state: &GameState) -> Result<(), String> {
                     let [(closed_at, selected, returned, attachment)] = closed.as_slice() else {
                         return Err("Fake Aura returned more than once".into());
                     };
-                    let relation_count = state.engine.event_history.iter().filter(|event|
+                    let relation_count = row_events(state).filter(|event|
                         matches!(journal(event), Some(JournalV50::AuraAttachmentCommitted { input: original, .. })
                             if *original == at as u64)).count();
                     if relation_count != usize::from(selected.is_some()) {
@@ -406,11 +399,7 @@ pub(crate) fn validate_resolution_closed(
     treasure: u64,
     returned: Option<u64>,
 ) -> Result<(), String> {
-    let inputs = state
-        .engine
-        .event_history
-        .iter()
-        .enumerate()
+    let inputs = rows(state)
         .filter_map(|(at, event)| match journal(event) {
             Some(JournalV50::AuraReturnInput { input })
                 if input.choice.resolution == resolution =>
@@ -423,11 +412,7 @@ pub(crate) fn validate_resolution_closed(
     let [input] = inputs.as_slice() else {
         return Err("Fake closed Aura resolution lost its unique mandatory return input".into());
     };
-    let completions = state
-        .engine
-        .event_history
-        .iter()
-        .enumerate()
+    let completions = rows(state)
         .filter_map(|(at, event)| match journal(event) {
             Some(JournalV50::AuraReturnCompleted {
                 input: original,
