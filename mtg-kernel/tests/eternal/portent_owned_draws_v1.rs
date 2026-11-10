@@ -743,7 +743,10 @@ fn paid_portent_pending_order_sources_remain_original_after_hidden_return() {
                 .pending_triggers;
             assert_eq!(pending.len(), 2);
             for (pending, original) in pending.iter().zip(&sources) {
-                let source = pending.source.as_ref().expect("authenticated original source");
+                let source = pending
+                    .source
+                    .as_ref()
+                    .expect("authenticated original source");
                 assert_eq!(source.arena_id, original.source.0);
                 assert_eq!(source.zone, Zone::Stack);
                 assert_eq!(source.zone_change_count, original.zone_change_count);
