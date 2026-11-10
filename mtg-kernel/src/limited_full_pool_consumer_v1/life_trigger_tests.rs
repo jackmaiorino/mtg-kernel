@@ -319,6 +319,14 @@ fn paid_life_creatures_publish_exact_programs_and_caps_both_seats() {
                     .unwrap()[0]
                     .source;
                 source.zone = Zone::Hand;
+                assert_eq!(
+                    trigger_programs::validate(
+                        facts(&d),
+                        &forged.common.common.projection.surface,
+                    )
+                    .unwrap_err(),
+                    "invalid FullPool public trigger cap ledger"
+                );
                 forged.projection_sha256 =
                     crate::kaito_observation_v75::commitment(&forged).unwrap();
                 assert!(crate::kaito_observation_v75::validate_artifact(&forged).is_err());
