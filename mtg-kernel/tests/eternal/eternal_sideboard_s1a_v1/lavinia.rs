@@ -68,7 +68,12 @@ fn lavinia_counter_trigger_follows_its_controller_after_paid_exchange_both_seats
             |s| s.turn > turn && s.active_player == controller && s.step == Step::Main1,
             |_, _| None,
         );
-        activate(&mut state, oko, 2, &[Target::Object(food), Target::Object(lavinia)]);
+        activate(
+            &mut state,
+            oko,
+            2,
+            &[Target::Object(food), Target::Object(lavinia)],
+        );
         settled(&mut state);
         assert_eq!(loyalty(&state, oko), Some(1));
         assert_eq!(state.objects.get(food).controller, owner);
@@ -87,7 +92,10 @@ fn lavinia_counter_trigger_follows_its_controller_after_paid_exchange_both_seats
         assert!(matches!(priority, Decision::CastSpellOrPass { .. }));
         assert_eq!(zone(&state, mox), Zone::Stack);
         assert_eq!(state.players[owner.index()].mana_pool, [0; 6]);
-        let trigger = state.stack.last().expect("Lavinia's published counter trigger");
+        let trigger = state
+            .stack
+            .last()
+            .expect("Lavinia's published counter trigger");
         assert_eq!(trigger.kind, StackItemKind::TriggeredAbility);
         assert_eq!(trigger.source, lavinia);
         assert_eq!(trigger.controller, controller);
