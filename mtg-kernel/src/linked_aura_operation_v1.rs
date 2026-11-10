@@ -3194,6 +3194,7 @@ pub(crate) fn tamper_drake_saved_output_runtime_for_test(state: &mut GameState) 
         kinship_plans: Vec::new(),
         mage_start: None,
         mage_plans: Vec::new(),
+        mage_names_v2: true,
         original_stack: state.stack.clone(),
         original_history_len: state.engine.event_history.len(),
         batch_depth: 0,
