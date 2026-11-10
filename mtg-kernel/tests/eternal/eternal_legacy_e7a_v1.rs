@@ -1152,29 +1152,60 @@ fn curie_draw_uses_departure_base_power_and_replacement_attempts_both_seats() {
         let mut state = islands();
         state.active_player = actor;
         state.priority_player = actor;
-        let curie = put(&mut state, actor, "Curie, Emergent Intelligence", Zone::Battlefield);
-        let donor = put(&mut state, actor, "Phyrexian Dreadnought", Zone::Battlefield);
-        let other = put(&mut state, opponent, "Phyrexian Dreadnought", Zone::Battlefield);
+        let curie = put(
+            &mut state,
+            actor,
+            "Curie, Emergent Intelligence",
+            Zone::Battlefield,
+        );
+        let donor = put(
+            &mut state,
+            actor,
+            "Phyrexian Dreadnought",
+            Zone::Battlefield,
+        );
+        let other = put(
+            &mut state,
+            opponent,
+            "Phyrexian Dreadnought",
+            Zone::Battlefield,
+        );
         let bounce = put(&mut state, actor, "Echoing Truth", Zone::Hand);
         pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
         act(&mut state, Action::DeclareAttackers(vec![curie]));
-        pass_until(&mut state, |state| state.stack.last().is_some_and(|row| {
-            row.source == curie && row.kind == StackItemKind::TriggeredAbility
-        }));
+        pass_until(&mut state, |state| {
+            state.stack.last().is_some_and(|row| {
+                row.source == curie && row.kind == StackItemKind::TriggeredAbility
+            })
+        });
         assert_eq!(state.players[opponent.index()].life, 19);
-        let combat_at = state.engine.event_history.iter().position(|event| matches!(event,
+        let combat_at = state
+            .engine
+            .event_history
+            .iter()
+            .position(|event| {
+                matches!(event,
             CommittedEvent::CombatDamageToPlayer { source, player, amount: 1, .. }
-            if *source == curie && *player == opponent)).unwrap();
+            if *source == curie && *player == opponent)
+            })
+            .unwrap();
         let trigger = state.stack.last().unwrap().v4.stack_item_id;
 
         pool(&mut state, actor, &[ManaColor::U], 1);
         activate(&mut state, curie, 0, &[]);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets {
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseEffectTargets {
             player, legal_targets, .. }) if player == actor
-                && legal_targets.contains(&Target::Object(donor))));
-        act(&mut state, Action::ChooseEffectTarget(Target::Object(donor)));
-        pass_until(&mut state, |state| state.stack.len() == 1
-            && state.objects.get(curie).card_def == id("Phyrexian Dreadnought"));
+                && legal_targets.contains(&Target::Object(donor)))
+        );
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(donor)),
+        );
+        pass_until(&mut state, |state| {
+            state.stack.len() == 1
+                && state.objects.get(curie).card_def == id("Phyrexian Dreadnought")
+        });
         assert_eq!(zone(&state, donor), Zone::Exile);
         assert_eq!(state.stack[0].v4.stack_item_id, trigger);
         state.objects.get_mut(curie).counters.plus1_plus1 = 1;
@@ -1183,20 +1214,34 @@ fn curie_draw_uses_departure_base_power_and_replacement_attempts_both_seats() {
 
         pool(&mut state, actor, &[ManaColor::U], 1);
         cast(&mut state, bounce, &[Target::Object(other)]);
-        pass_until(&mut state, |state| zone(state, curie) == Zone::Hand
-            && zone(state, other) == Zone::Hand);
-        assert_eq!(state.objects.get(curie).card_def, id("Curie, Emergent Intelligence"));
+        pass_until(&mut state, |state| {
+            zone(state, curie) == Zone::Hand && zone(state, other) == Zone::Hand
+        });
+        assert_eq!(
+            state.objects.get(curie).card_def,
+            id("Curie, Emergent Intelligence")
+        );
         assert_eq!(state.stack.last().unwrap().v4.stack_item_id, trigger);
-        let departures = state.engine.event_history.iter().skip(combat_at + 1)
+        let departures = state
+            .engine
+            .event_history
+            .iter()
+            .skip(combat_at + 1)
             .filter_map(|event| match event {
-                CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to: Zone::Hand, .. }
-                    if [other, curie].contains(object) => Some(*object),
+                CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Battlefield,
+                    to: Zone::Hand,
+                    ..
+                } if [other, curie].contains(object) => Some(*object),
                 _ => None,
-            }).collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
         assert_eq!(departures, [other, curie]);
 
         let before = hand_len(&state, actor);
-        let mut ordinary: GameState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let mut ordinary: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         settled(&mut ordinary);
         assert_eq!(hand_len(&ordinary, actor), before + 12);
 
@@ -1213,28 +1258,45 @@ fn curie_draw_uses_departure_base_power_and_replacement_attempts_both_seats() {
         assert_eq!(next(&mut restored), choice);
 
         let mut wrong_count = serde_json::to_value(&state).unwrap();
-        let count = wrong_count["engine"]["event_history"].as_array_mut().unwrap()
-            .iter_mut().find_map(|event| {
-                event.get_mut("EternalOwnedDrawV1")?.get_mut("journal")?
-                    .get_mut("Started")?.get_mut("total")
-            }).unwrap();
+        let count = wrong_count["engine"]["event_history"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find_map(|event| {
+                event
+                    .get_mut("EternalOwnedDrawV1")?
+                    .get_mut("journal")?
+                    .get_mut("Started")?
+                    .get_mut("total")
+            })
+            .unwrap();
         assert_eq!(count.as_u64(), Some(12));
         *count = serde_json::json!(13);
         let wrong_count: GameState = serde_json::from_value(wrong_count).unwrap();
         assert!(mtg_kernel::effect::validate_pending_effect_choice(&wrong_count).is_err());
 
         let mut wrong_lki = serde_json::to_value(&state).unwrap();
-        let power = wrong_lki["engine"]["event_history"].as_array_mut().unwrap()
-            .iter_mut().find_map(|event| {
-                event.get_mut("EternalOwnedDrawV1")?.get_mut("journal")?
-                    .get_mut("CurieDeparture")?.get_mut("power")
-            }).unwrap();
+        let power = wrong_lki["engine"]["event_history"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find_map(|event| {
+                event
+                    .get_mut("EternalOwnedDrawV1")?
+                    .get_mut("journal")?
+                    .get_mut("CurieDeparture")?
+                    .get_mut("power")
+            })
+            .unwrap();
         assert_eq!(power.as_u64(), Some(12));
         *power = serde_json::json!(13);
         let wrong_lki: GameState = serde_json::from_value(wrong_lki).unwrap();
         assert!(mtg_kernel::effect::validate_pending_effect_choice(&wrong_lki).is_err());
 
-        act(&mut restored, Action::ChooseEffectTarget(Target::Object(thug)));
+        act(
+            &mut restored,
+            Action::ChooseEffectTarget(Target::Object(thug)),
+        );
         settled(&mut restored);
         assert_eq!(zone(&restored, thug), Zone::Hand);
         assert_eq!(restored.players[actor.index()].library, library[4..]);
@@ -1256,19 +1318,30 @@ fn curie_draw_uses_departure_base_power_and_replacement_attempts_both_seats() {
         let library = terminal.players[actor.index()].library.clone();
         mtg_kernel::event::propose_and_commit_batch(
             &mut terminal,
-            library.into_iter().map(|card|
-                mtg_kernel::event::ProposedEvent::zone_change(card, Zone::Exile)
-            ).collect(),
+            library
+                .into_iter()
+                .map(|card| mtg_kernel::event::ProposedEvent::zone_change(card, Zone::Exile))
+                .collect(),
         );
-        let jace = put(&mut terminal, actor, "Jace, Wielder of Mysteries", Zone::Battlefield);
+        let jace = put(
+            &mut terminal,
+            actor,
+            "Jace, Wielder of Mysteries",
+            Zone::Battlefield,
+        );
         let prompt = settle(&mut terminal).expect("Curie chooses Jace or Hullbreacher");
         assert!(matches!(&prompt, Decision::ChooseEffectTargets {
             player, source, legal_targets, can_finish: true, .. }
             if *player == actor && *source == curie && legal_targets.as_slice() == [Target::Object(jace)]));
         terminal = serde_json::from_slice(&serde_json::to_vec(&terminal).unwrap()).unwrap();
         assert_eq!(next(&mut terminal), prompt);
-        act(&mut terminal, Action::ChooseEffectTarget(Target::Object(jace)));
-        assert!(matches!(next(&mut terminal), Decision::GameOver { winner: Some(player) } if player == actor));
+        act(
+            &mut terminal,
+            Action::ChooseEffectTarget(Target::Object(jace)),
+        );
+        assert!(
+            matches!(next(&mut terminal), Decision::GameOver { winner: Some(player) } if player == actor)
+        );
         assert!(named(&terminal, opponent, "Treasure Token").is_empty());
     }
 }
