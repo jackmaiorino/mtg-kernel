@@ -1872,7 +1872,7 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
                 );
                 assert_eq!(named(branch, other, "Treasure Token").len(), 1);
                 assert_eq!(
-                    shuffle_ordinals(&serde_json::to_value(branch).unwrap()),
+                    shuffle_ordinals(&serde_json::to_value(&*branch).unwrap()),
                     serde_json::json!([1, 1])
                 );
                 assert_eq!(
