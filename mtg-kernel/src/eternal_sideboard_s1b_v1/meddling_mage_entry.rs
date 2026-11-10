@@ -181,8 +181,11 @@ enum FaceV1 {
 pub(super) fn split_names(def: &CardDef) -> Option<(&'static str, &'static str)> {
     def.name.split_once(" // ").filter(|_| {
         crate::eternal_premodern_p1a_v1::statics::split_card(def.name)
-            || crate::standard_cards_v1::room_cast_mana_value(def, crate::state::CastMethodV4::Normal)
-                .is_some()
+            || crate::standard_cards_v1::room_cast_mana_value(
+                def,
+                crate::state::CastMethodV4::Normal,
+            )
+            .is_some()
     })
 }
 
@@ -213,9 +216,10 @@ impl NameV1 {
             Some(FaceV1::RightHalf) => split_names(def).map(|(_, right)| right),
             Some(FaceV1::AlternateSpell) if split_names(def).is_none() => alternate_spell_name(def),
             Some(FaceV1::AlternateSpell) => None,
-            Some(FaceV1::Back) => def.transform_face.as_ref().and_then(|back| {
-                (!back.types.contains(&CardType::Land)).then_some(back.name)
-            }),
+            Some(FaceV1::Back) => def
+                .transform_face
+                .as_ref()
+                .and_then(|back| (!back.types.contains(&CardType::Land)).then_some(back.name)),
         }
     }
 }
@@ -225,25 +229,39 @@ fn name_groups(names_v2: bool) -> &'static [Vec<NameV1>] {
     static PRINTED: std::sync::OnceLock<Vec<Vec<NameV1>>> = std::sync::OnceLock::new();
     if !names_v2 {
         return LEGACY.get_or_init(|| {
-            nameable_nonland().iter().map(|group| {
-                group.iter().copied().map(NameV1::Front).collect()
-            }).collect()
+            nameable_nonland()
+                .iter()
+                .map(|group| group.iter().copied().map(NameV1::Front).collect())
+                .collect()
         });
     }
     PRINTED.get_or_init(|| {
         let mut groups: BTreeMap<char, Vec<NameV1>> = BTreeMap::new();
         let mut seen = HashSet::new();
         for (index, def) in CARD_DEFS.iter().enumerate() {
-            let Ok(card) = u16::try_from(index) else { continue };
+            let Ok(card) = u16::try_from(index) else {
+                continue;
+            };
             let face = |face| NameV1::Face(PrintedFaceV1 { card, face });
             let forms = if split_names(def).is_some() {
-                [face(FaceV1::LeftHalf), face(FaceV1::RightHalf), face(FaceV1::Back)]
+                [
+                    face(FaceV1::LeftHalf),
+                    face(FaceV1::RightHalf),
+                    face(FaceV1::Back),
+                ]
             } else {
-                [NameV1::Front(card), face(FaceV1::AlternateSpell), face(FaceV1::Back)]
+                [
+                    NameV1::Front(card),
+                    face(FaceV1::AlternateSpell),
+                    face(FaceV1::Back),
+                ]
             };
             for form in forms {
                 if let Some(name) = form.printed_name().filter(|name| seen.insert(*name)) {
-                    let letter = name.chars().next().map_or(' ', |letter| letter.to_ascii_uppercase());
+                    let letter = name
+                        .chars()
+                        .next()
+                        .map_or(' ', |letter| letter.to_ascii_uppercase());
                     groups.entry(letter).or_default().push(form);
                 }
             }
@@ -413,7 +431,13 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
         let index = u32::try_from(index).map_err(|_| "Meddling Mage event index overflow")?;
         match journal.as_ref() {
             JournalV1::Started { .. } | JournalV1::StartedWithNamesV2 { .. } => {
-                operations.insert(index, (matches!(journal.as_ref(), JournalV1::StartedWithNamesV2 { .. }), false));
+                operations.insert(
+                    index,
+                    (
+                        matches!(journal.as_ref(), JournalV1::StartedWithNamesV2 { .. }),
+                        false,
+                    ),
+                );
             }
             JournalV1::Chosen {
                 operation,
@@ -421,7 +445,9 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
                 group,
                 index: name_index,
             } => {
-                if !operations.get(operation).is_some_and(|(names_v2, _)| *names_v2 == choice.names_v2)
+                if !operations
+                    .get(operation)
+                    .is_some_and(|(names_v2, _)| *names_v2 == choice.names_v2)
                     || choice.suppressed
                     || !owns_definition(choice.card_def)
                     || !valid_index(choice, Some(*group), *name_index)
@@ -477,7 +503,9 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
                 *has_name = true;
             }
             JournalV1::Completed { operation } => {
-                if !operations.remove(operation).is_some_and(|(_, has_name)| has_name)
+                if !operations
+                    .remove(operation)
+                    .is_some_and(|(_, has_name)| has_name)
                     || choices.values().any(|pending| pending == operation)
                 {
                     return Err(

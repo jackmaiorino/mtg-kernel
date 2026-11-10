@@ -943,11 +943,22 @@ fn meddling_mage_names_a_card_that_then_cannot_be_cast() {
 }
 
 fn choose_mage_name_group(state: &mut GameState, player: PlayerId, name: &str) -> u16 {
-    let Decision::ChooseMeddlingMageNameV1 { player: chooser, group: None, options, .. } = next(state) else {
+    let Decision::ChooseMeddlingMageNameV1 {
+        player: chooser,
+        group: None,
+        options,
+        ..
+    } = next(state)
+    else {
         panic!("expected the catalog name groups")
     };
     assert_eq!(chooser, player);
-    let letter = name.chars().next().unwrap().to_ascii_uppercase().to_string();
+    let letter = name
+        .chars()
+        .next()
+        .unwrap()
+        .to_ascii_uppercase()
+        .to_string();
     let group = options.iter().position(|option| option == &letter).unwrap() as u16;
     act(state, Action::ChooseEffectOption(group));
     group
@@ -1104,20 +1115,28 @@ fn meddling_mage_names_exact_split_and_adventure_forms_both_seats() {
             if name == "Fire" {
                 // Recreate the prior checkpoint shape, before any group was chosen.
                 let mut legacy = serde_json::to_value(&state).unwrap();
-                let checkpoint = &mut legacy["engine"]["linked_aura_operation_v1"]
-                    ["pending_meddling_mage_v1"];
+                let checkpoint =
+                    &mut legacy["engine"]["linked_aura_operation_v1"]["pending_meddling_mage_v1"];
                 let operation = checkpoint["operation_history_index"].as_u64().unwrap() as usize;
                 assert!(checkpoint["choice"]["MeddlingMageV1"]["choice"]
-                    .as_object_mut().unwrap().remove("names_v2").is_some());
-                let journal = legacy["engine"]["event_history"][operation]
-                    ["MeddlingMageEntryV1"]["journal"].as_object_mut().unwrap();
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("names_v2")
+                    .is_some());
+                let journal = legacy["engine"]["event_history"][operation]["MeddlingMageEntryV1"]
+                    ["journal"]
+                    .as_object_mut()
+                    .unwrap();
                 let started = journal.remove("StartedWithNamesV2").unwrap();
                 journal.insert("Started".into(), started);
                 let mut legacy: GameState = serde_json::from_value(legacy).unwrap();
                 choose_mage_name(&mut legacy, chooser, "Lightning Bolt");
                 settled(&mut legacy);
                 let retained = &legacy.eternal_v1.as_ref().unwrap().s1b.mage_names;
-                assert_eq!(serde_json::to_value(retained[0].1).unwrap(), serde_json::json!(id("Lightning Bolt")));
+                assert_eq!(
+                    serde_json::to_value(retained[0].1).unwrap(),
+                    serde_json::json!(id("Lightning Bolt"))
+                );
                 let mut old_hash = std::collections::hash_map::DefaultHasher::new();
                 let mut new_hash = std::collections::hash_map::DefaultHasher::new();
                 use std::hash::{Hash, Hasher};
@@ -1127,15 +1146,25 @@ fn meddling_mage_names_exact_split_and_adventure_forms_both_seats() {
 
                 let mut land_check = state.clone();
                 choose_mage_name_group(&mut land_check, chooser, "Shatterskull Smashing");
-                let Decision::ChooseMeddlingMageNameV1 { options, .. } = next(&mut land_check) else {
+                let Decision::ChooseMeddlingMageNameV1 { options, .. } = next(&mut land_check)
+                else {
                     panic!("expected the Shatterskull name group")
                 };
-                assert!(options.iter().any(|option| option == "Shatterskull Smashing"));
-                assert!(!options.iter().any(|option| option == "Shatterskull, the Hammer Pass"));
+                assert!(options
+                    .iter()
+                    .any(|option| option == "Shatterskull Smashing"));
+                assert!(!options
+                    .iter()
+                    .any(|option| option == "Shatterskull, the Hammer Pass"));
             }
             let group = choose_mage_name_group(&mut state, chooser, name);
             let menu = next(&mut state);
-            let Decision::ChooseMeddlingMageNameV1 { options, group: Some(selected), .. } = &menu else {
+            let Decision::ChooseMeddlingMageNameV1 {
+                options,
+                group: Some(selected),
+                ..
+            } = &menu
+            else {
                 panic!("expected names in the chosen group")
             };
             assert_eq!(*selected, group);
@@ -1144,9 +1173,14 @@ fn meddling_mage_names_exact_split_and_adventure_forms_both_seats() {
 
             let snapshot = serde_json::to_value(&state).unwrap();
             let mut altered = snapshot.clone();
-            assert!(altered["engine"]["linked_aura_operation_v1"]["pending_meddling_mage_v1"]
-                ["choice"]["MeddlingMageV1"]["choice"]
-                .as_object_mut().unwrap().remove("names_v2").is_some());
+            assert!(
+                altered["engine"]["linked_aura_operation_v1"]["pending_meddling_mage_v1"]["choice"]
+                    ["MeddlingMageV1"]["choice"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("names_v2")
+                    .is_some()
+            );
             let mut altered: GameState = serde_json::from_value(altered).unwrap();
             assert!(engine::step(&mut altered, Action::ChooseEffectOption(index)).is_err());
             state = serde_json::from_value(snapshot).unwrap();
@@ -1157,11 +1191,19 @@ fn meddling_mage_names_exact_split_and_adventure_forms_both_seats() {
 
             if name == "Ice" {
                 let mut altered = serde_json::to_value(&state).unwrap();
-                let named = altered["engine"]["event_history"].as_array_mut().unwrap().iter_mut()
-                    .find_map(|row| row.get_mut("MeddlingMageEntryV1")?.get_mut("journal")?.get_mut("Named"))
+                let named = altered["engine"]["event_history"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find_map(|row| {
+                        row.get_mut("MeddlingMageEntryV1")?
+                            .get_mut("journal")?
+                            .get_mut("Named")
+                    })
                     .unwrap();
                 named["named"]["face"] = serde_json::json!("LeftHalf");
-                altered["eternal_v1"]["s1b"]["mage_names"][0][1]["face"] = serde_json::json!("LeftHalf");
+                altered["eternal_v1"]["s1b"]["mage_names"][0][1]["face"] =
+                    serde_json::json!("LeftHalf");
                 let mut altered: GameState = serde_json::from_value(altered).unwrap();
                 assert!(engine::step(&mut altered, Action::Pass).is_err());
             }

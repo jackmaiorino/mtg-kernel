@@ -983,12 +983,14 @@ fn replay_general_current_slots_v69(
         active_fake_aura_entry_v50: None,
         mage_start: None,
         mage_plans: Vec::new(),
-        mage_names_v2: mage_names_v2.or_else(|| answers.iter().find_map(|answer| {
-            match answer {
-                GeneralAnswerV36::MeddlingMageV1 { choice, .. } => Some(choice.names_v2),
-                _ => None,
-            }
-        })).unwrap_or(true),
+        mage_names_v2: mage_names_v2
+            .or_else(|| {
+                answers.iter().find_map(|answer| match answer {
+                    GeneralAnswerV36::MeddlingMageV1 { choice, .. } => Some(choice.names_v2),
+                    _ => None,
+                })
+            })
+            .unwrap_or(true),
     }));
     if potentially_returns_aura(original) {
         staged
@@ -1421,11 +1423,22 @@ pub fn validate(state: &GameState) -> Result<(), String> {
         .pending_meddling_mage_v1
     {
         let started = mage_entry::journal(state, pending.operation_history_index);
-        let names_v2 = matches!(started, Some(mage_entry::JournalV1::StartedWithNamesV2 { .. }));
+        let names_v2 = matches!(
+            started,
+            Some(mage_entry::JournalV1::StartedWithNamesV2 { .. })
+        );
         match started {
-            Some(mage_entry::JournalV1::Started { operation, original_sha256 }
-                | mage_entry::JournalV1::StartedWithNamesV2 { operation, original_sha256 })
-                if **operation == pending.operation && origin_digest_matches(original_sha256, &pending.original) => {}
+            Some(
+                mage_entry::JournalV1::Started {
+                    operation,
+                    original_sha256,
+                }
+                | mage_entry::JournalV1::StartedWithNamesV2 {
+                    operation,
+                    original_sha256,
+                },
+            ) if **operation == pending.operation
+                && origin_digest_matches(original_sha256, &pending.original) => {}
             _ => return Err("Meddling Mage checkpoint lost its original operation".into()),
         }
         return as_recorded(|| {
@@ -2097,7 +2110,12 @@ fn capture_mage_plans(
     state: &mut GameState,
     events: &[ProposedEvent],
 ) -> Result<Vec<usize>, String> {
-    let names_v2 = state.engine.linked_aura_operation_v1.runtime.as_ref().is_none_or(|runner| runner.mage_names_v2);
+    let names_v2 = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .is_none_or(|runner| runner.mage_names_v2);
     let mut plans = Vec::new();
     for (ordinal, event) in events.iter().enumerate() {
         let ordinal = u32::try_from(ordinal).map_err(|_| "entry ordinal overflow")?;
@@ -2125,9 +2143,15 @@ fn capture_mage_plans(
         let operation = Box::new(runner.operation.clone());
         let original_sha256 = runner.original_sha256.clone();
         Some(if names_v2 {
-            mage_entry::JournalV1::StartedWithNamesV2 { operation, original_sha256 }
+            mage_entry::JournalV1::StartedWithNamesV2 {
+                operation,
+                original_sha256,
+            }
         } else {
-            mage_entry::JournalV1::Started { operation, original_sha256 }
+            mage_entry::JournalV1::Started {
+                operation,
+                original_sha256,
+            }
         })
     } else {
         None
@@ -2232,7 +2256,8 @@ fn answer_mage_plan(state: &mut GameState, index: usize) -> Result<bool, String>
     let Some(name_index) = mage_answer(state, &choice, Some(group))? else {
         return Ok(false);
     };
-    let named = mage_entry::name(&choice, group, name_index).ok_or("Meddling Mage name index absent")?;
+    let named =
+        mage_entry::name(&choice, group, name_index).ok_or("Meddling Mage name index absent")?;
     let operation = state
         .engine
         .linked_aura_operation_v1
