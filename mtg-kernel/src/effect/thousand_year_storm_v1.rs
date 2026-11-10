@@ -314,7 +314,25 @@ fn instant_or_sorcery(spell: &StackItem) -> Result<bool, String> {
         .ok_or("Storm spell source absent")?;
     casts::instant_or_sorcery(source.card_def, source.cast_method)
 }
-pub(crate) fn record_cast(state: &mut GameState, spell: ObjectId) -> Result<(), String> {
+pub(crate) fn freeze_cast_targets(
+    state: &GameState,
+    pending: &crate::engine::PendingCast,
+    method: crate::state::CastMethodV4,
+) -> Result<Option<targets::CastTargetsV1>, String> {
+    if state.thousand_year_storm_consumer_v1
+        && enabled()
+        && casts::instant_or_sorcery(pending.source_contract.card_def, method)?
+    {
+        return targets::freeze_cast(state, pending).map(Some);
+    }
+    Ok(None)
+}
+
+pub(crate) fn record_cast(
+    state: &mut GameState,
+    spell: ObjectId,
+    frozen_targets: Option<targets::CastTargetsV1>,
+) -> Result<(), String> {
     if !enabled() {
         return Ok(());
     }
@@ -324,7 +342,7 @@ pub(crate) fn record_cast(state: &mut GameState, spell: ObjectId) -> Result<(), 
         .find(|r| r.kind == crate::state::StackItemKind::Spell && r.source == spell)
         .ok_or("Storm finalized cast row absent")?
         .clone();
-    let form = if state.thousand_year_storm_consumer_v1 {
+    let witnesses = if state.thousand_year_storm_consumer_v1 {
         let event = state
             .engine
             .event_history
@@ -336,7 +354,11 @@ pub(crate) fn record_cast(state: &mut GameState, spell: ObjectId) -> Result<(), 
             casts::record_form(state, form);
             return Ok(());
         }
-        Some(form)
+        let targets = targets::cast_journal(
+            &row,
+            frozen_targets.ok_or("Storm cast lost its pre-payment target faces")?,
+        )?;
+        Some((form, targets))
     } else {
         if !instant_or_sorcery(&row)? {
             return Ok(());
@@ -377,14 +399,14 @@ pub(crate) fn record_cast(state: &mut GameState, spell: ObjectId) -> Result<(), 
         state,
         JournalV1::Cast {
             event: event as u64,
-            spell: Box::new(row.clone()),
+            spell: Box::new(row),
             observers,
         },
         true,
     );
-    if let Some(form) = form {
+    if let Some((form, targets)) = witnesses {
         casts::record_form(state, form);
-        targets::record_cast(state, &row)?;
+        append(state, targets, false);
     }
     Ok(())
 }

@@ -28308,7 +28308,7 @@ fn finalize_owned_cast(
     pending: PendingCast,
     cast_method: CastMethodV4,
     discarded: Vec<ObjectId>,
-    payment: spell_costs_v1::PreparedSpellPaymentV1,
+    mut payment: spell_costs_v1::PreparedSpellPaymentV1,
 ) -> Result<(), String> {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     let edict_input = if crate::edict_receipts_v1::is_printing(pending.source_contract.card_def) {
@@ -28355,6 +28355,7 @@ fn finalize_owned_cast(
         pending.spell,
         payment.restricted_pool_used(),
     );
+    let storm_targets = payment.storm_targets.take();
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
     if let Some((creatures, quoted)) = edict_input {
         crate::edict_receipts_v1::record_mana_committed(
@@ -28562,7 +28563,7 @@ fn finalize_owned_cast(
     .saturating_add(1);
     crate::cast_identity_v1::publish(state, finalized_source_contract, stack_item_id);
     let cast_at = state.engine.event_history.len();
-    event::log_spell_cast(state, pending.spell, pending.controller);
+    event::log_spell_cast_with_targets(state, pending.spell, pending.controller, storm_targets);
     crate::etali_primal_storm_receipts_v1::record_cast(
         state,
         stack_item_id,

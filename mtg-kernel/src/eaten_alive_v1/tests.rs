@@ -307,6 +307,80 @@ fn actual_target_sacrificed_as_cost_or_reentered_fizzles_without_refund_both_sea
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
+fn actual_forced_sacrifice_keeps_original_storm_target_face_both_seats() {
+    use crate::effect::thousand_year_storm_v1::targets;
+    use crate::rl::TargetRefV1;
+    use crate::state::StackTargetContractV4;
+
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for storm in [false, true] {
+            for self_target in [false, true] {
+                let mut state = ready(actor);
+                state.thousand_year_storm_consumer_v1 = storm;
+                let ghoul = put(&mut state, actor, "Hungry Ghoul", Zone::Hand);
+                fund(&mut state, actor, 1, 1);
+                engine::step(&mut state, Action::CastSpell(ghoul)).unwrap();
+                assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+                resolve(&mut state, ghoul);
+                assert_eq!(state.objects.get(ghoul).zone, Zone::Battlefield);
+                assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+                let recipient = if self_target {
+                    ghoul
+                } else {
+                    creature(&mut state, actor.opponent())
+                };
+                let chosen = Target::Object(recipient);
+                let contract = StackTargetContractV4::capture(&state, chosen);
+                let generation = state.objects.get(recipient).zone_change_count;
+                let printing = state.objects.get(recipient).card_def;
+                let spell = put(&mut state, actor, "Eaten Alive", Zone::Hand);
+                fund(&mut state, actor, 1, 0);
+                engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+                assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+                engine::step(&mut state, Action::ChooseTarget(chosen)).unwrap();
+
+                let mut restored = restore(&state);
+                for branch in [&mut state, &mut restored] {
+                    assert!(matches!(next(branch), Decision::CastSpellOrPass { .. }));
+                    assert_eq!(branch.objects.get(ghoul).zone, Zone::Graveyard);
+                    assert_eq!(branch.players[actor.index()].mana_pool, [0; 6]);
+                    let item = branch.stack.last().unwrap();
+                    assert_eq!(item.source, spell);
+                    assert_eq!(item.targets, [chosen]);
+                    assert_eq!(item.v4.target_contracts, [contract]);
+                    assert_eq!(item.v4.paid_cost_refs.len(), 1);
+                    assert_eq!(item.v4.paid_cost_refs[0].object, ghoul);
+                    if storm {
+                        let faces = targets::public_refs(branch, item).unwrap();
+                        assert!(matches!(faces.as_slice(), [TargetRefV1::Object { object }]
+                            if object.arena_id == recipient.0 && object.card_db_id == printing
+                                && object.zone == Zone::Battlefield && object.zone_change_count == generation));
+                    } else {
+                        assert!(targets::public_refs(branch, item).is_err());
+                    }
+                    *branch = restore(branch);
+                    resolve(branch, spell);
+                    assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
+                    assert_eq!(
+                        branch.objects.get(recipient).zone,
+                        if self_target {
+                            Zone::Graveyard
+                        } else {
+                            Zone::Exile
+                        }
+                    );
+                }
+                assert_eq!(bytes(&state), bytes(&restored));
+            }
+        }
+    }
+}
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
 fn actual_planeswalker_target_and_an_offer_response_keep_paid_costs_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for counter in [false, true] {
