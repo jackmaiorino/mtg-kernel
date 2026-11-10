@@ -340,13 +340,13 @@ pub(crate) fn departed_target_legal(
             )
             && match row.target {
                 Target::Object(object) => {
-                    !crate::eternal_pauper_e6b_v1::protected_from_colors(state, object, colors)
-                        && !((colors & 0x1f).count_ones() > 1
+                    !(crate::eternal_pauper_e6b_v1::protected_from_colors(state, object, colors)
+                        || ((colors & 0x1f).count_ones() > 1
                             && super::statics::has_protection_from_multicolored(state, object))
-                        && !(departure
+                        || (departure
                             .types
                             .contains(crate::card_def::CardType::Creature)
-                            && crate::eternal_vintage_v1::protected_from_creatures(state, object))
+                            && crate::eternal_vintage_v1::protected_from_creatures(state, object)))
                 }
                 Target::Player(_) => true,
                 Target::StackItem(_) => false,

@@ -4880,17 +4880,17 @@ fn legal_targets_unrestricted_v1(
                 return true;
             };
             let color_count = colors.count_ones();
-            !crate::controlled_creature_grants_v1::protects_from_colors(state, object, colors)
-                && !crate::eternal_pauper_e6b_v1::protected_from_colors(state, object, colors)
-                && !crate::standard_legends_v1::hexproof_from_color_mask(
+            !(crate::controlled_creature_grants_v1::protects_from_colors(state, object, colors)
+                || crate::eternal_pauper_e6b_v1::protected_from_colors(state, object, colors)
+                || crate::standard_legends_v1::hexproof_from_color_mask(
                     state, object, controller, colors,
                 )
-                && !(color_count == 1
+                || (color_count == 1
                     && has_effective_keyword(state, object, Keywords::PROTECTION_FROM_MONOCOLORED))
-                && !(color_count > 1
+                || (color_count > 1
                     && crate::eternal_vintage_e7b_v1::statics::has_protection_from_multicolored(
                         state, object,
-                    ))
+                    )))
         });
     }
     if spec == TargetSpec::KickerControlledCreatures {
@@ -14798,16 +14798,16 @@ pub(crate) fn validate_pending_cast(
             );
         }
         if pending.mode_chosen == Some(1)
-            && !pending
+            && !(pending
                 .source_contract
                 .spell_cast_origin
                 .is_some_and(|origin| {
                     matches!(origin.route, SpellCastRouteV4::GraveyardAdventure { .. })
                 })
-            && !(cfg!(feature = "eternal-fixtures")
+            || (cfg!(feature = "eternal-fixtures")
                 && resolution_cast_v1::graveyard_resolution_cast(state, pending.spell))
-            && !(crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
-                && pending_has_ordinary_graveyard_permission(pending, state))
+            || (crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
+                && pending_has_ordinary_graveyard_permission(pending, state)))
         {
             return Err("graveyard creature permission cannot cast the Adventure form".to_string());
         }

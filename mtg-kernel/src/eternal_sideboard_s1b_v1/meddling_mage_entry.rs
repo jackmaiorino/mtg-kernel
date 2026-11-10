@@ -959,9 +959,9 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
             }
             JournalV1::VialMetamorphChosen { .. } => {}
             JournalV1::ShowAndTellMetamorphChosen { copy } => {
-                if !copy
+                if copy
                     .show_and_tell
-                    .is_some_and(|show| show.chosen_at == index as usize)
+                    .is_none_or(|show| show.chosen_at != index as usize)
                     || !copy.cast_matches(state)
                     || !show_choices.insert((copy.stack_item, copy.physical.owner))
                 {
@@ -983,9 +983,9 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
                 group,
                 index: name_index,
             } => {
-                if !operations
+                if operations
                     .get(operation)
-                    .is_some_and(|(names_v2, _)| *names_v2 == choice.names_v2)
+                    .is_none_or(|(names_v2, _)| *names_v2 != choice.names_v2)
                     || choice.suppressed
                     || !owns_definition(choice.card_def)
                     || !valid_index(choice, Some(*group), *name_index)
