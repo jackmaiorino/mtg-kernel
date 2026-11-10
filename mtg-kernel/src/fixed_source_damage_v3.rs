@@ -611,26 +611,26 @@ pub(crate) fn legal_targets(state: &GameState, facts: HistoricalDamageSourceV1) 
         Target::Player(_) => true,
         Target::StackItem(_) => false,
         Target::Object(id) => {
-            !crate::source_power_activation_v1::protected(state, facts, id)
-                && !(cfg!(feature = "eternal-fixtures")
+            !(crate::source_power_activation_v1::protected(state, facts, id)
+                || (cfg!(feature = "eternal-fixtures")
                     && crate::eternal_pauper_e6b_v1::protected_from_colors(
                         state,
                         id,
                         facts.color_mask,
                     ))
-                && !crate::source_type_hexproof_v1::protects_from_source(
+                || crate::source_type_hexproof_v1::protects_from_source(
                     state,
                     id,
                     facts.source.controller,
                     facts.source,
                 )
                 .unwrap_or(true)
-                && !crate::standard_legends_v1::hexproof_from_historical_color(
+                || crate::standard_legends_v1::hexproof_from_historical_color(
                     state,
                     id,
                     facts.color_mask,
                     facts.source.controller,
-                )
+                ))
         }
     })
     .collect()
