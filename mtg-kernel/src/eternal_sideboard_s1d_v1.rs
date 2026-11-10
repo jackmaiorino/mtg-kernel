@@ -834,7 +834,11 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
         }
     });
     let waiting_returns = state.eternal_v1.iter().flat_map(|eternal| {
-        eternal.e8a.end_step_returns.iter().map(|pending| &pending.cards)
+        eternal
+            .e8a
+            .end_step_returns
+            .iter()
+            .map(|pending| &pending.cards)
     });
     for &card in waiting_returns.chain(published_returns).flatten() {
         if link_live_in(state, card, Zone::Exile) {
