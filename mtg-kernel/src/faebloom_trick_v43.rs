@@ -996,7 +996,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     .engine
                     .event_log
                     .iter()
-                    .filter(|e| journal(e) == Some(j))
+                    .filter(|e| self::journal(e) == Some(j))
                     .count();
                 let pending = waiting(state)
                     .filter(|p| capture_of(&p.effect) == Some(index))
