@@ -20,6 +20,8 @@ use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Target, Zon
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod paradoxical_outcome_v1;
+
 /// Per-game state for this module's cards, kept inside
 /// `eternal_cards_v1::EternalStateV1`. Default (and absent from snapshots)
 /// until one of these cards needs it.
@@ -215,6 +217,8 @@ pub enum VintageOpV1 {
     /// Completes one attempted draw in the original combat trigger. The
     /// third completion transfers and untaps that original source.
     CovetedJewelDrawCompletedV1 { ordinal: u16 },
+    /// Completes one draw attempt in a suspended Paradoxical Outcome.
+    ParadoxicalOutcomeDrawCompletedV1 { ordinal: u16 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -829,50 +833,7 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         VintageOpV1::ParadoxicalOutcomeV1 => {
-            let Some(spec) = state
-                .objects
-                .try_get(ctx.source)
-                .and_then(|source| CARD_DEFS.get(source.card_def as usize))
-                .map(|def| def.target_spec)
-            else {
-                return;
-            };
-            let returned = (0..ctx.targets.len())
-                .filter(|&index| {
-                    ctx.target_incarnation_matches(index, state)
-                        && crate::engine::effect_target_is_legal(
-                            state,
-                            ctx.source,
-                            ctx.controller,
-                            spec,
-                            &ctx.targets,
-                            index,
-                        )
-                })
-                .filter_map(|index| match ctx.targets[index] {
-                    Target::Object(object) => Some(object),
-                    Target::Player(_) | Target::StackItem(_) => None,
-                })
-                .collect::<Vec<_>>();
-            if returned.is_empty() {
-                return;
-            }
-            event::propose_and_commit_batch(
-                state,
-                returned
-                    .iter()
-                    .map(|&object| ProposedEvent::zone_change(object, Zone::Hand))
-                    .collect(),
-            );
-            let count = returned
-                .iter()
-                .filter(|&&object| {
-                    state
-                        .objects
-                        .try_get(object)
-                        .is_some_and(|card| card.zone == Zone::Hand && card.owner == ctx.controller)
-                })
-                .count();
+            let count = paradoxical_outcome_v1::return_targets(state, ctx).arrivals.len();
             if count > 0 {
                 crate::effect::execute(
                     &EffectOp::DrawCards {
@@ -884,6 +845,7 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        VintageOpV1::ParadoxicalOutcomeDrawCompletedV1 { .. } => halt(state, ctx.source),
         VintageOpV1::KarnAnimateTargetV1 => {
             let Some(object) = legal_object_target(ctx, state) else {
                 return;

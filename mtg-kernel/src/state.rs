@@ -2519,6 +2519,9 @@ pub struct GameState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) coveted_jewel_draw_progress_v1:
         Option<crate::eternal_vintage_v1::JewelDrawProgressV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) paradoxical_outcome_draw_progress_v1:
+        Option<crate::eternal_vintage_v1::paradoxical_outcome_v1::DrawProgressV1>,
     /// Opt-in (issue #531): the other player reads a card leaving a hand by
     /// name, never by copy (see [`GameState::forget_departing_hand_object`]).
     /// Off in every historical session, whose rows, snapshot bytes and hashes
@@ -2816,6 +2819,10 @@ impl Hash for GameState {
             "coveted-jewel-draw-progress/v1".hash(state);
             progress.hash(state);
         }
+        if let Some(progress) = &self.paradoxical_outcome_draw_progress_v1 {
+            "paradoxical-outcome-draw-progress/v1".hash(state);
+            progress.hash(state);
+        }
         if self.hand_departures_by_name_v1 {
             "hand-departures-by-name/v1".hash(state);
         }
@@ -3043,6 +3050,7 @@ impl GameState {
             leyline_opening_v1: None,
             eternal_opening_v1: None,
             coveted_jewel_draw_progress_v1: None,
+            paradoxical_outcome_draw_progress_v1: None,
             hand_departures_by_name_v1: false,
             hand_knowledge_by_name_v2: false,
             public_shroud_v1: false,

@@ -517,6 +517,8 @@ impl EternalOpV1 {
                 self,
                 EternalOpV1::VintageV1(
                     crate::eternal_vintage_v1::VintageOpV1::CovetedJewelChangesHandsV1
+                    | crate::eternal_vintage_v1::VintageOpV1::ParadoxicalOutcomeV1
+                    | crate::eternal_vintage_v1::VintageOpV1::ParadoxicalOutcomeDrawCompletedV1 { .. }
                 )
             )
             || matches!(self, EternalOpV1::P1aV1(op) if op.draws())

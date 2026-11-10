@@ -1162,6 +1162,18 @@ pub(crate) fn drive(
             crate::eternal_vintage_v1::begin_coveted_jewel_draws(state, continuation, &path)?;
             Ok(false)
         }
+        EternalOpV1::VintageV1(crate::eternal_vintage_v1::VintageOpV1::ParadoxicalOutcomeV1) => {
+            crate::eternal_vintage_v1::paradoxical_outcome_v1::begin(state, continuation, &path)?;
+            Ok(false)
+        }
+        EternalOpV1::VintageV1(
+            crate::eternal_vintage_v1::VintageOpV1::ParadoxicalOutcomeDrawCompletedV1 { ordinal },
+        ) => {
+            crate::eternal_vintage_v1::paradoxical_outcome_v1::complete(
+                state, continuation, *ordinal, &path,
+            )?;
+            Ok(false)
+        }
         EternalOpV1::P2bV1(op) => {
             crate::eternal_premodern_p2b_v1::drive(state, continuation, op, path)
         }

@@ -518,11 +518,13 @@ New, each built once in the first wave that needs it:
   Phyrexia (subtype grant on reanimation).
   Partial: the drawing player can choose dredge or let Hullbreacher replace the draw (616.1) on
   resumable draw programs, including the monarch's draw, both Baubles' delayed
-  upkeep draws, Coveted Jewel's entry and unblocked combat draws, Bonder's
-  Ornament, and both selected-discard draw paths. The Jewel combat continuation
-  binds completed draws to the original trigger and transfers only its original
-  battlefield incarnation after the third draw attempt. Its progress check
-  validates the continuation's consistency. An affected
+  upkeep draws, Coveted Jewel's entry and unblocked combat draws, Paradoxical
+  Outcome, Bonder's Ornament, and both selected-discard draw paths. The Jewel
+  combat continuation binds draw progress to the original trigger and transfers
+  only its original battlefield incarnation after the third attempt. Outcome
+  returns its legal targets in one batch and derives draw progress from actual
+  original-incarnation arrivals into the spell controller's hand. Both progress
+  checks validate continuation consistency. An affected
   player can also choose between Jace's empty-library win and Hullbreacher on
   fixed-count draw instructions, the monarch's draw and the Baubles' upkeep draws.
   Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
