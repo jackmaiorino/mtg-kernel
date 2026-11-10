@@ -633,7 +633,7 @@ fn checked_relations_skip_enclosing_rows_and_reject_backward_tamper() {
         let sparse = custody::validate(state);
         let full = custody::without_prefix_memo_for_test(|| custody::validate(state));
         assert_eq!(sparse, full);
-        assert_eq!(sparse.as_deref().map_err(String::as_str), Err(error));
+        assert_eq!(sparse.as_ref().map_err(String::as_str), Err(error));
     };
     let append = |mut row: custody::RecordV1| {
         let mut branch = base.clone();
