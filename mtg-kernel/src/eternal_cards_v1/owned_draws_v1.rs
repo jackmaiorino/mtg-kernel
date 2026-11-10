@@ -1,17 +1,19 @@
-//! One replacement choice per draw in four definition-owned Eternal effects.
+//! One replacement choice per draw in selected definition-owned Eternal effects.
 
 use super::EternalOpV1;
 use crate::card_def::CARD_DEFS;
 use crate::effect::{EffectContinuation, EffectFrame, EffectOp, ExecCtx, PlayerRef};
+use crate::eternal_e5a_v1::E5aOpV1;
+use crate::eternal_legacy_e8a_v1::E8aOpV1;
 use crate::eternal_lurrus_v1::LurrusOpV1;
 use crate::eternal_pauper_e8b_v1::{self, E8bOpV1};
-use crate::eternal_vintage_e7b_v1::dredge;
+use crate::eternal_vintage_e7b_v1::{dredge, E7bOpV1};
 use crate::event::CommittedEvent;
 use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{
-    AbilitySourceContractV4, GameState, StackItemKind, StackSourceContractV4, Zone,
+    AbilitySourceContractV4, GameState, ObjectLinkV4, StackItemKind, StackSourceContractV4, Zone,
 };
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +23,9 @@ enum InstructionV1 {
     Plunder { normal: u8, from_graveyard: u8 },
     Tamiyo,
     TwinnedVision,
+    EndstoneLand,
+    KishlaSkimmer,
+    ChandraEmblem,
 }
 
 impl InstructionV1 {
@@ -36,6 +41,9 @@ impl InstructionV1 {
             }),
             EternalOpV1::DrawHalfLibraryThenNoMaximumHandSizeV1 => Some(Self::Tamiyo),
             EternalOpV1::E8bV1(E8bOpV1::TwinnedVisionV1) => Some(Self::TwinnedVision),
+            EternalOpV1::E5aV1(E5aOpV1::EndstoneDrawV1) => Some(Self::EndstoneLand),
+            EternalOpV1::E7bV1(E7bOpV1::DrawOneV1) => Some(Self::KishlaSkimmer),
+            EternalOpV1::E8aV1(E8aOpV1::DrawOneV1) => Some(Self::ChandraEmblem),
             _ => None,
         }
     }
@@ -49,7 +57,7 @@ impl InstructionV1 {
 
     fn count(self, state: &GameState, ctx: &ExecCtx) -> u32 {
         match self {
-            Self::Frog => 1,
+            Self::Frog | Self::EndstoneLand | Self::KishlaSkimmer | Self::ChandraEmblem => 1,
             Self::Plunder {
                 normal,
                 from_graveyard,
@@ -167,19 +175,38 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
             return None;
         }
         let name = CARD_DEFS.get(usize::from(source.card_def))?.object_name;
-        return match (instruction, item.kind, name) {
-            (InstructionV1::Frog, StackItemKind::TriggeredAbility, "Psychic Frog") => {
-                Some((instruction, SourceV1::Ability(source)))
-            }
+        let authorized = match (instruction, item.kind, name) {
+            (InstructionV1::Frog, StackItemKind::TriggeredAbility, "Psychic Frog")
+            | (InstructionV1::EndstoneLand, StackItemKind::TriggeredAbility, "The Endstone") => true,
             (
                 InstructionV1::Tamiyo,
                 StackItemKind::ActivatedAbility,
                 "Tamiyo, Inquisitive Student",
-            ) if item.v4.activated_ability_index == Some(2) => {
-                Some((instruction, SourceV1::Ability(source)))
+            ) => item.v4.activated_ability_index == Some(2),
+            (InstructionV1::KishlaSkimmer, StackItemKind::TriggeredAbility, "Kishla Skimmer") => {
+                let source_link = ObjectLinkV4 {
+                    object: source.source,
+                    zone_change_count: source.zone_change_count,
+                };
+                state.eternal_v1.as_ref().is_some_and(|eternal| {
+                    eternal.e7b.skimmer_uses.iter().any(|(used, turn)| {
+                        *used == source_link
+                            && turn.player == source.controller
+                            && turn.turn == state.turn_key_v1()
+                            && turn.active == state.active_player
+                    })
+                })
             }
-            _ => None,
+            (
+                InstructionV1::ChandraEmblem,
+                StackItemKind::TriggeredAbility,
+                "Chandra, Chill of Compliance",
+            ) => state.eternal_v1.as_ref().is_some_and(|eternal| {
+                eternal.e8a.chandra_emblems.contains(&(item.controller, source))
+            }),
+            _ => false,
         };
+        return authorized.then_some((instruction, SourceV1::Ability(source)));
     }
     if item.kind != StackItemKind::Spell {
         return None;

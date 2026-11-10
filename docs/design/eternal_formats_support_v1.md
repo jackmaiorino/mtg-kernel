@@ -520,7 +520,9 @@ New, each built once in the first wave that needs it:
   resumable draw programs, including the monarch's draw, both Baubles' delayed
   upkeep draws, Coveted Jewel's entry and unblocked combat draws, Paradoxical
   Outcome, Psychic Frog, Plunder the Trollshaws, Tamiyo's -7, Twinned Vision,
-  Bonder's Ornament, and both selected-discard draw paths. The Jewel
+  The Endstone's land-play draw, Kishla Skimmer's graveyard-departure draw,
+  Chandra, Chill of Compliance's emblem draw, Bonder's Ornament, and both
+  selected-discard draw paths. The Jewel
   combat continuation binds draw progress to the original trigger and transfers
   only its original battlefield incarnation after the third attempt. Outcome
   returns its legal targets in one batch and derives draw progress from actual
@@ -528,7 +530,7 @@ New, each built once in the first wave that needs it:
   checks validate continuation consistency. Plunder and Twinned Vision retain
   their cast-origin conditions. Tamiyo's count uses the library size when her
   ability starts, and the hand-size effect follows the last draw attempt if
-  play continues. The four owned draw instructions journal their start and
+  play continues. The owned draw instructions journal their start and
   actual completed attempts when the replacement continuation runs. Restore
   checks saved progress against that native evidence.
   An affected player can also choose between Jace's empty-library win and

@@ -1011,6 +1011,209 @@ fn restore_draw_answer(state: &GameState) -> GameState {
     restored
 }
 
+/// Cast real removal in response to the source's already published trigger.
+fn remove_source_with_draw_waiting(
+    state: &mut GameState,
+    drawer: PlayerId,
+    source: ObjectId,
+    name: &str,
+    generic: u8,
+) {
+    let opponent = drawer.opponent();
+    assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+    assert!(state.stack.last().is_some_and(|item| item.source == source
+        && item.kind == mtg_kernel::state::StackItemKind::TriggeredAbility));
+    if state.priority_player != opponent {
+        act(state, Action::Pass);
+    }
+    let removal = put(state, opponent, name, Zone::Hand);
+    pool(state, opponent, &[ManaColor::W], generic);
+    cast(state, removal, &[Target::Object(source)]);
+    pass_until(state, |state| {
+        state.objects.get(source).zone != Zone::Battlefield
+            && state.stack.last().is_some_and(|item| item.source == source)
+    });
+    assert_eq!(state.players[opponent.index()].mana_pool, [0; 6]);
+}
+
+fn check_departed_draw_trigger(
+    mut state: GameState,
+    drawer: PlayerId,
+    source: ObjectId,
+    original_generation: u32,
+    expected: mtg_kernel::eternal_cards_v1::EternalOpV1,
+) {
+    use mtg_kernel::effect::EffectOp;
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_legacy_e8a_v1::E8aOpV1;
+    use mtg_kernel::eternal_vintage_e7b_v1::E7bOpV1;
+    use mtg_kernel::event_history_v1::EventKindV1;
+    use mtg_kernel::standard_cards_v1::StandardOpV1;
+
+    let opponent = drawer.opponent();
+    let trigger = state.stack.last().unwrap();
+    assert_eq!(trigger.kind, mtg_kernel::state::StackItemKind::TriggeredAbility);
+    assert_eq!(trigger.inline_effect, Some(EffectOp::StandardV1(StandardOpV1::EternalV1(expected.clone()))));
+    let original = trigger.v4.ability_source_contract.unwrap();
+    assert_eq!((original.source, original.controller, original.zone), (source, drawer, Zone::Battlefield));
+    assert_eq!(original.zone_change_count, original_generation);
+    assert!(state.objects.get(source).zone_change_count > original_generation);
+    assert_ne!(state.objects.get(source).zone, Zone::Battlefield);
+    let library = state.players[drawer.index()].library.clone();
+    let history_start = state.engine.event_history.len();
+    let receipt_count = |state: &GameState| {
+        state.engine.event_history[history_start..].iter().filter(|event| {
+            event.kind_v1() == EventKindV1::EternalOwnedDrawV1
+        }).count()
+    };
+
+    let mut unopposed = state.clone();
+    settled(&mut unopposed);
+    assert_eq!(unopposed.players[drawer.index()].library, library);
+    assert_eq!(treasure_count(&unopposed, opponent), 1);
+    assert_eq!(receipt_count(&unopposed), 0);
+
+    let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+    let prompt = settle(&mut state).expect("a replacement choice from the departed source");
+    assert_draw_replacement_prompt(&prompt, drawer, source, thug);
+    assert_eq!(receipt_count(&state), 1);
+    assert_eq!(treasure_count(&state, opponent), 0);
+    let mut forged = state.clone();
+    let eternal = forged.eternal_v1.as_mut().unwrap();
+    let changed = match expected {
+        EternalOpV1::E7bV1(E7bOpV1::DrawOneV1) => {
+            eternal.e7b.skimmer_uses.clear();
+            true
+        }
+        EternalOpV1::E8aV1(E8aOpV1::DrawOneV1) => {
+            eternal.e8a.chandra_emblems[0].0 = opponent;
+            true
+        }
+        _ => false,
+    };
+    if changed {
+        let forged: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
+        assert_eq!(
+            mtg_kernel::effect::validate_pending_effect_choice(&forged).unwrap_err(),
+            "Eternal draw progress lost its original source",
+        );
+    }
+    let mut declined: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    assert_eq!(next(&mut declined), prompt);
+    act(&mut declined, Action::FinishEffectSelection);
+    let mut restored_decline = restore_draw_answer(&declined);
+    for branch in [&mut declined, &mut restored_decline] {
+        settled(branch);
+        assert_eq!(branch.players[drawer.index()].library, library);
+        assert_eq!(branch.objects.get(thug).zone, Zone::Graveyard);
+        assert_eq!(treasure_count(branch, opponent), 1);
+        assert_eq!(receipt_count(branch), 2);
+    }
+    assert_eq!(declined.state_hash(), restored_decline.state_hash());
+
+    act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+    let mut restored_dredge = restore_draw_answer(&state);
+    for branch in [&mut state, &mut restored_dredge] {
+        settled(branch);
+        assert_eq!(branch.players[drawer.index()].library, library[4..]);
+        assert_eq!(branch.objects.get(thug).zone, Zone::Hand);
+        assert_eq!(treasure_count(branch, opponent), 0);
+        assert_eq!(receipt_count(branch), 2);
+    }
+    assert_eq!(state.state_hash(), restored_dredge.state_hash());
+}
+
+#[test]
+fn paid_endstone_land_draw_survives_source_departure_both_seats() {
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_e5a_v1::E5aOpV1;
+
+    for drawer in [P0, P1] {
+        let mut state = islands();
+        state.active_player = drawer;
+        state.priority_player = drawer;
+        put(&mut state, drawer.opponent(), "Hullbreacher", Zone::Battlefield);
+        let stone = put(&mut state, drawer, "The Endstone", Zone::Hand);
+        pool(&mut state, drawer, &[], 7);
+        cast(&mut state, stone, &[]);
+        settled(&mut state);
+        assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
+        let original = state.objects.get(stone).zone_change_count;
+        let land = put(&mut state, drawer, "Island", Zone::Hand);
+        act(&mut state, Action::PlayLand(land));
+        remove_source_with_draw_waiting(&mut state, drawer, stone, "Disenchant", 1);
+        assert_eq!(state.objects.get(stone).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(land).zone, Zone::Battlefield);
+        check_departed_draw_trigger(state, drawer, stone, original,
+            EternalOpV1::E5aV1(E5aOpV1::EndstoneDrawV1));
+    }
+}
+
+#[test]
+fn paid_kishla_graveyard_departure_draw_survives_source_departure_both_seats() {
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_vintage_e7b_v1::E7bOpV1;
+
+    for drawer in [P0, P1] {
+        let mut state = islands();
+        state.active_player = drawer;
+        state.priority_player = drawer;
+        put(&mut state, drawer.opponent(), "Hullbreacher", Zone::Battlefield);
+        let skimmer = put(&mut state, drawer, "Kishla Skimmer", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::G, ManaColor::U], 0);
+        cast(&mut state, skimmer, &[]);
+        settled(&mut state);
+        let original = state.objects.get(skimmer).zone_change_count;
+        let creature = put(&mut state, drawer, "Llanowar Elves", Zone::Graveyard);
+        let reanimate = put(&mut state, drawer, "Reanimate", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::B], 0);
+        cast(&mut state, reanimate, &[Target::Object(creature)]);
+        pass_until(&mut state, |state| {
+            state.stack.last().is_some_and(|item| item.source == skimmer)
+        });
+        assert_eq!(state.objects.get(creature).zone, Zone::Battlefield);
+        assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
+        remove_source_with_draw_waiting(&mut state, drawer, skimmer, "Swords to Plowshares", 0);
+        assert_eq!(state.objects.get(skimmer).zone, Zone::Exile);
+        check_departed_draw_trigger(state, drawer, skimmer, original,
+            EternalOpV1::E7bV1(E7bOpV1::DrawOneV1));
+    }
+}
+
+#[test]
+fn paid_chandra_emblem_owns_the_draw_after_chandra_leaves_both_seats() {
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_legacy_e8a_v1::E8aOpV1;
+
+    for drawer in [P0, P1] {
+        let opponent = drawer.opponent();
+        let mut state = islands();
+        state.active_player = drawer;
+        state.priority_player = drawer;
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let chandra = put(&mut state, drawer, "Chandra, Chill of Compliance", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::U, ManaColor::U], 1);
+        cast(&mut state, chandra, &[]);
+        settled(&mut state);
+        let original = state.objects.get(chandra).zone_change_count;
+        mtg_kernel::planeswalker_v1::change_loyalty(&mut state, chandra, 3);
+        activate(&mut state, chandra, 3, &[]);
+        settled(&mut state);
+        assert_eq!(state.objects.get(chandra).zone, Zone::Graveyard);
+        let bolt = put(&mut state, drawer, "Lightning Bolt", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::R], 0);
+        cast(&mut state, bolt, &[Target::Player(opponent)]);
+        pass_until(&mut state, |state| {
+            state.stack.last().is_some_and(|item| item.source == chandra)
+        });
+        assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
+        check_departed_draw_trigger(state, drawer, chandra, original,
+            EternalOpV1::E8aV1(E8aOpV1::DrawOneV1));
+    }
+}
+
 #[test]
 fn eternal_draw_spells_preserve_paid_cast_origins_and_replacements_both_seats() {
     for drawer in [P0, P1] {
