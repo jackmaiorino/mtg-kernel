@@ -434,8 +434,8 @@ New, each built once in the first wave that needs it:
   both-seat X, Bestow, split, overload, Room, cascade, Madness and graveyard-cast checks remain unqualified;
   Lavinia stays Partial. Mana value ignores alternative payments and includes announced X, as stated
   in the [Ravnica Remastered rulings](https://media.wizards.com/2023/downloads/RVR_Release_Notes_XrN0zlJaFn/EN_MTGRVR_ReleaseNotes_20231120.pdf).
-  Leyline of the Void's opening action goes on the stack during the
-  first upkeep. The opening action belongs before the first turn under rule 103.6.
+  The native opening profile puts Leyline of the Void's opening action before
+  the first turn under rule 103.6. Legacy starts retain their first-upkeep behavior.
   [Comprehensive Rules](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
 
   Left out of the wave: Damping Sphere (its land replacement spans the mana planner and
@@ -481,7 +481,7 @@ New, each built once in the first wave that needs it:
   combined string and matches neither cast half. Names outside the registry
   and the frozen observation paths remain outside this change. A pre-entry-owner
   save without authenticated choice evidence still requires its historical engine. Leyline has
-  the same opening timing gap as Leyline of the Void.
+  the same native opening path as Leyline of the Void.
   Extirpate uses the shared extraction continuation to require all
   public graveyard matches, offer any subset of the hidden matches, and provide the caster
   a private look at the full searched hand and library. Native qualification of this
@@ -694,6 +694,18 @@ mainboard cards before games two and three, from the registered configuration ea
 `tests/eternal/eternal_bo3_v1.rs` tracks the decks whose full 75 is Full (`PLAYABLE_75`) and
 plays each against the next deck of its format in a seeded match with random actions, checking
 natural terminals, replay and that sided-in cards are cast.
+
+For the opt-in native opening window, register both decks with
+`EternalRegisteredDeckV1::new_with_native_opening_v1`, then call
+`EternalBestOfThreeMatchV1::start_game_with_native_opening_v1` for each game.
+Drive the returned `GameState` with `engine::advance_until_decision` and `engine::step`.
+It uses the ordinary shuffle and alternating deal, London mulligans, then kept-hand
+choices before untap. The prepared game's seat map still identifies the starting
+match player as native seat P0. Companion and outside-game setup retain their
+admitted configuration. This explicit registration admits the two executable
+Partial Leylines alongside Chancellor of the Annex and otherwise requires Full.
+The ordinary registration and catalog counts still require Full, and the legacy
+start refuses these opt-in registrations. Native qualification is pending.
 
 S3 is `src/eternal_outside_game_v1.rs`. Each player's cards outside the game (a best-of-three
 game's sideboard without a companion in use) are a sorted list in the eternal module state,
