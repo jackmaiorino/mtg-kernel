@@ -604,6 +604,15 @@ appended with its passing producer receipt in `data/event_history_v1/README.md`;
 the three event-history consumer checks remain pending.
 No capability labels or playable-deck counts are promoted by this source batch.
 
+The successor combines pre-entry Meddling Mage choices, the native Eternal
+opening window, paid overload permissions and Circle/Flagbearer source repairs.
+At generator source `2dfff92a7d76c620342bf7682e0e24d4a16d4217`, the pinned
+Rust 1.94.1/MSVC generator produced `0255dfef9c57f234` for the revised overload
+recipe. Receipt SHA-256:
+`a8df5a2a37bbfa58becd863e8e6efc8d7b562293517e8c0789957fca994f3f9c`.
+The following Circle menu change does not alter the registry or recipe inputs.
+Native qualification and genuine Mage/opening event samples remain pending.
+
 ## Card contract and verification
 
 Each card follows the existing contract: `engine_capability` Full only when every
