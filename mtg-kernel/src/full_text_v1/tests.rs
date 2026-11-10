@@ -61,15 +61,24 @@ fn legacy_full_text_guard_agrees_with_forced_and_stale_history_scans() {
 
     let mut state = game();
     let land = put(&mut state, PlayerId::P0, "Island", Zone::Hand);
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(land, Zone::Battlefield));
-    assert!(!state.engine.event_history.has_any(&[EventKindV1::FullTextBatchEntryV1]));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(land, Zone::Battlefield),
+    );
+    assert!(!state
+        .engine
+        .event_history
+        .has_any(&[EventKindV1::FullTextBatchEntryV1]));
     assert!(refuse_legacy(&state).is_ok());
     assert!(with_scans_forced(|| refuse_legacy(&state)).is_ok());
 
     // A mutable history borrow invalidates the index even when the event
     // bytes stay identical. This forces the ordinary fallback scan.
     let _ = state.engine.event_history.as_mut_slice();
-    assert!(state.engine.event_history.has_any(&[EventKindV1::FullTextBatchEntryV1]));
+    assert!(state
+        .engine
+        .event_history
+        .has_any(&[EventKindV1::FullTextBatchEntryV1]));
     assert!(refuse_legacy(&state).is_ok());
 }
 

@@ -4655,9 +4655,9 @@ fn commit_with_entry_batch_and_source_color(
         state.engine.event_history.push(receipt);
     }
     record_copied_token_entry_v1(state, entry_history_index);
-    if let Err(source) = crate::full_text_v1::record_entry_trigger(
-        state, entry_history_index, donated_entries,
-    ) {
+    if let Err(source) =
+        crate::full_text_v1::record_entry_trigger(state, entry_history_index, donated_entries)
+    {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             source,
@@ -6642,7 +6642,11 @@ fn commit_batch_survivors_native(
                 Some(removed),
                 captures,
                 authority_batch.as_mut(),
-                (garruk_batch.as_mut(), arahbo_batch.as_mut(), Some(&mut donated_entries)),
+                (
+                    garruk_batch.as_mut(),
+                    arahbo_batch.as_mut(),
+                    Some(&mut donated_entries),
+                ),
                 (
                     (None, true),
                     frozen_color,
@@ -6669,7 +6673,11 @@ fn commit_batch_survivors_native(
                 None,
                 captures,
                 authority_batch.as_mut(),
-                (garruk_batch.as_mut(), arahbo_batch.as_mut(), Some(&mut donated_entries)),
+                (
+                    garruk_batch.as_mut(),
+                    arahbo_batch.as_mut(),
+                    Some(&mut donated_entries),
+                ),
                 (
                     (None, true),
                     frozen_color,

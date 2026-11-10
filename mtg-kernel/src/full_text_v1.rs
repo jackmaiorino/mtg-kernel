@@ -398,7 +398,8 @@ fn entry_source(state: &GameState, index: usize) -> Option<ObjectId> {
 fn entry_trigger_suppressed(state: &GameState, index: usize, source: ObjectId) -> bool {
     !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
         || crate::eternal_vintage_e7b_v1::statics::entry_event_suppressed(
-            state, &state.engine.event_history[index],
+            state,
+            &state.engine.event_history[index],
         )
 }
 
@@ -1129,17 +1130,26 @@ fn stack_producer(
 pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
     crate::graveyard_order_v1::refuse_legacy(state)?;
     use crate::event_history_v1::EventKindV1 as Kind;
-    if state.engine.event_history.scan_for_v1(&[
-        Kind::FullTextTriggerCapturedV1,
-        Kind::FullTextBatchEntryV1,
-        Kind::FullTextRestrictedUseV1,
-        Kind::OrderedGraveyardControlGainedV1,
-    ]).iter().any(|event| matches!(event,
-        CommittedEvent::FullTextTriggerCapturedV1 { .. }
-            | CommittedEvent::FullTextBatchEntryV1 { .. }
-            | CommittedEvent::FullTextRestrictedUseV1 { .. }
-            | CommittedEvent::OrderedGraveyardControlGainedV1 { .. }
-    )) {
+    if state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            Kind::FullTextTriggerCapturedV1,
+            Kind::FullTextBatchEntryV1,
+            Kind::FullTextRestrictedUseV1,
+            Kind::OrderedGraveyardControlGainedV1,
+        ])
+        .iter()
+        .any(|event| {
+            matches!(
+                event,
+                CommittedEvent::FullTextTriggerCapturedV1 { .. }
+                    | CommittedEvent::FullTextBatchEntryV1 { .. }
+                    | CommittedEvent::FullTextRestrictedUseV1 { .. }
+                    | CommittedEvent::OrderedGraveyardControlGainedV1 { .. }
+            )
+        })
+    {
         return Err(
             "full-text trigger producers require a complete public consumer successor".into(),
         );

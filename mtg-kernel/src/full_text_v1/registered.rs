@@ -85,12 +85,18 @@ fn resolve_untap(state: &mut GameState, player: PlayerId, source: ObjectId, land
 }
 
 fn captured_entry(state: &GameState, source: ObjectId) -> Option<DonatedTriggerCaptureV1> {
-    state.engine.event_history.iter().find_map(|event| match event {
-        CommittedEvent::FullTextTriggerCapturedV1 { capture } if capture.host.source == source => {
-            Some(**capture)
-        }
-        _ => None,
-    })
+    state
+        .engine
+        .event_history
+        .iter()
+        .find_map(|event| match event {
+            CommittedEvent::FullTextTriggerCapturedV1 { capture }
+                if capture.host.source == source =>
+            {
+                Some(**capture)
+            }
+            _ => None,
+        })
 }
 
 #[test]
@@ -133,7 +139,10 @@ fn volrath_native_paid_donated_etb_obeys_torpor_orb_both_seats() {
                 assert_eq!(active_text(&state, source).unwrap().donor().object, donor);
                 if !suppressed {
                     let capture = captured_entry(&state, source).unwrap();
-                    assert_eq!(capture.host, AbilitySourceContractV4::capture(&state, source));
+                    assert_eq!(
+                        capture.host,
+                        AbilitySourceContractV4::capture(&state, source)
+                    );
                     assert_eq!(capture.donor.source, donor);
                 }
             }
@@ -173,17 +182,24 @@ fn volrath_native_simultaneous_entry_obeys_final_suppressor_scene_both_seats() {
                     assert!(state.objects.get(land).tapped);
                 } else {
                     resolve_untap(&mut state, player, source, land);
-                    assert!(matches!(captured_entry(&state, source).unwrap().kind,
-                        DonatedTriggerKindV1::PalinchronEnteredAfterBatch { .. }));
+                    assert!(matches!(
+                        captured_entry(&state, source).unwrap().kind,
+                        DonatedTriggerKindV1::PalinchronEnteredAfterBatch { .. }
+                    ));
                 }
                 // Archived native entry facts also require the successor
                 // independently of the current runtime-mode bit.
                 state.engine.runtime_rules = RuntimeRulesV1::default();
-                let refusal = "full-text trigger producers require a complete public consumer successor";
+                let refusal =
+                    "full-text trigger producers require a complete public consumer successor";
                 assert_eq!(refuse_legacy(&state).unwrap_err(), refusal);
-                assert_eq!(crate::event_history_v1::guard_tests_v1::with_scans_forced(
-                    || refuse_legacy(&state),
-                ).unwrap_err(), refusal);
+                assert_eq!(
+                    crate::event_history_v1::guard_tests_v1::with_scans_forced(|| refuse_legacy(
+                        &state
+                    ),)
+                    .unwrap_err(),
+                    refusal
+                );
             }
         }
     }
