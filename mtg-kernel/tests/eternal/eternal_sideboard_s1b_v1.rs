@@ -2962,8 +2962,13 @@ fn paid_show_and_tell_metamorph_owns_private_choices_and_simultaneous_entry() {
 
             state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             let copied = if active_copies { first } else { second };
-            let bounce = put(&mut state, active, "Stern Dismissal", Zone::Hand);
-            pool(&mut state, active, &[ManaColor::U], 0);
+            // Stern Dismissal targets a creature an opponent controls.
+            let caster = state.objects.get(copied).controller.opponent();
+            if state.priority_player != caster {
+                act(&mut state, Action::Pass);
+            }
+            let bounce = put(&mut state, caster, "Stern Dismissal", Zone::Hand);
+            pool(&mut state, caster, &[ManaColor::U], 0);
             cast(&mut state, bounce, &[Target::Object(copied)]);
             settled(&mut state);
             assert_eq!(zone(&state, copied), Zone::Hand);
