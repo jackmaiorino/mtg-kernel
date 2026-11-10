@@ -497,9 +497,20 @@ New, each built once in the first wave that needs it:
   private hand choice. Its supported face-up donors are Mage, Wall of Blossoms and the
   printed Aether Vial. A Vial copy enters with zero counters. Frozen viewers
   refuse the native profile from setup, independently of the hand or its
-  choice. Other noncast copy-entry producers remain outside this path.
-  Dress Down suppresses the physical copy choice before entry. Native
-  qualification is pending.
+  choice. Dress Down suppresses the physical copy choice before entry. The
+  selected paid-cast, Reanimate and Vial cases passed at `4d8cd0bb9`.
+  The paid physical Show and Tell successor keeps both hand selections private
+  until both players have answered. Its pre-entry copy menu uses the existing
+  battlefield, excluding the other entrant, and supports Mage, Wall of Blossoms
+  and Containment Priest forms. Mage names are selected before the simultaneous
+  entry. Priest replacements use the common pre-entry battlefield, so a Priest
+  in the same batch cannot exile the other entrant. The private checkpoint
+  retains confirmed-answer integrity, and ordinary hand prompts retain their
+  existing observer metadata and redaction without a second executable owner.
+  Source review and formatting passed; native qualification is pending.
+  Other noncast copy-entry producers remain outside this path. Copied Show
+  still lacks the shared pre-entry Priest replacement and does not support
+  the new Metamorph copy path; it is not qualified by this physical-spell repair.
   Extirpate uses the shared extraction continuation to require all
   public graveyard matches, offer any subset of the hidden matches, and provide the caster
   a private look at the full searched hand and library. Native qualification of this
@@ -590,7 +601,7 @@ New, each built once in the first wave that needs it:
   Each player applies Riddler once at the start of their draws. The first
   player's event-time adjustment remains bound when the second player draws.
   The shuffles normally remove Dredge cards from both graveyards before any
-  draw can use them. Echo's native qualification is pending.
+  draw can use them. The selected Echo native cases passed at `4d8cd0bb9`.
   Forgotten Realms dungeons and Undercity retain their bottom room until no
   triggered room ability from that dungeon remains. Another venture completes
   the old dungeon before starting a new one, even while an old room waits.
@@ -612,8 +623,11 @@ New, each built once in the first wave that needs it:
   retains each player's adjusted attempts across replacement choices. A Jace
   win ends the ability before the next player's draw. Ordinary completed
   activations retain current observations; an active owned choice requires
-  a successor. Source review and formatting passed; native qualification of
-  this Bonder successor is pending. Generated
+  a successor. At `4d8cd0bb9`, the existing Bonder/Dredge competition case passed,
+  but all seven new Bonder cases stopped at a shared setup assertion before
+  native advance finalized payment. The helper now advances to priority and
+  verifies the paid stack row before checking tap and mana; it does not resolve
+  the draws. Those seven cases still require native qualification. Generated
   draws from the Premodern draw leaves, Standstill, Arcane
   Denial and Accumulated Knowledge still need their Jace/Hullbreacher origins.
   Quantum Riddler adjusts the whole count once for uninterrupted fixed and
@@ -622,8 +636,8 @@ New, each built once in the first wave that needs it:
   replacement choices using native start and completion receipts.
   Nested or dynamic suspended draws, copies, the Coveted Jewel and Paradoxical
   Outcome owners, and turn-based draws with replacement choices still need
-  count ownership. Native qualification of the Flame, Curie and Riddler
-  repairs is pending.
+  count ownership. The selected Flame, Curie and Riddler cases passed at
+  `4d8cd0bb9`; those passes do not cover the remaining draw owners.
 - S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
   S1c, S1a, S1b and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload
@@ -705,9 +719,9 @@ New, each built once in the first wave that needs it:
   last-known color and visibility evidence, and contextual hand and library
   sources remain unsupported. An in-flight saved Circle menu with the old
   broad roster refuses restore when it differs from the legal roster, preserving
-  the meaning of its original option indices. Paid source-menu,
-  Fanatic/Painter and blink/restore qualification is pending. Policy observation
-  v5 omits the shields.
+  the meaning of its original option indices. Selected paid Fanatic/Painter,
+  departed Minsc, Bombardment departure and self-sacrifice/copy/restore cases
+  passed at `4d8cd0bb9`. Policy observation v5 omits the shields.
   [Comprehensive Rules, 609.7 and 702.96](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
 
 The Extirpate, Martyr and Lavinia repair batch is composed at `e8d06349e2956e3a386d10a77295ebcc928a991d`.
