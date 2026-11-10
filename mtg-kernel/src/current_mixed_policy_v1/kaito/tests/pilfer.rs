@@ -9,11 +9,7 @@ use crate::{
     state::{GameState, Step, Zone},
 };
 
-fn setup(
-    p: PlayerId,
-    kind: u8,
-    creature: &str,
-) -> (KaitoSession, FastActorSessionV1, ObjectId, Option<ObjectId>) {
+fn scene(p: PlayerId) -> (GameState, ObjectId) {
     let forest = crate::card_def::card_id_by_name("Forest").unwrap();
     let mut s = GameState::new_from_libraries_with_starting_player_v1(
         &[forest; 40],
@@ -28,6 +24,14 @@ fn setup(
         put(&mut s, p.opponent(), "Island", Zone::Battlefield);
     }
     let source = put(&mut s, p, "Pilfer", Zone::Hand);
+    (s, source)
+}
+fn setup(
+    p: PlayerId,
+    kind: u8,
+    creature: &str,
+) -> (KaitoSession, FastActorSessionV1, ObjectId, Option<ObjectId>) {
+    let (mut s, source) = scene(p);
     if kind > 0 {
         put(&mut s, p.opponent(), "Forest", Zone::Hand);
         put(&mut s, p.opponent(), "Plains", Zone::Hand);
@@ -41,6 +45,101 @@ fn setup(
     };
     let (own, native) = sessions(s);
     (own, native, source, counter)
+}
+
+#[test]
+fn full_pool_paid_pilfer_uses_public_names_and_exact_native_answers_both_seats() {
+    use crate::policy_surface_v5::LimitedAppendixV1;
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let opponent = p.opponent();
+        let mut paired_packets = None;
+        let mut mapped_orders = Vec::new();
+        for names in [
+            ["Forest", "Giant Growth", "Hero's Downfall", "Hero's Downfall", "Plains"],
+            ["Hero's Downfall", "Forest", "Hero's Downfall", "Plains", "Giant Growth"],
+        ] {
+            let (mut s, source) = scene(p);
+            FastActorSessionV1::enable_limited_native_modes_v1(&mut s, LimitedAppendixV1::FullPool);
+            s.reveal_knowledge_v4 = Some(Default::default());
+            s.reveal_meaning_v3.enable();
+            let hand = names.map(|name| put(&mut s, opponent, name, Zone::Hand));
+            let mut native = FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
+                s.clone(),
+                LimitedAppendixV1::FullPool,
+            );
+            let mut own = KaitoSession::from_session(
+                FastActorSessionV1::from_kaito_v75_fixture_state_scoped(s, LimitedAppendixV1::FullPool),
+            )
+            .unwrap();
+            let before = packet(&own);
+            begin(&mut own, &mut native, source, p);
+            for _ in 0..32 {
+                if own.fixture_state().engine.pending_effect.is_some() {
+                    break;
+                }
+                act(&mut own, &mut native, |a| matches!(a, A::Pass { .. }));
+            }
+            let FastActorResponseV1::Decision(h) = own.current_response() else {
+                panic!("no paid Pilfer choice");
+            };
+            assert_eq!(h.acting_player, p.into());
+            let d = own.encode(h).unwrap();
+            assert_eq!(d.packet().actions().len(), 3);
+            let inputs = own.training_input_v1(&d).unwrap();
+            let logits = crate::current_tree_learner_v1::ModelV1::deterministic_fixture()
+                .forward(&inputs)
+                .unwrap();
+            assert_eq!(logits.len(), 3);
+            assert!(logits.iter().all(|v| v.is_finite()));
+            if let Some((opening, revealed)) = &paired_packets {
+                assert_eq!(opening, &before);
+                assert_eq!(revealed, d.packet());
+            } else {
+                paired_packets = Some((before, d.packet().clone()));
+            }
+            let order = d.current.name_order.as_ref().unwrap();
+            mapped_orders.push(order.clone());
+            let expected = order.iter().map(|&i| match &d.backend.actions()[i as usize] {
+                A::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. } => object.card_db_id,
+                _ => panic!("incorrect Pilfer semantic"),
+            }).collect::<Vec<_>>();
+            assert!(expected.is_sorted());
+            let downfall = crate::card_def::card_id_by_name("Hero's Downfall").unwrap();
+            let revealed = &own.fixture_state().reveal_knowledge_v4.as_ref().unwrap()[p.index()];
+            assert_eq!(revealed.hand(opponent).find(|&(id, _)| id == downfall), Some((downfall, 2)));
+
+            let saved = own.snapshot();
+            let raw = native.snapshot_v1();
+            for (public, &backend) in order.iter().enumerate() {
+                own.restore(&saved).unwrap();
+                native.kaito_restore_v75(&raw).unwrap();
+                assert!(own.apply(&d, public as u32).is_err());
+                let FastActorResponseV1::Decision(restored) = own.current_response() else {
+                    panic!("no restored Pilfer choice");
+                };
+                let fresh = own.encode(restored).unwrap();
+                assert_eq!(fresh.packet(), d.packet());
+                let A::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. } = &fresh.backend.actions()[backend as usize] else {
+                    panic!("incorrect restored Pilfer semantic");
+                };
+                let discarded = ObjectId(object.arena_id);
+                let native_index = fresh.backend.fixture_original_index_v75(backend).unwrap();
+                assert_eq!(
+                    own.apply(&fresh, public as u32).unwrap(),
+                    native.step(restored.episode_id, restored.step, native_index).unwrap(),
+                );
+                settle(&mut own, &mut native);
+                let state = own.fixture_state();
+                assert_eq!(state, native.kaito_fixture_state());
+                assert_eq!(state.objects.get(discarded).zone, Zone::Graveyard);
+                assert!(hand.iter().filter(|&&id| id != discarded).all(|&id| state.objects.get(id).zone == Zone::Hand));
+                let retained = &state.reveal_knowledge_v4.as_ref().unwrap()[p.index()];
+                let copies = if object.card_db_id == downfall { 1 } else { 2 };
+                assert_eq!(retained.hand(opponent).find(|&(id, _)| id == downfall), Some((downfall, copies)));
+            }
+        }
+        assert_ne!(mapped_orders[0], mapped_orders[1]);
+    }
 }
 fn packet(own: &KaitoSession) -> crate::current_mixed_policy_v1::Packet {
     let FastActorResponseV1::Decision(h) = own.current_response() else {

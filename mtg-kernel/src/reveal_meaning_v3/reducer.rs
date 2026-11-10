@@ -46,8 +46,12 @@ impl RevealKnowledgeV3 {
     }
 
     pub(super) fn present(&mut self, owner: PlayerId, name: u16) {
+        self.present_copies(owner, name, 1);
+    }
+
+    pub(crate) fn present_copies(&mut self, owner: PlayerId, name: u16, copies: usize) {
         let count = self.0[owner.index()].entry(name).or_default();
-        count.present = count.present.max(1);
+        count.present = count.present.max(copies);
     }
 
     pub(crate) fn depart(&mut self, owner: PlayerId, name: Option<u16>, count: usize) {

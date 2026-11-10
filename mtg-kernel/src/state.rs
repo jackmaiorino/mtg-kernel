@@ -3549,7 +3549,24 @@ impl GameState {
                 )?;
             }
         }
-        self.note_public_hand_reveal_group_v3(owner, objects, RevealV3::Present);
+        self.note_public_hand_reveal_group_v3(owner, objects.clone(), RevealV3::Present);
+        if let Some(knowledge) = &mut self.reveal_knowledge_v4 {
+            // The same card shown in later operations does not increase the
+            // minimum, but distinct cards shown together establish multiplicity.
+            let distinct: std::collections::BTreeSet<_> = objects.collect();
+            let mut copies = std::collections::BTreeMap::<u16, usize>::new();
+            for object in distinct {
+                let card = self.objects.get(object);
+                if !card.v4.is_token && card.spell_copy_origin.is_none() {
+                    *copies.entry(card.card_def).or_default() += 1;
+                }
+            }
+            let observer = owner.opponent();
+            for (name, copies) in copies {
+                knowledge[observer.index()].present_copies(owner, name, copies);
+            }
+            self.bind_reveal_names_v4(observer, owner);
+        }
         Ok(())
     }
 

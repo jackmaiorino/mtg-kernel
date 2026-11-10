@@ -90,7 +90,8 @@ impl Packet {
     pub fn state(&self) -> &NumericTree {
         &self.state
     }
-    /// Rows are in the exact original backend legal-action order, without label sorting.
+    /// Rows use the owning decision's action ordinals. A publicly revealed
+    /// opponent-hand menu orders choices by printing without exposing native hand order.
     pub fn actions(&self) -> &[NumericTree] {
         &self.actions
     }
