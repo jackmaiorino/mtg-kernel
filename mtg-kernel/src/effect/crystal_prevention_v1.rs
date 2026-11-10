@@ -1354,7 +1354,7 @@ pub(crate) fn acquire_owner(
         || excess_root
         || mixed_environment(state)
         || crate::twinflame_tyrant_v1::has_active_source(state)
-        || crate::fixed_source_damage_v3::tracked(state, item)
+        || crate::fixed_source_damage_v3::requires_crystal_execution(state, item)
         || crate::equipment_damage_source_v4::tracked(state, item)
         || (crate::gorehorn_damage_v1::selected(item)
             && crate::crystal_barricade_v1::active(state))
