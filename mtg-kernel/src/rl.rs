@@ -5484,10 +5484,6 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             "Crystal requires its selected public/Human successor".into(),
         ));
     }
-    if ordered_full_text {
-        crate::effect::crystal_prevention_v1::validate_ordered_donated_archive(state)
-            .map_err(RlContractError)?;
-    }
     if !accept_combat_rules && crate::combat_static_rules_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "printed combat statics require their selected successor".into(),
