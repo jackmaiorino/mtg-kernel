@@ -556,9 +556,10 @@ New, each built once in the first wave that needs it:
   Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
   Their damage-draw interaction has no native qualification.
   Some specialized synchronous draws and unbound generated or dynamic draw instructions
-  still lack a replacement choice. Quantum Riddler's extra draws are committed
-  inside one shared draw event and remain outside these choice and terminal
-  boundaries. Native qualification of the repairs is pending.
+  still lack a replacement choice. Quantum Riddler's extra draws stop at a
+  terminal Jace win. They are committed inside one shared draw event and still
+  lack individual replacement choices. Native qualification of the repairs is
+  pending.
 - S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
   S1c, S1a, S1b and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload

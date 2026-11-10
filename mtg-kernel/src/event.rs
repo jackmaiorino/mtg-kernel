@@ -3902,6 +3902,9 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
     #[cfg(feature = "eternal-fixtures")]
     if let Some((player, extra)) = extra_draws {
         for _ in 0..extra {
+            if crate::eternal_cards_v1::owned_draws_v1::draw_won_game(state, player) {
+                break;
+            }
             commit(state, ProposedEvent::draw(player));
         }
     }

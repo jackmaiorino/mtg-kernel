@@ -148,7 +148,7 @@ pub(crate) fn half_library_count(library_len: usize) -> u32 {
     u32::try_from(library_len.div_ceil(2)).unwrap_or(u32::MAX)
 }
 
-fn draw_won_game(state: &GameState, player: PlayerId) -> bool {
+pub(crate) fn draw_won_game(state: &GameState, player: PlayerId) -> bool {
     let opponent = player.opponent();
     state.players[opponent.index()].has_lost
         && !crate::game_outcome_protection_v1::cannot_lose(state, opponent)
