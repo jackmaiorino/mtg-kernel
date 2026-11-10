@@ -404,13 +404,22 @@ jobs:
           cargo clippy --release --locked -p mtg-kernel --all-targets --features gameplay-decision-trace-v1 -- -D warnings
           cargo test --release --locked -p mtg-kernel --features gameplay-decision-trace-v1 --lib gameplay_trace
 
-      - name: Saved input and checkpoint diagnostic guards
+      - name: Saved input, checkpoint and S learner diagnostic guards
         if: matrix.group == 'saved-input'
         env:
-          SAVED_INPUT_FEATURES: saved-input-scalar-diagnostic,gameplay-checkpoint-reconstruction-v1,s-update-profile-v1,checkpoint-codec-bench-v1
+          SAVED_INPUT_FEATURES: saved-input-scalar-diagnostic,gameplay-checkpoint-reconstruction-v1,s-update-profile-v1,s-learner-profile-v1,checkpoint-codec-bench-v1
         run: |
-          cargo clippy --release --locked -p mtg-kernel --lib --bin saved_input_scalar_diagnostic --bin gameplay_checkpoint_reconstruction_v1 --bin s_update_fixture_v1 --example checkpoint_codec_bench_v1 --features "$SAVED_INPUT_FEATURES" -- -D warnings
-          python python/tools/run_rust_lib_filters.py --features "$SAVED_INPUT_FEATURES" saved_input_scalar_diagnostic:: gameplay_checkpoint_reconstruction_v1::tests checkpoint_codec_bench_v1::fixture_tests:: s_update_fixture_v1::tests:: s_transformer_v1::update_profile_v1::tests:: tape_bytes_bound_matches_the_buffers_a_forward_sizes parallel_gae_reports_first_batch_error_without_updating_adam
+          features="$SAVED_INPUT_FEATURES"
+          cargo clippy --release --locked -p mtg-kernel --features "$features" --lib \
+            --bin saved_input_scalar_diagnostic --bin gameplay_checkpoint_reconstruction_v1 \
+            --bin s_transformer_v1 --bin s_update_fixture_v1 --test s_learner_profile_v1 --example checkpoint_codec_bench_v1 -- -D warnings
+          python python/tools/run_rust_lib_filters.py --features "$features" \
+            saved_input_scalar_diagnostic:: gameplay_checkpoint_reconstruction_v1::tests \
+            checkpoint_codec_bench_v1::fixture_tests:: s_transformer_v1::parallel::partial_block_counts_inactive_slot_capacity_separately \
+            s_update_fixture_v1::tests:: s_transformer_v1::update_profile_v1::tests:: \
+            tape_bytes_bound_matches_the_buffers_a_forward_sizes parallel_gae_reports_first_batch_error_without_updating_adam
+          cargo test --release --locked -p mtg-kernel --features "$features" --test s_learner_profile_v1
+          python -m unittest discover -s scripts/experiments/s_learner_attribution_v1 -p test_run.py
 
       - name: Validate native Store production feature boundary
         if: matrix.group == 'native-store'
