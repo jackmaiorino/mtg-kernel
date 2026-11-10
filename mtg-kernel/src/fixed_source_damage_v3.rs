@@ -127,7 +127,13 @@ pub(crate) fn waiting_bombardment_source(state: &GameState, source: ObjectId) ->
     state
         .stack
         .iter()
-        .chain(state.engine.pending_effect.iter().map(|p| &p.resolving_item))
+        .chain(
+            state
+                .engine
+                .pending_effect
+                .iter()
+                .map(|p| &p.resolving_item),
+        )
         .any(|item| {
             item.source == source
                 && (paid_bombardment_self(item)
@@ -184,9 +190,8 @@ pub(crate) fn acquire_payment(state: &GameState) -> Result<Option<PaymentOwnerV3
     let bombardment_recipe = bombardment::printed(source.card_def, p.ability_index)
         && matches!(p.object_cost_chosen.as_slice(), [cost] if cost.object == p.source);
     let eligible_card = !live.v4.is_token && live.spell_copy_origin.is_none();
-    let physical_fanatic = fanatic_recipe
-        && eligible_card
-        && !crate::eternal_vintage_v1::active_copy(state, p.source);
+    let physical_fanatic =
+        fanatic_recipe && eligible_card && !crate::eternal_vintage_v1::active_copy(state, p.source);
     let bombardment_self = bombardment_recipe && eligible_card;
     let metamorph_physical_def = if bombardment_self {
         capture_metamorph_definition(state, source)?
@@ -229,7 +234,10 @@ pub(crate) fn acquire_payment(state: &GameState) -> Result<Option<PaymentOwnerV3
     }))
 }
 
-fn recorded_metamorph_definition(state: &GameState, source: AbilitySourceContractV4) -> Option<u16> {
+fn recorded_metamorph_definition(
+    state: &GameState,
+    source: AbilitySourceContractV4,
+) -> Option<u16> {
     crate::card_def::card_id_by_name("Phyrexian Metamorph").filter(|&physical| {
         [physical, source.card_def].into_iter().all(|definition| {
             crate::standard_cards_v1::had_card_def(

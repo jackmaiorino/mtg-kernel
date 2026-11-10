@@ -2178,7 +2178,11 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
         pool(&mut state, actor, &[ManaColor::W, ManaColor::W], 2);
         cast(&mut state, opalescence, &[]);
         settled(&mut state);
-        assert!(engine::object_has_type(&state, template, CardType::Creature));
+        assert!(engine::object_has_type(
+            &state,
+            template,
+            CardType::Creature
+        ));
         assert_eq!(power_toughness(&state, template), (2, 2));
         let painter = put(&mut state, actor, "Painter's Servant", Zone::Hand);
         pool(&mut state, actor, &[], 2);
@@ -2189,7 +2193,11 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
         let source = if copy {
             run_until(
                 &mut state,
-                |s| s.active_player == opponent && s.priority_player == opponent && s.step == Step::Main1,
+                |s| {
+                    s.active_player == opponent
+                        && s.priority_player == opponent
+                        && s.step == Step::Main1
+                },
                 |_, _| None,
             );
             let metamorph = put(&mut state, opponent, "Phyrexian Metamorph", Zone::Hand);
@@ -2200,17 +2208,31 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
                 Some(Decision::ChooseEffectTargets { legal_targets, .. })
                     if legal_targets.contains(&Target::Object(template))
             ));
-            act(&mut state, Action::ChooseEffectTarget(Target::Object(template)));
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(template)),
+            );
             settled(&mut state);
             assert_eq!(zone(&state, metamorph), Zone::Battlefield);
-            assert_eq!(state.objects.get(metamorph).card_def, id("Goblin Bombardment"));
-            assert!(engine::object_has_type(&state, metamorph, CardType::Artifact));
+            assert_eq!(
+                state.objects.get(metamorph).card_def,
+                id("Goblin Bombardment")
+            );
+            assert!(engine::object_has_type(
+                &state,
+                metamorph,
+                CardType::Artifact
+            ));
             metamorph
         } else {
             act(&mut state, Action::Pass);
             template
         };
-        let physical = id(if copy { "Phyrexian Metamorph" } else { "Goblin Bombardment" });
+        let physical = id(if copy {
+            "Phyrexian Metamorph"
+        } else {
+            "Goblin Bombardment"
+        });
         let original = state.objects.get(source).zone_change_count;
         assert!(engine::object_has_type(&state, source, CardType::Creature));
         assert_ne!(engine::object_color_mask(&state, source) & blue, 0);
@@ -2309,7 +2331,11 @@ fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
             let revival = put(&mut later, opponent, "Noxious Revival", Zone::Hand);
             pool(&mut later, opponent, &[ManaColor::G], 0);
             cast(&mut later, revival, &[Target::Object(source)]);
-            run_until(&mut later, |s| zone(s, source) == Zone::Library, |_, _| None);
+            run_until(
+                &mut later,
+                |s| zone(s, source) == Zone::Library,
+                |_, _| None,
+            );
             assert!(later.objects.get(source).zone_change_count > original + 1);
             assert_eq!(later.stack.as_slice(), std::slice::from_ref(&item));
             raw_sources.push(later);
