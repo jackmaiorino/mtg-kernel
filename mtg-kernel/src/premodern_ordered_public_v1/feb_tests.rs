@@ -401,7 +401,8 @@ fn frozen_feb_human_names_and_resolves_paid_cabal_therapy_both_seats() {
             .choice
             .unwrap();
         assert_eq!(order.native_candidates.len(), matching.len());
-        let expected_order = [1, 2, 0].map(|index| ObjectId(order.native_candidates[index].arena_id));
+        let expected_order =
+            [1, 2, 0].map(|index| ObjectId(order.native_candidates[index].arena_id));
         // Choose the second available card twice, leaving the first card forced last.
         for _ in 0..2 {
             assert_eq!(acting(&owner), other_viewer);
