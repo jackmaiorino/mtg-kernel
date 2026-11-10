@@ -303,3 +303,19 @@ fn paid_bonder_dredge_hull_choices_and_riddler_expand_once_per_player() {
         }
     }
 }
+
+#[test]
+fn paid_bonder_unopposed_jace_stops_apnap_without_dredge_or_hull() {
+    for active in [P0, P1] {
+        let other = active.opponent();
+        let mut state = game(&[]);
+        for _ in 0..3 { put(&mut state, other, "Plains", Zone::Library); }
+        cast_jace(&mut state, active);
+        let source = put(&mut state, active, "Bonder's Ornament", Zone::Battlefield);
+        put(&mut state, other, "Bonder's Ornament", Zone::Battlefield);
+        activate(&mut state, source, active, active);
+        assert!(matches!(settle(&mut state), Some(Decision::GameOver { winner: Some(winner) }) if winner == active));
+        assert!(state.players[other.index()].hand.is_empty());
+        assert_eq!(state.players[other.index()].library.len(), 3);
+    }
+}
