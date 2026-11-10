@@ -5,8 +5,8 @@ usage: summarize.py --root DIR --checkpoints b512=0,c1-u0065536=65536,... --json
 
 Each checkpoint's census directory is DIR/<checkpoint>/census with games-bcd-*.jsonl (counts (b), (c), (d) on every
 game) and games-win-*.jsonl ((a) on the seed families searched). Rates are per 100 verified focal games; (a)'s
-conversion rate carries a Wilson 95% interval, the per-100 rates a Wilson interval on the per-game proportion scaled
-to 100 (an approximation when a game holds several events; stated in the output).
+conversion rate carries a Wilson 95% interval, the per-100 rates a 95% Poisson interval on the event count. A pass
+whose game and error rows do not cover its jobs is refused.
 """
 from __future__ import annotations
 
@@ -44,14 +44,32 @@ def read(paths):
     return games, errors
 
 
+def poisson(k: int) -> list[float]:
+    """95% interval for a Poisson count (Wilson-Hilferty approximation to the exact Garwood interval)."""
+    z = 1.959964
+    lo = 0.0 if k == 0 else k * (1 - 1 / (9 * k) - z / (3 * math.sqrt(k))) ** 3
+    hi = (k + 1) * (1 - 1 / (9 * (k + 1)) + z / (3 * math.sqrt(k + 1))) ** 3
+    return [max(0.0, lo), hi]
+
+
 def per100(k: int, games: int) -> dict:
-    ci = wilson(min(k, games), games)
+    ci = poisson(k) if games else None
     return {"count": k, "per_100": round(100 * k / games, 2) if games else None,
-            "ci_per_100": [round(100 * x, 2) for x in ci] if ci else None}
+            "ci_per_100": [round(100 * x / games, 2) for x in ci] if ci else None}
+
+
+def covered(d: Path, tag: str) -> dict:
+    """Game and error rows must cover every job the pass was given (census-<tag>.json)."""
+    record = json.loads((d / f"census-{tag}.json").read_text(encoding="utf-8"))
+    games, errors = read(sorted(d.glob(f"games-{tag}-*.jsonl")))
+    if len(games) + len(errors) != record["expected_jobs"]:
+        raise SystemExit(f"{d}: {tag} rows cover {len(games) + len(errors)} of {record['expected_jobs']} jobs")
+    return record
 
 
 def summarize(root: Path, name: str) -> dict:
     d = root / name / "census"
+    covered(d, "bcd")
     games, errors = read(sorted(d.glob("games-bcd-*.jsonl")))
     n = Counter()
     for g in games:
@@ -65,16 +83,21 @@ def summarize(root: Path, name: str) -> dict:
            "c_blocks": n["c_blocks"], "c_combats_with_block": n["c_combats_with_block"], "c_chumps": n["c_chumps"],
            "c_pointless_half": per100(n["c_pointless_half"], g_count),
            "c_pointless_quarter": per100(n["c_pointless_quarter"], g_count),
-           "c_counterfactual_unavailable": n["c_chumps_counterfactual_unavailable"],
+           "c_forced_include_combats": n["c_forced_include_combats"],
+           "c_chumps_in_forced_combats": n["c_chumps_in_forced_combats"],
+           "c_chumps_counterfactual_failed": n["c_chumps_counterfactual_failed"],
            "d_combat_losses": n["d_combat_losses"],
            "d_opportunities": n["d_combat_losses_with_block_decision"],
            "d_no_block_decision": n["d_combat_loss_no_block_decision"],
            "d_blunder": per100(n["d_blunder"], g_count), "d_bounded_out": n["d_bounded_out"],
            "d_post_declaration_loss": n["d_post_declaration_loss"], "d_no_survivor": n["d_no_survivor"],
+           "d_recorded_continuation_failed": n["d_recorded_continuation_failed"], "d_walk_error": n["d_walk_error"],
+           "scoring_failures": sum(g["scoring_failures"] for g in games),
            "focal_score": round(sum(1 for g in games if g["win"]) / g_count, 4) if g_count else None}
-    wgames, werrors = read(sorted(d.glob("games-win-*.jsonl")))
-    wgames = [g for g in wgames if g.get("searched_a")]
-    if wgames:
+    if (d / "census-win.json").exists():
+        covered(d, "win")
+        wgames, werrors = read(sorted(d.glob("games-win-*.jsonl")))
+        wgames = [g for g in wgames if g.get("searched_a")]
         a = Counter()
         by_deck = defaultdict(Counter)
         for g in wgames:
@@ -153,12 +176,17 @@ def chart(rows: list[dict], updates: dict, path: Path) -> None:
     fig.savefig(path, dpi=130)
 
 
+def num(x) -> str:
+    return "n/a" if x is None else f"{x:.3f}"
+
+
 def cases_md(root: Path, names: list[str], path: Path, per_kind: int = 6) -> None:
     out = ["# Blunder census cases (first few per checkpoint and kind; full rows in census/cases-*.jsonl)\n"]
     for name in names:
         rows = []
-        for p in sorted((root / name / "census").glob("cases-*.jsonl")):
-            rows += [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines()]
+        for tag, kinds in (("bcd", ("b_own_only", "c_chump", "d_combat_loss")), ("win", ("a_opportunity",))):
+            for p in sorted((root / name / "census").glob(f"cases-{tag}-*.jsonl")):
+                rows += [r for r in map(json.loads, p.read_text(encoding="utf-8").splitlines()) if r["kind"] in kinds]
         out.append(f"\n## {name}\n")
         for kind, keep in (("a_opportunity", lambda r: not r.get("converted")), ("b_own_only", lambda r: r["harmful"]),
                            ("c_chump", lambda r: r["pointless_half"]), ("d_combat_loss", lambda r: r["class"] == "blunder")):
@@ -166,10 +194,11 @@ def cases_md(root: Path, names: list[str], path: Path, per_kind: int = 6) -> Non
             out.append(f"\n### {kind} ({sum(1 for r in rows if r['kind'] == kind and keep(r))} cases)\n")
             for r in picked:
                 if kind == "a_opportunity":
-                    detail = f"p(chosen) {r['p_chosen']:.3f}, p(line first) {r.get('p_line_first')}, line {r['line'][:3]}"
+                    detail = f"p(chosen) {num(r['p_chosen'])}, p(line first) {num(r.get('p_line_first'))}, line {r['line'][:3]}"
                 elif kind == "b_own_only":
-                    detail = (f"cast p {r['cast_menu']['p_chosen']:.3f} (pass {r['cast_menu']['p_pass']}), "
-                              f"{r['cast_menu']['chosen_action'][:120]}")
+                    menu = r["cast_menu"]
+                    detail = (f"cast p {num(menu['p_chosen'])} (pass {num(menu['p_pass'])}), "
+                              f"{(menu['chosen_action'] or '')[:120]}")
                 elif kind == "c_chump":
                     detail = (f"no-block life {r['no_block_life']} of {r['start_life']}, include p "
                               f"{[round(s['p_include'] or 0, 3) for s in r['scans'] if s['include_chosen']]}")

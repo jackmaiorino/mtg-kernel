@@ -14,6 +14,9 @@ CLI:
   play     --plan DIR/plan.json --evaluator EXE --receipt DIR/receipt.json
   jobs     --plan DIR/plan.json --out JOBS.jsonl
   census   --jobs JOBS.jsonl --source SRC.json --exe EXE --out DIR --shards K [--win] [--families 2] [--nodes 5000]
+  ladder   --jobs JOBS.jsonl --source SRC.json --exe EXE --root DIR [--shards 1,4,12] [--win]
+           the census pass at each shard count on the same jobs, with the score check on; identical sorted rows
+           required; the fastest parity-clean shard count is selected
 """
 from __future__ import annotations
 
@@ -111,38 +114,81 @@ def play(plan_path: Path, executable: str, receipt_path: Path) -> dict:
     return result
 
 
-def census(jobs: Path, source: Path, exe: str, out: Path, shards: int, win: bool, families: int, nodes: int) -> dict:
+def family(line: str) -> int:
+    return int(json.loads(line)["id"].rsplit("-k", 1)[1].split("-")[0])
+
+
+def census(jobs: Path, source: Path, exe: str, out: Path, shards: int, win: bool, families: int, nodes: int,
+           tag: str | None = None, check: bool = False) -> dict:
+    """One census pass over `jobs` split across `shards` processes. Refuses (after writing its record) when a shard
+    exits nonzero or its game and error rows do not cover its jobs."""
     lines = [x for x in jobs.read_text(encoding="utf-8").splitlines() if x.strip()]
+    if win:  # only the (a) sample's seed families are searched
+        lines = [x for x in lines if family(x) < families]
     out.mkdir(parents=True, exist_ok=True)
-    tag = "win" if win else "bcd"
+    tag = tag or ("win" if win else "bcd")
     parts = []
     for k in range(shards):
         part = lines[k::shards]
         if not part:
             continue
-        if win:  # only the (a) sample's seed families are worth a process
-            part = [x for x in part if int(json.loads(x)["id"].rsplit("-k", 1)[1].split("-")[0]) < families]
         path = out / f"jobs-{tag}-{k:02d}.jsonl"
         path.write_text("".join(x + "\n" for x in part), encoding="utf-8")
-        parts.append((k, path))
+        parts.append((k, path, len(part)))
 
     def one(item):
-        k, path = item
+        k, path, count = item
         env = dict(os.environ, LABEL_JOBS=str(path), CENSUS_SOURCE=str(source),
                    CENSUS_CASES=str(out / f"cases-{tag}-{k:02d}.jsonl"), CENSUS_WIN="1" if win else "0",
-                   CENSUS_WIN_FAMILIES=str(families), WIN_NODES=str(nodes), WIN_DEPTH="400", CUDA_VISIBLE_DEVICES="")
+                   CENSUS_WIN_FAMILIES=str(families), WIN_NODES=str(nodes), WIN_DEPTH="400",
+                   CENSUS_TIMING=str(out / f"timing-{tag}-{k:02d}.jsonl"), CENSUS_SCORE_CHECK="1" if check else "0",
+                   CUDA_VISIBLE_DEVICES="")
+        games = out / f"games-{tag}-{k:02d}.jsonl"
         with (out / f"census-{tag}-{k:02d}.log").open("w") as log:
-            code = subprocess.run([exe, "mode=s4a-blunder-census", f"out={out / f'games-{tag}-{k:02d}.jsonl'}"],
+            code = subprocess.run([exe, "mode=s4a-blunder-census", f"out={games}"],
                                   stdout=log, stderr=subprocess.STDOUT, env=env, creationflags=BELOW_NORMAL).returncode
-        return {"shard": k, "exit": code}
+        rows = [json.loads(x)["kind"] for x in games.read_text(encoding="utf-8").splitlines()] if games.exists() else []
+        covered = sum(1 for x in rows if x in ("game", "error"))
+        return {"shard": k, "exit": code, "jobs": count, "games": rows.count("game"), "errors": rows.count("error"),
+                "complete": code == 0 and covered == count}
 
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=shards) as pool:
         results = list(pool.map(one, parts))
     record = {"jobs": npp.pin(jobs), "source": npp.pin(source), "exe_sha256": sha(exe), "win": win,
-              "families": families, "nodes": nodes, "shards": results, "seconds": time.monotonic() - started}
-    npp.write_json(out / f"census-{tag}.json", record)
+              "families": families, "nodes": nodes, "expected_jobs": len(lines), "shards": results,
+              "complete": all(r["complete"] for r in results), "seconds": time.monotonic() - started}
+    npp.write_json(out / f"census-{tag}.json" if record["complete"] else out / f"census-{tag}.failed.json", record)
+    if not record["complete"]:
+        raise SystemExit(f"census pass {tag} incomplete: {[r for r in results if not r['complete']]}")
     return record
+
+
+def sorted_rows(out: Path, prefix: str) -> list[str]:
+    return sorted(x for p in out.glob(f"{prefix}-*.jsonl") for x in p.read_text(encoding="utf-8").splitlines()
+                  if json.loads(x)["kind"] != "header")
+
+
+def ladder(jobs: Path, source: Path, exe: str, root: Path, shards: list[int], win: bool, families: int,
+           nodes: int) -> dict:
+    """The census pass's throughput qualification: the same jobs at each shard count; the game and case rows (as
+    sorted sets of lines) must be identical; the fastest parity-clean count is selected."""
+    trials, golden = [], None
+    for k in shards:
+        out = root / f"s{k}"
+        r = census(jobs, source, exe, out, k, win, families, nodes, tag="ladder", check=True)
+        rows = (sorted_rows(out, "games-ladder"), sorted_rows(out, "cases-ladder"))
+        golden = golden or rows
+        games = r["expected_jobs"]
+        trials.append({"shards": k, "jobs": games, "parity": rows == golden, "seconds": r["seconds"],
+                       "jobs_per_second": games / r["seconds"],
+                       "score_mismatches": sum(json.loads(x).get("score_mismatches", 0) for x in rows[0]),
+                       "score_checks": sum(json.loads(x).get("score_checks", 0) for x in rows[0])})
+    receipt = {"schema": "census-20261110/census-ladder-v1", "exe_sha256": sha(exe), "jobs": npp.pin(jobs),
+               "win": win, "trials": trials, "selected_shards": max(
+                   (t for t in trials if t["parity"]), key=lambda t: t["jobs_per_second"])["shards"]}
+    npp.write_json(root / "receipt.json", receipt)
+    return receipt
 
 
 def main(argv=None) -> int:
@@ -176,6 +222,15 @@ def main(argv=None) -> int:
     c.add_argument("--win", action="store_true")
     c.add_argument("--families", type=int, default=2)
     c.add_argument("--nodes", type=int, default=5000)
+    lad = sub.add_parser("ladder")
+    lad.add_argument("--jobs", type=Path, required=True)
+    lad.add_argument("--source", type=Path, required=True)
+    lad.add_argument("--exe", required=True)
+    lad.add_argument("--root", type=Path, required=True)
+    lad.add_argument("--shards", default="1,4,12")
+    lad.add_argument("--win", action="store_true")
+    lad.add_argument("--families", type=int, default=2)
+    lad.add_argument("--nodes", type=int, default=5000)
     a = ap.parse_args(argv)
     if a.op == "build":
         plan = panel.build(a.id, json.loads(a.candidate.read_text()), "b512", json.loads(a.opponent.read_text()),
@@ -191,6 +246,10 @@ def main(argv=None) -> int:
         jobs = panel.label_jobs(a.plan)
         a.out.write_text("".join(json.dumps(x, separators=(",", ":")) + "\n" for x in jobs), encoding="utf-8")
         print(json.dumps({"jobs": len(jobs)}))
+    elif a.op == "ladder":
+        r = ladder(a.jobs, a.source, a.exe, a.root, [int(x) for x in a.shards.split(",")], a.win, a.families,
+                   a.nodes)
+        print(json.dumps({k: r[k] for k in ("trials", "selected_shards")}))
     else:
         r = census(a.jobs, a.source, a.exe, a.out, a.shards, a.win, a.families, a.nodes)
         print(json.dumps({"seconds": r["seconds"], "shards": r["shards"]}))
