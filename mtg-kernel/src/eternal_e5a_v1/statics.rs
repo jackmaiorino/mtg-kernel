@@ -173,6 +173,21 @@ pub(crate) fn object_protected_from(state: &GameState, object: ObjectId, source:
         && protected_from(state, live.controller, source)
 }
 
+/// Serra's Emissary protection against an original departed source.
+pub(crate) fn protects_from_departed_types(
+    state: &GameState,
+    target: Target,
+    types: crate::source_type_hexproof_v1::SourceTypesV1,
+) -> bool {
+    let player = match target {
+        Target::Player(player) => player,
+        Target::Object(object) if crate::engine::object_has_type(state, object, CardType::Creature) =>
+            state.objects.get(object).controller,
+        _ => return false,
+    };
+    protection_types(state, player).into_iter().any(|kind| types.contains(kind))
+}
+
 /// Damage protection prevents (702.16e).
 pub(crate) fn damage_prevented(state: &GameState, source: ObjectId, target: Target) -> bool {
     match target {

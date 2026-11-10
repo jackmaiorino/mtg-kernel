@@ -5143,7 +5143,7 @@ fn initialize_materialized_entry_v1(
 struct FinalZonePtPlanV1 {
     departures: Vec<(crate::state::ObjectLinkV4, (i32, i32))>,
     curie_departures: Vec<crate::eternal_legacy_e7a_v1::curie::DepartureV1>,
-    minsc_departures: Vec<HistoricalDamageSourceV1>,
+    minsc_departures: Vec<crate::eternal_vintage_e7b_v1::minsc::DepartureV1>,
 }
 #[derive(Clone, Copy)]
 enum NativeMaterializationV1<'a> {
@@ -5154,13 +5154,13 @@ impl NativeMaterializationV1<'_> {
     fn is_scene(self) -> bool {
         matches!(self, Self::FinalScene(_))
     }
-    fn minsc_departure(self, state: &GameState, id: ObjectId) -> Option<HistoricalDamageSourceV1> {
+    fn minsc_departure(self, state: &GameState, id: ObjectId) -> Option<crate::eternal_vintage_e7b_v1::minsc::DepartureV1> {
         match self {
             Self::FinalScene(_) => None,
             Self::Commit(Some(plan)) => {
                 let generation = state.objects.get(id).zone_change_count;
                 plan.minsc_departures.iter().find(|departure| {
-                    departure.source.source == id && departure.source.zone_change_count == generation
+                    departure.facts.source.source == id && departure.facts.source.zone_change_count == generation
                 }).copied()
             }
             Self::Commit(None) => crate::eternal_vintage_e7b_v1::minsc::departure(state, id),
@@ -6197,7 +6197,7 @@ struct MaterializedEventV1 {
     alesha_power_departure: Option<(ObjectId, u16, u32, i32)>,
     niv_source_departure: Option<crate::state::AbilitySourceContractV4>,
     curie_departure: Option<crate::eternal_legacy_e7a_v1::curie::DepartureV1>,
-    minsc_departure: Option<HistoricalDamageSourceV1>,
+    minsc_departure: Option<crate::eternal_vintage_e7b_v1::minsc::DepartureV1>,
 }
 
 /// Runs the replace/prevent pass independently on every event in `events`

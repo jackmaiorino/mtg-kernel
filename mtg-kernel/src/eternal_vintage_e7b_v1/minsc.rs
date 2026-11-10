@@ -171,7 +171,14 @@ pub(crate) fn count(state: &GameState, ctx: &ExecCtx, at: usize) -> Option<u32> 
         && ctx.source == proof.source.source).then_some(proof.power)
 }
 
-pub(crate) fn departure(state: &GameState, object: ObjectId) -> Option<HistoricalDamageSourceV1> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DepartureV1 {
+    pub(crate) facts: HistoricalDamageSourceV1,
+    types: crate::source_type_hexproof_v1::SourceTypesV1,
+}
+
+pub(crate) fn departure(state: &GameState, object: ObjectId) -> Option<DepartureV1> {
     let live = state.objects.try_get(object)?;
     (cfg!(feature = "eternal-fixtures")
         && live.zone == Zone::Battlefield
@@ -184,10 +191,14 @@ pub(crate) fn departure(state: &GameState, object: ObjectId) -> Option<Historica
             }) && (item.inline_effect.as_ref() == Some(&super::minsc_minus_two())
                 || announced(item).is_some())
         }))
-        .then(|| crate::source_power_activation_v1::capture_damage_source(state, object))
+        .then_some(())?;
+    Some(DepartureV1 {
+        facts: crate::source_power_activation_v1::capture_damage_source(state, object),
+        types: crate::source_type_hexproof_v1::current_types(state, object).ok()?,
+    })
 }
 
-pub(crate) fn capture_batch(state: &GameState, events: &[ProposedEvent]) -> Vec<HistoricalDamageSourceV1> {
+pub(crate) fn capture_batch(state: &GameState, events: &[ProposedEvent]) -> Vec<DepartureV1> {
     if !cfg!(feature = "eternal-fixtures") {
         return Vec::new();
     }
@@ -197,8 +208,8 @@ pub(crate) fn capture_batch(state: &GameState, events: &[ProposedEvent]) -> Vec<
     }).collect()
 }
 
-pub(crate) fn record_departure(state: &mut GameState, at: usize, facts: HistoricalDamageSourceV1) {
-    record(state, JournalV1::MinscDeparture { at, facts });
+pub(crate) fn record_departure(state: &mut GameState, at: usize, departure: DepartureV1) {
+    record(state, JournalV1::MinscDeparture { at, departure });
 }
 
 pub(crate) struct DamageLoanV1(HistoricalDamageSourceV1);
@@ -212,7 +223,7 @@ impl DamageLoanV1 {
 fn departed_source(
     state: &GameState,
     source: AbilitySourceContractV4,
-) -> Result<Option<DamageLoanV1>, String> {
+) -> Result<Option<DepartureV1>, String> {
     let live = state.objects.try_get(source.source)
         .ok_or("Minsc & Boo lost its physical damage source")?;
     if live.zone == Zone::Battlefield && live.zone_change_count == source.zone_change_count {
@@ -221,21 +232,58 @@ fn departed_source(
     let mut departures = state.engine.event_history
         .scan_for_v1(&[EventKindV1::EternalOwnedDrawV1]).iter().enumerate().filter_map(|(index, event)| {
             let CommittedEvent::EternalOwnedDrawV1 { journal } = event else { return None; };
-            let JournalV1::MinscDeparture { at, facts } = **journal else { return None; };
-            (facts.source.source == source.source && facts.source.zone_change_count == source.zone_change_count
+            let JournalV1::MinscDeparture { at, departure } = **journal else { return None; };
+            let facts = departure.facts;
+            (departure.types.valid() && facts.source.source == source.source && facts.source.zone_change_count == source.zone_change_count
                 && facts.source.owner == source.owner && facts.source.card_def == source.card_def
                 && facts.source.zone == Zone::Battlefield && at.checked_add(1) == Some(index)
                 && matches!(state.engine.event_history.get(at),
                     Some(CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, controller_before })
                         if *object == source.source && *to != Zone::Battlefield
                             && *controller_before == facts.source.controller))
-                .then_some(facts)
+                .then_some(departure)
         });
-    let facts = departures.next().ok_or("Minsc & Boo lost its original departure")?;
+    let departure = departures.next().ok_or("Minsc & Boo lost its original departure")?;
     if departures.next().is_some() {
         return Err("Minsc & Boo has duplicate departure evidence".into());
     }
-    Ok(Some(DamageLoanV1(facts)))
+    Ok(Some(departure))
+}
+
+/// Minsc's original native target with source characteristics from departure.
+pub(crate) fn departed_target_legal(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<bool>, String> {
+    let Some(row) = announced(item) else {
+        return Ok(None);
+    };
+    let Some(departure) = departed_source(state, row.source)? else {
+        return Ok(None);
+    };
+    let facts = departure.facts;
+    let colors = facts.color_mask;
+    let controller = item.controller;
+    let legal = crate::fixed_source_damage_v3::legal_targets_with_controller(state, facts, controller)
+        .contains(&row.target)
+        && !crate::eternal_cards_v1::e3::veil_protects_from_colors(
+            state, row.target, controller, colors,
+        )
+        && !crate::eternal_e5a_v1::statics::protects_from_departed_types(
+            state, row.target, departure.types,
+        )
+        && match row.target {
+            Target::Object(object) => {
+                !crate::eternal_pauper_e6b_v1::protected_from_colors(state, object, colors)
+                    && !((colors & 0x1f).count_ones() > 1
+                        && super::statics::has_protection_from_multicolored(state, object))
+                    && !(departure.types.contains(crate::card_def::CardType::Creature)
+                        && crate::eternal_vintage_v1::protected_from_creatures(state, object))
+            }
+            Target::Player(_) => true,
+            Target::StackItem(_) => false,
+        };
+    Ok(Some(legal))
 }
 
 pub(crate) fn damage_once(
@@ -256,7 +304,9 @@ pub(crate) fn damage_once(
     if let (ProposedEvent::Damage(damage), Some(proof)) =
         (&mut proposal, departed_source(state, row.source)?)
     {
-        damage.eternal_damage_lki_v1 = Some(crate::effect::EternalDamageLkiV1::for_minsc(proof));
+        damage.eternal_damage_lki_v1 = Some(crate::effect::EternalDamageLkiV1::for_minsc(
+            DamageLoanV1(proof.facts),
+        ));
     }
     event::propose_and_commit(state, proposal);
     if state.engine.halted.is_some() || crate::linked_aura_operation_v1::has_pending(state) {
@@ -277,6 +327,14 @@ pub(crate) fn completed_damage(
     let Some((published_at, row)) = publication(state, item, sacrifice) else {
         return false;
     };
-    before.checked_sub(1).and_then(|at| journal(state, at)) ==
-        Some(JournalV1::MinscDamageCompleted { item: row.item, published_at })
+    let Some(at) = before.checked_sub(1) else {
+        return false;
+    };
+    let mut completions = state.engine.event_history
+        .scan_for_v1(&[EventKindV1::EternalOwnedDrawV1]).iter().enumerate().filter_map(|(index, event)| {
+            let CommittedEvent::EternalOwnedDrawV1 { journal } = event else { return None; };
+            let JournalV1::MinscDamageCompleted { item, published_at } = **journal else { return None; };
+            (item == row.item).then_some((index, published_at))
+        });
+    completions.next() == Some((at, published_at)) && completions.next().is_none()
 }

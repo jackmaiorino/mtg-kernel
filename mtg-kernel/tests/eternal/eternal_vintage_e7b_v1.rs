@@ -1755,9 +1755,20 @@ fn minsc_hamster_draw_resumes_after_damage_and_fizzles_with_its_target_both_seat
         let [boo] = controls(&state, actor, "Boo Token").try_into().unwrap();
         activate(&mut state, minsc, 0, &[Target::Object(boo)]);
         settled(&mut state);
+        pass_until(&mut state, |state| state.active_player == opponent && state.step == Step::Main1);
+        let painter = put(&mut state, opponent, "Painter's Servant", Zone::Hand);
+        pool(&mut state, opponent, &[], 2);
+        cast(&mut state, painter, &[]);
+        settle_picking(&mut state, 1, None);
+        assert_eq!(state.objects.get(painter).v4.chosen_color, Some(ManaColor::U));
         to_main(&mut state, actor);
         assert_eq!(power_toughness(&state, boo), (4, 4));
         let other_target = put(&mut state, opponent, "Wall of Blossoms", Zone::Battlefield);
+        let phantom = put(&mut state, opponent, "Phantom Nishoba", Zone::Hand);
+        event::propose_and_commit(
+            &mut state, ProposedEvent::zone_change(phantom, Zone::Battlefield),
+        );
+        assert_eq!(state.objects.get(phantom).counters.plus1_plus1, 7);
         let bounce = put(&mut state, actor, "Echoing Truth", Zone::Hand);
         activate(&mut state, minsc, 1, &[]);
         assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets {
@@ -1782,12 +1793,44 @@ fn minsc_hamster_draw_resumes_after_damage_and_fizzles_with_its_target_both_seat
         assert!(!fizzled.engine.event_history.iter().any(|event|
             matches!(event, CommittedEvent::Damage { source, .. } if *source == minsc)));
 
+        // Legal target, actual Phantom prevention: draw still uses Hamster power.
+        let mut prevented = state.clone();
+        let hand = prevented.players[actor.index()].hand.len();
+        act(&mut prevented, Action::ChooseTarget(Target::Object(phantom)));
+        settled(&mut prevented);
+        assert_eq!(prevented.objects.get(phantom).counters.plus1_plus1, 6);
+        assert_eq!(prevented.objects.get(phantom).damage, 0);
+        assert_eq!(prevented.players[actor.index()].hand.len(), hand + 4);
+        assert!(!prevented.engine.event_history.iter().any(|event|
+            matches!(event, CommittedEvent::Damage { source, .. } if *source == minsc)));
+
         act(&mut state, Action::ChooseTarget(Target::Player(opponent)));
         pool(&mut state, actor, &[ManaColor::U], 1);
         cast(&mut state, bounce, &[Target::Object(minsc)]);
         pass_until(&mut state, |state| zone(state, minsc) == Zone::Hand);
         assert_eq!(state.players[opponent.index()].life, 20);
         assert_eq!(state.stack.last().unwrap().source, minsc);
+
+        // Painter made the departed Minsc blue. Removing Painter before the
+        // opponent's Veil resolves cannot turn the old source red/green again.
+        let mut veiled = state.clone();
+        let painter_bounce = put(&mut veiled, actor, "Echoing Truth", Zone::Hand);
+        let veil = put(&mut veiled, opponent, "Veil of Summer", Zone::Hand);
+        pool(&mut veiled, actor, &[ManaColor::U], 1);
+        cast(&mut veiled, painter_bounce, &[Target::Object(painter)]);
+        pass_until(&mut veiled, |state| zone(state, painter) == Zone::Hand);
+        assert_eq!(engine::object_color_mask(&veiled, minsc)
+            & mtg_kernel::card_def::mana_color_mask(ManaColor::U), 0);
+        pool(&mut veiled, opponent, &[ManaColor::G], 0);
+        act(&mut veiled, Action::Pass);
+        cast(&mut veiled, veil, &[]);
+        let own_library = veiled.players[actor.index()].library.clone();
+        settled(&mut veiled);
+        assert_eq!(veiled.players[opponent.index()].life, 20);
+        assert_eq!(veiled.players[actor.index()].library, own_library);
+        assert!(!veiled.engine.event_history.iter().any(|event|
+            matches!(event, CommittedEvent::Damage { source, .. } if *source == minsc)));
+
         let damage_count = |state: &GameState| state.engine.event_history.iter()
             .filter(|event| matches!(event,
                 CommittedEvent::Damage { source, target: Target::Player(player), amount: 4 }
@@ -1831,6 +1874,37 @@ fn minsc_hamster_draw_resumes_after_damage_and_fizzles_with_its_target_both_seat
         *at = serde_json::json!(0);
         let forged: GameState = serde_json::from_value(forged).unwrap();
         assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err());
+
+        // Remove the draw start, but keep the independent, genuine damage
+        // completion. The printed root cannot resume by dealing damage again.
+        let mut rewind = serde_json::to_value(&state).unwrap();
+        rewind.as_object_mut().unwrap().remove("eternal_owned_draw_progress_v1").unwrap();
+        let history = rewind["engine"]["event_history"].as_array_mut().unwrap();
+        let removed = history.iter().position(|event| {
+            event["EternalOwnedDrawV1"]["journal"].get("Started").is_some()
+        }).unwrap();
+        history.remove(removed);
+        let pending = &mut rewind["engine"]["pending_effect"];
+        let root = pending["resolving_item"]["inline_effect"].clone();
+        pending["frames"] = serde_json::json!([{"Program":{"op":root,"path":[]}}]);
+        pending["choice"] = serde_json::Value::Null;
+        pending["answered_choice_guard"] = serde_json::Value::Null;
+        let rewind: GameState = serde_json::from_value(rewind).unwrap();
+        assert!(mtg_kernel::effect::validate_pending_effect_choice(&rewind).is_err());
+        assert_eq!(damage_count(&rewind), 1);
+
+        let mut lethal: GameState = serde_json::from_slice(&before_draws).unwrap();
+        lethal.players[opponent.index()].life = 4;
+        assert!(matches!(settle(&mut lethal), Some(Decision::ChooseEffectTargets {
+            player, source, legal_targets, .. }) if player == actor
+                && source == minsc && legal_targets.as_slice() == [Target::Object(thug)]));
+        assert_eq!(lethal.players[opponent.index()].life, 0);
+        assert!(!lethal.players[opponent.index()].has_lost);
+        act(&mut lethal, Action::ChooseEffectTarget(Target::Object(thug)));
+        assert!(matches!(next(&mut lethal), Decision::GameOver { winner: Some(player) } if player == actor));
+        assert_eq!(zone(&lethal, thug), Zone::Hand);
+        assert_eq!(controls(&lethal, opponent, "Treasure Token").len(), 3);
+        assert_eq!(damage_count(&lethal), 1);
 
         let mut terminal: GameState = serde_json::from_slice(&before_draws).unwrap();
         event::propose_and_commit_batch(&mut terminal, library.iter().copied()

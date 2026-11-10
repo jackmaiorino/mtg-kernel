@@ -303,7 +303,7 @@ pub enum JournalV1 {
     MinscSacrifice(minsc::SacrificeV1),
     MinscTarget(minsc::PublicationV1),
     MinscDamageCompleted { item: StackItemId, published_at: usize },
-    MinscDeparture { at: usize, facts: crate::event::HistoricalDamageSourceV1 },
+    MinscDeparture { at: usize, departure: minsc::DepartureV1 },
 }
 
 impl JournalV1 {

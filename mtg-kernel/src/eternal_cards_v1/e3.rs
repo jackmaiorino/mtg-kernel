@@ -2311,6 +2311,28 @@ fn active_veils(state: &GameState, player: PlayerId) -> impl Iterator<Item = &Ve
         .filter(move |veil| veil.player == player && veil.turn == turn)
 }
 
+/// Veil's current shield tested against an original departed source's colors.
+pub(crate) fn veil_protects_from_colors(
+    state: &GameState,
+    target: Target,
+    controller: PlayerId,
+    colors: u8,
+) -> bool {
+    if colors & blue_or_black_mask() == 0 {
+        return false;
+    }
+    match target {
+        Target::Player(player) => player != controller && active_veils(state, player).next().is_some(),
+        Target::Object(object) => state.objects.try_get(object).is_some_and(|live| {
+            live.zone == Zone::Battlefield && live.controller != controller
+                && active_veils(state, live.controller).any(|veil| veil.permanents.contains(&ObjectLinkV4 {
+                    object, zone_change_count: live.zone_change_count,
+                }))
+        }),
+        Target::StackItem(_) => false,
+    }
+}
+
 /// Whether a targeting source is blue or black.
 fn source_blue_or_black(state: &GameState, source: Option<ObjectId>) -> bool {
     source.is_some_and(|source| {
