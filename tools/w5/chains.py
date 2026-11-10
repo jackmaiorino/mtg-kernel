@@ -35,7 +35,10 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
   less memory traffic per update), for X arms `budget`, `coefficient`, `dose`, and for a CG arm (P-grow, independent
   Stage 0 plans) `ladder` (`stride`, `roster_max`, `replaces`, `test_stride`, and for a fork `history`: pgrow.py;
   the base's fixed-parent share plays a per-segment roster drawn from the chain's own checkpoint ladder, each state
-  verified before use);
+  verified before use; `start_member: false` for a parent without a checkpoint), and for an extra C-recipe arm of an
+  independent Stage 0 plan optional `initial_opponent` (`segment-start`: the base may use the `initial` kind, the
+  segment's start state) and a fresh parent (a dose record with `"fresh": true` and no checkpoint: a fresh-init
+  lineage, the play import pinned; G(i) references, collab LANES/refs-20261110);
 - `chains`: name to `{arm, slot, seed_root, pair}` (F: a filler box, no pair, run by supervise through `w5box.py
   fill`, not by `run`; XS in Stage 1b: `partner`, the Stage 1a C
   chain in the same root; Stage 0 chains may omit the pair, e.g. a box throughput run with every box on one
@@ -222,14 +225,18 @@ SEGCHECK_SCHEMA = 'w5-segcheck/v1'
 COMMIT_SCHEMA = 'w5-segment-commit/v1'
 COMMIT_LOG = 'durable.jsonl'  # chains/<name>/durable.jsonl: the driver's committed boundaries (module docstring)
 ARMS = {'C': ('C', 'C'), 'X8': ('X', 'X'), 'XS': ('X', 'X'), 'F': ('C', None),
-        'CS': ('C', 'C'), 'CP': ('C', 'C'), 'CG': ('C', 'C'), 'FBA': ('C', 'C'), 'FBB': ('C', 'C')}  # recipe, retention
-# CS, CP, CG, FBA and FBB: further C-recipe arms of an independent Stage 0 plan (own parent and base; e.g. an S parent,
-# a pool base, a fork's parent and a regrouped base). CG (P-grow, pgrow.py) also plays its own checkpoint ladder in
-# the base's fixed-parent share. FBA and FBB are two arms that differ only in their base (e.g. two learning rates).
-EXTRA_C = ('CS', 'CP', 'CG', 'FBA', 'FBB')
+        'CS': ('C', 'C'), 'CP': ('C', 'C'), 'CG': ('C', 'C'), 'CH': ('C', 'C'),
+        'FBA': ('C', 'C'), 'FBB': ('C', 'C')}  # recipe, retention arm
+# CS, CP, CG, CH, FBA and FBB: further C-recipe arms of an independent Stage 0 plan (own parent and base; e.g. an S
+# parent, a pool base, a fork's parent and a regrouped base). CG (P-grow, pgrow.py) also plays its own checkpoint
+# ladder in the base's fixed-parent share. FBA and FBB are two arms that differ only in their base (e.g. two learning
+# rates).
+EXTRA_C = ('CS', 'CP', 'CG', 'CH', 'FBA', 'FBB')
+LADDER_ARMS = ('CG', 'CH')  # CH: a second P-grow arm, so one plan can hold two parents (e.g. two fresh lineages)
 MEASURED = ('C', 'X8', 'XS') + EXTRA_C
 STAGES = ('0', '1a', '1b')
-SEGMENT_UPDATES = {'C': 256, 'X8': 16, 'XS': 16, 'F': 64, 'CS': 256, 'CP': 256, 'CG': 256, 'FBA': 256, 'FBB': 256}
+SEGMENT_UPDATES = {'C': 256, 'X8': 16, 'XS': 16, 'F': 64, 'CS': 256, 'CP': 256, 'CG': 256, 'CH': 256, 'FBA': 256,
+                   'FBB': 256}
 # A scratch segment ends on a multiple of 32 updates that divides the 4,096-update ladder stride. 32 (below retention's
 # 64-update full-state stride) lets a large-batch arm keep its segment config under the trainer's 16 MiB cap; an odd
 # 32-update end is pruned like any other non-full state, only once its segment and the next are complete.
@@ -254,6 +261,7 @@ PAIR_ONLY_KEYS = {'ex1', 'preparation_workers', 'output_directory', 'chain_ledge
                   'record_envelope', 'verified_reads'}
 RECORD_ENVELOPES = ('zstd1',)  # mtg-kernel record_envelope_v1; C-recipe arms only (the trainer refuses EX1)
 VERIFIED_READS = ('resident',)  # mtg-kernel verified_bytes_cache_v1 resident reads; C-recipe arms only
+INITIAL_SEGMENT_START = 'segment-start'  # arm key initial_opponent: the base's `initial` kind is the segment start
 TOOL_FILES = {'chains.py': HERE / 'chains.py', 'retention.py': HERE / 'retention.py', 'xact.py': HERE / 'xact.py',
               'replay_sample.py': HERE / 'replay_sample.py', 'pgrow.py': HERE / 'pgrow.py',
               'w5box.py': HERE / 'w5box.py', 'qual.py': HERE.parent / 'ex1' / 'qual.py',
@@ -436,7 +444,8 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
         try:
             states = ladder if ladder is not None else \
                 [(i, src) for i, src, _ in pgrow.history_states(arm['ladder'], parent['source'])] + \
-                [(pgrow.member_id(0), copy.deepcopy(parent['source']))]
+                ([(pgrow.member_id(0), copy.deepcopy(parent['source']))]
+                 if arm['ladder'].get('start_member', True) else [])
             pgrow.apply(cfg, arm['ladder'], states, seed_root, offset // arm['segment_updates'], offset)
         except pgrow.LadderError as exc:
             raise Stop(str(exc)) from exc
@@ -506,6 +515,8 @@ def recipe_identity(arm):
         identity['verified_reads'] = arm['verified_reads']
     if arm.get('ladder'):
         identity['ladder'] = arm['ladder']  # absent otherwise: existing manifests unchanged
+    if arm.get('initial_opponent'):
+        identity['initial_opponent'] = arm['initial_opponent']
     return identity
 
 
@@ -601,17 +612,34 @@ def make_plan(inputs_path):
                 'bytes pass the 60 GB per-chain hot cap')
         base = pin(spec.get('base', inputs['base']))
         base_doc = read(base['path'])
-        require(not history_relative(base_doc), f'{a}: the base uses history-relative opponents, which '
-                'segments would change')
+        # `initial_opponent: "segment-start"` (an extra C-recipe arm of an independent Stage 0 plan only) admits the
+        # base's `initial` opponent kind, which the native run binds to its initial source: each segment's start
+        # state. The arm then plays a lagged self that resets every segment (G(i)'s block-start opponent with the
+        # segment as the block). Every other history-relative kind stays refused.
+        initial_opponent = spec.get('initial_opponent')
+        require(initial_opponent in (None, INITIAL_SEGMENT_START),
+                f'{a}: initial_opponent is {INITIAL_SEGMENT_START!r} or absent')
+        # An independent plan never runs its filler (no filler boxes), so F may mirror its arms' base and parent.
+        extra = (a in EXTRA_C or a == 'F') and stage == '0' and independent
+        require(initial_opponent is None or extra,
+                f'{a}: initial_opponent is for extra C-recipe arms of independent Stage 0 plans only')
+        allowed = ['initial'] if initial_opponent else []
+        require(not [k for k in history_relative(base_doc) if k not in allowed],
+                f'{a}: the base uses history-relative opponents, which segments would change')
+        fresh = read(spec['parent']).get('fresh') is True
+        require(not fresh or extra,
+                f'{a}: a fresh parent (no checkpoint) is for extra C-recipe arms of independent Stage 0 plans only')
         ladder = None
-        if a == 'CG':
+        if a in LADDER_ARMS:
             try:
                 ladder = pgrow.check_spec(spec.get('ladder'), base_doc, length, retention.C_LONG_STRIDE,
                                           read(spec['parent'])['source'], pin)
             except ValueError as exc:
                 raise Stop(f'{a}: {exc}') from exc
+            require(ladder.get('start_member', True) or initial_opponent,
+                    f'{a}: a fresh-start ladder plays `initial` before its first state (needs initial_opponent)')
         else:
-            require('ladder' not in spec, f'{a}: only a CG arm plays a checkpoint ladder')
+            require('ladder' not in spec, f'{a}: only a CG or CH arm plays a checkpoint ladder')
         x = None
         if recipe == 'X':
             require(type(spec.get('budget')) is int and spec['budget'] > 0 and spec.get('dose') in xact.DOSES
@@ -642,6 +670,8 @@ def make_plan(inputs_path):
             doc['scratch_root'] = Path(scratch_root).as_posix()  # absent otherwise: existing arm files unchanged
         if ladder is not None:
             doc['ladder'] = ladder  # CG only: other arm files unchanged
+        if initial_opponent is not None:  # absent otherwise, so existing arm files keep their bytes
+            doc['initial_opponent'] = initial_opponent
         if envelope is not None:  # absent otherwise, so every existing arm file keeps its bytes and pin
             doc['record_envelope'] = envelope
         if verified_reads is not None:  # absent otherwise, as record_envelope
