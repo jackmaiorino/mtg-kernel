@@ -27830,7 +27830,9 @@ pub(crate) mod liliana_dreadhorde_v1;
 pub(crate) mod vivien_reid_v1;
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
     if state.stack.iter().any(|item| {
-        ctx.stack_item_id == Some(item.v4.stack_item_id)
+        (ctx.stack_item_id == Some(item.v4.stack_item_id)
+            || (item.source == ctx.source
+                && crate::fixed_source_damage_v3::paid_bombardment_self(item)))
             && crate::source_power_activation_v1::bombardment::selected(state, item)
             && crate::source_power_activation_v1::bombardment::needs_lki(state, item)
     }) {

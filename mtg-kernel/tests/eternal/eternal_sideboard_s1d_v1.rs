@@ -2151,6 +2151,167 @@ fn circle_of_protection_blue_uses_waiting_bombardments_actual_departure_both_sea
 }
 
 #[test]
+fn circle_of_protection_blue_uses_paid_bombardment_self_sacrifice_both_seats() {
+    use mtg_kernel::effect::{self, EffectOp, ExecCtx, PendingEffectChoice};
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_sideboard_s1d_v1::S1dOpV1;
+    use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
+    use mtg_kernel::standard_cards_v1::StandardOpV1;
+
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let source = put(&mut state, opponent, "Goblin Bombardment", Zone::Battlefield);
+        let alternative = put(&mut state, opponent, "Llanowar Elves", Zone::Battlefield);
+        let original = state.objects.get(source).zone_change_count;
+        let circle = put(&mut state, actor, "Circle of Protection: Blue", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::W], 1);
+        cast(&mut state, circle, &[]);
+        settled(&mut state);
+        let opalescence = put(&mut state, actor, "Opalescence", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::W, ManaColor::W], 2);
+        cast(&mut state, opalescence, &[]);
+        settled(&mut state);
+        assert!(engine::object_has_type(&state, source, CardType::Creature));
+        assert_eq!(power_toughness(&state, source), (2, 2));
+        let painter = put(&mut state, actor, "Painter's Servant", Zone::Hand);
+        pool(&mut state, actor, &[], 2);
+        cast(&mut state, painter, &[]);
+        settle_option(&mut state, 1);
+        let blue = mtg_kernel::card_def::mana_color_mask(ManaColor::U);
+        assert_ne!(engine::object_color_mask(&state, source) & blue, 0);
+        put(&mut state, actor, "Mulldrifter", Zone::Battlefield);
+
+        act(&mut state, Action::Pass);
+        activate(&mut state, source, 0, &[Target::Player(actor)]);
+        let payment_choice = next(&mut state);
+        assert!(matches!(
+            &payment_choice,
+            Decision::ChooseCostTargets { player, candidates, remaining: 1, .. }
+                if *player == opponent && candidates.contains(&source) && candidates.contains(&alternative)
+        ));
+        state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut state), payment_choice);
+        act(&mut state, Action::ChooseCostTarget(source));
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == opponent));
+        assert_eq!(zone(&state, source), Zone::Graveyard);
+        assert_eq!(zone(&state, alternative), Zone::Battlefield);
+        let item = state.stack[0].clone();
+        let paid_at = item.v4.fixed_damage_paid_v3.0.unwrap();
+        let CommittedEvent::FixedDamagePaidV3 { payment } =
+            &state.engine.event_history[paid_at as usize]
+        else {
+            panic!("missing original paid Bombardment row");
+        };
+        let departure_at = payment.departure as usize;
+        assert_eq!(payment.item.as_ref(), &item);
+        let CommittedEvent::FixedDamageDepartureV3 { departure } =
+            &state.engine.event_history[departure_at]
+        else {
+            panic!("missing prepayment source facts");
+        };
+        assert_eq!(departure.facts.source.zone_change_count, original);
+        assert_ne!(departure.facts.color_mask & blue, 0);
+        let move_at = (departure_at + 1..paid_at as usize)
+            .find(|&at| matches!(
+                &state.engine.event_history[at],
+                CommittedEvent::ZoneChange { object, from: Zone::Battlefield, .. } if *object == source
+            ))
+            .expect("missing native sacrifice departure");
+
+        for mutation in 0..4 {
+            let mut forged: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            if mutation == 0 {
+                forged.stack[0].v4.fixed_damage_paid_v3 = Default::default();
+            } else if mutation == 1 {
+                forged.stack[0].v4.stack_item_id.0 += 1;
+            } else if mutation == 2 {
+                let CommittedEvent::FixedDamageDepartureV3 { departure } =
+                    &mut forged.engine.event_history[departure_at]
+                else {
+                    panic!("missing restored source facts");
+                };
+                departure.facts.source.zone_change_count += 1;
+            } else {
+                forged.engine.event_history[move_at] =
+                    state.engine.event_history[departure_at + 1].clone();
+            }
+            let hash = forged.state_hash();
+            assert!(engine::step(&mut forged, Action::Pass).is_err());
+            assert_eq!(forged.state_hash(), hash);
+        }
+
+        let mut direct = state.clone();
+        let mut ctx = ExecCtx::no_targets(source, opponent);
+        ctx.targets = item.targets.clone();
+        effect::execute(item.inline_effect.as_ref().unwrap(), &ctx, &mut direct);
+        assert!(direct.engine.halted.is_some());
+        assert_eq!(life(&direct, actor), 20);
+        assert_eq!(direct.engine.event_history, state.engine.event_history);
+        let mut damage = ProposedEvent::damage(source, Target::Player(actor), 1);
+        let ProposedEvent::Damage(proposal) = &mut damage else {
+            panic!("missing damage proposal");
+        };
+        proposal.historical_source = Some(item.v4.stack_item_id);
+        for commit in [event::propose_and_commit, event::commit] {
+            let mut raw = state.clone();
+            commit(&mut raw, damage.clone());
+            assert!(raw.engine.halted.is_some());
+            assert_eq!(life(&raw, actor), 20);
+            assert_eq!(raw.engine.event_history, state.engine.event_history);
+        }
+
+        act(&mut state, Action::Pass);
+        let removal = put(&mut state, actor, "Cast Down", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::B], 1);
+        cast(&mut state, removal, &[Target::Object(painter)]);
+        run_until(&mut state, |s| zone(s, painter) == Zone::Graveyard, |_, _| None);
+        assert_eq!(state.stack.as_slice(), &[item]);
+        assert_eq!(engine::object_color_mask(&state, source) & blue, 0);
+        let mut unprotected = state.clone();
+        settled(&mut unprotected);
+        assert_eq!(life(&unprotected, actor), 19);
+
+        pool(&mut state, actor, &[], 1);
+        activate(&mut state, circle, 0, &[]);
+        let decision = settle(&mut state).expect("paid Circle source choice");
+        assert!(matches!(
+            decision,
+            Decision::ChooseEffectOption { player, source, .. } if player == actor && source == circle
+        ));
+        let Some(PendingEffectChoice::ChooseOption { options, .. }) = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .and_then(|pending| pending.choice.as_ref())
+        else {
+            panic!("Circle source options missing");
+        };
+        let option = options.iter().position(|op| {
+            matches!(op, EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
+                S1dOpV1::CopShieldV1 { source: link },
+            ))) if link.object == source && link.zone_change_count == original)
+        }).expect("Circle must offer the departed original blue Bombardment");
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut restored), decision);
+        for branch in [&mut state, &mut restored] {
+            act(branch, Action::ChooseEffectOption(u16::try_from(option).unwrap()));
+            settled(branch);
+            assert_eq!(life(branch, actor), 20);
+            assert!(branch.eternal_v1.as_ref().unwrap().s1d.cop_shields.is_empty());
+            assert!(branch.engine.event_history.iter().any(|event| matches!(
+                event, CommittedEvent::FixedDamageRemovedV3 { removal } if removal.payment == paid_at
+            )));
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
+    }
+}
+
+#[test]
 fn circle_of_protection_blue_uses_departed_minsc_from_waiting_reflexive_trigger_both_seats() {
     use mtg_kernel::effect::{validate_pending_effect_choice, EffectOp, PendingEffectChoice};
     use mtg_kernel::eternal_cards_v1::EternalOpV1;

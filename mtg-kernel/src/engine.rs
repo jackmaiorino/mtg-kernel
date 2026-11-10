@@ -29464,7 +29464,7 @@ fn finalize_activation(state: &mut GameState) {
                         state,
                         pending.controller,
                         pending.source,
-                        &[CostComponent::SacrificeSelf],
+                        &[owner.sacrifice_cost()],
                         &object_cost_ids,
                         x_value,
                     )
