@@ -5888,7 +5888,7 @@ fn materialize_event_v1(
             }
             state.players[t.controller.index()].battlefield.push(object);
             let enters_tapped = t.entry_tapped
-                || permanent_enters_battlefield_tapped(state, object, t.controller)
+                || permanent_enters_battlefield_tapped(state, object, t.controller, t.token_def)
                 || authority_observers.map_or_else(
                     || {
                         crate::authority_of_the_consuls_v1::enters_tapped(
