@@ -352,11 +352,12 @@ pub enum EventKindV1 {
     NishobaDamageSourceV1,
     MartyrRevealPaidV1,
     MeddlingMageEntryV1,
+    EternalOpeningV1,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 317;
-const _: () = assert!(EventKindV1::MeddlingMageEntryV1 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 318;
+const _: () = assert!(EventKindV1::EternalOpeningV1 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -773,6 +774,7 @@ impl CommittedEvent {
             Self::NishobaDamageSourceV1 { .. } => EventKindV1::NishobaDamageSourceV1,
             Self::MartyrRevealPaidV1 { .. } => EventKindV1::MartyrRevealPaidV1,
             Self::MeddlingMageEntryV1 { .. } => EventKindV1::MeddlingMageEntryV1,
+            Self::EternalOpeningV1 { .. } => EventKindV1::EternalOpeningV1,
         }
     }
 }

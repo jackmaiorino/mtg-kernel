@@ -1787,6 +1787,11 @@ pub enum Decision {
         group: Option<u16>,
         options: Vec<String>,
     },
+    /// Native kept-hand actions in the acting player's chosen order.
+    ChooseEternalOpeningV1 {
+        player: PlayerId,
+        legal_cards: Vec<ObjectId>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -12482,6 +12487,7 @@ fn advance_until_decision_historical(state: &mut GameState) -> Decision {
         .and_then(|()| effect::liliana_dreadhorde_v1::validate_state(state))
         .and_then(|()| muldrotha_v1::validate_state(state))
         .and_then(|()| tinybones_v72::validate_state(state))
+        .and_then(|()| crate::eternal_opening_v1::validate(state))
     {
         #[cfg(test)]
         eprintln!("Native prework validation rejected: {_error}");
@@ -12791,7 +12797,12 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
             }
         }
 
-        match crate::leyline_axe_v1::drain_or_decide(state) {
+        let opening = if crate::eternal_opening_v1::enabled(state) {
+            crate::eternal_opening_v1::drain_or_decide(state)
+        } else {
+            crate::leyline_axe_v1::drain_or_decide(state)
+        };
+        match opening {
             Ok(Some(decision)) => return decision,
             Ok(None) => {}
             Err(_) => {
@@ -24726,6 +24737,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     muldrotha_v1::validate_state(state)?;
     tinybones_v72::validate_state(state)?;
     crate::leyline_axe_v1::validate(state)?;
+    crate::eternal_opening_v1::validate(state)?;
     validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
     crate::drake_hatcher_v1::custody::validate(state)?;
@@ -24742,10 +24754,15 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     crate::krenko_v1::validate_state(state)?;
     crate::fishing_pole_v39::lifecycle::validate_state(state)?;
     crate::twinflame_tyrant_v1::combat::validate(state)?;
+    if crate::eternal_opening_v1::owns_action(state) {
+        return crate::eternal_opening_v1::answer(state, action);
+    }
     if state.leyline_opening_v1.is_some() {
         return crate::leyline_axe_v1::answer(state, action);
     }
-    if crate::leyline_axe_v1::requires_initial_advance(state)? {
+    if !crate::eternal_opening_v1::enabled(state)
+        && crate::leyline_axe_v1::requires_initial_advance(state)?
+    {
         return Err("complete the actual opening-hand checkpoint before gameplay".into());
     }
     if crate::twinflame_tyrant_v1::combat::has_pending(state) {

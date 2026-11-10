@@ -1024,7 +1024,10 @@ fn stage3_triggers(state: &mut GameState, events: &[CommittedEvent]) -> Vec<Pend
         && events
             .iter()
             .any(|event| matches!(event, CommittedEvent::UpkeepBegan { .. }));
-    if first_upkeep && !read_state(state).is_some_and(|s1b| s1b.leyline_offered) {
+    if first_upkeep
+        && !crate::eternal_opening_v1::enabled(state)
+        && !read_state(state).is_some_and(|s1b| s1b.leyline_offered)
+    {
         let leylines = [PlayerId::P0, PlayerId::P1]
             .into_iter()
             .flat_map(|player| state.players[player.index()].hand.iter().copied())

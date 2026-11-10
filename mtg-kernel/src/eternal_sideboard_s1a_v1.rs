@@ -717,7 +717,10 @@ fn leyline_triggers(state: &mut GameState, events: &[CommittedEvent]) -> Vec<Pen
         && events
             .iter()
             .any(|event| matches!(event, CommittedEvent::UpkeepBegan { .. }));
-    if !first_upkeep || read_state(state).is_some_and(|s1a| s1a.leylines_offered) {
+    if !first_upkeep
+        || crate::eternal_opening_v1::enabled(state)
+        || read_state(state).is_some_and(|s1a| s1a.leylines_offered)
+    {
         return Vec::new();
     }
     let leylines = [PlayerId::P0, PlayerId::P1]
