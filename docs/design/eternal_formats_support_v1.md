@@ -593,13 +593,16 @@ New, each built once in the first wave that needs it:
   Flickerwisp and Yorion's unchanged face-up exile links remain eligible
   when their waiting return moves onto the stack.
   It uses the original incarnation and retained color for authenticated departed
-  damage sources. Unrelated graveyard and exile cards are excluded. Other
+  damage sources. Eternal records the physical Mogg Fanatic's source immediately
+  before paying its sacrifice cost, even if Circle is absent. A later color or
+  zone change cannot affect that damage. Legacy unmarked activations retain the
+  earlier execution path. Unrelated graveyard and exile cards are excluded. Other
   embedded effect references need explicit bindings, departed references need
   last-known color and visibility evidence, and contextual hand and library
   sources remain unsupported. An in-flight saved Circle menu with the old
   broad roster refuses restore when it differs from the legal roster, preserving
   the meaning of its original option indices. Paid source-menu,
-  Firebrand/Painter and blink/restore qualification is pending. Policy observation
+  Fanatic/Painter and blink/restore qualification is pending. Policy observation
   v5 omits the shields.
   [Comprehensive Rules, 609.7 and 702.96](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
 

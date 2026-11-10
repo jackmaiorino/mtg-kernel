@@ -29366,17 +29366,19 @@ fn finalize_activation(state: &mut GameState) {
             _ => false,
         }
     } else if let Some(owner) = fixed_payment_owner.as_ref() {
-        if !pay_cost_components_with_x(
-            state,
-            pending.controller,
-            pending.source,
-            &[CostComponent::Tap],
-            &object_cost_ids,
-            x_value,
-        ) {
+        if owner.requires_tap()
+            && !pay_cost_components_with_x(
+                state,
+                pending.controller,
+                pending.source,
+                &[CostComponent::Tap],
+                &object_cost_ids,
+                x_value,
+            )
+        {
             false
         } else {
-            match crate::fixed_source_damage_v3::capture_after_tap(state, owner) {
+            match crate::fixed_source_damage_v3::capture_departure(state, owner) {
                 Ok(index) => {
                     frozen.fixed_departure = Some(index);
                     pay_cost_components_with_x(

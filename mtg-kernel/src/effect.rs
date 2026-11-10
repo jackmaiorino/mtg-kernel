@@ -20708,6 +20708,20 @@ fn execute_with_native_row_v1(
             }
             let target = ctx.resolve_target(*target);
             let mut proposal = event::damage_from_exec_ctx_v1(ctx, target, *amount);
+            match crate::fixed_source_damage_v3::native_fanatic_damage(state, ctx, op) {
+                Ok(id) => {
+                    if let event::ProposedEvent::Damage(damage) = &mut proposal {
+                        damage.historical_source = id;
+                    }
+                }
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            }
             if let Some(origin) = ctx.niv_damage_origin_v1 {
                 if !crate::event::niv_damage_origin_matches_context_v1(
                     origin,
