@@ -23,7 +23,10 @@ pub(super) fn selected(
             SourceV1::Spell(source)
         }
         StackItemKind::TriggeredAbility
-            if matches!(item.inline_effect.as_ref(), Some(EffectOp::DrawCards { .. })) =>
+            if matches!(
+                item.inline_effect.as_ref(),
+                Some(EffectOp::DrawCards { .. })
+            ) =>
         {
             let source = item.v4.ability_source_contract?;
             if source.source != item.source || source.controller != item.controller {
@@ -50,7 +53,14 @@ pub(super) fn selected(
         },
         PlayerRef::ObjectController(_) => return None,
     };
-    Some((InstructionV1::FixedRoot { player, drawer, count }, source))
+    Some((
+        InstructionV1::FixedRoot {
+            player,
+            drawer,
+            count,
+        },
+        source,
+    ))
 }
 
 pub(crate) fn begin(
@@ -71,7 +81,13 @@ pub(crate) fn begin(
     let Some((instruction, source)) = selected(state, pending) else {
         return Ok(false);
     };
-    if instruction != (InstructionV1::FixedRoot { player, drawer, count }) {
+    if instruction
+        != (InstructionV1::FixedRoot {
+            player,
+            drawer,
+            count,
+        })
+    {
         return Err("Eternal fixed draw changed its definition-owned root".into());
     }
     if state.eternal_owned_draw_progress_v1.is_some()

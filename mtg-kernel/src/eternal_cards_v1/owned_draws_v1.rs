@@ -300,7 +300,11 @@ pub enum JournalV1 {
 impl JournalV1 {
     fn start(self) -> Option<(StartedV1, u32)> {
         match self {
-            Self::Started(started) if matches!(started.instruction, InstructionV1::FixedRoot { .. }) => None,
+            Self::Started(started)
+                if matches!(started.instruction, InstructionV1::FixedRoot { .. }) =>
+            {
+                None
+            }
             Self::Started(started) => Some((started, started.total)),
             Self::StartedWithRiddlerV1 { started, extra } if started.total != 0 && extra != 0 => {
                 Some((started, started.total.checked_add(extra)?))
@@ -311,7 +315,9 @@ impl JournalV1 {
 
     fn started_item(self) -> Option<StackItemId> {
         match self {
-            Self::Started(started) | Self::StartedWithRiddlerV1 { started, .. } => Some(started.item),
+            Self::Started(started) | Self::StartedWithRiddlerV1 { started, .. } => {
+                Some(started.item)
+            }
             _ => None,
         }
     }

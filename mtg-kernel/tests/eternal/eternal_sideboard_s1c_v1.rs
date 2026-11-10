@@ -1035,7 +1035,10 @@ fn paid_gush_with_riddler_resumes_the_original_fixed_count_both_seats() {
 
         act(&mut state, Action::FinishEffectSelection);
         let second = settle(&mut state).expect("Dredge on the second of three attempts");
-        assert_eq!(named(&state, opponent, "Treasure Token").len(), treasures_before + 1);
+        assert_eq!(
+            named(&state, opponent, "Treasure Token").len(),
+            treasures_before + 1
+        );
         let second_snapshot = serde_json::to_value(&state).unwrap();
         let mut skipped = first_snapshot.clone();
         skipped["eternal_owned_draw_progress_v1"] =
@@ -1049,8 +1052,11 @@ fn paid_gush_with_riddler_resumes_the_original_fixed_count_both_seats() {
 
         for corrupt_start in [false, true] {
             let mut removed = first_snapshot.clone();
-            let progress = removed.as_object_mut().unwrap()
-                .remove("eternal_owned_draw_progress_v1").unwrap();
+            let progress = removed
+                .as_object_mut()
+                .unwrap()
+                .remove("eternal_owned_draw_progress_v1")
+                .unwrap();
             if corrupt_start {
                 let started_at = progress["started_at"].as_u64().unwrap() as usize;
                 let started = &mut removed["engine"]["event_history"][started_at]
@@ -1071,10 +1077,16 @@ fn paid_gush_with_riddler_resumes_the_original_fixed_count_both_seats() {
         assert!(settle(&mut state).is_some(), "Dredge on the third attempt");
         act(&mut state, Action::FinishEffectSelection);
         settled(&mut state);
-        assert_eq!(named(&state, opponent, "Treasure Token").len(), treasures_before + 3);
+        assert_eq!(
+            named(&state, opponent, "Treasure Token").len(),
+            treasures_before + 3
+        );
         assert_eq!(restored.players[drawer.index()].library.len(), 20);
 
-        act(&mut restored, Action::ChooseEffectTarget(Target::Object(thug)));
+        act(
+            &mut restored,
+            Action::ChooseEffectTarget(Target::Object(thug)),
+        );
         let mut answered: GameState =
             serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
         for branch in [&mut restored, &mut answered] {
@@ -1082,7 +1094,10 @@ fn paid_gush_with_riddler_resumes_the_original_fixed_count_both_seats() {
             assert_eq!(zone(branch, gush), Zone::Graveyard);
             assert_eq!(zone(branch, thug), Zone::Hand);
             assert_eq!(branch.players[drawer.index()].library.len(), 16);
-            assert_eq!(named(branch, opponent, "Treasure Token").len(), treasures_before + 2);
+            assert_eq!(
+                named(branch, opponent, "Treasure Token").len(),
+                treasures_before + 2
+            );
         }
         assert_eq!(restored.state_hash(), answered.state_hash());
     }
