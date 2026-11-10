@@ -1917,10 +1917,20 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
                     } if *player == actor && state.step == Step::Upkeep => {
                         Some(Action::ChooseEffectOption(1))
                     }
+                    Decision::Discard { count, choices, .. } => {
+                        let islands = choices.iter().copied().filter(|&object| {
+                            object != selected && state.objects.get(object).card_def == id("Island")
+                        }).take(*count as usize).collect::<Vec<_>>();
+                        assert_eq!(islands.len(), *count as usize);
+                        Some(Action::Discard(islands))
+                    }
                     _ => None,
                 },
             );
+            assert_eq!(zone(&state, selected), Zone::Hand);
+            assert_eq!(zone(&state, wrong_value), Zone::Hand);
             assert!(!state.objects.get(vial).tapped);
+            let vial_generation = state.objects.get(vial).zone_change_count;
             activate(&mut state, vial, 0, &[]);
             assert!(matches!(next(&mut state),
                 Decision::CastSpellOrPass { player, .. } if player == actor));
@@ -1956,9 +1966,13 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
                 }
             }
             if bounce_vial {
+                assert_eq!(zone(&state, bounce), Zone::Hand);
                 pool(&mut state, opponent, &[ManaColor::U], 1);
                 act(&mut state, Action::Pass);
                 cast(&mut state, bounce, &[Target::Object(vial)]);
+                pass_until(&mut state, |state| zone(state, vial) == Zone::Hand);
+                assert_eq!(state.stack.last().unwrap().source, vial);
+                assert_eq!(state.counter_lki_for(vial, vial_generation).unwrap().charge, 4);
             }
             let hand_choice = settle(&mut state);
             assert_eq!(frozen_opening_refusal(&state, opponent), refusal);
