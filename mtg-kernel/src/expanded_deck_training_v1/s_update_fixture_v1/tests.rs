@@ -136,7 +136,11 @@ fn assert_verified_replay_refusals_v1(
     let cap = fixture_verified_cap_v1(batch);
     let out = root.join("refused-backward");
     let mut inputs = fixture_serial_inputs_v1(manifest, batch, out.clone(), Some(cap));
-    inputs.verified_replay.as_mut().unwrap().short_first_gradient = true;
+    inputs
+        .verified_replay
+        .as_mut()
+        .unwrap()
+        .short_first_gradient = true;
     assert_eq!(
         execute_s_update_v1(inputs).unwrap_err(),
         "S gradient buffer has the wrong length"
@@ -181,7 +185,11 @@ fn assert_verified_replay_refusals_v1(
             let out = root.join("refused-backward-then-opponent");
             let mut inputs = fixture_serial_inputs_v1(manifest, batch, out.clone(), Some(cap));
             inputs.trajectories[1] = pin;
-            inputs.verified_replay.as_mut().unwrap().short_first_gradient = true;
+            inputs
+                .verified_replay
+                .as_mut()
+                .unwrap()
+                .short_first_gradient = true;
             assert_eq!(execute_s_update_v1(inputs).unwrap_err(), message);
             assert!(!out.exists());
         }
@@ -199,7 +207,11 @@ fn assert_late_capacity_fallback_v1(
     let first: ExpandedTrajectoryV1 = read_pinned(&batch.trajectories[0]).unwrap();
     let mut trajectory: ExpandedTrajectoryV1 = read_pinned(&batch.trajectories[1]).unwrap();
     let seat = trajectory.episode.learner_seat;
-    let index = trajectory.decisions.iter().rposition(|row| row.actor == seat).unwrap();
+    let index = trajectory
+        .decisions
+        .iter()
+        .rposition(|row| row.actor == seat)
+        .unwrap();
     // This fixture uses the legacy sampler, one independent RNG draw per
     // actor row. Preserve the draw while changing only the late row's shape.
     assert!(trajectory.learner_sampler.is_none());
@@ -207,20 +219,25 @@ fn assert_late_capacity_fallback_v1(
         .iter()
         .filter(|row| row.actor == seat)
         .count();
-    let candidate_backwards = first.decisions.iter()
+    let candidate_backwards = first
+        .decisions
+        .iter()
         .filter(|row| row.actor == first.episode.learner_seat)
-        .count() + seat_rows - 1;
+        .count()
+        + seat_rows
+        - 1;
     assert!(candidate_backwards > 0);
     let mut rng = SplitMix64::seed(paired_policy_seeds_v1(trajectory.episode.seed)[seat as usize]);
     let draw = (0..seat_rows).map(|_| rng.next_u64()).last().unwrap();
     let row = &mut trajectory.decisions[index];
     let config = manifest.config;
     // Attention buffers alone exceed the cap after this enlargement.
-    let objects = (cap / (std::mem::size_of::<f32>() * config.heads * (1 + config.layers)))
-        .isqrt()
-        + 1;
+    let objects =
+        (cap / (std::mem::size_of::<f32>() * config.heads * (1 + config.layers))).isqrt() + 1;
     assert!(objects > row.tensor.object_card_ids.len());
-    row.tensor.object_features.resize(objects * OBJECT_FEATURE_DIM_V1, 0);
+    row.tensor
+        .object_features
+        .resize(objects * OBJECT_FEATURE_DIM_V1, 0);
     row.tensor.object_card_ids.resize(objects, 0);
     row.tensor.object_groups.resize(objects, 0);
     row.tensor.object_node_ids.resize(objects, 0);
@@ -228,9 +245,15 @@ fn assert_late_capacity_fallback_v1(
     let counts = SInputV1::of_tensor_v1(&input).validate_v1(&config).unwrap();
     assert!(STapeV1::bytes_for_counts_v1(&config, counts) > cap);
     let (policy, _) = load_expanded_inference_any_math_v1(&batch.source).unwrap();
-    let (logits, value) = policy.s_model_v1().unwrap().score_tensor_v1(&input).unwrap();
+    let (logits, value) = policy
+        .s_model_v1()
+        .unwrap()
+        .score_tensor_v1(&input)
+        .unwrap();
     assert_eq!(logits.len(), row.logits.len());
-    row.selected = WideCategoricalScratchV1::default().sample(&logits, draw).unwrap() as u32;
+    row.selected = WideCategoricalScratchV1::default()
+        .sample(&logits, draw)
+        .unwrap() as u32;
     row.logits = bits(&logits);
     row.value = value.to_bits();
 
@@ -244,22 +267,34 @@ fn assert_late_capacity_fallback_v1(
         &ragged.opponents,
         &config,
         &manifest.options,
-    ).unwrap();
+    )
+    .unwrap();
     ragged.census = census;
     let reference_dir = root.join("late-oversized-reference");
     let reference = execute_s_update_v1(fixture_serial_inputs_v1(
-        manifest, &ragged, reference_dir.clone(), None,
-    )).unwrap();
+        manifest,
+        &ragged,
+        reference_dir.clone(),
+        None,
+    ))
+    .unwrap();
     ragged.reference = pin_file_v1(&reference_dir.join("update.json")).unwrap();
     ragged.identity = identity_of_update_v1(&reference, games_sha256).unwrap();
 
     let profile = s_update_profile::arm_v1();
     let fallback = execute_s_update_v1(fixture_serial_inputs_v1(
-        manifest, &ragged, root.join("late-oversized-fallback"), Some(cap),
-    )).unwrap();
+        manifest,
+        &ragged,
+        root.join("late-oversized-fallback"),
+        Some(cap),
+    ))
+    .unwrap();
     assert_eq!(fallback["verified_replay"]["used"], false);
     assert_eq!(fallback["verified_replay"]["fallback"], "tape_capacity");
-    assert_eq!(verify_v1(manifest, &ragged, &fallback).unwrap()["verified"], true);
+    assert_eq!(
+        verify_v1(manifest, &ragged, &fallback).unwrap()["verified"],
+        true
+    );
     if let Some(totals) = profile.totals_v1() {
         use s_update_profile::StageV1;
 
@@ -278,7 +313,9 @@ fn assert_dirty_mxcsr_fallback_v1(
     manifest: &FixtureManifestV1,
     batch: &FixtureBatchV1,
 ) {
-    use crate::deterministic_math_v1::{read_mxcsr_v1, verify_pinned_mxcsr_state_v1, write_mxcsr_v1};
+    use crate::deterministic_math_v1::{
+        read_mxcsr_v1, verify_pinned_mxcsr_state_v1, write_mxcsr_v1,
+    };
 
     let inputs = fixture_serial_inputs_v1(
         manifest,
@@ -301,7 +338,10 @@ fn assert_dirty_mxcsr_fallback_v1(
         .unwrap();
     assert_eq!(fallback["verified_replay"]["used"], false);
     assert_eq!(fallback["verified_replay"]["fallback"], "caller_math_state");
-    assert_eq!(verify_v1(manifest, batch, &fallback).unwrap()["verified"], true);
+    assert_eq!(
+        verify_v1(manifest, batch, &fallback).unwrap()["verified"],
+        true
+    );
 }
 
 #[test]
