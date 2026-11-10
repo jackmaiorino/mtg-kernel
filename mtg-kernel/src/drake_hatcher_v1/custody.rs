@@ -1968,7 +1968,11 @@ fn relation_positions(
     unchecked: usize,
     len: usize,
 ) -> impl Iterator<Item = usize> + '_ {
-    let start = if non_enclosing.is_some() { unchecked } else { 0 };
+    let start = if non_enclosing.is_some() {
+        unchecked
+    } else {
+        0
+    };
     non_enclosing
         .unwrap_or_default()
         .iter()
@@ -2032,9 +2036,8 @@ impl<'a> RelationsV1<'a> {
     }
 
     fn slot(&self, position: usize) -> Option<usize> {
-        self.non_enclosing.map_or(Some(position), |rows| {
-            rows.binary_search(&position).ok()
-        })
+        self.non_enclosing
+            .map_or(Some(position), |rows| rows.binary_search(&position).ok())
     }
 
     fn coverage(&self, position: usize) -> i64 {
