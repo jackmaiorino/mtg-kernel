@@ -930,6 +930,172 @@ fn empty_library_draw_chooses_between_jace_and_hullbreacher() {
     }
 }
 
+fn announce_flame(
+    state: &mut GameState,
+    caster: PlayerId,
+    drawer: PlayerId,
+    other_target: Option<ObjectId>,
+    mode: u8,
+) -> ObjectId {
+    put(state, caster, "Snapcaster Mage", Zone::Battlefield);
+    let flame = put(state, caster, "Flame of Anor", Zone::Hand);
+    pool(state, caster, &[ManaColor::U, ManaColor::R], 1);
+    assert!(castable(state, flame));
+    act(state, Action::CastSpell(flame));
+    assert!(
+        matches!(next(state), Decision::ChooseSpellMode { legal_modes, .. }
+        if legal_modes.contains(&mode))
+    );
+    act(state, Action::ChooseSpellMode(mode));
+    choose_target(state, Target::Player(drawer));
+    if let Some(other_target) = other_target {
+        choose_target(state, Target::Object(other_target));
+    }
+    flame
+}
+
+#[test]
+fn paid_flame_of_anor_draws_for_its_target_then_resolves_other_mode_both_seats() {
+    use mtg_kernel::state::StackTargetContractV4;
+
+    for caster in [P0, P1] {
+        let drawer = caster.opponent();
+        for (name, mode) in [
+            (None, 0),
+            (Some("Sol Ring"), 3),
+            (Some("Llanowar Elves"), 4),
+        ] {
+            let mut state = plains();
+            state.active_player = caster;
+            state.priority_player = caster;
+            let hullbreacher = put(&mut state, caster, "Hullbreacher", Zone::Hand);
+            pool(&mut state, caster, &[ManaColor::U], 2);
+            cast(&mut state, hullbreacher, &[]);
+            settled(&mut state);
+            let other = name.map(|name| put(&mut state, drawer, name, Zone::Battlefield));
+            let other_zone = |state: &GameState| other.map(|object| zone(state, object));
+            let dredger = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+            let flame = announce_flame(&mut state, caster, drawer, other, mode);
+            let first = settle(&mut state).expect("target player chooses the first replacement");
+            assert!(matches!(&first, Decision::ChooseEffectTargets {
+                player, source, legal_targets, can_finish: true, ..
+            } if *player == drawer && *source == flame
+                && legal_targets.as_slice() == [Target::Object(dredger)]));
+            assert_eq!(state.players[caster.index()].mana_pool, [0; 6]);
+            assert_eq!(other_zone(&state), other.map(|_| Zone::Battlefield));
+            let mut forged = state.clone();
+            let item = forged.stack.last_mut().unwrap();
+            assert_eq!(item.source, flame);
+            item.targets[0] = Target::Player(caster);
+            item.v4.target_contracts[0] = StackTargetContractV4::Player(caster);
+            let pending = forged.engine.pending_effect.as_mut().unwrap();
+            pending.resolving_item = item.clone();
+            pending.ctx.targets[0] = item.targets[0];
+            pending.ctx.target_contracts[0] = item.v4.target_contracts[0];
+            assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged)
+                .unwrap_err()
+                .contains("lost its native start"));
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(next(&mut restored), first);
+            act(
+                &mut restored,
+                Action::ChooseEffectTarget(Target::Object(dredger)),
+            );
+            restored = serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
+            settled(&mut restored);
+            assert_eq!(zone(&restored, dredger), Zone::Hand);
+            assert_eq!(restored.players[drawer.index()].library.len(), 16);
+            assert_eq!(named(&restored, caster, "Treasure Token").len(), 1);
+            assert_eq!(other_zone(&restored), other.map(|_| Zone::Graveyard));
+
+            act(&mut state, Action::FinishEffectSelection);
+            assert_eq!(settle(&mut state), Some(first));
+            assert_eq!(other_zone(&state), other.map(|_| Zone::Battlefield));
+            assert_eq!(named(&state, caster, "Treasure Token").len(), 1);
+            act(&mut state, Action::FinishEffectSelection);
+            settled(&mut state);
+            assert_eq!(zone(&state, dredger), Zone::Graveyard);
+            assert_eq!(state.players[drawer.index()].library.len(), 20);
+            assert_eq!(named(&state, caster, "Treasure Token").len(), 2);
+            assert_eq!(other_zone(&state), other.map(|_| Zone::Graveyard));
+        }
+    }
+}
+
+#[test]
+fn paid_flame_of_anor_stops_other_mode_when_its_draw_target_wins_both_seats() {
+    for drawer in [P0, P1] {
+        let caster = drawer.opponent();
+        let mut state = game(&[]);
+        state.active_player = drawer;
+        state.priority_player = drawer;
+        put(&mut state, caster, "Hullbreacher", Zone::Battlefield);
+        let jace = put(&mut state, drawer, "Jace, Wielder of Mysteries", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::U; 3], 1);
+        cast(&mut state, jace, &[]);
+        settled(&mut state);
+        act(&mut state, Action::Pass);
+        let ring = put(&mut state, drawer, "Sol Ring", Zone::Battlefield);
+        let flame = announce_flame(&mut state, caster, drawer, Some(ring), 3);
+        let first = settle(&mut state).expect("Jace competes with Hullbreacher for Flame's draw");
+        assert!(matches!(&first, Decision::ChooseEffectTargets {
+            player, source, legal_targets, can_finish: true, ..
+        } if *player == drawer && *source == flame
+            && legal_targets.as_slice() == [Target::Object(jace)]));
+        act(&mut state, Action::FinishEffectSelection);
+        assert_eq!(settle(&mut state), Some(first));
+        assert_eq!(named(&state, caster, "Treasure Token").len(), 1);
+        assert_eq!(zone(&state, ring), Zone::Battlefield);
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(jace)));
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        for branch in [&mut state, &mut restored] {
+            assert_eq!(
+                next(branch),
+                Decision::GameOver {
+                    winner: Some(drawer)
+                }
+            );
+            assert_eq!(named(branch, caster, "Treasure Token").len(), 1);
+            assert_eq!(zone(branch, ring), Zone::Battlefield);
+        }
+        assert_eq!(restored.state_hash(), state.state_hash());
+    }
+}
+
+#[test]
+fn paid_flame_of_anor_ignores_caster_dredge_and_departed_other_target_both_seats() {
+    use mtg_kernel::event::CommittedEvent;
+
+    for caster in [P0, P1] {
+        let drawer = caster.opponent();
+        let mut state = plains();
+        state.active_player = caster;
+        state.priority_player = caster;
+        let ring = put(&mut state, drawer, "Sol Ring", Zone::Battlefield);
+        let bounce = put(&mut state, drawer, "Echoing Truth", Zone::Hand);
+        let unrelated = put(&mut state, caster, "Golgari Thug", Zone::Graveyard);
+        announce_flame(&mut state, caster, drawer, Some(ring), 3);
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == caster)
+        );
+        act(&mut state, Action::Pass);
+        pool(&mut state, drawer, &[ManaColor::U], 1);
+        cast(&mut state, bounce, &[Target::Object(ring)]);
+        settled(&mut state);
+        assert_eq!(zone(&state, ring), Zone::Hand);
+        assert_eq!(zone(&state, unrelated), Zone::Graveyard);
+        assert_eq!(state.players[drawer.index()].library.len(), 18);
+        assert_eq!(state.players[drawer.index()].hand.len(), 3);
+        assert!(!state
+            .engine
+            .event_history
+            .iter()
+            .any(|event| matches!(event, CommittedEvent::EternalOwnedDrawV1 { .. })));
+    }
+}
+
 #[test]
 fn wurmcoil_engine_leaves_two_wurms() {
     let mut state = plains();

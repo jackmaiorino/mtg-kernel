@@ -792,6 +792,61 @@ pub fn flame_of_anor_artifact_creature() -> EffectOp {
     )
 }
 
+pub(crate) fn flame_draw_target(
+    state: &GameState,
+    ctx: &ExecCtx,
+    slot: u8,
+    spec: TargetSpec,
+) -> Option<PlayerId> {
+    let index = usize::from(slot);
+    let Some(&Target::Player(player)) = ctx.targets.get(index) else {
+        return None;
+    };
+    (ctx.target_incarnation_matches(index, state)
+        && crate::engine::effect_target_is_legal(
+            state,
+            ctx.source,
+            ctx.controller,
+            spec,
+            &ctx.targets,
+            index,
+        ))
+    .then_some(player)
+}
+
+/// The selected nondraw modes resolve in printed order after the draw mode.
+pub(crate) fn finish_flame_of_anor(
+    state: &mut GameState,
+    ctx: &ExecCtx,
+    artifact: Option<u8>,
+    creature: Option<u8>,
+    spec: TargetSpec,
+) {
+    if let Some(slot) = artifact {
+        if legal_object_target(ctx, state, usize::from(slot), spec).is_some() {
+            crate::effect::execute(
+                &EffectOp::DestroyObject {
+                    object: ObjectRef::Target(slot),
+                },
+                ctx,
+                state,
+            );
+        }
+    }
+    if let Some(slot) = creature {
+        if legal_object_target(ctx, state, usize::from(slot), spec).is_some() {
+            crate::effect::execute(
+                &EffectOp::DealDamage {
+                    target: crate::effect::TargetRef::Target(slot),
+                    amount: 5,
+                },
+                ctx,
+                state,
+            );
+        }
+    }
+}
+
 /// Flame of Anor: "Choose one. If you control a Wizard as you cast this
 /// spell, you may choose two instead." Whether `controller` may choose
 /// printed form `mode` of the card named `name`.
@@ -1519,53 +1574,12 @@ pub(crate) fn execute(op: &LurrusOpV1, ctx: &ExecCtx, state: &mut GameState) {
         } => {
             // Each chosen mode acts on its own target if that target is
             // still legal (608.2b); the others still happen.
-            if let Some(slot) = *draw {
-                let index = usize::from(slot);
-                if let Some(Target::Player(_)) = ctx.targets.get(index) {
-                    if ctx.target_incarnation_matches(index, state)
-                        && crate::engine::effect_target_is_legal(
-                            state,
-                            ctx.source,
-                            ctx.controller,
-                            *spec,
-                            &ctx.targets,
-                            index,
-                        )
-                    {
-                        crate::effect::execute(
-                            &EffectOp::DrawCards {
-                                player: PlayerRef::Target(slot),
-                                count: 2,
-                            },
-                            ctx,
-                            state,
-                        );
-                    }
+            if let Some(player) = draw.and_then(|slot| flame_draw_target(state, ctx, slot, *spec)) {
+                if !crate::eternal_cards_v1::owned_draws_v1::draw_uninterrupted(state, player, 2) {
+                    return;
                 }
             }
-            if let Some(slot) = *artifact {
-                if legal_object_target(ctx, state, usize::from(slot), *spec).is_some() {
-                    crate::effect::execute(
-                        &EffectOp::DestroyObject {
-                            object: ObjectRef::Target(slot),
-                        },
-                        ctx,
-                        state,
-                    );
-                }
-            }
-            if let Some(slot) = *creature {
-                if legal_object_target(ctx, state, usize::from(slot), *spec).is_some() {
-                    crate::effect::execute(
-                        &EffectOp::DealDamage {
-                            target: crate::effect::TargetRef::Target(slot),
-                            amount: 5,
-                        },
-                        ctx,
-                        state,
-                    );
-                }
-            }
+            finish_flame_of_anor(state, ctx, *artifact, *creature, *spec);
         }
         LurrusOpV1::ForthEorlingasV1 { token_def } => {
             if ctx.x_value > 0 {
