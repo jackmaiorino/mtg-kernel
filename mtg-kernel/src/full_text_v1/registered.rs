@@ -259,7 +259,9 @@ fn volrath_native_simultaneous_entry_uses_final_donor_after_departure_both_seats
 #[test]
 fn volrath_native_registration_retains_paid_discard_with_no_or_unsupported_text_both_seats() {
     for player in [PlayerId::P0, PlayerId::P1] {
-        for donor_name in [None, Some(VOLRATH), Some("Abyssal Harvester")] {
+        // Masticore supplies characteristics but its activation has no
+        // donated payment recipe in this profile.
+        for donor_name in [None, Some(VOLRATH), Some("Masticore")] {
             let mut state = ordered_game(player);
             let donor = donor_name.map(|name| put(&mut state, player, name, Zone::Graveyard));
             let discarded = put(&mut state, player, "Island", Zone::Hand);
@@ -273,7 +275,7 @@ fn volrath_native_registration_retains_paid_discard_with_no_or_unsupported_text_
                 active_text(&state, source).map(|text| text.donor().object),
                 donor
             );
-            if donor_name != Some("Abyssal Harvester") {
+            if donor_name != Some("Masticore") {
                 assert_eq!(engine::effective_power(&state, source), 0);
                 assert_eq!(engine::effective_toughness(&state, source), 1);
             }

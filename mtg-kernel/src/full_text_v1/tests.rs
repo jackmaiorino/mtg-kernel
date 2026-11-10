@@ -360,7 +360,7 @@ fn donated_guide_echo_tracks_native_control_and_keeps_its_cost_after_donor_depar
         state.active_player = player;
         state.priority_player = player;
         state.step = Step::Upkeep;
-        let source = put(&mut state, player, "Tireless Tribe", Zone::Hand);
+        let source = put(&mut state, player, VOLRATH, Zone::Hand);
         event::commit(
             &mut state,
             ProposedEvent::zone_change(source, Zone::Battlefield),
@@ -383,14 +383,8 @@ fn donated_guide_echo_tracks_native_control_and_keeps_its_cost_after_donor_depar
         );
         let upkeep = state.engine.event_history.len() as u64;
         event::log_upkeep_began(&mut state, player);
-        let text = top_creature_text(&state, old_host).unwrap();
         assert_eq!(echo_custody(&state, old_host, upkeep), Some(control));
-        queue_donated_trigger(
-            &mut state,
-            text,
-            DonatedTriggerKindV1::KarmicGuideEcho { upkeep, control },
-        )
-        .unwrap();
+        queue_upkeep_triggers(&mut state, player, upkeep as usize).unwrap();
         let triggers = crate::trigger::collect_and_process(&mut state);
         state.engine.pending_triggers.extend(triggers);
         assert!(matches!(
@@ -584,14 +578,16 @@ fn full_text_ignores_layer_six_removal_but_activation_does_not() {
         &mut state,
         ProposedEvent::zone_change(dress, Zone::Battlefield),
     );
+    // Register Dress Down's native layer-six effect before checking the host.
+    let _ = crate::trigger::collect_and_process(&mut state);
     let text = top_creature_text(&state, host).unwrap();
     assert_eq!(text.definition().name, "Masticore");
-    assert!(text
-        .freeze_activated(&state, FullTextAbilityV1::Printed(0))
-        .is_err());
-    assert!(text
-        .freeze_activated(&state, FullTextAbilityV1::RetainedDiscard)
-        .is_err());
+    for selector in [FullTextAbilityV1::Printed(0), FullTextAbilityV1::RetainedDiscard] {
+        assert_eq!(
+            text.freeze_activated(&state, selector).unwrap_err(),
+            "full-text ability was removed in a later layer",
+        );
+    }
 }
 
 #[test]
@@ -744,7 +740,7 @@ fn full_text_retained_activation_requires_mana_but_not_hand_or_supported_donor()
     put(
         &mut state,
         PlayerId::P0,
-        "Abyssal Harvester",
+        VOLRATH,
         Zone::Graveyard,
     );
     let text = top_creature_text(&state, host).unwrap();
@@ -1125,6 +1121,7 @@ fn donated_psychatog_can_discard_above_or_exile_its_own_donor() {
         put(&mut state, PlayerId::P0, "Forest", Zone::Graveyard);
         let donor = put(&mut state, PlayerId::P0, "Psychatog", Zone::Graveyard);
         let discard = put(&mut state, PlayerId::P0, "Island", Zone::Hand);
+        let kept = put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
         let before = engine::effective_power(&state, host.source);
         let text = top_creature_text(&state, host).unwrap();
         engine::stage_full_text_activation(&mut state, text, FullTextAbilityV1::Printed(index))
@@ -1132,10 +1129,12 @@ fn donated_psychatog_can_discard_above_or_exile_its_own_donor() {
         if index == 0 {
             assert!(matches!(
                 engine::advance_until_decision(&mut state),
-                Decision::Discard { count: 1, .. }
+                Decision::Discard { count: 1, choices, .. }
+                    if choices.contains(&discard) && choices.contains(&kept)
             ));
             engine::step(&mut state, Action::Discard(vec![discard])).unwrap();
             assert_eq!(state.objects.get(discard).zone, Zone::Graveyard);
+            assert_eq!(state.objects.get(kept).zone, Zone::Hand);
         } else {
             for cost in [donor, other_cost] {
                 assert!(matches!(engine::advance_until_decision(&mut state),

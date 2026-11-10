@@ -172,7 +172,10 @@ impl FullTextV1 {
             .engine
             .event_history
             .scan_for_v1(&[crate::event_history_v1::EventKindV1::FullTextRestrictedUseV1])
-            .contains(&used)
+            .iter()
+            .any(|event| {
+                matches!(event, CommittedEvent::FullTextRestrictedUseV1 { .. } if event == &used)
+            })
     }
 
     pub(crate) fn activation_allowed(

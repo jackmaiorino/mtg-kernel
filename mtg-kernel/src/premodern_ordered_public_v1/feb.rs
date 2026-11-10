@@ -309,7 +309,7 @@ impl FebSessionV1 {
             )
             .map_err(|_| "FEB ordered observation is unsupported")?;
         let (observed, actions) = visible_numeric_input(&self.inner.game, &state)?;
-        let (observation, actions) = visible_numeric_parts_v1(&observed, &actions)
+        let (observation, actions) = visible_numeric_parts_v1(observed, &actions)
             .map_err(|error| format!("FEB numeric operand: {error}"))?;
         Ok(FebCurrentV1::Decision {
             numeric: Box::new(FebNumericViewV1 {
