@@ -3504,7 +3504,7 @@ impl GameState {
 
     /// The legacy observation and sampler use object rows. Bind the public
     /// minima to deterministic representatives inside this sampled world.
-    fn bind_reveal_names_v4(&mut self, observer: PlayerId, owner: PlayerId) {
+    pub(crate) fn bind_reveal_names_v4(&mut self, observer: PlayerId, owner: PlayerId) {
         let Some(knowledge) = &self.reveal_knowledge_v4 else {
             return;
         };

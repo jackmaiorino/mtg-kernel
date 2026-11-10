@@ -1167,12 +1167,20 @@ struct FastActorCurrentDecisionV1 {
 pub(crate) struct LimitedClosedListRootV3<'a> {
     actor: PlayerId,
     courtyard: Option<crate::linked_aura_operation_v1::CourtyardSampleV1<'a>>,
+    revealed_discard: Option<crate::effect::revealed_discard_sampling_v1::PreparedV1<'a>>,
     slots: [Vec<ObjectId>; 2],
     knowledge: crate::reveal_meaning_v3::RevealKnowledgeV3,
     known_names: Vec<u16>,
     library_minima: Vec<u16>,
     typed_full_pool: bool,
     sampled_history: crate::sampled_history_v1::CustodyV1,
+}
+
+#[cfg(feature = "limited-fdn-fixtures")]
+impl LimitedClosedListRootV3<'_> {
+    pub(crate) fn rebinds_revealed_discard(&self) -> bool {
+        self.revealed_discard.is_some()
+    }
 }
 
 fn flat_player_id_v1(seat: PlayerSeatV1) -> PlayerId {
@@ -8663,7 +8671,21 @@ impl FastActorSessionV1 {
         } else {
             Default::default()
         };
+        let revealed_discard = if typed_full_pool && courtyard.is_none() {
+            crate::effect::revealed_discard_sampling_v1::PreparedV1::capture(
+                sampling_state,
+                actor,
+                &known_names,
+            )?
+        } else {
+            None
+        };
         let mut pinned = pending_selection_hidden_objects_v1(sampling_state, actor);
+        if let Some(discard) = &revealed_discard {
+            // Only the proved menu operands can change aliases. Independent
+            // retained-source pins are collected separately below.
+            pinned.retain(|id| !discard.releases_selection_pin(*id));
+        }
         pinned.extend(flat_action_v4::limited_public_source_pins_v3(
             sampling_state,
             actor,
@@ -8684,6 +8706,7 @@ impl FastActorSessionV1 {
         Ok(LimitedClosedListRootV3 {
             actor,
             courtyard,
+            revealed_discard,
             slots,
             knowledge,
             known_names,
@@ -8720,13 +8743,17 @@ impl FastActorSessionV1 {
         sampled.state.sampled_history_v1 = root.sampled_history.clone();
         let opening = crate::leyline_axe_v1::sampling::prepare(&mut sampled.state, root.actor)?;
         if typed_full_pool {
+            let hand_names = root.revealed_discard.as_ref().map_or_else(
+                || root.known_names.clone(),
+                |discard| discard.names().to_vec(),
+            );
             crate::limited_match_v1::curator_sampling_v1::rewrite(
                 &mut sampled.state,
                 root.actor,
                 root.slots.clone(),
                 belief,
                 seed,
-                root.known_names.clone(),
+                hand_names,
                 &root.library_minima,
             )?;
         } else {
@@ -8745,6 +8772,13 @@ impl FastActorSessionV1 {
         let mut viewers = [Default::default(), Default::default()];
         viewers[root.actor.index()] = root.knowledge.clone();
         sampled.state.reveal_knowledge_v4 = Some(viewers);
+        if root.rebinds_revealed_discard() {
+            // Exact prompt names constrained the sample. Only the prior
+            // conservative ledger survives the choice.
+            sampled
+                .state
+                .bind_reveal_names_v4(root.actor, root.actor.opponent());
+        }
         sampled.state.reveal_meaning_v3 = Default::default();
         sampled.state.hand_departures_by_name_v1 = false;
         sampled.state.hand_knowledge_by_name_v2 = false;
@@ -8760,6 +8794,11 @@ impl FastActorSessionV1 {
                 .current
                 .take()
                 .ok_or("sampled full-pool root absent")?;
+            if let Some(revealed_discard) = &root.revealed_discard {
+                current.origin_decision = PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+                    revealed_discard.rebind(&mut sampled.state)?,
+                ));
+            }
             kaito_v75::prepare_current(&sampled, &mut current)
                 .map_err(|e| format!("sampled full-pool binding: {e:?}"))?;
             sampled.flat_action_cache_spare = None;
@@ -8779,6 +8818,11 @@ impl FastActorSessionV1 {
             || rebuilt.candidates.len() != live.candidates.len()
         {
             return Err("sampled root menu differs".into());
+        }
+        if root.rebinds_revealed_discard() {
+            // The sample owns a fresh native menu. Its public name ordinals
+            // are compared by the sealed numeric owner after this rebinding.
+            return Ok(sampled);
         }
         let mut by_semantic = std::collections::HashMap::with_capacity(rebuilt.candidates.len());
         for candidate in std::mem::take(&mut rebuilt.candidates) {

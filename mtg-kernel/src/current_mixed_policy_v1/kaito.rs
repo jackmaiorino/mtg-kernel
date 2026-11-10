@@ -1,5 +1,6 @@
 //! Distinct numeric Kaito V75 owner. No predecessor artifact or executable is encoded.
 use super::{normalize, Error, NativeModel, Packet, Result, Source};
+use crate::rl::{ActionSemanticV1, PendingEffectChoiceSemanticV4, PlayerSeatV1, TargetRefV1};
 use crate::rl_session::{
     FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1, KaitoDecisionV75,
     KaitoSessionV75, KaitoSnapshotV75,
@@ -32,13 +33,13 @@ pub struct KaitoSnapshot {
 #[derive(Clone)]
 pub struct KaitoDecision {
     backend: KaitoDecisionV75,
-    packet: Packet,
+    current: NumericCurrent,
     owner: Arc<()>,
     generation: u64,
 }
 impl KaitoDecision {
     pub fn packet(&self) -> &Packet {
-        &self.packet
+        &self.current.packet
     }
     #[cfg(feature = "limited-fdn-fixtures")]
     pub(crate) fn public_turn(&self) -> u32 {
@@ -63,7 +64,17 @@ impl KaitoDecision {
 enum HandFacts {
     CopyRows,
     NamesV2,
-    RevealMinimaV3([Vec<(u16, usize)>; 2]),
+    RevealMinimaV3 {
+        minima: [Vec<(u16, usize)>; 2],
+        discard_owner: Option<PlayerSeatV1>,
+    },
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct NumericCurrent {
+    packet: Packet,
+    /// Present only for a revealed-hand menu in public name order.
+    name_order: Option<Vec<u32>>,
 }
 
 fn opponent_hand_binding(value: &Value, opponent: &Value) -> bool {
@@ -83,13 +94,94 @@ fn opponent_hand_binding(value: &Value, opponent: &Value) -> bool {
     }
 }
 
+/// Normalize only the exact current public reveal/discard targets. The backend
+/// still owns every original physical answer, including equal-printing copies.
+fn revealed_discard_by_name(
+    candidates: &crate::kaito_candidates_v75::KaitoCandidatesV75,
+    actions: &[ActionSemanticV1],
+    owner: PlayerSeatV1,
+    minima: &[(u16, usize)],
+    state: &mut Value,
+) -> Result<Vec<u32>> {
+    let observation = &candidates.observation.common.common;
+    let invalid =
+        || Error::Projection("revealed discard menu differs from public hand names".into());
+    let Some(PendingEffectChoiceSemanticV4::Targets {
+        player,
+        legal_targets,
+        ..
+    }) = observation
+        .projection
+        .surface
+        .engine_context
+        .pending_effect
+        .as_ref()
+        .and_then(|effect| effect.choice.as_ref())
+    else {
+        return Err(invalid());
+    };
+    if *player != observation.acting_player || legal_targets.len() != actions.len() {
+        return Err(invalid());
+    }
+    let mut remaining: BTreeMap<_, _> = minima.iter().copied().collect();
+    let mut names = Vec::with_capacity(actions.len());
+    for (index, (action, expected)) in actions.iter().zip(legal_targets).enumerate() {
+        let ActionSemanticV1::ChooseEffectTarget {
+            actor,
+            target: target @ TargetRefV1::Object { object },
+            selected_count: 0,
+            min_targets: 1,
+            max_targets: 1,
+            ..
+        } = action
+        else {
+            return Err(invalid());
+        };
+        if actor != player
+            || target != expected
+            || object.owner != owner
+            || object.zone != crate::state::Zone::Hand
+        {
+            return Err(invalid());
+        }
+        let copies = remaining.get_mut(&object.card_db_id).ok_or_else(invalid)?;
+        *copies = copies.checked_sub(1).ok_or_else(invalid)?;
+        names.push((object.card_db_id, index));
+    }
+    names.sort_by_key(|&(printing, _)| printing);
+    let name_rows: Vec<_> = names
+        .iter()
+        .map(|&(printing, _)| {
+            serde_json::json!({
+                "target_kind": "revealed_hand_name",
+                "card_db_id": printing,
+                "card_name": crate::card_def::CARD_DEFS[usize::from(printing)].name,
+                "owner": owner,
+            })
+        })
+        .collect();
+    *state.pointer_mut("/observation/common/common/projection/surface/engine_context/pending_effect/choice/legal_targets")
+        .ok_or_else(invalid)? = serde_json::json!(name_rows);
+    let rows = state["candidates"].as_array_mut().ok_or_else(invalid)?;
+    let mut native_rows = std::mem::take(rows);
+    let mut order = Vec::with_capacity(names.len());
+    for (ordinal, ((_, index), target)) in names.into_iter().zip(name_rows).enumerate() {
+        let mut row = std::mem::take(&mut native_rows[index]);
+        row["ordinal"] = Value::from(u32::try_from(ordinal).map_err(|_| Error::Range)?);
+        row["action"]["target"] = target;
+        rows.push(row);
+        order.push(u32::try_from(index).map_err(|_| Error::Range)?);
+    }
+    Ok(order)
+}
+
 // Pure normalization of the exact freshly validated backend input. This
 // function cannot capture another decision or acquire executable authority.
 fn packet_from_current(
     candidates: &crate::kaito_candidates_v75::KaitoCandidatesV75,
     actions: &[crate::rl::ActionSemanticV1],
     hand_facts: &HandFacts,
-) -> Result<Packet> {
+) -> Result<NumericCurrent> {
     crate::kaito_candidates_v75::validate_artifact(candidates)
         .map_err(|e| Error::Projection(e.to_string()))?;
     if candidates.candidates.len() != actions.len()
@@ -127,7 +219,7 @@ fn packet_from_current(
                     counts.into_iter().collect::<Vec<_>>()
                 }),
         ),
-        HandFacts::RevealMinimaV3(minima) => Some(minima.clone()),
+        HandFacts::RevealMinimaV3 { minima, .. } => Some(minima.clone()),
     };
     if let Some(minima) = minima {
         let counts = minima.map(|cards| {
@@ -147,7 +239,22 @@ fn packet_from_current(
             .ok_or_else(|| Error::Projection("missing known hand facts".into()))? =
             serde_json::json!(counts);
     }
-    if matches!(hand_facts, HandFacts::RevealMinimaV3(_)) {
+    let mut name_order = None;
+    if let HandFacts::RevealMinimaV3 {
+        minima,
+        discard_owner,
+    } = hand_facts
+    {
+        if let Some(owner) = *discard_owner {
+            let seat = usize::from(owner == PlayerSeatV1::P1);
+            name_order = Some(revealed_discard_by_name(
+                candidates,
+                actions,
+                owner,
+                &minima[seat],
+                &mut state,
+            )?);
+        }
         let opponent = match candidates.observation.common.common.acting_player {
             crate::rl::PlayerSeatV1::P0 => "p1",
             crate::rl::PlayerSeatV1::P1 => "p0",
@@ -158,22 +265,40 @@ fn packet_from_current(
             ));
         }
     }
-    let actions = candidates
-        .candidates
-        .iter()
-        .map(serde_json::to_value)
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|e| Error::Projection(e.to_string()))?;
-    normalize::encode(Source::KaitoV75, state, actions)
+    let actions = state["candidates"]
+        .as_array()
+        .ok_or_else(|| Error::Projection("missing numeric candidate rows".into()))?
+        .clone();
+    Ok(NumericCurrent {
+        packet: normalize::encode(Source::KaitoV75, state, actions)?,
+        name_order,
+    })
 }
 impl KaitoSession {
-    fn hand_facts(&self) -> HandFacts {
-        if let Some(minima) = self.inner.reveal_hand_minima_v3() {
-            HandFacts::RevealMinimaV3(minima)
+    fn hand_facts(&self) -> Result<HandFacts> {
+        if let Some(mut minima) = self.inner.reveal_hand_minima_v3() {
+            let reveal = self
+                .inner
+                .revealed_discard_hand_v1()
+                .map_err(Error::Projection)?;
+            let discard_owner = if let Some((owner, names)) = reveal {
+                let mut counts = BTreeMap::<u16, usize>::new();
+                for name in names {
+                    *counts.entry(name).or_default() += 1;
+                }
+                minima[owner.index()] = counts.into_iter().collect();
+                Some(owner.into())
+            } else {
+                None
+            };
+            Ok(HandFacts::RevealMinimaV3 {
+                minima,
+                discard_owner,
+            })
         } else if self.inner.uses_hand_knowledge_by_name_v2() {
-            HandFacts::NamesV2
+            Ok(HandFacts::NamesV2)
         } else {
-            HandFacts::CopyRows
+            Ok(HandFacts::CopyRows)
         }
     }
     pub fn from_session(session: FastActorSessionV1) -> Result<Self> {
@@ -241,8 +366,8 @@ impl KaitoSession {
         self.inner
             .validate_decision_v75(&decision.backend)
             .map_err(|_| Error::StaleBinding)?;
-        let facts = self.hand_facts();
-        if matches!(facts, HandFacts::RevealMinimaV3(_)) {
+        let facts = self.hand_facts()?;
+        if matches!(facts, HandFacts::RevealMinimaV3 { .. }) {
             return Err(Error::Projection(
                 "use the separate closed-list V3 sampler".into(),
             ));
@@ -251,7 +376,7 @@ impl KaitoSession {
             decision.backend.candidates_v75(),
             decision.backend.actions(),
             &facts,
-        )? != decision.packet
+        )? != decision.current
         {
             return Err(Error::StaleBinding);
         }
@@ -260,7 +385,7 @@ impl KaitoSession {
             .sampled_clone_v75(&decision.backend, seed)
             .map_err(|e| Error::Projection(e.to_string()))?;
         let sampled = Self::from_kaito(inner);
-        if sampled.encode(decision.backend.expected())?.packet != decision.packet {
+        if sampled.encode(decision.backend.expected())?.packet() != decision.packet() {
             return Err(Error::StaleBinding);
         }
         Ok(sampled)
@@ -278,8 +403,8 @@ impl KaitoSession {
         if !Arc::ptr_eq(&self.owner, &decision.owner) || self.generation != decision.generation {
             return Err(Error::StaleBinding);
         }
-        let facts = self.hand_facts();
-        if !matches!(facts, HandFacts::RevealMinimaV3(_)) {
+        let facts = self.hand_facts()?;
+        if !matches!(facts, HandFacts::RevealMinimaV3 { .. }) {
             return Err(Error::Projection(
                 "full-pool sampling requires public reveal minima".into(),
             ));
@@ -288,7 +413,7 @@ impl KaitoSession {
             decision.backend.candidates_v75(),
             decision.backend.actions(),
             &facts,
-        )? != decision.packet
+        )? != decision.current
         {
             return Err(Error::StaleBinding);
         }
@@ -297,7 +422,7 @@ impl KaitoSession {
             .sampled_full_pool_closed_list_v1(&decision.backend, seed, belief)
             .map_err(|e| Error::Projection(e.to_string()))?;
         let sampled = Self::from_kaito(inner);
-        if sampled.encode(decision.backend.expected())?.packet != decision.packet {
+        if sampled.encode(decision.backend.expected())?.packet() != decision.packet() {
             return Err(Error::StaleBinding);
         }
         Ok(sampled)
@@ -356,14 +481,14 @@ impl KaitoSession {
         if backend.expected() != expected {
             return Err(Error::StaleBinding);
         }
-        let packet = packet_from_current(
+        let current = packet_from_current(
             backend.candidates_v75(),
             backend.actions(),
-            &self.hand_facts(),
+            &self.hand_facts()?,
         )?;
         Ok(KaitoDecision {
             backend,
-            packet,
+            current,
             owner: self.owner.clone(),
             generation: self.generation,
         })
@@ -376,18 +501,21 @@ impl KaitoSession {
         if !Arc::ptr_eq(&self.owner, &decision.owner) || self.generation != decision.generation {
             return Err(Error::StaleBinding);
         }
-        if usize::try_from(selected_index)
-            .ok()
-            .is_none_or(|i| i >= decision.packet.actions.len())
-        {
+        let index = usize::try_from(selected_index).map_err(|_| Error::ActionRange)?;
+        if index >= decision.packet().actions.len() {
             return Err(Error::ActionRange);
         }
-        let name_facts = self.hand_facts();
+        let backend_index = decision
+            .current
+            .name_order
+            .as_ref()
+            .map_or(selected_index, |order| order[index]);
+        let name_facts = self.hand_facts()?;
         self.inner.step_with_current_check(
             &decision.backend,
-            selected_index,
+            backend_index,
             |candidates, actions| {
-                if packet_from_current(candidates, actions, &name_facts)? != decision.packet {
+                if packet_from_current(candidates, actions, &name_facts)? != decision.current {
                     return Err(Error::StaleBinding);
                 }
                 Ok(())
@@ -413,14 +541,25 @@ impl KaitoSession {
         if packet_from_current(
             decision.backend.candidates_v75(),
             decision.backend.actions(),
-            &self.hand_facts(),
-        )? != decision.packet
+            &self.hand_facts()?,
+        )? != decision.current
         {
             return Err(Error::StaleBinding);
         }
+        let actions = decision.backend.actions();
+        let ordered;
+        let actions = if let Some(order) = &decision.current.name_order {
+            ordered = order
+                .iter()
+                .map(|&index| actions[index as usize].clone())
+                .collect::<Vec<_>>();
+            &ordered
+        } else {
+            actions
+        };
         crate::current_tree_learner_v1::AuthenticatedInputV1::from_current(
-            decision.packet.clone(),
-            decision.backend.actions(),
+            decision.packet().clone(),
+            actions,
         )
     }
 
@@ -450,8 +589,8 @@ impl KaitoSession {
         decision: &KaitoDecision,
         model: &NativeModel,
     ) -> Result<(Vec<f32>, u32, FastActorResponseV1)> {
-        let logits = model.forward(&decision.packet)?;
-        if logits.len() != decision.packet.actions.len() || logits.is_empty() {
+        let logits = model.forward(decision.packet())?;
+        if logits.len() != decision.packet().actions.len() || logits.is_empty() {
             return Err(Error::ModelContract);
         }
         let mut selected = 0;

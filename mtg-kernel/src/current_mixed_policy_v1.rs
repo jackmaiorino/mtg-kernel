@@ -90,7 +90,8 @@ impl Packet {
     pub fn state(&self) -> &NumericTree {
         &self.state
     }
-    /// Rows are in the exact original backend legal-action order, without label sorting.
+    /// Rows use the owning decision's action ordinals. A publicly revealed
+    /// opponent-hand menu orders choices by printing without exposing native hand order.
     pub fn actions(&self) -> &[NumericTree] {
         &self.actions
     }
@@ -284,6 +285,7 @@ pub fn feature_identity() -> String {
             include_str!("continuous_characteristics_v1.rs"),
             include_str!("trigger.rs"),
             include_str!("effect.rs"),
+            include_str!("effect/revealed_discard_sampling_v1.rs"),
             include_str!("state.rs"),
             include_str!("event.rs"),
             include_str!("arahbo_public_v1.rs"),

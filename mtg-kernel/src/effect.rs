@@ -21,6 +21,8 @@ pub(crate) mod greatwurm_v1;
 pub(crate) mod harvester_v1;
 pub(crate) mod kykar_v1;
 pub(crate) mod loot_v1;
+#[cfg(feature = "limited-fdn-fixtures")]
+pub(crate) mod revealed_discard_sampling_v1;
 pub(crate) mod source_token_copy_v1;
 pub(crate) mod sphinx_lore_v1;
 mod standard_ward;
@@ -8780,6 +8782,44 @@ fn revealed_discard_excludes_creatures(
         }) if pending.ctx.resolve_player(*original_player, state) == player => Ok(false),
         _ => Err("revealed discard continuation lost its definition-owned origin".to_string()),
     }
+}
+
+/// Exact names shown together in the current reveal-and-discard operation.
+/// This disclosure lasts only while the chooser owns the native prompt.
+pub(crate) fn revealed_discard_names_v1(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<Option<(PlayerId, Vec<u16>)>, String> {
+    if state.reveal_knowledge_v4.is_none() {
+        return Ok(None);
+    }
+    let Some(PendingEffectChoice::SelectTargets {
+        player,
+        purpose:
+            EffectTargetSelectionPurpose::DuressDiscard {
+                player: owner,
+                original_hand,
+                ..
+            },
+        ..
+    }) = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .and_then(|pending| pending.choice.as_ref())
+    else {
+        return Ok(None);
+    };
+    if *player != viewer || *owner != viewer.opponent() {
+        return Ok(None);
+    }
+    validate_pending_effect_choice(state)?;
+    let mut names = original_hand
+        .iter()
+        .map(|binding| state.objects.get(binding.object).card_def)
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    Ok(Some((*owner, names)))
 }
 
 fn validate_begin_search_library_to_battlefield_frame(
