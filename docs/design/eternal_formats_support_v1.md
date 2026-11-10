@@ -473,10 +473,14 @@ New, each built once in the first wave that needs it:
   The Meddling Mage candidate asks for a name before committing the actual entry.
   A resumed entry checks the original operation, confirmed catalog choice, controller,
   and native entry occurrence. The named-spell restriction uses the same quote and
-  payment gates for ordinary casts and resolution casts. The catalog name menu and
-  legacy observation paths still need a consumer successor. A save with a legacy
-  staged Mage choice or completed name tuple requires the historical engine because
-  the save lacks the choice evidence required by the new entry owner. Leyline has
+  payment gates for ordinary casts and resolution casts. The revised native menu names
+  individual split halves and Room doors, alternate Adventure and Omen spells, and
+  nonland back faces in the executable registry. It checks the selected spell name,
+  including disturb. Existing authenticated numeric choices retain their original
+  menu, serialization and hash. A legacy combined split name remains its literal
+  combined string and matches neither cast half. Names outside the registry
+  and the frozen observation paths remain outside this change. A pre-entry-owner
+  save without authenticated choice evidence still requires its historical engine. Leyline has
   the same opening timing gap as Leyline of the Void.
   Extirpate uses the shared extraction continuation to require all
   public graveyard matches, offer any subset of the hidden matches, and provide the caster
