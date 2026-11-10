@@ -1425,6 +1425,92 @@ fn circle_of_protection_blue_only_offers_public_contextual_sources_both_seats() 
 }
 
 #[test]
+fn circle_of_protection_blue_tracks_flickerwisps_waiting_and_published_returns_both_seats() {
+    use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::eternal_legacy_e8a_v1::E8aOpV1;
+    use mtg_kernel::eternal_sideboard_s1d_v1::S1dOpV1;
+    use mtg_kernel::event::{propose_and_commit, ProposedEvent};
+    use mtg_kernel::standard_cards_v1::StandardOpV1;
+    use mtg_kernel::state::ObjectLinkV4;
+
+    for actor in [P0, P1] {
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let circle = put(&mut state, actor, "Circle of Protection: Blue", Zone::Battlefield);
+        let flickerwisp = put(&mut state, actor, "Flickerwisp", Zone::Hand);
+        let returning = put(&mut state, actor, "Mulldrifter", Zone::Battlefield);
+        let unrelated = put(&mut state, actor, "Mulldrifter", Zone::Exile);
+        for player in [P0, P1] {
+            put(&mut state, player, "Delver of Secrets", Zone::Battlefield);
+        }
+        pool(&mut state, actor, &[ManaColor::W, ManaColor::W], 1);
+        cast(&mut state, flickerwisp, &[]);
+        settle_choosing(&mut state, returning);
+        assert_eq!(zone(&state, flickerwisp), Zone::Battlefield);
+        assert_eq!(zone(&state, returning), Zone::Exile);
+        let returning_link = ObjectLinkV4 {
+            object: returning,
+            zone_change_count: state.objects.get(returning).zone_change_count,
+        };
+        assert_eq!(state.eternal_v1.as_ref().unwrap().e8a.end_step_returns[0].cards, [returning_link]);
+
+        let paid_sources = |state: &mut GameState| -> Vec<ObjectLinkV4> {
+            pool(state, actor, &[], 1);
+            activate(state, circle, 0, &[]);
+            assert!(matches!(settle(state), Some(Decision::ChooseEffectOption { player, source, .. })
+                if player == actor && source == circle));
+            assert_eq!(mana(state, actor, ManaColor::C), 0);
+            let Some(PendingEffectChoice::ChooseOption { options, .. }) = state.engine.pending_effect.as_ref().and_then(|pending| pending.choice.as_ref()) else {
+                panic!("expected the paid Circle menu");
+            };
+            options.iter().map(|option| match option {
+                EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
+                    S1dOpV1::CopShieldV1 { source },
+                ))) => *source,
+                _ => panic!("unexpected Circle source option"),
+            }).collect()
+        };
+
+        let mut waiting = state.clone();
+        let sources = paid_sources(&mut waiting);
+        assert!(sources.iter().all(|source| source.object != unrelated));
+        let option = sources.iter().position(|source| *source == returning_link).unwrap() as u16;
+        act(&mut waiting, Action::ChooseEffectOption(option));
+        settled(&mut waiting);
+        assert_eq!(waiting.eternal_v1.as_ref().unwrap().s1d.cop_shields[0].source, returning_link);
+
+        pass_until(&mut state, |s| {
+            s.step == Step::End && s.stack.iter().any(|item| {
+                item.source == flickerwisp && matches!(
+                    item.inline_effect.as_ref(),
+                    Some(EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E8aV1(
+                        E8aOpV1::ReturnExiledV1 { cards },
+                    )))) if cards.as_slice() == [returning_link]
+                )
+            })
+        });
+        assert!(state.eternal_v1.as_ref().unwrap().e8a.end_step_returns.is_empty());
+        let mut stale = state.clone();
+        propose_and_commit(&mut stale, ProposedEvent::zone_change(returning, Zone::Graveyard));
+        propose_and_commit(&mut stale, ProposedEvent::zone_change(returning, Zone::Exile));
+        assert!(stale.objects.get(returning).zone_change_count > returning_link.zone_change_count);
+        assert!(paid_sources(&mut stale).iter().all(|source| source.object != returning && source.object != unrelated));
+
+        let sources = paid_sources(&mut state);
+        assert!(sources.iter().all(|source| source.object != unrelated));
+        let option = sources.iter().position(|source| *source == returning_link).unwrap() as u16;
+        let mut restored: GameState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut restored), next(&mut state));
+        act(&mut restored, Action::ChooseEffectOption(option));
+        settled(&mut restored);
+        assert_eq!(zone(&restored, returning), Zone::Battlefield);
+        assert_eq!(zone(&restored, unrelated), Zone::Exile);
+    }
+}
+
+#[test]
 fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
     use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
     use mtg_kernel::eternal_cards_v1::EternalOpV1;

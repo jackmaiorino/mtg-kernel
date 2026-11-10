@@ -579,6 +579,8 @@ New, each built once in the first wave that needs it:
   not retarget its shield. Virtual permanent spell copies still need this binding.
   The choice menu includes blue permanents, stack spells, face-up command
   objects and supported public references from stack items and waiting effects.
+  Flickerwisp and Yorion's unchanged face-up exile links remain eligible
+  when their waiting return moves onto the stack.
   It uses the original incarnation and retained color for authenticated departed
   damage sources. Unrelated graveyard and exile cards are excluded. Other
   embedded effect references need explicit bindings, departed references need
