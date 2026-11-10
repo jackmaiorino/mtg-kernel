@@ -17165,31 +17165,11 @@ fn drive_resumable_inner_with_native_row_v1(
                 });
             }
             EffectOp::EachPlayerControllingDefinitionDrawsCard { card_def }
-                if cfg!(feature = "eternal-fixtures")
-                    && [PlayerId::P0, PlayerId::P1].into_iter().any(|drawer| {
-                        controls_definition(state, drawer, card_def)
-                            && !crate::eternal_vintage_e7b_v1::dredge::dredge_cards(state, drawer)
-                                .is_empty()
-                    }) =>
+                if cfg!(feature = "eternal-fixtures") =>
             {
-                // Push in reverse APNAP order so the active player draws first.
-                for (drawer, ordinal) in [(state.active_player.opponent(), 1), (state.active_player, 0)] {
-                    if controls_definition(state, drawer, card_def) {
-                        let mut draw_path = path.clone();
-                        draw_path.push(ordinal);
-                        continuation.frames.push(EffectFrame::Program {
-                            op: EffectOp::DrawCards {
-                                player: if drawer == continuation.ctx.controller {
-                                    PlayerRef::Controller
-                                } else {
-                                    PlayerRef::Opponent
-                                },
-                                count: 1,
-                            },
-                            path: draw_path,
-                        });
-                    }
-                }
+                crate::eternal_cards_v1::owned_draws_v1::bonder::begin(
+                    state, &mut continuation, card_def, &path,
+                )?;
             }
             EffectOp::DrawCards { player, count }
                 if cfg!(feature = "eternal-fixtures")
@@ -21266,10 +21246,8 @@ fn execute_with_native_row_v1(
             }
         }
         EffectOp::EachPlayerControllingDefinitionDrawsCard { card_def } => {
-            // APNAP-stable order: P0 then P1. Bonder's Ornament's own
-            // "getPlayersInRange" iteration order never affects the
-            // deterministic outcome here (each player's draw depends only on
-            // their own battlefield), so a fixed iteration order is safe.
+            // Historical atomic behavior for catalogs without Eternal draw
+            // replacements. The Eternal interpreter owns ordered continuations.
             for player in [PlayerId::P0, PlayerId::P1] {
                 if controls_definition(state, player, *card_def) {
                     event::propose_and_commit(state, event::ProposedEvent::draw(player));

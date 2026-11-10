@@ -22,6 +22,7 @@ use crate::state::{
 };
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod bonder;
 pub(crate) mod echo;
 pub(crate) mod fixed;
 pub(crate) mod rooms;
@@ -66,6 +67,10 @@ enum InstructionV1 {
     Room {
         kind: rooms::KindV1,
         entered_at: usize,
+    },
+    Bonder {
+        resolution_at: usize,
+        drawer: PlayerId,
     },
 }
 
@@ -155,6 +160,7 @@ impl InstructionV1 {
             Self::FixedRoot { count, .. } => count,
             Self::Minsc { sacrifice } => minsc::count(state, ctx, sacrifice).unwrap_or(0),
             Self::Echo { .. } => 7,
+            Self::Bonder { .. } => 1,
             Self::Room { kind, .. } => kind.count(),
             Self::Curie { combat_at } => {
                 eternal_legacy_e7a_v1::curie::draw_count(state, ctx, combat_at).unwrap_or(0)
@@ -173,7 +179,8 @@ impl InstructionV1 {
         match self {
             Self::FlameOfAnor { draw, .. } => PlayerRef::Target(draw),
             Self::FixedRoot { player, .. } => player,
-            Self::Echo { drawer, .. } if drawer != ctx.controller => PlayerRef::Opponent,
+            Self::Echo { drawer, .. } | Self::Bonder { drawer, .. }
+                if drawer != ctx.controller => PlayerRef::Opponent,
             _ => PlayerRef::Controller,
         }
     }
@@ -184,7 +191,7 @@ impl InstructionV1 {
                 Target::Player(player) => Some(*player),
                 _ => None,
             },
-            Self::FixedRoot { drawer, .. } | Self::Echo { drawer, .. } => Some(drawer),
+            Self::FixedRoot { drawer, .. } | Self::Echo { drawer, .. } | Self::Bonder { drawer, .. } => Some(drawer),
             _ => Some(ctx.controller),
         }
     }
@@ -364,6 +371,14 @@ pub enum JournalV1 {
         finished_at: usize,
         selected: Option<crate::effect::EffectObjectBinding>,
     },
+    BonderPaidV1(bonder::PaidV1),
+    BonderResolutionV1 {
+        item: StackItemId,
+        paid_at: usize,
+        first: PlayerId,
+        eligible: [bool; 2],
+        first_extra: u32,
+    },
 }
 
 impl JournalV1 {
@@ -390,7 +405,8 @@ impl JournalV1 {
             Self::CurieDrawCount { item, .. }
             | Self::MinscDamageCompleted { item, .. }
             | Self::EchoShuffledV1 { item, .. }
-            | Self::EchoShuffleCommittedV1 { item, .. } => Some(item),
+            | Self::EchoShuffleCommittedV1 { item, .. }
+            | Self::BonderResolutionV1 { item, .. } => Some(item),
             _ => self.room_tail_item(),
         }
     }
@@ -678,6 +694,10 @@ fn progress(
     let (started, attempts) = journal.start()?;
     let actual = match started.instruction {
         InstructionV1::FixedRoot { .. } => fixed::selected(state, pending),
+        InstructionV1::Bonder { .. } => {
+            bonder::matches_start(state, pending, started, progress.started_at)
+                .then_some((started.instruction, started.source))
+        }
         InstructionV1::Echo { .. } => {
             echo::matches_start(state, pending, started, progress.started_at)
                 .then_some((started.instruction, started.source))
@@ -743,6 +763,9 @@ pub(crate) fn complete(
         state.eternal_owned_draw_progress_v1 = None;
         if !terminal {
             match started.instruction {
+                InstructionV1::Bonder { resolution_at, drawer } => {
+                    bonder::finish_leg(state, pending, resolution_at, drawer, started.source)?;
+                }
                 InstructionV1::Echo {
                     shuffled_at,
                     drawer,
@@ -981,6 +1004,9 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
         if rooms::validate_idle(state, pending)? {
             return Ok(());
         }
+        if bonder::validate_idle(state, pending)? {
+            return Ok(());
+        }
         let named = selected(state, pending);
         let is_echo = named.is_none() && echo::selected(state, pending).is_some();
         if (named.is_some() || is_echo || fixed::selected(state, pending).is_some())
@@ -1006,6 +1032,7 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
     } else if selected(state, pending).is_none()
         && fixed::selected(state, pending).is_none()
         && echo::selected(state, pending).is_none()
+        && bonder::selected(state, pending).is_none()
     {
         return Err("Eternal draw progress lost its original source".into());
     }
