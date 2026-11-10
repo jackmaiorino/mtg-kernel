@@ -848,6 +848,7 @@ fn entry_matches(
 }
 
 pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
+    vial::validate_live_paid(state)?;
     use crate::linked_aura_operation_v1 as owner;
     if owner::locally_owned(state) {
         return Ok(());
@@ -883,6 +884,7 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
                 if !crate::eternal_opening_v1::enabled(state)
                     || !vial_activations.insert(*item)
                     || !vial::paid_matches(state, index as usize, *source, *item)
+                    || !vial::live_item_matches(state, index as usize, *item, *source)
                 {
                     return Err("Aether Vial lost its actual paid activation".into());
                 }

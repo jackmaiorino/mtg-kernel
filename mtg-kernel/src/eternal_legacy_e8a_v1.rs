@@ -660,7 +660,7 @@ pub(crate) fn validate_legacy_hand_choice(
     if continuation
         .ctx
         .ability_source_contract
-        .is_some_and(|source| source.card_def == card_id_by_name(AETHER_VIAL).unwrap_or(u16::MAX)
+        .is_some_and(|source| card_id_by_name(AETHER_VIAL) == Some(source.card_def)
             && statics::vial_charge(state, source) == 4)
         && crate::eternal_sideboard_s1b_v1::meddling_mage_entry::vial::paid_at(state, continuation)?
             .is_some()

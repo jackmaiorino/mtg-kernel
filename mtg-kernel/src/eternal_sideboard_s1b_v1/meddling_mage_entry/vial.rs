@@ -5,7 +5,7 @@ use super::{
 use crate::effect::EffectContinuation;
 use crate::eternal_legacy_e8a_v1::{self as e8a, AETHER_VIAL};
 use crate::event::CommittedEvent;
-use crate::state::{StackItem, StackItemKind};
+use crate::state::{StackItem, StackItemKind, VialMetamorphPaidV1};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -54,7 +54,13 @@ pub(crate) fn record_paid(
     else {
         return Ok(());
     };
-    if crate::eternal_vintage_v1::active_copy(state, source.source) {
+    if state.objects.try_get(source.source).is_none_or(|object| {
+        object.v4.is_token || object.v4.face_down_v1.is_some() || object.v4.face_index != 0
+    }) || crate::eternal_vintage_v1::active_copy(state, source.source)
+        || crate::standard_cards_v1::had_card_def(
+            state, source.source, source.zone_change_count, source.card_def,
+        )
+    {
         return Ok(());
     }
     let history = &state.engine.event_history;
@@ -63,6 +69,7 @@ pub(crate) fn record_paid(
     {
         return Err("Aether Vial has no original paid tap".into());
     }
+    let paid_at = history.len();
     record(
         state,
         JournalV1::VialPaid {
@@ -71,6 +78,7 @@ pub(crate) fn record_paid(
             tap_at,
         },
     );
+    state.stack.last_mut().unwrap().v4.vial_metamorph_paid_v1 = VialMetamorphPaidV1(Some(paid_at));
     Ok(())
 }
 
@@ -96,6 +104,36 @@ pub(super) fn paid_matches(
             Some(CommittedEvent::Tap { object }) if *object == source.source)
 }
 
+pub(super) fn validate_live_paid(state: &GameState) -> Result<(), String> {
+    for row in &state.stack {
+        let Some(at) = row.v4.vial_metamorph_paid_v1.0 else {
+            continue;
+        };
+        if !crate::eternal_opening_v1::enabled(state)
+            || printed_source(row)
+                .is_none_or(|source| !paid_matches(state, at, source, row.v4.stack_item_id))
+        {
+            return Err("Aether Vial stack row lost its exact paid tap".into());
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn live_item_matches(
+    state: &GameState,
+    at: usize,
+    item: StackItemId,
+    source: AbilitySourceContractV4,
+) -> bool {
+    state
+        .stack
+        .iter()
+        .find(|row| row.v4.stack_item_id == item)
+        .is_none_or(|row| {
+            printed_source(row) == Some(source) && row.v4.vial_metamorph_paid_v1.0 == Some(at)
+        })
+}
+
 pub(crate) fn waiting(state: &GameState) -> bool {
     use crate::effect::{EffectFrame, EffectTargetSelectionPurpose, PendingEffectChoice};
     use crate::eternal_cards_v1::e3::E3ChoiceKindV1;
@@ -118,28 +156,13 @@ pub(crate) fn paid_at(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Result<Option<usize>, String> {
-    if !crate::eternal_opening_v1::enabled(state) {
-        return Ok(None);
-    }
-    let Some(source) = printed_source(&pending.resolving_item) else {
+    let row = &pending.resolving_item;
+    let Some(at) = row.v4.vial_metamorph_paid_v1.0 else {
         return Ok(None);
     };
-    let item = pending.resolving_item.v4.stack_item_id;
-    let history = &state.engine.event_history;
-    let mut rows = history
-        .scan_for_v1(&[crate::event_history_v1::EventKindV1::MeddlingMageEntryV1])
-        .iter().enumerate().filter_map(|(at, event)| match event {
-        CommittedEvent::MeddlingMageEntryV1 { journal }
-            if matches!(journal.as_ref(), JournalV1::VialPaid { item: saved, .. } if *saved == item) =>
-        {
-            Some(at)
-        }
-        _ => None,
-    });
-    let Some(at) = rows.next() else {
-        return Ok(None);
-    };
-    if rows.next().is_some()
+    let source = printed_source(row).ok_or("Aether Vial changed its paid resolving source")?;
+    let item = row.v4.stack_item_id;
+    if !crate::eternal_opening_v1::enabled(state)
         || !paid_matches(state, at, source, item)
         || pending.ctx.ability_source_contract != Some(source)
         || pending.ctx.stack_item_id != Some(item)

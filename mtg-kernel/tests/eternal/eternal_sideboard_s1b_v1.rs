@@ -1895,6 +1895,23 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
             assert!(state.objects.get(vial).tapped);
             assert_eq!(state.stack.last().unwrap().source, vial);
             assert_eq!(frozen_opening_refusal(&state, opponent), refusal);
+            if hidden == "Phyrexian Metamorph" {
+                let mut missing_marker = serde_json::to_value(&state).unwrap();
+                let mut missing_receipt = missing_marker.clone();
+                let row = missing_marker["stack"].as_array_mut().unwrap().last_mut().unwrap();
+                let at = row["v4"].as_object_mut().unwrap()
+                    .remove("vial_metamorph_paid_v1").unwrap().as_u64().unwrap() as usize;
+                assert!(at > prior_paid_at);
+                let history = missing_receipt["engine"]["event_history"].as_array_mut().unwrap();
+                assert!(history[at].get("MeddlingMageEntryV1").is_some());
+                history.remove(at);
+                for missing in [missing_marker, missing_receipt] {
+                    let mut missing: GameState = serde_json::from_value(missing).unwrap();
+                    let before = missing.state_hash();
+                    assert!(engine::step(&mut missing, Action::Pass).is_err());
+                    assert_eq!(missing.state_hash(), before);
+                }
+            }
             if bounce_vial {
                 pool(&mut state, opponent, &[ManaColor::U], 1);
                 act(&mut state, Action::Pass);
