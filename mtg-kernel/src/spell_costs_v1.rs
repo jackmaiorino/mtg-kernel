@@ -1488,8 +1488,7 @@ pub(super) struct PreparedSpellPaymentV1 {
     optional_objects: Vec<ObjectId>,
     pub(super) ordered_objects: Vec<ObjectId>,
     pub(super) chosen_power_lki: Option<i32>,
-    pub(super) storm_targets:
-        Option<crate::effect::thousand_year_storm_v1::targets::CastTargetsV1>,
+    pub(super) storm_targets: Option<crate::effect::thousand_year_storm_v1::targets::CastTargetsV1>,
 }
 
 impl SpellManaPaymentV1 {

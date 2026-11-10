@@ -119,7 +119,10 @@ pub(super) fn freeze_cast(
     })
 }
 
-pub(super) fn cast_journal(spell: &StackItem, prepared: CastTargetsV1) -> Result<JournalV1, String> {
+pub(super) fn cast_journal(
+    spell: &StackItem,
+    prepared: CastTargetsV1,
+) -> Result<JournalV1, String> {
     let source = spell
         .v4
         .source_contract
@@ -130,11 +133,11 @@ pub(super) fn cast_journal(spell: &StackItem, prepared: CastTargetsV1) -> Result
         || prepared.source.card_def != source.card_def
         || prepared.source.owner != source.owner
         || prepared.source.controller != source.controller
-        || prepared
-            .faces
+        || prepared.faces.iter().map(|face| face.contract).ne(spell
+            .v4
+            .target_contracts
             .iter()
-            .map(|face| face.contract)
-            .ne(spell.v4.target_contracts.iter().copied())
+            .copied())
         || prepared
             .faces
             .iter()

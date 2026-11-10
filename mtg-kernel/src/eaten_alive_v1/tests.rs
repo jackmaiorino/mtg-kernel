@@ -324,7 +324,11 @@ fn actual_forced_sacrifice_keeps_original_storm_target_face_both_seats() {
                 resolve(&mut state, ghoul);
                 assert_eq!(state.objects.get(ghoul).zone, Zone::Battlefield);
                 assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
-                let recipient = if self_target { ghoul } else { creature(&mut state, actor.opponent()) };
+                let recipient = if self_target {
+                    ghoul
+                } else {
+                    creature(&mut state, actor.opponent())
+                };
                 let chosen = Target::Object(recipient);
                 let contract = StackTargetContractV4::capture(&state, chosen);
                 let generation = state.objects.get(recipient).zone_change_count;
@@ -357,8 +361,14 @@ fn actual_forced_sacrifice_keeps_original_storm_target_face_both_seats() {
                     *branch = restore(branch);
                     resolve(branch, spell);
                     assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
-                    assert_eq!(branch.objects.get(recipient).zone,
-                        if self_target { Zone::Graveyard } else { Zone::Exile });
+                    assert_eq!(
+                        branch.objects.get(recipient).zone,
+                        if self_target {
+                            Zone::Graveyard
+                        } else {
+                            Zone::Exile
+                        }
+                    );
                 }
                 assert_eq!(bytes(&state), bytes(&restored));
             }
