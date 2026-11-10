@@ -3,12 +3,24 @@
 
 use super::{
     ensure_mxcsr_v1, gae_policy_row_v1, update_profile_v1, CountsV1, LayerTapeV1, SBackScratchV1,
-    SConfigV1, SGradientSinkV1, SModelV1, SSubstepV1, STapeV1, OBJECT_FEATURE_DIM_V1,
+    SConfigV1, SGradientSinkV1, SLossV1, SModelV1, SSubstepV1, STapeV1, OBJECT_FEATURE_DIM_V1,
     REF_FEATURE_DIM_V1,
 };
 use std::mem::size_of;
 
-const CAP_ERROR: &str = "S verified tape exceeds its retained byte cap";
+#[derive(Debug)]
+pub(crate) enum ReplayErrorV1 {
+    Capacity,
+    CallerMathState,
+    UnsupportedGeneration,
+    Replay(String),
+}
+
+impl From<String> for ReplayErrorV1 {
+    fn from(error: String) -> Self {
+        Self::Replay(error)
+    }
+}
 
 thread_local! {
     static TEST_FORWARDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -79,14 +91,14 @@ impl TapeSlotV1 {
         bytes
     }
 
-    fn reserve_v1(&mut self, config: &SConfigV1, counts: CountsV1) -> Result<(), String> {
+    fn reserve_v1(&mut self, config: &SConfigV1, counts: CountsV1) -> Result<usize, ReplayErrorV1> {
         // Guard the shared sizing visitor's products before evaluating any
         // shape, even for an unrealistically large but structurally valid row.
         let rows = counts
             .objects
             .checked_add(counts.actions)
             .and_then(|n| n.checked_add(1))
-            .ok_or(CAP_ERROR)?;
+            .ok_or(ReplayErrorV1::Capacity)?;
         let width = config
             .ffn
             .max(3 * config.d_model)
@@ -97,16 +109,17 @@ impl TapeSlotV1 {
             .heads
             .checked_mul(rows)
             .and_then(|n| n.checked_mul(rows))
-            .ok_or(CAP_ERROR)?;
+            .ok_or(ReplayErrorV1::Capacity)?;
         rows.max(counts.edges)
             .max(counts.refs)
             .checked_mul(width)
-            .ok_or(CAP_ERROR)?;
+            .ok_or(ReplayErrorV1::Capacity)?;
 
-        if self.bytes_v1(config, counts, false).ok_or(CAP_ERROR)? > self.cap
-            || self.bytes_v1(config, counts, true).ok_or(CAP_ERROR)? > self.cap
+        if self
+            .bytes_v1(config, counts, true)
+            .is_none_or(|bytes| bytes > self.cap)
         {
-            return Err(CAP_ERROR.into());
+            return Err(ReplayErrorV1::Capacity);
         }
         let reservation = (|| {
             let layers = &mut self.tape.layers;
@@ -129,14 +142,15 @@ impl TapeSlotV1 {
         })();
         // The allocator may grant extra capacity. Measure the actual slot
         // before forward, including after a failed reservation.
-        if self
+        let Some(bytes) = self
             .bytes_v1(config, counts, false)
-            .is_none_or(|bytes| bytes > self.cap)
-        {
+            .filter(|bytes| *bytes <= self.cap)
+        else {
             self.tape = STapeV1::default();
-            return Err(CAP_ERROR.into());
-        }
-        reservation.map_err(|error| format!("S verified tape reservation failed: {error}"))
+            return Err(ReplayErrorV1::Capacity);
+        };
+        reservation.map_err(|error| format!("S verified tape reservation failed: {error}"))?;
+        Ok(bytes)
     }
 
     pub(super) fn authenticate_v1<'model, 'input, 'slot>(
@@ -146,12 +160,37 @@ impl TapeSlotV1 {
         index: (usize, usize),
         expected_logits: &[u32],
         expected_value: u32,
-    ) -> Result<VerifiedRowV1<'model, 'input, 'slot>, String> {
+    ) -> Result<VerifiedRowV1<'model, 'input, 'slot>, ReplayErrorV1> {
+        self.authenticate_recycling_v1(
+            generation,
+            step,
+            index,
+            expected_logits,
+            expected_value,
+            false,
+        )
+    }
+
+    fn authenticate_recycling_v1<'model, 'input, 'slot>(
+        &'slot mut self,
+        generation: &ModelScopeV1<'model>,
+        step: SSubstepV1<'input>,
+        index: (usize, usize),
+        expected_logits: &[u32],
+        expected_value: u32,
+        recycle: bool,
+    ) -> Result<VerifiedRowV1<'model, 'input, 'slot>, ReplayErrorV1> {
         ensure_mxcsr_v1()?;
         let model = generation.0;
         let config = model.layout.config;
         let counts = step.input.validate_v1(&config)?;
-        self.reserve_v1(&config, counts)?;
+        let bytes = match self.reserve_v1(&config, counts) {
+            Err(ReplayErrorV1::Capacity) if recycle => {
+                self.tape = STapeV1::default();
+                self.reserve_v1(&config, counts)?
+            }
+            result => result?,
+        };
         let forward = update_profile_v1::span_v1(update_profile_v1::StageV1::ReplayLearnerRow);
         model.forward_validated_into_v1(step.input, &mut self.tape, counts)?;
         forward.finish_v1(self.tape.logits_v1(), self.tape.value_v1());
@@ -164,13 +203,16 @@ impl TapeSlotV1 {
                 .all(|(actual, expected)| actual.to_bits() == *expected)
             || self.tape.value_v1().to_bits() != expected_value
         {
-            return Err("stored tensor does not reproduce rollout outputs".into());
+            return Err("stored tensor does not reproduce rollout outputs"
+                .to_owned()
+                .into());
         }
         Ok(VerifiedRowV1 {
             model,
             step,
             index,
             tape: &self.tape,
+            bytes,
         })
     }
 }
@@ -182,6 +224,7 @@ pub(super) struct VerifiedRowV1<'model, 'input, 'slot> {
     step: SSubstepV1<'input>,
     index: (usize, usize),
     tape: &'slot STapeV1,
+    bytes: usize,
 }
 
 pub(super) struct GaeTargetV1 {
@@ -233,6 +276,145 @@ impl VerifiedRowV1<'_, '_, '_> {
             .backward_into_v1(self.step.input, self.tape, &dlogits, dvalue, sink, scratch)?;
         backward.finish_plain_v1();
         Ok((selected, value_error))
+    }
+}
+
+/// The serial candidate owns its gradient until the caller has authenticated
+/// all actor rows. Only replay failures escape the per-row method.
+pub(crate) struct SerialVerifiedGaeV1<'model> {
+    generation: ModelScopeV1<'model>,
+    tape: TapeSlotV1,
+    scratch: SBackScratchV1,
+    gradient: Vec<f32>,
+    group_count: usize,
+    coefficient: f32,
+    joint: f32,
+    value_error: f32,
+    policy_sum: f32,
+    value_sum: f32,
+    first_error: Option<String>,
+    peak_retained_tape_bytes: usize,
+    short_first_gradient: bool,
+}
+
+impl<'model> SerialVerifiedGaeV1<'model> {
+    pub(crate) fn new(
+        model: &'model SModelV1,
+        expected_generation: [u8; 32],
+        cap: usize,
+        group_count: usize,
+        coefficient: f32,
+        short_first_gradient: bool,
+    ) -> Result<Self, ReplayErrorV1> {
+        let generation = ModelScopeV1::bind_v1(model, expected_generation)?;
+        if cap < size_of::<TapeSlotV1>() {
+            return Err(ReplayErrorV1::Capacity);
+        }
+        Ok(Self {
+            generation,
+            tape: TapeSlotV1::new(cap),
+            scratch: SBackScratchV1::default(),
+            gradient: vec![0.0; model.layout.total],
+            group_count,
+            coefficient,
+            joint: 0.0,
+            value_error: 0.0,
+            policy_sum: 0.0,
+            value_sum: 0.0,
+            first_error: None,
+            peak_retained_tape_bytes: size_of::<TapeSlotV1>(),
+            short_first_gradient,
+        })
+    }
+
+    pub(crate) fn authenticate_v1(
+        &mut self,
+        step: SSubstepV1<'_>,
+        index: (usize, usize),
+        last: bool,
+        expected_logits: &[u32],
+        expected_value: u32,
+        target: impl FnOnce() -> Option<(f32, f32)>,
+    ) -> Result<(), ReplayErrorV1> {
+        let row = self.tape.authenticate_recycling_v1(
+            &self.generation,
+            step,
+            index,
+            expected_logits,
+            expected_value,
+            true,
+        )?;
+        self.peak_retained_tape_bytes = self.peak_retained_tape_bytes.max(row.bytes);
+        if self.first_error.is_some() {
+            return Ok(());
+        }
+        let Some((advantage, value_target)) = target() else {
+            return Ok(());
+        };
+        let (group, sub) = index;
+        if !advantage.is_finite() || !value_target.is_finite() {
+            self.first_error = Some(format!("S group {group} has a non-finite target"));
+            return Ok(());
+        }
+        // A short sink exercises the real backward rejection without changing
+        // replayed inputs or provisional targets.
+        let gradient = if self.short_first_gradient && index == (0, 0) {
+            &mut self.gradient[..0]
+        } else {
+            self.gradient.as_mut_slice()
+        };
+        let result = row.backward_v1(
+            GaeTargetV1 {
+                group_count: self.group_count,
+                advantage,
+                value_target,
+                value_coefficient: self.coefficient,
+            },
+            &mut SGradientSinkV1::Direct(gradient),
+            &mut self.scratch,
+        );
+        match result {
+            Ok((selected, value_error)) => {
+                if sub == 0 {
+                    self.joint = selected;
+                    self.value_error = value_error;
+                } else {
+                    self.joint += selected;
+                }
+                if last {
+                    self.policy_sum += -self.joint * advantage;
+                    self.value_sum += self.value_error * self.value_error;
+                }
+            }
+            Err(error) => self.first_error = Some(error),
+        }
+        Ok(())
+    }
+
+    pub(crate) fn finish_v1(mut self) -> Result<(SLossV1, Vec<f32>, usize), String> {
+        if let Some(error) = self.first_error {
+            return Err(error);
+        }
+        for range in self.generation.0.layout.gauge_ranges_v1() {
+            self.gradient[range].fill(0.0);
+        }
+        let count = self.group_count as f32;
+        let loss = (self.policy_sum + self.coefficient * self.value_sum) / count;
+        if !loss.is_finite() || self.gradient.iter().any(|value| !value.is_finite()) {
+            return Err("S loss or gradient is not finite".into());
+        }
+        Ok((
+            SLossV1 {
+                group_count: self.group_count,
+                policy_sum: self.policy_sum,
+                value_sum: self.value_sum,
+                policy_term: self.policy_sum / count,
+                value_term: self.value_sum / count,
+                loss,
+            },
+            self.gradient,
+            self.peak_retained_tape_bytes,
+        ))
     }
 }
 
