@@ -149,7 +149,16 @@ decision, sealed token and ordinal still execute the original bound action.
 Both-seat fixtures cover paid cycling, physical and donated echo, paid
 Palinchron bounce above echo, donor departure, restore, stale tokens and
 forged source or reordered-option refusal. Source review and pinned formatting
-passed; these new fixtures have not run. The inherited engine's controller-
-change sacrifice halt and differing physical/departed echo payment behavior
-remain under rules review. Neither this source nor the preceding terminal
-fixture establishes complete echo or transport qualification.
+passed; these new fixtures have not run.
+
+The native echo repair takes the physical payment from the validated captured
+source definition, so a departed Guide still costs {3}{W}{W} and a departed
+Avalanche Riders still costs {3}{R}. Missing or invalid payment provenance
+still halts. Sacrifice does nothing when the original incarnation left or
+belongs to another controller. This follows rules 113.7a, 118.12a, 702.30a,
+101.3, 603.3a and 701.21a in the linked Comprehensive Rules. New fixtures use
+paid Snap above Riders echo and native Legacy's Allure control transfer above
+Guide echo; they check payment, decline/unpayable resolution, restored and
+returned incarnations, and the absence of false sacrifice events. Source
+review found both inherited defects resolved. These repairs still require
+native execution and do not establish transport or complete donor coverage.
