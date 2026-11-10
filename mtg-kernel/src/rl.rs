@@ -1740,7 +1740,11 @@ pub fn build_deck_pair_state_with_starting_player_v1(
     // environment that callers might otherwise retain.
     preflight_fully_supported_deck(p0_deck)?;
     preflight_fully_supported_deck(p1_deck)?;
-    Ok(deal_validated_deck_pair_v1(seed, [p0_deck, p1_deck], starting_player))
+    Ok(deal_validated_deck_pair_v1(
+        seed,
+        [p0_deck, p1_deck],
+        starting_player,
+    ))
 }
 
 /// Shared native shuffle and alternating opening deal. The owning entry

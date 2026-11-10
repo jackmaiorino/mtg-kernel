@@ -136,7 +136,14 @@ impl EternalRegisteredDeckV1 {
         sideboard: Vec<u16>,
         companion: Option<u16>,
     ) -> Result<Self, EternalBo3ErrorV1> {
-        Self::register(format, deck_id.into(), mainboard, sideboard, companion, false)
+        Self::register(
+            format,
+            deck_id.into(),
+            mainboard,
+            sideboard,
+            companion,
+            false,
+        )
     }
 
     /// Explicit native pregame profile. In addition to Full definitions, it
@@ -154,7 +161,14 @@ impl EternalRegisteredDeckV1 {
                 reason: "the native opening profile requires the Eternal catalog".into(),
             });
         }
-        Self::register(format, deck_id.into(), mainboard, sideboard, companion, true)
+        Self::register(
+            format,
+            deck_id.into(),
+            mainboard,
+            sideboard,
+            companion,
+            true,
+        )
     }
 
     fn register(
@@ -181,7 +195,10 @@ impl EternalRegisteredDeckV1 {
             }
             let opening_card = native_opening
                 && card.is_executable()
-                && matches!(card.name, "Leyline of the Void" | "Leyline of Sanctity" | "Chancellor of the Annex");
+                && matches!(
+                    card.name,
+                    "Leyline of the Void" | "Leyline of Sanctity" | "Chancellor of the Annex"
+                );
             if card.is_token || !(card.has_full_support() || opening_card) {
                 return Err(EternalBo3ErrorV1::UnsupportedCard {
                     name: card.name.to_owned(),
@@ -455,12 +472,20 @@ impl EternalBestOfThreeMatchV1 {
             .map_err(|reason| EternalBo3ErrorV1::NativeOpeningSetup { reason })?;
         // Keep the native deal and London ownership ahead of companion exile.
         let companions = [0, 1].map(|seat| {
-            game.game_deck(game.player_in_seat(seat)).deck.companion.as_deref().map(|name| {
-                card_id_by_name(name).expect("prepared companion has a registered definition")
-            })
+            game.game_deck(game.player_in_seat(seat))
+                .deck
+                .companion
+                .as_deref()
+                .map(|name| {
+                    card_id_by_name(name).expect("prepared companion has a registered definition")
+                })
         });
         crate::eternal_lurrus_v1::add_companions(&mut state, companions);
-        let outside = [0, 1].map(|seat| game.game_deck(game.player_in_seat(seat)).outside_the_game.clone());
+        let outside = [0, 1].map(|seat| {
+            game.game_deck(game.player_in_seat(seat))
+                .outside_the_game
+                .clone()
+        });
         crate::eternal_outside_game_v1::set_outside_the_game(&mut state, outside);
         self.state = next;
         Ok((game, state))
@@ -478,11 +503,14 @@ impl EternalBestOfThreeMatchV1 {
             self.decks[0].game_deck_v1(start.game_index, &configurations[0])?,
             self.decks[1].game_deck_v1(start.game_index, &configurations[1])?,
         ];
-        Ok((next, EternalPreparedGameV1 {
-            start,
-            configurations,
-            game_decks,
-        }))
+        Ok((
+            next,
+            EternalPreparedGameV1 {
+                start,
+                configurations,
+                game_decks,
+            },
+        ))
     }
 
     pub fn record_game_result_v1(
@@ -613,7 +641,9 @@ impl fmt::Display for EternalBo3ErrorV1 {
                 write!(f, "game one of {deck_id:?} must use the registered deck")
             }
             Self::FormatMismatch => f.write_str("the two registrations are of different formats"),
-            Self::OpeningProfileMismatch => f.write_str("both registrations and the game start must use the same opening profile"),
+            Self::OpeningProfileMismatch => f.write_str(
+                "both registrations and the game start must use the same opening profile",
+            ),
             Self::NativeOpeningSetup { reason } => write!(f, "native opening setup: {reason}"),
             Self::Match(error) => write!(f, "match state: {error}"),
         }
