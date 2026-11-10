@@ -15121,7 +15121,9 @@ pub(crate) fn validate_pending_cast(
 
 fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_cast.clone()?;
-    if validate_pending_cast(state, &pending).is_err() {
+    if let Err(_error) = validate_pending_cast(state, &pending) {
+        #[cfg(test)]
+        eprintln!("native pending cast {:?} rejected: {_error}", pending.spell);
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.spell,
@@ -15951,7 +15953,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    if finalize_cast(state, Vec::new()).is_err() {
+    if let Err(_error) = finalize_cast(state, Vec::new()) {
+        #[cfg(test)]
+        eprintln!(
+            "native finalized cast {:?} rejected: {_error}",
+            pending.spell
+        );
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.spell,

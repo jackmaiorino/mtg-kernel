@@ -24,6 +24,8 @@ mod equipment;
 mod life_trigger_tests;
 #[path = "modal_trigger_tests.rs"]
 mod modal_trigger_tests;
+#[path = "pilot_leg1_diagnostic.rs"]
+mod pilot_leg1_diagnostic;
 
 fn card(name: &str) -> u16 {
     card_id_by_name(name).unwrap()
