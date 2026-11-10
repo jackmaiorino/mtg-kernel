@@ -51,7 +51,11 @@ fn resolve(state: &mut GameState, source: ObjectId) {
         if !state.stack.iter().any(|item| item.source == source) {
             return;
         }
-        match next(state) {
+        let decision = next(state);
+        if !state.stack.iter().any(|item| item.source == source) {
+            return;
+        }
+        match decision {
             Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
             decision => panic!("unexpected response {decision:?}"),
         }
@@ -324,6 +328,9 @@ fn actual_forced_sacrifice_keeps_original_storm_target_face_both_seats() {
                 resolve(&mut state, ghoul);
                 assert_eq!(state.objects.get(ghoul).zone, Zone::Battlefield);
                 assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+                assert_eq!(state.active_player, actor);
+                assert_eq!(state.priority_player, actor);
+                assert_eq!(state.step, Step::Main1);
                 let recipient = if self_target {
                     ghoul
                 } else {
