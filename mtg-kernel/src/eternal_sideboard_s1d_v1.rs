@@ -962,19 +962,25 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
             continue;
         };
         if source.zone != Zone::Battlefield
-            || state.objects.try_get(source.source).is_none_or(|live| {
-                live.zone_change_count <= source.zone_change_count
-            })
+            || state
+                .objects
+                .try_get(source.source)
+                .is_none_or(|live| live.zone_change_count <= source.zone_change_count)
         {
             continue;
         }
         let historical = if crate::source_power_activation_v1::bombardment::selected(state, item) {
             crate::source_power_activation_v1::bombardment::departed_source(state, item)
-                .ok().flatten()
+                .ok()
+                .flatten()
         } else {
             crate::source_power_activation_v1::damage_source(
-                state, source.source, item.v4.stack_item_id,
-            ).ok().filter(|facts| facts.source == source)
+                state,
+                source.source,
+                item.v4.stack_item_id,
+            )
+            .ok()
+            .filter(|facts| facts.source == source)
         };
         if historical.is_some_and(|facts| facts.color_mask & mask != 0) {
             sources.push(ObjectLinkV4 {

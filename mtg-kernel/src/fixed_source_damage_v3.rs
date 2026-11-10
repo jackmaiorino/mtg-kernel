@@ -598,34 +598,29 @@ pub(crate) fn legal_targets_with_controller(
     facts: HistoricalDamageSourceV1,
     controller: crate::ids::PlayerId,
 ) -> Vec<Target> {
-    crate::engine::legal_targets_for_controller(
-        TargetSpec::AnyTarget,
-        &[],
-        controller,
-        state,
-    )
-    .into_iter()
-    .filter(|target| match *target {
-        Target::Player(_) => true,
-        Target::StackItem(_) => false,
-        Target::Object(id) => {
-            !crate::source_power_activation_v1::protected(state, facts, id)
-                && !crate::source_type_hexproof_v1::protects_from_source(
-                    state,
-                    id,
-                    controller,
-                    facts.source,
-                )
-                .unwrap_or(true)
-                && !crate::standard_legends_v1::hexproof_from_historical_color(
-                    state,
-                    id,
-                    facts.color_mask,
-                    controller,
-                )
-        }
-    })
-    .collect()
+    crate::engine::legal_targets_for_controller(TargetSpec::AnyTarget, &[], controller, state)
+        .into_iter()
+        .filter(|target| match *target {
+            Target::Player(_) => true,
+            Target::StackItem(_) => false,
+            Target::Object(id) => {
+                !crate::source_power_activation_v1::protected(state, facts, id)
+                    && !crate::source_type_hexproof_v1::protects_from_source(
+                        state,
+                        id,
+                        controller,
+                        facts.source,
+                    )
+                    .unwrap_or(true)
+                    && !crate::standard_legends_v1::hexproof_from_historical_color(
+                        state,
+                        id,
+                        facts.color_mask,
+                        controller,
+                    )
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

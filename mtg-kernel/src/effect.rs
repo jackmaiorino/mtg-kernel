@@ -20741,11 +20741,13 @@ fn execute_with_native_row_v1(
             if let Some(proof) = native_proof.filter(|proof| {
                 proof.ctx == ctx
                     && crate::source_power_activation_v1::bombardment::selected(
-                        state, &proof.owner.item,
+                        state,
+                        &proof.owner.item,
                     )
             }) {
                 match crate::source_power_activation_v1::bombardment::departed_source(
-                    state, &proof.owner.item,
+                    state,
+                    &proof.owner.item,
                 ) {
                     Ok(Some(facts)) => {
                         if let event::ProposedEvent::Damage(damage) = &mut proposal {

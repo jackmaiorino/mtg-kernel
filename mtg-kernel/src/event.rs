@@ -2917,23 +2917,24 @@ pub fn apply_replacements(
             return None;
         }
         if !damage_cannot_be_prevented
-            && damage.historical_facts(state).expect("validated historical source").map_or_else(
-                || {
-                    crate::engine::damage_is_prevented_by_protection(
-                        state,
-                        damage.source,
-                        damage.target,
-                    )
-                },
-                |facts| match damage.target {
-                    Target::Object(target) => crate::source_power_activation_v1::protected(
-                        state,
-                        facts,
-                        target,
-                    ),
-                    _ => false,
-                },
-            )
+            && damage
+                .historical_facts(state)
+                .expect("validated historical source")
+                .map_or_else(
+                    || {
+                        crate::engine::damage_is_prevented_by_protection(
+                            state,
+                            damage.source,
+                            damage.target,
+                        )
+                    },
+                    |facts| match damage.target {
+                        Target::Object(target) => {
+                            crate::source_power_activation_v1::protected(state, facts, target)
+                        }
+                        _ => false,
+                    },
+                )
         {
             return None;
         }
@@ -3451,10 +3452,13 @@ fn lifelink_gain_for(state: &GameState, event: &ProposedEvent) -> Option<(Player
 
 /// Convenience: replace/prevent then commit if anything survived. Lifelink
 pub(crate) fn damage_color_mask(state: &GameState, damage: &DamageProposed) -> u8 {
-    damage.historical_facts(state).expect("validated historical source").map_or_else(
-        || crate::engine::object_color_mask(state, damage.source),
-        |facts| facts.color_mask,
-    )
+    damage
+        .historical_facts(state)
+        .expect("validated historical source")
+        .map_or_else(
+            || crate::engine::object_color_mask(state, damage.source),
+            |facts| facts.color_mask,
+        )
 }
 
 /// Convenience: replace/prevent then commit if anything survived. Lifelink
@@ -5429,7 +5433,9 @@ fn materialize_event_v1(
     let mut niv_source_departure = None;
     let committed = match event {
         ProposedEvent::Damage(d) => {
-            let historical = d.historical_facts(state).expect("validated historical source");
+            let historical = d
+                .historical_facts(state)
+                .expect("validated historical source");
             let source_has_deathtouch = d.amount > 0
                 && historical.map_or_else(
                     || {
@@ -5597,7 +5603,9 @@ fn materialize_event_v1(
                     crate::drakuseth_damage_source_v76::before_departure(state, z.object);
                     crate::equipment_damage_source_v4::before_departure(state, z.object);
                     if z.to_zone != Zone::Battlefield {
-                        crate::source_power_activation_v1::bombardment::before_departure(state, z.object);
+                        crate::source_power_activation_v1::bombardment::before_departure(
+                            state, z.object,
+                        );
                     }
                 }
                 #[cfg(feature = "standard-magezero-fixtures")]

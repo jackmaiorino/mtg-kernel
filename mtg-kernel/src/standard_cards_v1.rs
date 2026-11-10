@@ -3093,7 +3093,9 @@ pub(crate) fn replace_damage(state: &GameState, damage: &mut DamageProposed) {
     let Some(source) = state.objects.try_get(damage.source) else {
         return;
     };
-    let controller = damage.historical_facts(state).expect("validated historical source")
+    let controller = damage
+        .historical_facts(state)
+        .expect("validated historical source")
         .map_or(source.controller, |facts| facts.source.controller);
     if damaged != controller.opponent()
         || crate::event::damage_color_mask(state, damage)

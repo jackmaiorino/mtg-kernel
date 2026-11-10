@@ -4948,7 +4948,9 @@ fn applicable_after(
                 );
             }
             let protected = match damage.historical_facts(state) {
-                Ok(Some(facts)) => crate::source_power_activation_v1::protected(state, facts, target),
+                Ok(Some(facts)) => {
+                    crate::source_power_activation_v1::protected(state, facts, target)
+                }
                 Ok(None) => crate::engine::damage_is_prevented_by_protection(
                     state,
                     damage.source,
