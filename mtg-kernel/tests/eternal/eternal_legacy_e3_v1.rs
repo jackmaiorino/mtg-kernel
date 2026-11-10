@@ -1909,7 +1909,8 @@ fn acererak_advances_native_undercity_with_bound_throne_restore_both_seats() {
 
     for actor in [P0, P1] {
         let mut state = game(&[
-            "Island", "Forest", "Llanowar Elves", "Llanowar Elves", "Island", "Island", "Island",
+            "Island", "Forest", "Llanowar Elves", "Llanowar Elves", "Llanowar Elves",
+            "Island", "Island", "Island",
         ]);
         state.active_player = actor;
         state.priority_player = actor;
@@ -1932,7 +1933,7 @@ fn acererak_advances_native_undercity_with_bound_throne_restore_both_seats() {
             pool(branch, actor, &[ManaColor::B], 2);
             cast(branch, acererak, &[]);
             choose_venture_route(branch, 0); // Forge.
-            let Some(Decision::ChooseTargets { player, source, legal_targets, .. }) = settle(branch) else {
+            let Some(Decision::ChooseTargets { player, spell: source, legal_targets, .. }) = settle(branch) else {
                 panic!("Forge must use the current Undercity room");
             };
             assert_eq!(player, actor);
@@ -1993,6 +1994,75 @@ fn acererak_advances_native_undercity_with_bound_throne_restore_both_seats() {
         let marker = &restored.players[actor.index()].dungeon;
         assert_eq!((marker.dungeon_id, marker.room_id), (None, None));
         assert_eq!(marker.completed_dungeons, vec![UNDERCITY_DUNGEON_ID_V1]);
+    }
+}
+
+#[test]
+fn paid_metamorph_acererak_keeps_original_undercity_room_source_both_seats() {
+    use mtg_kernel::effect::EffectOp;
+    use mtg_kernel::state::{InitiativeTriggerKindV1, UndercityRoomV1, UNDERCITY_DUNGEON_ID_V1};
+
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let hunter = put(&mut state, actor, "Avenging Hunter", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::G], 4);
+        cast(&mut state, hunter, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { can_finish: true, .. })
+        ));
+        act(&mut state, Action::FinishEffectSelection);
+        settled(&mut state);
+        assert_eq!(state.initiative, Some(actor));
+
+        let original = put(&mut state, actor.opponent(), ACERERAK, Zone::Battlefield);
+        let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Hand);
+        let physical_def = state.objects.get(metamorph).card_def;
+        let copied_def = state.objects.get(original).card_def;
+        let life = state.players[actor.index()].life;
+        pool(&mut state, actor, &[ManaColor::U], 3);
+        cast(&mut state, metamorph, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                if legal_targets.contains(&Target::Object(original))
+        ));
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(original)));
+        choose_venture_route(&mut state, 0); // Forge from the copied Acererak ETB.
+        assert_eq!(state.objects.get(metamorph).zone, Zone::Hand);
+        assert_eq!(state.objects.get(metamorph).card_def, physical_def);
+        assert_eq!(state.players[actor.index()].life, life);
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseTargets { player, spell, legal_targets, .. })
+                if player == actor && spell == metamorph && legal_targets.contains(&Target::Object(original))
+        ));
+        act(&mut state, Action::ChooseTarget(Target::Object(original)));
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        let item = state.stack.last().expect("published Forge ability");
+        let Some(EffectOp::ResolveInitiativeTrigger { binding }) = item.inline_effect.as_ref() else {
+            panic!("Forge must retain its original room source");
+        };
+        assert!(matches!(binding.kind, InitiativeTriggerKindV1::UndercityRoomBoundV1 {
+            room: UndercityRoomV1::Forge, ..
+        }));
+        assert_eq!(binding.player, actor);
+        assert_eq!(binding.source.source, metamorph);
+        assert_eq!(binding.source.card_def, copied_def);
+        assert_eq!(binding.source.zone, Zone::Battlefield);
+        assert!(binding.source.zone_change_count < state.objects.get(metamorph).zone_change_count);
+
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        settled(&mut restored);
+        assert_eq!(restored.objects.get(original).counters.plus1_plus1, 2);
+        let marker = &restored.players[actor.index()].dungeon;
+        assert_eq!(marker.dungeon_id, Some(UNDERCITY_DUNGEON_ID_V1));
+        assert_eq!(marker.room_id, Some(UndercityRoomV1::Forge.stable_id()));
     }
 }
 

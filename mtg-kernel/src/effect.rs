@@ -8928,12 +8928,17 @@ pub(crate) fn validate_initiative_trigger_binding(
     } else {
         initiative_granter
     };
+    let source_definition_matches = if native_room {
+        crate::engine::source_card_def_matches(state, binding.source, source.card_def)
+    } else {
+        source.card_def == binding.source.card_def
+    };
     if binding.source.controller != binding.player
         || binding.source.zone != Zone::Battlefield
         || binding.source.attached_to.is_some()
         || !allowed
         || !definition.is_executable()
-        || source.card_def != binding.source.card_def
+        || !source_definition_matches
         || source.owner != binding.source.owner
         || source.zone_change_count < binding.source.zone_change_count
         || (source.zone_change_count == binding.source.zone_change_count
