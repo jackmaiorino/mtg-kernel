@@ -747,7 +747,8 @@ fn overload_with_retrace_pays_the_land_discard_and_mana_both_seats() {
 
         let spell = put(&mut state, actor, "Electrickery", Zone::Graveyard);
         let land = put(&mut state, actor, "Plains", Zone::Hand);
-        put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        let other_land = put(&mut state, actor, "Island", Zone::Hand);
+        let nonland = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
         let first = put(
             &mut state,
             actor.opponent(),
@@ -766,13 +767,20 @@ fn overload_with_retrace_pays_the_land_discard_and_mana_both_seats() {
             matches!(next(&mut state), Decision::ChooseSpellMode { legal_modes, .. } if legal_modes == [0, 1])
         );
         act(&mut state, Action::ChooseSpellMode(1));
+        let decision = next(&mut state);
         assert!(matches!(
-            next(&mut state),
-            Decision::ChooseCostTargets { candidates, .. } if candidates == [land]
-        ));
+            &decision,
+            Decision::ChooseCostTargets { candidates, remaining: 1, .. }
+                if candidates.len() == 2
+                    && candidates.contains(&land)
+                    && candidates.contains(&other_land)
+                    && !candidates.contains(&nonland)
+        ), "{decision:?}");
         act(&mut state, Action::ChooseCostTarget(land));
         settled(&mut state);
         assert_eq!(zone(&state, land), Zone::Graveyard);
+        assert_eq!(zone(&state, other_land), Zone::Hand);
+        assert_eq!(zone(&state, nonland), Zone::Hand);
         assert_eq!(zone(&state, first), Zone::Graveyard);
         assert_eq!(zone(&state, second), Zone::Graveyard);
         assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
