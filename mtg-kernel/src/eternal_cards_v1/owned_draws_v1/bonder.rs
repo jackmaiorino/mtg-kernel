@@ -31,7 +31,8 @@ enum OriginalSourceV1 {
 /// the arena object's later incarnation during a restored draw.
 fn original_source(state: &GameState, source: AbilitySourceContractV4) -> Option<OriginalSourceV1> {
     let live = state.objects.try_get(source.source)?;
-    if AbilitySourceContractV4::capture(state, source.source) != source
+    if live.card_def != source.card_def || live.owner != source.owner
+        || live.zone != source.zone || live.zone_change_count != source.zone_change_count
         || live.v4.is_token || live.spell_copy_origin.is_some()
     {
         return None;
