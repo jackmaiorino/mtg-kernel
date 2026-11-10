@@ -1167,7 +1167,8 @@ fn paid_tamiyo_ultimate_keeps_its_starting_draw_count_and_tail_both_seats() {
             state.engine.event_history[later_history_index].kind_v1(),
             mtg_kernel::event_history_v1::EventKindV1::EternalOwnedDrawV1,
         );
-        forged["eternal_owned_draw_progress_v1"]["started_at"] = serde_json::json!(later_history_index);
+        forged["eternal_owned_draw_progress_v1"]["started_at"] =
+            serde_json::json!(later_history_index);
         let forged: GameState = serde_json::from_value(forged).unwrap();
         assert_eq!(
             mtg_kernel::effect::validate_pending_effect_choice(&forged).unwrap_err(),
@@ -1175,11 +1176,15 @@ fn paid_tamiyo_ultimate_keeps_its_starting_draw_count_and_tail_both_seats() {
         );
 
         let started_at = saved["eternal_owned_draw_progress_v1"]["started_at"]
-            .as_u64().unwrap() as usize;
+            .as_u64()
+            .unwrap() as usize;
         let mut changed_count = saved;
-        let start = &mut changed_count["engine"]["event_history"][started_at]
-            ["EternalOwnedDrawV1"]["journal"]["Started"];
-        assert_eq!(start["initial_library_len"], serde_json::json!(library.len()));
+        let start = &mut changed_count["engine"]["event_history"][started_at]["EternalOwnedDrawV1"]
+            ["journal"]["Started"];
+        assert_eq!(
+            start["initial_library_len"],
+            serde_json::json!(library.len())
+        );
         let current_len = state.players[drawer.index()].library.len();
         start["initial_library_len"] = serde_json::json!(current_len);
         start["total"] = serde_json::json!(current_len.div_ceil(2));
@@ -1295,7 +1300,12 @@ fn paid_tamiyo_ultimate_stops_on_jace_alone_after_dredge_both_seats() {
         let mut state = game(&["Island"; 9]);
         state.active_player = drawer;
         state.priority_player = drawer;
-        let tamiyo = put(&mut state, drawer, "Tamiyo, Inquisitive Student", Zone::Hand);
+        let tamiyo = put(
+            &mut state,
+            drawer,
+            "Tamiyo, Inquisitive Student",
+            Zone::Hand,
+        );
         let recall = put(&mut state, drawer, "Ancestral Recall", Zone::Hand);
         pool(&mut state, drawer, &[ManaColor::U, ManaColor::U], 0);
         cast(&mut state, tamiyo, &[]);
@@ -1307,7 +1317,12 @@ fn paid_tamiyo_ultimate_stops_on_jace_alone_after_dredge_both_seats() {
         mtg_kernel::planeswalker_v1::change_loyalty(&mut state, tamiyo, 5);
 
         let jace = put(&mut state, drawer, "Jace, Wielder of Mysteries", Zone::Hand);
-        pool(&mut state, drawer, &[ManaColor::U, ManaColor::U, ManaColor::U], 1);
+        pool(
+            &mut state,
+            drawer,
+            &[ManaColor::U, ManaColor::U, ManaColor::U],
+            1,
+        );
         cast(&mut state, jace, &[]);
         settled(&mut state);
         let troll = put(&mut state, drawer, "Golgari Grave-Troll", Zone::Graveyard);
@@ -1315,10 +1330,15 @@ fn paid_tamiyo_ultimate_stops_on_jace_alone_after_dredge_both_seats() {
         activate(&mut state, tamiyo, 2, &[]);
         let first = settle(&mut state).expect("dredge is legal before the library is empty");
         assert_draw_replacement_prompt(&first, drawer, tamiyo, troll);
-        act(&mut state, Action::ChooseEffectTarget(Target::Object(troll)));
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(troll)),
+        );
         let mut restored = restore_draw_answer(&state);
         for branch in [&mut state, &mut restored] {
-            assert!(matches!(next(branch), Decision::GameOver { winner: Some(player) } if player == drawer));
+            assert!(
+                matches!(next(branch), Decision::GameOver { winner: Some(player) } if player == drawer)
+            );
             assert!(branch.players[drawer.index()].library.is_empty());
             assert_eq!(branch.objects.get(troll).zone, Zone::Hand);
             assert_eq!(
@@ -1329,10 +1349,14 @@ fn paid_tamiyo_ultimate_stops_on_jace_alone_after_dredge_both_seats() {
                 "Jace's win skips Tamiyo's third draw attempt",
             );
             assert!(!branch.players[drawer.index()].drew_from_empty);
-            assert!(!branch.eternal_v1.as_ref().is_some_and(|eternal| {
-                eternal.no_maximum_hand_size[drawer.index()]
-            }));
-            assert!(serde_json::to_value(&*branch).unwrap().get("eternal_owned_draw_progress_v1").is_none());
+            assert!(!branch
+                .eternal_v1
+                .as_ref()
+                .is_some_and(|eternal| { eternal.no_maximum_hand_size[drawer.index()] }));
+            assert!(serde_json::to_value(&*branch)
+                .unwrap()
+                .get("eternal_owned_draw_progress_v1")
+                .is_none());
         }
         assert_eq!(state.state_hash(), restored.state_hash());
     }

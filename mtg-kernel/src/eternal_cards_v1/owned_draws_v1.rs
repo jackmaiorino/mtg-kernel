@@ -131,16 +131,24 @@ pub enum JournalV1 {
 }
 
 fn record(state: &mut GameState, journal: JournalV1) {
-    state.engine.event_history.push(CommittedEvent::EternalOwnedDrawV1 {
-        journal: Box::new(journal),
-    });
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::EternalOwnedDrawV1 {
+            journal: Box::new(journal),
+        });
 }
 
 fn has_started(state: &GameState, item: StackItemId) -> bool {
-    state.engine.event_history.scan_for_v1(&[EventKindV1::EternalOwnedDrawV1]).iter().any(|event| {
-        matches!(event, CommittedEvent::EternalOwnedDrawV1 { journal }
+    state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::EternalOwnedDrawV1])
+        .iter()
+        .any(|event| {
+            matches!(event, CommittedEvent::EternalOwnedDrawV1 { journal }
             if matches!(**journal, JournalV1::Started(started) if started.item == item))
-    })
+        })
 }
 
 fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(InstructionV1, SourceV1)> {
@@ -253,10 +261,7 @@ pub(crate) fn begin(
     Ok(())
 }
 
-fn progress(
-    state: &GameState,
-    pending: &EffectContinuation,
-) -> Option<(ProgressV1, StartedV1)> {
+fn progress(state: &GameState, pending: &EffectContinuation) -> Option<(ProgressV1, StartedV1)> {
     let progress = state.eternal_owned_draw_progress_v1?;
     let CommittedEvent::EternalOwnedDrawV1 { journal } =
         state.engine.event_history.get(progress.started_at)?
@@ -285,7 +290,13 @@ pub(crate) fn complete(
         return Err("Eternal draw completed the wrong attempt".into());
     }
     let completed = ordinal + 1;
-    record(state, JournalV1::Completed { started_at: progress.started_at, ordinal });
+    record(
+        state,
+        JournalV1::Completed {
+            started_at: progress.started_at,
+            ordinal,
+        },
+    );
     let opponent = started.controller.opponent();
     let terminal = state.players[opponent.index()].has_lost
         && !crate::game_outcome_protection_v1::cannot_lose(state, opponent);
@@ -356,15 +367,25 @@ fn validate_native_progress(
     if total != Some(started.total) {
         return Err("Eternal draw changed its original count".into());
     }
-    let completed = state.engine.event_history[tail..].iter().filter_map(|event| match event {
-        CommittedEvent::EternalOwnedDrawV1 { journal } => match **journal {
-            JournalV1::Completed { started_at, ordinal } if started_at == progress.started_at => Some(ordinal),
+    let completed = state.engine.event_history[tail..]
+        .iter()
+        .filter_map(|event| match event {
+            CommittedEvent::EternalOwnedDrawV1 { journal } => match **journal {
+                JournalV1::Completed {
+                    started_at,
+                    ordinal,
+                } if started_at == progress.started_at => Some(ordinal),
+                _ => None,
+            },
             _ => None,
-        },
-        _ => None,
-    }).try_fold(0u32, |count, ordinal| {
-        if count == ordinal { count.checked_add(1) } else { None }
-    });
+        })
+        .try_fold(0u32, |count, ordinal| {
+            if count == ordinal {
+                count.checked_add(1)
+            } else {
+                None
+            }
+        });
     if completed != Some(progress.completed) {
         return Err("Eternal draw changed its native completed attempts".into());
     }
@@ -379,9 +400,7 @@ pub(crate) fn draw_stage_matches(
     remaining: &[EffectFrame],
 ) -> bool {
     progress(state, pending).is_some_and(|(progress, started)| {
-        drawer == started.controller
-            && path == [0]
-            && remaining == [completion(progress.completed)]
+        drawer == started.controller && path == [0] && remaining == [completion(progress.completed)]
     })
 }
 
