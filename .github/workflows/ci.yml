@@ -269,6 +269,10 @@ jobs:
     # Pull requests from forks never run on the self-hosted runners.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
     steps:
+      - name: Limit affected hosted builds to one Cargo job
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux' && (matrix.group == 'trace' || matrix.group == 'limited-store')
+        run: echo 'CARGO_BUILD_JOBS=1' >> "$GITHUB_ENV"
+
       # Windows can resolve `bash` to the WSL launcher in System32 first;
       # put Git Bash ahead of it for every later step.
       - name: Use Git Bash for bash steps on Windows
