@@ -259,8 +259,10 @@ const PARTIAL_S1: [&str; 13] = [
     "Vandalblast",
 ];
 
+/// Volrath's Shapeshifter and the S1 cards above are the registry's only
+/// Partial definitions.
 pub(crate) fn expected_capability(name: &str) -> CardCapability {
-    if PARTIAL_S1.contains(&name) {
+    if name == "Volrath's Shapeshifter" || PARTIAL_S1.contains(&name) {
         CardCapability::Partial
     } else {
         CardCapability::Full

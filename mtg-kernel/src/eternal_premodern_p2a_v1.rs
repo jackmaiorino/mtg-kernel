@@ -640,7 +640,7 @@ const YOUR_UPKEEP: TriggerCondition = TriggerCondition::BeginningOfUpkeep {
 };
 
 /// Ravenous Rats: "target opponent discards a card."
-fn rats_enters() -> EffectOp {
+pub(crate) fn rats_enters() -> EffectOp {
     EffectOp::DiscardCards {
         player: PlayerRef::Target(0),
         count: 1,

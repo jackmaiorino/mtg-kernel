@@ -2003,6 +2003,7 @@ pub fn observe_v1(
             "Meddling Mage named entry requires its consumer successor".into(),
         ));
     }
+    crate::full_text_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::continuous_characteristics_v1::refuse_land_override_consumer(state, acting_player)
         .map_err(RlContractError)?;
     crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
@@ -2140,9 +2141,55 @@ pub fn observe_v2(
     Ok(observation)
 }
 
+/// Numeric observation for the explicit native ordered-graveyard profile.
+/// Ordinary V2 only supplies stable common facts after its other guards run.
+pub fn observe_premodern_ordered_v1(
+    state: &GameState,
+    surface: &crate::surface_v2::HarnessSurfaceV2,
+    viewer: PlayerId,
+    step_index: u64,
+) -> Result<crate::premodern_ordered_public_v1::NumericObservationV1> {
+    use crate::premodern_ordered_public_v1::{
+        observe, NumericObservationV1, NumericStableSceneV1, NUMERIC_SCHEMA_V1,
+    };
+
+    let ordered = observe(state, viewer).map_err(RlContractError)?;
+    let stable = if ordered.full_text.is_some() {
+        crate::elenda_public_v52::require_legacy_visible(state, Some(viewer))
+            .map_err(RlContractError)?;
+        crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
+        crate::effect::temporary_control_v1::refuse_legacy_observation(state)
+            .map_err(RlContractError)?;
+        let common = build_observation_v2(
+            state,
+            surface,
+            viewer,
+            step_index,
+            ObservationTextModeV2::PremodernOrderedV1Artifact,
+        )?;
+        Some(NumericStableSceneV1 {
+            projection: common.projection,
+            own_hand: common.own_hand,
+            known_library_cards: common.known_library_cards,
+            known_hand_cards: common.known_hand_cards,
+            known_face_down_cards: common.known_face_down_cards,
+        })
+    } else {
+        None
+    };
+    Ok(NumericObservationV1 {
+        schema: NUMERIC_SCHEMA_V1,
+        step_index,
+        ordered,
+        stable,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ObservationTextModeV2 {
     FullArtifact,
+    /// Stable common facts consumed by the ordered Premodern envelope only.
+    PremodernOrderedV1Artifact,
     /// `FullArtifact` for a game under the public shroud contract (Limited
     /// schema 5): shroud on permanents and players is reported instead of
     /// refused. Only `observe_policy_v5` selects it.
@@ -2187,6 +2234,7 @@ impl ObservationTextModeV2 {
     fn kernel_version(self) -> String {
         match self {
             Self::FullArtifact
+            | Self::PremodernOrderedV1Artifact
             | Self::PublicShroudV5Artifact
             | Self::RavenousV51Artifact
             | Self::PreparedV57Artifact
@@ -2208,6 +2256,7 @@ impl ObservationTextModeV2 {
     fn card_name(self, card_id: u16) -> String {
         match self {
             Self::FullArtifact
+            | Self::PremodernOrderedV1Artifact
             | Self::PublicShroudV5Artifact
             | Self::RavenousV51Artifact
             | Self::PreparedV57Artifact
@@ -2381,6 +2430,9 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         return Err(RlContractError(
             "Meddling Mage named entry requires its consumer successor".into(),
         ));
+    }
+    if text_mode != ObservationTextModeV2::PremodernOrderedV1Artifact {
+        crate::full_text_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if !matches!(
         text_mode,
@@ -2709,10 +2761,23 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         .map_err(RlContractError)?;
     crate::eternal_cards_v1::owned_draws_v1::bonder::refuse_legacy(state)
         .map_err(RlContractError)?;
-    if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(state) {
+    let ordered_full_text = text_mode == ObservationTextModeV2::PremodernOrderedV1Artifact;
+    if ordered_full_text {
+        crate::fixed_source_damage_v3::validate_state(state).map_err(RlContractError)?;
+    }
+    if !accept_crystal
+        && crate::effect::crystal_prevention_v1::requires_successor_with_full_text(
+            state,
+            ordered_full_text,
+        )
+    {
         return Err(RlContractError(
             "Crystal requires its selected public/Human successor".into(),
         ));
+    }
+    if ordered_full_text {
+        crate::effect::crystal_prevention_v1::validate_ordered_donated_archive(state)
+            .map_err(RlContractError)?;
     }
     let projection = PublicObservationProjectionV2 {
         turn: state.turn,
@@ -2757,7 +2822,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             acting_player,
             (accept_cant_block, accept_gourmand),
             accept_temporary_control,
-            accept_crystal,
+            accept_crystal || ordered_full_text,
         )?,
         object_relations: object_relations_public_v4(state, acting_player)?,
         exile_play_permissions: exile_play_permissions_public_v2(state)?,
@@ -5215,6 +5280,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
     accept_fake: bool,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<PolicyObservationStorageV6> {
+    crate::full_text_v1::refuse_legacy(request.0.state).map_err(RlContractError)?;
     if let Some(proof) = conqueror_proof {
         proof.require_state(request.0.state)?;
     }

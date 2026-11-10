@@ -1,6 +1,7 @@
-//! Captured fixed damage for actual Firebrand, Fanatic and Bombardment payments.
+//! Captured fixed damage for actual Firebrand, Fanatic and Bombardment
+//! payments, including exact donated Fanatic payments.
 //! Each catalog owns its exact printed activation.
-use crate::card_def::{CostComponent, TargetSpec, CARD_DEFS};
+use crate::card_def::{CardDef, CostComponent, TargetSpec, CARD_DEFS};
 use crate::effect::{EffectOp, ExecCtx, TargetRef};
 use crate::event::{CommittedEvent, HistoricalDamageSourceV1};
 use crate::event_history_v1::EventKindV1;
@@ -54,6 +55,7 @@ pub struct RemovedV3 {
 pub(crate) struct PaymentOwnerV3 {
     source: AbilitySourceContractV4,
     tap: bool,
+    donated: bool,
     bombardment_self: bool,
     metamorph_physical_def: Option<u16>,
 }
@@ -146,14 +148,33 @@ fn native_ordinary_damage(item: &StackItem) -> bool {
     paid_fanatic(item) || paid_bombardment_self(item)
 }
 
-pub(crate) fn selected(item: &StackItem) -> bool {
+pub(crate) fn fanatic_recipe(definition: &CardDef) -> bool {
+    definition.name == "Mogg Fanatic"
+        && definition.capability.is_fully_supported()
+        && definition
+            .activated_abilities
+            .first()
+            .is_some_and(|ability| {
+                ability.cost == [CostComponent::SacrificeSelf]
+                    && ability.activation_zone == Zone::Battlefield
+                    && ability.target_spec == TargetSpec::AnyTarget
+                    && (ability.effect)() == printed_root()
+            })
+}
+pub(crate) fn donated_fanatic(item: &StackItem) -> bool {
     item.kind == StackItemKind::ActivatedAbility
-        && (native_ordinary_damage(item)
-            || item
-                .v4
-                .ability_source_contract
-                .zip(item.v4.activated_ability_index)
-                .is_some_and(|(s, i)| firebrand(s.card_def, i)))
+        && item.v4.full_text_activation_v1.is_donated_fanatic()
+}
+
+pub(crate) fn selected(item: &StackItem) -> bool {
+    donated_fanatic(item)
+        || (item.kind == StackItemKind::ActivatedAbility
+            && (native_ordinary_damage(item)
+                || item
+                    .v4
+                    .ability_source_contract
+                    .zip(item.v4.activated_ability_index)
+                    .is_some_and(|(s, i)| firebrand(s.card_def, i))))
 }
 pub(crate) fn tracked(state: &GameState, item: &StackItem) -> bool {
     selected(item) || item.v4.fixed_damage_paid_v3.0.is_some()
@@ -169,6 +190,12 @@ pub(crate) fn requires_crystal_execution(state: &GameState, item: &StackItem) ->
 /// requires its successor.
 pub(crate) fn requires_successor(state: &GameState) -> bool {
     requires_successor_except(state, paid_fanatic)
+}
+
+/// FEB already exposes the exact donated producer. All other fixed damage
+/// except a paid physical Fanatic remains outside its observation contract.
+pub(crate) fn requires_other_successor(state: &GameState) -> bool {
+    requires_successor_except(state, |item| paid_fanatic(item) || donated_fanatic(item))
 }
 
 fn requires_successor_except(state: &GameState, represented: fn(&StackItem) -> bool) -> bool {
@@ -230,7 +257,8 @@ pub(crate) fn acquire_payment(state: &GameState) -> Result<Option<PaymentOwnerV3
         None
     };
     let tap = firebrand(source.card_def, p.ability_index);
-    if !physical_fanatic && !tap && !bombardment_self {
+    let donated = p.full_text_activation_v1.is_donated_fanatic();
+    if !donated && !physical_fanatic && !tap && !bombardment_self {
         // A borrowed Firebrand recipe needs its own departing-source capture.
         if firebrand_enabled()
             && crate::engine::resolved_activated_ability(
@@ -260,6 +288,7 @@ pub(crate) fn acquire_payment(state: &GameState) -> Result<Option<PaymentOwnerV3
     Ok(Some(PaymentOwnerV3 {
         source,
         tap,
+        donated,
         bombardment_self,
         metamorph_physical_def,
     }))
@@ -300,6 +329,12 @@ fn capture_metamorph_definition(
 impl PaymentOwnerV3 {
     pub(crate) fn requires_tap(&self) -> bool {
         self.tap
+    }
+
+    /// A donated Fanatic pays its resolved full-text cost in one native
+    /// transaction with its departure.
+    pub(crate) fn donated(&self) -> bool {
+        self.donated
     }
 
     pub(crate) fn sacrifice_cost(&self) -> CostComponent {
@@ -417,7 +452,7 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
         || p.departure >= p.history_index
         || normalized != s
         || snapshot.zone != Zone::Battlefield
-        || (!native_ordinary_damage(&p.item) && !snapshot.tapped)
+        || (!native_ordinary_damage(&p.item) && !donated_fanatic(&p.item) && !snapshot.tapped)
         || snapshot.card_def != s.card_def
         || snapshot.owner != s.owner
         || snapshot.controller != s.controller
@@ -456,6 +491,26 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
     let Some(departure_to) = departure_to else {
         return Err("fixed damage lost actual post-sacrifice departure".into());
     };
+    if donated_fanatic(&p.item) {
+        let ability_index = p
+            .item
+            .v4
+            .activated_ability_index
+            .ok_or("donated Fanatic lost its native activation index")?;
+        p.item
+            .v4
+            .full_text_activation_v1
+            .resolve(state, s, ability_index, None, Default::default())?
+            .ok_or("donated Fanatic lost its original host and donor")?;
+        if !p.item.v4.paid_cost_refs.iter().any(|reference| {
+            reference.object == s.source
+                && reference.owner == s.owner
+                && reference.zone == departure_to
+                && s.zone_change_count.checked_add(1) == Some(reference.zone_change_count)
+        }) {
+            return Err("donated Fanatic lost its exact sacrificed incarnation".into());
+        }
+    }
     if paid_bombardment_self(&p.item) {
         let first_source_move = between.iter().enumerate().find(|(_, event)| {
             matches!(event, CommittedEvent::ZoneChange { object, .. } if *object == s.source)
@@ -542,6 +597,18 @@ pub(crate) fn has_payment(state: &GameState, id: StackItemId) -> bool {
             matches!(e,CommittedEvent::FixedDamagePaidV3 {payment}
         if payment.item.v4.stack_item_id==id)
         })
+}
+pub(crate) fn has_donated_payment(state: &GameState, id: StackItemId) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::FixedDamagePaidV3])
+            .iter()
+            .any(|event| {
+                matches!(event, CommittedEvent::FixedDamagePaidV3 { payment }
+            if payment.item.v4.stack_item_id == id && donated_fanatic(&payment.item))
+            })
 }
 pub(crate) fn native_fanatic_damage(
     state: &GameState,
@@ -779,20 +846,26 @@ pub(crate) fn legal_targets_with_controller(
             Target::Player(_) => true,
             Target::StackItem(_) => false,
             Target::Object(id) => {
-                !crate::source_power_activation_v1::protected(state, facts, id)
-                    && !crate::source_type_hexproof_v1::protects_from_source(
+                !(crate::source_power_activation_v1::protected(state, facts, id)
+                    || (cfg!(feature = "eternal-fixtures")
+                        && crate::eternal_pauper_e6b_v1::protected_from_colors(
+                            state,
+                            id,
+                            facts.color_mask,
+                        ))
+                    || crate::source_type_hexproof_v1::protects_from_source(
                         state,
                         id,
                         controller,
                         facts.source,
                     )
                     .unwrap_or(true)
-                    && !crate::standard_legends_v1::hexproof_from_historical_color(
+                    || crate::standard_legends_v1::hexproof_from_historical_color(
                         state,
                         id,
                         facts.color_mask,
                         controller,
-                    )
+                    ))
             }
         })
         .collect()

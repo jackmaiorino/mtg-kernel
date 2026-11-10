@@ -350,6 +350,10 @@ pub enum EventKindV1 {
     KaitoCunningV75,
     DrakusethDamageSourceV76,
     NishobaDamageSourceV1,
+    FullTextTriggerCapturedV1,
+    FullTextBatchEntryV1,
+    FullTextRestrictedUseV1,
+    OrderedGraveyardControlGainedV1,
     MartyrRevealPaidV1,
     MeddlingMageEntryV1,
     EternalOpeningV1,
@@ -357,7 +361,7 @@ pub enum EventKindV1 {
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 319;
+pub const EVENT_KIND_COUNT_V1: usize = 323;
 const _: () = assert!(EventKindV1::EternalOwnedDrawV1 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
@@ -773,6 +777,12 @@ impl CommittedEvent {
             Self::KaitoCunningV75 { .. } => EventKindV1::KaitoCunningV75,
             Self::DrakusethDamageSourceV76 { .. } => EventKindV1::DrakusethDamageSourceV76,
             Self::NishobaDamageSourceV1 { .. } => EventKindV1::NishobaDamageSourceV1,
+            Self::FullTextTriggerCapturedV1 { .. } => EventKindV1::FullTextTriggerCapturedV1,
+            Self::FullTextBatchEntryV1 { .. } => EventKindV1::FullTextBatchEntryV1,
+            Self::FullTextRestrictedUseV1 { .. } => EventKindV1::FullTextRestrictedUseV1,
+            Self::OrderedGraveyardControlGainedV1 { .. } => {
+                EventKindV1::OrderedGraveyardControlGainedV1
+            }
             Self::MartyrRevealPaidV1 { .. } => EventKindV1::MartyrRevealPaidV1,
             Self::MeddlingMageEntryV1 { .. } => EventKindV1::MeddlingMageEntryV1,
             Self::EternalOpeningV1 { .. } => EventKindV1::EternalOpeningV1,

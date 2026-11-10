@@ -77,6 +77,7 @@ pub(crate) fn active(state: &GameState, source: ObjectId) -> bool {
 
 /// Transient ownership for one genuine simultaneous event batch. Static
 /// replacement observers exist before entry; ETB observers exist after it.
+#[derive(Clone)]
 pub(crate) struct EntryBatchV1 {
     pub(crate) observers: Vec<AbilitySourceContractV4>,
     entries: Vec<usize>,

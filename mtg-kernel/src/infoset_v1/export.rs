@@ -936,6 +936,10 @@ fn export_versioned(
             "Meddling Mage named entry is unavailable in this infoset export",
         ));
     }
+
+    crate::graveyard_order_v1::refuse_legacy(state)
+        .map_err(|error| refuse(RefusalCodeV1::R2, error))?;
+
     // The canonical allocator does not model hidden sideboards. Refuse from
     // the explicit public profile before any projection or name-sensitive
     // validation, including when both private lists are empty or depleted.

@@ -160,14 +160,31 @@ kind order. This standalone event fragment tests serialization; it does not
 make the artificial mixed fixture a valid native replay or qualify a gameplay
 profile or Drakuseth consumers.
 
+## Appended ordered-graveyard event samples (November 10, 2026)
+
+The four samples below came from successful native producers at `442e15adcad577f40ead2f35e5abef1746d9a429`.
+The original payloads and producer results are recorded in
+`E:/codex-eternal-feb-442e-evidence/manifest.json`,
+SHA-256 `09f6b145c9ce2436bf63b218dd48cc145b0a57ade360985aac3a2cc3ee287360`.
+The trigger payload came from the dedicated trigger producer. The preceding
+315 event payloads retain their bytes and order. This append records sample
+provenance for the serialization corpus.
+
+| Event kind | Native producer | Original payload SHA-256 |
+| --- | --- | --- |
+| `FullTextTriggerCapturedV1` | `full_text_v1::tests::registered::volrath_native_cast_captures_and_pays_for_palinchron_text_both_seats` | `65a43e5302575fafe8031f927a6eb3222e4cc2a3c3ec01f6283e46e0f9d3e9d9` |
+| `FullTextBatchEntryV1` | `full_text_v1::tests::registered::volrath_native_mixed_batch_records_real_entry_and_order_both_seats` | `394a93b7526863ac5701a2d2ff0ec2b5b6214e4c9baf7066a78f6fc1cbf9b37b` |
+| `FullTextRestrictedUseV1` | `full_text_v1::tests::registered::volrath_native_wall_mana_records_the_exact_restricted_use_both_seats` | `0bd55de5fe06b428512681fe48b103250bfa4c1f166e4490d983130440f45844` |
+| `OrderedGraveyardControlGainedV1` | `full_text_v1::tests::registered::volrath_native_paid_control_transfer_records_the_new_controller_both_seats` | `3abcb5e812c0516f90ccdee856e29df8db7067a738d8f7d7147754286ddcce4f` |
+
 ## Appended Martyr event sample (November 9, 2026)
 
-Row 316, `MartyrRevealPaidV1`, is the first actual event harvested from
+Row 320, `MartyrRevealPaidV1`, is the first actual event harvested from
 `eternal_sideboard_s1d_v1::martyr_of_sands_pays_zero_exact_subset_and_more_than_ten_both_seats`
 at source `90bda0c0fee4136f2e30a25182b8068720553e63`. The complete paid producer
 passed under the guarded Rust 1.94.1/MSVC native integration run. Its selected
 scope has two revealed white cards; no sample payload was synthesized. The
-original 315 JSON values and their order remain unchanged.
+preceding 319 JSON values and their order remain unchanged.
 
 The original 161-byte payload has SHA-256
 `59b5702344a2157c9fcc3de0e08566c58ae9b3c43e732e434fdd32bb0652bbd0` and remains at
@@ -182,13 +199,13 @@ event-history consumers passed. Consumer checks remain pending.
 
 ## Appended Mage and opening samples (November 10, 2026)
 
-Rows 317 and 318 append the first native `MeddlingMageEntryV1` and
+Rows 321 and 322 append the first native `MeddlingMageEntryV1` and
 `EternalOpeningV1` events from source
 `db7764a1caf15b63083ad2ef25d6384024ffd524`. Their producers were
 `eternal_sideboard_s1b_v1::meddling_mage_names_a_card_that_then_cannot_be_cast`
 and `eternal_opening_v1::native_leyline_and_chancellor_order_restore_and_first_spell_both_seats`.
-Both passed in the guarded Rust 1.94.1/MSVC integration batch. The original
-316-event prefix is unchanged; these rows are the actual emitted payloads.
+Both passed in the guarded Rust 1.94.1/MSVC integration batch. The preceding
+320-event prefix is unchanged; these rows are the actual emitted payloads.
 
 The original payload SHA-256 values are
 `0f3c4d3d80341b2836e9e43f0bc2fe70288fedd873adfbd8796f72fc00578d77`
@@ -203,11 +220,11 @@ the still-pending every-kind consumer checks or complete card admission.
 
 ## Appended owned-draw sample (November 10, 2026)
 
-Row 319, `EternalOwnedDrawV1`, is the first actual event emitted by
+Row 323, `EternalOwnedDrawV1`, is the first actual event emitted by
 `eternal_vintage_e4_v1::paid_tamiyo_ultimate_keeps_its_starting_draw_count_and_tail_both_seats`
 at source `f90a56fd929b457a87dc9be1ac5102085b4844a4`. The complete paid producer
 passed in 2.317818 seconds; the guarded Rust 1.94.1/MSVC integration batch
-passed all 86 cases with no timeout. The previous 318-event prefix is unchanged.
+passed all 86 cases with no timeout. The previous 322-event prefix is unchanged.
 
 The original 248-byte payload has SHA-256
 `44b4152a57a971fe2da5a6a7f11fab882fc5e923f2e84a5b082d4fe916c712d5`
@@ -220,3 +237,11 @@ the archived integration binary SHA-256 is
 Only this passing producer supplied the appended sample. The earlier failed
 Tamiyo attempt is retained separately and was not imported. Every-kind
 consumer checks and complete card admission remain pending.
+
+## Merged S1 order (November 10, 2026)
+
+The four S1 rows above merged after the ordered-graveyard rows, so they moved
+from rows 316-319 to rows 320-323. Volrath's Shapeshifter's registry entry also
+precedes the S1 cards and moves each S1 card id up by one. The Martyr row's
+source `card_def` is therefore 1216 rather than the harvested 1215; no other
+payload changed.

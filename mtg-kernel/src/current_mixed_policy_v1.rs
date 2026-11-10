@@ -16,6 +16,8 @@ mod network;
 mod next_five;
 mod next_five_support;
 mod normalize;
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) use normalize::visible_numeric_parts_v1;
 mod numeric;
 mod prepared;
 mod public_projection_operands;

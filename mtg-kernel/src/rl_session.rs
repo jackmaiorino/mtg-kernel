@@ -8160,16 +8160,21 @@ impl FastActorSessionV1 {
     /// expose, never the current decision, so a caller can replay a
     /// historical game to a root and continue under the new profile.
     /// Refused when the profile would remove a choice some card in the game
-    /// can read (a Delve card anywhere, for either player).
+    /// can read. This is a session-level check across both decks.
     pub fn set_runtime_rules_v1(
         &mut self,
         rules: crate::engine::RuntimeRulesV1,
     ) -> Result<(), String> {
+        if rules.order_graveyard_batches_v1
+            || self.state.engine.runtime_rules.order_graveyard_batches_v1
+        {
+            return Err("native graveyard ordering requires its own session consumer".into());
+        }
         if rules.auto_unobservable_graveyard_order
             && crate::engine::graveyard_order_readers_present(&self.state)
         {
             return Err(
-                "resolution-boundary profile refused: a card in this game reads graveyard order (Delve)"
+                "resolution-boundary profile refused: a card in this game reads graveyard order"
                     .into(),
             );
         }

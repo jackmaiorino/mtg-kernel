@@ -293,6 +293,10 @@ pub(crate) fn locally_owned(state: &GameState) -> bool {
     state.engine.linked_aura_operation_v1.runtime.is_some()
 }
 
+pub(crate) fn clear_runtime_for_graveyard_checkpoint(state: &mut GameState) {
+    state.engine.linked_aura_operation_v1.runtime = None;
+}
+
 /// Borrow the existing enclosing operation of a published entry checkpoint.
 pub(crate) fn pending_original_operation(state: &GameState) -> Option<(&GameState, &OperationV1)> {
     if let Some(pending) = &state
