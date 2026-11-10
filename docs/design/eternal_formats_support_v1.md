@@ -517,10 +517,17 @@ New, each built once in the first wave that needs it:
   Shoal (X tied to an exiled card), Darksteel Angel (cannot lose the game) and Portal to
   Phyrexia (subtype grant on reanimation).
   Partial: the drawing player can choose dredge or let Hullbreacher replace the draw (616.1) on
-  resumable draw programs, including the monarch's draw, Bonder's Ornament, and both
-  selected-discard draw paths. An affected player can also choose between Jace's
-  empty-library win and Hullbreacher on fixed-count draw instructions and the monarch's
-  draw. Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
+  resumable draw programs, including the monarch's draw, both Baubles' delayed
+  upkeep draws, Coveted Jewel's entry and unblocked combat draws, Paradoxical
+  Outcome, Bonder's Ornament, and both selected-discard draw paths. The Jewel
+  combat continuation binds draw progress to the original trigger and transfers
+  only its original battlefield incarnation after the third attempt. Outcome
+  returns its legal targets in one batch and derives draw progress from actual
+  original-incarnation arrivals into the spell controller's hand. Both progress
+  checks validate continuation consistency. An affected
+  player can also choose between Jace's empty-library win and Hullbreacher on
+  fixed-count draw instructions, the monarch's draw and the Baubles' upkeep draws.
+  Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
   Their damage-draw interaction has no native qualification.
   Some specialized synchronous draws and unbound generated or dynamic draw instructions
   still lack a replacement choice. Native qualification of the repairs is pending.

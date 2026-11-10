@@ -17,9 +17,18 @@ use crate::effect::{
     EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp, EffectTargetSelectionPurpose,
     PendingEffectChoice, PlayerRef,
 };
-use crate::eternal_cards_v1::e3::{E3ChoiceKindV1, E3ChoiceV1};
+use crate::eternal_cards_v1::{
+    delayed_upkeep_draw,
+    e3::{E3ChoiceKindV1, E3ChoiceV1},
+    EternalOpV1,
+};
+use crate::eternal_vintage_v1::{
+    abandon_coveted_jewel_draws, coveted_jewel_changes_hands, coveted_jewel_draw_stage_matches,
+    VintageOpV1,
+};
 use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
+use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{GameState, MonarchTriggerBindingV1, Target, Zone};
 
 /// Life from the Loam (wave E7a): "Dredge 3".
@@ -71,9 +80,11 @@ fn draws(op: &EffectOp) -> bool {
         EffectOp::Choice { options, .. } => options.iter().any(draws),
         // Premodern wave P1a's leaves that draw (Ice, Skeletal Scrying,
         // Graveborn Muse, Portent's delayed draw).
-        EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
-            crate::eternal_cards_v1::EternalOpV1::P1aV1(op),
-        )) => op.draws(),
+        EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::P1aV1(op))) => op.draws(),
+        EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::DelayedUpkeepDrawV1)) => true,
+        EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::VintageV1(
+            VintageOpV1::CovetedJewelChangesHandsV1 | VintageOpV1::ParadoxicalOutcomeV1,
+        ))) => true,
         _ => false,
     }
 }
@@ -196,15 +207,120 @@ pub(crate) fn validate_monarch_draw(
     {
         return Err("Monarch draw changed its original trigger".into());
     }
+    validate_single_draw(
+        state,
+        pending,
+        binding.player,
+        &EffectOp::ResolveMonarchTrigger { binding },
+        "Monarch draw",
+    )
+}
+
+pub(crate) fn validate_bauble_draw(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    let root = delayed_upkeep_draw();
+    if pending.resolving_item.inline_effect.as_ref() != Some(&root) {
+        return Ok(());
+    }
+    let item = &pending.resolving_item;
+    if item.kind != crate::state::StackItemKind::TriggeredAbility
+        || !item.v4.ability_source_contract.is_some_and(|source| {
+            source.zone == Zone::Battlefield && source.controller == item.controller
+        })
+    {
+        return Err("Bauble draw changed its original trigger".into());
+    }
+    validate_single_draw(state, pending, item.controller, &root, "Bauble draw")
+}
+
+fn validate_single_draw(
+    state: &GameState,
+    pending: &EffectContinuation,
+    drawer: PlayerId,
+    root: &EffectOp,
+    owner: &str,
+) -> Result<(), String> {
     if matches!((&pending.choice, pending.frames.as_slice()),
-        (None, [EffectFrame::Program { op: EffectOp::ResolveMonarchTrigger { binding: found }, path }])
-            if *found == binding && path.is_empty())
+        (None, [EffectFrame::Program { op, path }]) if op == root && path.is_empty())
     {
         return Ok(());
     }
-    let (kind, cards) = replacement_options(state, pending, binding.player, &[], &[])
-        .ok_or("Monarch draw lost its replacement choices")?;
-    let expected = choice(state, binding.player, kind, &cards, Vec::new(), Vec::new());
+    validate_draw_choice(state, pending, drawer, &[], &[], owner)
+}
+
+pub(crate) fn validate_coveted_jewel_draw(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    let root = coveted_jewel_changes_hands();
+    if pending.resolving_item.inline_effect.as_ref() != Some(&root) {
+        return if state.coveted_jewel_draw_progress_v1.is_none() {
+            Ok(())
+        } else {
+            Err("Coveted Jewel draw progress lost its original combat trigger".into())
+        };
+    }
+    let item = &pending.resolving_item;
+    if item.kind != crate::state::StackItemKind::TriggeredAbility
+        || !item.v4.ability_source_contract.is_some_and(|source| {
+            source.zone == Zone::Battlefield && source.controller == item.controller
+        })
+    {
+        return Err("Coveted Jewel changed its original combat trigger".into());
+    }
+    if state.coveted_jewel_draw_progress_v1.is_none()
+        && matches!((&pending.choice, pending.frames.as_slice()),
+        (None, [EffectFrame::Program { op, path }]) if *op == root && path.is_empty())
+    {
+        return Ok(());
+    }
+    let (path, remaining) =
+        draw_stage(pending).ok_or("Coveted Jewel lost its original draw stage")?;
+    if !coveted_jewel_draw_stage_matches(state, &pending.ctx, path, remaining) {
+        return Err("Coveted Jewel draw changed its progress or remaining effects".into());
+    }
+    validate_draw_choice(
+        state,
+        pending,
+        item.controller.opponent(),
+        path,
+        remaining,
+        "Coveted Jewel draw",
+    )
+}
+
+pub(crate) fn draw_stage(pending: &EffectContinuation) -> Option<(&[u16], &[EffectFrame])> {
+    match (&pending.choice, pending.frames.split_last()) {
+        (Some(PendingEffectChoice::SelectTargets { path, .. }), _) => {
+            Some((path.as_slice(), pending.frames.as_slice()))
+        }
+        (None, Some((EffectFrame::EternalSelectionV1 { choice, .. }, rest))) => {
+            Some((choice.path.as_slice(), rest))
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn validate_draw_choice(
+    state: &GameState,
+    pending: &EffectContinuation,
+    drawer: PlayerId,
+    path: &[u16],
+    remaining: &[EffectFrame],
+    owner: &str,
+) -> Result<(), String> {
+    let (kind, cards) = replacement_options(state, pending, drawer, path, remaining)
+        .ok_or_else(|| format!("{owner} lost its replacement choices"))?;
+    let expected = choice(
+        state,
+        drawer,
+        kind,
+        &cards,
+        path.to_vec(),
+        remaining.to_vec(),
+    );
     let valid = match (&pending.choice, pending.frames.as_slice()) {
         (
             Some(PendingEffectChoice::SelectTargets {
@@ -214,17 +330,19 @@ pub(crate) fn validate_monarch_draw(
                 min_targets: 0,
                 ..
             }),
-            [],
+            frames,
         ) => {
-            **choice == expected
+            frames == remaining
+                && **choice == expected
                 && selected.is_empty()
                 && legal
                     .iter()
                     .map(|candidate| candidate.target)
                     .eq(expected.candidates)
         }
-        (None, [EffectFrame::EternalSelectionV1 { choice, selected }]) => {
-            **choice == expected
+        (None, [frames @ .., EffectFrame::EternalSelectionV1 { choice, selected }]) => {
+            frames == remaining
+                && **choice == expected
                 && selected.len() <= 1
                 && selected
                     .iter()
@@ -233,7 +351,7 @@ pub(crate) fn validate_monarch_draw(
         _ => false,
     };
     if !valid {
-        return Err("Monarch draw changed its native replacement choice".into());
+        return Err(format!("{owner} changed its native replacement choice"));
     }
     Ok(())
 }
@@ -314,6 +432,8 @@ pub(crate) fn finish_jace_or_hullbreacher(
             && !crate::game_outcome_protection_v1::cannot_lose(state, opponent)
         {
             pending.frames.clear();
+            abandon_coveted_jewel_draws(state, &pending.ctx);
+            crate::eternal_vintage_v1::paradoxical_outcome_v1::abandon(state, &pending.ctx);
         }
     } else {
         event::propose_and_commit(state, ProposedEvent::draw(player));

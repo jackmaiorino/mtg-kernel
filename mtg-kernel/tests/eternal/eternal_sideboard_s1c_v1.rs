@@ -613,6 +613,139 @@ fn hullbreacher_and_dredge_compete_for_the_monarchs_draw() {
 }
 
 #[test]
+fn hullbreacher_and_dredge_compete_for_bauble_upkeep_draws_both_seats() {
+    use mtg_kernel::effect::{EffectTargetSelectionPurpose, PendingEffectChoice};
+
+    for actor in [P0, P1] {
+        for name in ["Mishra's Bauble", "Urza's Bauble"] {
+            let opponent = actor.opponent();
+            let mut state = plains();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let bauble = put(&mut state, actor, name, Zone::Hand);
+            let hull = put(&mut state, opponent, "Hullbreacher", Zone::Hand);
+            let hidden = put(&mut state, opponent, "Lightning Bolt", Zone::Hand);
+            let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
+            cast(&mut state, bauble, &[]);
+            settled(&mut state);
+            let bauble_generation = state.objects.get(bauble).zone_change_count;
+            assert_eq!(zone(&state, bauble), Zone::Battlefield);
+            act(&mut state, Action::Pass);
+            assert!(
+                matches!(next(&mut state), Decision::CastSpellOrPass { player, .. }
+                if player == opponent)
+            );
+            pool(&mut state, opponent, &[ManaColor::U], 2);
+            cast(&mut state, hull, &[]);
+            settled(&mut state);
+            assert_eq!(zone(&state, hull), Zone::Battlefield);
+            assert_eq!(state.players[opponent.index()].mana_pool, [0; 6]);
+
+            let top = state.players[opponent.index()].library[0];
+            activate(&mut state, bauble, 0, &[Target::Player(opponent)]);
+            settled(&mut state);
+            assert_eq!(zone(&state, bauble), Zone::Graveyard);
+            let delayed = &state.eternal_v1.as_ref().unwrap().upkeep_draws;
+            assert_eq!(delayed.len(), 1);
+            assert_eq!(delayed[0].controller, actor);
+            assert_eq!(delayed[0].source.source, bauble);
+            assert_eq!(delayed[0].source.zone_change_count, bauble_generation);
+            if name == "Mishra's Bauble" {
+                assert!(state
+                    .known_library_cards(actor, opponent)
+                    .iter()
+                    .any(|entry| { entry.position == 0 && entry.object == top }));
+            } else {
+                assert!(state
+                    .known_hand_cards(actor, opponent)
+                    .iter()
+                    .any(|entry| entry.object == hidden));
+            }
+            assert!(named(&state, opponent, "Treasure Token").is_empty());
+            let library = state.players[actor.index()].library.clone();
+            pass_until(&mut state, |state| {
+                state.active_player == opponent && state.step == Step::Upkeep
+            });
+            let prompt = settle(&mut state).expect("the Bauble's actual delayed draw");
+            assert!(matches!(
+                &prompt,
+                Decision::ChooseEffectTargets {
+                    player, source, min_targets: 0, max_targets: 1, legal_targets, can_finish: true, ..
+                } if *player == actor && *source == bauble && legal_targets.as_slice() == [Target::Object(thug)]
+            ));
+            let suspended = state.engine.pending_effect.as_ref().unwrap();
+            assert_eq!(suspended.resolving_item.controller, actor);
+            assert_eq!(
+                suspended
+                    .resolving_item
+                    .v4
+                    .ability_source_contract
+                    .unwrap()
+                    .zone_change_count,
+                bauble_generation
+            );
+            assert!(named(&state, opponent, "Treasure Token").is_empty());
+            assert_eq!(state.players[actor.index()].library, library);
+
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(prompt, next(&mut restored));
+            let mut forged = restored.clone();
+            let Some(PendingEffectChoice::SelectTargets {
+                player,
+                purpose: EffectTargetSelectionPurpose::EternalV1 { choice },
+                ..
+            }) = forged
+                .engine
+                .pending_effect
+                .as_mut()
+                .unwrap()
+                .choice
+                .as_mut()
+            else {
+                panic!("the native Bauble draw must own an Eternal choice");
+            };
+            *player = opponent;
+            choice.player = opponent;
+            assert_eq!(
+                mtg_kernel::effect::validate_pending_effect_choice(&forged).unwrap_err(),
+                "Bauble draw changed its native replacement choice",
+            );
+            let before = forged.state_hash();
+            assert!(engine::step(&mut forged, Action::FinishEffectSelection).is_err());
+            assert_eq!(forged.state_hash(), before);
+
+            let mut stale = restored.clone();
+            stale.objects.get_mut(thug).zone_change_count += 1;
+            assert!(mtg_kernel::effect::validate_pending_effect_choice(&stale).is_err());
+
+            act(&mut restored, Action::FinishEffectSelection);
+            settled(&mut restored);
+            assert_eq!(named(&restored, opponent, "Treasure Token").len(), 1);
+            assert_eq!(zone(&restored, thug), Zone::Graveyard);
+            assert_eq!(restored.players[actor.index()].library, library);
+            assert_eq!(restored.players[actor.index()].draws_this_turn, 0);
+
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+            let mut answered: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut answered] {
+                settled(branch);
+                assert_eq!(zone(branch, thug), Zone::Hand);
+                assert!(library[..4]
+                    .iter()
+                    .all(|&card| zone(branch, card) == Zone::Graveyard));
+                assert_eq!(branch.players[actor.index()].library, library[4..]);
+                assert_eq!(branch.players[actor.index()].draws_this_turn, 0);
+                assert!(named(branch, opponent, "Treasure Token").is_empty());
+                assert_eq!(branch.step, Step::Upkeep);
+            }
+            assert_eq!(state.state_hash(), answered.state_hash());
+        }
+    }
+}
+
+#[test]
 fn dredging_the_turn_based_draw_exempts_only_the_first_actual_draw() {
     for actor in [P0, P1] {
         let opponent = actor.opponent();

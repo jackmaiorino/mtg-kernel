@@ -1149,6 +1149,34 @@ pub(crate) fn drive(
         EternalOpV1::P1aV1(op) => {
             crate::eternal_premodern_p1a_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::DelayedUpkeepDrawV1 => crate::eternal_vintage_e7b_v1::dredge::drive_draws(
+            state,
+            continuation,
+            PlayerRef::Controller,
+            1,
+            path,
+        ),
+        EternalOpV1::VintageV1(
+            crate::eternal_vintage_v1::VintageOpV1::CovetedJewelChangesHandsV1,
+        ) => {
+            crate::eternal_vintage_v1::begin_coveted_jewel_draws(state, continuation, &path)?;
+            Ok(false)
+        }
+        EternalOpV1::VintageV1(crate::eternal_vintage_v1::VintageOpV1::ParadoxicalOutcomeV1) => {
+            crate::eternal_vintage_v1::paradoxical_outcome_v1::begin(state, continuation, &path)?;
+            Ok(false)
+        }
+        EternalOpV1::VintageV1(
+            crate::eternal_vintage_v1::VintageOpV1::ParadoxicalOutcomeDrawCompletedV1 { ordinal },
+        ) => {
+            crate::eternal_vintage_v1::paradoxical_outcome_v1::complete(
+                state,
+                continuation,
+                *ordinal,
+                &path,
+            )?;
+            Ok(false)
+        }
         EternalOpV1::P2bV1(op) => {
             crate::eternal_premodern_p2b_v1::drive(state, continuation, op, path)
         }
