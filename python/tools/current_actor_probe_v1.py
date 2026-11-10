@@ -169,7 +169,10 @@ def require_choice(path, binary, manifest):
         raise ValueError("inventory must cover Jack, HaleysPC and RunPod")
     now = datetime.now(timezone.utc)
     for host, status in inventory.items():
-        age = (now - datetime.fromisoformat(status["checked_at"])).total_seconds()
+        checked_at = datetime.fromisoformat(status["checked_at"])
+        if checked_at.tzinfo is None:
+            raise ValueError(f"refresh placement evidence for {host}: checked_at needs a UTC offset")
+        age = (now - checked_at).total_seconds()
         if not 0 <= age <= 86400 or type(status["eligible"]) is not bool or not status["reason"]:
             raise ValueError(f"refresh placement evidence for {host}")
         checked(status["evidence"])
@@ -221,7 +224,9 @@ def require_choice(path, binary, manifest):
     for host, status in inventory.items():
         if status["eligible"] and not any(c["host"] == host for c in candidates):
             raise ValueError(f"eligible host has no measured completed-work rate: {host}")
-    chosen = next(c for c in candidates if c["id"] == plan["selected"])
+    chosen = next((c for c in candidates if c["id"] == plan["selected"]), None)
+    if chosen is None:
+        raise ValueError("selected allocation is not a qualified candidate")
     if chosen["projected_seconds"] != min(c["projected_seconds"] for c in candidates):
         raise ValueError("chosen placement is slower than a qualified alternative")
     if chosen["hostname"].casefold() != platform.node().casefold():
@@ -279,7 +284,13 @@ def execute(args):
         with log.open("x", encoding="utf-8") as stream:
             stream.write((error or "guard ended before native log creation") + "\n")
     elapsed = time.monotonic()-started
-    native_seconds = read(report)["seconds"] if report.exists() else None
+    native_seconds = None
+    if report.exists():
+        # A run killed while writing its report still gets a receipt.
+        try:
+            native_seconds = read(report)["seconds"]
+        except (OSError, ValueError, KeyError, TypeError) as exception:
+            error = error or f"unreadable native report: {exception}"
     admission_seconds = admitted_at-started if admitted_at is not None else None
     receipt = dict(schema="current-actor-probe-execution/v1", host=platform.node(), binary=binary, manifest=manifest,
                    workers=workers, count=count, seconds=elapsed, exit_code=code, error=error, allocation=allocation,
