@@ -593,6 +593,21 @@ impl PolicySpecV1 {
         self.uses_closed_list_v2() || self.uses_closed_list_v3()
     }
 
+    pub fn uses_full_pool_closed_list_v1(&self) -> bool {
+        matches!(
+            self,
+            Self::Pimc {
+                world: WorldModeV1::FullPoolClosedListV1,
+                ..
+            }
+        )
+    }
+
+    /// Policies whose match output keeps search counts and replay identity.
+    pub fn records_search_v1(&self) -> bool {
+        self.uses_versioned_closed_list() || self.uses_full_pool_closed_list_v1()
+    }
+
     /// Keep the sealed FullPool policy and raw match policies on their own sessions.
     pub fn validate_full_pool_session_v1(&self, session: SessionKindV1) -> Result<(), String> {
         match (session, self) {
