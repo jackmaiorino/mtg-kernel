@@ -48,6 +48,13 @@ pub struct ObjectSelectionRuleV1 {
     pub action: ObjectSelectionActionV1,
 }
 
+pub(crate) fn metamorph_copy_candidates(
+    state: &GameState,
+    player: PlayerId,
+) -> Result<Vec<EffectObjectBinding>, String> {
+    candidates(state, player, crate::eternal_vintage_v1::metamorph_copy_rule(), None)
+}
+
 fn candidates(
     state: &GameState,
     player: PlayerId,

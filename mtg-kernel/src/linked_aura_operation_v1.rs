@@ -87,6 +87,10 @@ pub enum GeneralAnswerV36 {
         group: Option<u16>,
         index: u16,
     },
+    ReanimateMetamorphV1 {
+        choice: Box<mage_entry::ReanimateCopyChoiceV1>,
+        copied: Option<crate::state::AbilitySourceContractV4>,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GeneralChoiceV36 {
@@ -113,6 +117,10 @@ pub enum GeneralChoiceV36 {
     MeddlingMageV1 {
         choice: Box<mage_entry::ChoiceV1>,
         group: Option<u16>,
+    },
+    ReanimateMetamorphV1 {
+        choice: Box<mage_entry::ReanimateCopyChoiceV1>,
+        original_sha256: String,
     },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -771,6 +779,7 @@ fn potential_operation(state: &GameState) -> bool {
         return true;
     }
     crate::effect::needs_electroduplicate_entry_owner_v1(state)
+        || state.stack.last().is_some_and(|item| mage_entry::reanimate_metamorph_waiting(state, item))
         || ((!state.stack.is_empty() || state.engine.pending_effect.is_some())
             && mage_entry::potentially_enters(state))
         || crate::drake_hatcher_v1::custody::relevant(state)
@@ -1071,7 +1080,9 @@ fn replay_general_current_slots_v69(
                     operation_history_index,
                     used_banner: runner.used_banner,
                 }));
-        } else if let Some(operation_history_index) = runner.mage_start {
+        } else if runner.mage_start.is_some()
+            || matches!(choice, GeneralChoiceV36::ReanimateMetamorphV1 { .. })
+        {
             checkpoint
                 .engine
                 .linked_aura_operation_v1
@@ -1080,7 +1091,7 @@ fn replay_general_current_slots_v69(
                 operation: operation.clone(),
                 answers: answers.to_vec(),
                 choice,
-                operation_history_index,
+                operation_history_index: runner.mage_start,
                 used_banner: runner.used_banner,
             }));
         } else if runner.used_banner {
@@ -1432,25 +1443,29 @@ pub fn validate(state: &GameState) -> Result<(), String> {
         .linked_aura_operation_v1
         .pending_meddling_mage_v1
     {
-        let started = mage_entry::journal(state, pending.operation_history_index);
-        let names_v2 = matches!(
-            started,
-            Some(mage_entry::JournalV1::StartedWithNamesV2 { .. })
-        );
-        match started {
-            Some(
-                mage_entry::JournalV1::Started {
-                    operation,
-                    original_sha256,
-                }
-                | mage_entry::JournalV1::StartedWithNamesV2 {
-                    operation,
-                    original_sha256,
-                },
-            ) if **operation == pending.operation
-                && origin_digest_matches(original_sha256, &pending.original) => {}
-            _ => return Err("Meddling Mage checkpoint lost its original operation".into()),
-        }
+        let names_v2 = if let GeneralChoiceV36::ReanimateMetamorphV1 { original_sha256, .. } =
+            &pending.choice
+        {
+            if pending.operation_history_index.is_some()
+                || !origin_digest_matches(original_sha256, &pending.original)
+            {
+                return Err("Metamorph copy checkpoint changed its original operation".into());
+            }
+            true
+        } else {
+            let started = pending.operation_history_index
+                .and_then(|at| mage_entry::journal(state, at));
+            let names_v2 = matches!(started, Some(mage_entry::JournalV1::StartedWithNamesV2 { .. }));
+            match started {
+                Some(
+                    mage_entry::JournalV1::Started { operation, original_sha256 }
+                    | mage_entry::JournalV1::StartedWithNamesV2 { operation, original_sha256 },
+                ) if **operation == pending.operation
+                    && origin_digest_matches(original_sha256, &pending.original) => {}
+                _ => return Err("Meddling Mage checkpoint lost its original operation".into()),
+            }
+            names_v2
+        };
         return as_recorded(|| {
             let (expected, _) = replay_general_current_slots_v69(
                 &pending.original,
@@ -1644,7 +1659,8 @@ fn decision(state: &GameState) -> Result<Decision, String> {
             GeneralChoiceV36::TokenEquipmentV48 { .. }
             | GeneralChoiceV36::FakeAuraV50 { .. }
             | GeneralChoiceV36::KinshipV1 { .. }
-            | GeneralChoiceV36::MeddlingMageV1 { .. } => {
+            | GeneralChoiceV36::MeddlingMageV1 { .. }
+            | GeneralChoiceV36::ReanimateMetamorphV1 { .. } => {
                 return Err("successor choice cannot use frozen Banner checkpoint".into())
             }
             GeneralChoiceV36::Color { choice, .. } => Decision::ChooseEntryColorV36 {
@@ -2207,6 +2223,81 @@ pub(crate) fn metamorph_mage_copy(
     .then_some(copy)
 }
 
+fn mage_checkpoint_world(state: &GameState, runner: &RunnerV1) -> GameState {
+    let mut snapshot = state.clone();
+    if let Some(original) = runner.original_stack.last() {
+        let absent = !snapshot
+            .stack
+            .iter()
+            .any(|item| item.v4.stack_item_id == original.v4.stack_item_id);
+        let departed = snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|
+            matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Stack, .. } if *object == original.source));
+        if absent && !departed {
+            snapshot.stack.insert(
+                runner
+                    .original_stack
+                    .len()
+                    .saturating_sub(1)
+                    .min(snapshot.stack.len()),
+                original.clone(),
+            );
+        }
+    }
+    snapshot.engine.linked_aura_operation_v1 = StateV1::default();
+    snapshot
+}
+
+pub(crate) fn prepare_reanimated_metamorph(
+    state: &mut GameState,
+    ctx: &crate::effect::ExecCtx,
+    object: crate::ids::ObjectId,
+) -> Result<bool, String> {
+    if !mage_entry::physical_graveyard_metamorph(state, object) || ctx.stack_item_id.is_none() {
+        return Ok(true);
+    }
+    let ProposedEvent::ZoneChange(proposal) =
+        ProposedEvent::zone_change_to_battlefield_under_controller(object, ctx.controller)
+    else {
+        unreachable!("Reanimate proposes a zone change");
+    };
+    if crate::eternal_legacy_e7a_v1::prevents_zone_change(state, &proposal) {
+        return Ok(true);
+    }
+    let runner = state.engine.linked_aura_operation_v1.runtime.as_ref()
+        .ok_or("noncast Metamorph has no actual Reanimate replay owner")?;
+    if !matches!(runner.operation, OperationV1::Advance | OperationV1::Step(_))
+        || state.stack.iter().any(|row| Some(row.v4.stack_item_id) == ctx.stack_item_id)
+    {
+        return Err("noncast Metamorph requires the actual resolving Reanimate".into());
+    }
+    let parent = runner.original_stack.last()
+        .ok_or("noncast Metamorph lost its original Reanimate stack row")?;
+    let Some(choice) = mage_entry::ReanimateCopyChoiceV1::capture(state, ctx, object, parent)? else {
+        return Ok(true);
+    };
+    if let Some(answer) = runner.answers.get(runner.cursor) {
+        let GeneralAnswerV36::ReanimateMetamorphV1 { choice: expected, copied } = answer else {
+            return Err("Metamorph replay changed its confirmed copy choice kind".into());
+        };
+        if **expected != choice || copied.is_some_and(|source| !choice.candidates.contains(&source)) {
+            return Err("Metamorph replay changed its confirmed copy candidate".into());
+        }
+        let copy = copied.map(|copied| choice.copy(copied));
+        state.engine.linked_aura_operation_v1.runtime.as_mut().unwrap().cursor += 1;
+        if let Some(copy) = copy {
+            stage_metamorph_mage_copy(state, copy)?;
+        }
+        return Ok(true);
+    }
+    let snapshot = mage_checkpoint_world(state, runner);
+    let original_sha256 = runner.original_sha256.clone();
+    state.engine.linked_aura_operation_v1.runtime.as_mut().unwrap().checkpoint = Some((
+        Box::new(snapshot),
+        GeneralChoiceV36::ReanimateMetamorphV1 { choice: Box::new(choice), original_sha256 },
+    ));
+    Ok(false)
+}
+
 fn mage_answer(
     state: &mut GameState,
     choice: &mage_entry::ChoiceV1,
@@ -2243,26 +2334,7 @@ fn mage_answer(
             .cursor += 1;
         return Ok(Some(index));
     }
-    let mut snapshot = state.clone();
-    if let Some(original) = runner.original_stack.last() {
-        let absent = !snapshot
-            .stack
-            .iter()
-            .any(|item| item.v4.stack_item_id == original.v4.stack_item_id);
-        let departed = snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|
-            matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Stack, .. } if *object == original.source));
-        if absent && !departed {
-            snapshot.stack.insert(
-                runner
-                    .original_stack
-                    .len()
-                    .saturating_sub(1)
-                    .min(snapshot.stack.len()),
-                original.clone(),
-            );
-        }
-    }
-    snapshot.engine.linked_aura_operation_v1 = StateV1::default();
+    let snapshot = mage_checkpoint_world(state, runner);
     state
         .engine
         .linked_aura_operation_v1
@@ -2837,6 +2909,15 @@ pub(crate) fn commit_entry_color(
 fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String> {
     match choice {
         GeneralChoiceV36::MeddlingMageV1 { choice, group } => mage_entry::decision(choice, *group),
+        GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. } => Ok(Decision::ChooseEffectTargets {
+            player: choice.producer.controller,
+            source: choice.physical.source,
+            selected_count: 0,
+            min_targets: 0,
+            max_targets: 1,
+            can_finish: true,
+            legal_targets: choice.candidates.iter().map(|source| Target::Object(source.source)).collect(),
+        }),
         GeneralChoiceV36::KinshipV1 { choice, .. } => Ok(Decision::ChooseEntryCreatureTypeV1 {
             player: choice.controller,
             entry_ordinal: choice.ordinal,
@@ -2893,6 +2974,14 @@ fn answer_equipment_checkpoint_v48(
     action: Action,
 ) -> Result<GeneralAnswerV36, String> {
     match (choice, action) {
+        (GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. }, Action::FinishEffectSelection) => {
+            Ok(GeneralAnswerV36::ReanimateMetamorphV1 { choice: choice.clone(), copied: None })
+        }
+        (GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. }, Action::ChooseEffectTarget(Target::Object(object))) => {
+            let source = choice.candidates.iter().find(|source| source.source == object)
+                .ok_or("Metamorph copy answer is outside its original menu")?;
+            Ok(GeneralAnswerV36::ReanimateMetamorphV1 { choice: choice.clone(), copied: Some(*source) })
+        }
         (GeneralChoiceV36::MeddlingMageV1 { choice, group }, Action::ChooseEffectOption(index))
             if mage_entry::valid_index(choice, *group, index) =>
         {

@@ -7326,7 +7326,7 @@ fn materialize_zone_change_v1(
     });
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
-    let metamorph_mage_copy = (from_zone == Zone::Stack && to_zone == Zone::Battlefield)
+    let metamorph_mage_copy = (to_zone == Zone::Battlefield)
         .then(|| crate::linked_aura_operation_v1::metamorph_mage_copy(state, id))
         .flatten();
     let entry_definition =

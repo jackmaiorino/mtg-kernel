@@ -993,6 +993,7 @@ pub use inspiration_resolution_v1::{
     InspirationDepartureV1, InspirationInputKindV1, InspirationInputV1, InspirationOperationV1,
     InspirationResolutionReceiptV1,
 };
+pub(crate) use standard_selection_v1::metamorph_copy_candidates;
 pub use standard_selection_v1::{
     ObjectSelectionActionV1, ObjectSelectionFilterV1, ObjectSelectionRuleV1,
 };

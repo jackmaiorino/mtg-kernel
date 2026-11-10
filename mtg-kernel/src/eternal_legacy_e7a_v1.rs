@@ -1403,6 +1403,14 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             let life = i32::from(crate::engine::object_mana_value(state, card));
+            match crate::linked_aura_operation_v1::prepare_reanimated_metamorph(state, ctx, card) {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(_) => {
+                    halt(state, ctx.source);
+                    return;
+                }
+            }
             put_onto_battlefield(state, card, ctx.controller);
             if life > 0 {
                 crate::effect::execute(
