@@ -1740,6 +1740,16 @@ pub fn build_deck_pair_state_with_starting_player_v1(
     // environment that callers might otherwise retain.
     preflight_fully_supported_deck(p0_deck)?;
     preflight_fully_supported_deck(p1_deck)?;
+    Ok(deal_validated_deck_pair_v1(seed, [p0_deck, p1_deck], starting_player))
+}
+
+/// Shared native shuffle and alternating opening deal. The owning entry
+/// point admits both complete decks before calling this function.
+pub(crate) fn deal_validated_deck_pair_v1(
+    seed: u64,
+    [p0_deck, p1_deck]: [&[u16]; 2],
+    starting_player: PlayerId,
+) -> GameState {
     let mut shuffle_rng = SplitMix64::seed(seed);
     let lib0 = shuffled(p0_deck, &mut shuffle_rng);
     let lib1 = shuffled(p1_deck, &mut shuffle_rng);
@@ -1754,7 +1764,7 @@ pub fn build_deck_pair_state_with_starting_player_v1(
         event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P0));
         event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P1));
     }
-    Ok(state)
+    state
 }
 
 pub fn build_burn_mirror_state(seed: u64) -> GameState {

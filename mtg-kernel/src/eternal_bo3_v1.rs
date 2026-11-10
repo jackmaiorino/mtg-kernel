@@ -5,10 +5,10 @@
 //! registrations and its frozen sideboard policy (`crate::sideboard`,
 //! `crate::bo3_session`) are separate and unchanged.
 //!
-//! Each game is an ordinary custom-deck session (`limited_session_v1`). That
-//! session seats its first deck as the starting player
-//! (`rl::build_deck_pair_state`), so a prepared game lists the starting
-//! player's deck first and maps session seats back to match players.
+//! Ordinary games use the custom-deck session (`limited_session_v1`). The
+//! explicit native opening profile returns a GameState for engine commands.
+//! Both game paths seat the starting player first and use the prepared game
+//! to map session seats back to match players.
 
 use crate::bo3_match::{
     BestOfThreeMatchStateV1, GameOutcomeV1, GameStartV1, MatchStateErrorV1, MatchTransitionV1,
@@ -17,6 +17,7 @@ use crate::bo3_match::{
 use crate::card_def::{card_id_by_name, Supertype, CARD_DEFS};
 use crate::ids::PlayerId;
 use crate::limited_session_v1::{CustomCardCountV1, CustomDeckV1, MAX_CUSTOM_DECK_CARDS_V1};
+use crate::state::GameState;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
@@ -120,6 +121,7 @@ pub struct EternalRegisteredDeckV1 {
     deck_id: String,
     registered: EternalConfigurationV1,
     companion: Option<u16>,
+    native_opening: bool,
 }
 
 impl EternalRegisteredDeckV1 {
@@ -134,7 +136,35 @@ impl EternalRegisteredDeckV1 {
         sideboard: Vec<u16>,
         companion: Option<u16>,
     ) -> Result<Self, EternalBo3ErrorV1> {
-        let deck_id = deck_id.into();
+        Self::register(format, deck_id.into(), mainboard, sideboard, companion, false)
+    }
+
+    /// Explicit native pregame profile. In addition to Full definitions, it
+    /// admits the three executable Eternal opening cards while their ordinary
+    /// catalog admission remains separate. Both match registrations must opt in.
+    pub fn new_with_native_opening_v1(
+        format: EternalFormatV1,
+        deck_id: impl Into<String>,
+        mainboard: Vec<u16>,
+        sideboard: Vec<u16>,
+        companion: Option<u16>,
+    ) -> Result<Self, EternalBo3ErrorV1> {
+        if !cfg!(feature = "eternal-fixtures") {
+            return Err(EternalBo3ErrorV1::NativeOpeningSetup {
+                reason: "the native opening profile requires the Eternal catalog".into(),
+            });
+        }
+        Self::register(format, deck_id.into(), mainboard, sideboard, companion, true)
+    }
+
+    fn register(
+        format: EternalFormatV1,
+        deck_id: String,
+        mainboard: Vec<u16>,
+        sideboard: Vec<u16>,
+        companion: Option<u16>,
+        native_opening: bool,
+    ) -> Result<Self, EternalBo3ErrorV1> {
         if deck_id.is_empty() {
             return Err(EternalBo3ErrorV1::EmptyDeckId);
         }
@@ -144,7 +174,15 @@ impl EternalRegisteredDeckV1 {
             let card = CARD_DEFS
                 .get(usize::from(id))
                 .ok_or(EternalBo3ErrorV1::UnknownCardId { card_id: id })?;
-            if card.is_token || !card.has_full_support() {
+            if native_opening && crate::leyline_axe_v1::definition(id) {
+                return Err(EternalBo3ErrorV1::NativeOpeningSetup {
+                    reason: "Leyline Axe belongs to its own opening profile".into(),
+                });
+            }
+            let opening_card = native_opening
+                && card.is_executable()
+                && matches!(card.name, "Leyline of the Void" | "Leyline of Sanctity" | "Chancellor of the Annex");
+            if card.is_token || !(card.has_full_support() || opening_card) {
                 return Err(EternalBo3ErrorV1::UnsupportedCard {
                     name: card.name.to_owned(),
                 });
@@ -182,6 +220,7 @@ impl EternalRegisteredDeckV1 {
             deck_id,
             registered,
             companion,
+            native_opening,
         })
     }
 
@@ -360,6 +399,9 @@ impl EternalBestOfThreeMatchV1 {
         if decks[0].format != decks[1].format {
             return Err(EternalBo3ErrorV1::FormatMismatch);
         }
+        if decks[0].native_opening != decks[1].native_opening {
+            return Err(EternalBo3ErrorV1::OpeningProfileMismatch);
+        }
         Ok(Self {
             decks,
             state: BestOfThreeMatchStateV1::new_v1(game_one_chooser)?,
@@ -383,18 +425,64 @@ impl EternalBestOfThreeMatchV1 {
         choice: PlayDrawChoiceV1,
         configurations: [EternalConfigurationV1; 2],
     ) -> Result<EternalPreparedGameV1, EternalBo3ErrorV1> {
+        if self.decks[0].native_opening {
+            return Err(EternalBo3ErrorV1::OpeningProfileMismatch);
+        }
+        let (next, game) = self.prepare_game(chooser, choice, configurations)?;
+        self.state = next;
+        Ok(game)
+    }
+
+    /// Start a game under the two registrations' native opening profile.
+    /// Use `engine::advance_until_decision` and `engine::step` on the returned
+    /// state for London mulligans, the kept-hand choices and the regular game.
+    /// The prepared game maps native seat P0 to the match's starting player.
+    pub fn start_game_with_native_opening_v1(
+        &mut self,
+        chooser: PlayerId,
+        choice: PlayDrawChoiceV1,
+        configurations: [EternalConfigurationV1; 2],
+        seed: u64,
+    ) -> Result<(EternalPreparedGameV1, GameState), EternalBo3ErrorV1> {
+        if !self.decks[0].native_opening {
+            return Err(EternalBo3ErrorV1::OpeningProfileMismatch);
+        }
+        let (next, game) = self.prepare_game(chooser, choice, configurations)?;
+        let decks = [0, 1].map(|seat| game.configuration(game.player_in_seat(seat)).mainboard());
+        let mut state = crate::rl::deal_validated_deck_pair_v1(seed, decks, PlayerId::P0);
+        crate::combat_damage_v1::enable_foundations_combat_v1(&mut state)
+            .and_then(|()| crate::eternal_opening_v1::enable_eternal_opening_v1(&mut state))
+            .map_err(|reason| EternalBo3ErrorV1::NativeOpeningSetup { reason })?;
+        // Keep the native deal and London ownership ahead of companion exile.
+        let companions = [0, 1].map(|seat| {
+            game.game_deck(game.player_in_seat(seat)).deck.companion.as_deref().map(|name| {
+                card_id_by_name(name).expect("prepared companion has a registered definition")
+            })
+        });
+        crate::eternal_lurrus_v1::add_companions(&mut state, companions);
+        let outside = [0, 1].map(|seat| game.game_deck(game.player_in_seat(seat)).outside_the_game.clone());
+        crate::eternal_outside_game_v1::set_outside_the_game(&mut state, outside);
+        self.state = next;
+        Ok((game, state))
+    }
+
+    fn prepare_game(
+        &self,
+        chooser: PlayerId,
+        choice: PlayDrawChoiceV1,
+        configurations: [EternalConfigurationV1; 2],
+    ) -> Result<(BestOfThreeMatchStateV1, EternalPreparedGameV1), EternalBo3ErrorV1> {
         let mut next = self.state.clone();
         let start = next.choose_play_draw_v1(chooser, choice)?;
         let game_decks = [
             self.decks[0].game_deck_v1(start.game_index, &configurations[0])?,
             self.decks[1].game_deck_v1(start.game_index, &configurations[1])?,
         ];
-        self.state = next;
-        Ok(EternalPreparedGameV1 {
+        Ok((next, EternalPreparedGameV1 {
             start,
             configurations,
             game_decks,
-        })
+        }))
     }
 
     pub fn record_game_result_v1(
@@ -471,6 +559,8 @@ pub enum EternalBo3ErrorV1 {
     RegisteredCardsChanged { deck_id: String },
     GameOneSideboarded { deck_id: String },
     FormatMismatch,
+    OpeningProfileMismatch,
+    NativeOpeningSetup { reason: String },
     Match(MatchStateErrorV1),
 }
 
@@ -523,6 +613,8 @@ impl fmt::Display for EternalBo3ErrorV1 {
                 write!(f, "game one of {deck_id:?} must use the registered deck")
             }
             Self::FormatMismatch => f.write_str("the two registrations are of different formats"),
+            Self::OpeningProfileMismatch => f.write_str("both registrations and the game start must use the same opening profile"),
+            Self::NativeOpeningSetup { reason } => write!(f, "native opening setup: {reason}"),
             Self::Match(error) => write!(f, "match state: {error}"),
         }
     }
