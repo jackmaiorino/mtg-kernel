@@ -811,7 +811,11 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
             include_live(source);
         }
         if item.kind == StackItemKind::TriggeredAbility {
-            if let Some(source) = item.inline_effect.as_ref().and_then(stacked_delayed_source_link) {
+            if let Some(source) = item
+                .inline_effect
+                .as_ref()
+                .and_then(stacked_delayed_source_link)
+            {
                 include_live(source);
             }
         }
