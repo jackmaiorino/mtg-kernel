@@ -4261,8 +4261,9 @@ fn commit_with_entry_batch_and_source_color(
             .as_ref()
             .is_some_and(|input| !input.seasons.is_empty());
     let metamorph_mage_copy = match &event {
-        ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Battlefield =>
-            crate::linked_aura_operation_v1::metamorph_mage_copy(state, change.object),
+        ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Battlefield => {
+            crate::linked_aura_operation_v1::metamorph_mage_copy(state, change.object)
+        }
         _ => None,
     };
     if let Some(input) = counter_input.as_ref() {
@@ -4682,10 +4683,16 @@ fn commit_with_entry_batch_and_source_color(
             Some(CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Battlefield, .. })
                 if *object == copy.physical.source)
             && crate::eternal_sideboard_s1b_v1::meddling_mage_entry::record_metamorph_copy(
-                state, copy, entry_history_index,
-            ).is_err()
+                state,
+                copy,
+                entry_history_index,
+            )
+            .is_err()
         {
-            state.engine.halted = Some((crate::engine::UnsupportedMechanic::InvalidEffectContinuation, copy.physical.source));
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                copy.physical.source,
+            ));
             return;
         }
     }
@@ -5165,8 +5172,9 @@ impl FinalZonePtPlanV1 {
             }
             let mut entry = characteristics;
             let metamorph_mage_copy = match event {
-                ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Battlefield =>
-                    crate::linked_aura_operation_v1::metamorph_mage_copy(&scene, change.object),
+                ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Battlefield => {
+                    crate::linked_aura_operation_v1::metamorph_mage_copy(&scene, change.object)
+                }
                 _ => None,
             };
             prepare_zone_entry_characteristics_v1(event, &mut entry)?;
@@ -5217,8 +5225,11 @@ impl FinalZonePtPlanV1 {
                     .push(materialized.committed.clone());
                 if let Some(copy) = metamorph_mage_copy {
                     crate::eternal_sideboard_s1b_v1::meddling_mage_entry::record_metamorph_copy(
-                        &mut scene, copy, entry_index,
-                    ).map_err(|_| object)?;
+                        &mut scene,
+                        copy,
+                        entry_index,
+                    )
+                    .map_err(|_| object)?;
                 }
                 crate::linked_aura_operation_v1::commit_entry_color(
                     &mut scene,
@@ -7312,7 +7323,8 @@ fn materialize_zone_change_v1(
     let metamorph_mage_copy = (from_zone == Zone::Stack && to_zone == Zone::Battlefield)
         .then(|| crate::linked_aura_operation_v1::metamorph_mage_copy(state, id))
         .flatten();
-    let entry_definition = metamorph_mage_copy.map_or(state.objects.get(id).card_def, |copy| copy.copied.card_def);
+    let entry_definition =
+        metamorph_mage_copy.map_or(state.objects.get(id).card_def, |copy| copy.copied.card_def);
     let source_face = state.objects.get(id).v4.face_down_v1;
     let source_face_down = source_face.is_some();
     let nine_lives_cast_entry = to_zone == Zone::Battlefield

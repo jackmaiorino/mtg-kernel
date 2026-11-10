@@ -1010,13 +1010,18 @@ pub(crate) fn paid_metamorph_copy_is_suppressed(state: &GameState, ctx: &ExecCtx
     cfg!(feature = "eternal-fixtures")
         && ctx.stack_item_id.is_some()
         && state.objects.try_get(ctx.source).is_some_and(|source| {
-            source.zone == Zone::Stack && source.controller == ctx.controller
+            source.zone == Zone::Stack
+                && source.controller == ctx.controller
                 && source.spell_copy_origin.is_none()
                 && source.v4.face_down_v1.is_none()
-                && source.v4.spell_cast_origin.is_some_and(|origin| origin.finalized_method.is_some())
+                && source
+                    .v4
+                    .spell_cast_origin
+                    .is_some_and(|origin| origin.finalized_method.is_some())
                 && CARD_DEFS[usize::from(source.card_def)].name == "Phyrexian Metamorph"
         })
-        && crate::eternal_legacy_e7a_v1::active_dress_down_timestamp(state, Some(ctx.source)).is_some()
+        && crate::eternal_legacy_e7a_v1::active_dress_down_timestamp(state, Some(ctx.source))
+            .is_some()
 }
 
 /// Retain Metamorph's physical printing before any entry observer sees the
@@ -1037,7 +1042,10 @@ pub(crate) fn retain_mage_copy_on_entry(
         subtype_ids: physical.effective_subtype_ids,
     });
     crate::standard_cards_v1::note_copied_definitions(
-        state, object, host.zone_change_count, &[card_def, copy.copied.card_def],
+        state,
+        object,
+        host.zone_change_count,
+        &[card_def, copy.copied.card_def],
     );
 }
 

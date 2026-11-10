@@ -1267,20 +1267,42 @@ fn meddling_mage_name_precedes_paid_metamorph_copy_entry_both_seats() {
         cast(&mut suppressed, metamorph, &[]);
         settled(&mut suppressed);
         assert_eq!(zone(&suppressed, metamorph), Zone::Graveyard);
-        assert_eq!(suppressed.objects.get(metamorph).card_def, id("Phyrexian Metamorph"));
-        assert!(suppressed.eternal_v1.as_ref().unwrap().vintage.copies.is_empty());
-        assert_eq!(suppressed.eternal_v1.as_ref().unwrap().s1b.mage_names.len(), 1);
+        assert_eq!(
+            suppressed.objects.get(metamorph).card_def,
+            id("Phyrexian Metamorph")
+        );
+        assert!(suppressed
+            .eternal_v1
+            .as_ref()
+            .unwrap()
+            .vintage
+            .copies
+            .is_empty());
+        assert_eq!(
+            suppressed.eternal_v1.as_ref().unwrap().s1b.mage_names.len(),
+            1
+        );
 
         pool(&mut state, actor, &[ManaColor::U], 3);
         cast(&mut state, metamorph, &[]);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, legal_targets, .. })
-            if player == actor && legal_targets.contains(&Target::Object(donor))));
-        act(&mut state, Action::ChooseEffectTarget(Target::Object(donor)));
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 { player, group: None, .. })
-            if player == actor));
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, legal_targets, .. })
+            if player == actor && legal_targets.contains(&Target::Object(donor)))
+        );
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(donor)),
+        );
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseMeddlingMageNameV1 { player, group: None, .. })
+            if player == actor)
+        );
         let physical_generation = state.objects.get(metamorph).zone_change_count;
         assert_eq!(zone(&state, metamorph), Zone::Stack);
-        assert_eq!(state.objects.get(metamorph).card_def, id("Phyrexian Metamorph"));
+        assert_eq!(
+            state.objects.get(metamorph).card_def,
+            id("Phyrexian Metamorph")
+        );
         assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
         assert!(!state.engine.event_history.iter().any(|event| matches!(event,
             CommittedEvent::ZoneChange { object, to: Zone::Battlefield, .. } if *object == metamorph)));
@@ -1291,20 +1313,38 @@ fn meddling_mage_name_precedes_paid_metamorph_copy_entry_both_seats() {
         settled(&mut state);
         assert_eq!(zone(&state, metamorph), Zone::Battlefield);
         assert_eq!(state.objects.get(metamorph).card_def, id("Meddling Mage"));
-        assert_eq!(state.objects.get(metamorph).zone_change_count, physical_generation + 1);
-        assert!(engine::object_has_type(&state, metamorph, CardType::Artifact));
-        assert!(engine::object_has_type(&state, metamorph, CardType::Creature));
+        assert_eq!(
+            state.objects.get(metamorph).zone_change_count,
+            physical_generation + 1
+        );
+        assert!(engine::object_has_type(
+            &state,
+            metamorph,
+            CardType::Artifact
+        ));
+        assert!(engine::object_has_type(
+            &state,
+            metamorph,
+            CardType::Creature
+        ));
         assert!(!state.objects.get(metamorph).v4.is_token);
         assert_eq!(engine::effective_power(&state, metamorph), 2);
 
         let mut forged = serde_json::to_value(&state).unwrap();
         let mut edits = 0;
         for event in forged["engine"]["event_history"].as_array_mut().unwrap() {
-            let Some(journal) = event.get_mut("MeddlingMageEntryV1").and_then(|row| row.get_mut("journal")) else { continue };
+            let Some(journal) = event
+                .get_mut("MeddlingMageEntryV1")
+                .and_then(|row| row.get_mut("journal"))
+            else {
+                continue;
+            };
             let copy = if journal.get("MetamorphCopied").is_some() {
                 journal["MetamorphCopied"].get_mut("copy")
             } else {
-                journal.get_mut("Chosen").and_then(|row| row["choice"].get_mut("metamorph_copy"))
+                journal
+                    .get_mut("Chosen")
+                    .and_then(|row| row["choice"].get_mut("metamorph_copy"))
             };
             if let Some(copy) = copy {
                 let original = copy["stack_item"].as_u64().unwrap();
@@ -1323,7 +1363,10 @@ fn meddling_mage_name_precedes_paid_metamorph_copy_entry_both_seats() {
         cast(&mut state, disenchant, &[Target::Object(metamorph)]);
         settled(&mut state);
         assert_eq!(zone(&state, metamorph), Zone::Graveyard);
-        assert_eq!(state.objects.get(metamorph).card_def, id("Phyrexian Metamorph"));
+        assert_eq!(
+            state.objects.get(metamorph).card_def,
+            id("Phyrexian Metamorph")
+        );
         assert!(state.eternal_v1.as_ref().unwrap().vintage.copies.is_empty());
         assert!(castable(&mut state, bolt));
     }

@@ -2179,7 +2179,11 @@ pub(crate) fn stage_metamorph_mage_copy(
     state: &mut GameState,
     copy: mage_entry::MetamorphCopyV1,
 ) -> Result<(), String> {
-    let runner = state.engine.linked_aura_operation_v1.runtime.as_mut()
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
         .ok_or("Metamorph copy has no native entry replay owner")?;
     if runner.metamorph_mage_copy.is_some() {
         return Err("Metamorph copy already owns a prospective entry".into());
@@ -2192,10 +2196,15 @@ pub(crate) fn metamorph_mage_copy(
     state: &GameState,
     object: crate::ids::ObjectId,
 ) -> Option<mage_entry::MetamorphCopyV1> {
-    let copy = state.engine.linked_aura_operation_v1.runtime.as_ref()?.metamorph_mage_copy?;
+    let copy = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()?
+        .metamorph_mage_copy?;
     (copy.physical.source == object
         && copy.physical == crate::state::AbilitySourceContractV4::capture(state, object))
-        .then_some(copy)
+    .then_some(copy)
 }
 
 fn mage_answer(
