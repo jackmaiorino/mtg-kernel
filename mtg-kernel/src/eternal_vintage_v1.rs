@@ -833,7 +833,9 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         VintageOpV1::ParadoxicalOutcomeV1 => {
-            let count = paradoxical_outcome_v1::return_targets(state, ctx).arrivals.len();
+            let count = paradoxical_outcome_v1::return_targets(state, ctx)
+                .arrivals
+                .len();
             if count > 0 {
                 crate::effect::execute(
                     &EffectOp::DrawCards {

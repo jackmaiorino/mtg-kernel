@@ -757,7 +757,12 @@ fn paradoxical_outcome_draw_replacements_follow_actual_returns_both_seats() {
         pool(&mut state, opponent, &[ManaColor::W], 1);
 
         act(&mut state, Action::CastSpell(outcome));
-        let Decision::ChooseTargets { legal_targets, can_finish: true, .. } = next(&mut state) else {
+        let Decision::ChooseTargets {
+            legal_targets,
+            can_finish: true,
+            ..
+        } = next(&mut state)
+        else {
             panic!("expected Outcome's actual optional target menu");
         };
         for eligible in [ring, mox, borrowed, departed] {
@@ -773,7 +778,9 @@ fn paradoxical_outcome_draw_replacements_follow_actual_returns_both_seats() {
             act(&mut state, Action::FinishEffectSelection);
         }
         assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
-        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == drawer));
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == drawer)
+        );
         act(&mut state, Action::Pass);
         cast(&mut state, disenchant, &[Target::Object(departed)]);
 
@@ -789,7 +796,10 @@ fn paradoxical_outcome_draw_replacements_follow_actual_returns_both_seats() {
 
         let mut forged = serde_json::to_value(&state).unwrap();
         forged["paradoxical_outcome_draw_progress_v1"]["returned"]["arrivals"]
-            .as_array_mut().unwrap().pop().unwrap();
+            .as_array_mut()
+            .unwrap()
+            .pop()
+            .unwrap();
         let forged: GameState = serde_json::from_value(forged).unwrap();
         assert_eq!(
             mtg_kernel::effect::validate_pending_effect_choice(&forged).unwrap_err(),
@@ -826,8 +836,10 @@ fn paradoxical_outcome_draw_replacements_follow_actual_returns_both_seats() {
             assert_eq!(continued.players[drawer.index()].library, library[4..]);
             assert_eq!(continued.players[drawer.index()].draws_this_turn, 0);
             assert_eq!(treasure_count(continued, opponent), 1);
-            assert!(serde_json::to_value(&*continued).unwrap()
-                .get("paradoxical_outcome_draw_progress_v1").is_none());
+            assert!(serde_json::to_value(&*continued)
+                .unwrap()
+                .get("paradoxical_outcome_draw_progress_v1")
+                .is_none());
         }
         assert_eq!(state.state_hash(), accepted.state_hash());
     }
@@ -852,7 +864,10 @@ fn paradoxical_outcome_with_no_returns_to_its_controller_never_draws_both_seats(
             if return_borrowed {
                 choose_target(&mut state, Target::Object(borrowed));
             }
-            if let Decision::ChooseTargets { can_finish: true, .. } = next(&mut state) {
+            if let Decision::ChooseTargets {
+                can_finish: true, ..
+            } = next(&mut state)
+            {
                 act(&mut state, Action::FinishEffectSelection);
             }
             settled(&mut state);
@@ -860,10 +875,15 @@ fn paradoxical_outcome_with_no_returns_to_its_controller_never_draws_both_seats(
             assert_eq!(state.objects.get(thug).zone, Zone::Graveyard);
             assert!(state.players[drawer.index()].hand.is_empty());
             assert_eq!(state.players[drawer.index()].library, library);
-            assert_eq!(state.players[opponent.index()].hand.contains(&borrowed), return_borrowed);
+            assert_eq!(
+                state.players[opponent.index()].hand.contains(&borrowed),
+                return_borrowed
+            );
             assert_eq!(treasure_count(&state, opponent), 0);
-            assert!(serde_json::to_value(&state).unwrap()
-                .get("paradoxical_outcome_draw_progress_v1").is_none());
+            assert!(serde_json::to_value(&state)
+                .unwrap()
+                .get("paradoxical_outcome_draw_progress_v1")
+                .is_none());
         }
     }
 }

@@ -276,7 +276,8 @@ pub(crate) fn validate_coveted_jewel_draw(
     {
         return Ok(());
     }
-    let (path, remaining) = draw_stage(pending).ok_or("Coveted Jewel lost its original draw stage")?;
+    let (path, remaining) =
+        draw_stage(pending).ok_or("Coveted Jewel lost its original draw stage")?;
     if !coveted_jewel_draw_stage_matches(state, &pending.ctx, path, remaining) {
         return Err("Coveted Jewel draw changed its progress or remaining effects".into());
     }

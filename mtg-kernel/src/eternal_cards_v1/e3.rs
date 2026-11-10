@@ -1170,7 +1170,10 @@ pub(crate) fn drive(
             crate::eternal_vintage_v1::VintageOpV1::ParadoxicalOutcomeDrawCompletedV1 { ordinal },
         ) => {
             crate::eternal_vintage_v1::paradoxical_outcome_v1::complete(
-                state, continuation, *ordinal, &path,
+                state,
+                continuation,
+                *ordinal,
+                &path,
             )?;
             Ok(false)
         }
