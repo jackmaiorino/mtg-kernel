@@ -149,7 +149,7 @@ struct KinshipPlanV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MagePlanV1 {
     choice: mage_entry::ChoiceV1,
-    named: Option<(u32, u16)>,
+    named: Option<(u32, mage_entry::NameV1)>,
     committed: bool,
 }
 
@@ -185,6 +185,8 @@ struct RunnerV1 {
     mage_start: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     mage_plans: Vec<MagePlanV1>,
+    #[serde(skip)]
+    mage_names_v2: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -779,7 +781,7 @@ fn operation_has_color_entry(state: &GameState, operation: &OperationV1) -> bool
         crate::heraldic_banner_v1::choice(state, event, 0).is_ok_and(|choice| choice.is_some())
             || crate::banner_of_kinship_v1::entry::choice(state, event, 0)
                 .is_ok_and(|choice| choice.is_some())
-            || mage_entry::choice(state, event, 0).is_some()
+            || mage_entry::choice(state, event, 0, true).is_some()
     };
     match operation {
         OperationV1::Event(event) | OperationV1::Commit(event) => selected(event),
@@ -936,7 +938,7 @@ fn replay_general(
     answers: &[GeneralAnswerV36],
     used_banner: bool,
 ) -> Result<(GameState, Option<Decision>), String> {
-    replay_general_current_slots_v69(original, operation, answers, used_banner, None)
+    replay_general_current_slots_v69(original, operation, answers, used_banner, None, None)
 }
 fn replay_general_current_slots_v69(
     original: &GameState,
@@ -944,6 +946,7 @@ fn replay_general_current_slots_v69(
     answers: &[GeneralAnswerV36],
     used_banner: bool,
     current_slots: Option<&genesis_current_slots_v69::InputV69>,
+    mage_names_v2: Option<bool>,
 ) -> Result<(GameState, Option<Decision>), String> {
     if has_pending(original) || locally_owned(original) {
         return Err("entry operation cannot recursively own another public checkpoint".into());
@@ -980,6 +983,12 @@ fn replay_general_current_slots_v69(
         active_fake_aura_entry_v50: None,
         mage_start: None,
         mage_plans: Vec::new(),
+        mage_names_v2: mage_names_v2.or_else(|| answers.iter().find_map(|answer| {
+            match answer {
+                GeneralAnswerV36::MeddlingMageV1 { choice, .. } => Some(choice.names_v2),
+                _ => None,
+            }
+        })).unwrap_or(true),
     }));
     if potentially_returns_aura(original) {
         staged
@@ -1411,19 +1420,22 @@ pub fn validate(state: &GameState) -> Result<(), String> {
         .linked_aura_operation_v1
         .pending_meddling_mage_v1
     {
-        if !matches!(
-            mage_entry::journal(state, pending.operation_history_index),
-            Some(mage_entry::JournalV1::Started { operation, original_sha256 })
-                if **operation == pending.operation && origin_digest_matches(original_sha256, &pending.original)
-        ) {
-            return Err("Meddling Mage checkpoint lost its original operation".into());
+        let started = mage_entry::journal(state, pending.operation_history_index);
+        let names_v2 = matches!(started, Some(mage_entry::JournalV1::StartedWithNamesV2 { .. }));
+        match started {
+            Some(mage_entry::JournalV1::Started { operation, original_sha256 }
+                | mage_entry::JournalV1::StartedWithNamesV2 { operation, original_sha256 })
+                if **operation == pending.operation && origin_digest_matches(original_sha256, &pending.original) => {}
+            _ => return Err("Meddling Mage checkpoint lost its original operation".into()),
         }
         return as_recorded(|| {
-            let (expected, _) = replay_general(
+            let (expected, _) = replay_general_current_slots_v69(
                 &pending.original,
                 &pending.operation,
                 &pending.answers,
                 pending.used_banner,
+                None,
+                Some(names_v2),
             )?;
             if expected != *state {
                 return Err("Meddling Mage checkpoint, entrant or original choice changed".into());
@@ -1536,6 +1548,7 @@ pub fn validate(state: &GameState) -> Result<(), String> {
                 &pending.answers,
                 true,
                 pending.genesis_current_slots_v69.as_ref(),
+                None,
             )?;
             if expected != *state || !has_banner_pending(&expected) {
                 return Err("Banner checkpoint/original operation changed".into());
@@ -1752,6 +1765,7 @@ pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> 
             &answers,
             true,
             pending.genesis_current_slots_v69.as_ref(),
+            None,
         )?;
         *state = next;
         return Ok(());
@@ -2083,10 +2097,11 @@ fn capture_mage_plans(
     state: &mut GameState,
     events: &[ProposedEvent],
 ) -> Result<Vec<usize>, String> {
+    let names_v2 = state.engine.linked_aura_operation_v1.runtime.as_ref().is_none_or(|runner| runner.mage_names_v2);
     let mut plans = Vec::new();
     for (ordinal, event) in events.iter().enumerate() {
         let ordinal = u32::try_from(ordinal).map_err(|_| "entry ordinal overflow")?;
-        if let Some(choice) = mage_entry::choice(state, event, ordinal) {
+        if let Some(choice) = mage_entry::choice(state, event, ordinal, names_v2) {
             plans.push(MagePlanV1 {
                 choice,
                 named: None,
@@ -2107,9 +2122,12 @@ fn capture_mage_plans(
         let at = u32::try_from(state.engine.event_history.len())
             .map_err(|_| "Meddling Mage operation index overflow")?;
         runner.mage_start = Some(at);
-        Some(mage_entry::JournalV1::Started {
-            operation: Box::new(runner.operation.clone()),
-            original_sha256: runner.original_sha256.clone(),
+        let operation = Box::new(runner.operation.clone());
+        let original_sha256 = runner.original_sha256.clone();
+        Some(if names_v2 {
+            mage_entry::JournalV1::StartedWithNamesV2 { operation, original_sha256 }
+        } else {
+            mage_entry::JournalV1::Started { operation, original_sha256 }
         })
     } else {
         None
@@ -2145,7 +2163,7 @@ fn mage_answer(
         };
         if captured.as_ref() != choice
             || *prior_group != group
-            || !mage_entry::valid_index(group, *index)
+            || !mage_entry::valid_index(choice, group, *index)
         {
             return Err("Meddling Mage replay changed its confirmed name choice".into());
         }
@@ -2214,7 +2232,7 @@ fn answer_mage_plan(state: &mut GameState, index: usize) -> Result<bool, String>
     let Some(name_index) = mage_answer(state, &choice, Some(group))? else {
         return Ok(false);
     };
-    let named = mage_entry::name(group, name_index).ok_or("Meddling Mage name index absent")?;
+    let named = mage_entry::name(&choice, group, name_index).ok_or("Meddling Mage name index absent")?;
     let operation = state
         .engine
         .linked_aura_operation_v1
@@ -2809,7 +2827,7 @@ fn answer_equipment_checkpoint_v48(
 ) -> Result<GeneralAnswerV36, String> {
     match (choice, action) {
         (GeneralChoiceV36::MeddlingMageV1 { choice, group }, Action::ChooseEffectOption(index))
-            if mage_entry::valid_index(*group, index) =>
+            if mage_entry::valid_index(choice, *group, index) =>
         {
             Ok(GeneralAnswerV36::MeddlingMageV1 {
                 choice: choice.clone(),

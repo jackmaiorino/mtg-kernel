@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
 pub(crate) mod meddling_mage_entry;
+pub use meddling_mage_entry::NameV1 as MeddlingMageNameV1;
 pub(crate) mod targets;
 pub use crate::eternal_sideboard_s1a_v1::surgical::{
     extirpate_search_look_v1, SurgicalSearchLookV1 as ExtirpateSearchLookV1,
@@ -47,7 +48,7 @@ pub struct S1bStateV1 {
     pub noncreature_casts: [u8; 2],
     /// Meddling Mages and the definition whose name each chose.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mage_names: Vec<(ObjectLinkV4, u16)>,
+    pub mage_names: Vec<(ObjectLinkV4, MeddlingMageNameV1)>,
     /// Whether Leyline of Sanctity's opening-hand offer has been made.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub leyline_offered: bool,
@@ -644,30 +645,30 @@ pub(crate) fn mage_prohibits(state: &GameState, def: &CardDef, method: CastMetho
             state.objects.try_get(mage.object).is_some_and(|live| {
                 live.zone_change_count == mage.zone_change_count
                     && active_named(state, mage.object, MEDDLING_MAGE)
-            }) && CARD_DEFS
-                .get(usize::from(*named))
-                .is_some_and(|named_def| named_def.object_name == spell_name)
+            }) && named.printed_name() == Some(spell_name)
         })
     })
 }
 
 fn selected_spell_name(def: &CardDef, method: CastMethodV4) -> Option<&'static str> {
-    if method == CastMethodV4::Alternative
-        && def
-            .alt_cost
-            .is_some_and(|alt| alt.condition == crate::card_def::AltCostCondition::DisguiseFromHand)
-    {
-        return None;
+    if method == CastMethodV4::Alternative {
+        match def.alt_cost.map(|alt| alt.condition) {
+            Some(crate::card_def::AltCostCondition::DisguiseFromHand) => return None,
+            Some(crate::card_def::AltCostCondition::DisturbV1) => {
+                return def.transform_face.as_ref().map(|back| back.name);
+            }
+            _ => {}
+        }
     }
     if crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name) {
         return Some(def.object_name);
     }
     if method == CastMethodV4::Omen {
-        // The true Omen form is outside the current catalog's name menu.
-        // Adventure and the supported split half carry their actual name.
-        return def.adventure.as_ref().map(|adventure| adventure.name);
+        return meddling_mage_entry::split_names(def)
+            .map(|(_, right)| right)
+            .or_else(|| meddling_mage_entry::alternate_spell_name(def));
     }
-    if let Some((left, right)) = def.name.split_once(" // ") {
+    if let Some((left, right)) = meddling_mage_entry::split_names(def) {
         if crate::standard_cards_v1::room_cast_mana_value(def, method).is_some() {
             return Some(if method == CastMethodV4::Alternative {
                 right
