@@ -1323,11 +1323,18 @@ fn full_text_batch_keywords_follow_paid_host_donor_and_layer_six_both_seats() {
         let wanted = Keywords::DEFENDER | Keywords::FLYING;
         assert_eq!(engine::effective_keywords(state, source, wanted), expected);
         for keyword in [Keywords::DEFENDER, Keywords::FLYING] {
-            assert_eq!(engine::has_effective_keyword(state, source, keyword), expected.has(keyword));
+            assert_eq!(
+                engine::has_effective_keyword(state, source, keyword),
+                expected.has(keyword)
+            );
         }
         assert_eq!(state.objects.get(source).card_def, id(VOLRATH));
-        let restored: GameState = serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
-        assert_eq!(engine::effective_keywords(&restored, source, wanted), expected);
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
+        assert_eq!(
+            engine::effective_keywords(&restored, source, wanted),
+            expected
+        );
         assert_eq!(state.state_hash(), restored.state_hash());
     }
 
@@ -1341,12 +1348,19 @@ fn full_text_batch_keywords_follow_paid_host_donor_and_layer_six_both_seats() {
         let source = put(&mut state, player, VOLRATH, Zone::Hand);
         state.players[player.index()].mana_pool[ManaColor::U.pool_index()] = 2;
         state.players[player.index()].mana_pool[ManaColor::C.pool_index()] = 1;
-        assert!(matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&source)));
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&source))
+        );
         engine::step(&mut state, Action::CastSpell(source)).unwrap();
         for _ in 0..8 {
             let decision = engine::advance_until_decision(&mut state);
-            assert!(matches!(decision, Decision::CastSpellOrPass { .. }), "{decision:?}");
-            if state.stack.is_empty() { break; }
+            assert!(
+                matches!(decision, Decision::CastSpellOrPass { .. }),
+                "{decision:?}"
+            );
+            if state.stack.is_empty() {
+                break;
+            }
             engine::step(&mut state, Action::Pass).unwrap();
         }
         assert!(state.stack.is_empty());
@@ -1355,20 +1369,32 @@ fn full_text_batch_keywords_follow_paid_host_donor_and_layer_six_both_seats() {
         check(&state, source, Keywords::DEFENDER);
 
         let bird = put(&mut state, player, "Birds of Paradise", Zone::Hand);
-        event::commit(&mut state, ProposedEvent::zone_change(bird, Zone::Graveyard));
+        event::commit(
+            &mut state,
+            ProposedEvent::zone_change(bird, Zone::Graveyard),
+        );
         check(&state, source, Keywords::FLYING);
         let land = put(&mut state, player, "Island", Zone::Hand);
-        event::commit(&mut state, ProposedEvent::zone_change(land, Zone::Graveyard));
+        event::commit(
+            &mut state,
+            ProposedEvent::zone_change(land, Zone::Graveyard),
+        );
         assert!(active_definition(&state, source).is_none());
         check(&state, source, Keywords::NONE);
         event::commit(&mut state, ProposedEvent::zone_change(land, Zone::Exile));
         check(&state, source, Keywords::FLYING);
 
         let dress = put(&mut state, player.opponent(), "Dress Down", Zone::Hand);
-        event::commit(&mut state, ProposedEvent::zone_change(dress, Zone::Battlefield));
+        event::commit(
+            &mut state,
+            ProposedEvent::zone_change(dress, Zone::Battlefield),
+        );
         // Install the native layer-six removal as in the full-text layer fixture.
         let _ = crate::trigger::collect_and_process(&mut state);
-        assert_eq!(active_definition(&state, source).unwrap().name, "Birds of Paradise");
+        assert_eq!(
+            active_definition(&state, source).unwrap().name,
+            "Birds of Paradise"
+        );
         check(&state, source, Keywords::NONE);
     }
 }
