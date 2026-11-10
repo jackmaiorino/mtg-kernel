@@ -577,8 +577,11 @@ New, each built once in the first wave that needs it:
   The draw count is fixed before the first replacement attempt. Historical
   serialized `CurieDrawV1` triggers retain their old fallback behavior.
   Echo of Eons finishes both native shuffles before drawing in turn order.
-  Interrupted draws retain the actual shuffle and each player's completed
-  attempts. Each player applies Riddler once at the start of their draws.
+  Interrupted draws retain both native shuffle commits and each player's
+  completed attempts. The kernel has no generic shuffle event, so Echo
+  records its successful shuffle commits only when it owns a draw choice.
+  Each player applies Riddler once at the start of their draws. The first
+  player's event-time adjustment remains bound when the second player draws.
   The shuffles normally remove Dredge cards from both graveyards before any
   draw can use them. Echo's native qualification is pending.
   Remaining specialized draws include Minsc & Boo's reflexive draw and the

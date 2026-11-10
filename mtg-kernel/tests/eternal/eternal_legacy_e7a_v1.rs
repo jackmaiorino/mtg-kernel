@@ -1713,6 +1713,10 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
             );
             put(&mut state, drawer, "Quantum Riddler", Zone::Battlefield);
             put(&mut state, other, "Hullbreacher", Zone::Battlefield);
+            if other == caster {
+                put(&mut state, other, "Quantum Riddler", Zone::Battlefield);
+            }
+            let other_draws = if other == caster { 8 } else { 7 };
             let thug = put(&mut state, other, "Golgari Thug", Zone::Graveyard);
             let returned = put(&mut state, other, "Lightning Bolt", Zone::Hand);
             let echo = put(&mut state, caster, "Echo of Eons", Zone::Graveyard);
@@ -1728,7 +1732,7 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
             assert_ne!(zone(&state, thug), Zone::Graveyard);
             assert_eq!(
                 hand_len(&state, other),
-                if drawer == caster { 0 } else { 7 }
+                if drawer == caster { 0 } else { other_draws }
             );
             assert!(state.engine.event_history.iter().any(|event|
                 matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Hand, to: Zone::Library, .. }
@@ -1738,6 +1742,27 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
                 saved["environment_randomization_v2"]["next_live_shuffle_ordinal"].clone()
             };
             assert_eq!(shuffle_ordinals(&saved), serde_json::json!([1, 1]));
+            let (marker_at, marker) = saved["engine"]["event_history"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .enumerate()
+                .find_map(|(at, row)| {
+                    row.get("EternalOwnedDrawV1")?.get("journal")?
+                        .get("EchoShuffledV1").map(|marker| (at, marker))
+                })
+                .expect("Echo's native shuffle marker");
+            let shuffles = [
+                marker["shuffles"][0].as_u64().unwrap() as usize,
+                marker["shuffles"][1].as_u64().unwrap() as usize,
+            ];
+            for [missing, substitute] in [shuffles, [shuffles[1], shuffles[0]]] {
+                let mut replaced = saved.clone();
+                let events = replaced["engine"]["event_history"].as_array_mut().unwrap();
+                events[missing] = events[substitute].clone();
+                let replaced: GameState = serde_json::from_value(replaced).unwrap();
+                assert!(mtg_kernel::effect::validate_pending_effect_choice(&replaced).is_err());
+            }
 
             let mut rewound = state.clone();
             let pending = rewound.engine.pending_effect.as_mut().unwrap();
@@ -1765,6 +1790,14 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
                 .contains("already started"));
 
             if drawer != caster {
+                let mut changed_count = saved.clone();
+                let extra = &mut changed_count["engine"]["event_history"][marker_at]
+                    ["EternalOwnedDrawV1"]["journal"]["EchoShuffledV1"]["first_extra"];
+                assert_eq!(*extra, serde_json::json!(1));
+                *extra = serde_json::json!(0);
+                let changed_count: GameState = serde_json::from_value(changed_count).unwrap();
+                assert!(mtg_kernel::effect::validate_pending_effect_choice(&changed_count).is_err());
+
                 let mut skipped = saved.clone();
                 let completed = skipped["engine"]["event_history"]
                     .as_array_mut()
@@ -1802,7 +1835,7 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
                 );
                 assert_eq!(
                     hand_len(branch, other),
-                    if drawer == caster { 0 } else { 7 }
+                    if drawer == caster { 0 } else { other_draws }
                 );
             }
             assert_eq!(restored.state_hash(), answered.state_hash());
@@ -1817,7 +1850,7 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
             }
             assert_eq!(zone(&state, echo), Zone::Exile);
             assert_eq!(hand_len(&state, drawer), 0);
-            assert_eq!(hand_len(&state, other), 7);
+            assert_eq!(hand_len(&state, other), other_draws);
             assert_eq!(
                 shuffle_ordinals(&serde_json::to_value(&state).unwrap()),
                 serde_json::json!([1, 1])

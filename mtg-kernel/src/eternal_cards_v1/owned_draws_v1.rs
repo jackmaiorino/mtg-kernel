@@ -306,6 +306,12 @@ pub enum JournalV1 {
         item: StackItemId,
         source: StackSourceContractV4,
         first: PlayerId,
+        shuffles: [usize; 2],
+        first_extra: u32,
+    },
+    EchoShuffleCommittedV1 {
+        item: StackItemId,
+        commit: echo::ShuffleCommitV1,
     },
 }
 

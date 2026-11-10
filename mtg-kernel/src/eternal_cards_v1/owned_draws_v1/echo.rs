@@ -6,11 +6,48 @@ use super::{
 };
 use crate::card_def::CARD_DEFS;
 use crate::effect::{EffectContinuation, EffectFrame};
+use crate::environment_randomization_v2::PhysicalOwnerV2;
 use crate::eternal_legacy_e7a_v1;
 use crate::eternal_vintage_e7b_v1::dredge;
 use crate::event::{self, CommittedEvent};
 use crate::ids::PlayerId;
 use crate::state::{GameState, StackItemKind, StackSourceContractV4, Zone};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShuffleCommitV1 {
+    player: PlayerId,
+    moves_start: usize,
+    history_after_moves: usize,
+    ordinal_after: Option<u64>,
+}
+
+fn shuffle_ordinal(state: &GameState, player: PlayerId) -> Option<u64> {
+    let owner = match player {
+        PlayerId::P0 => PhysicalOwnerV2::P0,
+        PlayerId::P1 => PhysicalOwnerV2::P1,
+        _ => return None,
+    };
+    state
+        .environment_randomization_v2()
+        .map(|rng| rng.next_live_shuffle_ordinal(owner))
+}
+
+/// The checked shuffle has no generic event row. Capture its actual commit
+/// boundary here, retaining the proof only if Echo needs an owned draw stage.
+pub(crate) fn commit_shuffle(
+    state: &mut GameState,
+    player: PlayerId,
+    moves_start: usize,
+) -> Result<ShuffleCommitV1, String> {
+    state.shuffle_library(player).map_err(|error| error.to_string())?;
+    Ok(ShuffleCommitV1 {
+        player,
+        moves_start,
+        history_after_moves: state.engine.event_history.len(),
+        ordinal_after: shuffle_ordinal(state, player),
+    })
+}
 
 pub(super) fn selected(
     state: &GameState,
@@ -72,7 +109,7 @@ pub(crate) fn begin(
         return Err("Echo of Eons cannot replay its shuffle".into());
     }
     let first = state.active_player;
-    eternal_legacy_e7a_v1::shuffle_echo_libraries(state)?;
+    let commits = eternal_legacy_e7a_v1::shuffle_echo_libraries(state)?;
     if ![first, first.opponent()]
         .into_iter()
         .any(|drawer| dredge::owned_draw_needs_choice(state, drawer, 7))
@@ -80,16 +117,31 @@ pub(crate) fn begin(
         eternal_legacy_e7a_v1::draw_echo_cards(state);
         return Ok(());
     }
+    let shuffles = commits.map(|commit| {
+        let at = state.engine.event_history.len();
+        record(state, JournalV1::EchoShuffleCommittedV1 { item, commit });
+        at
+    });
     let shuffled_at = state.engine.event_history.len();
+    let first_extra = event::draw_instruction_extra(state, first, 7);
     record(
         state,
         JournalV1::EchoShuffledV1 {
             item,
             source,
             first,
+            shuffles,
+            first_extra,
         },
     );
-    start_draws(state, pending, shuffled_at, first, SourceV1::Spell(source));
+    start_instruction(
+        state,
+        pending,
+        InstructionV1::Echo { shuffled_at, drawer: first },
+        SourceV1::Spell(source),
+        7,
+        first_extra,
+    );
     Ok(())
 }
 
@@ -138,6 +190,8 @@ pub(super) fn matches_start(
         item,
         source,
         first,
+        shuffles,
+        first_extra,
     }) = journal(state, shuffled_at)
     else {
         return false;
@@ -146,12 +200,43 @@ pub(super) fn matches_start(
         || started.source != SourceV1::Spell(source)
         || Some(source) != selected(state, pending)
         || first != state.active_player
+        || !matches!(first, PlayerId::P0 | PlayerId::P1)
+    {
+        return false;
+    }
+    let [first_shuffle, second_shuffle] = shuffles;
+    if first_shuffle.checked_add(1) != Some(second_shuffle)
+        || second_shuffle.checked_add(1) != Some(shuffled_at)
+    {
+        return false;
+    }
+    let [Some(JournalV1::EchoShuffleCommittedV1 { item: first_item, commit: first_commit }),
+         Some(JournalV1::EchoShuffleCommittedV1 { item: second_item, commit: second_commit })] =
+        shuffles.map(|at| journal(state, at))
+    else {
+        return false;
+    };
+    if first_item != item
+        || second_item != item
+        || first_commit.player != first
+        || second_commit.player != first.opponent()
+        || first_commit.moves_start > first_commit.history_after_moves
+        || first_commit.history_after_moves != second_commit.moves_start
+        || second_commit.moves_start > second_commit.history_after_moves
+        || second_commit.history_after_moves != first_shuffle
+        || first_commit.ordinal_after != shuffle_ordinal(state, first)
+        || second_commit.ordinal_after != shuffle_ordinal(state, first.opponent())
     {
         return false;
     }
     let first_at = shuffled_at + 1;
+    let Some(expected_first_count) = 7u32.checked_add(first_extra) else {
+        return false;
+    };
     if drawer == first {
-        return started_at == first_at;
+        return started_at == first_at
+            && journal(state, first_at).and_then(JournalV1::start).map(|(_, count)| count)
+                == Some(expected_first_count);
     }
     if drawer != first.opponent() || started_at <= first_at {
         return false;
@@ -169,6 +254,7 @@ pub(super) fn matches_start(
         && first_start.source == started.source
         && first_start.controller == started.controller
         && first_start.total == 7
+        && first_count == expected_first_count
         && first_start.initial_library_len.is_none()
         && completed_attempts(
             &state.engine.event_history[first_at + 1..started_at],

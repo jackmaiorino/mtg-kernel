@@ -1647,9 +1647,14 @@ fn echo_of_eons_effect(ctx: &ExecCtx, state: &mut GameState) {
     draw_echo_cards(state);
 }
 
-pub(crate) fn shuffle_echo_libraries(state: &mut GameState) -> Result<(), String> {
-    let first = state.active_player;
-    for player in [first, first.opponent()] {
+pub(crate) fn shuffle_echo_libraries(
+    state: &mut GameState,
+) -> Result<[crate::eternal_cards_v1::owned_draws_v1::echo::ShuffleCommitV1; 2], String> {
+    fn one(
+        state: &mut GameState,
+        player: PlayerId,
+    ) -> Result<crate::eternal_cards_v1::owned_draws_v1::echo::ShuffleCommitV1, String> {
+        let moves_start = state.engine.event_history.len();
         let cards = state.players[player.index()]
             .hand
             .iter()
@@ -1668,9 +1673,10 @@ pub(crate) fn shuffle_echo_libraries(state: &mut GameState) -> Result<(), String
         if state.engine.halted.is_some() || crate::linked_aura_operation_v1::has_pending(state) {
             return Err("Echo of Eons could not complete its return batch".into());
         }
-        shuffle(state, player)?;
+        crate::eternal_cards_v1::owned_draws_v1::echo::commit_shuffle(state, player, moves_start)
     }
-    Ok(())
+    let first = state.active_player;
+    Ok([one(state, first)?, one(state, first.opponent())?])
 }
 
 pub(crate) fn draw_echo_cards(state: &mut GameState) {
