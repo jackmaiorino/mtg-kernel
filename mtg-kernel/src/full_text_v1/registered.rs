@@ -663,15 +663,44 @@ fn volrath_native_paid_fanatic_uses_original_damage_source_both_seats() {
                     crate::rl::observe_premodern_ordered_v1(branch, &surface, viewer, 3).unwrap();
                 }
 
-                if prevent {
-                    assert_eq!(branch.objects.get(strands.unwrap()).zone, Zone::Graveyard);
+                if let Some(strands) = strands {
+                    use crate::effect::crystal_prevention_v1::PreventionV1;
+                    use crate::event::ReplacementEffectKind;
+
+                    assert_eq!(branch.objects.get(strands).zone, Zone::Graveyard);
                     assert_eq!(branch.players[opponent.index()].mana_pool, [0; 6]);
-                    assert!(branch.engine.event_history.iter().any(|event| {
-                        matches!(event, CommittedEvent::CrystalDamageOperationV3 { operation }
-                            if operation.historical_source == Some(item.v4.stack_item_id)
-                                && operation.output.is_none()
-                                && operation.damage_history.is_none())
-                    }));
+                    let mut forged: GameState =
+                        serde_json::from_slice(&serde_json::to_vec(branch).unwrap()).unwrap();
+                    let operation = forged
+                        .engine
+                        .event_history
+                        .iter_mut()
+                        .find_map(|event| match event {
+                            CommittedEvent::CrystalDamageOperationV3 { operation }
+                                if operation.historical_source == Some(item.v4.stack_item_id) =>
+                            {
+                                Some(operation)
+                            }
+                            _ => None,
+                        })
+                        .expect("paid Fanatic has a native damage operation");
+                    assert!(operation.output.is_none() && operation.damage_history.is_none());
+                    assert!(matches!(
+                        operation.preventers.as_slice(),
+                        [PreventionV1::Replacement(replacement)]
+                            if replacement.source == strands
+                                && matches!(
+                                    replacement.kind,
+                                    ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn {
+                                        color: ManaColor::R, ..
+                                    }
+                                )
+                    ));
+                    operation.preventers.clear();
+                    assert_eq!(
+                        crate::effect::crystal_prevention_v1::validate(&forged).unwrap_err(),
+                        "Crystal damage outcome lost actual positive or fully-prevented result"
+                    );
                 }
                 if protect {
                     let mut forged: GameState =

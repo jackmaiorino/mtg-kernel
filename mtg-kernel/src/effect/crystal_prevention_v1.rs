@@ -5008,22 +5008,35 @@ fn applicable_after(
                 }));
             }
         }
-        // Preserve predecessor player admission. The exact Drakuseth producer
-        // additionally owns finite-player prevention in its mixed batch.
-        if matches!(damage.target, Target::Object(_))
+        // Preserve predecessor player admission, including Drakuseth's
+        // finite-player prevention. Donated Fanatic additionally records
+        // color-wide prevention for its exact historical player damage.
+        let include_replacements = matches!(damage.target, Target::Object(_))
             || drakuseth_damage(state, damage)
             || crate::twinflame_tyrant_v1::has_active_source(state)
             || !crate::twinflame_tyrant_v1::sources(state, damage)
                 .unwrap_or_default()
-                .is_empty()
-        {
+                .is_empty();
+        let donated_player_damage = !include_replacements
+            && matches!(damage.target, Target::Player(_))
+            && damage.historical_source.is_some_and(|id| {
+                crate::fixed_source_damage_v3::has_donated_payment(state, id)
+                    && crate::fixed_source_damage_v3::damage_source(state, damage.source, id)
+                        .is_ok()
+            });
+        if include_replacements || donated_player_damage {
             options.extend(
                 state
                     .engine
                     .active_replacements
                     .iter()
                     .filter(|r| {
-                        !damage.touched_by.contains(&r.id)
+                        (include_replacements
+                            || matches!(
+                                r.kind,
+                                ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }
+                            ))
+                            && !damage.touched_by.contains(&r.id)
                             && crate::event::replacement_applies(
                                 r,
                                 &crate::event::ProposedEvent::Damage(damage.clone()),
