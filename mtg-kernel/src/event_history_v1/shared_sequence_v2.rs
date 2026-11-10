@@ -485,6 +485,9 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
 
 /// Range cursor with independent front/back leaf caches. Sequential iteration
 /// descends the spine once per leaf, not once per element; nth skips directly.
+/// The per-element step is small enough to inline into a caller's loop, with
+/// the spine descent out of line, and `fold`/`rfold` walk whole leaf slices,
+/// so a scan of the history costs about what a scan of a slice does.
 pub(crate) struct Iter<'a, T: Clone, const C: usize> {
     sequence: &'a SharedSequence<T, C>,
     front: usize,
@@ -505,62 +508,216 @@ impl<T: Clone, const C: usize> Clone for Iter<'_, T, C> {
     }
 }
 
+impl<'a, T: Clone, const C: usize> Iter<'a, T, C> {
+    /// The leaf holding the in-bounds logical `index`, and the leaf's start.
+    #[cold]
+    #[inline(never)]
+    fn locate(&self, index: usize) -> (&'a [T], usize) {
+        self.sequence.leaf_at(index).expect("cursor in bounds")
+    }
+
+    /// The cached leaf when it holds `index`, else the leaf found afresh.
+    #[inline]
+    fn leaf_for(&self, cached: Option<(&'a [T], usize)>, index: usize) -> (&'a [T], usize) {
+        match cached {
+            Some((leaf, start)) if index >= start && index - start < leaf.len() => (leaf, start),
+            _ => self.locate(index),
+        }
+    }
+}
+
 impl<'a, T: Clone, const C: usize> Iterator for Iter<'a, T, C> {
     type Item = &'a T;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.front == self.back {
             return None;
         }
         let index = self.front;
         self.front += 1;
-        let (leaf, start) = match self.front_leaf {
-            Some((leaf, start)) if index >= start && index - start < leaf.len() => (leaf, start),
-            _ => {
-                let found = self.sequence.leaf_at(index).expect("cursor in bounds");
-                self.front_leaf = Some(found);
-                found
+        if let Some((leaf, start)) = self.front_leaf {
+            // An index before the leaf wraps past its length and misses.
+            if let Some(value) = leaf.get(index.wrapping_sub(start)) {
+                return Some(value);
             }
-        };
+        }
+        let (leaf, start) = self.locate(index);
+        self.front_leaf = Some((leaf, start));
         Some(&leaf[index - start])
     }
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let len = self.len();
         (len, Some(len))
     }
+    #[inline]
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
         self.front = self.front.saturating_add(n).min(self.back);
         self.next()
     }
+    /// One slice fold per leaf (`count`, `sum`, `for_each`, `last`, ...).
+    #[inline]
+    fn fold<B, F>(self, init: B, mut f: F) -> B
+    where
+        F: FnMut(B, Self::Item) -> B,
+    {
+        let mut accumulator = init;
+        let mut index = self.front;
+        let mut cached = self.front_leaf;
+        while index < self.back {
+            let (leaf, start) = self.leaf_for(cached, index);
+            let end = (self.back - start).min(leaf.len());
+            accumulator = leaf[index - start..end].iter().fold(accumulator, &mut f);
+            index = start + end;
+            cached = None;
+        }
+        accumulator
+    }
 }
 
 impl<T: Clone, const C: usize> DoubleEndedIterator for Iter<'_, T, C> {
+    #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.front == self.back {
             return None;
         }
         self.back -= 1;
         let index = self.back;
-        let (leaf, start) = match self.back_leaf {
-            Some((leaf, start)) if index >= start && index - start < leaf.len() => (leaf, start),
-            _ => {
-                let found = self.sequence.leaf_at(index).expect("cursor in bounds");
-                self.back_leaf = Some(found);
-                found
+        if let Some((leaf, start)) = self.back_leaf {
+            if let Some(value) = leaf.get(index.wrapping_sub(start)) {
+                return Some(value);
             }
-        };
+        }
+        let (leaf, start) = self.locate(index);
+        self.back_leaf = Some((leaf, start));
         Some(&leaf[index - start])
     }
+    #[inline]
     fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
         self.back = self.back.saturating_sub(n).max(self.front);
         self.next_back()
     }
+    #[inline]
+    fn rfold<B, F>(self, init: B, mut f: F) -> B
+    where
+        F: FnMut(B, Self::Item) -> B,
+    {
+        let mut accumulator = init;
+        let mut index = self.back;
+        let mut cached = self.back_leaf;
+        while index > self.front {
+            let (leaf, start) = self.leaf_for(cached, index - 1);
+            let from = self.front.max(start) - start;
+            accumulator = leaf[from..index - start].iter().rfold(accumulator, &mut f);
+            index = start + from;
+            cached = None;
+        }
+        accumulator
+    }
 }
 impl<T: Clone, const C: usize> ExactSizeIterator for Iter<'_, T, C> {
+    #[inline]
     fn len(&self) -> usize {
         self.back - self.front
     }
 }
 impl<T: Clone, const C: usize> FusedIterator for Iter<'_, T, C> {}
+
+impl<T: Clone, const C: usize> SharedSequence<T, C> {
+    /// The elements whose kind is one of `kinds`, with their positions, in
+    /// order: what filtering `iter().enumerate()` by kind yields. A subtree
+    /// whose counts hold none of `kinds` is skipped whole, so a scan for rare
+    /// kinds reads only the leaves that hold them. Editable storage is
+    /// filtered element by element.
+    pub(crate) fn of_kinds(&self, kinds: Vec<usize>) -> KindIter<'_, T, C> {
+        self.kind_filter(kinds, true)
+    }
+
+    /// `of_kinds` reading every leaf, to show that skipping by counts loses
+    /// no element.
+    #[cfg(test)]
+    pub(crate) fn of_kinds_reading_every_leaf(&self, kinds: Vec<usize>) -> KindIter<'_, T, C> {
+        self.kind_filter(kinds, false)
+    }
+
+    fn kind_filter(&self, kinds: Vec<usize>, skip: bool) -> KindIter<'_, T, C> {
+        assert!(
+            C != 0 && kinds.iter().all(|&kind| kind < C),
+            "kind filter outside the sequence's count domain"
+        );
+        let mut iter = KindIter {
+            kinds,
+            kind: self.kind,
+            skip,
+            stack: Vec::new(),
+            leaf: &[],
+            position: 0,
+        };
+        if self.editable {
+            iter.leaf = self.flat.get().expect("editable Vec");
+        } else if let Some(root) = self.root.as_deref().filter(|root| iter.wanted(root)) {
+            match &root.body {
+                Body::Leaf(values) => iter.leaf = values,
+                Body::Branch(children) => iter.stack.push((children, 0)),
+            }
+        }
+        iter
+    }
+}
+
+/// Depth-first cursor over the subtrees that count a wanted kind.
+pub(crate) struct KindIter<'a, T: Clone, const C: usize> {
+    kinds: Vec<usize>,
+    kind: fn(&T) -> usize,
+    /// Whether subtrees counting none of `kinds` are skipped.
+    skip: bool,
+    /// Unvisited children of each open branch, and the position of the first.
+    stack: Vec<(&'a [Arc<Node<T, C>>], usize)>,
+    /// Unvisited elements of the current leaf, and the position of the first.
+    leaf: &'a [T],
+    position: usize,
+}
+
+impl<T: Clone, const C: usize> KindIter<'_, T, C> {
+    fn wanted(&self, node: &Node<T, C>) -> bool {
+        !self.skip || self.kinds.iter().any(|&kind| node.counts[kind] != 0)
+    }
+}
+
+impl<'a, T: Clone, const C: usize> Iterator for KindIter<'a, T, C> {
+    type Item = (usize, &'a T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            while let Some((value, rest)) = self.leaf.split_first() {
+                let position = self.position;
+                self.leaf = rest;
+                self.position += 1;
+                if self.kinds.contains(&(self.kind)(value)) {
+                    return Some((position, value));
+                }
+            }
+            let frame = self.stack.last_mut()?;
+            let Some((child, rest)) = frame.0.split_first() else {
+                self.stack.pop();
+                continue;
+            };
+            let start = frame.1;
+            *frame = (rest, start + child.len);
+            if !self.wanted(child) {
+                continue;
+            }
+            match &child.body {
+                Body::Leaf(values) => {
+                    self.leaf = values;
+                    self.position = start;
+                }
+                Body::Branch(children) => self.stack.push((children, start)),
+            }
+        }
+    }
+}
+impl<T: Clone, const C: usize> FusedIterator for KindIter<'_, T, C> {}
 
 #[cfg(test)]
 mod tests {
@@ -593,6 +750,33 @@ mod tests {
             values.len().saturating_sub(1),
         ] {
             assert_eq!(tree.get(index), values.get(index));
+        }
+        kinds_oracle(tree, values, kind);
+    }
+    fn kinds_oracle<const C: usize>(
+        tree: &SharedSequence<usize, C>,
+        values: &[usize],
+        kind: fn(&usize) -> usize,
+    ) {
+        for kinds in [
+            vec![],
+            vec![0],
+            vec![C - 1],
+            vec![C - 1, 0],
+            (0..C).collect(),
+        ] {
+            let expected = values
+                .iter()
+                .enumerate()
+                .filter(|(_, value)| kinds.contains(&kind(value)));
+            assert!(
+                tree.of_kinds(kinds.clone()).eq(expected.clone()),
+                "kinds {kinds:?}"
+            );
+            assert!(
+                tree.of_kinds_reading_every_leaf(kinds.clone()).eq(expected),
+                "kinds {kinds:?} reading every leaf"
+            );
         }
     }
 
@@ -786,6 +970,48 @@ mod tests {
         tree.repack();
         assert_eq!(clones.load(Ordering::Relaxed), 0);
         assert_eq!(tree.get(0).unwrap().value, 2999);
+    }
+
+    /// Kind 2 is rare, so most leaves and spines count none of it and the
+    /// kind filter skips them; every shape must still match a plain filter.
+    #[test]
+    fn rare_kind_filters_match_a_filtered_scan_in_every_shape() {
+        fn sparse(value: &usize) -> usize {
+            if value % 997 == 5 {
+                2
+            } else {
+                value % 2
+            }
+        }
+        for len in [0, 1, 5, 6, 64, 65, 2048, 2049, 70_000] {
+            let values: Vec<_> = (0..len).collect();
+            let built = SharedSequence::<_, 3>::from_vec(values.clone(), sparse);
+            let mut pushed = SharedSequence::<_, 3>::new(sparse);
+            for value in &values {
+                pushed.push(*value);
+            }
+            kinds_oracle(&built, &values, sparse);
+            kinds_oracle(&pushed, &values, sparse);
+            for cut in [0, 6, 64, 1000, len / 2, len] {
+                let mut prefix = built.prefix(cut);
+                let mut expected = values[..cut.min(len)].to_vec();
+                kinds_oracle(&prefix, &expected, sparse);
+                let shared = prefix.clone();
+                for value in [5, 7, 1002, 1999] {
+                    prefix.push(value);
+                    expected.push(value);
+                }
+                kinds_oracle(&prefix, &expected, sparse);
+                kinds_oracle(&shared, &values[..cut.min(len)], sparse);
+            }
+            let mut edited = built.clone();
+            edited.as_mut_vec().insert(0, 5);
+            let mut expected = values.clone();
+            expected.insert(0, 5);
+            kinds_oracle(&edited, &expected, sparse);
+            edited.repack();
+            kinds_oracle(&edited, &expected, sparse);
+        }
     }
 
     #[test]

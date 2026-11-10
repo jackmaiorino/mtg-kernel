@@ -957,23 +957,42 @@ pub struct EventHistoryIterV2<'a> {
 impl<'a> Iterator for EventHistoryIterV2<'a> {
     type Item = &'a CommittedEvent;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next()
     }
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.inner.size_hint()
     }
+    #[inline]
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
         self.inner.nth(n)
+    }
+    #[inline]
+    fn fold<B, F>(self, init: B, f: F) -> B
+    where
+        F: FnMut(B, Self::Item) -> B,
+    {
+        self.inner.fold(init, f)
     }
 }
 
 impl DoubleEndedIterator for EventHistoryIterV2<'_> {
+    #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
         self.inner.next_back()
     }
+    #[inline]
     fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
         self.inner.nth_back(n)
+    }
+    #[inline]
+    fn rfold<B, F>(self, init: B, f: F) -> B
+    where
+        F: FnMut(B, Self::Item) -> B,
+    {
+        self.inner.rfold(init, f)
     }
 }
 
@@ -996,6 +1015,7 @@ impl<'a> EventHistoryRangeV2<'a> {
     pub fn is_empty(&self) -> bool {
         self.start == self.end
     }
+    #[inline]
     pub fn iter(&self) -> EventHistoryIterV2<'a> {
         EventHistoryIterV2 {
             inner: self.history.events.range(self.start..self.end),
@@ -1111,9 +1131,11 @@ impl EventHistoryV1 {
         }
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.events.len()
     }
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
@@ -1121,11 +1143,13 @@ impl EventHistoryV1 {
     pub fn common_prefix_len_v2(&self, other: &Self) -> usize {
         self.events.common_prefix_len(&other.events)
     }
+    #[inline]
     pub fn iter(&self) -> EventHistoryIterV2<'_> {
         EventHistoryIterV2 {
             inner: self.events.iter(),
         }
     }
+    #[inline]
     pub fn get<I: EventHistoryIndexV2>(&self, index: I) -> Option<&I::Output> {
         index.get(self)
     }
@@ -1140,6 +1164,7 @@ impl EventHistoryV1 {
             .checked_sub(1)
             .and_then(|index| self.events.get(index))
     }
+    #[inline]
     pub fn get_range_v2(&self, range: impl RangeBounds<usize>) -> Option<EventHistoryRangeV2<'_>> {
         let start = match range.start_bound() {
             Bound::Unbounded => 0,
@@ -1157,6 +1182,7 @@ impl EventHistoryV1 {
             end,
         })
     }
+    #[inline]
     pub fn range_v2(&self, range: impl RangeBounds<usize>) -> EventHistoryRangeV2<'_> {
         self.get_range_v2(range)
             .expect("history range out of bounds")
@@ -1165,6 +1191,7 @@ impl EventHistoryV1 {
     /// Whether an event of one of `kinds` may be in the history: false only
     /// when none is. A check that acts only on events of `kinds` can skip its
     /// scan when this is false.
+    #[inline]
     pub fn has_any(&self, kinds: &[EventKindV1]) -> bool {
         #[cfg(test)]
         if guard_tests_v1::scans_forced() {
@@ -1186,6 +1213,24 @@ impl EventHistoryV1 {
         } else {
             self.range_v2(..0)
         }
+    }
+
+    /// The events of `kinds` with their positions, in history order: what
+    /// filtering `iter().enumerate()` to those kinds yields. Stored chunks
+    /// that count none of `kinds` are skipped whole, so a check of rare events
+    /// reads only the chunks that hold one, not the whole history. With every
+    /// guard forced open (tests) it reads every chunk, which must give the
+    /// same events.
+    pub(crate) fn of_kinds_v2(
+        &self,
+        kinds: &[EventKindV1],
+    ) -> impl Iterator<Item = (usize, &CommittedEvent)> + '_ {
+        let kinds = kinds.iter().map(|&kind| kind as usize).collect();
+        #[cfg(test)]
+        if guard_tests_v1::scans_forced() {
+            return self.events.of_kinds_reading_every_leaf(kinds);
+        }
+        self.events.of_kinds(kinds)
     }
 
     pub fn push(&mut self, event: CommittedEvent) {
