@@ -5105,6 +5105,11 @@ fn legal_targets_unrestricted_v1(
             }
         }
     }
+    if dungeon_colors.is_some() {
+        targets.retain(|&target| {
+            !crate::eternal_e5a_v1::statics::protected_from_dungeon(state, target)
+        });
+    }
     if let Some(colors) = dungeon_colors.filter(|&colors| colors != 0) {
         targets.retain(|&target| {
             if crate::eternal_cards_v1::e3::veil_protects_from_colors(
