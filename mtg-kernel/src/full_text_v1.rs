@@ -395,6 +395,13 @@ fn entry_source(state: &GameState, index: usize) -> Option<ObjectId> {
     }
 }
 
+fn entry_trigger_suppressed(state: &GameState, index: usize, source: ObjectId) -> bool {
+    !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+        || crate::eternal_vintage_e7b_v1::statics::entry_event_suppressed(
+            state, &state.engine.event_history[index],
+        )
+}
+
 /// A real control transfer matters even if the permanent currently has no
 /// echo. This record describes only the public transfer, independent of its
 /// printing, face and current donor.
@@ -508,7 +515,11 @@ fn queue_donated_trigger(
     Ok(())
 }
 
-pub(crate) fn record_entry_trigger(state: &mut GameState, index: usize) -> Result<(), ObjectId> {
+pub(crate) fn record_entry_trigger(
+    state: &mut GameState,
+    index: usize,
+    batch: Option<&mut Vec<u64>>,
+) -> Result<(), ObjectId> {
     if !cfg!(feature = "eternal-fixtures") {
         return Ok(());
     }
@@ -521,24 +532,27 @@ pub(crate) fn record_entry_trigger(state: &mut GameState, index: usize) -> Resul
     let Some(text) = active_text(state, source) else {
         return Ok(());
     };
-    if !crate::continuous_characteristics_v1::printed_abilities_active(state, source) {
-        return Ok(());
-    }
     let entry = u64::try_from(index).map_err(|_| source)?;
     let Some(kind) = DonatedTriggerKindV1::entry(text, entry, None) else {
         return Ok(());
     };
-    if crate::graveyard_order_v1::defer_donated_entry(
-        state,
-        CommittedEvent::FullTextBatchEntryV1 {
-            entry_history_index: entry,
-            host: text.host,
-            donor: text.donor,
-            text_definition: text.text_definition,
-        },
-    )
-    .map_err(|_| source)?
-    {
+    let marker = CommittedEvent::FullTextBatchEntryV1 {
+        entry_history_index: entry,
+        host: text.host,
+        donor: text.donor,
+        text_definition: text.text_definition,
+    };
+    if crate::graveyard_order_v1::defer_donated_entry(state, marker.clone()).map_err(|_| source)? {
+        return Ok(());
+    }
+    if let Some(batch) = batch {
+        // Freeze the native entry and its text now, then evaluate trigger
+        // suppression with all simultaneous entrants and departures applied.
+        batch.push(u64::try_from(state.engine.event_history.len()).map_err(|_| source)?);
+        state.engine.event_history.push(marker);
+        return Ok(());
+    }
+    if entry_trigger_suppressed(state, index, source) {
         return Ok(());
     }
     queue_donated_trigger(state, text, kind).map_err(|_| source)
@@ -547,10 +561,17 @@ pub(crate) fn record_entry_trigger(state: &mut GameState, index: usize) -> Resul
 pub(crate) fn record_batch_entry_trigger(state: &mut GameState, marker: u64) -> Result<(), String> {
     let (entry, text) = batch_entry(state, marker)?;
     if active_text(state, text.host.source) != Some(text) {
-        return Err("mixed entry lost the selected final graveyard text".into());
+        return Err("batched entry lost the selected final graveyard text".into());
+    }
+    let index = usize::try_from(entry).map_err(|_| "donated entry index overflow")?;
+    if entry_source(state, index) != Some(text.host.source) {
+        return Err("donated entry lost its original native source".into());
+    }
+    if entry_trigger_suppressed(state, index, text.host.source) {
+        return Ok(());
     }
     let kind = DonatedTriggerKindV1::entry(text, entry, Some(marker))
-        .ok_or("mixed entry has no donated trigger for its selected text")?;
+        .ok_or("batched entry has no donated trigger for its selected text")?;
     queue_donated_trigger(state, text, kind)
 }
 
@@ -1107,12 +1128,18 @@ fn stack_producer(
 
 pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
     crate::graveyard_order_v1::refuse_legacy(state)?;
-    if state.engine.event_history.has_any(&[
-        crate::event_history_v1::EventKindV1::FullTextTriggerCapturedV1,
-        crate::event_history_v1::EventKindV1::FullTextBatchEntryV1,
-        crate::event_history_v1::EventKindV1::FullTextRestrictedUseV1,
-        crate::event_history_v1::EventKindV1::OrderedGraveyardControlGainedV1,
-    ]) {
+    use crate::event_history_v1::EventKindV1 as Kind;
+    if state.engine.event_history.scan_for_v1(&[
+        Kind::FullTextTriggerCapturedV1,
+        Kind::FullTextBatchEntryV1,
+        Kind::FullTextRestrictedUseV1,
+        Kind::OrderedGraveyardControlGainedV1,
+    ]).iter().any(|event| matches!(event,
+        CommittedEvent::FullTextTriggerCapturedV1 { .. }
+            | CommittedEvent::FullTextBatchEntryV1 { .. }
+            | CommittedEvent::FullTextRestrictedUseV1 { .. }
+            | CommittedEvent::OrderedGraveyardControlGainedV1 { .. }
+    )) {
         return Err(
             "full-text trigger producers require a complete public consumer successor".into(),
         );

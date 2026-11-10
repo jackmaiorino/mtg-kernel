@@ -58,8 +58,14 @@ battlefield entry. Formatting and diff checks do not establish native
 behavior. The new event kinds require genuine sample harvest before the
 every-kind event-history checks can qualify.
 
-The fixtures also check no donor, another Shapeshifter on top, unsupported
-public donor text, the printed discard cost, and legacy observation refusal.
-Ordinary copy and activation compatibility need qualification on the exact
-delivery head. Mainboard playability still requires owning gameplay and
-catalog evidence.
+The fixtures also cover no donor, another Shapeshifter on top, unsupported
+public donor text, and the printed discard cost. The legacy guard uses actual
+history events even when the event-kind index is stale or forced open. Donated
+entry triggers check native suppression after all members of a simultaneous
+batch have entered or left. The fixtures cover paid Palinchron and Karmic Guide
+text with Torpor Orb, and an Orb entering or departing in the same batch.
+
+Donor support is finite. It omits, for example, Mogg Fanatic's donated
+activation and Ravenous Rats' donated entry trigger. Mainboard qualification
+also requires a session that resets, plays and replays the actual snapshot
+list. Ordinary copy compatibility needs exact-head gameplay evidence.

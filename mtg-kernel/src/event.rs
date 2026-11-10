@@ -3851,7 +3851,7 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
             None,
             None,
             None,
-            (None, None),
+            (None, None, None),
             ((None, false), None, input, None, Some(&plan)),
             None,
         );
@@ -4061,7 +4061,7 @@ fn commit_with_ability_lki_and_entry_batch(
         abilities_removed_before,
         frozen_death_captures,
         authority_batch,
-        entry_batches,
+        (entry_batches.0, entry_batches.1, None),
         (entry_context, None, None, None, None),
         None,
     );
@@ -4146,6 +4146,7 @@ fn commit_with_entry_batch_and_source_color(
     entry_batches: (
         Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
         Option<&mut crate::arahbo_v1::EntryBatchV1>,
+        Option<&mut Vec<u64>>,
     ),
     entry_context: EntryContextWithSourceColorV1<'_>,
     mut progenitus_completions: Option<&mut Vec<crate::progenitus_v1::CompletionV1>>,
@@ -4280,7 +4281,7 @@ fn commit_with_entry_batch_and_source_color(
     let conqueror_single = (!defer_raid_entry)
         .then(|| crate::bloodthirsty_conqueror_v49::RecorderV49::capture(state))
         .flatten();
-    let (mut garruk_batch, mut arahbo_batch) = entry_batches;
+    let (mut garruk_batch, mut arahbo_batch, donated_entries) = entry_batches;
     let progenitus_plan = match crate::progenitus_v1::plan(state, &event, abilities_removed_before)
     {
         Ok(plan) => plan,
@@ -4654,7 +4655,9 @@ fn commit_with_entry_batch_and_source_color(
         state.engine.event_history.push(receipt);
     }
     record_copied_token_entry_v1(state, entry_history_index);
-    if let Err(source) = crate::full_text_v1::record_entry_trigger(state, entry_history_index) {
+    if let Err(source) = crate::full_text_v1::record_entry_trigger(
+        state, entry_history_index, donated_entries,
+    ) {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             source,
@@ -6590,6 +6593,7 @@ fn commit_batch_survivors_native(
     };
     let greatwurm_history_start = state.engine.event_history.len();
     let mut progenitus_completions = Vec::new();
+    let mut donated_entries = Vec::new();
     let mut counter_inputs = planned_counter_inputs.into_iter();
     let graveyard_batch = match crate::graveyard_order_v1::PreparedBatchV1::capture(
         state,
@@ -6638,7 +6642,7 @@ fn commit_batch_survivors_native(
                 Some(removed),
                 captures,
                 authority_batch.as_mut(),
-                (garruk_batch.as_mut(), arahbo_batch.as_mut()),
+                (garruk_batch.as_mut(), arahbo_batch.as_mut(), Some(&mut donated_entries)),
                 (
                     (None, true),
                     frozen_color,
@@ -6665,7 +6669,7 @@ fn commit_batch_survivors_native(
                 None,
                 captures,
                 authority_batch.as_mut(),
-                (garruk_batch.as_mut(), arahbo_batch.as_mut()),
+                (garruk_batch.as_mut(), arahbo_batch.as_mut(), Some(&mut donated_entries)),
                 (
                     (None, true),
                     frozen_color,
@@ -6724,6 +6728,15 @@ fn commit_batch_survivors_native(
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     aura.object,
                 ));
+                return;
+            }
+        }
+    }
+    if state.engine.halted.is_none() {
+        for marker in donated_entries {
+            if crate::full_text_v1::record_batch_entry_trigger(state, marker).is_err() {
+                crate::graveyard_order_v1::halt(state);
+                crate::linked_aura_operation_v1::end_batch(state);
                 return;
             }
         }
@@ -6892,7 +6905,7 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
                 progenitus_ability_removed,
                 Some(captures),
                 None,
-                (None, None),
+                (None, None, None),
                 ((None, false), frozen_color, None, None, zone_plan.as_ref()),
                 Some(&mut progenitus_completions),
             );
@@ -6995,7 +7008,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
                     progenitus_ability_removed,
                     None,
                     None,
-                    (None, None),
+                    (None, None, None),
                     ((None, false), frozen_color, None, None, zone_plan.as_ref()),
                     Some(&mut progenitus_completions),
                 );
@@ -7042,7 +7055,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
             progenitus_ability_removed,
             Some(captures),
             None,
-            (None, None),
+            (None, None, None),
             ((None, false), frozen_color, None, None, zone_plan.as_ref()),
             Some(&mut progenitus_completions),
         );

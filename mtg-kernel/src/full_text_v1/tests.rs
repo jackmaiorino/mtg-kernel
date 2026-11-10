@@ -56,6 +56,24 @@ fn host(state: &mut GameState) -> AbilitySourceContractV4 {
 }
 
 #[test]
+fn legacy_full_text_guard_agrees_with_forced_and_stale_history_scans() {
+    use crate::event_history_v1::{guard_tests_v1::with_scans_forced, EventKindV1};
+
+    let mut state = game();
+    let land = put(&mut state, PlayerId::P0, "Island", Zone::Hand);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(land, Zone::Battlefield));
+    assert!(!state.engine.event_history.has_any(&[EventKindV1::FullTextBatchEntryV1]));
+    assert!(refuse_legacy(&state).is_ok());
+    assert!(with_scans_forced(|| refuse_legacy(&state)).is_ok());
+
+    // A mutable history borrow invalidates the index even when the event
+    // bytes stay identical. This forces the ordinary fallback scan.
+    let _ = state.engine.event_history.as_mut_slice();
+    assert!(state.engine.event_history.has_any(&[EventKindV1::FullTextBatchEntryV1]));
+    assert!(refuse_legacy(&state).is_ok());
+}
+
+#[test]
 fn full_text_top_is_the_last_arrival_and_noncreature_does_not_skip_backward() {
     let mut state = game();
     let host = host(&mut state);

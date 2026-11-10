@@ -84,6 +84,111 @@ fn resolve_untap(state: &mut GameState, player: PlayerId, source: ObjectId, land
     assert!(!state.objects.get(land).tapped);
 }
 
+fn captured_entry(state: &GameState, source: ObjectId) -> Option<DonatedTriggerCaptureV1> {
+    state.engine.event_history.iter().find_map(|event| match event {
+        CommittedEvent::FullTextTriggerCapturedV1 { capture } if capture.host.source == source => {
+            Some(**capture)
+        }
+        _ => None,
+    })
+}
+
+#[test]
+fn volrath_native_paid_donated_etb_obeys_torpor_orb_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for donor_name in ["Palinchron", "Karmic Guide"] {
+            for suppressed in [false, true] {
+                let mut state = ordered_game(player);
+                let target = put(&mut state, player, "Tireless Tribe", Zone::Graveyard);
+                let donor = put(&mut state, player, donor_name, Zone::Graveyard);
+                let land = put(&mut state, player, "Island", Zone::Battlefield);
+                state.objects.get_mut(land).tapped = true;
+                if suppressed {
+                    let orb = put(&mut state, player, "Torpor Orb", Zone::Hand);
+                    pool(&mut state, player, &[], 2);
+                    cast(&mut state, orb);
+                    settled(&mut state);
+                    assert_eq!(state.objects.get(orb).zone, Zone::Battlefield);
+                    assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
+                }
+
+                let source = cast_volrath(&mut state, player);
+                if suppressed {
+                    settled(&mut state);
+                    assert!(captured_entry(&state, source).is_none());
+                    assert!(state.objects.get(land).tapped);
+                    assert_eq!(state.objects.get(target).zone, Zone::Graveyard);
+                } else if donor_name == "Palinchron" {
+                    resolve_untap(&mut state, player, source, land);
+                } else {
+                    assert!(matches!(settle(&mut state),
+                        Some(Decision::ChooseTargets { player: chooser, spell, legal_targets, .. })
+                            if chooser == player && spell == source && legal_targets.contains(&Target::Object(target))));
+                    act(&mut state, Action::ChooseTarget(Target::Object(target)));
+                    settled(&mut state);
+                    assert_eq!(state.objects.get(target).zone, Zone::Battlefield);
+                }
+                assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+                assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
+                assert_eq!(active_text(&state, source).unwrap().donor().object, donor);
+                if !suppressed {
+                    let capture = captured_entry(&state, source).unwrap();
+                    assert_eq!(capture.host, AbilitySourceContractV4::capture(&state, source));
+                    assert_eq!(capture.donor.source, donor);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn volrath_native_simultaneous_entry_obeys_final_suppressor_scene_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for arriving in [true, false] {
+            for orb_first in [true, false] {
+                let mut state = ordered_game(player);
+                let source = put(&mut state, player, VOLRATH, Zone::Hand);
+                let donor = put(&mut state, player, "Palinchron", Zone::Graveyard);
+                let land = put(&mut state, player, "Island", Zone::Battlefield);
+                state.objects.get_mut(land).tapped = true;
+                let (from, to) = if arriving {
+                    (Zone::Hand, Zone::Battlefield)
+                } else {
+                    (Zone::Battlefield, Zone::Exile)
+                };
+                let orb = put(&mut state, player.opponent(), "Torpor Orb", from);
+                let mut changes = vec![
+                    ProposedEvent::zone_change(source, Zone::Battlefield),
+                    ProposedEvent::zone_change(orb, to),
+                ];
+                if orb_first {
+                    changes.reverse();
+                }
+                event::propose_and_commit_batch(&mut state, changes);
+                assert_eq!(state.objects.get(orb).zone, to);
+                assert_eq!(active_text(&state, source).unwrap().donor().object, donor);
+                if arriving {
+                    settled(&mut state);
+                    assert!(captured_entry(&state, source).is_none());
+                    assert!(state.objects.get(land).tapped);
+                } else {
+                    resolve_untap(&mut state, player, source, land);
+                    assert!(matches!(captured_entry(&state, source).unwrap().kind,
+                        DonatedTriggerKindV1::PalinchronEnteredAfterBatch { .. }));
+                }
+                // Archived native entry facts also require the successor
+                // independently of the current runtime-mode bit.
+                state.engine.runtime_rules = RuntimeRulesV1::default();
+                let refusal = "full-text trigger producers require a complete public consumer successor";
+                assert_eq!(refuse_legacy(&state).unwrap_err(), refusal);
+                assert_eq!(crate::event_history_v1::guard_tests_v1::with_scans_forced(
+                    || refuse_legacy(&state),
+                ).unwrap_err(), refusal);
+            }
+        }
+    }
+}
+
 #[test]
 fn volrath_native_registration_retains_paid_discard_with_no_or_unsupported_text_both_seats() {
     for player in [PlayerId::P0, PlayerId::P1] {
