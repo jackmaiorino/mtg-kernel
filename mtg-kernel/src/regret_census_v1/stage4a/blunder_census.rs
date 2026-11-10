@@ -88,8 +88,11 @@ fn focal_lost(s: &Session, focal: PlayerId) -> Option<bool> {
 }
 
 /// Softmax of the candidate's logits on the live session.
+/// A position the scorer cannot score yields no probabilities (counted), never
+/// a lost game.
 struct Scorer {
     play: Play,
+    failures: u64,
 }
 
 impl Scorer {
@@ -98,7 +101,10 @@ impl Scorer {
             .play
             .legacy_policy_mut()
             .ok_or("the candidate must be a Legacy source")?;
-        let scores = p.score_fast_session_v1(s)?;
+        let Ok(scores) = p.score_fast_session_v1(s) else {
+            self.failures += 1;
+            return Ok(Vec::new());
+        };
         let max = scores
             .logits
             .iter()
@@ -975,7 +981,7 @@ fn run_on_worker(out_path: &str) -> Result<(), String> {
         },
     };
     let (play, receipt) = load(&source)?;
-    let mut scorer = Scorer { play };
+    let mut scorer = Scorer { play, failures: 0 };
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
     let mut out =
         std::io::BufWriter::new(std::fs::File::create(out_path).map_err(|e| e.to_string())?);
@@ -994,6 +1000,7 @@ fn run_on_worker(out_path: &str) -> Result<(), String> {
             cases.write_all(&buffer).map_err(|e| e.to_string())?;
         }
         row["seconds"] = json!(started.elapsed().as_secs_f64());
+        row["scoring_failures_so_far"] = json!(scorer.failures);
         writeln!(out, "{row}").map_err(|e| e.to_string())?;
         out.flush().map_err(|e| e.to_string())?;
         cases.flush().map_err(|e| e.to_string())?;
