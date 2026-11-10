@@ -107,7 +107,10 @@ fn next_rooms(state: &GameState, player: PlayerId) -> Result<Vec<(u16, u16)>, St
         }
         (Some(UNDERCITY_DUNGEON_ID_V1), Some(_)) => {
             let (_, rooms) = crate::effect::undercity_next_rooms(state, player)?;
-            Ok(rooms.into_iter().map(|room| (UNDERCITY_DUNGEON_ID_V1, room.stable_id())).collect())
+            Ok(rooms
+                .into_iter()
+                .map(|room| (UNDERCITY_DUNGEON_ID_V1, room.stable_id()))
+                .collect())
         }
         _ => Err("venture lost its current dungeon".into()),
     }
@@ -128,10 +131,7 @@ pub(crate) fn venture(
     continuation.frames.push(EffectFrame::Program {
         op: EffectOp::Choice {
             controller: PlayerRef::Controller,
-            options: options
-                .into_iter()
-                .map(enter_room_op)
-                .collect(),
+            options: options.into_iter().map(enter_room_op).collect(),
         },
         path,
     });
@@ -143,16 +143,23 @@ fn enter_room_op((dungeon, room): (u16, u16)) -> EffectOp {
 }
 
 pub(crate) fn in_forgotten_realms(state: &GameState, player: PlayerId) -> bool {
-    state.players[player.index()].dungeon.dungeon_id
+    state.players[player.index()]
+        .dungeon
+        .dungeon_id
         .is_some_and(|dungeon| DUNGEONS.contains(&dungeon))
 }
 
 fn initiative_venture(effect: &EffectOp) -> Option<InitiativeTriggerBindingV1> {
     match effect {
-        EffectOp::ResolveInitiativeTrigger { binding } if matches!(
-            binding.kind,
-            InitiativeTriggerKindV1::VentureAfterTaking | InitiativeTriggerKindV1::VentureAtUpkeep
-        ) => Some(*binding),
+        EffectOp::ResolveInitiativeTrigger { binding }
+            if matches!(
+                binding.kind,
+                InitiativeTriggerKindV1::VentureAfterTaking
+                    | InitiativeTriggerKindV1::VentureAtUpkeep
+            ) =>
+        {
+            Some(*binding)
+        }
         _ => None,
     }
 }
@@ -173,13 +180,34 @@ pub(crate) fn validate_initiative_venture_choice(
     crate::effect::validate_initiative_continuation_root(state, pending, binding)?;
     let rooms = next_rooms(state, binding.player)?;
     let valid = match (&pending.choice, pending.frames.as_slice()) {
-        (Some(PendingEffectChoice::ChooseOption {
-            player, path, options, purpose: EffectOptionChoicePurpose::Generic,
-        }), []) => *player == binding.player && path.is_empty()
-            && rooms.len() > 1 && rooms.iter().copied().map(enter_room_op).eq(options.iter().cloned()),
+        (
+            Some(PendingEffectChoice::ChooseOption {
+                player,
+                path,
+                options,
+                purpose: EffectOptionChoicePurpose::Generic,
+            }),
+            [],
+        ) => {
+            *player == binding.player
+                && path.is_empty()
+                && rooms.len() > 1
+                && rooms
+                    .iter()
+                    .copied()
+                    .map(enter_room_op)
+                    .eq(options.iter().cloned())
+        }
         (None, [EffectFrame::Program { op, path }]) => match path.as_slice() {
             [] => op == root,
-            [index] => rooms.get(usize::from(*index)).copied().map(enter_room_op).as_ref() == Some(op),
+            [index] => {
+                rooms
+                    .get(usize::from(*index))
+                    .copied()
+                    .map(enter_room_op)
+                    .as_ref()
+                    == Some(op)
+            }
             _ => false,
         },
         _ => false,
@@ -199,7 +227,8 @@ pub(super) fn enter_selected_room(
     match pending.resolving_item.inline_effect.as_ref() {
         Some(effect) if *effect == acererak_enters() => {}
         Some(effect) => {
-            let binding = initiative_venture(effect).ok_or("room choice lost its native venture")?;
+            let binding =
+                initiative_venture(effect).ok_or("room choice lost its native venture")?;
             crate::effect::validate_initiative_continuation_root(state, pending, binding)?;
             if !in_forgotten_realms(state, binding.player) {
                 return Err("Initiative venture lost its active Forgotten Realms dungeon".into());
@@ -291,11 +320,21 @@ pub(crate) fn room_triggers(state: &mut GameState) -> Vec<crate::trigger::Pendin
     if let Some(source) = super::e3(state).and_then(|e3| {
         e3.room_triggers.iter().find_map(|room| {
             (room.entered_at.is_none()
-                && occurrences::retained_room_entry(state, room.player, room.source, room.dungeon, room.room)
-                    .is_some()).then_some(room.source.source)
+                && occurrences::retained_room_entry(
+                    state,
+                    room.player,
+                    room.source,
+                    room.dungeon,
+                    room.room,
+                )
+                .is_some())
+            .then_some(room.source.source)
         })
     }) {
-        state.engine.halted = Some((crate::engine::UnsupportedMechanic::InvalidEffectContinuation, source));
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
         return Vec::new();
     }
     let Some(rooms) = state

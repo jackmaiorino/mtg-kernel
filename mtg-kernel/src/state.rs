@@ -713,7 +713,10 @@ pub enum InitiativeTriggerKindV1 {
     VentureAfterTaking,
     VentureAtUpkeep,
     UndercityRoom(UndercityRoomV1),
-    UndercityRoomBoundV1 { room: UndercityRoomV1, entered_at: usize },
+    UndercityRoomBoundV1 {
+        room: UndercityRoomV1,
+        entered_at: usize,
+    },
 }
 
 impl InitiativeTriggerKindV1 {

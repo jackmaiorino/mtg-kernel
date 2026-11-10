@@ -8920,11 +8920,16 @@ pub(crate) fn validate_initiative_trigger_binding(
         .get(binding.source.card_def as usize)
         .ok_or("Initiative trigger source definition is missing")?;
     let initiative_granter = crate::eternal_vintage_v1::initiative_granter(definition.name);
-    let native_room = matches!(binding.kind, InitiativeTriggerKindV1::UndercityRoomBoundV1 { .. });
+    let native_room = matches!(
+        binding.kind,
+        InitiativeTriggerKindV1::UndercityRoomBoundV1 { .. }
+    );
     let allowed = if native_room {
         (initiative_granter || definition.name == crate::eternal_cards_v1::e3::dungeons::ACERERAK)
-            && crate::eternal_cards_v1::e3::dungeons::occurrences::bound_undercity_entry(state, binding)
-                .is_some()
+            && crate::eternal_cards_v1::e3::dungeons::occurrences::bound_undercity_entry(
+                state, binding,
+            )
+            .is_some()
     } else {
         initiative_granter
     };
@@ -9114,8 +9119,7 @@ fn validate_undercity_throne_metadata(
     chosen: Option<EffectObjectBinding>,
 ) -> Result<(), String> {
     validate_initiative_continuation_root(state, pending, binding)?;
-    if binding.kind.undercity_room() != Some(UndercityRoomV1::ThroneOfTheDeadThree)
-    {
+    if binding.kind.undercity_room() != Some(UndercityRoomV1::ThroneOfTheDeadThree) {
         return Err("Throne continuation is not owned by the Throne room".to_string());
     }
     let current = bind_library_exact(state, binding.player);
@@ -9206,7 +9210,10 @@ fn enter_undercity_room(
         return Err("Undercity entry no longer follows the exact room graph".to_string());
     }
     crate::eternal_cards_v1::e3::dungeons::occurrences::enter_undercity(
-        state, binding.player, binding.source, room,
+        state,
+        binding.player,
+        binding.source,
+        room,
     )
 }
 

@@ -98,11 +98,13 @@ fn advance_to_initiative_stack(
     for _ in 0..48 {
         let decision = engine::advance_until_decision(state);
         if let Some(binding) = stack_binding(state) {
-            if binding.kind == expected || matches!(
-                (binding.kind, expected),
-                (InitiativeTriggerKindV1::UndercityRoomBoundV1 { room, .. },
-                 InitiativeTriggerKindV1::UndercityRoom(expected)) if room == expected
-            ) {
+            if binding.kind == expected
+                || matches!(
+                    (binding.kind, expected),
+                    (InitiativeTriggerKindV1::UndercityRoomBoundV1 { room, .. },
+                     InitiativeTriggerKindV1::UndercityRoom(expected)) if room == expected
+                )
+            {
                 return binding;
             }
         }
@@ -251,9 +253,13 @@ fn avenging_hunter_definition_and_etb_make_separate_venture_and_room_stack_items
     resolve_top_until_choice(&mut state);
     let room = stack_binding(&state).expect("venture queues room ability separately");
     if cfg!(feature = "eternal-fixtures") {
-        assert!(matches!(room.kind, InitiativeTriggerKindV1::UndercityRoomBoundV1 {
-            room: UndercityRoomV1::SecretEntrance, ..
-        }));
+        assert!(matches!(
+            room.kind,
+            InitiativeTriggerKindV1::UndercityRoomBoundV1 {
+                room: UndercityRoomV1::SecretEntrance,
+                ..
+            }
+        ));
     } else {
         assert_eq!(
             room.kind,
@@ -338,7 +344,10 @@ fn every_undercity_route_edge_is_exact_and_throne_completes_the_dungeon() {
             }
             assert_eq!(latest_room_event(&state), Some(expected), "edge {from:?}");
             if expected == UndercityRoomV1::ThroneOfTheDeadThree {
-                assert_eq!(state.players[0].dungeon.dungeon_id, Some(UNDERCITY_DUNGEON_ID_V1));
+                assert_eq!(
+                    state.players[0].dungeon.dungeon_id,
+                    Some(UNDERCITY_DUNGEON_ID_V1)
+                );
                 assert_eq!(state.players[0].dungeon.room_id, Some(expected.stable_id()));
                 assert!(state.players[0].dungeon.completed_dungeons.is_empty());
                 advance_to_initiative_stack(
@@ -346,7 +355,10 @@ fn every_undercity_route_edge_is_exact_and_throne_completes_the_dungeon() {
                     InitiativeTriggerKindV1::UndercityRoom(expected),
                 );
                 state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-                assert!(matches!(resolve_top_until_choice(&mut state), Some(Decision::CastSpellOrPass { .. })));
+                assert!(matches!(
+                    resolve_top_until_choice(&mut state),
+                    Some(Decision::CastSpellOrPass { .. })
+                ));
                 assert_eq!(state.players[0].dungeon.dungeon_id, None);
                 assert_eq!(state.players[0].dungeon.room_id, None);
                 assert_eq!(

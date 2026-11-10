@@ -4861,7 +4861,9 @@ fn legal_targets_unrestricted_v1(
     }
     if let Some(colors) = dungeon_colors.filter(|&colors| colors != 0) {
         targets.retain(|&target| {
-            if crate::eternal_cards_v1::e3::veil_protects_from_colors(state, target, controller, colors) {
+            if crate::eternal_cards_v1::e3::veil_protects_from_colors(
+                state, target, controller, colors,
+            ) {
                 return false;
             }
             let Target::Object(object) = target else {
@@ -4870,11 +4872,15 @@ fn legal_targets_unrestricted_v1(
             let color_count = colors.count_ones();
             !crate::controlled_creature_grants_v1::protects_from_colors(state, object, colors)
                 && !crate::eternal_pauper_e6b_v1::protected_from_colors(state, object, colors)
-                && !crate::standard_legends_v1::hexproof_from_color_mask(state, object, controller, colors)
+                && !crate::standard_legends_v1::hexproof_from_color_mask(
+                    state, object, controller, colors,
+                )
                 && !(color_count == 1
                     && has_effective_keyword(state, object, Keywords::PROTECTION_FROM_MONOCOLORED))
                 && !(color_count > 1
-                    && crate::eternal_vintage_e7b_v1::statics::has_protection_from_multicolored(state, object))
+                    && crate::eternal_vintage_e7b_v1::statics::has_protection_from_multicolored(
+                        state, object,
+                    ))
         });
     }
     if spec == TargetSpec::KickerControlledCreatures {
