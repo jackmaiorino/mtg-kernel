@@ -434,6 +434,186 @@ fn frozen_feb_human_names_and_resolves_paid_cabal_therapy_both_seats() {
 }
 
 #[test]
+fn frozen_feb_human_cycles_paid_unearth_both_seats() {
+    let label = "Unearth: Pay {2} and discard this card to draw a card (cycling)";
+    for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+        let player = native_seat(seat);
+        let mut owner = main_phase_owner(460_621, seat);
+        let state = &mut owner.inner.game;
+        let unearth = stage_deck_card(state, player, "Unearth", Zone::Hand);
+        let hand_count = state.players[player.index()].hand.len();
+        let library_count = state.players[player.index()].library.len();
+        state.players[player.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+        owner.inner.current = bind_next(state, &mut owner.inner.surface, owner.inner.step);
+
+        let human = owner.human_current(seat).unwrap().unwrap();
+        let ordinal = human
+            .actions
+            .iter()
+            .find_map(|row| match row {
+                FebHumanActionV1::Supported { native_ordinal, label: meaning }
+                    if meaning == label => Some(*native_ordinal),
+                _ => None,
+            })
+            .expect("paid Unearth offers its printed cycling ability");
+        let (other, token) = issued(&owner, player.opponent().into());
+        assert!(other.actions.is_empty() && token.is_none());
+        let snapshot = owner.snapshot();
+        let (numeric, token) = issued(&owner, seat);
+        let token = token.unwrap();
+        propose_and_commit(
+            &mut owner.inner.game,
+            ProposedEvent::zone_change(unearth, Zone::Library),
+        );
+        assert!(owner.step_human(&token, ordinal).is_err());
+        owner.restore(&snapshot).unwrap();
+        assert!(owner.step_human(&token, ordinal).is_err());
+        assert_eq!(owner.human_current(seat).unwrap().unwrap(), human);
+        assert_eq!(issued(&owner, seat).0.actions, numeric.actions);
+        choose_label(&mut owner, seat, label);
+
+        for _ in 0..8 {
+            if owner.inner.game.stack.is_empty() {
+                break;
+            }
+            let viewer = acting(&owner);
+            choose_label(&mut owner, viewer, "Pass priority");
+        }
+        let state = &owner.inner.game;
+        let actor = &state.players[player.index()];
+        assert!(state.stack.is_empty());
+        assert_eq!(state.objects.get(unearth).zone, Zone::Graveyard);
+        assert_eq!(actor.mana_pool, [0; 6]);
+        assert_eq!(actor.hand.len(), hand_count);
+        assert_eq!(actor.library.len(), library_count - 1);
+    }
+}
+
+#[test]
+fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
+    use crate::{effect::PendingEffectChoice, state::StackItemKind};
+
+    for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+        let player = native_seat(seat);
+        for donated in [false, true] {
+            let mut owner = main_phase_owner(460_622, seat);
+            let source_name = if donated {
+                "Volrath's Shapeshifter"
+            } else {
+                "Karmic Guide"
+            };
+            let state = &mut owner.inner.game;
+            let source = stage_deck_card(state, player, source_name, Zone::Hand);
+            let wall = stage_deck_card(state, player, "Wall of Roots", Zone::Graveyard);
+            let donor = donated.then(|| stage_deck_card(state, player, "Karmic Guide", Zone::Graveyard));
+            let mana = &mut state.players[player.index()].mana_pool;
+            if donated {
+                mana[ManaColor::U.pool_index()] = 2;
+                mana[ManaColor::C.pool_index()] = 1;
+            } else {
+                mana[ManaColor::W.pool_index()] = 2;
+                mana[ManaColor::C.pool_index()] = 3;
+            }
+            owner.inner.current = bind_next(state, &mut owner.inner.surface, owner.inner.step);
+            choose_label(&mut owner, seat, &format!("Begin casting {source_name}"));
+
+            let echo_published = |state: &GameState| {
+                state.step == Step::Upkeep
+                    && state.active_player == player
+                    && state.stack.last().is_some_and(|item| {
+                        item.kind == StackItemKind::TriggeredAbility && item.source == source
+                    })
+            };
+            for _ in 0..96 {
+                if echo_published(&owner.inner.game) {
+                    break;
+                }
+                let viewer = acting(&owner);
+                let human = owner.human_current(viewer).unwrap().unwrap();
+                let ordinal = human.actions.iter().find_map(|row| match row {
+                    FebHumanActionV1::Supported { native_ordinal, label }
+                        if ["Choose Wall of Roots", "Pass priority", "Attack with none", "Discard "]
+                            .iter()
+                            .any(|prefix| label.starts_with(prefix)) => Some(*native_ordinal),
+                    _ => None,
+                }).expect("native FEB cast, entry, or turn progression");
+                let (_, token) = issued(&owner, viewer);
+                owner.step_human(&token.unwrap(), ordinal).unwrap();
+            }
+            let state = &mut owner.inner.game;
+            assert!(echo_published(state));
+            assert_eq!(state.objects.get(wall).zone, Zone::Battlefield);
+            assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+            assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
+            if let Some(donor) = donor {
+                propose_and_commit(state, ProposedEvent::zone_change(donor, Zone::Exile));
+                assert!(full_text_v1::active_text(state, source).is_none());
+            }
+            let mana = &mut state.players[player.index()].mana_pool;
+            mana[ManaColor::W.pool_index()] = 2;
+            mana[ManaColor::C.pool_index()] = 3;
+            let unpaid_pool = *mana;
+            owner.inner.current = bind_next(state, &mut owner.inner.surface, owner.inner.step);
+            for _ in 0..8 {
+                if owner.inner.game.engine.pending_effect.is_some() {
+                    break;
+                }
+                let viewer = acting(&owner);
+                choose_label(&mut owner, viewer, "Pass priority");
+            }
+
+            let human = owner.human_current(seat).unwrap().unwrap();
+            assert_eq!(human.actions, [
+                FebHumanActionV1::Supported {
+                    native_ordinal: 0,
+                    label: format!("Pay {{3}}{{W}}{{W}} to keep {source_name} (Karmic Guide echo, sacrifice if unpaid)"),
+                },
+                FebHumanActionV1::Supported {
+                    native_ordinal: 1,
+                    label: format!("Sacrifice {source_name} (Karmic Guide echo)"),
+                },
+            ]);
+            assert!(owner.human_current(player.opponent().into()).unwrap().unwrap().actions.is_empty());
+            let (numeric, stale) = issued(&owner, seat);
+            let stale = stale.unwrap();
+            let snapshot = owner.snapshot();
+            let Some(PendingEffectChoice::ChooseOption { options, .. }) = owner
+                .inner
+                .game
+                .engine
+                .pending_effect
+                .as_mut()
+                .and_then(|pending| pending.choice.as_mut())
+            else {
+                panic!("Karmic Guide echo must offer native effect options");
+            };
+            options.swap(0, 1);
+            let reordered = owner.human_current(seat).unwrap().unwrap();
+            assert_eq!(reordered.actions.len(), 2);
+            assert!(reordered.actions.iter().all(|row| matches!(row,
+                FebHumanActionV1::Unsupported { action_kind, .. } if action_kind == "choose_effect_option")));
+            assert!(owner.step_human(&stale, 0).is_err());
+
+            for (ordinal, zone, mana) in [
+                (0, Zone::Battlefield, [0; 6]),
+                (1, Zone::Graveyard, unpaid_pool),
+            ] {
+                owner.restore(&snapshot).unwrap();
+                assert!(owner.step_human(&stale, ordinal).is_err());
+                assert_eq!(owner.human_current(seat).unwrap().unwrap(), human);
+                let (restored, token) = issued(&owner, seat);
+                assert_eq!(restored.actions, numeric.actions);
+                owner.step_human(&token.unwrap(), ordinal).unwrap();
+                let state = &owner.inner.game;
+                assert!(state.stack.is_empty());
+                assert_eq!(state.objects.get(source).zone, zone);
+                assert_eq!(state.players[player.index()].mana_pool, mana);
+            }
+        }
+    }
+}
+
+#[test]
 fn frozen_feb_human_order_exposes_only_presentation_and_sealed_ordinals() {
     for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
         let p = native_seat(seat);

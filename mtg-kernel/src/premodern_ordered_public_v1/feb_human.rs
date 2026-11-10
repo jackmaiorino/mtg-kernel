@@ -5,13 +5,17 @@ use crate::premodern_ordered_public_v1::{
     HumanFullTextProducerV1, HumanGraveyardV1, HumanObservationV1, HumanOrderPromptV1,
 };
 use crate::{
+    card_def::{CostComponent, TargetSpec},
     effect::{self, EffectOp, EffectOptionChoicePurpose, PendingEffectChoice, PlayerRef},
     eternal_cards_v1::EternalOpV1,
     eternal_legacy_e7a_v1::E7aOpV1,
+    eternal_premodern_p2c_v1::KARMIC_GUIDE,
+    eternal_premodern_p2d_v1 as echo,
     full_text_v1::FullTextAbilityV1,
+    mana::Cost,
     rl::{ActionSemanticV1 as A, CardStableRefV1, TargetRefV1},
     standard_cards_v1::StandardOpV1,
-    state::{StackItemKind, Zone},
+    state::{AbilitySourceContractV4, StackItem, StackItemKind, Zone},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -156,7 +160,7 @@ fn names(cards: &[CardStableRefV1]) -> Result<String, String> {
         .join(", "))
 }
 
-struct CabalTherapyMenu {
+struct NativeEffectOptionMenu {
     source: CardStableRefV1,
     labels: Vec<String>,
 }
@@ -171,7 +175,7 @@ fn cabal_therapy_name(option: &EffectOp) -> Option<&'static str> {
     Some(CARD_DEFS.get(usize::from(*named))?.object_name)
 }
 
-fn cabal_therapy_menu(state: &GameState, viewer: PlayerId) -> Option<CabalTherapyMenu> {
+fn native_effect_option_menu(state: &GameState, viewer: PlayerId) -> Option<NativeEffectOptionMenu> {
     let pending = state.engine.pending_effect.as_ref()?;
     let PendingEffectChoice::ChooseOption {
         player,
@@ -182,23 +186,40 @@ fn cabal_therapy_menu(state: &GameState, viewer: PlayerId) -> Option<CabalTherap
     else {
         return None;
     };
-    let spell = &pending.resolving_item;
-    let source = rl::card_ref(state, spell.source).ok()?;
+    let item = &pending.resolving_item;
+    let source = rl::card_ref(state, item.source).ok()?;
     if *player != viewer
-        || spell.controller != viewer
-        || spell.kind != StackItemKind::Spell
-        || spell.inline_effect.is_some()
-        || spell.is_copy
-        || source.zone != Zone::Stack
-        || Some(source.card_db_id) != card_id_by_name("Cabal Therapy")
+        || item.controller != viewer
+        || item.is_copy
         || !pending.frames.is_empty()
         || pending.answered_choice_guard.is_some()
+    {
+        return None;
+    }
+    let labels = match item.kind {
+        StackItemKind::Spell => cabal_therapy_labels(item, &source, path, options)?,
+        StackItemKind::TriggeredAbility if path.is_empty() => {
+            guide_echo_labels(state, item, &source, options)?
+        }
+        _ => return None,
+    };
+    effect::validate_pending_effect_choice(state).ok()?;
+    Some(NativeEffectOptionMenu { source, labels })
+}
+
+fn cabal_therapy_labels(
+    spell: &StackItem,
+    source: &CardStableRefV1,
+    path: &[u16],
+    options: &[EffectOp],
+) -> Option<Vec<String>> {
+    if spell.inline_effect.is_some()
+        || source.zone != Zone::Stack
+        || Some(source.card_db_id) != card_id_by_name("Cabal Therapy")
         || path.len() > 1
     {
         return None;
     }
-    effect::validate_pending_effect_choice(state).ok()?;
-
     // Generic native choices validate their operations individually. Bind this
     // menu to the ordered options of the printed spell at the same path.
     let definition = &CARD_DEFS[usize::from(source.card_db_id)];
@@ -210,11 +231,11 @@ fn cabal_therapy_menu(state: &GameState, viewer: PlayerId) -> Option<CabalTherap
     else {
         return None;
     };
-    if options != printed_options {
+    if options != printed_options.as_slice() {
         return None;
     }
 
-    let labels = options
+    options
         .iter()
         .map(|option| {
             if path.is_empty() {
@@ -237,8 +258,83 @@ fn cabal_therapy_menu(state: &GameState, viewer: PlayerId) -> Option<CabalTherap
                 Some(format!("Name {name} for Cabal Therapy"))
             }
         })
-        .collect::<Option<Vec<_>>>()?;
-    Some(CabalTherapyMenu { source, labels })
+        .collect()
+}
+
+fn guide_echo_labels(
+    state: &GameState,
+    item: &StackItem,
+    source: &CardStableRefV1,
+    options: &[EffectOp],
+) -> Option<Vec<String>> {
+    let captured = item.v4.ability_source_contract?;
+    if source.zone != Zone::Battlefield
+        || source.controller != item.controller.into()
+        || source.card_db_id != captured.card_def
+        || captured != AbilitySourceContractV4::capture(state, item.source)
+    {
+        return None;
+    }
+    let inline = item.inline_effect.as_ref()?;
+    let donated = full_text_v1::trigger_program(state, item).ok()?;
+    let program = match donated.as_ref() {
+        Some((program, TargetSpec::None)) if *program == echo::donated_guide_echo_trigger() => {
+            program
+        }
+        None if Some(source.card_db_id) == card_id_by_name(KARMIC_GUIDE)
+            && echo::delayed_effect_matches(KARMIC_GUIDE, inline) => inline,
+        _ => return None,
+    };
+    let EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: canonical,
+    } = program
+    else {
+        return None;
+    };
+    if options != canonical.as_slice() {
+        return None;
+    }
+
+    let name = public_name(source).ok()?;
+    let (colors, generic) = echo::echo_cost(KARMIC_GUIDE)?;
+    let colored_cost: String = colors.iter().map(|color| format!("{{{color:?}}}")).collect();
+    Some(vec![
+        format!("Pay {{{generic}}}{colored_cost} to keep {name} (Karmic Guide echo, sacrifice if unpaid)"),
+        format!("Sacrifice {name} (Karmic Guide echo)"),
+    ])
+}
+
+fn unearth_cycling(state: &GameState, source: &CardStableRefV1, viewer: PlayerSeatV1) -> bool {
+    if source.owner != viewer
+        || source.controller != viewer
+        || Some(source.card_db_id) != card_id_by_name("Unearth")
+        || !rl::card_ref(state, ObjectId(source.arena_id)).is_ok_and(|live| live == *source)
+    {
+        return false;
+    }
+    let Some(ability) = CARD_DEFS[usize::from(source.card_db_id)]
+        .activated_abilities
+        .first()
+    else {
+        return false;
+    };
+    ability.activation_zone == Zone::Hand
+        && ability.target_spec == TargetSpec::None
+        && ability.cost
+            == [
+                CostComponent::Mana(Cost {
+                    pips: &[],
+                    generic: 2,
+                    x_count: 0,
+                }),
+                CostComponent::DiscardSelf,
+            ]
+        && (ability.effect)()
+            == (EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            })
 }
 
 fn label(
@@ -246,7 +342,7 @@ fn label(
     row: &NumericNativeActionV1,
     viewer: PlayerSeatV1,
     graveyards: &[GraveyardV1; 2],
-    cabal_therapy: Option<&CabalTherapyMenu>,
+    effect_options: Option<&NativeEffectOptionMenu>,
 ) -> Result<Option<String>, String> {
     let action = &row.action.semantic;
     Ok(Some(match action {
@@ -281,10 +377,10 @@ fn label(
             }
         }
         A::ActivateAbility {
+            actor,
             source,
             ability_index,
             granted_ability,
-            ..
         } => {
             let name = public_name(source)?;
             let program = full_text_action(row).or_else(|| {
@@ -307,6 +403,11 @@ fn label(
                 }
                 (None, "Elvish Spirit Guide", 0, crate::state::Zone::Hand, None) => {
                     "Exile this card from your hand to add {G}"
+                }
+                (None, "Unearth", 0, Zone::Hand, None)
+                    if *actor == viewer && unearth_cycling(state, source, viewer) =>
+                {
+                    "Pay {2} and discard this card to draw a card (cycling)"
                 }
                 _ => return Ok(None),
             };
@@ -335,7 +436,7 @@ fn label(
             option_index,
             option_count,
         } => {
-            return Ok(cabal_therapy
+            return Ok(effect_options
                 .filter(|menu| {
                     *actor == viewer
                         && *source == menu.source
@@ -407,7 +508,7 @@ impl FebSessionV1 {
                 })
                 .collect(),
             Some(NumericMenuV1::Native { actions }) => {
-                let cabal_therapy = cabal_therapy_menu(state, seat);
+                let effect_options = native_effect_option_menu(state, seat);
                 actions
                     .iter()
                     .zip(action_values)
@@ -419,7 +520,7 @@ impl FebSessionV1 {
                                 row,
                                 viewer,
                                 &view.observation.ordered.graveyards,
-                                cabal_therapy.as_ref(),
+                            effect_options.as_ref(),
                             )? {
                                 Some(label) => FebHumanActionV1::Supported {
                                     native_ordinal,
