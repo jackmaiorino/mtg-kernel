@@ -57,3 +57,43 @@ Primary evidence directory:
 Next: diagnose the remaining growing work and the regression against these
 retained receipts before changing or measuring another candidate. The baseline,
 candidate, failed attempts and completed comparison remain intact.
+
+## Logical-index follow-up
+
+A separate matched comparison of candidate
+`7b2576e7f2edb5b254b65cb834b12f7eda62f38c` against the same baseline source
+preserved every outcome and final-state receipt but still failed #474.
+Summing each game's windows and averaging its borrowed and owned staging modes
+gives:
+
+| Fixed case | Baseline seconds | Candidate seconds | Time increase |
+| --- | ---: | ---: | ---: |
+| train 241 | 21.275 | 27.944 | 31.3% |
+| train 436 | 19.401 | 23.329 | 20.3% |
+| train 597 | 33.090 | 37.527 | 13.4% |
+| eval 458 | 18.733 | 21.191 | 13.1% |
+| Sum of staging means | 92.499 | 109.991 | 18.9% |
+
+The unaveraged sum across both modes is 184.997226 versus 219.982786 seconds,
+an increase of 18.9114%. This is a separate comparison, so the change from
+the earlier 37.3% regression is not itself a controlled effect estimate.
+Late-game cost still grows: train 597's owned 1501-1600 window costs 4.4094
+seconds per 100 decisions for the candidate, versus 2.8952 for the baseline.
+These four fixed cases do not provide a general performance estimate or a
+confidence interval.
+
+The retained comparison is
+`D:/mtg-kernel-history474-logical-qualification-20261108-01/timing-7b-qualification/comparison/comparison.json`,
+SHA-256 `5e409f93c7050244112c540f2f362876e8fc6e8a11ded6099145be9f40120d01`.
+Its plan SHA-256 is
+`0072669a2cdc6c6474af9deb45f1a3ed031626e70002cc0e38585c841d4df457`.
+All original windows and both earlier comparison artifacts remain intact.
+
+The next source candidate adds bounded proof memoization for immutable Drake
+rows and avoids expanding already-proved nested records during checkpoint
+serialization. Source `89751ff88e8c22002e385aafcd3abf163fa595d8` has been
+composed with main `40e278bd73b09264d9b363bdc81ce63f92a28b37`. Source review
+found no blocker in allocation identity, exact prefix checks, or legacy
+serialization fallback. Native correctness, timing and current CI remain
+pending. Neither this candidate nor the logical-index repair establishes flat
+per-decision cost; PR #583 and issue #474 remain open.
