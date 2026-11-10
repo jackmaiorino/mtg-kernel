@@ -1177,6 +1177,32 @@ fn show_and_tell_puts_each_players_chosen_card_onto_the_battlefield() {
                     .any(|entry| entry.object == wraith),
                 "the second player chooses before the first card is revealed"
             );
+            use mtg_kernel::rl::{EngineDecisionStageV2, PendingEffectChoiceSemanticV4};
+            for (viewer, visible) in [(P0, 0), (P1, 1)] {
+                let observation = mtg_kernel::rl::observe_policy_v5(
+                    &state,
+                    &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                    viewer,
+                    0,
+                    0,
+                    0,
+                    1,
+                ).unwrap();
+                let context = observation.projection.surface.engine_context;
+                assert_eq!(context.current_stage, EngineDecisionStageV2::PendingEffect);
+                assert!(matches!(context.pending_effect.unwrap().choice,
+                    Some(PendingEffectChoiceSemanticV4::Targets {
+                        player, selected_targets, legal_targets, min_targets: 0,
+                        max_targets: 1, can_finish: true, ..
+                    }) if player == P1.into() && selected_targets.is_empty()
+                        && legal_targets.len() == visible));
+            }
+            let before = state.state_hash();
+            assert!(mtg_kernel::effect::choose_resumable_target(
+                &mut state,
+                Target::Object(diamond),
+            ).is_err());
+            assert_eq!(state.state_hash(), before);
             act(
                 &mut state,
                 Action::ChooseEffectTarget(Target::Object(diamond)),
