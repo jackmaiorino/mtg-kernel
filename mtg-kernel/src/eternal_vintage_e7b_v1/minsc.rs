@@ -9,7 +9,10 @@ use crate::event::{self, CommittedEvent, HistoricalDamageSourceV1, ProposedEvent
 use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, StackItemId};
 use crate::standard_cards_v1::StandardOpV1;
-use crate::state::{AbilitySourceContractV4, GameState, StackItem, StackItemKind, StackTargetContractV4, Target, Zone};
+use crate::state::{
+    AbilitySourceContractV4, GameState, StackItem, StackItemKind, StackTargetContractV4, Target,
+    Zone,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -33,7 +36,8 @@ pub struct PublicationV1 {
 }
 
 fn is_minsc(source: AbilitySourceContractV4) -> bool {
-    cfg!(feature = "eternal-fixtures") && source.zone == Zone::Battlefield
+    cfg!(feature = "eternal-fixtures")
+        && source.zone == Zone::Battlefield
         && card_id_by_name(MINSC_AND_BOO) == Some(source.card_def)
 }
 
@@ -73,7 +77,11 @@ pub(crate) fn record_sacrifice(
     power: u32,
 ) -> Result<Option<usize>, String> {
     let row = &pending.resolving_item;
-    let Some(source) = row.v4.ability_source_contract.filter(|&source| is_minsc(source)) else {
+    let Some(source) = row
+        .v4
+        .ability_source_contract
+        .filter(|&source| is_minsc(source))
+    else {
         return Ok(None);
     };
     if row.kind != StackItemKind::ActivatedAbility
@@ -87,14 +95,27 @@ pub(crate) fn record_sacrifice(
         return Err("Minsc & Boo lost its actual loyalty activation".into());
     }
     let history = &state.engine.event_history;
-    let Some((move_at, _)) = history.iter().enumerate().skip(sacrifice_at + 1)
-        .find(|(_, event)| matches!(event, CommittedEvent::ZoneChange { object, .. }
-            if *object == creature.source))
+    let Some((move_at, _)) =
+        history
+            .iter()
+            .enumerate()
+            .skip(sacrifice_at + 1)
+            .find(|(_, event)| {
+                matches!(event, CommittedEvent::ZoneChange { object, .. }
+            if *object == creature.source)
+            })
     else {
         return Ok(None);
     };
     let at = history.len();
-    let proof = SacrificeV1 { activation: row.v4.stack_item_id, source, creature, sacrifice_at, move_at, power };
+    let proof = SacrificeV1 {
+        activation: row.v4.stack_item_id,
+        source,
+        creature,
+        sacrifice_at,
+        move_at,
+        power,
+    };
     if !actual_sacrifice(state, proof, at) {
         return Err("Minsc & Boo lost its actual Hamster sacrifice".into());
     }
@@ -112,25 +133,35 @@ fn sacrifice(state: &GameState, at: usize) -> Option<SacrificeV1> {
 fn announced(item: &StackItem) -> Option<PublicationV1> {
     let EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E7bV1(
         E7bOpV1::MinscDamageBoundV1 { sacrifice },
-    ))) = item.inline_effect.as_ref()? else {
+    ))) = item.inline_effect.as_ref()?
+    else {
         return None;
     };
     let source = item.v4.ability_source_contract?;
-    let [target] = item.targets.as_slice() else { return None; };
-    let [contract] = item.v4.target_contracts.as_slice() else { return None; };
+    let [target] = item.targets.as_slice() else {
+        return None;
+    };
+    let [contract] = item.v4.target_contracts.as_slice() else {
+        return None;
+    };
     (item.kind == StackItemKind::TriggeredAbility
         && item.v4.target_spec == Some(TargetSpec::AnyTarget)
-        && source.source == item.source && source.controller == item.controller
+        && source.source == item.source
+        && source.controller == item.controller
         && item.v4.stack_item_id != StackItemId::default())
-        .then_some(PublicationV1 {
-            item: item.v4.stack_item_id,
-            sacrifice: *sacrifice,
-            source, target: *target, contract: *contract,
-        })
+    .then_some(PublicationV1 {
+        item: item.v4.stack_item_id,
+        sacrifice: *sacrifice,
+        source,
+        target: *target,
+        contract: *contract,
+    })
 }
 
 pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), String> {
-    let Some(publication) = announced(item) else { return Ok(()); };
+    let Some(publication) = announced(item) else {
+        return Ok(());
+    };
     if sacrifice(state, publication.sacrifice)
         .is_none_or(|proof| proof.source != publication.source)
     {
@@ -140,20 +171,27 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
     Ok(())
 }
 
-fn publication(state: &GameState, item: &StackItem, sacrifice: usize) -> Option<(usize, PublicationV1)> {
+fn publication(
+    state: &GameState,
+    item: &StackItem,
+    sacrifice: usize,
+) -> Option<(usize, PublicationV1)> {
     let current = announced(item)?;
     if current.sacrifice != sacrifice {
         return None;
     }
-    let mut entries = state.engine.event_history
-        .scan_for_v1(&[EventKindV1::EternalOwnedDrawV1]).iter().enumerate().filter_map(|(at, event)| {
-            match event {
-                CommittedEvent::EternalOwnedDrawV1 { journal } => match **journal {
-                    JournalV1::MinscTarget(saved) if saved.item == current.item => Some((at, saved)),
-                    _ => None,
-                },
+    let mut entries = state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::EternalOwnedDrawV1])
+        .iter()
+        .enumerate()
+        .filter_map(|(at, event)| match event {
+            CommittedEvent::EternalOwnedDrawV1 { journal } => match **journal {
+                JournalV1::MinscTarget(saved) if saved.item == current.item => Some((at, saved)),
                 _ => None,
-            }
+            },
+            _ => None,
         });
     let (at, saved) = entries.next()?;
     (entries.next().is_none() && saved == current && at > sacrifice).then_some((at, saved))
@@ -167,8 +205,10 @@ pub(crate) fn owns(state: &GameState, item: &StackItem, at: usize) -> bool {
 
 pub(crate) fn count(state: &GameState, ctx: &ExecCtx, at: usize) -> Option<u32> {
     let proof = sacrifice(state, at)?;
-    (ctx.ability_source_contract == Some(proof.source) && ctx.controller == proof.source.controller
-        && ctx.source == proof.source.source).then_some(proof.power)
+    (ctx.ability_source_contract == Some(proof.source)
+        && ctx.controller == proof.source.controller
+        && ctx.source == proof.source.source)
+        .then_some(proof.power)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -186,12 +226,13 @@ pub(crate) fn departure(state: &GameState, object: ObjectId) -> Option<Departure
         && card_id_by_name(MINSC_AND_BOO) == Some(live.card_def)
         && state.stack.iter().any(|item| {
             item.v4.ability_source_contract.is_some_and(|source| {
-                source.source == object && source.zone_change_count == live.zone_change_count
+                source.source == object
+                    && source.zone_change_count == live.zone_change_count
                     && is_minsc(source)
             }) && (item.inline_effect.as_ref() == Some(&super::minsc_minus_two())
                 || announced(item).is_some())
         }))
-        .then_some(())?;
+    .then_some(())?;
     Some(DepartureV1 {
         facts: crate::source_power_activation_v1::capture_damage_source(state, object),
         types: crate::source_type_hexproof_v1::current_types(state, object).ok()?,
@@ -202,10 +243,13 @@ pub(crate) fn capture_batch(state: &GameState, events: &[ProposedEvent]) -> Vec<
     if !cfg!(feature = "eternal-fixtures") {
         return Vec::new();
     }
-    events.iter().filter_map(|event| match event {
-        ProposedEvent::ZoneChange(change) => departure(state, change.object),
-        _ => None,
-    }).collect()
+    events
+        .iter()
+        .filter_map(|event| match event {
+            ProposedEvent::ZoneChange(change) => departure(state, change.object),
+            _ => None,
+        })
+        .collect()
 }
 
 pub(crate) fn record_departure(state: &mut GameState, at: usize, departure: DepartureV1) {
@@ -224,7 +268,9 @@ fn departed_source(
     state: &GameState,
     source: AbilitySourceContractV4,
 ) -> Result<Option<DepartureV1>, String> {
-    let live = state.objects.try_get(source.source)
+    let live = state
+        .objects
+        .try_get(source.source)
         .ok_or("Minsc & Boo lost its physical damage source")?;
     if live.zone == Zone::Battlefield && live.zone_change_count == source.zone_change_count {
         return Ok(None);
@@ -243,7 +289,9 @@ fn departed_source(
                             && *controller_before == facts.source.controller))
                 .then_some(departure)
         });
-    let departure = departures.next().ok_or("Minsc & Boo lost its original departure")?;
+    let departure = departures
+        .next()
+        .ok_or("Minsc & Boo lost its original departure")?;
     if departures.next().is_some() {
         return Err("Minsc & Boo has duplicate departure evidence".into());
     }
@@ -264,25 +312,30 @@ pub(crate) fn departed_target_legal(
     let facts = departure.facts;
     let colors = facts.color_mask;
     let controller = item.controller;
-    let legal = crate::fixed_source_damage_v3::legal_targets_with_controller(state, facts, controller)
-        .contains(&row.target)
-        && !crate::eternal_cards_v1::e3::veil_protects_from_colors(
-            state, row.target, controller, colors,
-        )
-        && !crate::eternal_e5a_v1::statics::protects_from_departed_types(
-            state, row.target, departure.types,
-        )
-        && match row.target {
-            Target::Object(object) => {
-                !crate::eternal_pauper_e6b_v1::protected_from_colors(state, object, colors)
-                    && !((colors & 0x1f).count_ones() > 1
-                        && super::statics::has_protection_from_multicolored(state, object))
-                    && !(departure.types.contains(crate::card_def::CardType::Creature)
-                        && crate::eternal_vintage_v1::protected_from_creatures(state, object))
-            }
-            Target::Player(_) => true,
-            Target::StackItem(_) => false,
-        };
+    let legal =
+        crate::fixed_source_damage_v3::legal_targets_with_controller(state, facts, controller)
+            .contains(&row.target)
+            && !crate::eternal_cards_v1::e3::veil_protects_from_colors(
+                state, row.target, controller, colors,
+            )
+            && !crate::eternal_e5a_v1::statics::protects_from_departed_types(
+                state,
+                row.target,
+                departure.types,
+            )
+            && match row.target {
+                Target::Object(object) => {
+                    !crate::eternal_pauper_e6b_v1::protected_from_colors(state, object, colors)
+                        && !((colors & 0x1f).count_ones() > 1
+                            && super::statics::has_protection_from_multicolored(state, object))
+                        && !(departure
+                            .types
+                            .contains(crate::card_def::CardType::Creature)
+                            && crate::eternal_vintage_v1::protected_from_creatures(state, object))
+                }
+                Target::Player(_) => true,
+                Target::StackItem(_) => false,
+            };
     Ok(Some(legal))
 }
 
@@ -299,7 +352,9 @@ pub(crate) fn damage_once(
         return Ok(0);
     }
     let mut proposal = event::damage_from_exec_ctx_v1(
-        &pending.ctx, row.target, i32::try_from(power).map_err(|_| "Minsc & Boo damage overflow")?,
+        &pending.ctx,
+        row.target,
+        i32::try_from(power).map_err(|_| "Minsc & Boo damage overflow")?,
     );
     if let (ProposedEvent::Damage(damage), Some(proof)) =
         (&mut proposal, departed_source(state, row.source)?)
@@ -312,9 +367,13 @@ pub(crate) fn damage_once(
     if state.engine.halted.is_some() || crate::linked_aura_operation_v1::has_pending(state) {
         return Err("Minsc & Boo damage did not complete".into());
     }
-    record(state, JournalV1::MinscDamageCompleted {
-        item: row.item, published_at,
-    });
+    record(
+        state,
+        JournalV1::MinscDamageCompleted {
+            item: row.item,
+            published_at,
+        },
+    );
     Ok(power)
 }
 
@@ -330,10 +389,19 @@ pub(crate) fn completed_damage(
     let Some(at) = before.checked_sub(1) else {
         return false;
     };
-    let mut completions = state.engine.event_history
-        .scan_for_v1(&[EventKindV1::EternalOwnedDrawV1]).iter().enumerate().filter_map(|(index, event)| {
-            let CommittedEvent::EternalOwnedDrawV1 { journal } = event else { return None; };
-            let JournalV1::MinscDamageCompleted { item, published_at } = **journal else { return None; };
+    let mut completions = state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::EternalOwnedDrawV1])
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| {
+            let CommittedEvent::EternalOwnedDrawV1 { journal } = event else {
+                return None;
+            };
+            let JournalV1::MinscDamageCompleted { item, published_at } = **journal else {
+                return None;
+            };
             (item == row.item).then_some((index, published_at))
         });
     completions.next() == Some((at, published_at)) && completions.next().is_none()

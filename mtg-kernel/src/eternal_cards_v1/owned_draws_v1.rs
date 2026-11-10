@@ -54,7 +54,9 @@ enum InstructionV1 {
         drawer: PlayerId,
         count: u32,
     },
-    Minsc { sacrifice: usize },
+    Minsc {
+        sacrifice: usize,
+    },
 }
 
 impl InstructionV1 {
@@ -93,9 +95,9 @@ impl InstructionV1 {
             EternalOpV1::E7aV1(E7aOpV1::CurieDrawBoundV1 { combat_at }) => Some(Self::Curie {
                 combat_at: *combat_at,
             }),
-            EternalOpV1::E7bV1(E7bOpV1::MinscDamageBoundV1 { sacrifice }) => {
-                Some(Self::Minsc { sacrifice: *sacrifice })
-            }
+            EternalOpV1::E7bV1(E7bOpV1::MinscDamageBoundV1 { sacrifice }) => Some(Self::Minsc {
+                sacrifice: *sacrifice,
+            }),
             _ => None,
         }
     }
@@ -302,8 +304,14 @@ pub enum JournalV1 {
     },
     MinscSacrifice(minsc::SacrificeV1),
     MinscTarget(minsc::PublicationV1),
-    MinscDamageCompleted { item: StackItemId, published_at: usize },
-    MinscDeparture { at: usize, departure: minsc::DepartureV1 },
+    MinscDamageCompleted {
+        item: StackItemId,
+        published_at: usize,
+    },
+    MinscDeparture {
+        at: usize,
+        departure: minsc::DepartureV1,
+    },
 }
 
 impl JournalV1 {
@@ -607,7 +615,12 @@ fn progress(
         selected(state, pending)
     };
     if let InstructionV1::Minsc { sacrifice } = started.instruction {
-        if !minsc::completed_damage(state, &pending.resolving_item, sacrifice, progress.started_at) {
+        if !minsc::completed_damage(
+            state,
+            &pending.resolving_item,
+            sacrifice,
+            progress.started_at,
+        ) {
             return None;
         }
     }

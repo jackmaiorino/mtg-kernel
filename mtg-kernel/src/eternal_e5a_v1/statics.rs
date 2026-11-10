@@ -181,11 +181,16 @@ pub(crate) fn protects_from_departed_types(
 ) -> bool {
     let player = match target {
         Target::Player(player) => player,
-        Target::Object(object) if crate::engine::object_has_type(state, object, CardType::Creature) =>
-            state.objects.get(object).controller,
+        Target::Object(object)
+            if crate::engine::object_has_type(state, object, CardType::Creature) =>
+        {
+            state.objects.get(object).controller
+        }
         _ => return false,
     };
-    protection_types(state, player).into_iter().any(|kind| types.contains(kind))
+    protection_types(state, player)
+        .into_iter()
+        .any(|kind| types.contains(kind))
 }
 
 /// Damage protection prevents (702.16e).

@@ -1213,7 +1213,10 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         VENGEVINE => matches!(op, E7bOpV1::MayV1(_)),
         KISHLA_SKIMMER => matches!(op, E7bOpV1::DrawOneV1),
         STINKWEED_IMP => matches!(op, E7bOpV1::DestroyDamagedCreatureV1 { .. }),
-        MINSC_AND_BOO => matches!(op, E7bOpV1::MinscDamageV1 { .. } | E7bOpV1::MinscDamageBoundV1 { .. }),
+        MINSC_AND_BOO => matches!(
+            op,
+            E7bOpV1::MinscDamageV1 { .. } | E7bOpV1::MinscDamageBoundV1 { .. }
+        ),
         DACK_FAYDEN => matches!(op, E7bOpV1::GainControlOfPermanentsV1 { .. }),
         _ => false,
     }
@@ -2233,15 +2236,22 @@ pub(crate) fn finish_selection(
                 state,
                 ProposedEvent::zone_change(creature.object, Zone::Graveyard),
             );
-            if state.engine.halted.is_some() || link_live_in(state, binding_link(&creature), Zone::Battlefield) {
+            if state.engine.halted.is_some()
+                || link_live_in(state, binding_link(&creature), Zone::Battlefield)
+            {
                 return Ok(false);
             }
             // "When you do": a reflexive trigger, which targets.
             if let Some(source) = continuation.ctx.ability_source_contract {
                 let op = if hamster && power > 0 {
                     let Some(sacrifice) = minsc::record_sacrifice(
-                        state, continuation, captured, sacrifice_at, power as u32,
-                    )? else {
+                        state,
+                        continuation,
+                        captured,
+                        sacrifice_at,
+                        power as u32,
+                    )?
+                    else {
                         return Ok(false);
                     };
                     E7bOpV1::MinscDamageBoundV1 { sacrifice }

@@ -19071,8 +19071,12 @@ pub(crate) fn stack_targets_still_legal(
         return Ok(true);
     };
     if let Some(legal) = crate::eternal_vintage_e7b_v1::minsc::departed_target_legal(state, item)? {
-        let [target] = item.targets.as_slice() else { return Ok(false); };
-        let [contract] = item.v4.target_contracts.as_slice() else { return Ok(false); };
+        let [target] = item.targets.as_slice() else {
+            return Ok(false);
+        };
+        let [contract] = item.v4.target_contracts.as_slice() else {
+            return Ok(false);
+        };
         return Ok(legal && target_contract_matches_live(state, *target, *contract));
     }
     if item.kind == StackItemKind::ActivatedAbility

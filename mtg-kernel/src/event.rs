@@ -4760,7 +4760,11 @@ fn commit_with_entry_batch_and_source_color(
         );
     }
     if let Some(departure) = minsc_departure {
-        crate::eternal_vintage_e7b_v1::minsc::record_departure(state, entry_history_index, departure);
+        crate::eternal_vintage_e7b_v1::minsc::record_departure(
+            state,
+            entry_history_index,
+            departure,
+        );
     }
     if let Some(copy) = metamorph_mage_copy {
         if matches!(state.engine.event_history.get(entry_history_index),
@@ -5154,14 +5158,22 @@ impl NativeMaterializationV1<'_> {
     fn is_scene(self) -> bool {
         matches!(self, Self::FinalScene(_))
     }
-    fn minsc_departure(self, state: &GameState, id: ObjectId) -> Option<crate::eternal_vintage_e7b_v1::minsc::DepartureV1> {
+    fn minsc_departure(
+        self,
+        state: &GameState,
+        id: ObjectId,
+    ) -> Option<crate::eternal_vintage_e7b_v1::minsc::DepartureV1> {
         match self {
             Self::FinalScene(_) => None,
             Self::Commit(Some(plan)) => {
                 let generation = state.objects.get(id).zone_change_count;
-                plan.minsc_departures.iter().find(|departure| {
-                    departure.facts.source.source == id && departure.facts.source.zone_change_count == generation
-                }).copied()
+                plan.minsc_departures
+                    .iter()
+                    .find(|departure| {
+                        departure.facts.source.source == id
+                            && departure.facts.source.zone_change_count == generation
+                    })
+                    .copied()
             }
             Self::Commit(None) => crate::eternal_vintage_e7b_v1::minsc::departure(state, id),
         }

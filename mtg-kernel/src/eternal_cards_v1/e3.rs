@@ -2322,12 +2322,18 @@ pub(crate) fn veil_protects_from_colors(
         return false;
     }
     match target {
-        Target::Player(player) => player != controller && active_veils(state, player).next().is_some(),
+        Target::Player(player) => {
+            player != controller && active_veils(state, player).next().is_some()
+        }
         Target::Object(object) => state.objects.try_get(object).is_some_and(|live| {
-            live.zone == Zone::Battlefield && live.controller != controller
-                && active_veils(state, live.controller).any(|veil| veil.permanents.contains(&ObjectLinkV4 {
-                    object, zone_change_count: live.zone_change_count,
-                }))
+            live.zone == Zone::Battlefield
+                && live.controller != controller
+                && active_veils(state, live.controller).any(|veil| {
+                    veil.permanents.contains(&ObjectLinkV4 {
+                        object,
+                        zone_change_count: live.zone_change_count,
+                    })
+                })
         }),
         Target::StackItem(_) => false,
     }
