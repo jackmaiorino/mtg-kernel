@@ -11,8 +11,9 @@ backward GEMM multiply-adds. The object keys and values remain live.
 
 These are attribution measurements, not a speedup claim. Counts and bytes are
 exact. Times come from a measurement-only build on a noisy VM, and both builds
-use the CI receipt profile (LTO off, 16 codegen units). The checked-in release
-profile timings still need a machine with at least 32 GB (see Pending).
+use the CI receipt profile (LTO off, 16 codegen units). A second receipt, with
+the checked-in release profile on a 32 GB Windows host, is under
+[Checked-in release profile](#checked-in-release-profile).
 
 | 2-worker gradient, mean of 8 repetitions | ms | share |
 |---|---:|---:|
@@ -118,16 +119,109 @@ the [manifest](s_learner_attribution_cloud_20261108.json). `python
 scripts/experiments/s_learner_attribution_v1/run.py summarize <manifest>`
 regenerates every table from it.
 
-## Pending
+## Checked-in release profile
 
-The checked-in release profile (thin LTO, one codegen unit) needs more memory
-than this 15 GiB host. These steps still need a machine with at least 32 GB:
+The second receipt builds baseline `c6329d8` and the reviewed successor
+`aa85af1` with the checked-in release profile (thin LTO, one codegen unit) on
+a 32 GB Windows host. There the serial gradient took **130.8 ms** and the
+two-worker gradient **80.8 ms** (1.62x). Host, operating system and profile all
+differ from the cloud receipt, so its times are not comparable with those
+above. Every count and byte figure matches the cloud receipt exactly.
 
-1. Build baseline `c6329d8` and the reviewed successor with that profile,
-   the successor both with and without `--features s-learner-profile-v1`.
-2. Run the five exact tests and `--test s_learner_profile_v1` under it.
-3. Run `run.py run` with the three binaries, fixed `--cpus`, workers 1 and 2,
-   four rounds and four profile runs. The result is a second manifest.
+| 2-worker gradient, mean of 8 repetitions | ms | share |
+|---|---:|---:|
+| Record drain (forward, recorded backward) | 61.4 | 76.0% |
+| Replay drain (weight-gradient shards) | 18.2 | 22.6% |
+| Replay additions (serial) | 0.8 | 1.0% |
+| Shard build, score merge, rest | 0.3 | 0.4% |
+| Gradient | 80.8 | |
 
-Synthetic `gae-bench` speed is not durable-update gain. Any later kernel change
-needs its own real-input qualification.
+- **Lost time:** of the 15.4 ms lost against an ideal half of the serial
+  gradient, **7.0 ms is record-phase imbalance**. The sum of each block's
+  slower worker is 60.7 ms against a 53.8 ms mean, and the caller waited
+  6.2 ms on joins. About 5.5 ms more comes from slower work with two workers
+  active. Record work totals 107.5 ms, 11.5% more than the serial forward and
+  backward without weight gradients (96.4 ms). On the cloud VM that excess
+  was 1.6%. The forward records nothing yet took 12.7% longer, so recording
+  is not the main cause.
+- **Replay:** 34.6 ms of work against the serial sink's 34.0 ms, balanced at
+  17.6 and 17.0 ms busy (0.3 ms imbalance).
+- **Unchanged counts:** each update records 41.58 MiB of term values from 1,097
+  Linear terms, 10,441 LayerNorm rows and 4,479 additions. The peak active
+  block holds 4.60 MiB live and 5.61 MiB reserved. The final block's object
+  query rows are 22.0% of the 1.290 billion backward GEMM multiply-adds.
+  Capacity retained across all slots peaks at 5.61 MiB, the same as the active
+  block, because every block is full.
+- **Serial path:** forward is 30.3% of the gradient, backward 69.5% and weight
+  gradients in the sink 26.0%. Per layer the backward spends about 14.9 ms in
+  the FFN, 5.9 ms in attention, 4.7 ms in QKV and 1.6 ms in the projection.
+  Adam took 2.6 ms and the state hash 4.4 ms.
+- **Helpers and allocations:** each update spawns and joins 22 helpers with no
+  failure, spending 0.22 ms spawning record helpers and 0.25 ms spawning replay
+  helpers. The caller thread records 1,068 allocations (6.9 MiB) serially and
+  a mean 822 (11.4 MiB) at two workers, and the record helper reports 645 more.
+  Peak process heap was 30.7 MiB at two workers and 29.1 MiB serially.
+
+### Correctness
+
+- With this profile all 21 `s_transformer_v1::` tests pass, including the five
+  exact tests listed above, and `tests/s_learner_profile_v1.rs` passes.
+- `parity-dump` gives identical `files_sha256` under baseline and candidate,
+  and the same 7 file hashes as the cloud receipt.
+- Every `gae-bench` attempt, in all three builds and at both worker counts,
+  goes from full state `d5e8442f…fc54` to `7d577ed1…a2ed`. Those are the
+  cloud receipt's digests. The Linux CI-profile builds and these Windows
+  checked-in-profile builds give bit-identical parameters and Adam state on
+  this fixture.
+
+### Default-build A-B-B-A
+
+Four A-B-B-A rounds per worker count, one process per attempt, 3 repetitions
+each. Warm-process repetitions exclude each process's first.
+
+| Workers | Baseline mean s | Candidate mean s | Mean ratio | Median ratio | Paired rounds |
+|---:|---:|---:|---:|---:|---|
+| 1 | 0.1444 | 0.1396 | 0.966 | 1.000 | 1.028, 0.913, 1.059, 0.874 |
+| 2 | 0.0861 | 0.0850 | 0.987 | 0.969 | 0.950, 1.032, 0.947, 1.024 |
+
+Both differences are within the observed spread, which reaches 34% within an
+arm at one worker. There, each process's repetitions agree closely, but
+processes in both arms settle near 0.128 s or 0.146 s (once 0.172 s). The
+default build's instrumentation again shows no measurable cost. This is not a
+speedup.
+
+### Identities
+
+Baseline is `c6329d868ad32467b22a411018894a6eae65205c`. The candidate and the
+profile build are `aa85af14a458d9b235592a69d8e69ca2da02f036`, which adds only
+this milestone's changes to the baseline. Main has since merged other S
+learner changes (#609, #617, #619), so these times describe `aa85af1`, not
+current main.
+
+- **Binaries:** SHA-256s are `a5dcb591…93d5` (baseline), `90819b35…be06`
+  (candidate) and `a1172b54…d83e` (profile).
+- **Toolchain:** Rust and Cargo 1.94.1 (LLVM 21.1.8),
+  x86_64-pc-windows-msvc, MSVC link.exe 14.50.35725.0, `--release --locked`.
+  The builds used the checked-in profile with no profile or RUSTFLAGS
+  overrides.
+- **Host:** Windows 11 (10.0.26200), AMD Ryzen 9 5900XT (16 cores, 32
+  threads), 32 GiB.
+- **Builds:** they ran under the host's build guard (4 cores, below-normal
+  priority). With `-j 4` the profile build left as little as 2.6 GB
+  available, and its page file grew by about 0.7 GB.
+- **Timed step:** it ran at normal priority in a host-guard reservation of
+  logical CPUs 4-7 (two physical cores), with WSL stopped and desktop load
+  under 7% of total CPU.
+
+The [manifest](s_learner_attribution_windows_20261110.json) holds the raw
+samples, digests and aggregate profile. The run wrote it as 67,089 bytes with
+SHA-256 `c02f8b37eb10ac144a6b9bf3c886d04eaef74a07cc9609de7345b539faef5411`. The
+committed copy differs in only three ways: the run folder path is shown as
+`<W>`, the host name is omitted, and line endings are LF. `run.py summarize`
+regenerates the tables from it.
+
+## Remaining
+
+This milestone's checked-in release-profile steps are complete. Synthetic
+`gae-bench` speed is not durable-update gain. Any later kernel change needs
+its own measurements and real-input qualification.
