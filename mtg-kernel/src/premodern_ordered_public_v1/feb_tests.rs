@@ -519,7 +519,11 @@ fn play_frozen_feb_mirror(
                 panic!("{} native halt: {:?}", at(), owner.inner.game.engine.halted);
             }
             Ok(FebCurrentV1::UnsupportedDecision) => {
-                panic!("{} unsupported decision: {:?}", at(), owner.inner.current.as_ref().err());
+                panic!(
+                    "{} unsupported decision: {:?}",
+                    at(),
+                    owner.inner.current.as_ref().err()
+                );
             }
             Err(error) => panic!("{} numeric view: {error}", at()),
         };
@@ -532,7 +536,10 @@ fn play_frozen_feb_mirror(
             assert_eq!(actor, PlayerSeatV1::P1, "{}", at());
             assert!(numeric.actions.is_empty(), "{}", at());
             let (actor_view, token) = issued(&owner, actor);
-            (actor_view, token.expect("actor receives sealed FEB decision"))
+            (
+                actor_view,
+                token.expect("actor receives sealed FEB decision"),
+            )
         };
         let human = owner
             .human_current(actor)
@@ -643,7 +650,10 @@ fn frozen_feb_mirrors_reach_native_terminal_and_replay_both_starting_seats() {
         let (replay, replay_winner, replay_trace) = play_frozen_feb_mirror(starting, Some(&trace));
         assert_eq!(winner, replay_winner, "FEB starting {starting:?}");
         assert_eq!(trace, replay_trace, "FEB starting {starting:?}");
-        assert_eq!(actual.inner.game.state_hash(), replay.inner.game.state_hash());
+        assert_eq!(
+            actual.inner.game.state_hash(),
+            replay.inner.game.state_hash()
+        );
         assert!(
             history == &replay.inner.game.engine.event_history,
             "FEB starting {starting:?} replay changed native event receipts"
