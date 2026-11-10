@@ -18308,7 +18308,11 @@ fn triggered_stack_item_expected_target_spec(
             }
         };
     if crate::eternal_cards_v1::owned_draws_v1::standstill::bound(inline_effect).is_some() {
-        crate::eternal_cards_v1::owned_draws_v1::standstill::validate_trigger(state, item, require_publication)?;
+        crate::eternal_cards_v1::owned_draws_v1::standstill::validate_trigger(
+            state,
+            item,
+            require_publication,
+        )?;
         return Ok(None);
     }
     if crate::eternal_cards_v1::owned_draws_v1::portent::bound(inline_effect).is_some() {

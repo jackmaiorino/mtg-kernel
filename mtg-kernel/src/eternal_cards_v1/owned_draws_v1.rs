@@ -26,8 +26,8 @@ pub(crate) mod bonder;
 pub(crate) mod echo;
 pub(crate) mod fixed;
 pub(crate) mod portent;
-pub(crate) mod standstill;
 pub(crate) mod rooms;
+pub(crate) mod standstill;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum InstructionV1 {
@@ -77,13 +77,22 @@ enum InstructionV1 {
     Portent {
         queued_at: usize,
     },
-    Standstill { triggered_at: usize, drawer: PlayerId },
+    Standstill {
+        triggered_at: usize,
+        drawer: PlayerId,
+    },
 }
 
 impl InstructionV1 {
     fn from_op(op: &EternalOpV1) -> Option<Self> {
         match op {
-            EternalOpV1::P1bV1(crate::eternal_premodern_p1b_v1::P1bOpV1::StandstillBoundV1 { triggered_at, caster }) => Some(Self::Standstill { triggered_at: *triggered_at, drawer: caster.opponent() }),
+            EternalOpV1::P1bV1(crate::eternal_premodern_p1b_v1::P1bOpV1::StandstillBoundV1 {
+                triggered_at,
+                caster,
+            }) => Some(Self::Standstill {
+                triggered_at: *triggered_at,
+                drawer: caster.opponent(),
+            }),
             EternalOpV1::P1aV1(
                 crate::eternal_premodern_p1a_v1::P1aOpV1::PortentUpkeepBoundV1 { queued_at },
             ) => Some(Self::Portent {
@@ -191,7 +200,11 @@ impl InstructionV1 {
         match self {
             Self::FlameOfAnor { draw, .. } => PlayerRef::Target(draw),
             Self::FixedRoot { player, .. } => player,
-            Self::Echo { drawer, .. } | Self::Bonder { drawer, .. } | Self::Standstill { drawer, .. } if drawer != ctx.controller => {
+            Self::Echo { drawer, .. }
+            | Self::Bonder { drawer, .. }
+            | Self::Standstill { drawer, .. }
+                if drawer != ctx.controller =>
+            {
                 PlayerRef::Opponent
             }
             _ => PlayerRef::Controller,
@@ -206,7 +219,8 @@ impl InstructionV1 {
             },
             Self::FixedRoot { drawer, .. }
             | Self::Echo { drawer, .. }
-            | Self::Bonder { drawer, .. } | Self::Standstill { drawer, .. } => Some(drawer),
+            | Self::Bonder { drawer, .. }
+            | Self::Standstill { drawer, .. } => Some(drawer),
             _ => Some(ctx.controller),
         }
     }
@@ -470,9 +484,15 @@ fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(Instruct
             return portent::selected_draw(state, pending, queued_at)
                 .then_some((instruction, SourceV1::Spell(item.v4.source_contract?)));
         }
-        if let InstructionV1::Standstill { triggered_at, drawer } = instruction {
-            return standstill::selected(state, pending, triggered_at, drawer)
-                .then_some((instruction, SourceV1::Ability(item.v4.ability_source_contract?)));
+        if let InstructionV1::Standstill {
+            triggered_at,
+            drawer,
+        } = instruction
+        {
+            return standstill::selected(state, pending, triggered_at, drawer).then_some((
+                instruction,
+                SourceV1::Ability(item.v4.ability_source_contract?),
+            ));
         }
         let source = item.v4.ability_source_contract?;
         if source.source != item.source
@@ -626,9 +646,10 @@ pub(crate) fn begin(
         || state.eternal_owned_draw_progress_v1.is_some()
         || has_started(state, pending.resolving_item.v4.stack_item_id)
         || matches!(instruction, InstructionV1::Portent { .. })
-            && state.stack.iter().any(|row| {
-                row.v4.stack_item_id == pending.resolving_item.v4.stack_item_id
-            })
+            && state
+                .stack
+                .iter()
+                .any(|row| row.v4.stack_item_id == pending.resolving_item.v4.stack_item_id)
     {
         return Err("Eternal draw lost its original instruction".into());
     }

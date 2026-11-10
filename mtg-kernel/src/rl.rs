@@ -13938,15 +13938,46 @@ fn owned_draw_pending_source_ref(
         return Ok(None);
     }
     crate::engine::validate_pending_trigger_identity(state, pending).map_err(RlContractError)?;
-    if state.engine.pending_triggers.iter().chain(state.pending_legend_rule_v1.iter().flat_map(|legend| legend.waiting_triggers())).filter(|row| *row == pending).count() != 1 {
-        return Err(RlContractError("owned draw pending source lacks one native queue row".into()));
+    if state
+        .engine
+        .pending_triggers
+        .iter()
+        .chain(
+            state
+                .pending_legend_rule_v1
+                .iter()
+                .flat_map(|legend| legend.waiting_triggers()),
+        )
+        .filter(|row| *row == pending)
+        .count()
+        != 1
+    {
+        return Err(RlContractError(
+            "owned draw pending source lacks one native queue row".into(),
+        ));
     }
-    let (source, card_def, owner, controller, zone, generation) = if portent::bound(&pending.effect).is_some() {
+    let (source, card_def, owner, controller, zone, generation) = if portent::bound(&pending.effect)
+        .is_some()
+    {
         let source = portent::pending_source(state, &pending.effect).map_err(RlContractError)?;
-        (source.source, source.card_def, source.owner, source.controller, source.zone, source.zone_change_count)
+        (
+            source.source,
+            source.card_def,
+            source.owner,
+            source.controller,
+            source.zone,
+            source.zone_change_count,
+        )
     } else {
         let source = standstill::pending_source(state, &pending.effect).map_err(RlContractError)?;
-        (source.source, source.card_def, source.owner, source.controller, source.zone, source.zone_change_count)
+        (
+            source.source,
+            source.card_def,
+            source.owner,
+            source.controller,
+            source.zone,
+            source.zone_change_count,
+        )
     };
     Ok(Some(CardStableRefV1 {
         arena_id: source.0,

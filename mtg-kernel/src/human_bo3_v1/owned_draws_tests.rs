@@ -4,11 +4,13 @@ use crate::card_def::{card_id_by_name, CARD_DEFS};
 use crate::engine::{self, Action, Decision};
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
-use crate::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 use crate::rl_session::FastActorResponseV1;
+use crate::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
-fn zone(state: &GameState, source: ObjectId) -> Zone { state.objects.get(source).zone }
+fn zone(state: &GameState, source: ObjectId) -> Zone {
+    state.objects.get(source).zone
+}
 fn id(name: &str) -> u16 {
     card_id_by_name(name).unwrap_or_else(|| panic!("{name}"))
 }
@@ -221,10 +223,18 @@ fn paid_portent_and_standstill_ordinary_human_pass_both_seats_restore_and_retry(
             } else {
                 let source = cast(&mut state, actor, "Standstill", None, &[ManaColor::U], 1);
                 settled(&mut state);
-                cast(&mut state, actor, "Lightning Bolt", Some(actor.opponent()), &[ManaColor::R], 0);
+                cast(
+                    &mut state,
+                    actor,
+                    "Lightning Bolt",
+                    Some(actor.opponent()),
+                    &[ManaColor::R],
+                    0,
+                );
                 source
             };
-            assert!(state.stack.iter().any(|row| row.source == source && row.kind == crate::state::StackItemKind::TriggeredAbility));
+            assert!(state.stack.iter().any(|row| row.source == source
+                && row.kind == crate::state::StackItemKind::TriggeredAbility));
             let mut replay = None;
             for state in [state.clone(), restored(&state)] {
                 let mut session = FastActorSessionV1::from_v3_fixture_state(state);
@@ -235,16 +245,32 @@ fn paid_portent_and_standstill_ordinary_human_pass_both_seats_restore_and_retry(
                 let mut projector = HumanDecisionProjectorV1::new_v4(expected.acting_player);
                 let before = session.privileged_core_environment_hash();
                 let visible = projector.project_current(&session, expected).unwrap();
-                assert_eq!(visible, projector.project_current(&session, expected).unwrap());
+                assert_eq!(
+                    visible,
+                    projector.project_current(&session, expected).unwrap()
+                );
                 assert_eq!(before, session.privileged_core_environment_hash());
-                let pass = visible.actions.iter().find(|action| action.label == "Pass priority").unwrap_or_else(|| panic!("{visible:?}"));
-                let request = HumanActionRequestV1 { prompt_seq: visible.prompt_seq, action_index: pass.action_index };
+                let pass = visible
+                    .actions
+                    .iter()
+                    .find(|action| action.label == "Pass priority")
+                    .unwrap_or_else(|| panic!("{visible:?}"));
+                let request = HumanActionRequestV1 {
+                    prompt_seq: visible.prompt_seq,
+                    action_index: pass.action_index,
+                };
                 let receipt = projector.submit(&mut session, request.clone()).unwrap();
                 let after = session.privileged_core_environment_hash();
                 assert_eq!(projector.submit(&mut session, request).unwrap(), receipt);
                 assert_eq!(after, session.privileged_core_environment_hash());
-                let result = (serde_json::to_vec(&visible).unwrap(), serde_json::to_vec(&receipt).unwrap(), after);
-                if let Some(previous) = &replay { assert_eq!(&result, previous); }
+                let result = (
+                    serde_json::to_vec(&visible).unwrap(),
+                    serde_json::to_vec(&receipt).unwrap(),
+                    after,
+                );
+                if let Some(previous) = &replay {
+                    assert_eq!(&result, previous);
+                }
                 replay = Some(result);
             }
         }

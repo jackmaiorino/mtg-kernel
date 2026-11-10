@@ -1509,13 +1509,18 @@ fn cast_triggers_need_no_spell_on_the_stack() {
     let seal = put(&mut state, P0, "Seal of Cleansing", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::W], 1);
     cast(&mut state, seal, &[]);
-    run_until(&mut state, |state| zone(state, seal) == Zone::Graveyard, |_, _| None);
+    run_until(
+        &mut state,
+        |state| zone(state, seal) == Zone::Graveyard,
+        |_, _| None,
+    );
     assert!(state.stack.iter().all(|item| item.source != seal));
     assert!(state.stack.iter().any(|item| item.source == standstill));
     assert_eq!(zone(&state, standstill), Zone::Battlefield);
     assert!(state.players.iter().all(|player| player.hand.is_empty()));
     assert_eq!(p1b::depletion_counters(&state, decree), 1);
-    let mut replay: GameState = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    let mut replay: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
     assert_eq!(state.state_hash(), replay.state_hash());
     for branch in [&mut state, &mut replay] {
         settled(branch);
@@ -1536,15 +1541,23 @@ fn injected_departed_spell_cast_cannot_mint_standstill_draw_ownership() {
     next(&mut state);
     // This is deliberately not an actual cast and has no finalized native
     // cast identity. It cannot borrow the old card ID to authorize draws.
-    state.engine.event_log.push(mtg_kernel::event::CommittedEvent::SpellCast {
-        spell: seal,
-        controller: P0,
-    });
+    state
+        .engine
+        .event_log
+        .push(mtg_kernel::event::CommittedEvent::SpellCast {
+            spell: seal,
+            controller: P0,
+        });
     act(&mut state, Action::ActivateManaAbility(island));
-    assert!(matches!(engine::advance_until_decision(&mut state), Decision::Halted { source, .. } if source == standstill));
+    assert!(
+        matches!(engine::advance_until_decision(&mut state), Decision::Halted { source, .. } if source == standstill)
+    );
     assert_eq!(zone(&state, standstill), Zone::Battlefield);
     assert!(state.players.iter().all(|player| player.hand.is_empty()));
-    assert!(!state.engine.event_history.iter().any(|event| matches!(event, mtg_kernel::event::CommittedEvent::EternalOwnedDrawV1 { .. })));
+    assert!(!state.engine.event_history.iter().any(|event| matches!(
+        event,
+        mtg_kernel::event::CommittedEvent::EternalOwnedDrawV1 { .. }
+    )));
 }
 
 #[test]

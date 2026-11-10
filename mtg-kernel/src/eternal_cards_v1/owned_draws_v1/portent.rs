@@ -217,8 +217,13 @@ pub(crate) fn begin_look(
     path: &[u16],
 ) -> Result<(), String> {
     let (paid_at, _) = paid(state, pending).ok_or("Portent look lacks its actual paid cast")?;
-    if path != [0] || pending.frames != remainder(0) || look(state, paid_at).is_some()
-        || state.stack.iter().any(|live| live.v4.stack_item_id == pending.resolving_item.v4.stack_item_id)
+    if path != [0]
+        || pending.frames != remainder(0)
+        || look(state, paid_at).is_some()
+        || state
+            .stack
+            .iter()
+            .any(|live| live.v4.stack_item_id == pending.resolving_item.v4.stack_item_id)
     {
         return Err("Portent look changed or replayed its original root".into());
     }

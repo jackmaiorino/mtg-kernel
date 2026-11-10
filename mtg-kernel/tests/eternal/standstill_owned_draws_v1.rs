@@ -246,10 +246,21 @@ fn paid_standstill(state: &mut GameState, owner: PlayerId) -> ObjectId {
 }
 fn bolt(state: &mut GameState, actor: PlayerId) -> ObjectId {
     priority(state, actor);
-    cast(state, actor, "Lightning Bolt", Some(actor.opponent()), &[ManaColor::R], 0)
+    cast(
+        state,
+        actor,
+        "Lightning Bolt",
+        Some(actor.opponent()),
+        &[ManaColor::R],
+        0,
+    )
 }
 fn source_triggers(state: &GameState, source: ObjectId) -> usize {
-    state.stack.iter().filter(|item| item.source == source).count()
+    state
+        .stack
+        .iter()
+        .filter(|item| item.source == source)
+        .count()
 }
 fn sacrifices(state: &GameState, source: ObjectId) -> usize {
     state.engine.event_history.iter().filter(|event| matches!(event, mtg_kernel::event::CommittedEvent::Sacrificed { object, .. } if *object == source)).count()
@@ -262,12 +273,25 @@ fn paid_standstill_ordinary_caster_opponent_draws_both_seats_and_controllers() {
             state.active_player = owner;
             state.priority_player = owner;
             let source = paid_standstill(&mut state, owner);
-            assert_eq!(receipt_count(&state, "StandstillV1"), 0, "no draw journal before a triggering cast");
+            assert_eq!(
+                receipt_count(&state, "StandstillV1"),
+                0,
+                "no draw journal before a triggering cast"
+            );
             bolt(&mut state, caster);
             assert_eq!(source_triggers(&state, source), 1);
             let mut replay = restored(&state);
             for branch in [&mut state, &mut replay] {
-                mtg_kernel::rl::observe_policy_v5(branch, &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(), caster, 0, 0, 0, 1).unwrap();
+                mtg_kernel::rl::observe_policy_v5(
+                    branch,
+                    &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                    caster,
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .unwrap();
                 settled(branch);
                 assert_eq!(zone(branch, source), Zone::Graveyard);
                 assert_eq!(sacrifices(branch, source), 1);
@@ -275,7 +299,13 @@ fn paid_standstill_ordinary_caster_opponent_draws_both_seats_and_controllers() {
                 assert!(branch.players[caster.index()].hand.is_empty());
                 assert_eq!(receipt_count(branch, "Started"), 1);
                 assert_eq!(receipt_count(branch, "Completed"), 3);
-                assert!(mtg_kernel::rl::observe_v2(branch, &mtg_kernel::surface_v2::HarnessSurfaceV2::default(), owner, 0).is_ok());
+                assert!(mtg_kernel::rl::observe_v2(
+                    branch,
+                    &mtg_kernel::surface_v2::HarnessSurfaceV2::default(),
+                    owner,
+                    0
+                )
+                .is_ok());
             }
             assert_eq!(state.state_hash(), replay.state_hash());
         }
@@ -286,31 +316,56 @@ fn paid_standstill_jace_hull_terminal_stop_and_hull_all_attempts() {
     for drawer in [P0, P1] {
         for owner in [drawer, drawer.opponent()] {
             let mut state = game(&[]);
-            for _ in 0..4 { put(&mut state, drawer.opponent(), "Plains", Zone::Library); }
+            for _ in 0..4 {
+                put(&mut state, drawer.opponent(), "Plains", Zone::Library);
+            }
             let jace = cast_jace(&mut state, drawer);
-            put(&mut state, drawer.opponent(), "Hullbreacher", Zone::Battlefield);
+            put(
+                &mut state,
+                drawer.opponent(),
+                "Hullbreacher",
+                Zone::Battlefield,
+            );
             put(&mut state, drawer, "Quantum Riddler", Zone::Battlefield);
             state.active_player = owner;
             state.priority_player = owner;
             let source = paid_standstill(&mut state, owner);
             bolt(&mut state, drawer.opponent());
             let prompt = settle(&mut state).expect("Jace/Hull choice without Dredge");
-            assert!(matches!(&prompt, Decision::ChooseEffectTargets { player, legal_targets, .. } if *player == drawer && legal_targets == &[Target::Object(jace)]));
+            assert!(
+                matches!(&prompt, Decision::ChooseEffectTargets { player, legal_targets, .. } if *player == drawer && legal_targets == &[Target::Object(jace)])
+            );
             assert_eq!(sacrifices(&state, source), 1);
             assert_eq!(zone(&state, source), Zone::Graveyard);
             let mut winner = restored(&state);
             assert_eq!(next(&mut winner), prompt);
-            act(&mut winner, Action::ChooseEffectTarget(Target::Object(jace)));
-            assert!(matches!(next(&mut winner), Decision::GameOver { winner: Some(player) } if player == drawer));
-            assert_eq!(receipt_count(&winner, "Completed"), 1, "terminal first attempt stops the remaining three");
-            assert_eq!(winner.players[drawer.index()].life, 20, "underlying Bolt never resolves");
+            act(
+                &mut winner,
+                Action::ChooseEffectTarget(Target::Object(jace)),
+            );
+            assert!(
+                matches!(next(&mut winner), Decision::GameOver { winner: Some(player) } if player == drawer)
+            );
+            assert_eq!(
+                receipt_count(&winner, "Completed"),
+                1,
+                "terminal first attempt stops the remaining three"
+            );
+            assert_eq!(
+                winner.players[drawer.index()].life,
+                20,
+                "underlying Bolt never resolves"
+            );
             assert!(named(&winner, drawer.opponent(), "Treasure Token").is_empty());
             let mut replay = restored(&state);
             for branch in [&mut state, &mut replay] {
                 for ordinal in 0..4 {
                     act(branch, Action::FinishEffectSelection);
                     if ordinal < 3 {
-                        assert!(matches!(settle(branch), Some(Decision::ChooseEffectTargets { .. })));
+                        assert!(matches!(
+                            settle(branch),
+                            Some(Decision::ChooseEffectTargets { .. })
+                        ));
                         *branch = restored(branch);
                         assert_eq!(sacrifices(branch, source), 1);
                     }
@@ -320,7 +375,10 @@ fn paid_standstill_jace_hull_terminal_stop_and_hull_all_attempts() {
                 assert_eq!(sacrifices(branch, source), 1);
                 assert_eq!(receipt_count(branch, "StartedWithRiddlerV1"), 1);
                 assert_eq!(receipt_count(branch, "Completed"), 4);
-                assert!(branch.players.iter().all(|seat| !seat.has_lost && !seat.drew_from_empty));
+                assert!(branch
+                    .players
+                    .iter()
+                    .all(|seat| !seat.has_lost && !seat.drew_from_empty));
             }
             assert_eq!(state.state_hash(), replay.state_hash());
         }
@@ -333,12 +391,19 @@ fn paid_standstill_dredge_hull_riddler_freezes_count_after_first_attempt() {
             let mut state = plains();
             state.active_player = owner;
             state.priority_player = owner;
-            put(&mut state, drawer.opponent(), "Hullbreacher", Zone::Battlefield);
+            put(
+                &mut state,
+                drawer.opponent(),
+                "Hullbreacher",
+                Zone::Battlefield,
+            );
             put(&mut state, drawer, "Quantum Riddler", Zone::Battlefield);
             let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
             let source = paid_standstill(&mut state, owner);
             bolt(&mut state, drawer.opponent());
-            assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, legal_targets, .. }) if player == drawer && legal_targets == [Target::Object(thug)]));
+            assert!(
+                matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, legal_targets, .. }) if player == drawer && legal_targets == [Target::Object(thug)])
+            );
             let mut replay = restored(&state);
             for branch in [&mut state, &mut replay] {
                 act(branch, Action::ChooseEffectTarget(Target::Object(thug)));
@@ -406,9 +471,15 @@ fn paid_standstill_stacked_cast_triggers_sacrifice_once_and_stale_sources_do_not
             if change == 2 {
                 state.objects.get_mut(source).controller = owner.opponent();
             } else {
-                mtg_kernel::event::propose_and_commit(&mut state, mtg_kernel::event::ProposedEvent::zone_change(source, Zone::Exile));
+                mtg_kernel::event::propose_and_commit(
+                    &mut state,
+                    mtg_kernel::event::ProposedEvent::zone_change(source, Zone::Exile),
+                );
                 if change == 1 {
-                    mtg_kernel::event::propose_and_commit(&mut state, mtg_kernel::event::ProposedEvent::zone_change(source, Zone::Battlefield));
+                    mtg_kernel::event::propose_and_commit(
+                        &mut state,
+                        mtg_kernel::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+                    );
                 }
             }
             let mut replay = restored(&state);
@@ -427,18 +498,39 @@ fn paid_standstill_stacked_cast_triggers_sacrifice_once_and_stale_sources_do_not
 fn paid_standstill_restore_rejects_cast_source_sacrifice_and_progress_tampering() {
     for drawer in [P0, P1] {
         let mut state = game(&[]);
-        for _ in 0..4 { put(&mut state, drawer.opponent(), "Plains", Zone::Library); }
+        for _ in 0..4 {
+            put(&mut state, drawer.opponent(), "Plains", Zone::Library);
+        }
         cast_jace(&mut state, drawer);
-        put(&mut state, drawer.opponent(), "Hullbreacher", Zone::Battlefield);
+        put(
+            &mut state,
+            drawer.opponent(),
+            "Hullbreacher",
+            Zone::Battlefield,
+        );
         let source = paid_standstill(&mut state, drawer);
         bolt(&mut state, drawer.opponent());
         let live_state = state.clone();
-        let live_row = state.stack.iter().find(|item| item.source == source).unwrap().clone();
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { .. })));
+        let live_row = state
+            .stack
+            .iter()
+            .find(|item| item.source == source)
+            .unwrap()
+            .clone();
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
         restored(&state);
         let original = state.engine.pending_effect.as_ref().unwrap();
         let mut borrowed = live_state;
-        assert!(mtg_kernel::effect::begin_resumable_resolution(live_row.inline_effect.as_ref().unwrap(), &original.ctx, live_row.clone(), &mut borrowed).is_err());
+        assert!(mtg_kernel::effect::begin_resumable_resolution(
+            live_row.inline_effect.as_ref().unwrap(),
+            &original.ctx,
+            live_row.clone(),
+            &mut borrowed
+        )
+        .is_err());
         assert_eq!(sacrifices(&borrowed, source), 0);
         for mutation in 0..6 {
             let mut forged = state.clone();
@@ -446,18 +538,50 @@ fn paid_standstill_restore_rejects_cast_source_sacrifice_and_progress_tampering(
             match mutation {
                 0 => pending.frames.clear(),
                 1 => pending.ctx.controller = drawer.opponent(),
-                2 => pending.resolving_item.v4.ability_source_contract.as_mut().unwrap().zone_change_count += 1,
+                2 => {
+                    pending
+                        .resolving_item
+                        .v4
+                        .ability_source_contract
+                        .as_mut()
+                        .unwrap()
+                        .zone_change_count += 1
+                }
                 3 => pending.resolving_item.is_copy = true,
-                4 => pending.resolving_item.inline_effect = Some(mtg_kernel::effect::EffectOp::DrawCards { player: mtg_kernel::effect::PlayerRef::Controller, count: 3 }),
+                4 => {
+                    pending.resolving_item.inline_effect =
+                        Some(mtg_kernel::effect::EffectOp::DrawCards {
+                            player: mtg_kernel::effect::PlayerRef::Controller,
+                            count: 3,
+                        })
+                }
                 _ => pending.ctx.stack_item_id = None,
             }
-            assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err(), "mutation {mutation}");
+            assert!(
+                mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err(),
+                "mutation {mutation}"
+            );
         }
-        for (variant, field) in [("Started", "total"), ("Triggered", "cast_at"), ("Published", "triggered_at"), ("SacrificeCompleted", "sacrifice_at"), ("SacrificeCompleted", "departure_at"), ("SacrificeCompleted", "departed_generation")] {
+        for (variant, field) in [
+            ("Started", "total"),
+            ("Triggered", "cast_at"),
+            ("Published", "triggered_at"),
+            ("SacrificeCompleted", "sacrifice_at"),
+            ("SacrificeCompleted", "departure_at"),
+            ("SacrificeCompleted", "departed_generation"),
+        ] {
             let mut json = serde_json::to_value(&state).unwrap();
-            assert!(alter(&mut json["engine"]["event_history"], variant, field, 999999.into()));
+            assert!(alter(
+                &mut json["engine"]["event_history"],
+                variant,
+                field,
+                999999.into()
+            ));
             let forged: GameState = serde_json::from_value(json).unwrap();
-            assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err(), "{variant}.{field}");
+            assert!(
+                mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err(),
+                "{variant}.{field}"
+            );
         }
         let mut json = serde_json::to_value(&state).unwrap();
         json["eternal_owned_draw_progress_v1"]["completed"] = 1.into();
@@ -465,7 +589,11 @@ fn paid_standstill_restore_rejects_cast_source_sacrifice_and_progress_tampering(
         assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err());
         let mut raw = state.clone();
         raw.engine.pending_effect = None;
-        mtg_kernel::effect::execute(original.resolving_item.inline_effect.as_ref().unwrap(), &original.ctx, &mut raw);
+        mtg_kernel::effect::execute(
+            original.resolving_item.inline_effect.as_ref().unwrap(),
+            &original.ctx,
+            &mut raw,
+        );
         assert!(raw.engine.halted.is_some());
         assert_eq!(sacrifices(&raw, source), 1);
     }
@@ -479,24 +607,47 @@ fn native_vial_metamorph_of_animated_standstill_keeps_ordinary_copied_source_rou
         state.priority_player = owner;
         let vial = cast(&mut state, owner, "Aether Vial", None, &[], 1);
         settled(&mut state);
-        cast(&mut state, owner, "Opalescence", None, &[ManaColor::W, ManaColor::W], 2);
+        cast(
+            &mut state,
+            owner,
+            "Opalescence",
+            None,
+            &[ManaColor::W, ManaColor::W],
+            2,
+        );
         settled(&mut state);
         let source = paid_standstill(&mut state, owner);
         // Charge-counter setup control. The Vial activation still pays its
         // actual tap cost and follows the native hand/Metamorph entry choices.
         state.objects.get_mut(vial).counters.charge = 4;
         let copy = put(&mut state, owner, "Phyrexian Metamorph", Zone::Hand);
-        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(vial, 0))));
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(vial, 0)))
+        );
         act(&mut state, Action::ActivateAbility(vial, 0));
         assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
         assert!(state.objects.get(vial).tapped);
-        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(copy))));
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(copy)))
+        );
         act(&mut state, Action::ChooseEffectTarget(Target::Object(copy)));
-        assert!(matches!(next(&mut state), Decision::ChooseEffectTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(source))));
-        act(&mut state, Action::ChooseEffectTarget(Target::Object(source)));
+        assert!(
+            matches!(next(&mut state), Decision::ChooseEffectTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(source)))
+        );
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(source)),
+        );
         settled(&mut state);
         assert_eq!(state.objects.get(copy).card_def, id("Standstill"));
-        assert!(state.eternal_v1.as_ref().unwrap().vintage.copies.iter().any(|entry| entry.host.object == copy));
+        assert!(state
+            .eternal_v1
+            .as_ref()
+            .unwrap()
+            .vintage
+            .copies
+            .iter()
+            .any(|entry| entry.host.object == copy));
         bolt(&mut state, owner.opponent());
         assert_eq!(source_triggers(&state, source), 1);
         assert_eq!(source_triggers(&state, copy), 1);
@@ -506,7 +657,11 @@ fn native_vial_metamorph_of_animated_standstill_keeps_ordinary_copied_source_rou
             assert_eq!(sacrifices(branch, source), 1);
             assert_eq!(sacrifices(branch, copy), 1);
             assert_eq!(branch.players[owner.index()].hand.len(), 6);
-            assert_eq!(receipt_count(branch, "Started"), 1, "only the physical source acquires this successor owner");
+            assert_eq!(
+                receipt_count(branch, "Started"),
+                1,
+                "only the physical source acquires this successor owner"
+            );
         }
         assert_eq!(state.state_hash(), replay.state_hash());
     }

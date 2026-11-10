@@ -323,7 +323,16 @@ fn paid_portent_both_seats_shuffle_branches_restore_and_original_caster_next_upk
                     0
                 )
                 .is_ok());
-                mtg_kernel::rl::observe_policy_v5(branch, &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(), actor, 0, 0, 0, 1).unwrap();
+                mtg_kernel::rl::observe_policy_v5(
+                    branch,
+                    &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                    actor,
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .unwrap();
                 settled(branch);
                 assert!(mtg_kernel::rl::observe_v2(
                     branch,
@@ -590,7 +599,8 @@ fn paid_portent_parent_cannot_skip_look_shuffle_or_replay_completed_cast() {
             &original.ctx,
             original.resolving_item.clone(),
             &mut borrowed_live,
-        ).is_err());
+        )
+        .is_err());
         assert_eq!(receipt_count(&borrowed_live, "Look"), 0);
 
         for mutation in 0..3 {
@@ -702,11 +712,21 @@ fn paid_portent_pending_order_sources_remain_original_after_hidden_return() {
         let mut sources = Vec::new();
         for _ in 0..2 {
             let source = portent(&mut state, actor);
-            let contract = state.stack.iter().find(|row| row.source == source).unwrap().v4.source_contract.unwrap();
+            let contract = state
+                .stack
+                .iter()
+                .find(|row| row.source == source)
+                .unwrap()
+                .v4
+                .source_contract
+                .unwrap();
             finish_parent(&mut state, false);
             // Native zone-event control after a real paid and completed spell.
             // This is not a claim that Portent itself returns to its owner's hand.
-            mtg_kernel::event::propose_and_commit(&mut state, mtg_kernel::event::ProposedEvent::zone_change(source, Zone::Hand));
+            mtg_kernel::event::propose_and_commit(
+                &mut state,
+                mtg_kernel::event::ProposedEvent::zone_change(source, Zone::Hand),
+            );
             sources.push(contract);
         }
         next_upkeep(&mut state, actor);
@@ -716,7 +736,11 @@ fn paid_portent_pending_order_sources_remain_original_after_hidden_return() {
             let mut surface = PolicySurfaceV5::new();
             let decision = surface.next_decision(branch).unwrap();
             let observation = observe_policy_v5(branch, &surface, actor, 0, 0, 0, 1).unwrap();
-            let pending = &observation.projection.surface.engine_context.pending_triggers;
+            let pending = &observation
+                .projection
+                .surface
+                .engine_context
+                .pending_triggers;
             assert_eq!(pending.len(), 2);
             for (pending, original) in pending.iter().zip(&sources) {
                 assert_eq!(pending.source.arena_id, original.source.0);
@@ -727,14 +751,27 @@ fn paid_portent_pending_order_sources_remain_original_after_hidden_return() {
             let choices = legal_action_candidates_v5(&decision, branch).unwrap();
             assert_eq!(choices.len(), 2);
             for choice in &choices {
-                let ActionSemanticV1::OrderTriggers { pending_sources, .. } = &choice.record.semantic else { panic!("unexpected action"); };
-                assert_eq!(pending_sources, &pending.iter().map(|row| row.source.clone()).collect::<Vec<_>>());
+                let ActionSemanticV1::OrderTriggers {
+                    pending_sources, ..
+                } = &choice.record.semantic
+                else {
+                    panic!("unexpected action");
+                };
+                assert_eq!(
+                    pending_sources,
+                    &pending
+                        .iter()
+                        .map(|row| row.source.clone())
+                        .collect::<Vec<_>>()
+                );
             }
             let mut tampered = branch.clone();
             tampered.engine.pending_triggers[0].controller = actor.opponent();
             assert!(observe_policy_v5(&tampered, &surface, actor, 0, 0, 0, 1).is_err());
             assert!(legal_action_candidates_v5(&decision, &tampered).is_err());
-            surface.apply(branch, choices[0].policy_action.clone()).unwrap();
+            surface
+                .apply(branch, choices[0].policy_action.clone())
+                .unwrap();
             settled(branch);
             assert_eq!(branch.players[actor.index()].hand.len(), 4);
             assert_eq!(receipt_count(branch, "Completed"), 2);
