@@ -1427,7 +1427,7 @@ fn reanimated_metamorph_chooses_copy_and_mage_name_before_entry_both_seats() {
 }
 
 #[test]
-fn reanimated_metamorph_refuses_mixed_painter_copy_before_lethal_payment_both_seats() {
+fn reanimated_metamorph_refuses_mixed_painter_copy_before_lethal_life_loss_both_seats() {
     use mtg_kernel::engine::UnsupportedMechanic;
     use mtg_kernel::event::CommittedEvent;
 
@@ -1447,7 +1447,8 @@ fn reanimated_metamorph_refuses_mixed_painter_copy_before_lethal_payment_both_se
         for _ in 0..8 {
             match engine::advance_until_decision(&mut state) {
                 Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
-                Decision::Halted { mechanic: UnsupportedMechanic::InvalidEffectContinuation, .. } => {
+                Decision::Halted { mechanic: UnsupportedMechanic::InvalidEffectContinuation, source }
+                    if source == reanimate => {
                     halted = true;
                     break;
                 }
