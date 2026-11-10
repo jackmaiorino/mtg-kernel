@@ -2144,10 +2144,21 @@ fn serras_emissary_dungeon_choice_filters_native_room_targets_both_seats() {
     for actor in [P0, P1] {
         for (dungeon, room, route, player_target) in [
             (LOST_MINE, 3, 1, false),
-            (UNDERCITY_DUNGEON_ID_V1, UndercityRoomV1::Forge.stable_id(), 1, false),
-            (UNDERCITY_DUNGEON_ID_V1, UndercityRoomV1::Forge.stable_id(), 0, true),
+            (
+                UNDERCITY_DUNGEON_ID_V1,
+                UndercityRoomV1::Forge.stable_id(),
+                1,
+                false,
+            ),
+            (
+                UNDERCITY_DUNGEON_ID_V1,
+                UndercityRoomV1::Forge.stable_id(),
+                0,
+                true,
+            ),
         ] {
-            for choice in [1, 7] { // Creature is not the dungeon's type.
+            for choice in [1, 7] {
+                // Creature is not the dungeon's type.
                 let mut state = islands();
                 state.active_player = actor;
                 state.priority_player = actor;
@@ -2156,24 +2167,43 @@ fn serras_emissary_dungeon_choice_filters_native_room_targets_both_seats() {
                 cast(&mut state, emissary, &[]);
                 assert!(matches!(
                     settle(&mut state),
-                    Some(Decision::ChooseEffectOption { option_count: 8, .. })
+                    Some(Decision::ChooseEffectOption {
+                        option_count: 8,
+                        ..
+                    })
                 ));
                 act(&mut state, Action::ChooseEffectOption(choice));
                 settled(&mut state);
                 let own = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
-                let other = put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Battlefield);
+                let other = put(
+                    &mut state,
+                    actor.opponent(),
+                    "Llanowar Elves",
+                    Zone::Battlefield,
+                );
                 in_room(&mut state, actor, dungeon, room);
                 let acererak = put(&mut state, actor, ACERERAK, Zone::Hand);
                 pool(&mut state, actor, &[ManaColor::B], 2);
                 cast(&mut state, acererak, &[]);
                 choose_venture_route(&mut state, route); // Fungi Cavern, Arena or Trap.
-                let protected_target = if player_target { Target::Player(actor) } else { Target::Object(own) };
-                let other_target = if player_target { Target::Player(actor.opponent()) } else { Target::Object(other) };
+                let protected_target = if player_target {
+                    Target::Player(actor)
+                } else {
+                    Target::Object(own)
+                };
+                let other_target = if player_target {
+                    Target::Player(actor.opponent())
+                } else {
+                    Target::Object(other)
+                };
                 match next(&mut state) {
                     Decision::ChooseTargets { legal_targets, .. } => {
                         assert_eq!(legal_targets.contains(&protected_target), choice != 7);
                         if !player_target {
-                            assert_eq!(legal_targets.contains(&Target::Object(emissary)), choice != 7);
+                            assert_eq!(
+                                legal_targets.contains(&Target::Object(emissary)),
+                                choice != 7
+                            );
                         }
                         assert!(legal_targets.contains(&other_target));
                     }
@@ -2210,7 +2240,10 @@ fn sneak_in_emissary_for_room(
     act(state, Action::ChooseEffectTarget(Target::Object(emissary)));
     assert!(matches!(
         settle(state),
-        Some(Decision::ChooseEffectOption { option_count: 8, .. })
+        Some(Decision::ChooseEffectOption {
+            option_count: 8,
+            ..
+        })
     ));
     act(state, Action::ChooseEffectOption(choice));
     assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
@@ -2244,28 +2277,46 @@ fn serras_emissary_checks_retained_room_type_after_dungeon_departure_both_seats(
             cast(&mut state, acererak, &[]);
             choose_venture_route(&mut state, 1);
             choose_target(&mut state, Target::Object(target));
-            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor));
+            assert!(
+                matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+            );
             let active = state.clone();
 
             cast(&mut state, acererak, &[]);
             if dungeon == UNDERCITY_DUNGEON_ID_V1 {
                 choose_venture_route(&mut state, 0); // Archives.
                 pass_until(&mut state, |state| {
-                    state.players[actor.index()].dungeon.room_id == Some(UndercityRoomV1::Archives.stable_id())
+                    state.players[actor.index()].dungeon.room_id
+                        == Some(UndercityRoomV1::Archives.stable_id())
                         && state.stack.len() == 1
                 });
                 cast(&mut state, acererak, &[]);
             }
             pass_until(&mut state, |state| {
-                let bottom = if dungeon == LOST_MINE { 7 } else { UndercityRoomV1::ThroneOfTheDeadThree.stable_id() };
-                state.players[actor.index()].dungeon.room_id == Some(bottom) && state.stack.len() == 2
+                let bottom = if dungeon == LOST_MINE {
+                    7
+                } else {
+                    UndercityRoomV1::ThroneOfTheDeadThree.stable_id()
+                };
+                state.players[actor.index()].dungeon.room_id == Some(bottom)
+                    && state.stack.len() == 2
             });
             cast(&mut state, acererak, &[]);
-            assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { option_count: 3, .. })));
-            assert_eq!(state.players[actor.index()].dungeon.completed_dungeons, vec![dungeon]);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectOption {
+                    option_count: 3,
+                    ..
+                })
+            ));
+            assert_eq!(
+                state.players[actor.index()].dungeon.completed_dungeons,
+                vec![dungeon]
+            );
             act(&mut state, Action::ChooseEffectOption(1)); // A different dungeon.
             pass_until(&mut state, |state| {
-                state.players[actor.index()].dungeon.dungeon_id == Some(MAD_MAGE) && state.stack.len() == 2
+                state.players[actor.index()].dungeon.dungeon_id == Some(MAD_MAGE)
+                    && state.stack.len() == 2
             });
 
             for source_state in [&active, &state] {
@@ -2276,16 +2327,25 @@ fn serras_emissary_checks_retained_room_type_after_dungeon_departure_both_seats(
                     let bounce = put(&mut removed, actor, "Echoing Truth", Zone::Hand);
                     pool(&mut removed, actor, &[ManaColor::U], 1);
                     cast(&mut removed, bounce, &[Target::Object(emissary)]);
-                    pass_until(&mut removed, |state| state.objects.get(emissary).zone == Zone::Hand);
+                    pass_until(&mut removed, |state| {
+                        state.objects.get(emissary).zone == Zone::Hand
+                    });
 
                     for (branch, present) in [(&protected, true), (&removed, false)] {
-                        let mut restored: GameState = serde_json::from_slice(&serde_json::to_vec(branch).unwrap()).unwrap();
+                        let mut restored: GameState =
+                            serde_json::from_slice(&serde_json::to_vec(branch).unwrap()).unwrap();
                         settled(&mut restored);
                         let blocked = present && choice == 7;
                         if dungeon == LOST_MINE {
-                            assert_eq!(engine::effective_power(&restored, target), if blocked { 1 } else { -3 });
+                            assert_eq!(
+                                engine::effective_power(&restored, target),
+                                if blocked { 1 } else { -3 }
+                            );
                         } else {
-                            assert_eq!(restored.objects.get(target).v4.goaded_by.len(), usize::from(!blocked));
+                            assert_eq!(
+                                restored.objects.get(target).v4.goaded_by.len(),
+                                usize::from(!blocked)
+                            );
                         }
                     }
                 }
