@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Scratch segment work: deterministic fixtures, operation counts and timings for chains.py's reaper (`reap`),
 segment persistence (`persist`, `compress_config`) and driver-start recovery (`scratch_settle`).
-mtg-kernel#601 (T7) milestone 1: measurement only; chains.py runs unchanged.
+mtg-kernel#601 (T7): milestone 1 measured chains.py's reaper as it was; milestone 2 measures its completion cursor
+(`chains.Reaper`) against it.
 
-Every scenario calls chains.reap, persist, compress_config and scratch_settle as the in-box driver calls them, on
+Every scenario calls the tree's reaper tick, persist, compress_config and scratch_settle as the in-box driver calls
+them, on
 temporary-directory segments, with the scratch bind mount simulated as in test_w5_scratch.py (`chains.mounted` and
 `chains.unmount` are replaced). Here the segment path is a symlink to its scratch directory while "mounted", so a
 walk of the segment reads the scratch tree as it does through the mount on a node.
@@ -17,9 +19,11 @@ Member counts and bytes come from the profile; every byte derives from the seed.
 
 **Scenarios.** For a segment of N updates (a scratch segment length is a multiple of 64 dividing 4096; C's
 default is 256), one worker process per sample, the fixture built untimed in it:
-- reap: after each iteration completes, a productive tick (`reap` deletes the bulk of the iteration before it)
-  and an idle tick (nothing new) are measured. The driver's reaper ticks every REAP_EVERY = 0.5 s, so a C update
-  of about half a second sees about one tick, and a longer update also sees idle ones;
+- reap: after each iteration completes, a productive tick (it deletes the bulk of the iteration before it) and an
+  idle tick (nothing new) are measured. The tick is the one the tree's `run_reaped` makes: one `Reaper(native)`
+  per segment, ticked (`reaper_tick`), in a tree with the cursor; `reap(native)` in one without. The driver's
+  reaper ticks every REAP_EVERY = 0.5 s, so a C update of about half a second sees about one tick, and a longer
+  update also sees idle ones;
 - persist: then `persist` (its own reap, the copy with the regenerable records gzipped, an fsync per file and per
   staging directory, the marker, the swap under the index lock, the parent fsync, the scratch removal) and
   `compress_config` of the segment config, as `drive_locked` runs them after the trainer exits. The persisted
@@ -631,12 +635,21 @@ def op_summary(ops):
     return {'counts': dict(sorted(ops.n.items())), 'bytes': dict(sorted(ops.bytes.items()))}
 
 
+def reaper_tick(ch, native):
+    """(name, tick) as the tree's run_reaped ticks: one Reaper per segment where the tree has the completion cursor
+    (milestone 2), else the full `reap` on every tick."""
+    if hasattr(ch, 'Reaper'):
+        return 'Reaper.tick', ch.Reaper(native).tick
+    return 'reap', lambda: ch.reap(native)
+
+
 def run_segment(ch, n, profile, seed, scratch, work, count):
     """The reap ticks of a live segment of n updates, then its persist and config compression (one sample)."""
     rows = {'productive': collections.defaultdict(list), 'idle': collections.defaultdict(list)}
     with MountSim(ch) as sim:
         seg = Segment(ch, work, scratch, profile, seed)
         seg.mount(sim)
+        reaper, tick = reaper_tick(ch, seg.native)
         seg.begin(n)
         seg.start(0)
         last = {}
@@ -649,8 +662,7 @@ def run_segment(ch, n, profile, seed, scratch, work, count):
             for kind in ('productive', 'idle'):
                 state = {'reaped': i if kind == 'idle' else max(i - 1, 0), 'new': i - 1 if kind == 'productive'
                          else None, 'newest': i}
-                deleted, s = measured(lambda: ch.reap(seg.native), full=count,
-                                      classify=tick_classifier(state) if count else None)
+                deleted, s = measured(tick, full=count, classify=tick_classifier(state) if count else None)
                 if deleted != (len(seg.bulk[i - 1]) if kind == 'productive' and i else 0):
                     raise SystemExit(f'{kind} tick {i} deleted {deleted} files')
                 r = rows[kind]
@@ -667,7 +679,7 @@ def run_segment(ch, n, profile, seed, scratch, work, count):
                 for rel in seg.bulk.pop(i - 1):  # the productive tick deleted exactly this bulk
                     if (seg.target / rel).exists():
                         raise SystemExit(f'reap left {rel}')
-        out = {'reap': {k: dict(v) for k, v in rows.items()}, 'fixture_bytes_written': seg.written}
+        out = {'reap': {k: dict(v) for k, v in rows.items()}, 'reaper': reaper, 'fixture_bytes_written': seg.written}
         if count:
             out['reap']['last_tick'] = last
         expected = dict(seg.expected)
