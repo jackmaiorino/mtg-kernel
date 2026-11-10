@@ -29531,11 +29531,17 @@ fn push_paid_activation(
     // state. Never stamp the old activation onto Lorien's new graveyard
     // incarnation (or any sacrificed/exiled source); the stack provenance
     // above owns that historical fact instead.
+    // Unlimited ninjutsu leaves its source in the hidden hand pool. Its
+    // paid stack item owns the activation, and no limit needs a hand marker.
+    let unlimited_ninjutsu = ability.activation_zone == Zone::Hand
+        && ability.max_activations_per_turn.is_none()
+        && has_unblocked_attacker_return_cost(ability.cost);
     if !pending.full_text_activation_v1.is_empty() {
         pending
             .full_text_activation_v1
             .record_restricted_use(state, *ability);
     } else if !ajani_paid
+        && !unlimited_ninjutsu
         && state.objects.get(pending.source).zone_change_count == pending.source_zone_change_count
     {
         state
