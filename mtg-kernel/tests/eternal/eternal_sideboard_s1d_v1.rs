@@ -1236,7 +1236,7 @@ fn deglamer_shuffles_an_artifact_or_enchantment_into_its_owners_library() {
 fn circle_offers_live_wave_and_petradon_exiles_only_after_return_publication_both_seats() {
     use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
     use mtg_kernel::eternal_cards_v1::EternalOpV1;
-    use mtg_kernel::eternal_premodern_p1b_v1::{self, P1bOpV1};
+    use mtg_kernel::eternal_premodern_p1b_v1::{self as p1b, P1bOpV1};
     use mtg_kernel::eternal_premodern_p2c_v1::P2cOpV1;
     use mtg_kernel::eternal_sideboard_s1d_v1::S1dOpV1;
     use mtg_kernel::event::{self, ProposedEvent};

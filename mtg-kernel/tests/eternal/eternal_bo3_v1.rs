@@ -637,10 +637,8 @@ fn native_opening_match_uses_real_london_keeps_and_preserves_the_profile_both_se
         for seat in [p0, p1] {
             let match_player = game.player_in_seat(seat.index());
             assert_eq!(state.players[seat.index()].hand.len(), 7);
-            assert_eq!(
-                outside_the_game(&state, seat),
-                if match_player == p0 { &[bolt] } else { &[dart] }
-            );
+            let outside = [if match_player == p0 { bolt } else { dart }];
+            assert_eq!(outside_the_game(&state, seat), &outside);
         }
         assert_eq!(state.exile.len(), 1);
         let companion_object = state.objects.get(state.exile[0]);
