@@ -2204,7 +2204,9 @@ fn circle_of_protection_blue_uses_departed_minsc_from_waiting_reflexive_trigger_
             .battlefield
             .iter()
             .copied()
-            .find(|&object| CARD_DEFS[state.objects.get(object).card_def as usize].name == "Boo Token")
+            .find(|&object| {
+                CARD_DEFS[state.objects.get(object).card_def as usize].name == "Boo Token"
+            })
             .expect("Minsc's native Hamster token");
 
         activate(&mut state, minsc, 1, &[]);

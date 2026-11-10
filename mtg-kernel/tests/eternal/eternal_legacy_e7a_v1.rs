@@ -1352,7 +1352,10 @@ fn curie_draw_uses_departure_base_power_and_replacement_attempts_both_seats() {
                 .collect(),
         );
         assert_eq!(zone(&terminal, jace), Zone::Battlefield);
-        assert_eq!(mtg_kernel::planeswalker_v1::loyalty(&terminal, jace), Some(4));
+        assert_eq!(
+            mtg_kernel::planeswalker_v1::loyalty(&terminal, jace),
+            Some(4)
+        );
         let prompt = settle(&mut terminal).expect("Curie chooses Jace or Hullbreacher");
         assert!(matches!(&prompt, Decision::ChooseEffectTargets {
             player, source, legal_targets, can_finish: true, .. }
@@ -1729,12 +1732,7 @@ fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
             for _ in 0..12 {
                 put(&mut state, other, "Island", Zone::Library);
             }
-            let jace = put(
-                &mut state,
-                drawer,
-                "Jace, Wielder of Mysteries",
-                Zone::Hand,
-            );
+            let jace = put(&mut state, drawer, "Jace, Wielder of Mysteries", Zone::Hand);
             // Seed either seat's replacement through native entry so the
             // planeswalker has its printed loyalty before Echo resolves.
             event::propose_and_commit(

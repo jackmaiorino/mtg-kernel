@@ -1982,7 +1982,10 @@ fn minsc_hamster_draw_resumes_after_damage_and_fizzles_with_its_target_both_seat
                 .collect(),
         );
         assert_eq!(zone(&terminal, jace), Zone::Battlefield);
-        assert_eq!(mtg_kernel::planeswalker_v1::loyalty(&terminal, jace), Some(4));
+        assert_eq!(
+            mtg_kernel::planeswalker_v1::loyalty(&terminal, jace),
+            Some(4)
+        );
         assert!(
             matches!(settle(&mut terminal), Some(Decision::ChooseEffectTargets {
             player, source, legal_targets, can_finish: true, .. })
