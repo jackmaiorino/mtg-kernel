@@ -337,6 +337,7 @@ pub enum JournalV1 {
         item: StackItemId,
         commit: echo::ShuffleCommitV1,
     },
+    DungeonRoomV1(super::e3::dungeons::occurrences::RoomJournalV1),
     RoomDrawRevealedV1 {
         item: StackItemId,
         draw_at: usize,

@@ -20,6 +20,9 @@ use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Target, Zone};
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
+
+pub(crate) mod occurrences;
 
 pub(crate) const ACERERAK: &str = "Acererak the Archlich";
 pub(crate) const LOST_MINE_OF_PHANDELVER: u16 = 2;
@@ -32,13 +35,28 @@ const DUNGEONS: [u16; 3] = [
 ];
 
 /// A room ability waiting for the next trigger collection.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomTriggerV1 {
     pub player: PlayerId,
     pub source: AbilitySourceContractV4,
     pub dungeon: u16,
     pub room: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entered_at: Option<usize>,
+}
+
+impl Hash for RoomTriggerV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.player.hash(state);
+        self.source.hash(state);
+        self.dungeon.hash(state);
+        self.room.hash(state);
+        if let Some(at) = self.entered_at {
+            "eternal_room_occurrence_v1".hash(state);
+            at.hash(state);
+        }
+    }
 }
 
 /// The rooms a room leads to, by room id (the topmost room is 1). The
@@ -128,6 +146,7 @@ pub(super) fn enter_room(
     if !next_rooms(state, player)?.contains(&(dungeon, room)) {
         return Err("venture chose a room the marker cannot reach".to_string());
     }
+    let entered_at = occurrences::entered(state, player, source, dungeon, room)?;
     let bottommost = leads_to(dungeon, room).is_some_and(<[u16]>::is_empty);
     let marker = &mut state.players[player.index()].dungeon;
     if bottommost {
@@ -145,6 +164,7 @@ pub(super) fn enter_room(
         source,
         dungeon,
         room,
+        entered_at: Some(entered_at),
     });
     Ok(())
 }
@@ -164,7 +184,8 @@ pub(super) fn room_ability(dungeon: u16, room: u16) -> EffectOp {
 fn room_of(effect: &EffectOp) -> Option<(u16, u16)> {
     match effect {
         EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
-            EternalOpV1::RoomAbilityV1 { dungeon, room },
+            EternalOpV1::RoomAbilityV1 { dungeon, room }
+            | EternalOpV1::RoomBoundV1 { dungeon, room, .. },
         )) if leads_to(*dungeon, *room).is_some() => Some((*dungeon, *room)),
         _ => None,
     }
@@ -191,11 +212,15 @@ pub(super) fn room_triggers(state: &mut GameState) -> Vec<crate::trigger::Pendin
     rooms
         .into_iter()
         .map(|entered| {
-            let mut trigger = super::super::delayed_trigger(
-                entered.source,
-                entered.player,
-                room_ability(entered.dungeon, entered.room),
-            );
+            let effect = match entered.entered_at {
+                Some(entered_at) => eternal(EternalOpV1::RoomBoundV1 {
+                    entered_at,
+                    dungeon: entered.dungeon,
+                    room: entered.room,
+                }),
+                None => room_ability(entered.dungeon, entered.room),
+            };
+            let mut trigger = super::super::delayed_trigger(entered.source, entered.player, effect);
             trigger.target_spec = room_target_spec(entered.dungeon, entered.room);
             trigger
         })

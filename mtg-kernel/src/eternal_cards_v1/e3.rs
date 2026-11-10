@@ -1032,6 +1032,10 @@ pub(crate) fn drive(
         EternalOpV1::RoomAbilityV1 { dungeon, room } => {
             dungeons::resolve_room(state, continuation, *dungeon, *room, path)
         }
+        EternalOpV1::RoomBoundV1 { dungeon, room, .. } => {
+            dungeons::occurrences::validate_resolving(state, continuation)?;
+            dungeons::resolve_room(state, continuation, *dungeon, *room, path)
+        }
         EternalOpV1::AcererakEntersV1 => {
             dungeons::resolve_acererak_enters(state, continuation, path)?;
             Ok(false)
@@ -1234,6 +1238,7 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
             | EternalOpV1::AnnihilatorV1 { .. }
             | EternalOpV1::AtraxaRevealV1
             | EternalOpV1::RoomAbilityV1 { .. }
+            | EternalOpV1::RoomBoundV1 { .. }
             | EternalOpV1::AcererakEntersV1
             | EternalOpV1::AcererakAttacksV1
     ) || matches!(op, EternalOpV1::E5bV1(op) if op.contains_player_choice())
@@ -2161,6 +2166,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | EternalOpV1::AnnihilatorV1 { .. }
         | EternalOpV1::AtraxaRevealV1
         | EternalOpV1::RoomAbilityV1 { .. }
+        | EternalOpV1::RoomBoundV1 { .. }
         | EternalOpV1::AcererakEntersV1
         | EternalOpV1::AcererakAttacksV1 => {
             // Choice leaves run only inside the resumable interpreter.

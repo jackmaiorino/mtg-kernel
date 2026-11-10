@@ -442,6 +442,8 @@ pub enum EternalOpV1 {
     S1dV1(crate::eternal_sideboard_s1d_v1::S1dOpV1),
     /// Internal completion of one native draw attempt in an owned instruction.
     OwnedDrawCompletedV1 { ordinal: u32 },
+    /// Room trigger bound to the exact native venture occurrence.
+    RoomBoundV1 { entered_at: usize, dungeon: u16, room: u16 },
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -1372,6 +1374,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | EternalOpV1::RevealUntilCreatureAttackingV1
         | EternalOpV1::EnterRoomV1 { .. }
         | EternalOpV1::RoomAbilityV1 { .. }
+        | EternalOpV1::RoomBoundV1 { .. }
         | EternalOpV1::AcererakEntersV1
         | EternalOpV1::AcererakAttacksV1 => e3::execute(op, ctx, state),
         EternalOpV1::RemoveMinusOneCounterFromSourceV1 => {
