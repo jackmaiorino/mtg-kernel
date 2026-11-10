@@ -499,44 +499,34 @@ fn rows_checked_per_step_stay_bounded_after_drake_hatcher_is_cast() {
 
 #[test]
 fn collection_tail_matches_full_scan_on_append_divergence_and_tamper() {
+    use super::tests::{cast, damage_three, finish};
     use std::sync::Arc;
 
-    let mut found = None;
-    play(&PAIR_29, &mut |state| {
-        if found.is_none()
-            && rows(state) > 50
-            && state
-                .engine
-                .event_history
-                .iter()
-                .filter_map(custody::journal)
-                .any(|row| matches!(row.value, JournalV1::Collected { .. }))
-        {
-            found = Some(state.clone());
-        }
-    });
-    let base = found.expect("recorded Drake history");
+    let actor = PlayerId::P0;
+    let (mut base, drake) = cast(actor);
+    damage_three(&mut base, drake, actor);
+    finish(&mut base);
     custody::validate(&base).unwrap();
     let history = &base.engine.event_history;
     let covered = history.len();
     assert_eq!(history.prefix_memo_v1().unwrap().0, covered);
-    let (capture, marker) = history
+    let (collected, capture_index) = history
         .iter()
         .filter_map(custody::journal)
         .find_map(|row| match &row.value {
-            JournalV1::Captured { marker, .. } => Some((row.clone(), *marker)),
+            JournalV1::Collected { capture, .. } => Some((row, *capture)),
             _ => None,
         })
-        .expect("recorded capture");
-    let collected = history
-        .iter()
-        .filter_map(custody::journal)
-        .find(|row| {
-            matches!(&row.value,
-            JournalV1::Collected { capture: index, .. } if *index == capture.index)
-        })
-        .expect("checked capture was collected");
-    let events = [history.get(marker as usize).unwrap().clone()];
+        .expect("native combat trigger was collected");
+    let capture = history
+        .get(capture_index as usize)
+        .and_then(custody::journal)
+        .expect("collected capture record")
+        .clone();
+    let JournalV1::Captured { marker, .. } = &capture.value else {
+        panic!("collected record must point to a capture");
+    };
+    let events = [history.get(*marker as usize).unwrap().clone()];
     let compare = |state: &GameState, expected: Result<&[u64], &str>| {
         let result = custody::captures_for_collection(state, &events);
         let reference = custody::without_prefix_memo_for_test(|| {

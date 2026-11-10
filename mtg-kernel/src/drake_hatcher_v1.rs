@@ -142,7 +142,7 @@ mod tests {
         state::{AbilitySourceContractV4, Target},
     };
 
-    fn finish(state: &mut GameState) {
+    pub(super) fn finish(state: &mut GameState) {
         for _ in 0..32 {
             match engine::advance_until_decision(state) {
                 Decision::OrderTriggers { pending, .. } => engine::step(
@@ -157,7 +157,7 @@ mod tests {
         }
         panic!("Drake stack did not finish");
     }
-    fn cast(actor: PlayerId) -> (GameState, ObjectId) {
+    pub(super) fn cast(actor: PlayerId) -> (GameState, ObjectId) {
         let mut state = ready_state_for(actor);
         for player in [actor, actor.opponent()] {
             for _ in 0..8 {
@@ -496,7 +496,7 @@ mod tests {
         assert!(engine::step(&mut state, Action::Pass).is_err());
         assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
     }
-    fn damage_three(state: &mut GameState, drake: ObjectId, actor: PlayerId) {
+    pub(super) fn damage_three(state: &mut GameState, drake: ObjectId, actor: PlayerId) {
         engine::commit_combat_damage_events(
             state,
             vec![ProposedEvent::damage(
