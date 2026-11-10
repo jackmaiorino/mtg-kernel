@@ -693,12 +693,19 @@ fn run(
 }
 
 fn main() {
+    struct CliArgs {
+        session: Session,
+        root: PathBuf,
+        workers: usize,
+        resume: Option<(PathBuf, String)>,
+    }
+
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let (stage_diagnostics, args) = match args.as_slice() {
         [flag, tail @ ..] if flag == "--stage-diagnostics" => (true, tail),
         args => (false, args),
     };
-    let parse = || -> Result<(Session, PathBuf, usize, Option<(PathBuf, String)>)> {
+    let parse = || -> Result<CliArgs> {
         let usage = "kernel_limited_training_v1 [--stage-diagnostics] [-session return|full-pool] OUT_DIR 1|2 [TRAINING_JSON SHA256]";
         let (session, positional) = match args {
             [flag, value, tail @ ..] if flag == "-session" => {
@@ -727,10 +734,21 @@ fn main() {
             )),
             _ => return Err(usage.into()),
         };
-        Ok((session, PathBuf::from(out), workers, resume))
+        Ok(CliArgs {
+            session,
+            root: PathBuf::from(out),
+            workers,
+            resume,
+        })
     };
-    if let Err(error) = parse().and_then(|(session, root, workers, resume)| {
-        run(session, &root, workers, resume, stage_diagnostics)
+    if let Err(error) = parse().and_then(|args| {
+        run(
+            args.session,
+            &args.root,
+            args.workers,
+            args.resume,
+            stage_diagnostics,
+        )
     }) {
         eprintln!("{error}");
         std::process::exit(2);
