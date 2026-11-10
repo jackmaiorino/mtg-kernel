@@ -2367,6 +2367,114 @@ fn flagbearers_constrain_welders_first_slot_only_when_the_pair_can_complete() {
 }
 
 #[test]
+fn flagbearers_require_a_complete_ram_through_assignment_both_seats() {
+    use mtg_kernel::event::{propose_and_commit, ProposedEvent};
+
+    for actor in [P0, P1] {
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let opponent = actor.opponent();
+        let (own_name, opposing_name) = if actor == P0 {
+            ("Standard Bearer", "Coalition Honor Guard")
+        } else {
+            ("Coalition Honor Guard", "Standard Bearer")
+        };
+        let own = put(&mut state, actor, own_name, Zone::Battlefield);
+        let other = put(&mut state, actor, "Mogg Fanatic", Zone::Battlefield);
+        let opposing = put(&mut state, opponent, opposing_name, Zone::Battlefield);
+        let mother = put(&mut state, opponent, "Mother of Runes", Zone::Battlefield);
+        let ram = put(&mut state, actor, "Ram Through", Zone::Hand);
+        let own_target = Target::Object(own);
+        let other_target = Target::Object(other);
+        let opposing_target = Target::Object(opposing);
+        let mother_target = Target::Object(mother);
+        pool(&mut state, actor, &[ManaColor::G], 1);
+
+        // When both slots can supply a Flagbearer, the first pick stays free.
+        let mut flexible = state.clone();
+        cast(&mut flexible, ram, &[other_target]);
+        assert!(matches!(
+            next(&mut flexible),
+            Decision::ChooseTargets { player, legal_targets, .. }
+                if player == actor && legal_targets == [opposing_target]
+        ));
+        choose_target(&mut flexible, opposing_target);
+        settled(&mut flexible);
+        assert_eq!(zone(&flexible, ram), Zone::Graveyard);
+
+        act(&mut state, Action::Pass);
+        activate(&mut state, mother, 0, &[opposing_target]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption { player, option_count: 5, .. })
+                if player == opponent
+        ));
+        // Mother of Runes's five choices use WUBRG order.
+        act(&mut state, Action::ChooseEffectOption(4));
+        settled(&mut state);
+        assert!(state.objects.get(mother).tapped);
+
+        let mut no_second = state.clone();
+        propose_and_commit(&mut no_second, ProposedEvent::zone_change(mother, Zone::Graveyard));
+        assert!(!castable(&mut no_second, ram));
+        assert_eq!(zone(&no_second, ram), Zone::Hand);
+
+        let mut no_eligible_bearer = state.clone();
+        propose_and_commit(&mut no_eligible_bearer, ProposedEvent::zone_change(own, Zone::Graveyard));
+        cast(&mut no_eligible_bearer, ram, &[other_target, mother_target]);
+        settled(&mut no_eligible_bearer);
+        assert_eq!(zone(&no_eligible_bearer, mother), Zone::Graveyard);
+
+        assert!(castable(&mut state, ram));
+        act(&mut state, Action::CastSpell(ram));
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseTargets { player, legal_targets, .. }
+                if player == actor && legal_targets == [own_target]
+        ));
+        let hash = state.state_hash();
+        assert!(engine::step(&mut state, Action::ChooseTarget(other_target)).is_err());
+        assert_eq!(state.state_hash(), hash);
+
+        let mut forged = state.clone();
+        let contract = StackTargetContractV4::capture(&forged, other_target);
+        let pending = forged.engine.pending_cast.as_mut().unwrap();
+        pending.targets_chosen.push(other_target);
+        pending.target_contracts.push(contract);
+        let mut forged: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut forged),
+            Decision::Halted { .. }
+        ));
+        assert_eq!(mana(&forged, actor, ManaColor::G), 1);
+
+        choose_target(&mut state, own_target);
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let original_menu = next(&mut state);
+        assert_eq!(next(&mut restored), original_menu);
+        assert!(matches!(
+            original_menu,
+            Decision::ChooseTargets { player, legal_targets, .. }
+                if player == actor && legal_targets == [mother_target]
+        ));
+        choose_target(&mut restored, mother_target);
+        assert!(matches!(next(&mut restored), Decision::CastSpellOrPass { .. }));
+        let paid = restored.stack.last().expect("paid Ram Through");
+        assert_eq!(paid.source, ram);
+        assert_eq!(paid.targets, [own_target, mother_target]);
+        assert_eq!(mana(&restored, actor, ManaColor::G), 0);
+        assert_eq!(mana(&restored, actor, ManaColor::C), 0);
+        settled(&mut restored);
+        assert_eq!(zone(&restored, ram), Zone::Graveyard);
+        assert_eq!(zone(&restored, mother), Zone::Graveyard);
+        assert_eq!(zone(&restored, opposing), Zone::Battlefield);
+    }
+}
+
+#[test]
 fn flagbearers_constrain_payable_shatterskull_allocations_both_seats() {
     for actor in [P0, P1] {
         for x in 0..=2 {
