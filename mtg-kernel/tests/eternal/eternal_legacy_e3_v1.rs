@@ -1860,7 +1860,12 @@ fn fungi_cavern_targets_using_the_active_dungeons_characteristics_both_seats() {
             }
             let enforcer = put(&mut state, opponent, "Mystic Enforcer", Zone::Battlefield);
             let chaplain = put(&mut state, opponent, "Beloved Chaplain", Zone::Battlefield);
-            let shroud = put(&mut state, opponent, "Argothian Enchantress", Zone::Battlefield);
+            let shroud = put(
+                &mut state,
+                opponent,
+                "Argothian Enchantress",
+                Zone::Battlefield,
+            );
             let acererak = put(&mut state, actor, ACERERAK, Zone::Hand);
             pool(&mut state, actor, &[ManaColor::B], 2);
             cast(&mut state, acererak, &[]);

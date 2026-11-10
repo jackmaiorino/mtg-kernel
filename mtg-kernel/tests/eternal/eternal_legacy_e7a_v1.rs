@@ -1201,10 +1201,8 @@ fn curie_draw_uses_departure_base_power_and_replacement_attempts_both_seats() {
         activate(&mut state, curie, 0, &[]);
         // The only controlled legal material is selected and exiled by the
         // native cost owner without asking for a redundant choice.
-        assert!(
-            matches!(next(&mut state), Decision::CastSpellOrPass {
-            player, .. } if player == actor)
-        );
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass {
+            player, .. } if player == actor));
         assert_eq!(zone(&state, donor), Zone::Exile);
         pass_until(&mut state, |state| {
             state.stack.len() == 1
