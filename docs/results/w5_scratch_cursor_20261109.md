@@ -9,7 +9,8 @@ In a 256-update segment (C's default), the reaper's file-system calls fall from 
 idle tick makes one `stat` call however long the segment has run. Its ticks took 8.66 s per segment on main and
 0.108 s with the cursor, every sample faster (A-B-B-A). At the driver's 0.5 s cadence, the reaper's share of one
 core falls from 3.2% to under 0.01% at 256 updates, and from 11.9% to under 0.01% at 1,024. Both trees
-delete the same files at every tick, and the persisted copies are byte-identical between them.
+delete the same files at every tick, and the persisted logical member bytes match between them.
+The comparison decompresses gzip members; it does not establish identical compressed file bytes.
 
 **Decision.** The cursor removes the reaper's growth with segment length, which milestone 1 set as its goal. A
 durable updates/hour claim needs T6's guarded comparison on a node (handoff below). At 256 updates per segment the
