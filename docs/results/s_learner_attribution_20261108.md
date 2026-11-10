@@ -126,7 +126,10 @@ The second receipt builds baseline `c6329d8` and the reviewed successor
 a 32 GB Windows host. There the serial gradient took **130.8 ms** and the
 two-worker gradient **80.8 ms** (1.62x). Host, operating system and profile all
 differ from the cloud receipt, so its times are not comparable with those
-above. Every count and byte figure matches the cloud receipt exactly.
+above. Shared workload-derived term and MAC counts and common term-storage
+byte totals match the cloud receipt exactly. Dynamic allocation counts and
+bytes differ; the retained-capacity counter below is new and has no value in
+the cloud receipt.
 
 | 2-worker gradient, mean of 8 repetitions | ms | share |
 |---|---:|---:|
