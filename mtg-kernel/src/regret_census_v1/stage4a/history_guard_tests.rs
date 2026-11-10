@@ -58,9 +58,14 @@ fn drive_native(
         if visit(&session, decision, &actions, action) {
             return session;
         }
-        session.step(decision.episode_id, decision.step, action).unwrap_or_else(|error| {
-            panic!("fixture game {game} step {} action {action}: {error:?}", decision.step)
-        });
+        session
+            .step(decision.episode_id, decision.step, action)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "fixture game {game} step {} action {action}: {error:?}",
+                    decision.step
+                )
+            });
     }
     session
 }
@@ -85,8 +90,12 @@ fn game_record(game: u64) -> Vec<String> {
     // The original scorer refusal was after combat in game 0.
     if game == 0 {
         assert!(
-            session.game_state().engine.event_history.iter().any(|event|
-                matches!(event, CommittedEvent::CombatDamageToPlayer { .. })),
+            session
+                .game_state()
+                .engine
+                .event_history
+                .iter()
+                .any(|event| matches!(event, CommittedEvent::CombatDamageToPlayer { .. })),
             "game {game} produced no combat damage history",
         );
     }
@@ -245,7 +254,10 @@ fn outcomes(session: &FastActorSessionV1, action: u32, checks: &[StateCheck]) ->
             let mut next = session.clone();
             let response = next.step(d.episode_id, d.step, action);
             let menu = next.diagnostic_current_action_semantics();
-            format!("step: {response:?} {menu:?} {}", state_digest(next.game_state()))
+            format!(
+                "step: {response:?} {menu:?} {}",
+                state_digest(next.game_state())
+            )
         }));
     }
     outcomes
@@ -269,7 +281,10 @@ fn base_sessions() -> Vec<(FastActorSessionV1, u32)> {
             }
             game_bases.len() == 3
         });
-        assert!(game_bases.len() >= 2, "game {game} did not supply a combat base");
+        assert!(
+            game_bases.len() >= 2,
+            "game {game} did not supply a combat base"
+        );
         bases.extend(game_bases);
     }
     bases
