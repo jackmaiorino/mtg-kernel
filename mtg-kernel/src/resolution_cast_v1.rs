@@ -194,17 +194,20 @@ pub(super) fn form_allowed_for(
     let free = free_cast_for(state, source, controller);
     if method == CastMethodV4::Omen
         && state.objects.try_get(source).is_some_and(|object| {
-            crate::eternal_sideboard_s1d_v1::statics::is_overload(
+            let overload = crate::eternal_sideboard_s1d_v1::statics::is_overload(
                 card_def::CARD_DEFS[usize::from(object.card_def)].name,
-            )
+            );
+            let from_library = object.zone == Zone::Library
+                || object.v4.spell_cast_origin.is_some_and(|origin| origin.origin_zone == Zone::Library);
+            overload && (free
+                || (from_library
+                    && !crate::eternal_e5a_v1::permissions::library_overload_allowed(state, controller, source))
+                || state.engine.pending_cast.as_ref().is_some_and(|pending| {
+                    pending.spell == source
+                        && pending.controller == controller
+                        && pending.hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost)
+                }))
         })
-        && (free
-            || crate::eternal_e5a_v1::permissions::citadel_cast(state, source, controller)
-            || state.engine.pending_cast.as_ref().is_some_and(|pending| {
-                pending.spell == source
-                    && pending.controller == controller
-                    && pending.hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost)
-            }))
     {
         return false;
     }

@@ -2496,7 +2496,13 @@ fn validate_physical_spell_cast_origin(
                 && source.owner == caster
                 && holder == caster
                 && permission_zone_change_count == origin.origin_zone_change_count
-                && cast_method == CastMethodV4::Normal
+                && (cast_method == CastMethodV4::Normal
+                    || (!is_pending_placeholder
+                        && cast_method == CastMethodV4::Omen
+                        && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
+                        && crate::eternal_e5a_v1::permissions::library_overload_allowed(
+                            state, caster, item.source,
+                        )))
                 && crate::eternal_e5a_v1::permissions::library_permission(
                     state,
                     item.source,
@@ -9664,7 +9670,11 @@ fn viable_pending_spell_forms(
         (pending.origin_zone == Zone::Hand
             || free
             || (crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
-                && pending_has_ordinary_graveyard_permission(pending, state))
+                && (pending_has_ordinary_graveyard_permission(pending, state)
+                    || (pending.origin_zone == Zone::Library
+                        && crate::eternal_e5a_v1::permissions::library_overload_allowed(
+                            state, pending.controller, pending.spell,
+                        ))))
             || (pending.origin_zone == Zone::Exile
                 && !state.objects.get(pending.spell).v4.on_adventure)
             || pending
@@ -10502,7 +10512,7 @@ fn is_castable_now(
             // Ordinary exile permission allows either form. Adventure's own
             // exile permission allows only the permanent. Mosswood's own
             // graveyard permission allows its Adventure, and a general
-            // graveyard permission can pay the ordinary spell's overload.
+            // graveyard or library permission can pay the ordinary spell's overload.
             let adventure_ok = || {
                 supported_adventure(def).is_some_and(|adventure| {
                     (state.objects.get(id).zone == Zone::Hand
@@ -10514,7 +10524,11 @@ fn is_castable_now(
                             state, id, player,
                         )
                         || (crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
-                            && graveyard_permission_zone_change_count(player, id, state).is_some()))
+                            && (graveyard_permission_zone_change_count(player, id, state).is_some()
+                                || (state.objects.get(id).zone == Zone::Library
+                                    && crate::eternal_e5a_v1::permissions::library_overload_allowed(
+                                        state, player, id,
+                                    )))))
                         && cast_form_timing_ok(adventure.types, Keywords::NONE, player, state)
                         && target_prefix_can_complete_for_controller_and_source(
                             adventure.target_spec,
@@ -28393,7 +28407,11 @@ fn finalize_owned_cast(
         colored_mana_spent,
     );
     #[cfg(feature = "eternal-fixtures")]
-    crate::eternal_e5a_v1::permissions::pay_citadel_life(state, pending.spell, pending.controller);
+    if cast_method != CastMethodV4::Omen
+        || !crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
+    {
+        crate::eternal_e5a_v1::permissions::pay_citadel_life(state, pending.spell, pending.controller);
+    }
 
     let mut paid_cost_objects = object_cost_chosen;
     paid_cost_objects.extend(discarded.iter().copied());
