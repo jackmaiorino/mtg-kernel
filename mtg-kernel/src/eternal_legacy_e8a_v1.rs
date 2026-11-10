@@ -348,6 +348,8 @@ pub enum E8aChoiceV1 {
     /// Up to one card from hand to put onto the battlefield (Stoneforge
     /// Mystic, Aether Vial).
     HandToBattlefieldV1,
+    /// Exact paid Vial activation with four counters at resolution.
+    VialHandToBattlefieldV1 { paid_at: usize },
 }
 
 impl E8aChoiceV1 {
@@ -361,6 +363,7 @@ impl E8aChoiceV1 {
                 | Self::AnyCardSearchV1 { .. }
                 | Self::LibraryToHandRevealV1
                 | Self::HandToBattlefieldV1
+                | Self::VialHandToBattlefieldV1 { .. }
         )
     }
 
@@ -642,6 +645,55 @@ fn hand_cards(
         })
         .map(|card| bind(state, card))
         .collect()
+}
+
+fn vial_hand_cards(state: &GameState, player: PlayerId, charge: i32) -> Vec<EffectObjectBinding> {
+    hand_cards(state, player, |def| {
+        def.has_type(CardType::Creature) && i32::from(def.mana_value) == charge
+    })
+}
+
+pub(crate) fn validate_legacy_hand_choice(
+    state: &GameState,
+    continuation: &EffectContinuation,
+) -> Result<(), String> {
+    if continuation
+        .ctx
+        .ability_source_contract
+        .is_some_and(|source| source.card_def == card_id_by_name(AETHER_VIAL).unwrap_or(u16::MAX)
+            && statics::vial_charge(state, source) == 4)
+        && crate::eternal_sideboard_s1b_v1::meddling_mage_entry::vial::paid_at(state, continuation)?
+            .is_some()
+    {
+        return Err("Aether Vial hand choice lost its paid origin".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_vial_hand_choice(
+    state: &GameState,
+    continuation: &EffectContinuation,
+    choice: &E3ChoiceV1,
+    paid_at: usize,
+) -> Result<(), String> {
+    let source =
+        crate::eternal_sideboard_s1b_v1::meddling_mage_entry::vial::validate_hand_origin(
+            state, continuation, paid_at,
+        )?;
+    let cards = vial_hand_cards(state, source.controller, 4);
+    if cards.is_empty()
+        || choice.player != source.controller
+        || choice.min != 0
+        || choice.max != 1
+        || choice.ordered
+        || !choice.path.is_empty()
+        || !choice.remaining.is_empty()
+        || choice.bindings != cards
+        || choice.candidates != targets_of(&cards)
+    {
+        return Err("Aether Vial hand choice changed its native menu".into());
+    }
+    Ok(())
 }
 
 fn shuffle(state: &mut GameState, player: PlayerId) -> Result<(), String> {
@@ -1993,6 +2045,7 @@ pub(crate) fn drive(
             Ok(true)
         }
         E8aOpV1::StoneforgePutV1 | E8aOpV1::AetherVialPutV1 => {
+            let mut kind = E8aChoiceV1::HandToBattlefieldV1;
             let cards = if *op == E8aOpV1::StoneforgePutV1 {
                 hand_cards(state, controller, |def| {
                     def.subtypes.contains(&Subtype::Equipment)
@@ -2002,16 +2055,24 @@ pub(crate) fn drive(
                     return Ok(false);
                 };
                 let charge = statics::vial_charge(state, source);
-                hand_cards(state, controller, |def| {
-                    def.has_type(CardType::Creature) && i32::from(def.mana_value) == charge
-                })
+                if charge == 4 {
+                    if let Some(paid_at) =
+                        crate::eternal_sideboard_s1b_v1::meddling_mage_entry::vial::paid_at(
+                            state,
+                            continuation,
+                        )?
+                    {
+                        kind = E8aChoiceV1::VialHandToBattlefieldV1 { paid_at };
+                    }
+                }
+                vial_hand_cards(state, controller, charge)
             };
             if cards.is_empty() {
                 return Ok(false);
             }
             offer(
                 continuation,
-                E8aChoiceV1::HandToBattlefieldV1,
+                kind,
                 controller,
                 cards,
                 0,
@@ -2208,7 +2269,23 @@ pub(crate) fn finish_selection(
             }
             Ok(false)
         }
+        E8aChoiceV1::VialHandToBattlefieldV1 { paid_at } => {
+            validate_vial_hand_choice(state, continuation, choice, *paid_at)?;
+            if let Some(card) = chosen {
+                if !crate::linked_aura_operation_v1::prepare_vial_metamorph(
+                    state,
+                    continuation,
+                    *paid_at,
+                    card.object,
+                )? {
+                    return Ok(false);
+                }
+                put_onto_battlefield(state, card.object, player, false);
+            }
+            Ok(false)
+        }
         E8aChoiceV1::HandToBattlefieldV1 => {
+            validate_legacy_hand_choice(state, continuation)?;
             if let Some(card) = chosen {
                 if link_live_in(state, binding_link(&card), Zone::Hand) {
                     put_onto_battlefield(state, card.object, player, false);
