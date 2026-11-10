@@ -2516,6 +2516,9 @@ pub enum ManaAbilityCostDef {
     /// this subtype, the source included, is the activation's cost target;
     /// no tap. Appended for the eternal catalog.
     SacrificeControlledWithSubtypeV1(Subtype),
+    /// Tap two untapped controlled permanents of this effective subtype.
+    /// Neither payment is the tap symbol, so either creature may be sick.
+    TapTwoControlledPermanentsWithSubtypeV1(Subtype),
 }
 
 /// Amount of the chosen color added by a mana ability.
@@ -3908,7 +3911,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xe5c1_5dfe_e14d_a799;
+        const EXPECTED_ETERNAL: u64 = 0x945f_a0ce_fae3_9583;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

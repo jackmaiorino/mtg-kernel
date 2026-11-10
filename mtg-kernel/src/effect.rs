@@ -4446,6 +4446,9 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if crate::full_text_v1::is_donated_trigger(&resolving_item) {
+        return Err("full-text trigger requires its genuine native row".into());
+    }
     if matches!(op, EffectOp::TinybonesStashV72 { .. })
         || crate::engine::tinybones_v72::waiting(state, ctx)
         || resolving_item
@@ -7904,6 +7907,11 @@ fn validated_definition_owned_root_effect(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Result<Box<EffectOp>, String> {
+    if let Some((program, _)) =
+        crate::full_text_v1::trigger_program(state, &pending.resolving_item)?
+    {
+        return Ok(Box::new(program));
+    }
     if thousand_year_storm_v1::selected(state, &pending.resolving_item) {
         thousand_year_storm_v1::validate_published(state, &pending.resolving_item)?;
         return Ok(Box::new(
@@ -20061,6 +20069,16 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
     if state.engine.halted.is_some() {
         return;
     }
+    if ctx
+        .stack_item_id
+        .is_some_and(|id| crate::fixed_source_damage_v3::has_donated_payment(state, id))
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     if crate::linked_aura_operation_v1::needs_event_owner(state)
         && crate::linked_aura_operation_v1::event(
             state,
@@ -20489,6 +20507,9 @@ fn execute_with_native_row_v1(
         EffectOp::DealDamage { target, amount } => {
             if crate::gorehorn_damage_v1::owns_context(state, ctx)
                 || crate::equipment_damage_source_v4::owns_context(state, ctx)
+                || ctx
+                    .stack_item_id
+                    .is_some_and(|id| crate::fixed_source_damage_v3::has_donated_payment(state, id))
             {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -27537,6 +27558,13 @@ pub(crate) mod kaito_cunning_v75;
 pub(crate) mod liliana_dreadhorde_v1;
 pub(crate) mod vivien_reid_v1;
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if ctx.stack_item_id.is_some_and(|id| {
+        state.stack.iter().any(|item| {
+            item.v4.stack_item_id == id && crate::full_text_v1::is_donated_trigger(item)
+        })
+    }) {
+        return true;
+    }
     if kaito_cunning_v75::waiting(state, ctx)
         || crate::engine::tinybones_v72::waiting(state, ctx)
         || liliana_dreadhorde_v1::waiting(state, ctx)
@@ -27634,6 +27662,11 @@ fn validated_native_execution_root_v1(
     // Native stack validation includes genuine Ward and granted abilities,
     // whose roots need not occur in the source's printed trigger table.
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)?;
+    if let Some((program, _)) =
+        crate::full_text_v1::trigger_program(state, &pending.resolving_item)?
+    {
+        return Ok(Box::new(program));
+    }
     if let Some(root) = &pending.resolving_item.inline_effect {
         Ok(Box::new(root.clone()))
     } else {

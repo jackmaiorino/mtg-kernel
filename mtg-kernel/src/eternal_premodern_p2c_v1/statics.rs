@@ -40,6 +40,16 @@ pub(crate) fn is_nishoba(state: &GameState, object: ObjectId) -> bool {
 /// Printed protection from colors, as a color mask: Akroma ("protection
 /// from black and from red") and Karmic Guide ("protection from black").
 pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
+    if let Some(text) = crate::full_text_v1::active_definition(state, host) {
+        if !crate::continuous_characteristics_v1::printed_abilities_active(state, host) {
+            return 0;
+        }
+        return match text.name {
+            AKROMA => mana_color_mask(ManaColor::B) | mana_color_mask(ManaColor::R),
+            KARMIC_GUIDE => mana_color_mask(ManaColor::B),
+            _ => 0,
+        };
+    }
     match name_of(state, host) {
         Some(AKROMA) if active_named(state, host, AKROMA) => {
             mana_color_mask(ManaColor::B) | mana_color_mask(ManaColor::R)
@@ -58,7 +68,10 @@ pub(crate) fn apply_entry_counters(
     object: ObjectId,
     input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
 ) {
-    let count = match name_of(state, object) {
+    let text_name = crate::full_text_v1::active_definition(state, object)
+        .map(|definition| definition.name)
+        .or_else(|| name_of(state, object));
+    let count = match text_name {
         Some(TRISKELION) => 3,
         Some(PHANTOM_NISHOBA) => 7,
         _ => return,

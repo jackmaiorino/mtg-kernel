@@ -89,6 +89,7 @@ pub struct CaptureV1 {
 /// Genuine batch ownership retains entry-time controller/incarnation before
 /// later collection. Effective subtype and observers are sampled only after
 /// the complete simultaneous entry board, counters and attachments exist.
+#[derive(Clone)]
 pub(crate) struct EntryBatchV1 {
     entries: Vec<EntryV1>,
 }

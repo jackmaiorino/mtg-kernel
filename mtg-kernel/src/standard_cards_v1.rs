@@ -2350,6 +2350,7 @@ pub(crate) fn gain_control(state: &mut GameState, object: ObjectId, player: Play
     live.controller = player;
     live.summoning_sick = true;
     state.engine.combat.remove_from_combat(object);
+    crate::full_text_v1::record_control_gained(state, object);
     // Echo is owed by whoever controls the creature since their last upkeep.
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_premodern_p2d_v1::control_changed(state, object, player);

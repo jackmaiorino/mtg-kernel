@@ -4206,6 +4206,7 @@ mod tests {
             convoke_finished: false,
             escape_exile_finished_v1: false,
             hand_free_cast_v1: None,
+            thornscape_white_kicker_v1: None,
             mandatory_additional_cost: None,
         });
 

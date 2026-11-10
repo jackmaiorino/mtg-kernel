@@ -933,6 +933,15 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         // mana cost", paid as the cast completes.
         selected.costs.remove(0);
     }
+    if crate::eternal_premodern_p2b_v1::is_thornscape(definition)
+        && state.engine.pending_cast.as_ref().is_some_and(|pending| {
+            pending.spell == source && pending.thornscape_white_kicker_v1 == Some(true)
+        })
+    {
+        selected
+            .costs
+            .push(crate::eternal_premodern_p2b_v1::THORNSCAPE_WHITE_KICKER);
+    }
     Some(selected)
 }
 

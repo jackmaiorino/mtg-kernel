@@ -1629,12 +1629,24 @@ pub struct StackStateV4 {
         skip_serializing_if = "crate::cauldron_grants_v1::CauldronGrantRecordV1::is_empty"
     )]
     pub cauldron_grant: crate::cauldron_grants_v1::CauldronGrantRecordV1,
+    /// Physical source and text-producing card for a layer-3 ability.
+    /// Public schemas refuse this unrepresented producer.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::full_text_v1::FullTextActivationRecordV1::is_empty"
+    )]
+    pub full_text_activation_v1: crate::full_text_v1::FullTextActivationRecordV1,
     /// Optional additional cost actually paid for this exact cast or the
     /// triggered ability produced by it. Internal cast provenance only;
     /// existing public stack schemas continue to expose the associated
     /// physical payments through `paid_cost_refs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub optional_additional_cost_paid: Option<crate::card_def::OptionalAdditionalCostDef>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_premodern_p2b_v1::BattlemageKickersV1::is_empty"
+    )]
+    pub battlemage_kickers_v1: crate::eternal_premodern_p2b_v1::BattlemageKickersV1,
     /// Mana spent to cast this spell (CR 601.2h), recorded only for a
     /// definition with `CardDef::records_mana_spent` (Memory Deluge's "X is
     /// the amount of mana spent to cast this spell"). Zero, and absent from
@@ -2938,6 +2950,27 @@ impl GameState {
         // exact pre-existing literal (`PlayerId::P0`) supplied structurally:
         // this function's own body and behavior are unchanged.
         Self::new_from_libraries_with_starting_player_v1(lib0, lib1, names, seed, PlayerId::P0)
+    }
+
+    /// Native reset for the explicit simultaneous graveyard ordering profile.
+    /// Consumers that cannot represent its decision refuse this public mode.
+    #[cfg(feature = "eternal-fixtures")]
+    pub fn new_from_libraries_with_graveyard_order_v1(
+        lib0: &[u16],
+        lib1: &[u16],
+        names: impl Fn(u16) -> String,
+        seed: u64,
+        starting_player: PlayerId,
+    ) -> GameState {
+        let mut state = Self::new_from_libraries_with_starting_player_v1(
+            lib0,
+            lib1,
+            names,
+            seed,
+            starting_player,
+        );
+        state.engine.runtime_rules = crate::engine::RuntimeRulesV1::OWNER_ORDERED_GRAVEYARD_V1;
+        state
     }
 
     /// Opt-in sibling of [`GameState::new_from_libraries`] taking an explicit
@@ -5710,6 +5743,7 @@ mod tests {
             convoke_finished: false,
             escape_exile_finished_v1: false,
             hand_free_cast_v1: None,
+            thornscape_white_kicker_v1: None,
             mandatory_additional_cost: None,
         });
         let ordinary_contract = state.diagnostic_state_hash();

@@ -6,7 +6,14 @@
 //!        s_transformer_v1 gae-bench [seed= groups= reps= workers=]
 //!        s_transformer_v1 resume-check out=<dir> [seed= steps= split= groups=]
 
+#[cfg(not(feature = "s-learner-profile-v1"))]
 mtg_kernel::fast_global_allocator!();
+
+// Measurement-only builds count allocator events for `gae-bench`'s profile.
+#[cfg(feature = "s-learner-profile-v1")]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: mtg_kernel::s_transformer_v1::profile::SProfileAllocatorV1 =
+    mtg_kernel::s_transformer_v1::profile::SProfileAllocatorV1;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

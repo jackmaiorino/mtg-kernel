@@ -47,15 +47,19 @@ mod kernels;
 mod parallel;
 #[cfg(test)]
 mod policy_tests;
+pub mod profile;
 #[cfg(test)]
 mod tests;
 pub mod tools;
 pub(crate) mod update_profile_v1;
+#[cfg(test)]
+pub(crate) mod verified_row_v1;
 
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::training_math_v1::TrainingMathV1;
 use kernels::{gemm_v1, InitV1};
 use parallel::SGradientSinkV1;
+use profile::{SectionV1, StageV1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -647,8 +651,19 @@ impl SModelV1 {
         tape: &mut STapeV1,
     ) -> Result<(), String> {
         ensure_mxcsr_v1()?;
+        let counts = input.validate_v1(&self.layout.config)?;
+        self.forward_validated_into_v1(input, tape, counts)
+    }
+
+    fn forward_validated_into_v1(
+        &self,
+        input: SInputV1<'_>,
+        tape: &mut STapeV1,
+        counts: CountsV1,
+    ) -> Result<(), String> {
+        #[cfg(test)]
+        verified_row_v1::note_forward_v1();
         let config = self.layout.config;
-        let counts = input.validate_v1(&config)?;
         let (n, e, a, r) = (counts.objects, counts.edges, counts.actions, counts.refs);
         let d = config.d_model;
         let h = config.heads;
@@ -985,6 +1000,29 @@ pub(crate) struct LayerTapeV1 {
     ff_act: Vec<f32>,
 }
 
+impl LayerTapeV1 {
+    fn size_v1(
+        &mut self,
+        config: &SConfigV1,
+        counts: CountsV1,
+        mut size: impl FnMut(&mut Vec<f32>, usize),
+    ) {
+        let d = config.d_model;
+        let l = 1 + counts.objects + counts.actions;
+        size(&mut self.x_in, l * d);
+        size(&mut self.ln1, l * d);
+        size(&mut self.ln1_stats, 2 * l);
+        size(&mut self.qkv, l * 3 * d);
+        size(&mut self.probs, config.heads * l * l);
+        size(&mut self.attn, l * d);
+        size(&mut self.x_mid, l * d);
+        size(&mut self.ln2, l * d);
+        size(&mut self.ln2_stats, 2 * l);
+        size(&mut self.ff_pre, l * config.ffn);
+        size(&mut self.ff_act, l * config.ffn);
+    }
+}
+
 /// Forward workspace and tape. Buffers grow to the largest decision seen and
 /// are reused.
 #[derive(Clone, Debug, Default)]
@@ -1027,54 +1065,65 @@ fn sized_v1(buffer: &mut Vec<f32>, len: usize) {
 
 impl STapeV1 {
     fn reset_v1(&mut self, config: &SConfigV1, counts: CountsV1) {
+        self.counts = Some(counts);
+        self.size_prefix_v1(config, counts, sized_v1);
+        self.layers.resize_with(config.layers, LayerTapeV1::default);
+        for layer in &mut self.layers {
+            layer.size_v1(config, counts, sized_v1);
+        }
+        self.size_tail_v1(config, counts, sized_v1);
+        self.value_logit = 0.0;
+        self.value = 0.0;
+    }
+
+    fn size_prefix_v1(
+        &mut self,
+        config: &SConfigV1,
+        counts: CountsV1,
+        mut size: impl FnMut(&mut Vec<f32>, usize),
+    ) {
         let d = config.d_model;
         let cd = config.card_dim;
         let h = config.heads;
         let (n, e, a, r) = (counts.objects, counts.edges, counts.actions, counts.refs);
         let l = 1 + n + a;
-        self.counts = Some(counts);
-        sized_v1(&mut self.obj_inp, n * (OBJECT_FEATURE_DIM_V1 + cd));
-        sized_v1(&mut self.obj_pre, n * d);
-        sized_v1(&mut self.obj_act, n * d);
-        sized_v1(&mut self.state_pre, d);
-        sized_v1(&mut self.state_act, d);
-        sized_v1(&mut self.act_pre, a * d);
-        sized_v1(&mut self.act_act, a * d);
-        sized_v1(&mut self.ref_inp, r * (REF_FEATURE_DIM_V1 + cd));
-        sized_v1(&mut self.ref_pre, r * d);
-        sized_v1(&mut self.ref_act, r * d);
-        sized_v1(&mut self.ref_out, r * d);
-        sized_v1(&mut self.edge_out, e * 2 * h);
-        sized_v1(&mut self.bias, h * l * l);
+        size(&mut self.obj_inp, n * (OBJECT_FEATURE_DIM_V1 + cd));
+        size(&mut self.obj_pre, n * d);
+        size(&mut self.obj_act, n * d);
+        size(&mut self.state_pre, d);
+        size(&mut self.state_act, d);
+        size(&mut self.act_pre, a * d);
+        size(&mut self.act_act, a * d);
+        size(&mut self.ref_inp, r * (REF_FEATURE_DIM_V1 + cd));
+        size(&mut self.ref_pre, r * d);
+        size(&mut self.ref_act, r * d);
+        size(&mut self.ref_out, r * d);
+        size(&mut self.edge_out, e * 2 * h);
+        size(&mut self.bias, h * l * l);
         let dh = config.head_dim_v1();
-        sized_v1(&mut self.key_t, dh * l);
-        sized_v1(&mut self.value_h, l * dh);
-        sized_v1(&mut self.head_out, l * dh);
-        self.layers.resize_with(config.layers, LayerTapeV1::default);
-        for lt in &mut self.layers {
-            sized_v1(&mut lt.x_in, l * d);
-            sized_v1(&mut lt.ln1, l * d);
-            sized_v1(&mut lt.ln1_stats, 2 * l);
-            sized_v1(&mut lt.qkv, l * 3 * d);
-            sized_v1(&mut lt.probs, h * l * l);
-            sized_v1(&mut lt.attn, l * d);
-            sized_v1(&mut lt.x_mid, l * d);
-            sized_v1(&mut lt.ln2, l * d);
-            sized_v1(&mut lt.ln2_stats, 2 * l);
-            sized_v1(&mut lt.ff_pre, l * config.ffn);
-            sized_v1(&mut lt.ff_act, l * config.ffn);
-        }
-        sized_v1(&mut self.x_out, l * d);
-        sized_v1(&mut self.fin, (1 + a) * d);
-        sized_v1(&mut self.fin_stats, 2 * (1 + a));
-        sized_v1(&mut self.pol_inp, a * 2 * d);
-        sized_v1(&mut self.pol_pre, a * d);
-        sized_v1(&mut self.pol_act, a * d);
-        sized_v1(&mut self.logits, a);
-        sized_v1(&mut self.val_pre, d);
-        sized_v1(&mut self.val_act, d);
-        self.value_logit = 0.0;
-        self.value = 0.0;
+        size(&mut self.key_t, dh * l);
+        size(&mut self.value_h, l * dh);
+        size(&mut self.head_out, l * dh);
+    }
+
+    fn size_tail_v1(
+        &mut self,
+        config: &SConfigV1,
+        counts: CountsV1,
+        mut size: impl FnMut(&mut Vec<f32>, usize),
+    ) {
+        let d = config.d_model;
+        let a = counts.actions;
+        let l = 1 + counts.objects + a;
+        size(&mut self.x_out, l * d);
+        size(&mut self.fin, (1 + a) * d);
+        size(&mut self.fin_stats, 2 * (1 + a));
+        size(&mut self.pol_inp, a * 2 * d);
+        size(&mut self.pol_pre, a * d);
+        size(&mut self.pol_act, a * d);
+        size(&mut self.logits, a);
+        size(&mut self.val_pre, d);
+        size(&mut self.val_act, d);
     }
 
     pub fn logits_v1(&self) -> &[f32] {
@@ -1270,6 +1319,7 @@ impl SModelV1 {
         if matches!(grad, SGradientSinkV1::Direct(values) if values.len() != self.layout.total) {
             return Err("S gradient buffer has the wrong length".into());
         }
+        profile::backward_census_v1(&config, counts);
         let lay = &self.layout;
         let (n, e, a, r) = (counts.objects, counts.edges, counts.actions, counts.refs);
         let d = config.d_model;
@@ -1301,6 +1351,7 @@ impl SModelV1 {
         sized_v1(&mut ws.dscore, l * l);
 
         // Value head: v = tanh(z / 2).
+        let heads = profile::span_v1(StageV1::BackHeads);
         let dz = dvalue * 0.5 * (1.0 - tape.value * tape.value);
         {
             let dz_row = [dz];
@@ -1352,12 +1403,14 @@ impl SModelV1 {
                 );
             }
         }
+        drop(heads);
         // Blocks in reverse. `ws.dx` is the gradient of the block's output.
         ws.dbias.fill(0.0);
         let scale = 1.0 / (dh as f32).sqrt();
         for (layer, block) in lay.blocks.iter().enumerate().rev() {
             let lt = &tape.layers[layer];
             // FFN.
+            let section = profile::section_v1(SectionV1::Ffn, layer);
             let dff = &mut ws.dwide[..l * ffn];
             self.linear_bwd(block.ff2, l, &lt.ff_act, &ws.dx, grad, Some(dff));
             kernels::gelu_backward_slice_v1(&lt.ff_pre, &mut ws.dwide[..l * ffn]);
@@ -1369,7 +1422,9 @@ impl SModelV1 {
                 grad,
                 Some(&mut ws.dx2[..]),
             );
+            drop(section);
             // LN2: dx_mid = dx_out + LN2'(dln2).
+            let section = profile::section_v1(SectionV1::Ln2, layer);
             {
                 let mut dmid = vec![0.0f32; d];
                 for t in 0..l {
@@ -1389,7 +1444,9 @@ impl SModelV1 {
                     }
                 }
             }
+            drop(section);
             // Projection.
+            let section = profile::section_v1(SectionV1::Proj, layer);
             self.linear_bwd(
                 block.proj,
                 l,
@@ -1398,9 +1455,11 @@ impl SModelV1 {
                 grad,
                 Some(&mut ws.dattn[..]),
             );
+            drop(section);
             // Attention, per head, through the ordered kernels:
             // dP = dO V^T, dV = P^T dO, dS = P * (dP - rowsum(P * dP)),
             // dQ = scale dS K, dK = scale dS^T Q; dS also feeds the bias.
+            let section = profile::section_v1(SectionV1::Attention, layer);
             ws.dqkv.fill(0.0);
             for head in 0..h {
                 for j in 0..l {
@@ -1485,9 +1544,13 @@ impl SModelV1 {
                     }
                 }
             }
+            drop(section);
             // QKV.
+            let section = profile::section_v1(SectionV1::Qkv, layer);
             self.linear_bwd(block.qkv, l, &lt.ln1, &ws.dqkv, grad, Some(&mut ws.dx2[..]));
+            drop(section);
             // LN1: dx_in = dx_mid + LN1'(dln1).
+            let section = profile::section_v1(SectionV1::Ln1, layer);
             {
                 let mut din = vec![0.0f32; d];
                 for t in 0..l {
@@ -1507,9 +1570,11 @@ impl SModelV1 {
                     }
                 }
             }
+            drop(section);
         }
 
         // Token inputs. State token.
+        let _inputs = profile::span_v1(StageV1::BackInputs);
         {
             let dact = &mut ws.dsmall[..d];
             self.linear_bwd(
@@ -1775,12 +1840,16 @@ impl SModelV1 {
             for (sub, substep) in group.substeps.iter().enumerate() {
                 let is_masked = masked.is_some_and(|m| m[sub]);
                 let d_joint = if is_masked { 0.0 } else { d_unmasked };
-                let forward =
+                let update_forward =
                     update_profile_v1::span_v1(update_profile_v1::StageV1::LearnerForward);
+                let forward = profile::span_v1(StageV1::Forward);
                 self.forward_into_v1(substep.input, &mut work.tape)?;
-                forward.finish_v1(&work.tape.logits, work.tape.value);
+                drop(forward);
+                update_forward.finish_v1(&work.tape.logits, work.tape.value);
+                let policy_row = profile::span_v1(StageV1::PolicyRow);
                 let (selected, dlogits) =
                     gae_policy_row_v1(&work.tape.logits, substep.selected, d_joint, index, sub)?;
+                drop(policy_row);
                 joint = if sub == 0 { selected } else { joint + selected };
                 if !is_masked {
                     policy_joint = Some(policy_joint.map_or(selected, |j| j + selected));
@@ -1791,8 +1860,9 @@ impl SModelV1 {
                 } else {
                     0.0
                 };
-                let backward =
+                let update_backward =
                     update_profile_v1::span_v1(update_profile_v1::StageV1::LearnerBackward);
+                let backward = profile::span_v1(StageV1::Backward);
                 self.backward_v1(
                     substep.input,
                     &work.tape,
@@ -1801,7 +1871,8 @@ impl SModelV1 {
                     grad,
                     &mut work.back,
                 )?;
-                backward.finish_plain_v1();
+                drop(backward);
+                update_backward.finish_plain_v1();
             }
             policy_sum += match masked {
                 None => -joint * group.advantage,
@@ -1949,6 +2020,7 @@ impl STrainStateV1 {
         workers: usize,
     ) -> Result<SStepV1, String> {
         crate::expanded_deck_training_v1::validate_preparation_workers_v1(workers)?;
+        let gradient = profile::span_v1(StageV1::Gradient);
         let mut grad = vec![0.0f32; self.model.layout.total];
         let loss = if workers == 1 {
             self.model
@@ -1962,7 +2034,11 @@ impl STrainStateV1 {
                 work,
             )?
         };
+        drop(gradient);
+        let adam = profile::span_v1(StageV1::Adam);
         self.adam_step_with_gradient_v1(&grad, learning_rate)?;
+        drop(adam);
+        let _hash = profile::span_v1(StageV1::StateHash);
         Ok(SStepV1 {
             loss,
             adam_step: self.adam_step,
