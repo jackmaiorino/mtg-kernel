@@ -74,6 +74,12 @@ tensorize-cost-profile-v1 = []
 # (`s4a-search-profile` rows). Off by default; default builds compile the
 # spans to nothing, so uninstrumented timings use a build without it.
 s4a-profile-v1 = []
+# Measurement-only accounting of an S update's forward work (T3, #597):
+# behavior-replay and learner forward calls, their thread time and output
+# digests, which `s_update_fixture_v1 bench` reports. Off by default; default
+# builds compile the spans to nothing, so uninstrumented timings use a build
+# without it.
+s-update-profile-v1 = []
 # Test tooling only: test processes write the first committed event of each
 # kind to `MTG_EVENT_SAMPLES_V1` (event_history_v1::sample_harvest_v1), so
 # integration tests can supply the every-kind fixtures. Off by default; unit
