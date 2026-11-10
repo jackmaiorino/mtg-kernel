@@ -1258,9 +1258,31 @@ fn reanimated_metamorph_chooses_copy_and_mage_name_before_entry_both_seats() {
         for mixed in [false, true] {
             let mut state = paid_meddling_against(actor, "Lava Dart", &["Island"; 20]);
             let mage = state.players[opponent.index()].battlefield[0];
-            let wall = mixed.then(|| put(&mut state, actor, "Wall of Blossoms", Zone::Battlefield));
             let metamorph = put(&mut state, opponent, "Phyrexian Metamorph", Zone::Graveyard);
             let generation = state.objects.get(metamorph).zone_change_count;
+            let prior = mixed.then(|| {
+                let wall = put(&mut state, opponent, "Wall of Blossoms", Zone::Graveyard);
+                let reanimate = put(&mut state, actor, "Reanimate", Zone::Hand);
+                pool(&mut state, actor, &[ManaColor::B], 0);
+                cast(&mut state, reanimate, &[Target::Object(wall)]);
+                assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+                let source = mtg_kernel::state::AbilitySourceContractV4::capture(&state, reanimate);
+                let receipt = state.engine.event_history.iter().find_map(|event| {
+                    match event {
+                        CommittedEvent::PublishedCastIdentityV1 { receipt }
+                            if receipt.spell == reanimate => Some(*receipt),
+                        _ => None,
+                    }
+                }).unwrap();
+                settled(&mut state);
+                assert_eq!(zone(&state, reanimate), Zone::Graveyard);
+                assert_eq!(zone(&state, wall), Zone::Battlefield);
+                (wall, source, receipt)
+            });
+            let wall = prior.map(|(wall, _, _)| wall);
+            let life_before = life(&state, actor);
+            assert_eq!(zone(&state, metamorph), Zone::Graveyard);
+            assert_eq!(state.objects.get(metamorph).zone_change_count, generation);
             let reanimate = put(&mut state, actor, "Reanimate", Zone::Hand);
             let mage_history_count = |state: &GameState| {
                 state
@@ -1294,7 +1316,7 @@ fn reanimated_metamorph_chooses_copy_and_mage_name_before_entry_both_seats() {
             }
             assert_eq!(zone(&state, metamorph), Zone::Graveyard);
             assert_eq!(zone(&state, reanimate), Zone::Stack);
-            assert_eq!(life(&state, actor), 20);
+            assert_eq!(life(&state, actor), life_before);
             assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
             assert_eq!(mage_history_count(&state), history_before_copy);
             let frozen_hand = state.players[actor.index()].hand.len();
@@ -1326,13 +1348,13 @@ fn reanimated_metamorph_chooses_copy_and_mage_name_before_entry_both_seats() {
                         if player == actor));
                     assert_eq!(zone(&restored, metamorph), Zone::Graveyard);
                     assert_eq!(zone(&restored, reanimate), Zone::Stack);
-                    assert_eq!(life(&restored, actor), 20);
+                    assert_eq!(life(&restored, actor), life_before);
                     let name_snapshot = serde_json::to_vec(&restored).unwrap();
                     restored = serde_json::from_slice(&name_snapshot).unwrap();
                     choose_mage_name(&mut restored, actor, "Lightning Bolt");
                 }
                 settled(&mut restored);
-                assert_eq!(life(&restored, actor), 16);
+                assert_eq!(life(&restored, actor), life_before - 4);
                 assert_eq!(zone(&restored, reanimate), Zone::Graveyard);
                 assert_eq!(restored.objects.get(metamorph).owner, opponent);
                 assert_eq!(
@@ -1374,8 +1396,76 @@ fn reanimated_metamorph_chooses_copy_and_mage_name_before_entry_both_seats() {
                 assert!(restored.engine.event_history.iter().any(|event| matches!(event,
                     CommittedEvent::ZoneChange { object, from: Zone::Graveyard, to: Zone::Battlefield, .. }
                     if *object == metamorph)));
+                if let Some((wall, prior_source, prior_cast)) = prior.filter(|(wall, _, _)| selected == Some(*wall)) {
+                    assert_eq!(restored.objects.get(wall).card_def, id("Wall of Blossoms"));
+                    let mut wrong_producer = serde_json::to_value(&restored).unwrap();
+                    let copy = wrong_producer["engine"]["event_history"]
+                        .as_array_mut().unwrap().iter_mut().find_map(|event| {
+                            event.get_mut("MeddlingMageEntryV1")?.get_mut("journal")?
+                                .get_mut("MetamorphCopied")?.get_mut("copy")
+                        }).unwrap();
+                    copy["reanimated_by"] = serde_json::to_value(prior_source).unwrap();
+                    copy["cast_at"] = serde_json::json!(prior_cast.spell_cast_history_index);
+                    copy["stack_item"] = serde_json::to_value(prior_cast.stack_item_id).unwrap();
+
+                    let mut wrong_form = serde_json::to_value(&restored).unwrap();
+                    let forms = wrong_form["standard_v1"]["copied_card_defs"].as_array_mut().unwrap();
+                    let actual = serde_json::json!([metamorph, generation + 1, id("Wall of Blossoms")]);
+                    let count = forms.len();
+                    forms.retain(|form| *form != actual);
+                    assert_eq!(forms.len(), count - 1);
+                    for forged in [wrong_producer, wrong_form] {
+                        let mut forged: GameState = serde_json::from_value(forged).unwrap();
+                        let before = forged.state_hash();
+                        assert!(engine::step(&mut forged, Action::Pass).is_err());
+                        assert_eq!(forged.state_hash(), before);
+                    }
+                }
             }
         }
+    }
+}
+
+#[test]
+fn reanimated_metamorph_refuses_mixed_painter_copy_before_lethal_payment_both_seats() {
+    use mtg_kernel::engine::UnsupportedMechanic;
+    use mtg_kernel::event::CommittedEvent;
+
+    for actor in [P0, P1] {
+        let mut state = paid_meddling_against(actor, "Lava Dart", &["Island"; 20]);
+        let painter = put(&mut state, actor, "Painter's Servant", Zone::Hand);
+        pool(&mut state, actor, &[], 2);
+        cast(&mut state, painter, &[]);
+        settle_option(&mut state, 1);
+        assert_eq!(zone(&state, painter), Zone::Battlefield);
+        state.players[actor.index()].life = 4;
+        let metamorph = put(&mut state, actor.opponent(), "Phyrexian Metamorph", Zone::Graveyard);
+        let reanimate = put(&mut state, actor, "Reanimate", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::B], 0);
+        cast(&mut state, reanimate, &[Target::Object(metamorph)]);
+        let mut halted = false;
+        for _ in 0..8 {
+            match engine::advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                Decision::Halted { mechanic: UnsupportedMechanic::InvalidEffectContinuation, .. } => {
+                    halted = true;
+                    break;
+                }
+                other => panic!("unsupported mixed roster published a decision: {other:?}"),
+            }
+        }
+        assert!(halted);
+        assert_eq!(life(&state, actor), 4);
+        assert_eq!(zone(&state, metamorph), Zone::Graveyard);
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        assert!(state.engine.event_history.iter().any(|event| {
+            matches!(event, CommittedEvent::SpellCast { spell, controller }
+                if *spell == reanimate && *controller == actor)
+        }));
+        assert!(!state.engine.event_history.iter().any(|event| {
+            matches!(event, CommittedEvent::ZoneChange { object, to: Zone::Battlefield, .. }
+                if *object == metamorph)
+        }));
     }
 }
 

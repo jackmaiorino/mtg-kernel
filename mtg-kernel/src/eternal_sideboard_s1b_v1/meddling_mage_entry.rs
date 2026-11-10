@@ -98,6 +98,16 @@ pub(crate) fn reanimate_metamorph_waiting(
             if physical_graveyard_metamorph(state, *object))
 }
 
+/// The prospective entry owner implements Mage's name choice and Wall's
+/// ordinary draw trigger. Other registered definitions can still require an
+/// as-enters choice or a copy overlay that this entry path cannot install.
+fn reanimate_copy_definition(card_def: u16) -> bool {
+    owns_definition(card_def)
+        || CARD_DEFS.get(usize::from(card_def)).is_some_and(|definition| {
+            definition.name == "Wall of Blossoms" && definition.has_full_support()
+        })
+}
+
 impl ReanimateCopyChoiceV1 {
     pub(crate) fn capture(
         state: &GameState,
@@ -105,7 +115,6 @@ impl ReanimateCopyChoiceV1 {
         object: ObjectId,
         item: &crate::state::StackItem,
     ) -> Result<Option<Self>, String> {
-        use crate::effect::{EffectOp, ObjectRef};
         if !reanimate_metamorph_waiting(state, item)
             || ctx.targets.as_slice() != [crate::state::Target::Object(object)]
             || ctx.stack_item_id != Some(item.v4.stack_item_id)
@@ -124,19 +133,12 @@ impl ReanimateCopyChoiceV1 {
         let mut candidates = Vec::new();
         for binding in crate::effect::metamorph_copy_candidates(state, ctx.controller)? {
             let live = state.objects.get(binding.object);
-            let definition = &CARD_DEFS[usize::from(live.card_def)];
             if live.zone != Zone::Battlefield
                 || live.v4.face_down_v1.is_some()
                 || live.v4.face_index != 0
                 || live.v4.is_token
                 || crate::eternal_vintage_v1::active_copy(state, binding.object)
-                || !(owns_definition(live.card_def)
-                    || definition.has_full_support()
-                        && (definition.spell_effect)()
-                            == Some(EffectOp::MoveObject {
-                                object: ObjectRef::ThisSource,
-                                to_zone: Zone::Battlefield,
-                            }))
+                || !reanimate_copy_definition(live.card_def)
             {
                 return Err(
                     "noncast Metamorph copy menu contains an unsupported entry form".into(),
@@ -271,9 +273,7 @@ impl MetamorphCopyV1 {
             && self.copied.source != self.physical.source
             && (owns_definition(self.copied.card_def)
                 || self.reanimated_by.is_some()
-                    && CARD_DEFS
-                        .get(usize::from(self.copied.card_def))
-                        .is_some_and(CardDef::has_full_support))
+                    && reanimate_copy_definition(self.copied.card_def))
             && entrant.source == self.physical.source
             && entrant.card_def == self.copied.card_def
             && entrant.zone == Zone::Battlefield
@@ -543,16 +543,56 @@ pub(crate) fn record(state: &mut GameState, journal: JournalV1) {
         });
 }
 
+/// A paid Reanimate must still be resolving when its target actually enters.
+/// The native archive binds the exact cast and resulting entry window. The
+/// original graveyard target itself is authenticated by the lexical runner.
+fn reanimate_resolution_matches(
+    state: &GameState,
+    copy: MetamorphCopyV1,
+    entry: usize,
+    archived: bool,
+) -> bool {
+    let Some(producer) = copy.reanimated_by else {
+        return true;
+    };
+    let after_cast = copy.cast_at + 1;
+    let first_departure = state.engine.event_history[after_cast..]
+        .iter()
+        .enumerate()
+        .find_map(|(offset, event)| match event {
+            CommittedEvent::ZoneChange {
+                object, from: Zone::Stack, to, controller_before,
+            } if *object == producer.source => Some((after_cast + offset, *to, *controller_before)),
+            _ => None,
+        });
+    match first_departure {
+        Some((at, to, controller)) => archived
+            && at > entry
+            && to != Zone::Stack
+            && controller == producer.controller
+            && !state.engine.event_history[entry + 1..at].iter().any(|event| {
+                matches!(event, CommittedEvent::ZoneChange { from: Zone::Stack, .. })
+            }),
+        None => !archived && state.objects.try_get(producer.source).is_some()
+            && AbilitySourceContractV4::capture(state, producer.source) == producer,
+    }
+}
+
 fn copy_entry_matches(
     state: &GameState,
     copy: MetamorphCopyV1,
     entrant: AbilitySourceContractV4,
     entry: usize,
+    archived: bool,
 ) -> bool {
     let history = &state.engine.event_history;
     copy.cast_at < entry
         && copy.cast_matches(state)
         && copy.entrant_matches(entrant)
+        && reanimate_resolution_matches(state, copy, entry, archived)
+        && (copy.reanimated_by.is_none() || crate::standard_cards_v1::had_card_def(
+            state, entrant.source, entrant.zone_change_count, entrant.card_def,
+        ))
         && matches!(history.get(entry),
             Some(CommittedEvent::ZoneChange { object, from, to: Zone::Battlefield, controller_before })
                 if *object == entrant.source && *from == copy.physical.zone
@@ -570,11 +610,11 @@ pub(crate) fn record_metamorph_copy(
     entry_history_index: usize,
 ) -> Result<(), String> {
     let entrant = AbilitySourceContractV4::capture(state, copy.physical.source);
-    if !copy_entry_matches(state, copy, entrant, entry_history_index)
+    if !copy_entry_matches(state, copy, entrant, entry_history_index, false)
         || AbilitySourceContractV4::capture(state, copy.copied.source) != copy.copied
         || !crate::eternal_vintage_v1::active_copy(state, entrant.source)
     {
-        return Err("Metamorph lost the exact public Mage copy on entry".into());
+        return Err("Metamorph lost the exact public copy on entry".into());
     }
     record(
         state,
@@ -839,7 +879,7 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
                 copy,
             } => {
                 if entry_history_index.checked_add(1) != Some(index as usize)
-                    || !copy_entry_matches(state, *copy, *entrant, *entry_history_index)
+                    || !copy_entry_matches(state, *copy, *entrant, *entry_history_index, true)
                     || (owns_definition(entrant.card_def)
                         && !copies_needing_names.insert(*entry_history_index))
                 {
