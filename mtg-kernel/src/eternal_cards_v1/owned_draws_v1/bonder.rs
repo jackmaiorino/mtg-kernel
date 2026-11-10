@@ -15,18 +15,51 @@ pub struct PaidV1 {
     item: StackItemId,
     source: AbilitySourceContractV4,
     stack_sha256: [u8; 32],
+    original: OriginalSourceV1,
     tap_at: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+enum OriginalSourceV1 {
+    Printed,
+    Metamorph { physical_card_def: u16, copy_sha256: [u8; 32] },
+}
+
+/// Capture the original printing or the existing native, same-generation
+/// Metamorph copy record while the actual source pays. Never infer this from
+/// the arena object's later incarnation during a restored draw.
+fn original_source(state: &GameState, source: AbilitySourceContractV4) -> Option<OriginalSourceV1> {
+    let live = state.objects.try_get(source.source)?;
+    if AbilitySourceContractV4::capture(state, source.source) != source
+        || live.v4.is_token || live.spell_copy_origin.is_some()
+    {
+        return None;
+    }
+    let mut copies = state.eternal_v1.iter().flat_map(|e| &e.vintage.copies).filter(|copy| {
+        copy.host.object == source.source && copy.host.zone_change_count == source.zone_change_count
+    });
+    let Some(copy) = copies.next() else { return Some(OriginalSourceV1::Printed); };
+    if copies.next().is_some()
+        || CARD_DEFS.get(usize::from(copy.card_def))?.object_name != "Phyrexian Metamorph"
+        || source.zone_change_count == 0
+    {
+        return None;
+    }
+    Some(OriginalSourceV1::Metamorph {
+        physical_card_def: copy.card_def,
+        copy_sha256: Sha256::digest(serde_json::to_vec(copy).ok()?).into(),
+    })
 }
 
 fn root(card_def: u16) -> EffectOp {
     EffectOp::EachPlayerControllingDefinitionDrawsCard { card_def }
 }
 
-fn physical(state: &GameState, item: &StackItem) -> Option<AbilitySourceContractV4> {
+fn recipe(item: &StackItem) -> Option<AbilitySourceContractV4> {
     let source = item.v4.ability_source_contract?;
     let def = CARD_DEFS.get(usize::from(source.card_def))?;
     let ability = def.activated_abilities.first()?;
-    let live = state.objects.try_get(item.source)?;
     (cfg!(feature = "eternal-fixtures")
         && item.kind == StackItemKind::ActivatedAbility
         && !item.is_copy
@@ -44,15 +77,7 @@ fn physical(state: &GameState, item: &StackItem) -> Option<AbilitySourceContract
         && ability.target_spec == TargetSpec::None
         && ability.cost == [CostComponent::Mana(Cost { generic: 4, pips: &[], x_count: 0 }), CostComponent::Tap]
         && (ability.effect)() == root(source.card_def)
-        && item.inline_effect == Some(root(source.card_def))
-        && !live.v4.is_token
-        && live.spell_copy_origin.is_none()
-        && !state.eternal_v1.as_ref().is_some_and(|eternal| {
-            eternal.vintage.copies.iter().any(|copy| {
-                copy.host.object == source.source
-                    && copy.host.zone_change_count == source.zone_change_count
-            })
-        }))
+        && item.inline_effect == Some(root(source.card_def)))
         .then_some(source)
 }
 
@@ -71,7 +96,8 @@ pub(crate) fn record_paid(state: &mut GameState, item: StackItemId, payment_star
     if !matches!(row.inline_effect, Some(EffectOp::EachPlayerControllingDefinitionDrawsCard { .. })) {
         return Ok(());
     }
-    let source = physical(state, row).ok_or("Bonder draw requires its physical printed activation")?;
+    let source = recipe(row).ok_or("Bonder draw requires its original printed activation")?;
+    let original = original_source(state, source).ok_or("Bonder payment lost its physical or native Metamorph source")?;
     if AbilitySourceContractV4::capture(state, source.source) != source {
         return Err("Bonder payment changed its battlefield incarnation".into());
     }
@@ -79,7 +105,7 @@ pub(crate) fn record_paid(state: &mut GameState, item: StackItemId, payment_star
     let tap_at = state.engine.event_history.iter().enumerate().skip(payment_start)
         .find_map(|(at, event)| matches!(event, CommittedEvent::Tap { object } if *object == source.source).then_some(at))
         .ok_or("Bonder payment lost its actual tap")?;
-    record(state, JournalV1::BonderPaidV1(PaidV1 { item, source, stack_sha256, tap_at }));
+    record(state, JournalV1::BonderPaidV1(PaidV1 { item, source, stack_sha256, original, tap_at }));
     Ok(())
 }
 
@@ -92,7 +118,8 @@ fn journal(state: &GameState, at: usize) -> Option<JournalV1> {
 
 pub(super) fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(usize, AbilitySourceContractV4)> {
     let row = &pending.resolving_item;
-    let source = physical(state, row)?;
+    let source = recipe(row)?;
+    crate::engine::validate_historical_ability_source_contract(state, source).ok()?;
     if pending.ctx.source != source.source
         || pending.ctx.controller != source.controller
         || pending.ctx.stack_item_id != Some(row.v4.stack_item_id)
@@ -113,6 +140,10 @@ pub(super) fn selected(state: &GameState, pending: &EffectContinuation) -> Optio
     (matches.next().is_none()
         && paid.source == source
         && paid.stack_sha256 == digest
+        && state.objects.try_get(source.source).is_some_and(|live| {
+            live.zone_change_count > source.zone_change_count
+                || original_source(state, source) == Some(paid.original)
+        })
         && paid.tap_at < at
         && matches!(state.engine.event_history.get(paid.tap_at), Some(CommittedEvent::Tap { object }) if *object == source.source))
         .then_some((at, source))

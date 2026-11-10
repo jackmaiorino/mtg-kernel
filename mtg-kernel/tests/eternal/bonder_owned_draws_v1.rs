@@ -319,3 +319,77 @@ fn paid_bonder_unopposed_jace_stops_apnap_without_dredge_or_hull() {
         assert_eq!(state.players[other.index()].library.len(), 3);
     }
 }
+
+fn paid_metamorph(state: &mut GameState, actor: PlayerId, donor: ObjectId) -> ObjectId {
+    state.active_player = actor;
+    state.priority_player = actor;
+    let metamorph = put(state, actor, "Phyrexian Metamorph", Zone::Hand);
+    pool(state, actor, &[ManaColor::U], 3);
+    act(state, Action::CastSpell(metamorph));
+    assert!(matches!(settle(state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(donor))));
+    act(state, Action::ChooseEffectTarget(Target::Object(donor)));
+    settled(state);
+    assert_eq!(state.objects.get(metamorph).card_def, id("Bonder's Ornament"));
+    assert!(state.eternal_v1.as_ref().unwrap().vintage.copies.iter().any(|copy| copy.host.object == metamorph));
+    metamorph
+}
+
+#[test]
+fn paid_metamorph_bonder_keeps_ordinary_native_draw_contract() {
+    for actor in [P0, P1] {
+        let mut state = plains();
+        let donor = put(&mut state, actor.opponent(), "Bonder's Ornament", Zone::Battlefield);
+        let source = paid_metamorph(&mut state, actor, donor);
+        activate(&mut state, source, actor, actor.opponent());
+        settled(&mut state);
+        assert_eq!(state.players[actor.index()].hand.len(), 1);
+        assert_eq!(state.players[actor.opponent().index()].hand.len(), 1);
+        assert!(observation(&state, actor).is_ok());
+    }
+}
+
+#[test]
+fn paid_bonder_retains_original_source_after_departure_and_new_incarnation() {
+    for actor in [P0, P1] {
+        for copied in [false, true] {
+            let mut state = game(&[]);
+            let other = actor.opponent();
+            let jace = cast_jace(&mut state, actor);
+            put(&mut state, other, "Hullbreacher", Zone::Battlefield);
+            let donor = put(&mut state, actor, "Bonder's Ornament", Zone::Battlefield);
+            put(&mut state, other, "Bonder's Ornament", Zone::Battlefield);
+            let source = if copied { paid_metamorph(&mut state, actor, donor) }
+                else { put(&mut state, actor, "Bonder's Ornament", Zone::Battlefield) };
+            activate(&mut state, source, actor, actor);
+            let original_generation = state.objects.get(source).zone_change_count;
+            let removal = put(&mut state, actor, "Disenchant", Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::W], 1);
+            act(&mut state, Action::CastSpell(removal));
+            assert!(matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(source))));
+            act(&mut state, Action::ChooseTarget(Target::Object(source)));
+            for _ in 0..12 {
+                let decision = next(&mut state);
+                if zone(&state, source) == Zone::Graveyard { break; }
+                assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+                act(&mut state, Action::Pass);
+            }
+            assert_eq!(zone(&state, source), Zone::Graveyard);
+            assert!(state.engine.pending_effect.is_none());
+            if copied {
+                assert_eq!(state.objects.get(source).card_def, id("Phyrexian Metamorph"));
+                assert!(!state.eternal_v1.as_ref().unwrap().vintage.copies.iter().any(|copy| copy.host.object == source));
+            } else {
+                mtg_kernel::event::propose_and_commit(&mut state, mtg_kernel::event::ProposedEvent::zone_change(source, Zone::Battlefield));
+            }
+            assert!(state.objects.get(source).zone_change_count > original_generation);
+            assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, legal_targets, .. }) if player == actor && legal_targets == [Target::Object(jace)]));
+            let mut replay = restored(&state);
+            for branch in [&mut state, &mut replay] {
+                act(branch, Action::ChooseEffectTarget(Target::Object(jace)));
+                assert!(matches!(next(branch), Decision::GameOver { winner: Some(winner) } if winner == actor));
+                assert!(named(branch, other, "Treasure Token").is_empty());
+            }
+            assert_eq!(state.state_hash(), replay.state_hash());
+        }
+    }
+}
