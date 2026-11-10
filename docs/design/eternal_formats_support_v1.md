@@ -627,7 +627,8 @@ New, each built once in the first wave that needs it:
   but all seven new Bonder cases stopped at a shared setup assertion before
   native advance finalized payment. The helper now advances to priority and
   verifies the paid stack row before checking tap and mana; it does not resolve
-  the draws. Those seven cases still require native qualification.
+  the draws. All seven passed at `1330bc320` in the 63-pass, 8-fail packet;
+  the failures were confined to Portent and the copied Show and Tell fixture.
   The physical paid Portent successor binds
   its original cast, targeted-library look/order and optional shuffle before
   scheduling the caster's draw at the next turn's upkeep. The delayed trigger
@@ -653,7 +654,9 @@ New, each built once in the first wave that needs it:
   abilities have no shipped producer in this slice and are not authorized by
   a copied bound receipt. Ordinary pending and published triggers retain existing
   observations; suspended owned replacement choices require an observation
-  successor. Source review and native qualification remain pending.
+  successor. Source review verified the ordinary V5/Human compatibility repair
+  and authenticated historical source projection. Native qualification of this
+  successor remains pending.
   Generated draws from the remaining Premodern leaves, Arcane Denial and
   Accumulated Knowledge still need their Jace/Hullbreacher origins.
   Quantum Riddler adjusts the whole count once for uninterrupted fixed and
