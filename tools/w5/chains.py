@@ -23,7 +23,9 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
 (`w5box.py layout --out`), `python` (the interpreter w5box pins as the chain binary), `trainer`
 (native_expanded_training_run_v1), `container_tool` (checkpoint_container_v1, weights snapshots), `base` (the prepared
 30/50/20 opponent-schedule base), `frozen` (the section 8 freeze record, required in Stage 1), optional `byte_cap`,
-`x_cap_seconds`, `r_nom_usec`, `c_wall_seconds` (Stage 0 only; Stage 1 is the frozen 7 days), and
+`x_cap_seconds`, `r_nom_usec`, `c_wall_seconds` (Stage 0 only; Stage 1 is the frozen 7 days), `box_slots`
+(independent Stage 0 plans: the layout slots the plan owns, w5box "Box subsets"; its chains use only those slots and
+`throughput` measures one box, then all of them), and
 - `arms`: per arm (C, X8, XS, and always F, the frozen filler): `parent` (dose record: the source the chain starts
   from), `workers`, `memory_max_bytes`, `bytes_per_update`, optional `segment_updates`, `base` and `throughput`
   (a `w5-box-throughput/v1` record), for C-recipe arms optional `record_envelope` (`zstd1`: the trainer seals every
@@ -123,7 +125,7 @@ through `w5box.py fill`, which stops once all measured chains have ended); the b
 w5box's guard requires for one arm of a plan. Each phase (default: one box, then every box of the layout) is a
 Stage 0 plan derived from the plan's own inputs, so the arm file, filler, environment and w5box launch
 specification are byte-identical and the phase binds what the plan launches (checked: equal throughput bindings).
-Its chains (`<label>-<arm>-p<count>-s<slot>`, slots 0 to count - 1, all on one seed root, default
+Its chains (`<label>-<arm>-p<count>-s<slot>`, the plan's first count slots, all on one seed root, default
 `w5/throughput`) run fresh through `chains.py run` in qualification mode, under this command's own supervise
 cycles without fills; the node runs whole until every box has completed N updates (so each box's window has every
 other box busy), then every chain ends at once (STOP files, then w5box kills: a chain ended alone would leave a
@@ -223,14 +225,22 @@ SEGCHECK_SCHEMA = 'w5-segcheck/v1'
 COMMIT_SCHEMA = 'w5-segment-commit/v1'
 COMMIT_LOG = 'durable.jsonl'  # chains/<name>/durable.jsonl: the driver's committed boundaries (module docstring)
 ARMS = {'C': ('C', 'C'), 'X8': ('X', 'X'), 'XS': ('X', 'X'), 'F': ('C', None),
-        'CS': ('C', 'C'), 'CP': ('C', 'C'), 'CG': ('C', 'C'), 'CH': ('C', 'C')}  # recipe, retention arm
-# CS, CP and CG: further C-recipe arms of an independent Stage 0 plan (own parent and base; e.g. an S parent, a pool
-# base). CG (P-grow, pgrow.py) also plays its own checkpoint ladder in the base's fixed-parent share.
-EXTRA_C = ('CS', 'CP', 'CG', 'CH')
+        'CS': ('C', 'C'), 'CP': ('C', 'C'), 'CG': ('C', 'C'), 'CH': ('C', 'C'),
+        'FBA': ('C', 'C'), 'FBB': ('C', 'C')}  # recipe, retention arm
+# CS, CP, CG, CH, FBA and FBB: further C-recipe arms of an independent Stage 0 plan (own parent and base; e.g. an S
+# parent, a pool base, a fork's parent and a regrouped base). CG (P-grow, pgrow.py) also plays its own checkpoint
+# ladder in the base's fixed-parent share. FBA and FBB are two arms that differ only in their base (e.g. two learning
+# rates).
+EXTRA_C = ('CS', 'CP', 'CG', 'CH', 'FBA', 'FBB')
 LADDER_ARMS = ('CG', 'CH')  # CH: a second P-grow arm, so one plan can hold two parents (e.g. two fresh lineages)
 MEASURED = ('C', 'X8', 'XS') + EXTRA_C
 STAGES = ('0', '1a', '1b')
-SEGMENT_UPDATES = {'C': 256, 'X8': 16, 'XS': 16, 'F': 64, 'CS': 256, 'CP': 256, 'CG': 256, 'CH': 256}
+SEGMENT_UPDATES = {'C': 256, 'X8': 16, 'XS': 16, 'F': 64, 'CS': 256, 'CP': 256, 'CG': 256, 'CH': 256, 'FBA': 256,
+                   'FBB': 256}
+# A scratch segment ends on a multiple of 32 updates that divides the 4,096-update ladder stride. 32 (below retention's
+# 64-update full-state stride) lets a large-batch arm keep its segment config under the trainer's 16 MiB cap; an odd
+# 32-update end is pruned like any other non-full state, only once its segment and the next are complete.
+SCRATCH_MIN_UPDATES = 32
 HOT_CAP_BYTES = 60 * 10**9
 BYTE_CAP = 560 * 10**9
 HOLD_DAYS = 7
@@ -564,6 +574,15 @@ def make_plan(inputs_path):
     independent = inputs.get('independent', False)
     require(independent in (True, False), 'independent is true or false')
     require(not independent or stage == '0', 'independent chains are a Stage 0 plan option')
+    # A plan that owns a subset of the layout's boxes (w5box module docstring, "Box subsets"): independent Stage 0
+    # only, so no matched-work holds or fillers reach the boxes it does not own.
+    box_slots = inputs.get('box_slots')
+    if box_slots is not None:
+        require(independent and isinstance(box_slots, list) and box_slots and
+                all(type(s) is int and 0 <= s < boxes for s in box_slots) and box_slots == sorted(set(box_slots)),
+                'box_slots: distinct layout slots in increasing order, in an independent Stage 0 plan only')
+        require(inputs.get('isolation') == 'none', 'box_slots: the plan runs with isolation none (a member root '
+                'beside the plan that owns the partition, w5box "Box subsets")')
     arms_in, chains_in = inputs['arms'], inputs['chains']
     used = {c['arm'] for c in chains_in.values()} | {'F'}
     for a in used:
@@ -644,9 +663,9 @@ def make_plan(inputs_path):
             require(recipe == 'C' and a != 'F' and stage == '0',
                     f'{a}: scratch segments are for C-recipe chains (net-8 or S parent) in Stage 0 plans only')
             require(scratch_root and Path(scratch_root).is_absolute(), f'{a}: scratch needs an absolute scratch_root')
-            require(length % retention.FULL_STRIDE == 0 and retention.C_LONG_STRIDE % length == 0,
+            require(length % SCRATCH_MIN_UPDATES == 0 and retention.C_LONG_STRIDE % length == 0,
                     f'{a}: a scratch segment length divides {retention.C_LONG_STRIDE} and is a multiple of '
-                    f'{retention.FULL_STRIDE}, so segment ends hold every ladder state')
+                    f'{SCRATCH_MIN_UPDATES}, so segment ends hold every ladder state')
             require(r_nom is None, f'{a}: scratch keeps no look state (no r_nom_usec)')
             doc['scratch_root'] = Path(scratch_root).as_posix()  # absent otherwise: existing arm files unchanged
         if ladder is not None:
@@ -676,6 +695,7 @@ def make_plan(inputs_path):
         require(NAME.fullmatch(name) is not None, f'chain name {name!r}: lowercase letters, digits and dashes')
         a, slot, seed_root = c['arm'], c['slot'], c['seed_root']
         require(type(slot) is int and 0 <= slot < boxes and slot not in slots, f'{name}: bad or repeated slot')
+        require(box_slots is None or slot in box_slots, f'{name}: slot {slot} is not one of the plan box_slots')
         slots.add(slot)
         if a == 'F':
             require(not independent, f'{name}: an independent plan has no filler boxes')
@@ -785,6 +805,8 @@ def make_plan(inputs_path):
                'env': {'PYTHONDONTWRITEBYTECODE': '1'}, 'filler': filler,
                'chains': {n: dict(spec, box_slot=c['slot'], seed_root=c['seed_root'], handoff=not independent)
                           for n, c in sorted(chains.items()) if c['arm'] == a}}
+        if box_slots is not None:  # absent otherwise: existing launch plans keep their bytes
+            doc['box_slots'] = box_slots
         if arms_in[a].get('throughput'):
             doc['throughput'] = pin(arms_in[a]['throughput'])
         path = plan_dir / f'w5box-{a}.json'
@@ -796,6 +818,7 @@ def make_plan(inputs_path):
             'hold_days': float(inputs.get('hold_days', HOLD_DAYS)),
             'x_cap_seconds': x_cap, 'c_wall_seconds': c_wall, 'r_nom_usec': r_nom, **common, 'tools': tools,
             **({'independent': True} if independent else {}),
+            **({'box_slots': box_slots} if box_slots is not None else {}),
             'arms': {a: {'file': pin(arm_paths[a]), 'w5box_plan': w5plans.get(a),
                          'throughput': bool(arms_in[a].get('throughput')),
                          'segment_updates': arms[a]['segment_updates'],
@@ -959,8 +982,8 @@ def current_segment(arm, man, man_path, ledger_source):
 # on the root's volume, the mount is removed, and the copy replaces the (empty) segment directory by one rename.
 # An unfinished scratch segment found at a driver start is discarded and rerun from the previous segment's
 # persisted checkpoint (native runs are deterministic; a reaped run cannot resume natively). Full states are kept
-# at segment ends only, so the recent-window stride of a scratch C chain is its segment length (at most 255 updates
-# of replay rebuild any boundary) and the 4,096 ladder is exact; scratch chains therefore take no pair (W5 selection)
+# at segment ends only, so the recent-window stride of a scratch C chain is its segment length, or 64 for 32-update
+# segments (odd ends are pruned; at most 255 updates of replay rebuild any boundary) and the 4,096 ladder is exact; scratch chains therefore take no pair (W5 selection)
 # and no look. An END (wall, operator, OOM) names a persisted boundary only.
 
 SCRATCH_BULK = ('episode-', 'ex1-')
@@ -2662,18 +2685,25 @@ def arm_binding(plan, arm):
     return w5box.throughput_binding(box, next(iter(box['chains'].values())))
 
 
+def plan_slots(plan):
+    """The box slots a plan's chains may use: its `box_slots`, else every slot of the layout."""
+    return plan.get('box_slots') or list(range(len(read(plan['layout']['path'])['boxes'])))
+
+
 def throughput_inputs(plan, arm, label, count, seed_root):
     """A phase's Stage 0 inputs: the plan's own inputs (so arm file, filler and launch specification are the same
-    bytes) with `count` chains of `arm` on slots 0 to count - 1, all on one seed root, and no throughput records
-    (a stale one would make w5box check it)."""
+    bytes) with `count` chains of `arm` on the plan's first `count` slots (slots 0 to count - 1 unless the plan names
+    `box_slots`), all on one seed root, and no throughput records (a stale one would make w5box check it)."""
     check_pin(plan['inputs'], 'the plan inputs')
+    slots = plan_slots(plan)
+    require(1 <= count <= len(slots), f'a phase of {count} boxes on a plan of {len(slots)}')
     doc = copy.deepcopy(read(plan['inputs']['path']))
     doc['stage'], doc['label'] = '0', f'{label}-{arm.lower()}-p{count}'
     require(NAME.fullmatch(f'{doc["label"]}-s{count - 1}') is not None,
             f'label {label}: phase and chain names must be lowercase letters, digits and dashes (32 at most)')
     for spec in doc['arms'].values():
         spec.pop('throughput', None)
-    doc['chains'] = {f'{doc["label"]}-s{k}': {'arm': arm, 'slot': k, 'seed_root': seed_root} for k in range(count)}
+    doc['chains'] = {f'{doc["label"]}-s{k}': {'arm': arm, 'slot': k, 'seed_root': seed_root} for k in slots[:count]}
     return doc
 
 
@@ -2682,8 +2712,9 @@ def throughput_plans(plan_path, arm, label, counts, seed_root=THROUGHPUT_SEED_RO
     plan = load_plan(plan_path)
     require(arm in MEASURED, f'{arm} is not a measured arm')
     binding = arm_binding(plan, arm)
-    require(counts and counts[0] == 1 and counts[-1] == binding['boxes'] and counts == sorted(set(counts)),
-            f'phase box counts must rise from 1 to every box ({binding["boxes"]}): {counts}')
+    full = len(binding['box_slots']) if 'box_slots' in binding else binding['boxes']
+    require(counts and counts[0] == 1 and counts[-1] == full and counts == sorted(set(counts)),
+            f'phase box counts must rise from 1 to every box ({full}): {counts}')
     root = Path(plan['root'])
     out = []
     for count in counts:
@@ -2989,6 +3020,40 @@ def end_phase(plan, procs, poll):
     return sorted(n for n, p in procs.items() if p.poll() is None)
 
 
+def neighbours(plan):
+    """A box-subset plan's neighbours (w5box "Box subsets"): populated cgroups under its cgroup root's parent and
+    outside it, with their CPU usage, so a phase records what else ran beside it. None for whole-layout plans."""
+    if not plan.get('box_slots'):
+        return None
+    root = Path(plan['cgroup_root'])
+    out = {}
+    if not root.parent.exists():
+        return out
+    for dirpath, dirnames, _ in os.walk(root.parent):
+        here = Path(dirpath)
+        if here == root:
+            dirnames[:] = []
+            continue
+        try:
+            procs = (here / 'cgroup.procs').read_text().split()
+            usec = int(dict(x.split() for x in (here / 'cpu.stat').read_text().splitlines())['usage_usec'])
+        except (OSError, KeyError, ValueError):
+            continue
+        if procs:
+            out[here.as_posix()] = usec
+    return out
+
+
+def neighbour_window(before, after, seconds):
+    """CPU used by the neighbours present at both ends of a phase, per wall second (cores busy beside it)."""
+    if before is None or after is None:
+        return None
+    both = sorted(set(before) & set(after))
+    used = sum(max(0, after[k] - before[k]) for k in both)
+    return {'cgroups': both, 'started': sorted(set(after) - set(before)), 'ended': sorted(set(before) - set(after)),
+            'cpu_seconds': used / 1e6, 'cores_busy': used / 1e6 / seconds if seconds > 0 else None}
+
+
 def run_phase(plan_path, plan, updates, max_wall, spawn=spawn_run, launcher=launch_phase, poll=THROUGHPUT_POLL):
     """One phase: a guard verdict, the launch hold and every chain started; the node runs whole until every box has
     completed N updates (so each box's window has every other box busy), then all chains end together. Supervise
@@ -2996,6 +3061,7 @@ def run_phase(plan_path, plan, updates, max_wall, spawn=spawn_run, launcher=laun
     is done fails the phase."""
     names = sorted(plan['chains'])
     before = time.time()
+    beside = neighbours(plan)
     cycle(plan, plan_path, fills=False)  # a guard verdict and admission ceilings before any driver starts
     start = time.time()  # the durable window's common start: before the launch hold and every spawn
     launcher(plan_path)
@@ -3032,8 +3098,11 @@ def run_phase(plan_path, plan, updates, max_wall, spawn=spawn_run, launcher=laun
     boxes = [box_measurement(plan, n, updates, box_threads(plan, plan['chains'][n]['slot']), peaks.get(n))
              for n in names]
     durable = phase_durable(plan, names, updates, start, boxes, ended, poll, start - before)
-    return {'concurrent_boxes': len(names), 'label': plan['label'], 'plan': pin(plan_path), 'exits': exits,
-            'node_memory': node, 'boxes': sorted(boxes, key=lambda b: b['slot']), 'durable': durable}
+    out = {'concurrent_boxes': len(names), 'label': plan['label'], 'plan': pin(plan_path), 'exits': exits,
+           'node_memory': node, 'boxes': sorted(boxes, key=lambda b: b['slot']), 'durable': durable}
+    if beside is not None:  # absent for whole-layout plans: their records keep their keys
+        out['neighbours'] = neighbour_window(beside, neighbours(plan), ended - before)
+    return out
 
 
 def drop_trees(plan):
@@ -3059,8 +3128,8 @@ def throughput_run(plan_path, arm, label, updates, out, counts=None, max_wall=w5
     """`chains.py throughput` (module docstring): phases, measurements, the record. Returns (passed, record)."""
     target = load_plan(plan_path)
     require(arm in target['arms'], f'the plan has no arm {arm}')
-    boxes = len(read(target['layout']['path'])['boxes'])
-    counts = counts or [1, boxes]
+    slots = plan_slots(target)
+    counts = counts or [1, len(slots)]
     length = target['arms'][arm]['segment_updates']
     require(updates % length == 0 and updates >= 2 * length,
             f'N must be whole {arm} segments of {length} updates, at least two')
@@ -3087,7 +3156,7 @@ def throughput_run(plan_path, arm, label, updates, out, counts=None, max_wall=w5
         unlock(held)
     uname = os.uname() if hasattr(os, 'uname') else None
     meta = {'plan': pin(plan_path), 'label': label, 'arm': arm, 'updates': updates, 'seed_root': seed_root,
-            'counts': counts, 'segment_updates': length, 'box_threads': box_threads(target, 0),
+            'counts': counts, 'segment_updates': length, 'box_threads': box_threads(target, slots[0]),
             'host_class': target['host_class'], 'hostname': uname and uname.nodename,
             'kernel': uname and uname.release, 'tools': tools_shas(), 'started_unix': started,
             'finished_unix': time.time()}
@@ -3250,6 +3319,7 @@ def mix_run(plan_path, slots, label, updates, out, counts=None, max_wall=w5box.U
     """`chains.py throughput-mix` (module docstring, "Mixed occupancy"): phases, measurements, the record. Returns
     (passed, record)."""
     target = load_plan(plan_path)
+    require(not target.get('box_slots'), 'throughput-mix measures a plan over the whole layout (no box_slots)')
     slots = list(slots)
     for a in mix_arms(slots):
         require(a in target['arms'], f'the plan has no arm {a}')
