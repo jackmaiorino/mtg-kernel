@@ -83,8 +83,12 @@ detected layout). Its chains run only in those boxes, its cgroup root holds only
 freezes and thaws only those boxes, and its throughput record's full-node phase is all of those boxes (the binding
 carries `box_slots`). This lets a second plan run beside a running one on the same host, in boxes the first no
 longer uses: give it its own state root and a cgroup root the first plan's enforcement never globs (for example a
-child of the first plan's partition root, `<first root>/<name>`, with isolation `none`; the first root stays the
-exclusive partition). Plans without `box_slots` are unchanged.
+child of the first plan's partition root, `<first root>/<name>`, with isolation `none`, which a `box_slots` plan
+requires, so the first root stays the exclusive partition). Before a chain or filler starts in a box, the plan
+refuses if any populated cgroup outside its own root, under its root's parent, runs on that box's CPUs (the other
+plan's chain in the same physical box), since separate state roots share no box lock. Plans without `box_slots` are
+unchanged. Name the root so that it does not start with `box` (the first plan's enforcement globs `box*`), and keep
+the two plans' roots, scratch roots and byte caps apart (each guard counts its own root only).
 
     w5box.py layout [--cores-per-box 2] [--offbox-cores-per-domain 2] [--out LAYOUT.json]
     w5box.py host-class
@@ -564,7 +568,39 @@ def plan_box_slots(plan: dict) -> list[int] | None:
     boxes = len(plan["layout"]["boxes"])
     require(isinstance(slots, list) and slots and all(type(s) is int and 0 <= s < boxes for s in slots)
             and slots == sorted(set(slots)), "box_slots must be distinct layout slots in increasing order")
+    require(plan.get("isolation") == "none", "A box_slots plan runs with isolation none (a member root beside the "
+            "plan that owns the partition)")
     return slots
+
+
+def foreign_cpu_users(root: Cgroup, cpus: list[int]) -> list[str]:
+    """Populated cgroups under the root's parent, outside the root, whose effective CPUs meet `cpus`: another plan's
+    chain or filler in the same physical box. The parent itself is not listed (a partition root holds no process)."""
+    want, found = set(cpus), []
+    parent = root.path.parent
+    for dirpath, dirnames, _ in os.walk(parent):
+        here = Path(dirpath)
+        if here == root.path:
+            dirnames[:] = []
+            continue
+        if here == parent:
+            continue
+        try:
+            procs = (here / "cgroup.procs").read_text().split()
+            effective = set(parse_cpu_list((here / "cpuset.cpus.effective").read_text()))
+        except OSError:
+            continue
+        if procs and effective & want:
+            found.append(str(here))
+    return sorted(found)
+
+
+def require_box_free(plan: dict, root: Cgroup, slot: dict) -> None:
+    """A box-subset plan's box must not be in use by another plan (module docstring, "Box subsets")."""
+    if plan_box_slots(plan) is None:
+        return
+    users = foreign_cpu_users(root, slot["cpus"])
+    require(not users, f"Box {slot['slot']}'s CPUs are in use outside this plan: {users}")
 
 
 def chain_spec(plan: dict, chain: str) -> dict:
@@ -659,6 +695,9 @@ def require_throughput(record: dict | None, binding: dict) -> dict:
             reference = rows if reference is None else reference
             require(rows == reference, "Concurrent output differs from the single-box reference")
     full = phases[-1]
+    if "box_slots" in binding:  # the full phase measured exactly the plan's own boxes
+        require(sorted(b.get("slot") for b in full["boxes"]) == binding["box_slots"],
+                "The full-node phase did not run on the plan's box_slots")
     rate = sum(b["updates"] / b["seconds"] for b in full["boxes"])
     utilization = [b["ledger_usec"] / 1e6 / b["seconds"] for b in full["boxes"]]
     return {"full_node_updates_per_second": rate, "in_box_cpu_per_wall": utilization}
@@ -1124,6 +1163,7 @@ class Supervisor:
         with self.node.locked():  # concurrent supervisors create the shared root one at a time
             prepare_root(self.root, self.layout, self.plan["isolation"], plan_box_slots(self.plan))
             prepare_box(self.root, self.slot)
+            require_box_free(self.plan, self.root, self.slot)
         self.recover()
         if self.spec.get("handoff") is True:  # a W5 controller chain: an OOM kill is a chain failure, never resumed
             require(not any(r["event"] == "close" and r.get("chain_failure") for r in self.ledger.records()),
@@ -1299,6 +1339,7 @@ def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None, st
     with node.locked():
         prepare_root(root, layout, plan["isolation"], plan_box_slots(plan))
         box = prepare_box(root, slot)
+        require_box_free(plan, root, slot)
     chain_cg, filler_cg = Cgroup(box.path / "chain"), Cgroup(box.path / "filler")
     require(not chain_cg.exists() or not chain_cg.populated(), f"Box {index} holds a running chain")
     filler = plan["filler"]

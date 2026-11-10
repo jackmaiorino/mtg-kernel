@@ -122,7 +122,7 @@ through `w5box.py fill`, which stops once all measured chains have ended); the b
 w5box's guard requires for one arm of a plan. Each phase (default: one box, then every box of the layout) is a
 Stage 0 plan derived from the plan's own inputs, so the arm file, filler, environment and w5box launch
 specification are byte-identical and the phase binds what the plan launches (checked: equal throughput bindings).
-Its chains (`<label>-<arm>-p<count>-s<slot>`, slots 0 to count - 1, all on one seed root, default
+Its chains (`<label>-<arm>-p<count>-s<slot>`, the plan's first count slots, all on one seed root, default
 `w5/throughput`) run fresh through `chains.py run` in qualification mode, under this command's own supervise
 cycles without fills; the node runs whole until every box has completed N updates (so each box's window has every
 other box busy), then every chain ends at once (STOP files, then w5box kills: a chain ended alone would leave a
@@ -570,6 +570,8 @@ def make_plan(inputs_path):
         require(independent and isinstance(box_slots, list) and box_slots and
                 all(type(s) is int and 0 <= s < boxes for s in box_slots) and box_slots == sorted(set(box_slots)),
                 'box_slots: distinct layout slots in increasing order, in an independent Stage 0 plan only')
+        require(inputs.get('isolation') == 'none', 'box_slots: the plan runs with isolation none (a member root '
+                'beside the plan that owns the partition, w5box "Box subsets")')
     arms_in, chains_in = inputs['arms'], inputs['chains']
     used = {c['arm'] for c in chains_in.values()} | {'F'}
     for a in used:
@@ -950,8 +952,8 @@ def current_segment(arm, man, man_path, ledger_source):
 # on the root's volume, the mount is removed, and the copy replaces the (empty) segment directory by one rename.
 # An unfinished scratch segment found at a driver start is discarded and rerun from the previous segment's
 # persisted checkpoint (native runs are deterministic; a reaped run cannot resume natively). Full states are kept
-# at segment ends only, so the recent-window stride of a scratch C chain is its segment length (at most 255 updates
-# of replay rebuild any boundary) and the 4,096 ladder is exact; scratch chains therefore take no pair (W5 selection)
+# at segment ends only, so the recent-window stride of a scratch C chain is its segment length, or 64 for 32-update
+# segments (odd ends are pruned; at most 255 updates of replay rebuild any boundary) and the 4,096 ladder is exact; scratch chains therefore take no pair (W5 selection)
 # and no look. An END (wall, operator, OOM) names a persisted boundary only.
 
 SCRATCH_BULK = ('episode-', 'ex1-')
@@ -2988,6 +2990,40 @@ def end_phase(plan, procs, poll):
     return sorted(n for n, p in procs.items() if p.poll() is None)
 
 
+def neighbours(plan):
+    """A box-subset plan's neighbours (w5box "Box subsets"): populated cgroups under its cgroup root's parent and
+    outside it, with their CPU usage, so a phase records what else ran beside it. None for whole-layout plans."""
+    if not plan.get('box_slots'):
+        return None
+    root = Path(plan['cgroup_root'])
+    out = {}
+    if not root.parent.exists():
+        return out
+    for dirpath, dirnames, _ in os.walk(root.parent):
+        here = Path(dirpath)
+        if here == root:
+            dirnames[:] = []
+            continue
+        try:
+            procs = (here / 'cgroup.procs').read_text().split()
+            usec = int(dict(x.split() for x in (here / 'cpu.stat').read_text().splitlines())['usage_usec'])
+        except (OSError, KeyError, ValueError):
+            continue
+        if procs:
+            out[here.as_posix()] = usec
+    return out
+
+
+def neighbour_window(before, after, seconds):
+    """CPU used by the neighbours present at both ends of a phase, per wall second (cores busy beside it)."""
+    if before is None or after is None:
+        return None
+    both = sorted(set(before) & set(after))
+    used = sum(max(0, after[k] - before[k]) for k in both)
+    return {'cgroups': both, 'started': sorted(set(after) - set(before)), 'ended': sorted(set(before) - set(after)),
+            'cpu_seconds': used / 1e6, 'cores_busy': used / 1e6 / seconds if seconds > 0 else None}
+
+
 def run_phase(plan_path, plan, updates, max_wall, spawn=spawn_run, launcher=launch_phase, poll=THROUGHPUT_POLL):
     """One phase: a guard verdict, the launch hold and every chain started; the node runs whole until every box has
     completed N updates (so each box's window has every other box busy), then all chains end together. Supervise
@@ -2995,6 +3031,7 @@ def run_phase(plan_path, plan, updates, max_wall, spawn=spawn_run, launcher=laun
     is done fails the phase."""
     names = sorted(plan['chains'])
     before = time.time()
+    beside = neighbours(plan)
     cycle(plan, plan_path, fills=False)  # a guard verdict and admission ceilings before any driver starts
     start = time.time()  # the durable window's common start: before the launch hold and every spawn
     launcher(plan_path)
@@ -3031,8 +3068,11 @@ def run_phase(plan_path, plan, updates, max_wall, spawn=spawn_run, launcher=laun
     boxes = [box_measurement(plan, n, updates, box_threads(plan, plan['chains'][n]['slot']), peaks.get(n))
              for n in names]
     durable = phase_durable(plan, names, updates, start, boxes, ended, poll, start - before)
-    return {'concurrent_boxes': len(names), 'label': plan['label'], 'plan': pin(plan_path), 'exits': exits,
-            'node_memory': node, 'boxes': sorted(boxes, key=lambda b: b['slot']), 'durable': durable}
+    out = {'concurrent_boxes': len(names), 'label': plan['label'], 'plan': pin(plan_path), 'exits': exits,
+           'node_memory': node, 'boxes': sorted(boxes, key=lambda b: b['slot']), 'durable': durable}
+    if beside is not None:  # absent for whole-layout plans: their records keep their keys
+        out['neighbours'] = neighbour_window(beside, neighbours(plan), ended - before)
+    return out
 
 
 def drop_trees(plan):
