@@ -103,9 +103,11 @@ pub(crate) fn reanimate_metamorph_waiting(
 /// as-enters choice or a copy overlay that this entry path cannot install.
 fn reanimate_copy_definition(card_def: u16) -> bool {
     owns_definition(card_def)
-        || CARD_DEFS.get(usize::from(card_def)).is_some_and(|definition| {
-            definition.name == "Wall of Blossoms" && definition.has_full_support()
-        })
+        || CARD_DEFS
+            .get(usize::from(card_def))
+            .is_some_and(|definition| {
+                definition.name == "Wall of Blossoms" && definition.has_full_support()
+            })
 }
 
 impl ReanimateCopyChoiceV1 {
@@ -272,8 +274,7 @@ impl MetamorphCopyV1 {
         self.copied.zone == Zone::Battlefield
             && self.copied.source != self.physical.source
             && (owns_definition(self.copied.card_def)
-                || self.reanimated_by.is_some()
-                    && reanimate_copy_definition(self.copied.card_def))
+                || self.reanimated_by.is_some() && reanimate_copy_definition(self.copied.card_def))
             && entrant.source == self.physical.source
             && entrant.card_def == self.copied.card_def
             && entrant.zone == Zone::Battlefield
@@ -561,20 +562,36 @@ fn reanimate_resolution_matches(
         .enumerate()
         .find_map(|(offset, event)| match event {
             CommittedEvent::ZoneChange {
-                object, from: Zone::Stack, to, controller_before,
+                object,
+                from: Zone::Stack,
+                to,
+                controller_before,
             } if *object == producer.source => Some((after_cast + offset, *to, *controller_before)),
             _ => None,
         });
     match first_departure {
-        Some((at, to, controller)) => archived
-            && at > entry
-            && to != Zone::Stack
-            && controller == producer.controller
-            && !state.engine.event_history[entry + 1..at].iter().any(|event| {
-                matches!(event, CommittedEvent::ZoneChange { from: Zone::Stack, .. })
-            }),
-        None => !archived && state.objects.try_get(producer.source).is_some()
-            && AbilitySourceContractV4::capture(state, producer.source) == producer,
+        Some((at, to, controller)) => {
+            archived
+                && at > entry
+                && to != Zone::Stack
+                && controller == producer.controller
+                && !state.engine.event_history[entry + 1..at]
+                    .iter()
+                    .any(|event| {
+                        matches!(
+                            event,
+                            CommittedEvent::ZoneChange {
+                                from: Zone::Stack,
+                                ..
+                            }
+                        )
+                    })
+        }
+        None => {
+            !archived
+                && state.objects.try_get(producer.source).is_some()
+                && AbilitySourceContractV4::capture(state, producer.source) == producer
+        }
     }
 }
 
@@ -590,9 +607,13 @@ fn copy_entry_matches(
         && copy.cast_matches(state)
         && copy.entrant_matches(entrant)
         && reanimate_resolution_matches(state, copy, entry, archived)
-        && (copy.reanimated_by.is_none() || crate::standard_cards_v1::had_card_def(
-            state, entrant.source, entrant.zone_change_count, entrant.card_def,
-        ))
+        && (copy.reanimated_by.is_none()
+            || crate::standard_cards_v1::had_card_def(
+                state,
+                entrant.source,
+                entrant.zone_change_count,
+                entrant.card_def,
+            ))
         && matches!(history.get(entry),
             Some(CommittedEvent::ZoneChange { object, from, to: Zone::Battlefield, controller_before })
                 if *object == entrant.source && *from == copy.physical.zone
