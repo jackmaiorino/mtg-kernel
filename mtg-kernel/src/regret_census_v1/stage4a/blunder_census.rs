@@ -349,6 +349,12 @@ struct Cast {
     own_only: bool,
     decisions_left: u32,
     turn: (u32, PlayerId),
+    /// Own battlefield objects chosen at the target steps: (object, zcc, damage).
+    chosen: Vec<(ObjectId, u32, u32)>,
+    /// Window baselines at the cast: focal library, opponent life and permanents.
+    library: usize,
+    opp_life: i32,
+    opp_permanents: usize,
 }
 
 /// A focal stack item from an own-only cast, until it leaves the stack.
@@ -602,6 +608,21 @@ fn census_job(
                         _ => true,
                     });
                     c.own_only &= own;
+                    if let Some(ActionSemanticV1::ChooseTarget {
+                        target: TargetRefV1::Object { object },
+                        ..
+                    }) = m.get(r.selected as usize)
+                    {
+                        let id = ObjectId(object.arena_id);
+                        if let Some(o) = s
+                            .game_state()
+                            .objects
+                            .try_get(id)
+                            .filter(|o| o.zone == Zone::Battlefield && o.controller == focal)
+                        {
+                            c.chosen.push((id, o.zone_change_count, o.damage));
+                        }
+                    }
                     c.steps.push(json!({"index": i, "own_only": own,
                         "menu": scorer.menu_json(&s, r.selected)?}));
                 } else {
@@ -630,6 +651,10 @@ fn census_job(
                 own_only: true,
                 decisions_left: 64,
                 turn,
+                chosen: Vec::new(),
+                library: s.game_state().players[focal.index()].library.len(),
+                opp_life: s.game_state().players[focal.opponent().index()].life,
+                opp_permanents: permanents(&s, focal.opponent()),
             });
         }
 
@@ -775,27 +800,39 @@ fn close_cast(
         "cast_kind": c.kind, "cast_menu": c.cast_menu, "target_steps": c.steps,
         "stack_item_found": item.is_some()}),
     );
-    match item {
-        Some((position, targets)) => {
-            let st = s.game_state();
-            let opp = focal.opponent();
-            Some(Watch {
-                case: row,
-                position,
-                source: ObjectId(c.source),
-                targets,
-                library: st.players[focal.index()].library.len(),
-                opp_life: st.players[opp.index()].life,
-                opp_permanents: permanents(s, opp),
-            })
-        }
-        None => {
-            let mut row = row;
-            row["harmful"] = json!(false);
-            out.push(row);
-            None
-        }
+    // A stack item no longer on the stack (it resolved before the next
+    // recorded decision) is resolved now, on the targets chosen at its steps.
+    let on_stack = s
+        .game_state()
+        .stack
+        .iter()
+        .any(|x| x.source == ObjectId(c.source) && x.controller == focal);
+    let (position, targets) = match item {
+        Some((position, targets)) => (Some(position), targets),
+        None => (None, c.chosen.clone()),
+    };
+    let w = Watch {
+        case: row,
+        position: position.unwrap_or(usize::MAX),
+        source: ObjectId(c.source),
+        targets,
+        library: c.library,
+        opp_life: c.opp_life,
+        opp_permanents: c.opp_permanents,
+    };
+    if position.is_some() {
+        return Some(w);
     }
+    if on_stack {
+        // Found on the stack below the cast's own height: not ours to judge.
+        let mut row = w.case;
+        row["harmful"] = json!(false);
+        row["unresolved"] = json!(true);
+        out.push(row);
+        return None;
+    }
+    resolve_watch(w, s, focal, n, out);
+    None
 }
 
 fn resolve_watch(
