@@ -48,17 +48,18 @@ impl TapeSlotV1 {
     }
 
     fn bytes_v1(&mut self, config: &SConfigV1, counts: CountsV1, projected: bool) -> Option<usize> {
-        let layers = self.tape.layers.capacity().max(if projected {
-            config.layers
-        } else {
-            0
-        });
+        let layers = self
+            .tape
+            .layers
+            .capacity()
+            .max(if projected { config.layers } else { 0 });
         let mut bytes = layers
             .checked_mul(size_of::<LayerTapeV1>())?
             .checked_add(size_of::<Self>());
         let mut count = |buffer: &mut Vec<f32>, needed: usize| {
             let capacity = buffer.capacity().max(if projected { needed } else { 0 });
-            bytes = bytes.and_then(|total| total.checked_add(capacity.checked_mul(size_of::<f32>())?));
+            bytes =
+                bytes.and_then(|total| total.checked_add(capacity.checked_mul(size_of::<f32>())?));
         };
         self.tape.size_prefix_v1(config, counts, &mut count);
         if projected {
@@ -128,7 +129,10 @@ impl TapeSlotV1 {
         })();
         // The allocator may grant extra capacity. Measure the actual slot
         // before forward, including after a failed reservation.
-        if self.bytes_v1(config, counts, false).is_none_or(|bytes| bytes > self.cap) {
+        if self
+            .bytes_v1(config, counts, false)
+            .is_none_or(|bytes| bytes > self.cap)
+        {
             self.tape = STapeV1::default();
             return Err(CAP_ERROR.into());
         }
@@ -217,7 +221,10 @@ impl VerifiedRowV1<'_, '_, '_> {
         )?;
         let (value_error, dvalue) = if sub == 0 {
             let error = self.tape.value_v1() - target.value_target;
-            (error, (target.value_coefficient / group_count) * (2.0 * error))
+            (
+                error,
+                (target.value_coefficient / group_count) * (2.0 * error),
+            )
         } else {
             (0.0, 0.0)
         };
