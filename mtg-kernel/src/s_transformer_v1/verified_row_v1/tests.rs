@@ -28,7 +28,9 @@ fn forwards() -> usize {
 }
 
 fn recorded(model: &SModelV1, step: SSubstepV1<'_>) -> (Vec<u32>, u32) {
-    let output = model.forward_v1(step.input, &mut STapeV1::default()).unwrap();
+    let output = model
+        .forward_v1(step.input, &mut STapeV1::default())
+        .unwrap();
     (
         output.logits.iter().map(|value| value.to_bits()).collect(),
         output.value.to_bits(),
@@ -63,7 +65,13 @@ fn verified_rows_match_loss_and_gradients_for_both_sinks() {
             value_target: 0.2,
         },
         SGroupV1 {
-            substeps: vec![steps[1], SSubstepV1 { selected: 2, ..steps[2] }],
+            substeps: vec![
+                steps[1],
+                SSubstepV1 {
+                    selected: 2,
+                    ..steps[2]
+                },
+            ],
             advantage: 1.5,
             value_target: -0.6,
         },
@@ -80,7 +88,9 @@ fn verified_rows_match_loss_and_gradients_for_both_sinks() {
         .unwrap();
     let expected_outputs = steps.map(|step| recorded(&model, step));
     let mut expected_state = STrainStateV1::fresh_optimizer_v1(model.clone());
-    expected_state.adam_step_with_gradient_v1(&expected_gradient, 0.001).unwrap();
+    expected_state
+        .adam_step_with_gradient_v1(&expected_gradient, 0.001)
+        .unwrap();
 
     for record in [false, true] {
         let mut scratch = SBackScratchV1::default();
@@ -96,9 +106,15 @@ fn verified_rows_match_loss_and_gradients_for_both_sinks() {
             let mut group_terms = Vec::new();
             for (substep_index, &step) in group.substeps.iter().enumerate() {
                 let (logits, value) = &expected_outputs[ordinal];
-                let row = tape.authenticate_v1(
-                    &generation, step, (group_index, substep_index), logits, *value,
-                ).unwrap();
+                let row = tape
+                    .authenticate_v1(
+                        &generation,
+                        step,
+                        (group_index, substep_index),
+                        logits,
+                        *value,
+                    )
+                    .unwrap();
                 assert_eq!(forwards(), before + ordinal + 1);
                 let mut terms = SGradientTermsV1::default();
                 let mut sink = if record {
@@ -106,12 +122,18 @@ fn verified_rows_match_loss_and_gradients_for_both_sinks() {
                 } else {
                     SGradientSinkV1::Direct(&mut gradient)
                 };
-                let (selected, error) = row.backward_v1(GaeTargetV1 {
-                    group_count: groups.len(),
-                    advantage: group.advantage,
-                    value_target: group.value_target,
-                    value_coefficient: coefficient,
-                }, &mut sink, &mut scratch).unwrap();
+                let (selected, error) = row
+                    .backward_v1(
+                        GaeTargetV1 {
+                            group_count: groups.len(),
+                            advantage: group.advantage,
+                            value_target: group.value_target,
+                            value_coefficient: coefficient,
+                        },
+                        &mut sink,
+                        &mut scratch,
+                    )
+                    .unwrap();
                 assert_eq!(forwards(), before + ordinal + 1);
                 if record {
                     group_terms.push(terms);
@@ -134,18 +156,27 @@ fn verified_rows_match_loss_and_gradients_for_both_sinks() {
             gradient[range].fill(0.0);
         }
         let count = groups.len() as f32;
-        assert_eq!(loss_bits(SLossV1 {
-            group_count: groups.len(),
-            policy_sum,
-            value_sum,
-            policy_term: policy_sum / count,
-            value_term: value_sum / count,
-            loss: (policy_sum + coefficient * value_sum) / count,
-        }), loss_bits(expected_loss));
-        assert!(gradient.iter().zip(&expected_gradient).all(|(a, b)| a.to_bits() == b.to_bits()));
+        assert_eq!(
+            loss_bits(SLossV1 {
+                group_count: groups.len(),
+                policy_sum,
+                value_sum,
+                policy_term: policy_sum / count,
+                value_term: value_sum / count,
+                loss: (policy_sum + coefficient * value_sum) / count,
+            }),
+            loss_bits(expected_loss)
+        );
+        assert!(gradient
+            .iter()
+            .zip(&expected_gradient)
+            .all(|(a, b)| a.to_bits() == b.to_bits()));
         let mut state = STrainStateV1::fresh_optimizer_v1(model.clone());
         state.adam_step_with_gradient_v1(&gradient, 0.001).unwrap();
-        assert_eq!(encode_checkpoint_v1(&state), encode_checkpoint_v1(&expected_state));
+        assert_eq!(
+            encode_checkpoint_v1(&state),
+            encode_checkpoint_v1(&expected_state)
+        );
     }
 }
 
@@ -156,8 +187,14 @@ fn verified_rows_refuse_stale_model_input_and_output_bits() {
     let mut rng = SplitMixV1::new(29);
     let first = synthetic_decision_v1(&mut rng, shape(6, 2, 5, 3));
     let second = synthetic_decision_v1(&mut rng, shape(6, 2, 5, 3));
-    let step = SSubstepV1 { input: SInputV1::of_tensor_v1(&first), selected: 2 };
-    let other = SSubstepV1 { input: SInputV1::of_tensor_v1(&second), ..step };
+    let step = SSubstepV1 {
+        input: SInputV1::of_tensor_v1(&first),
+        selected: 2,
+    };
+    let other = SSubstepV1 {
+        input: SInputV1::of_tensor_v1(&second),
+        ..step
+    };
     let (logits, value) = recorded(&model, step);
     // The synthetic row never uses the last embedding. Its scores cannot
     // detect this different model generation, but the update scope can.
@@ -182,10 +219,14 @@ fn verified_rows_refuse_stale_model_input_and_output_bits() {
     ] {
         let before = forwards();
         let result = tape.authenticate_v1(&generation, used_step, (0, 0), logits, value);
-        assert!(matches!(result, Err(error) if error == "stored tensor does not reproduce rollout outputs"));
+        assert!(
+            matches!(result, Err(error) if error == "stored tensor does not reproduce rollout outputs")
+        );
         assert_eq!(forwards(), before + 1);
     }
-    assert!(tape.authenticate_v1(&generation, step, (0, 0), &logits, value).is_ok());
+    assert!(tape
+        .authenticate_v1(&generation, step, (0, 0), &logits, value)
+        .is_ok());
 }
 
 #[test]
@@ -201,9 +242,7 @@ fn verified_tape_checks_reserved_capacity_before_forward() {
     });
     let outputs = steps.map(|step| recorded(&model, step));
     let counts = steps.map(|step| step.input.validate_v1(&TINY).unwrap());
-    let sizes = counts.map(|counts| {
-        TapeSlotV1::new(0).bytes_v1(&TINY, counts, true).unwrap()
-    });
+    let sizes = counts.map(|counts| TapeSlotV1::new(0).bytes_v1(&TINY, counts, true).unwrap());
     assert_eq!(
         sizes[0],
         STapeV1::bytes_for_counts_v1(&TINY, counts[0])
@@ -217,14 +256,21 @@ fn verified_tape_checks_reserved_capacity_before_forward() {
         Err(error) if error == CAP_ERROR
     ));
     assert_eq!(forwards(), before);
-    assert_eq!(too_small.bytes_v1(&TINY, counts[0], false), Some(size_of::<TapeSlotV1>()));
+    assert_eq!(
+        too_small.bytes_v1(&TINY, counts[0], false),
+        Some(size_of::<TapeSlotV1>())
+    );
 
     let mut exact = TapeSlotV1::new(sizes[0]);
-    exact.authenticate_v1(&generation, steps[0], (0, 0), &outputs[0].0, outputs[0].1).unwrap();
+    exact
+        .authenticate_v1(&generation, steps[0], (0, 0), &outputs[0].0, outputs[0].1)
+        .unwrap();
     assert_eq!(exact.bytes_v1(&TINY, counts[0], false), Some(sizes[0]));
     let cap = sizes[0].max(sizes[1]);
     let mut reused = TapeSlotV1::new(cap);
-    reused.authenticate_v1(&generation, steps[0], (0, 0), &outputs[0].0, outputs[0].1).unwrap();
+    reused
+        .authenticate_v1(&generation, steps[0], (0, 0), &outputs[0].0, outputs[0].1)
+        .unwrap();
     assert!(reused.bytes_v1(&TINY, counts[1], true).unwrap() > cap);
     let before = forwards();
     assert!(matches!(
