@@ -135,10 +135,14 @@ fn full_pool_paid_pilfer_uses_public_names_and_exact_native_answers_both_seats()
                 .collect::<Vec<_>>();
             assert!(expected.is_sorted());
             let downfall = crate::card_def::card_id_by_name("Hero's Downfall").unwrap();
+            let HandFacts::RevealMinimaV3 { minima, .. } = own.hand_facts().unwrap() else {
+                panic!("no prompt-local hand names");
+            };
+            assert!(minima[opponent.index()].contains(&(downfall, 2)));
             let revealed = &own.fixture_state().reveal_knowledge_v4.as_ref().unwrap()[p.index()];
             assert_eq!(
                 revealed.hand(opponent).find(|&(id, _)| id == downfall),
-                Some((downfall, 2))
+                Some((downfall, 1))
             );
 
             let saved = own.snapshot();
@@ -177,10 +181,10 @@ fn full_pool_paid_pilfer_uses_public_names_and_exact_native_answers_both_seats()
                     .zone
                     == Zone::Hand));
                 let retained = &state.reveal_knowledge_v4.as_ref().unwrap()[p.index()];
-                let copies = if object.card_db_id == downfall { 1 } else { 2 };
+                let prior_minimum = (object.card_db_id != downfall).then_some((downfall, 1));
                 assert_eq!(
                     retained.hand(opponent).find(|&(id, _)| id == downfall),
-                    Some((downfall, copies))
+                    prior_minimum
                 );
             }
         }

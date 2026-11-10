@@ -65,6 +65,10 @@ fn full_pool_paid_pilfer_samples_revealed_names_and_rebinds_each_native_answer_b
             let paired = other.sampled_full_pool_closed_list_v1(&other_root, seed, &belief).unwrap();
             assert_eq!(hidden(&sampled), hidden(&paired));
             assert_ne!(hidden(&sampled).1, live_hidden.1);
+            assert_eq!(
+                sampled.inner.reveal_hand_minima_v3(),
+                live.inner.reveal_hand_minima_v3(),
+            );
             let d = decision(&sampled);
             assert_eq!(d.packet(), root.packet());
             assert_eq!(decision(&paired).packet(), root.packet());

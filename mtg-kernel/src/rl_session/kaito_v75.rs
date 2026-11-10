@@ -492,22 +492,14 @@ impl KaitoSessionV75 {
             knowledge[viewer.index()].hand(viewer.opponent()).collect();
         Some(minima)
     }
-    pub(crate) fn revealed_discard_hand_v1(&self) -> Option<crate::rl::PlayerSeatV1> {
-        use crate::effect::{EffectTargetSelectionPurpose, PendingEffectChoice};
+    pub(crate) fn revealed_discard_hand_v1(&self) -> Result<Option<(PlayerId, Vec<u16>)>, String> {
         if self.inner.surface.limited_appendix_v1() != LimitedAppendixV1::FullPool {
-            return None;
+            return Ok(None);
         }
-        let actor = self.inner.current.as_ref()?.actor;
-        let pending = self.inner.state.engine.pending_effect.as_ref()?;
-        let Some(PendingEffectChoice::SelectTargets {
-            player,
-            purpose: EffectTargetSelectionPurpose::DuressDiscard { player: owner, .. },
-            ..
-        }) = &pending.choice
-        else {
-            return None;
+        let Some(current) = &self.inner.current else {
+            return Ok(None);
         };
-        (*player == actor && *owner == actor.opponent()).then(|| (*owner).into())
+        crate::effect::revealed_discard_names_v1(&self.inner.state, current.actor)
     }
     pub fn snapshot_v75(&self) -> KaitoSnapshotV75 {
         KaitoSnapshotV75 {

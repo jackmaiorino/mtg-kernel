@@ -12509,6 +12509,12 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                     let private_etali_menu = etali && matches!(
                         purpose, crate::effect::EffectTargetSelectionPurpose::ExileBatch { .. }
                     );
+                    let revealed_discard = appendix == LimitedAppendixV1::FullPool
+                        && prepared_scope == Some(CommonProjectionScopeV42::KaitoV75)
+                        && state.reveal_knowledge_v4.is_some()
+                        && *player == acting_player
+                        && matches!(purpose, crate::effect::EffectTargetSelectionPurpose::DuressDiscard { player: owner, .. }
+                            if *owner == acting_player.opponent());
                     let chooser_private = (aberration_order || private_etali_menu || matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard
@@ -12594,7 +12600,11 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                         candidates
                             .iter()
                             .map(|candidate| {
-                                if search_for_chooser {
+                                if revealed_discard {
+                                    // The validated native prompt just showed
+                                    // every original hand card, including duplicates.
+                                    target_ref(state, candidate.target)
+                                } else if search_for_chooser {
                                     // A library search grants its chooser
                                     // temporary access to every matching
                                     // physical object without installing

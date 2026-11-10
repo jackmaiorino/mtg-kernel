@@ -8743,13 +8743,17 @@ impl FastActorSessionV1 {
         sampled.state.sampled_history_v1 = root.sampled_history.clone();
         let opening = crate::leyline_axe_v1::sampling::prepare(&mut sampled.state, root.actor)?;
         if typed_full_pool {
+            let hand_names = root.revealed_discard.as_ref().map_or_else(
+                || root.known_names.clone(),
+                |discard| discard.names().to_vec(),
+            );
             crate::limited_match_v1::curator_sampling_v1::rewrite(
                 &mut sampled.state,
                 root.actor,
                 root.slots.clone(),
                 belief,
                 seed,
-                root.known_names.clone(),
+                hand_names,
                 &root.library_minima,
             )?;
         } else {
@@ -8768,6 +8772,11 @@ impl FastActorSessionV1 {
         let mut viewers = [Default::default(), Default::default()];
         viewers[root.actor.index()] = root.knowledge.clone();
         sampled.state.reveal_knowledge_v4 = Some(viewers);
+        if root.rebinds_revealed_discard() {
+            // Exact prompt names constrained the sample. Only the prior
+            // conservative ledger survives the choice.
+            sampled.state.bind_reveal_names_v4(root.actor, root.actor.opponent());
+        }
         sampled.state.reveal_meaning_v3 = Default::default();
         sampled.state.hand_departures_by_name_v1 = false;
         sampled.state.hand_knowledge_by_name_v2 = false;
@@ -8785,7 +8794,7 @@ impl FastActorSessionV1 {
                 .ok_or("sampled full-pool root absent")?;
             if let Some(revealed_discard) = &root.revealed_discard {
                 current.origin_decision = PolicyDecisionV5::Surface(SurfaceDecision::Decision(
-                    revealed_discard.rebind(&mut sampled.state, &root.known_names)?,
+                    revealed_discard.rebind(&mut sampled.state)?,
                 ));
             }
             kaito_v75::prepare_current(&sampled, &mut current)

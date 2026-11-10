@@ -1,6 +1,6 @@
 //! Rebuild the active, publicly revealed discard menu in a disposable world.
 use super::{
-    bind_hand, revealed_discard_eligible_hand, revealed_discard_excludes_creatures,
+    bind_hand, revealed_discard_eligible_hand, revealed_discard_excludes_creatures, revealed_discard_names_v1,
     stage_duress_discard_choice, validate_pending_effect_choice, EffectContinuation,
     EffectObjectBinding, EffectTargetSelectionPurpose, PendingEffectChoice,
 };
@@ -10,6 +10,7 @@ pub(crate) struct PreparedV1<'a> {
     original: &'a EffectContinuation,
     owner: PlayerId,
     exclude_creatures: bool,
+    names: Vec<u16>,
     eligible_printings: Vec<u16>,
     eligible_objects: Vec<ObjectId>,
 }
@@ -34,7 +35,7 @@ impl<'a> PreparedV1<'a> {
         let Some(PendingEffectChoice::SelectTargets {
             player,
             purpose: EffectTargetSelectionPurpose::DuressDiscard {
-                player: owner, original_hand, eligible, canonical_path,
+                player: owner, eligible, canonical_path, ..
             },
             ..
         }) = &original.choice else {
@@ -50,22 +51,17 @@ impl<'a> PreparedV1<'a> {
         {
             return Err("unsupported revealed discard sampling continuation".into());
         }
-        validate_pending_effect_choice(state)?;
-        // Read identities only from the exact roster the spell just revealed.
-        // Complete name counts, including duplicates, must match that roster.
-        let known = state.known_hand_cards(actor, *owner);
-        if known.len() != original_hand.len()
-            || original_hand.iter().any(|binding| !known.iter().any(|row| {
-                row.object == binding.object && row.zone_change_count == binding.expected_zone_change_count
-            }))
-            || printings(state, original_hand).as_slice() != known_names
-        {
-            return Err("revealed discard sampling needs the complete public hand multiset".into());
+        let (_, names) = revealed_discard_names_v1(state, actor)?
+            .ok_or("revealed discard sampling lacks native public names")?;
+        let mut disclosed = names.iter();
+        if !known_names.iter().all(|known| disclosed.any(|name| name == known)) {
+            return Err("revealed discard names contradict retained minima".into());
         }
         Ok(Some(Self {
             original,
             owner: *owner,
             exclude_creatures: revealed_discard_excludes_creatures(state, original, *owner, canonical_path)?,
+            names,
             eligible_printings: printings(state, eligible),
             eligible_objects: eligible.iter().map(|binding| binding.object).collect(),
         }))
@@ -75,14 +71,18 @@ impl<'a> PreparedV1<'a> {
         self.eligible_objects.contains(&object)
     }
 
-    pub(crate) fn rebind(&self, sampled: &mut GameState, known_names: &[u16]) -> Result<Decision, String> {
+    pub(crate) fn names(&self) -> &[u16] {
+        &self.names
+    }
+
+    pub(crate) fn rebind(&self, sampled: &mut GameState) -> Result<Decision, String> {
         let mut pending = sampled.engine.pending_effect.take()
             .ok_or("revealed discard sampled continuation absent")?;
         if &pending != self.original {
             return Err("revealed discard sampled continuation changed before rebinding".into());
         }
         let hand = bind_hand(sampled, self.owner);
-        if printings(sampled, &hand).as_slice() != known_names {
+        if printings(sampled, &hand) != self.names {
             return Err("revealed discard sampled hand names changed".into());
         }
         let eligible = revealed_discard_eligible_hand(sampled, &hand, self.exclude_creatures)?;

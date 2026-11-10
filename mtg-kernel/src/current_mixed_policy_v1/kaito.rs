@@ -275,16 +275,26 @@ fn packet_from_current(
     })
 }
 impl KaitoSession {
-    fn hand_facts(&self) -> HandFacts {
-        if let Some(minima) = self.inner.reveal_hand_minima_v3() {
-            HandFacts::RevealMinimaV3 {
-                minima,
-                discard_owner: self.inner.revealed_discard_hand_v1(),
-            }
+    fn hand_facts(&self) -> Result<HandFacts> {
+        if let Some(mut minima) = self.inner.reveal_hand_minima_v3() {
+            let reveal = self.inner.revealed_discard_hand_v1().map_err(Error::Projection)?;
+            let discard_owner = if let Some((owner, names)) = reveal {
+                let mut counts = BTreeMap::<u16, usize>::new();
+                for name in names {
+                    *counts.entry(name).or_default() += 1;
+                }
+                minima[owner.index()] = counts.into_iter().collect();
+                Some(owner.into())
+            } else {
+                None
+            };
+            Ok(HandFacts::RevealMinimaV3 {
+                minima, discard_owner,
+            })
         } else if self.inner.uses_hand_knowledge_by_name_v2() {
-            HandFacts::NamesV2
+            Ok(HandFacts::NamesV2)
         } else {
-            HandFacts::CopyRows
+            Ok(HandFacts::CopyRows)
         }
     }
     pub fn from_session(session: FastActorSessionV1) -> Result<Self> {
@@ -352,7 +362,7 @@ impl KaitoSession {
         self.inner
             .validate_decision_v75(&decision.backend)
             .map_err(|_| Error::StaleBinding)?;
-        let facts = self.hand_facts();
+        let facts = self.hand_facts()?;
         if matches!(facts, HandFacts::RevealMinimaV3 { .. }) {
             return Err(Error::Projection(
                 "use the separate closed-list V3 sampler".into(),
@@ -389,7 +399,7 @@ impl KaitoSession {
         if !Arc::ptr_eq(&self.owner, &decision.owner) || self.generation != decision.generation {
             return Err(Error::StaleBinding);
         }
-        let facts = self.hand_facts();
+        let facts = self.hand_facts()?;
         if !matches!(facts, HandFacts::RevealMinimaV3 { .. }) {
             return Err(Error::Projection(
                 "full-pool sampling requires public reveal minima".into(),
@@ -470,7 +480,7 @@ impl KaitoSession {
         let current = packet_from_current(
             backend.candidates_v75(),
             backend.actions(),
-            &self.hand_facts(),
+            &self.hand_facts()?,
         )?;
         Ok(KaitoDecision {
             backend,
@@ -496,7 +506,7 @@ impl KaitoSession {
             .name_order
             .as_ref()
             .map_or(selected_index, |order| order[index]);
-        let name_facts = self.hand_facts();
+        let name_facts = self.hand_facts()?;
         self.inner.step_with_current_check(
             &decision.backend,
             backend_index,
@@ -527,7 +537,7 @@ impl KaitoSession {
         if packet_from_current(
             decision.backend.candidates_v75(),
             decision.backend.actions(),
-            &self.hand_facts(),
+            &self.hand_facts()?,
         )? != decision.current
         {
             return Err(Error::StaleBinding);
