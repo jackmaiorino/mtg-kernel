@@ -40,8 +40,6 @@ mod eternal_premodern_p2b_v1;
 mod eternal_premodern_p2c_v1;
 #[path = "eternal/eternal_premodern_p2d_v1.rs"]
 mod eternal_premodern_p2d_v1;
-#[path = "eternal/premodern_feb_jsonl_v1.rs"]
-mod premodern_feb_jsonl_v1;
 #[path = "eternal/eternal_public_shroud_v1.rs"]
 mod eternal_public_shroud_v1;
 #[path = "eternal/eternal_vintage_e4_v1.rs"]
@@ -52,3 +50,5 @@ mod eternal_vintage_e4b_v1;
 mod eternal_vintage_e5a_v1;
 #[path = "eternal/eternal_vintage_e7b_v1.rs"]
 mod eternal_vintage_e7b_v1;
+#[path = "eternal/premodern_feb_jsonl_v1.rs"]
+mod premodern_feb_jsonl_v1;

@@ -26,9 +26,20 @@ fn assert_wire_matches_native(owner: &FebSessionV1, viewer: PlayerSeatV1) {
     assert_eq!(wire["prompt"]["prompt_seq"], numeric.step);
     let human = owner.human_current(viewer).unwrap().unwrap();
     assert_eq!(wire["human"], json!(human));
-    assert_eq!(wire["numeric"]["actions"].as_array().unwrap().len(), human.actions.len());
-    for (wire, native) in wire["numeric"]["actions"].as_array().unwrap().iter().zip(numeric.actions) {
-        assert_eq!(wire, &json!({"rows": native.rows(), "topology": native.topology()}));
+    assert_eq!(
+        wire["numeric"]["actions"].as_array().unwrap().len(),
+        human.actions.len()
+    );
+    for (wire, native) in wire["numeric"]["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(numeric.actions)
+    {
+        assert_eq!(
+            wire,
+            &json!({"rows": native.rows(), "topology": native.topology()})
+        );
     }
 }
 

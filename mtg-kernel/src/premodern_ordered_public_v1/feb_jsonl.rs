@@ -1,7 +1,7 @@
 //! Actor-facing JSONL transport for the exact frozen FEB owner.
 use super::feb::{
-    FebCurrentV1, FebDecisionV1, FebHumanActionV1, FebHumanViewV1, FebNumericViewV1,
-    FebSessionV1, FebSnapshotV1, PROFILE_V1,
+    FebCurrentV1, FebDecisionV1, FebHumanActionV1, FebHumanViewV1, FebNumericViewV1, FebSessionV1,
+    FebSnapshotV1, PROFILE_V1,
 };
 use crate::{
     card_def::KERNEL_CARDDB_HASH, current_mixed_policy_v1::NumericTree,
@@ -9,7 +9,10 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::{hash_map::RandomState, BTreeMap}, hash::BuildHasher};
+use std::{
+    collections::{hash_map::RandomState, BTreeMap},
+    hash::BuildHasher,
+};
 
 pub const PROTOCOL: &str = "kernel_premodern_feb_jsonl";
 pub const SCHEMA_VERSION: u32 = 1;
@@ -43,7 +46,10 @@ enum Request {
         seed: u64,
         starting_player: PlayerSeatV1,
     },
-    Current { schema_version: u32, request_id: String },
+    Current {
+        schema_version: u32,
+        request_id: String,
+    },
     Step {
         schema_version: u32,
         request_id: String,
@@ -51,18 +57,43 @@ enum Request {
         native_ordinal: u32,
         submission: Submission,
     },
-    Snapshot { schema_version: u32, request_id: String },
-    Restore { schema_version: u32, request_id: String, snapshot_id: String },
+    Snapshot {
+        schema_version: u32,
+        request_id: String,
+    },
+    Restore {
+        schema_version: u32,
+        request_id: String,
+        snapshot_id: String,
+    },
 }
 
 impl Request {
     fn header(&self) -> (u32, &str) {
         match self {
-            Self::Reset { schema_version, request_id, .. }
-            | Self::Current { schema_version, request_id }
-            | Self::Step { schema_version, request_id, .. }
-            | Self::Snapshot { schema_version, request_id }
-            | Self::Restore { schema_version, request_id, .. } => (*schema_version, request_id),
+            Self::Reset {
+                schema_version,
+                request_id,
+                ..
+            }
+            | Self::Current {
+                schema_version,
+                request_id,
+            }
+            | Self::Step {
+                schema_version,
+                request_id,
+                ..
+            }
+            | Self::Snapshot {
+                schema_version,
+                request_id,
+            }
+            | Self::Restore {
+                schema_version,
+                request_id,
+                ..
+            } => (*schema_version, request_id),
         }
     }
 }
@@ -92,24 +123,38 @@ impl Projection {
     fn read(core: &FebSessionV1, episode_id: u64, authority_generation: u64) -> Self {
         let actor = core.actor();
         match core.current(actor.unwrap_or(PlayerSeatV1::P0)) {
-            Ok(FebCurrentV1::Decision { numeric, decision: Some(decision) })
-                if actor == Some(numeric.actor) =>
-            {
+            Ok(FebCurrentV1::Decision {
+                numeric,
+                decision: Some(decision),
+            }) if actor == Some(numeric.actor) => {
                 let Ok(Some(human)) = core.human_current(numeric.actor) else {
                     return Self::Unsupported("unsupported_human_projection");
                 };
-                if human.actor != numeric.actor || human.step != numeric.step
-                    || human.profile != numeric.profile || human.actions.is_empty()
+                if human.actor != numeric.actor
+                    || human.step != numeric.step
+                    || human.profile != numeric.profile
+                    || human.actions.is_empty()
                     || human.actions.len() != numeric.actions.len()
-                    || !human.actions.iter().enumerate().all(|(index, action)| match action {
-                        FebHumanActionV1::Supported { native_ordinal, .. }
-                        | FebHumanActionV1::Unsupported { native_ordinal, .. } => *native_ordinal == index,
-                    })
+                    || !human
+                        .actions
+                        .iter()
+                        .enumerate()
+                        .all(|(index, action)| match action {
+                            FebHumanActionV1::Supported { native_ordinal, .. }
+                            | FebHumanActionV1::Unsupported { native_ordinal, .. } => {
+                                *native_ordinal == index
+                            }
+                        })
                 {
                     return Self::Unsupported("inconsistent_projection");
                 }
                 Self::Decision(Box::new(Bound {
-                    prompt: Prompt { episode_id, authority_generation, actor: numeric.actor, prompt_seq: numeric.step },
+                    prompt: Prompt {
+                        episode_id,
+                        authority_generation,
+                        actor: numeric.actor,
+                        prompt_seq: numeric.step,
+                    },
                     numeric,
                     human,
                     decision,
@@ -117,7 +162,9 @@ impl Projection {
             }
             Ok(FebCurrentV1::GameOver { winner }) => Self::Terminal { winner },
             Ok(FebCurrentV1::NativeHalt) => Self::NativeHalt,
-            Ok(FebCurrentV1::UnsupportedDecision) => Self::Unsupported("unsupported_native_decision"),
+            Ok(FebCurrentV1::UnsupportedDecision) => {
+                Self::Unsupported("unsupported_native_decision")
+            }
             _ => Self::Unsupported("unsupported_numeric_projection"),
         }
     }
@@ -213,12 +260,14 @@ impl FebJsonlServerV1 {
             }
         }
         if let Some(accepted) = &self.accepted {
-            if request_id == accepted.request_id.as_str() && !matches!(
-                &request,
-                Request::Step { prompt, native_ordinal, submission, .. }
-                    if *prompt == accepted.receipt.prompt && *native_ordinal == accepted.receipt.native_ordinal
-                        && *submission == accepted.receipt.submission
-            ) {
+            if request_id == accepted.request_id.as_str()
+                && !matches!(
+                    &request,
+                    Request::Step { prompt, native_ordinal, submission, .. }
+                        if *prompt == accepted.receipt.prompt && *native_ordinal == accepted.receipt.native_ordinal
+                            && *submission == accepted.receipt.submission
+                )
+            {
                 return error(Some(request_id), "conflicting_retry").to_string();
             }
         }
@@ -227,9 +276,14 @@ impl FebJsonlServerV1 {
             Ok(applied) => applied,
             Err(code) => return error(Some(request_id), code).to_string(),
         };
-        let active = self.active.as_mut().expect("successful request has a FEB owner");
+        let active = self
+            .active
+            .as_mut()
+            .expect("successful request has a FEB owner");
         let mut reply = header(Some(request_id), "state");
-        reply["state"] = active.projection.wire(active.episode_id, self.authority_generation);
+        reply["state"] = active
+            .projection
+            .wire(active.episode_id, self.authority_generation);
         if let Some(receipt) = applied.receipt {
             reply["receipt"] = json!(receipt);
         }
@@ -241,7 +295,9 @@ impl FebJsonlServerV1 {
             // The output bound includes the terminating newline. Keep any
             // already accepted receipt, but withhold an oversized prompt.
             active.projection = Projection::Unsupported("transport_line_limit");
-            reply["state"] = active.projection.wire(active.episode_id, self.authority_generation);
+            reply["state"] = active
+                .projection
+                .wire(active.episode_id, self.authority_generation);
             encoded = reply.to_string();
         }
         if applied.mutated {
@@ -252,57 +308,100 @@ impl FebJsonlServerV1 {
 
     fn apply(&mut self, request: &Request) -> Result<Applied, &'static str> {
         match request {
-            Request::Reset { expected_card_db_hash, expected_profile, episode_id, seed, starting_player, .. } => {
+            Request::Reset {
+                expected_card_db_hash,
+                expected_profile,
+                episode_id,
+                seed,
+                starting_player,
+                ..
+            } => {
                 if *expected_card_db_hash != KERNEL_CARDDB_HASH {
                     return Err("catalog_mismatch");
                 }
                 if expected_profile.as_str() != PROFILE_V1 {
                     return Err("profile_mismatch");
                 }
-                let generation = self.authority_generation.checked_add(1).ok_or("authority_exhausted")?;
-                let core = FebSessionV1::reset(*seed, *starting_player).map_err(|_| "unsupported_reset")?;
+                let generation = self
+                    .authority_generation
+                    .checked_add(1)
+                    .ok_or("authority_exhausted")?;
+                let core = FebSessionV1::reset(*seed, *starting_player)
+                    .map_err(|_| "unsupported_reset")?;
                 let projection = Projection::read(&core, *episode_id, generation);
-                self.active = Some(Active { episode_id: *episode_id, core, projection });
+                self.active = Some(Active {
+                    episode_id: *episode_id,
+                    core,
+                    projection,
+                });
                 self.authority_generation = generation;
                 self.accepted = None;
                 self.snapshots.clear();
-                Ok(Applied { mutated: true, ..Applied::default() })
+                Ok(Applied {
+                    mutated: true,
+                    ..Applied::default()
+                })
             }
             Request::Current { .. } => {
                 self.active.as_ref().ok_or("no_session")?;
                 Ok(Applied::default())
             }
-            Request::Step { request_id, prompt, native_ordinal, submission, .. } => {
-                self.step(request_id, *prompt, *native_ordinal, *submission)
-            }
+            Request::Step {
+                request_id,
+                prompt,
+                native_ordinal,
+                submission,
+                ..
+            } => self.step(request_id, *prompt, *native_ordinal, *submission),
             Request::Snapshot { .. } => {
                 let active = self.active.as_ref().ok_or("no_session")?;
                 if self.snapshots.len() >= MAX_SNAPSHOTS {
                     return Err("snapshot_limit");
                 }
-                let serial = self.next_snapshot.checked_add(1).ok_or("snapshot_exhausted")?;
+                let serial = self
+                    .next_snapshot
+                    .checked_add(1)
+                    .ok_or("snapshot_exhausted")?;
                 let namespace = self.snapshot_namespace.hash_one(());
                 let id = format!("{namespace:016x}{serial:016x}");
                 self.snapshots.insert(id.clone(), active.core.snapshot());
                 self.next_snapshot = serial;
-                Ok(Applied { snapshot_id: Some(id), mutated: true, ..Applied::default() })
+                Ok(Applied {
+                    snapshot_id: Some(id),
+                    mutated: true,
+                    ..Applied::default()
+                })
             }
             Request::Restore { snapshot_id, .. } => {
                 let active = self.active.as_mut().ok_or("no_session")?;
                 let saved = self.snapshots.get(snapshot_id).ok_or("unknown_snapshot")?;
-                let generation = self.authority_generation.checked_add(1).ok_or("authority_exhausted")?;
+                let generation = self
+                    .authority_generation
+                    .checked_add(1)
+                    .ok_or("authority_exhausted")?;
                 active.core.restore(saved).map_err(|_| "foreign_snapshot")?;
                 active.projection = Projection::read(&active.core, active.episode_id, generation);
                 self.authority_generation = generation;
                 self.accepted = None;
-                Ok(Applied { mutated: true, ..Applied::default() })
+                Ok(Applied {
+                    mutated: true,
+                    ..Applied::default()
+                })
             }
         }
     }
 
-    fn step(&mut self, request_id: &str, prompt: Prompt, native_ordinal: u32, submission: Submission) -> Result<Applied, &'static str> {
+    fn step(
+        &mut self,
+        request_id: &str,
+        prompt: Prompt,
+        native_ordinal: u32,
+        submission: Submission,
+    ) -> Result<Applied, &'static str> {
         let active = self.active.as_mut().ok_or("no_session")?;
-        if prompt.episode_id != active.episode_id || prompt.authority_generation != self.authority_generation {
+        if prompt.episode_id != active.episode_id
+            || prompt.authority_generation != self.authority_generation
+        {
             return Err("stale_decision");
         }
         if let Some(accepted) = &self.accepted {
@@ -314,7 +413,10 @@ impl FebJsonlServerV1 {
                 if receipt.native_ordinal != native_ordinal || receipt.submission != submission {
                     return Err("conflicting_retry");
                 }
-                return Ok(Applied { receipt: Some(receipt), ..Applied::default() });
+                return Ok(Applied {
+                    receipt: Some(receipt),
+                    ..Applied::default()
+                });
             }
         }
         let Projection::Decision(bound) = &active.projection else {
@@ -333,10 +435,22 @@ impl FebJsonlServerV1 {
             Submission::Human => return Err("unsupported_human_action"),
         }
         .map_err(|_| "execution_refused")?;
-        active.projection = Projection::read(&active.core, active.episode_id, self.authority_generation);
-        let receipt = Receipt { prompt, native_ordinal, submission };
-        self.accepted = Some(Accepted { request_id: request_id.into(), receipt });
-        Ok(Applied { receipt: Some(receipt), mutated: true, ..Applied::default() })
+        active.projection =
+            Projection::read(&active.core, active.episode_id, self.authority_generation);
+        let receipt = Receipt {
+            prompt,
+            native_ordinal,
+            submission,
+        };
+        self.accepted = Some(Accepted {
+            request_id: request_id.into(),
+            receipt,
+        });
+        Ok(Applied {
+            receipt: Some(receipt),
+            mutated: true,
+            ..Applied::default()
+        })
     }
 }
 

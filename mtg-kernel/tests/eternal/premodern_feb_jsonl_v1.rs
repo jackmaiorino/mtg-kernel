@@ -1,6 +1,9 @@
 use mtg_kernel::{
     card_def::KERNEL_CARDDB_HASH,
-    premodern_ordered_public_v1::{feb::PROFILE_V1, feb_jsonl::{PROTOCOL, SCHEMA_VERSION}},
+    premodern_ordered_public_v1::{
+        feb::PROFILE_V1,
+        feb_jsonl::{PROTOCOL, SCHEMA_VERSION},
+    },
     rl::PlayerSeatV1,
 };
 use serde_json::{json, Value};
@@ -27,7 +30,12 @@ impl Process {
             .unwrap();
         let input = child.stdin.take();
         let output = BufReader::new(child.stdout.take().unwrap());
-        Self { child, input, output, request_id: 0 }
+        Self {
+            child,
+            input,
+            output,
+            request_id: 0,
+        }
     }
 
     fn request(&mut self, mut body: Value) -> Value {
@@ -39,7 +47,11 @@ impl Process {
         writeln!(input, "{body}").unwrap();
         input.flush().unwrap();
         let mut line = String::new();
-        assert_ne!(self.output.read_line(&mut line).unwrap(), 0, "FEB exited before reply {id}");
+        assert_ne!(
+            self.output.read_line(&mut line).unwrap(),
+            0,
+            "FEB exited before reply {id}"
+        );
         assert!(line.len() <= mtg_kernel::limited_session_v1::MAX_LIMITED_LINE_BYTES_V1);
         let reply: Value = serde_json::from_str(&line).unwrap();
         assert_eq!(reply["protocol"], PROTOCOL);
@@ -64,20 +76,34 @@ impl Drop for Process {
 
 fn rank(label: &str, ordinal: usize) -> (u8, usize) {
     let attacks = label.starts_with("Attack with ") && label != "Attack with none";
-    let rank = if label == "Keep this hand" || label.starts_with("Play ") || attacks
-        || (label.starts_with("Block ") && !label.ends_with(" with none")) {
+    let rank = if label == "Keep this hand"
+        || label.starts_with("Play ")
+        || attacks
+        || (label.starts_with("Block ") && !label.ends_with(" with none"))
+    {
         0
     } else if label.starts_with("Begin casting ") {
         1
     } else if label == "Pass priority" {
         3
-    } else if label == "Take a mulligan" || label.starts_with("Activate the mana ability")
-        || label.contains(": ") || label.starts_with("Tap ") || label.starts_with("Put a -0/-1 counter") {
+    } else if label == "Take a mulligan"
+        || label.starts_with("Activate the mana ability")
+        || label.contains(": ")
+        || label.starts_with("Tap ")
+        || label.starts_with("Put a -0/-1 counter")
+    {
         4
     } else {
         2
     };
-    (rank, if attacks { usize::MAX - ordinal } else { ordinal })
+    (
+        rank,
+        if attacks {
+            usize::MAX - ordinal
+        } else {
+            ordinal
+        },
+    )
 }
 
 type TraceRow = ([u8; 32], usize);
@@ -90,7 +116,10 @@ fn play(starting: PlayerSeatV1, replay: Option<&[TraceRow]>) -> (Value, Vec<Trac
         "starting_player": starting});
     let mut reply = process.request(reset.clone());
     assert_eq!(reply["state"]["prompt"]["actor"], json!(starting));
-    assert_eq!(process.request(json!({"request_type": "current"}))["state"], reply["state"]);
+    assert_eq!(
+        process.request(json!({"request_type": "current"}))["state"],
+        reply["state"]
+    );
     let saved = process.request(json!({"request_type": "snapshot"}));
     assert_eq!(saved["state"], reply["state"]);
     let restore = json!({"request_type": "restore", "snapshot_id": saved["snapshot_id"]});
@@ -99,8 +128,10 @@ fn play(starting: PlayerSeatV1, replay: Option<&[TraceRow]>) -> (Value, Vec<Trac
     for field in ["numeric", "human"] {
         assert_eq!(refreshed["state"][field], reply["state"][field]);
     }
-    let stale = process.request(json!({"request_type": "step", "prompt": reply["state"]["prompt"],
-        "native_ordinal": 0, "submission": "human"}));
+    let stale = process.request(
+        json!({"request_type": "step", "prompt": reply["state"]["prompt"],
+        "native_ordinal": 0, "submission": "human"}),
+    );
     assert_eq!(stale["code"], "stale_decision");
     reply = refreshed;
 
@@ -121,22 +152,44 @@ fn play(starting: PlayerSeatV1, replay: Option<&[TraceRow]>) -> (Value, Vec<Trac
             process.finish();
             return (winner, trace);
         }
-        assert_eq!(state["state_type"], "decision", "FEB stopped at step {step}: {reply}");
+        assert_eq!(
+            state["state_type"], "decision",
+            "FEB stopped at step {step}: {reply}"
+        );
         assert!(step < MAX_ACTIONS, "FEB reached the terminal replay cap");
         let prompt = &state["prompt"];
         assert_eq!(prompt["prompt_seq"], step);
         let human = state["human"]["actions"].as_array().unwrap();
-        assert_eq!(state["numeric"]["actions"].as_array().unwrap().len(), human.len());
-        let labels = human.iter().enumerate().map(|(ordinal, row)| {
-            assert_eq!(row["native_ordinal"], ordinal);
-            assert_eq!(row["kind"], "supported", "unsupported FEB meaning at step {step}: {row}");
-            row["label"].as_str().unwrap()
-        }).collect::<Vec<_>>();
+        assert_eq!(
+            state["numeric"]["actions"].as_array().unwrap().len(),
+            human.len()
+        );
+        let labels = human
+            .iter()
+            .enumerate()
+            .map(|(ordinal, row)| {
+                assert_eq!(row["native_ordinal"], ordinal);
+                assert_eq!(
+                    row["kind"], "supported",
+                    "unsupported FEB meaning at step {step}: {row}"
+                );
+                row["label"].as_str().unwrap()
+            })
+            .collect::<Vec<_>>();
         let ordinal = match replay {
             Some(rows) => rows[step].1,
-            None => labels.iter().enumerate().min_by_key(|&(ordinal, label)| rank(label, ordinal)).unwrap().0,
+            None => {
+                labels
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|&(ordinal, label)| rank(label, ordinal))
+                    .unwrap()
+                    .0
+            }
         };
-        let digest = Sha256::digest(serde_json::to_vec(&(&state["numeric"], &state["human"])).unwrap()).into();
+        let digest =
+            Sha256::digest(serde_json::to_vec(&(&state["numeric"], &state["human"])).unwrap())
+                .into();
         let row = (digest, ordinal);
         if let Some(replay) = replay {
             assert_eq!(row, replay[step], "FEB replay diverged at step {step}");

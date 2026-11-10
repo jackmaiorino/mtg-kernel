@@ -7,7 +7,8 @@ fn main() -> io::Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     #[cfg(feature = "eternal-fixtures")]
     if matches!(args.as_slice(), [flag] if flag == "--premodern-feb-v1") {
-        let mut server = mtg_kernel::premodern_ordered_public_v1::feb_jsonl::FebJsonlServerV1::default();
+        let mut server =
+            mtg_kernel::premodern_ordered_public_v1::feb_jsonl::FebJsonlServerV1::default();
         return run_jsonl(|line| server.handle_line(line));
     }
     let mode = match args.as_slice() {
@@ -17,7 +18,11 @@ fn main() -> io::Result<()> {
         [flag] if flag == "--london-mulligans-v1" => 4,
         [flag] if flag == "--public-shroud-v1" => 5,
         _ => {
-            let feb = if cfg!(feature = "eternal-fixtures") { " | --premodern-feb-v1" } else { "" };
+            let feb = if cfg!(feature = "eternal-fixtures") {
+                " | --premodern-feb-v1"
+            } else {
+                ""
+            };
             eprintln!("usage: kernel_limited_env [--engine-priority-v1 | --foundations-combat-v1 | --london-mulligans-v1 | --public-shroud-v1{feb}]");
             std::process::exit(2);
         }
