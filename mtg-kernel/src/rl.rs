@@ -2707,6 +2707,8 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     }
     crate::eternal_cards_v1::owned_draws_v1::portent::refuse_legacy(state)
         .map_err(RlContractError)?;
+    crate::eternal_cards_v1::owned_draws_v1::standstill::refuse_legacy(state)
+        .map_err(RlContractError)?;
     crate::eternal_cards_v1::owned_draws_v1::bonder::refuse_legacy(state)
         .map_err(RlContractError)?;
     if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(state) {
@@ -5466,6 +5468,8 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         ));
     }
     crate::eternal_cards_v1::owned_draws_v1::portent::refuse_legacy(request.state)
+        .map_err(RlContractError)?;
+    crate::eternal_cards_v1::owned_draws_v1::standstill::refuse_legacy(request.state)
         .map_err(RlContractError)?;
     crate::eternal_cards_v1::owned_draws_v1::bonder::refuse_legacy(request.state)
         .map_err(RlContractError)?;
@@ -11154,6 +11158,8 @@ fn continuous_effects_common_v2(
 ) -> Result<Vec<ContinuousEffectPublicV2>> {
     let (accept_cant_block, accept_gourmand) = accept_cant_block;
     crate::eternal_cards_v1::owned_draws_v1::portent::refuse_legacy(state)
+        .map_err(RlContractError)?;
+    crate::eternal_cards_v1::owned_draws_v1::standstill::refuse_legacy(state)
         .map_err(RlContractError)?;
     crate::eternal_cards_v1::owned_draws_v1::bonder::refuse_legacy(state)
         .map_err(RlContractError)?;

@@ -17921,6 +17921,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         effect::curator_v1::publish(state, &row)?;
     }
     crate::eternal_cards_v1::owned_draws_v1::portent::publish(state, stack_item_id)?;
+    crate::eternal_cards_v1::owned_draws_v1::standstill::publish(state, stack_item_id)?;
     crate::gorehorn_damage_v1::publish(state, stack_item_id)?;
     crate::equipment_damage_source_v4::publish(state, stack_item_id)?;
     crate::raid_entry_custody_v1::publish(state, stack_item_id)?;
@@ -18306,6 +18307,10 @@ fn triggered_stack_item_expected_target_spec(
                 )
             }
         };
+    if crate::eternal_cards_v1::owned_draws_v1::standstill::bound(inline_effect).is_some() {
+        crate::eternal_cards_v1::owned_draws_v1::standstill::validate_trigger(state, item, require_publication)?;
+        return Ok(None);
+    }
     if crate::eternal_cards_v1::owned_draws_v1::portent::bound(inline_effect).is_some() {
         crate::eternal_cards_v1::owned_draws_v1::portent::validate_trigger(
             state,
