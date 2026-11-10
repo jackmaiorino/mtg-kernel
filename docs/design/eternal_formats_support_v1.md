@@ -562,6 +562,10 @@ New, each built once in the first wave that needs it:
   Hullbreacher on fixed-count draw instructions and the covered owned draws.
   Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
   Their damage-draw interaction has no native qualification.
+  Curie's combat trigger binds the original source and controller. It uses
+  current base power for the same battlefield incarnation, or the base
+  power recorded in the native departure scene if that incarnation left.
+  The draw count is fixed before the first replacement attempt.
   Some specialized synchronous draws and unbound generated or dynamic draw instructions
   still lack a replacement choice. Quantum Riddler's extra draws stop at a
   terminal Jace win. They are committed inside one shared draw event and still

@@ -42,6 +42,8 @@ use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, StackItem, 
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod curie;
+
 // ---- State ------------------------------------------------------------------------
 
 /// Per-game state for this module's cards, kept inside
@@ -287,6 +289,8 @@ pub enum E7aOpV1 {
     /// Arena of Glory's and Gaea's Will's printed slots: the engine performs
     /// them as actions without the stack and never resolves these.
     SpecialActionV1,
+    /// Curie's actual positive combat damage to a player.
+    CurieDrawBoundV1 { combat_at: usize },
 }
 
 impl E7aOpV1 {
@@ -1140,7 +1144,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         return false;
     };
     match op {
-        E7aOpV1::TabernacleV1 | E7aOpV1::CurieDrawV1 { .. } => true,
+        E7aOpV1::TabernacleV1 | E7aOpV1::CurieDrawV1 { .. } | E7aOpV1::CurieDrawBoundV1 { .. } => true,
         E7aOpV1::DarkDepthsV1 { .. } => name == DARK_DEPTHS,
         E7aOpV1::ShallowGraveExileV1 { .. } => name == SHALLOW_GRAVE,
         E7aOpV1::SuspendTickV1 { .. } => name == GAEAS_WILL,
@@ -1154,7 +1158,7 @@ pub(crate) fn granted_trigger_effect(effect: &EffectOp) -> bool {
     matches!(
         effect,
         EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E7aV1(
-            E7aOpV1::TabernacleV1 | E7aOpV1::CurieDrawV1 { .. }
+            E7aOpV1::TabernacleV1 | E7aOpV1::CurieDrawV1 { .. } | E7aOpV1::CurieDrawBoundV1 { .. }
         )))
     )
 }
@@ -1541,6 +1545,18 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                     ctx,
                     state,
                 );
+            }
+        }
+        E7aOpV1::CurieDrawBoundV1 { combat_at } => {
+            if let Some(count) = curie::draw_count(state, ctx, *combat_at) {
+                crate::eternal_cards_v1::owned_draws_v1::draw_uninterrupted(
+                    state, ctx.controller, count,
+                );
+            } else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
             }
         }
         E7aOpV1::ShadowspearStripV1 => {
@@ -2252,7 +2268,7 @@ pub(crate) fn delayed_triggers(
     note_entries(state, events);
     upkeep_triggers(state, events);
     end_step_triggers(state, events);
-    curie_triggers(state, events);
+    curie::collect(state, events);
     dark_depths_triggers(state);
     prune(state);
     let Some(eternal) = state.eternal_v1.as_mut() else {
@@ -2414,47 +2430,6 @@ fn spell_delayed_source(
     let mut contract = AbilitySourceContractV4::capture(state, recorded.source);
     contract.controller = controller;
     Some(contract)
-}
-
-/// Curie's trigger, which a Curie keeps as a copy: "Whenever this creature
-/// deals combat damage to a player, draw cards equal to its base power."
-fn curie_triggers(state: &mut GameState, events: &[CommittedEvent]) {
-    for event in events {
-        let CommittedEvent::CombatDamageToPlayer {
-            source,
-            source_zone_change_count,
-            amount,
-            ..
-        } = *event
-        else {
-            continue;
-        };
-        if amount <= 0 {
-            continue;
-        }
-        let Some(live) = state.objects.try_get(source) else {
-            continue;
-        };
-        if live.zone != Zone::Battlefield
-            || live.zone_change_count != source_zone_change_count
-            || own_definition(state, source)
-                .and_then(|def| CARD_DEFS.get(usize::from(def)))
-                .is_none_or(|def| def.name != CURIE)
-            || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
-        {
-            continue;
-        }
-        let fallback = crate::engine::effective_base_power(state, source)
-            .map_or(0, |power| u32::try_from(power.max(0)).unwrap_or(0));
-        let controller = live.controller;
-        let contract = AbilitySourceContractV4::capture(state, source);
-        queue_trigger(
-            state,
-            contract,
-            controller,
-            E7aOpV1::CurieDrawV1 { fallback },
-        );
-    }
 }
 
 /// Dark Depths: "When Dark Depths has no ice counters on it, sacrifice it.
