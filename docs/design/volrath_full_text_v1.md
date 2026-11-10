@@ -83,3 +83,23 @@ row for action meanings outside the current renderer. Same-owner snapshots
 restore the pending menu and invalidate old decision tokens. The owner is
 an in-process milestone. Transport and complete consumer qualification remain
 open.
+
+The terminal fixture uses the frozen mirror at seed `20261108` with each
+starting seat and the catalog harness's 65,536 physical-action cap. The
+public-menu policy keeps the dealt hand, plays lands and spells, and chooses
+nonempty attacks and blocks. It uses native order to break ties and passes
+before optional activations. An unsupported decision or Human action meaning
+fails the fixture. A fresh reset must replay the recorded actor, menu and
+native ordinal sequence to the same natural result, state hash and event
+history. The fixture also restores a same-owner cast boundary and checks
+that its original token is stale.
+
+Run the focused acceptance fixture with the pinned toolchain and
+`eternal-fixtures` feature.
+
+```text
+cargo test --release -p mtg-kernel --lib --features eternal-fixtures -- premodern_ordered_public_v1::feb::tests::frozen_feb_mirrors_reach_native_terminal_and_replay_both_starting_seats --exact
+```
+
+This is an in-process determinism and rules check. Transport and other
+donated programs remain separate from this fixture.

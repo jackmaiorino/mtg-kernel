@@ -444,3 +444,209 @@ fn frozen_feb_human_paid_volrath_discard_and_wall_mana_both_seats() {
         }
     }
 }
+
+#[derive(Debug, PartialEq, Eq)]
+struct FebReplayStep {
+    step: u64,
+    actor: PlayerSeatV1,
+    menu_digest: [u8; 32],
+    native_ordinal: usize,
+}
+
+fn feb_menu_digest(numeric: &FebNumericViewV1, human: &FebHumanViewV1) -> [u8; 32] {
+    let numeric_menu: Vec<_> = numeric
+        .actions
+        .iter()
+        .map(|tree| (tree.rows(), tree.topology()))
+        .collect();
+    let payload = serde_json::to_vec(&(&human.actions, numeric_menu)).unwrap();
+    Sha256::digest(payload).into()
+}
+
+fn feb_action_rank(label: &str) -> u8 {
+    if label == "Keep this hand"
+        || label.starts_with("Play ")
+        || (label.starts_with("Attack with ") && label != "Attack with none")
+        || (label.starts_with("Block ") && !label.ends_with(" with none"))
+    {
+        0
+    } else if label.starts_with("Begin casting ") {
+        1
+    } else if label == "Pass priority" {
+        3
+    } else if label == "Take a mulligan"
+        || label.starts_with("Activate the mana ability")
+        || label.contains(": ")
+        || label.starts_with("Tap ")
+        || label.starts_with("Put a -0/-1 counter")
+    {
+        4
+    } else {
+        2
+    }
+}
+
+fn play_frozen_feb_mirror(
+    starting: PlayerSeatV1,
+    expected: Option<&[FebReplayStep]>,
+) -> (FebSessionV1, Option<PlayerSeatV1>, Vec<FebReplayStep>) {
+    const SEED: u64 = 20_261_108;
+    // Match the Eternal catalog harness's physical-decision cap.
+    const MAX_ACTIONS: u64 = 65_536;
+    let mut owner = FebSessionV1::reset(SEED, starting).unwrap();
+    let mut trace = Vec::new();
+    let mut restored = false;
+    for step in 0..=MAX_ACTIONS {
+        let at = || format!("FEB seed {SEED} starting {starting:?} step {step}");
+        let (numeric, decision) = match owner.current(PlayerSeatV1::P0) {
+            Ok(FebCurrentV1::Decision { numeric, decision }) => (numeric, decision),
+            Ok(FebCurrentV1::GameOver { winner }) => {
+                assert!(matches!(
+                    owner.current(PlayerSeatV1::P1),
+                    Ok(FebCurrentV1::GameOver { winner: other }) if winner == other
+                ));
+                assert!(
+                    restored || expected.is_some(),
+                    "{} reached terminal without restoring a cast boundary",
+                    at()
+                );
+                if let Some(expected) = expected {
+                    assert_eq!(trace.len(), expected.len(), "{}", at());
+                }
+                return (owner, winner, trace);
+            }
+            Ok(FebCurrentV1::NativeHalt) => {
+                panic!("{} native halt: {:?}", at(), owner.inner.game.engine.halted);
+            }
+            Ok(FebCurrentV1::UnsupportedDecision) => {
+                panic!("{} unsupported decision: {:?}", at(), owner.inner.current.as_ref().err());
+            }
+            Err(error) => panic!("{} numeric view: {error}", at()),
+        };
+        assert!(step < MAX_ACTIONS, "{} exceeded action cap", at());
+        let actor = numeric.actor;
+        let (numeric, token) = if let Some(token) = decision {
+            assert_eq!(actor, PlayerSeatV1::P0, "{}", at());
+            (numeric, token)
+        } else {
+            assert_eq!(actor, PlayerSeatV1::P1, "{}", at());
+            assert!(numeric.actions.is_empty(), "{}", at());
+            let (actor_view, token) = issued(&owner, actor);
+            (actor_view, token.expect("actor receives sealed FEB decision"))
+        };
+        let human = owner
+            .human_current(actor)
+            .unwrap_or_else(|error| panic!("{} Human view: {error}", at()))
+            .expect("actor has a FEB Human decision");
+        assert_eq!((human.step, human.actor), (step, actor), "{}", at());
+        assert_eq!((numeric.step, numeric.actor), (step, actor), "{}", at());
+        assert_eq!(numeric.actions.len(), human.actions.len(), "{}", at());
+
+        if step == 0 {
+            assert_eq!(actor, starting, "{}", at());
+        }
+        let labels: Vec<_> = human
+            .actions
+            .iter()
+            .enumerate()
+            .map(|(ordinal, row)| {
+                let FebHumanActionV1::Supported {
+                    native_ordinal,
+                    label,
+                } = row
+                else {
+                    panic!("{} unsupported Human row: {row:?}", at());
+                };
+                assert_eq!(*native_ordinal, ordinal, "{}", at());
+                label.as_str()
+            })
+            .collect();
+        let recorded = expected.map(|steps| {
+            steps
+                .get(step as usize)
+                .unwrap_or_else(|| panic!("{} replay continued past recorded terminal", at()))
+        });
+        let ordinal = if let Some(recorded) = recorded {
+            recorded.native_ordinal
+        } else {
+            labels
+                .iter()
+                .enumerate()
+                .min_by_key(|&(ordinal, label)| (feb_action_rank(label), ordinal))
+                .expect("FEB decision has a legal action")
+                .0
+        };
+        let label = *labels
+            .get(ordinal)
+            .unwrap_or_else(|| panic!("{} recorded ordinal {ordinal} is outside the menu", at()));
+        let receipt = FebReplayStep {
+            step,
+            actor,
+            menu_digest: feb_menu_digest(&numeric, &human),
+            native_ordinal: ordinal,
+        };
+        if let Some(recorded) = recorded {
+            assert_eq!(&receipt, recorded, "{}", at());
+        }
+        let checkpoint = (recorded.is_none() && !restored && label.starts_with("Begin casting "))
+            .then(|| owner.snapshot());
+        let result = if recorded.is_some() {
+            owner.step(&token, ordinal)
+        } else {
+            owner.step_human(&token, ordinal)
+        };
+        result.unwrap_or_else(|error| panic!("{} action {ordinal} {label:?}: {error}", at()));
+
+        if let Some(checkpoint) = checkpoint {
+            let next_hash = owner.inner.game.state_hash();
+            let next_human = owner.human_current(PlayerSeatV1::P0).unwrap();
+            owner.restore(&checkpoint).unwrap();
+            assert!(owner.step(&token, ordinal).is_err());
+            let (reset_view, fresh) = issued(&owner, actor);
+            assert_eq!(reset_view.observation, numeric.observation, "{}", at());
+            assert_eq!(reset_view.actions, numeric.actions, "{}", at());
+            assert_eq!(owner.human_current(actor).unwrap().as_ref(), Some(&human));
+            owner.step(&fresh.unwrap(), ordinal).unwrap();
+            assert_eq!(owner.inner.game.state_hash(), next_hash, "{}", at());
+            assert_eq!(owner.human_current(PlayerSeatV1::P0).unwrap(), next_human);
+            restored = true;
+        }
+        trace.push(receipt);
+    }
+    unreachable!("FEB terminal or action cap checked on every iteration")
+}
+
+#[test]
+fn frozen_feb_mirrors_reach_native_terminal_and_replay_both_starting_seats() {
+    use crate::event::CommittedEvent;
+
+    for starting in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+        let (actual, winner, trace) = play_frozen_feb_mirror(starting, None);
+        let history = &actual.inner.game.engine.event_history;
+        for player in [PlayerId::P0, PlayerId::P1] {
+            assert!(
+                history.iter().any(|event| matches!(
+                    event,
+                    CommittedEvent::SpellCast { controller, .. } if *controller == player
+                )),
+                "FEB starting {starting:?} had no native cast for {player:?}"
+            );
+        }
+        assert!(
+            history.iter().any(|event| matches!(
+                event,
+                CommittedEvent::CombatDamageToPlayer { amount, .. } if *amount > 0
+            )),
+            "FEB starting {starting:?} had no actual combat damage to a player"
+        );
+
+        let (replay, replay_winner, replay_trace) = play_frozen_feb_mirror(starting, Some(&trace));
+        assert_eq!(winner, replay_winner, "FEB starting {starting:?}");
+        assert_eq!(trace, replay_trace, "FEB starting {starting:?}");
+        assert_eq!(actual.inner.game.state_hash(), replay.inner.game.state_hash());
+        assert!(
+            history == &replay.inner.game.engine.event_history,
+            "FEB starting {starting:?} replay changed native event receipts"
+        );
+    }
+}
