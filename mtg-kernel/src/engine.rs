@@ -24164,6 +24164,8 @@ pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start
     for (source, source_zone_change_count, player, amount) in combat_player_damage {
         let marker_history_index = state.engine.event_history.len() as u64;
         event::log_combat_damage_to_player(state, source, source_zone_change_count, player, amount);
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_legacy_e7a_v1::curie::record_combat(state, marker_history_index as usize);
         if !lathril_captures.is_empty()
             && event::bind_lathril_combat_marker_v1(state, &lathril_captures, marker_history_index)
                 .is_err()
