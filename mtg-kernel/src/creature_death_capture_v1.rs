@@ -309,17 +309,21 @@ fn preceding_death<'a>(
     died: ObjectLinkV4,
     controller: crate::ids::PlayerId,
 ) -> Option<&'a CommittedEvent> {
-    let (departure, niv) = departure_segment(state, history_index, died, controller)?;
+    let (departure, niv, edict) = departure_segment(state, history_index, died, controller)?;
     let history = &state.engine.event_history;
     // Match the exact native collection-log suffix against committed history.
-    // Only the authenticated Niv receipt above is absent from that public log.
+    // Only the authenticated Niv and Edict receipts above are absent from that
+    // public log.
+    let history_only = |at: usize| Some(at) == niv || Some(at) == edict;
     let expected = history.get(departure..=history_index)?;
-    let log_len = expected.len().checked_sub(usize::from(niv.is_some()))?;
+    let log_len = expected
+        .len()
+        .checked_sub(usize::from(niv.is_some()) + usize::from(edict.is_some()))?;
     let actual = events.get(index.checked_add(1)?.checked_sub(log_len)?..=index)?;
     if !actual.iter().eq(expected
         .iter()
         .enumerate()
-        .filter(|(offset, _)| Some(departure + offset) != niv)
+        .filter(|(offset, _)| !history_only(departure + offset))
         .map(|(_, event)| event))
     {
         return None;
@@ -341,17 +345,19 @@ pub(crate) fn validated_capture_death(
     else {
         return Err("controlled death capture is absent".into());
     };
-    let (departure, _) = departure_segment(state, history_index, *died, *controller_before)
+    let (departure, _, _) = departure_segment(state, history_index, *died, *controller_before)
         .ok_or("controlled death lost its exact native departure/receipt segment")?;
     Ok(&state.engine.event_history[departure])
 }
 
+/// The death's departure index, then the history indices of Niv's departure
+/// marker and of a native Edict move receipt, when present.
 fn departure_segment(
     state: &GameState,
     history_index: usize,
     died: ObjectLinkV4,
     controller: crate::ids::PlayerId,
-) -> Option<(usize, Option<usize>)> {
+) -> Option<(usize, Option<usize>, Option<usize>)> {
     let history = &state.engine.event_history;
     let mut cursor = history_index;
     while cursor > 0
@@ -364,6 +370,17 @@ fn departure_segment(
     }
     let alesha = match history.get(cursor.checked_sub(1)?)? {
         CommittedEvent::AleshaPowerLkiV1 { .. } => {
+            cursor -= 1;
+            Some(cursor)
+        }
+        _ => None,
+    };
+    // A native Edict sacrifice records its move receipt after Niv's marker and
+    // before Alesha's LKI, so the receipt sits inside the departure segment.
+    let edict = match history.get(cursor.checked_sub(1)?)? {
+        CommittedEvent::BlasphemousEdictReceiptV1 { journal }
+            if matches!(**journal, crate::edict_receipts_v1::JournalV1::Move { .. }) =>
+        {
             cursor -= 1;
             Some(cursor)
         }
@@ -421,6 +438,29 @@ fn departure_segment(
             return None;
         }
     }
+    if let Some(at) = edict {
+        let CommittedEvent::BlasphemousEdictReceiptV1 { journal } = history.get(at)? else {
+            return None;
+        };
+        let crate::edict_receipts_v1::JournalV1::Move {
+            event_at,
+            binding,
+            destination,
+            ..
+        } = journal.as_ref()
+        else {
+            return None;
+        };
+        if at != departure.checked_add(1 + usize::from(niv.is_some()))?
+            || *event_at != departure
+            || binding.object != died.object
+            || binding.expected_zone != Zone::Battlefield
+            || binding.expected_zone_change_count != died.zone_change_count
+            || *destination != Zone::Graveyard
+        {
+            return None;
+        }
+    }
     if let Some(at) = alesha {
         let CommittedEvent::AleshaPowerLkiV1 {
             source,
@@ -432,7 +472,9 @@ fn departure_segment(
         else {
             return None;
         };
-        if at != departure.checked_add(1 + usize::from(niv.is_some()))?
+        if at
+            != departure
+                .checked_add(1 + usize::from(niv.is_some()) + usize::from(edict.is_some()))?
             || usize::try_from(*departure_history_index).ok()? != departure
             || *source != died.object
             || *zone_change_count != died.zone_change_count
@@ -442,7 +484,7 @@ fn departure_segment(
             return None;
         }
     }
-    Some((departure, niv))
+    Some((departure, niv, edict))
 }
 
 /// A definition-owned new death program, not a predecessor or an arbitrary

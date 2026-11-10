@@ -120,7 +120,14 @@ fn sampled_paid_attack_preserves_archived_target_and_departure_without_hidden_pr
     use crate::{fdn_family_source_v76 as public76, optional_trigger_public_v1::ConsumerV1};
     let scope = ConsumerV1::KaitoFullPoolV1;
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let (mut live, source) = paid(actor);
+        // The FullPool owner's reset enables these native receipt modes before
+        // any action, and its scoped capture refuses a state without them.
+        let mut ready = crate::extra_turn_v1::tests::ready(actor);
+        crate::rl_session::FastActorSessionV1::enable_limited_native_modes_v1(
+            &mut ready,
+            crate::policy_surface_v5::LimitedAppendixV1::FullPool,
+        );
+        let (mut live, source) = paid_in(ready, actor, None);
         let victim = put(
             &mut live,
             actor.opponent(),
@@ -249,7 +256,9 @@ pub(crate) fn paid(actor: PlayerId) -> (GameState, ObjectId) {
     paid_with_hidden(actor, None)
 }
 pub(crate) fn paid_with_hidden(actor: PlayerId, hidden: Option<&str>) -> (GameState, ObjectId) {
-    let mut state = crate::extra_turn_v1::tests::ready(actor);
+    paid_in(crate::extra_turn_v1::tests::ready(actor), actor, hidden)
+}
+fn paid_in(mut state: GameState, actor: PlayerId, hidden: Option<&str>) -> (GameState, ObjectId) {
     if let Some(name) = hidden {
         // Independently initialized private operand, before every paid action.
         put(&mut state, actor.opponent(), name, Zone::Hand);

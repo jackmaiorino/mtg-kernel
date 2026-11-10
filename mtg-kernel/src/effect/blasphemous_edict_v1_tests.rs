@@ -661,5 +661,77 @@ fn genuine_paid_dying_bloodwitch_observes_the_whole_simultaneous_sacrifice_group
         assert_eq!(s.objects.get(own[12]).zone, Zone::Battlefield);
         assert_eq!(s.objects.get(other[13]).zone, Zone::Battlefield);
         assert_eq!(taps(&s, actor), 3);
+        assert_death_captures_bind_their_edict_move_receipts(&s);
+    }
+}
+
+/// Each sacrificed creature's death capture reaches its departure through its
+/// own Edict move receipt, and an altered receipt cannot stand in for it.
+fn assert_death_captures_bind_their_edict_move_receipts(s: &GameState) {
+    use crate::creature_death_capture_v1::validated_capture_death;
+    use crate::edict_receipts_v1::JournalV1;
+    use crate::event::CommittedEvent;
+    let history = &s.engine.event_history;
+    let captures = history
+        .iter()
+        .enumerate()
+        .filter(|(_, event)| {
+            matches!(
+                event,
+                CommittedEvent::ControlledCreatureDeathCaptureV1 { .. }
+            )
+        })
+        .map(|(at, _)| at)
+        .collect::<Vec<_>>();
+    assert_eq!(captures.len(), 13);
+    for &at in &captures {
+        let CommittedEvent::ControlledCreatureDeathCaptureV1 { died, .. } = &history[at] else {
+            unreachable!()
+        };
+        assert!(matches!(validated_capture_death(s, at).unwrap(),
+            CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to: Zone::Graveyard, .. }
+                if *object == died.object));
+    }
+    let capture = history[captures[0]].clone();
+    let receipt = (0..captures[0])
+        .rev()
+        .find(|&at| {
+            matches!(&history[at], CommittedEvent::BlasphemousEdictReceiptV1 { journal }
+                if matches!(**journal, JournalV1::Move { .. }))
+        })
+        .unwrap();
+    for mutation in 0..6 {
+        let mut forged = s.clone();
+        let history = &mut forged.engine.event_history;
+        match mutation {
+            0 => history.insert(receipt, history[receipt].clone()),
+            1 => history.swap(receipt - 1, receipt),
+            _ => {
+                let CommittedEvent::BlasphemousEdictReceiptV1 { journal } = &mut history[receipt]
+                else {
+                    unreachable!()
+                };
+                let JournalV1::Move {
+                    event_at,
+                    binding,
+                    destination,
+                    ..
+                } = journal.as_mut()
+                else {
+                    unreachable!()
+                };
+                match mutation {
+                    2 => *event_at += 1,
+                    3 => binding.object = ObjectId(binding.object.0 + 1),
+                    4 => binding.expected_zone_change_count += 1,
+                    _ => *destination = Zone::Exile,
+                }
+            }
+        }
+        let at = history.iter().position(|event| event == &capture).unwrap();
+        assert!(
+            validated_capture_death(&forged, at).is_err(),
+            "altered Edict move receipt accepted, mutation {mutation}"
+        );
     }
 }
