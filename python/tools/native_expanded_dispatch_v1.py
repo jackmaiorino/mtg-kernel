@@ -5,8 +5,9 @@ Production requires compatible measured serial/parallel receipts and the fastest
 eligible allocation; for a study of several runs that may be a qualified pack of
 side-by-side slots (native_expanded_pack_v1.py). The runtime binding is
 independent of the launcher's commit.
-Runs on the two Windows hosts and, as the ``runpod`` placement, on a rented
-Linux pod with live lease-guard evidence (docs/native_expanded_dispatch_v1.md).
+Runs on the two Windows hosts, on an explicitly named owned Linux compute
+host, or on a rented Linux pod with live lease-guard evidence
+(docs/native_expanded_dispatch_v1.md).
 """
 from __future__ import annotations
 
@@ -39,6 +40,7 @@ SLOT_FIELDS = ("host", "cpu_affinity", "workers", "preparation_workers", "memory
 # The compute host's machine name is site configuration, not a public constant.
 HOSTS = {"desktop": "DESKTOP-DJ1C40R", "computehost": os.environ.get("COMPUTE_HOST_NAME", "COMPUTEHOST").upper()}
 PLACEMENTS = ("desktop", "computehost", "runpod")
+OWNED_LINUX_COMPUTEHOST = "owned_linux_computehost"
 CAP = 192 * 1024**3
 WINDOWS = os.name == "nt"
 # A Linux runtime also pins the system libraries its output bits depend on
@@ -310,7 +312,7 @@ def accounting_bytes(storage):
 # ("admission"), so its dispatcher checks the same numbers without walking again (mtg-kernel#463: on a network
 # volume each dispatcher's own walks took about 40 min, eight at once, before any native work). The driver admits
 # on a walk for 600 s after it completed and the dispatch follows within seconds, so the dispatcher uses it while
-# it completed at most ADMISSION_WALK_SECONDS ago; an older one means a walk as before.
+# it completed at most ADMISSION_WALK_SECONDS ago. A stale shared admission uses a fresh published bound or refuses.
 ADMISSION_SCHEMA = "native-expanded-storage-admission/v1"
 ADMISSION_WALK_SECONDS = 900
 CLOCK_SKEW_SECONDS = 60
@@ -353,11 +355,23 @@ def validate_storage(storage, extra=None, admission=None):
     require(type(cap) is int and 0 < cap <= CAP, "storage cap exceeds 192 GiB")
     require(storage["reserve_bytes"] >= DISK_RESERVE_BYTES, "reserve below 60 GiB")
     bound = admitted_bytes(admission, storage)
-    if bound is None:
+    source = "admission"
+    siblings = 0
+    if bound is None and admission is not None and admission.get("shared_walk"):
+        found = shared_walk(admission["shared_walk"])
+        require(found is not None and time.time() - found[2] <= ADMISSION_WALK_SECONDS,
+                "storage admission walk is stale; no fresh shared walk")
+        measured, walked, _, blocks = found
+        roots = accounting_roots(storage)
+        logical = measured + blocks * storage["projected_additional_bytes"]
+        source = "shared-walk"
+    elif bound is None:
         walked = time.time()
         roots, logical = accounting_bytes(storage)
+        source = "walk"
     else:
         walked, roots, logical = admission["walked_unix"], accounting_roots(storage), bound
+        siblings = admission.get("in_flight", 0) * storage["projected_additional_bytes"]
     for root in roots:
         anchor = root
         while not anchor.exists():
@@ -376,9 +390,8 @@ def validate_storage(storage, extra=None, admission=None):
     require(logical + projected <= cap, "retained plus projected storage exceeds allowance")
     # The emergency seed also counts the other blocks in flight at admission, each at its projected retained
     # bytes: their outputs may postdate the walk (the driver's own admission bound).
-    siblings = 0 if bound is None else admission.get("in_flight", 0) * storage["projected_additional_bytes"]
     LAST_STORAGE.update(logical=logical + siblings, unix=walked)
-    return {"logical_bytes": logical, "cap_bytes": cap, "source": "walk" if bound is None else "admission"}
+    return {"logical_bytes": logical, "cap_bytes": cap, "source": source}
 
 
 EMERGENCY_WALK_SECONDS = 600
@@ -389,6 +402,8 @@ EMERGENCY_WALK_SECONDS = 600
 EMERGENCY_FALLBACK_SECONDS = 3600
 MONITOR_POLL_SECONDS = 30  # a running attempt's sample interval (telemetry, memory, storage)
 SHARED_WALK_SCHEMA = "native-expanded-volume-walk/v1"
+OWN_WALK_RECORD = "storage-walk.json"
+ARCHIVE_PROGRESS_RECORD = "archive-progress.json"
 EMERGENCY_LOCK = threading.Lock()
 
 
@@ -428,8 +443,8 @@ def close_emergency():
 
 
 def publish_walk(path, logical, walked_unix, completed_unix, walker, in_flight=0):
-    """Write a shared walk record atomically (a temporary file renamed over the record). ``in_flight``: blocks in
-    flight when the walk started, whose retained outputs may postdate it."""
+    """Publish a walk atomically. ``in_flight`` includes blocks in flight at its start and later admissions;
+    the retained outputs of either can postdate the measurement."""
     path = Path(path)
     temporary = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     temporary.write_text(json.dumps({"schema": SHARED_WALK_SCHEMA, "logical_bytes": logical,
@@ -441,8 +456,7 @@ def publish_walk(path, logical, walked_unix, completed_unix, walker, in_flight=0
 
 
 def shared_walk(path):
-    """(bytes, walk start, walk end, blocks in flight at its start) of a well-formed shared walk record, else
-    None."""
+    """(bytes, walk start, walk end, projected blocks) of a well-formed shared walk record, else None."""
     try:
         value = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -459,24 +473,27 @@ def shared_walk(path):
 
 
 def adopt_shared(shared, storage):
-    """Take a published walk newer than this attempt's sample (a small file read, each sample), with each block in
-    flight at its start counted at its projected retained bytes (the admission bound: siblings' outputs may
-    postdate the walk); whether the publisher is live (its last walk completed within
-    EMERGENCY_FALLBACK_SECONDS)."""
+    """Take a newer published walk or raised projection on the current one, and report publisher freshness."""
     found = shared_walk(shared) if shared else None
     if found is None:
         return False
     logical, walked, completed, in_flight = found
+    bound = logical + in_flight * storage["projected_additional_bytes"]
     with EMERGENCY_LOCK:
         if EMERGENCY_WALK["unix"] is None or walked > EMERGENCY_WALK["unix"]:
-            EMERGENCY_WALK.update(logical=logical + in_flight * storage["projected_additional_bytes"], unix=walked,
-                                  at=time.monotonic())
+            EMERGENCY_WALK.update(logical=bound, unix=walked, at=time.monotonic())
+        elif walked == EMERGENCY_WALK["unix"]:
+            EMERGENCY_WALK["logical"] = max(EMERGENCY_WALK["logical"], bound)
     return time.time() - completed <= EMERGENCY_FALLBACK_SECONDS
 
 
-def emergency_refresh(storage):
+def emergency_refresh(storage, marker=None):
     """One walk of the accounting trees for this attempt's sample. Errors are kept for the next sample."""
     try:
+        if marker is not None:
+            temporary = marker.with_suffix(".tmp")
+            temporary.write_text(json.dumps({"completed_unix": None}), encoding="utf-8")
+            os.replace(temporary, marker)
         started = time.time()
         logical = accounting_bytes(storage)[1]
         with EMERGENCY_LOCK:
@@ -486,9 +503,17 @@ def emergency_refresh(storage):
     except BaseException as error:
         with EMERGENCY_LOCK:
             EMERGENCY_WALK.update(error=error, at=time.monotonic())
+    finally:
+        if marker is not None:
+            try:
+                temporary = marker.with_suffix(".tmp")
+                temporary.write_text(json.dumps({"completed_unix": time.time()}), encoding="utf-8")
+                os.replace(temporary, marker)
+            except OSError:
+                pass  # the live marker continues to exclude this attempt's uncertain CPU
 
 
-def running_storage(storage, shared=None, pending=()):
+def running_storage(storage, shared=None, pending=(), *, root=None):
     """The storage check of a running attempt. With the opt-in ``storage.emergency`` (G(i) amendment 2) it ends
     the attempt only on a physical shortage: the accounting trees past the provisioned volume less its margin,
     or a scratch volume's free space below its margin. The cap and projections then gate new dispatches only.
@@ -521,7 +546,8 @@ def running_storage(storage, shared=None, pending=()):
             own = time.monotonic() - EMERGENCY_WALK["at"] > EMERGENCY_WALK_SECONDS
         start = own and not busy
         if start:
-            thread = threading.Thread(target=emergency_refresh, args=(storage,), name="emergency-walk", daemon=True)
+            marker = root / OWN_WALK_RECORD if root is not None else None
+            thread = threading.Thread(target=emergency_refresh, args=(storage, marker), name="emergency-walk", daemon=True)
             EMERGENCY_WALK["thread"] = thread
     if first:
         emergency_refresh(storage)  # nothing to sample yet: walk in place
@@ -611,11 +637,28 @@ def runpod_lease(work_seconds, now=None):
     return {"pod_id": pod, "lease": lease["name"], "available_seconds": available}
 
 
+def owned_linux_computehost(request):
+    """The explicit, case-sensitive Linux hostname for the computehost placement."""
+    if OWNED_LINUX_COMPUTEHOST not in request:
+        return None
+    name = request[OWNED_LINUX_COMPUTEHOST]
+    require(request["placement"]["host"] == "computehost" and type(name) is str
+            and bool(name) and name == name.strip(),
+            "owned_linux_computehost requires an explicit hostname and computehost placement")
+    return name
+
+
 def require_host(request):
-    """desktop/computehost only on that Windows machine; runpod only on its own leased pod."""
+    """Bind the named Windows or owned Linux host, or the pod with its live lease."""
     host = request["placement"]["host"]
     require(host in PLACEMENTS, "no paid or unknown placement")
-    if host == "runpod":
+    owned_name = owned_linux_computehost(request)
+    if owned_name is not None:
+        require(not os.environ.get("RUNPOD_POD_ID") and not os.environ.get(LEASE_GUARD_ENV),
+                "owned Linux computehost cannot run on RunPod")
+        require(not WINDOWS and sys.platform.startswith("linux") and platform.machine() == "x86_64"
+                and platform.node() == owned_name, "wrong owned Linux computehost")
+    elif host == "runpod":
         wall = positive(request["wall_seconds"], "wall-time limit")
         runpod_lease(min(positive(request.get("lease_work_seconds", wall), "lease work seconds"), wall))
     else:
@@ -836,6 +879,20 @@ def iteration_fingerprint(index, item, expected, tolerant, project, resolve=chec
     timing["checkpoint_read_hash_parse_seconds"] += time.monotonic() - phase_started
     require([t["sha256"] for t in checkpoint["trajectories"]] == trajectories,
             "optimizer used different ordered trajectories")
+    if checkpoint.get("schema") == "w5-s-learner-checkpoint/v1":
+        # S publishes parameters and both Adam moments in a separate container.
+        # Bind its bytes, then remove the trial-specific path from the fingerprint.
+        phase_started = time.monotonic()
+        state = checkpoint["state"]
+        require(Path(state["path"]) == Path(update["checkpoint"]["path"]).with_name("s-train-state.bin")
+                and update["s_learner"]["state"] == state
+                and update["after_state_sha256"] == checkpoint["state_sha256"]
+                and update["adam_step"] == checkpoint["adam_step"],
+                "S checkpoint state does not bind this update")
+        state_path = resolve(state)
+        validated_files[str(state_path.resolve())] = state["sha256"]
+        checkpoint["state"] = state["sha256"]
+        timing["checkpoint_read_hash_parse_seconds"] += time.monotonic() - phase_started
     # Read the complete parameter and Adam tensors. Only the output-root
     # metadata in trajectory pins differs between serial/parallel trials.
     checkpoint["trajectories"] = trajectories
@@ -981,6 +1038,10 @@ def qualification_evidence(report, request, config, runtime, family, resolve, ve
     original = read(resolve(report["request"]))
     require(not profile_gae_requested(original),
             "profiled qualification cannot select production allocation")
+    expected_host = (owned_linux_computehost(request)
+                     if original["placement"]["host"] == "computehost" else None)
+    require(owned_linux_computehost(original) == expected_host,
+            "qualification owned Linux computehost differs")
     actual_config = read(resolve(report["executed_config"]))
     original_config = read(resolve(original["config"]))
     other_runtime = runtime_for(original, resolve)
@@ -1197,6 +1258,9 @@ def require_choice(path, request, verify_outputs=False, validated=None):
     choice = read(checked(path))
     require(choice["schema"] == CHOICE, "unsupported throughput choice")
     config, runtime = validate_request(request, False) if validated is None else validated
+    owned_name = owned_linux_computehost(request)
+    require((OWNED_LINUX_COMPUTEHOST in choice) == (owned_name is not None)
+            and choice.get(OWNED_LINUX_COMPUTEHOST) == owned_name, "choice owned Linux computehost differs")
     family = workload(config, request["kind"], family=request.get("schedule_family"))
     require(set(choice["inventory"]) == {"desktop", "computehost", "runpod"},
             "inspect all three placement options")
@@ -1533,7 +1597,7 @@ def run_attempt(request_path, request, qualification, config, runtime, selected,
                     if time.monotonic() >= sample_at:
                         sample_at = time.monotonic() + MONITOR_POLL_SECONDS
                         sample = process_sample(child)
-                        sample.update(running_storage(request["storage"], shared))
+                        sample.update(running_storage(request["storage"], shared, root=root))
                         telemetry.write(json.dumps(sample) + "\n"); telemetry.flush()
                         require(sample["rss_bytes"] <= request["placement"]["memory_bytes"],
                                 "native memory limit exceeded")
@@ -1592,6 +1656,10 @@ def run_attempt(request_path, request, qualification, config, runtime, selected,
     # Existing checked, durable, two-shard archive includes full readback. Raw
     # outputs remain. Both locations count against the same campaign allowance.
     check_stop(root, child)
+    try:
+        write(root / ARCHIVE_PROGRESS_RECORD, {"root": str(cold)})
+    except OSError:
+        pass  # archive progress can still be observed through CPU and completion records
     archive = archive_native(Path(placed["output_directory"]), cold, validated_files)
     storage_started = time.monotonic()
     running_storage(request["storage"], shared, pending=[native, (archive["compressed_bytes"], time.time())])

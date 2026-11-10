@@ -8,7 +8,6 @@
 use super::{FrozenPlayObservationTransferV3, FrozenPlayPolicyV1, PinnedFileV1};
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::fast_sampler::WIDE_CATEGORICAL_SAMPLER_VERSION_V1;
-#[cfg(test)]
 use crate::native_policy_train_step_v1::native_train_state_parameter_layout_v1;
 use crate::native_policy_value_net_v1::{
     NativePolicyValueModelConfigV1, NativePolicyValueNetV1, CARD_EMBEDDING_DIM_V1,
@@ -383,6 +382,10 @@ pub(super) fn read_actual_in_v1(
         metadata.is_file() && metadata.len() <= cap as u64,
         "fresh input is not a bounded regular file",
     )?;
+    // Resident reads (`verified_bytes_cache_v1`).
+    if let Some(held) = cache.resident_bytes_v1(&pin.path, &pin.sha256, metadata.len()) {
+        return Ok(held.as_ref().clone());
+    }
     let mut bytes = Vec::new();
     file.take(cap as u64 + 1)
         .read_to_end(&mut bytes)
@@ -679,24 +682,45 @@ pub(super) fn write_synthetic_fresh_source_v1(
 /// `compact_board_policy`/`compact_board_policy_v4`
 /// (`phase1_bo3_collection_v1/tests.rs`) use to make a real game terminate
 /// quickly by mutual decking), keeping the model, the payload bytes and
-/// every computed hash mutually consistent.
-#[cfg(test)]
+/// every computed hash mutually consistent. Also built for the opt-in
+/// checkpoint codec benchmark (`checkpoint_codec_bench_v1`), whose generated
+/// fixture starts from this source.
+#[cfg(any(test, feature = "checkpoint-codec-bench-v1"))]
 pub(crate) fn write_synthetic_fresh_source_with_parameters_v1(
     dir: &std::path::Path,
     feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
     mutate: impl FnOnce(&mut Vec<crate::native_policy_value_net_v1::NativeNamedParameterV1>),
 ) -> ExpandedFreshInitializationSourceV1 {
+    try_write_synthetic_fresh_source_with_parameters_v1(dir, feature_identity, mutate).unwrap()
+}
+
+/// The fallible body of `write_synthetic_fresh_source_with_parameters_v1`,
+/// also the net-8 shell and opponent of the public S saved-batch fixture
+/// (`s_update_fixture_v1`). The model is the deterministic runner-fixed
+/// Net8, not a trained or production one, and the manifest's producer is
+/// synthetic.
+pub(crate) fn try_write_synthetic_fresh_source_with_parameters_v1(
+    dir: &std::path::Path,
+    feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
+    mutate: impl FnOnce(&mut Vec<crate::native_policy_value_net_v1::NativeNamedParameterV1>),
+) -> Result<ExpandedFreshInitializationSourceV1, String> {
     use crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1;
-    std::fs::create_dir_all(dir).unwrap();
+    let io = |error: std::io::Error| error.to_string();
+    std::fs::create_dir_all(dir).map_err(io)?;
 
     let mut model =
         NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
-            .unwrap();
+            .map_err(|e| e.to_string())?;
     let mut parameters = model.parameter_snapshot_v1();
     mutate(&mut parameters);
-    model.replace_parameter_snapshot_v1(&parameters).unwrap();
+    model
+        .replace_parameter_snapshot_v1(&parameters)
+        .map_err(|e| e.to_string())?;
     let expected: Vec<_> = native_train_state_parameter_layout_v1().collect();
-    assert_eq!(parameters.len(), expected.len());
+    require(
+        parameters.len() == expected.len(),
+        "synthetic fresh parameter count differs from the layout",
+    )?;
 
     let mut payload = vec![0u8; PAYLOAD_BYTES];
     let mut offset = 0usize;
@@ -704,8 +728,15 @@ pub(crate) fn write_synthetic_fresh_source_with_parameters_v1(
     let mut layout_values = Vec::with_capacity(parameters.len());
     let mut anchor_bits: Option<u32> = None;
     for (ordinal, (parameter, (name, shape))) in parameters.iter().zip(expected).enumerate() {
-        assert_eq!(parameter.name, name);
+        require(
+            parameter.name == name,
+            "synthetic fresh parameter name differs from the layout",
+        )?;
         let byte_count = parameter.values.len() * 4;
+        require(
+            offset + byte_count <= PAYLOAD_BYTES,
+            "synthetic fresh parameters exceed the payload",
+        )?;
         for (i, value) in parameter.values.iter().enumerate() {
             payload[offset + i * 4..offset + i * 4 + 4]
                 .copy_from_slice(&value.to_bits().to_le_bytes());
@@ -726,8 +757,11 @@ pub(crate) fn write_synthetic_fresh_source_with_parameters_v1(
         }
         offset += byte_count;
     }
-    assert_eq!(offset, PAYLOAD_BYTES);
-    let anchor_bits = anchor_bits.expect("scorer.2.bias parameter present");
+    require(
+        offset == PAYLOAD_BYTES,
+        "synthetic fresh parameters do not fill the payload",
+    )?;
+    let anchor_bits = anchor_bits.ok_or("scorer.2.bias parameter absent")?;
 
     let config = NativePolicyValueModelConfigV1::contract_v1();
     let generator_model_config = GeneratorModelConfig {
@@ -747,9 +781,13 @@ pub(crate) fn write_synthetic_fresh_source_with_parameters_v1(
         object_group_count: config.object_group_count as u64,
         action_ref_feature_dim: config.action_ref_feature_dim as u64,
     };
-    let generator_model_config_sha256 =
-        hash(&canonical(&serde_json::to_value(&generator_model_config).unwrap()).unwrap());
-    assert_eq!(generator_model_config_sha256, MODEL_CONFIG_FINGERPRINT_V1);
+    let generator_model_config_sha256 = hash(&canonical(
+        &serde_json::to_value(&generator_model_config).map_err(|e| e.to_string())?,
+    )?);
+    require(
+        generator_model_config_sha256 == MODEL_CONFIG_FINGERPRINT_V1,
+        "synthetic fresh model config fingerprint differs",
+    )?;
 
     let paths = source_paths_v1(feature_identity.generation);
     let mut source_files = Vec::with_capacity(8);
@@ -832,7 +870,7 @@ pub(crate) fn write_synthetic_fresh_source_with_parameters_v1(
             bytes: PAYLOAD_BYTES,
             sha256: hash(&payload),
             model_parameter_sha256: model.parameter_manifest_sha256_v1(),
-            parameter_layout_sha256: hash(&canonical(&Value::Array(layout_values)).unwrap()),
+            parameter_layout_sha256: hash(&canonical(&Value::Array(layout_values))?),
             tensor_count: 33,
             element_count: PARAMETER_COUNT_V1,
         },
@@ -846,26 +884,26 @@ pub(crate) fn write_synthetic_fresh_source_with_parameters_v1(
         },
     };
 
-    let manifest_value = serde_json::to_value(&manifest).unwrap();
-    let mut manifest_bytes = canonical(&manifest_value).unwrap();
+    let manifest_value = serde_json::to_value(&manifest).map_err(|e| e.to_string())?;
+    let mut manifest_bytes = canonical(&manifest_value)?;
     manifest_bytes.push(b'\n');
 
     let manifest_path = dir.join("initialization.json");
-    std::fs::write(&manifest_path, &manifest_bytes).unwrap();
+    std::fs::write(&manifest_path, &manifest_bytes).map_err(io)?;
     let parameters_path = dir.join("parameters.f32le");
-    std::fs::write(&parameters_path, &payload).unwrap();
+    std::fs::write(&parameters_path, &payload).map_err(io)?;
 
-    ExpandedFreshInitializationSourceV1 {
+    Ok(ExpandedFreshInitializationSourceV1 {
         schema: SOURCE_SCHEMA.into(),
         initialization: PinnedFileV1 {
-            path: manifest_path.canonicalize().unwrap(),
+            path: manifest_path.canonicalize().map_err(io)?,
             sha256: hash(&manifest_bytes),
         },
         parameters: PinnedFileV1 {
-            path: parameters_path.canonicalize().unwrap(),
+            path: parameters_path.canonicalize().map_err(io)?,
             sha256: hash(&payload),
         },
-    }
+    })
 }
 
 #[cfg(test)]

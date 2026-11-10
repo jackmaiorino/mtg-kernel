@@ -8,7 +8,7 @@ use crate::expanded_deck_training_v1::encoded_decision_view_generic_v1;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_policy_train_step_v1::screen_fit_v1::{
     evaluate_screen_heldout_dims_v1, fit_screen_value_dims_v1, screen_minibatch_order_v1,
-    ScreenDecisionGroupV1, ScreenFitConfigV1, ScreenFitErrorV1, ScreenFitReportV1,
+    ScreenDecisionGroupV1, ScreenFitConfigV1, ScreenFitErrorV1, ScreenFitReportV1, ScreenForwardV1,
     ScreenGameOutcomeV1, ScreenGameRecordV1, ScreenSubstepV1, TerminalReturnTargetV1,
     SCREEN_POLICY_TERM_V1, SCREEN_VALUE_FIT_ENTRY_VERSION_V1, TERMINAL_RETURN_TARGET_SOURCE_V1,
 };
@@ -403,9 +403,98 @@ fn screen_fit_records_game_ids_and_outcome_provenance() {
     let mut first_epoch: Vec<usize> = order.concat()[..8].to_vec();
     first_epoch.sort_unstable();
     assert_eq!(first_epoch, (0..8).collect::<Vec<_>>());
+    let domain = b"mtg-kernel-screen-value-fit-minibatch-order-v1";
+    let mut independent_hash = Sha256::new();
+    independent_hash.update((domain.len() as u64).to_be_bytes());
+    independent_hash.update(domain);
+    for index in order.iter().flatten() {
+        independent_hash.update((*index as u64).to_be_bytes());
+    }
+    assert_eq!(
+        report.minibatch_order_sha256,
+        format!("{:x}", independent_hash.finalize())
+    );
     let json = serde_json::to_value(&report).unwrap();
     assert_eq!(json["fit_game_ids"][1], "fit-b");
     assert!(json["outcome_source_sha256"].is_string());
+}
+
+/// One update through the fitting entry must equal the ordinary optimizer
+/// given independently specified acting-seat returns, including both wins
+/// and losses in each winning game and zero returns in the drawn game.
+#[test]
+fn screen_fit_one_update_consumes_manual_acting_seat_targets() {
+    let (fit, heldout) = (fit_games_v1(), heldout_games_v1());
+    let mut config = config_v1(1, 8);
+    config.heldout_every_steps = 1;
+    let mut actual = narrow_state_v1();
+    let mut expected = actual.clone();
+    let order = screen_minibatch_order_v1(config.minibatch_seed, 8, 8, 1);
+    let flat: Vec<_> = fit.iter().flat_map(|game| &game.groups).collect();
+    // fit-a: P0 wins, actors 0/1/0; fit-b: P1 wins, actors 0/1/0;
+    // fit-c: draw, actors 0/1. No production target derivation is used.
+    let returns = [1_i8, -1, 1, -1, 1, -1, 0, 0];
+    let forward = ScreenForwardV1::of_state_v1(&expected, Generation::V3);
+    let recorded: Vec<Vec<_>> = order[0]
+        .iter()
+        .map(|&index| {
+            flat[index]
+                .substeps
+                .iter()
+                .map(|substep| forward.output_bits_v1(&substep.tensor).unwrap())
+                .collect()
+        })
+        .collect();
+    let substeps: Vec<Vec<_>> = order[0]
+        .iter()
+        .zip(&recorded)
+        .map(|(&index, outputs)| {
+            flat[index]
+                .substeps
+                .iter()
+                .zip(outputs)
+                .map(|(substep, (logits, value))| NativePolicySubstepV1 {
+                    forward: NativePolicyForwardInputV1::Encoded(Box::new(
+                        encoded_decision_view_generic_v1(&substep.tensor, Generation::V3),
+                    )),
+                    selected_action_index: substep.selected_action_index,
+                    expected_raw_action_logit_bits: logits,
+                    expected_value_bits: *value,
+                })
+                .collect()
+        })
+        .collect();
+    let groups: Vec<_> = order[0]
+        .iter()
+        .zip(&substeps)
+        .map(|(&index, substeps)| NativePolicyPhysicalDecisionV1 {
+            substeps,
+            terminal_return: returns[index],
+            baseline_bits: 0,
+        })
+        .collect();
+    let targets: Vec<_> = order[0]
+        .iter()
+        .map(|&index| f32::from(returns[index]))
+        .collect();
+    expected
+        .train_step_gae_feature_transfer_profiled_dims_v1(
+            Generation::V3,
+            &groups,
+            &targets,
+            &[0.0; 8],
+            config.value_coefficient,
+            config.learning_rate,
+            None,
+            1,
+            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+        )
+        .unwrap();
+    fit_v1(&mut actual, &fit, &heldout, &config).unwrap();
+    assert_eq!(
+        actual.state_sha256_v1().unwrap(),
+        expected.state_sha256_v1().unwrap()
+    );
 }
 
 /// The policy term is exactly off: every step's policy sum is zero, and

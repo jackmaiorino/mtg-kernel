@@ -6,6 +6,7 @@
 use crate::card_def::TargetSpec;
 use crate::ids::{Arena, ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
+use crate::reveal_meaning_v3::{RevealKnowledgeV3, RevealV3};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
@@ -2323,11 +2324,46 @@ pub(crate) fn take_opponent_reveal_sites_v1() -> Vec<(&'static str, &'static str
 /// snapshot and golden is unchanged and two states that differ only in what
 /// was journalled compare equal.
 #[derive(Debug, Clone, Default)]
-pub struct ObservationJournalV1(Vec<ObservationNoteV1>);
+pub struct ObservationJournalV1(
+    Vec<ObservationNoteV1>,
+    // Private exporter provenance, never part of notes(), snapshots or hashes.
+    std::collections::BTreeMap<usize, (ObjectId, u8)>,
+    // Damage attribution to an indexed public object at commit time. This
+    // proves only its publicly visible owner, never its concealed printing.
+    std::collections::BTreeMap<(usize, ObjectId), PlayerId>,
+);
 
 impl ObservationJournalV1 {
     pub fn notes(&self) -> &[ObservationNoteV1] {
         &self.0
+    }
+
+    pub(crate) fn visibility_v2(&self, event: usize, object: ObjectId) -> Option<u8> {
+        self.1
+            .get(&event)
+            .filter(|(id, _)| *id == object)
+            .map(|(_, mask)| *mask)
+    }
+
+    pub(crate) fn record_visibility_v2(&mut self, event: usize, object: ObjectId, mask: u8) {
+        self.1.insert(event, (object, mask));
+    }
+
+    pub(crate) fn damage_public_owner_v3(
+        &self,
+        event: usize,
+        object: ObjectId,
+    ) -> Option<PlayerId> {
+        self.2.get(&(event, object)).copied()
+    }
+
+    pub(crate) fn record_damage_public_owner_v3(
+        &mut self,
+        event: usize,
+        object: ObjectId,
+        owner: PlayerId,
+    ) {
+        self.2.insert((event, object), owner);
     }
 }
 
@@ -2498,6 +2534,11 @@ pub struct GameState {
     /// [`ObservationJournalV1`]. Not serialized, hashed or compared.
     #[serde(skip)]
     pub observation_journal: ObservationJournalV1,
+    #[serde(skip)]
+    pub(crate) reveal_meaning_v3: crate::reveal_meaning_v3::RevealJournalV3,
+    /// Compact public name ledger carried only in reveal-v4 search worlds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) reveal_knowledge_v4: Option<[RevealKnowledgeV3; 2]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2768,6 +2809,10 @@ impl Hash for GameState {
         if self.hand_knowledge_by_name_v2 {
             "hand-knowledge-by-name/v2".hash(state);
         }
+        if let Some(knowledge) = &self.reveal_knowledge_v4 {
+            "reveal-knowledge/v4".hash(state);
+            knowledge.hash(state);
+        }
         if self.public_shroud_v1 {
             "public-shroud/v1".hash(state);
         }
@@ -2987,6 +3032,8 @@ impl GameState {
             hand_knowledge_by_name_v2: false,
             public_shroud_v1: false,
             observation_journal: ObservationJournalV1::default(),
+            reveal_meaning_v3: Default::default(),
+            reveal_knowledge_v4: None,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         crate::life_loss_turn_v1::initialize_for_catalog(&mut state);
@@ -3036,6 +3083,9 @@ impl GameState {
     /// Appends one observer-scoped fact, anchored to the current length of
     /// `engine.event_history` (see [`ObservationNoteV1`]).
     pub(crate) fn note_observation(&mut self, kind: ObservationNoteKindV1) {
+        if let ObservationNoteKindV1::LibraryRandomized { owner } = &kind {
+            self.reveal_meaning_v3.shuffle(*owner);
+        }
         let history_len = self.engine.event_history.len();
         self.observation_journal
             .0
@@ -3066,6 +3116,19 @@ impl GameState {
         self.record_hand_reveal(observer, owner, object, None)
     }
 
+    /// Reveals an exact native move whose public evidence is supplied by the
+    /// rule that performed it, rather than inferred from a generic reveal.
+    #[cfg_attr(test, track_caller)]
+    pub(crate) fn reveal_distinct_hand_card_with_meaning_v3(
+        &mut self,
+        observer: PlayerId,
+        owner: PlayerId,
+        object: ObjectId,
+        meaning: crate::reveal_meaning_v3::RevealV3,
+    ) -> Result<(), String> {
+        self.record_hand_reveal_with_meaning_v3(observer, owner, object, None, meaning)
+    }
+
     /// For simultaneous reveals, every shown card of a name uses the same
     /// lower bound. The group may overlap previously known cards.
     #[cfg_attr(test, track_caller)]
@@ -3075,6 +3138,24 @@ impl GameState {
         owner: PlayerId,
         object: ObjectId,
         minimum_named_copies: Option<usize>,
+    ) -> Result<(), String> {
+        self.record_hand_reveal_with_meaning_v3(
+            observer,
+            owner,
+            object,
+            minimum_named_copies,
+            crate::reveal_meaning_v3::RevealV3::Present,
+        )
+    }
+
+    #[cfg_attr(test, track_caller)]
+    fn record_hand_reveal_with_meaning_v3(
+        &mut self,
+        observer: PlayerId,
+        owner: PlayerId,
+        object: ObjectId,
+        minimum_named_copies: Option<usize>,
+        meaning: crate::reveal_meaning_v3::RevealV3,
     ) -> Result<(), String> {
         #[cfg(test)]
         if observer != owner {
@@ -3090,19 +3171,23 @@ impl GameState {
         if !live || card.owner != owner || card.zone != Zone::Hand {
             return Err(format!("{object} is not a live card in {owner:?}'s hand"));
         }
+        let zone_change_count = card.zone_change_count;
+        let card_def = card.card_def;
+        self.note_hand_reveal_v3(observer, owner, object, meaning);
         if observer == owner {
             // `own_hand` already carries the complete private hand. Keeping a
             // second copy would add no information and creates two facts that
             // future hand mutation would have to reconcile.
             return Ok(());
         }
-        let zone_change_count = card.zone_change_count;
-        let card_def = card.card_def;
         self.note_observation(ObservationNoteKindV1::HandCardRevealed {
             observer,
             owner,
             object,
         });
+        if self.reveal_knowledge_v4.is_some() {
+            return Ok(());
+        }
         let entries = &mut self.hand_knowledge[observer.index()][owner.index()];
         if entries.iter().any(|entry| entry.object == object) {
             return Ok(());
@@ -3132,6 +3217,9 @@ impl GameState {
         position: usize,
         object: ObjectId,
     ) {
+        if self.reveal_knowledge_v4.is_some() {
+            return;
+        }
         let generation = self.objects.get(object).zone_change_count;
         for observer in [PlayerId::P0, PlayerId::P1] {
             if observer == owner {
@@ -3223,6 +3311,149 @@ impl GameState {
         self.forget_hand_object(object);
     }
 
+    pub(crate) fn record_hand_departure_v3(&mut self, object: ObjectId, to: Zone, named: bool) {
+        if !self.reveal_meaning_v3_enabled() {
+            return;
+        }
+        let card = self.objects.get(object);
+        if card.v4.is_token || card.spell_copy_origin.is_some() {
+            return;
+        }
+        let owner = card.owner;
+        let def = card.card_def;
+        let name = crate::card_def::CARD_DEFS[usize::from(def)].name;
+        let named = self
+            .reveal_meaning_v3
+            .departure(object, owner, name, to, named);
+        if let Some(knowledge) = &mut self.reveal_knowledge_v4 {
+            let observer = owner.opponent();
+            knowledge[observer.index()].depart(owner, named.then_some(def), 1);
+            self.bind_reveal_names_v4(observer, owner);
+        }
+    }
+
+    pub(crate) fn reveal_meaning_v3_enabled(&self) -> bool {
+        self.reveal_meaning_v3.enabled() || self.reveal_knowledge_v4.is_some()
+    }
+
+    pub(crate) fn note_hand_reveal_v3(
+        &mut self,
+        observer: PlayerId,
+        owner: PlayerId,
+        object: ObjectId,
+        meaning: RevealV3,
+    ) {
+        if !self.reveal_meaning_v3_enabled() || matches!(meaning, RevealV3::Omit) {
+            return;
+        }
+        let card = self.objects.get(object);
+        if !card.v4.is_token && card.spell_copy_origin.is_none() {
+            self.note_visible_hand_reveal_v3(observer, owner, [card.card_def].into_iter(), meaning);
+        }
+    }
+
+    pub(crate) fn note_public_hand_reveal_group_v3(
+        &mut self,
+        owner: PlayerId,
+        objects: impl IntoIterator<Item = ObjectId>,
+        meaning: RevealV3,
+    ) {
+        if !self.reveal_meaning_v3_enabled() {
+            return;
+        }
+        let definitions: Vec<_> = objects
+            .into_iter()
+            .map(|object| self.objects.get(object))
+            .filter(|card| {
+                card.owner == owner
+                    && card.zone == Zone::Hand
+                    && !card.v4.is_token
+                    && card.spell_copy_origin.is_none()
+            })
+            .map(|card| card.card_def)
+            .collect();
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            self.note_visible_hand_reveal_v3(observer, owner, definitions.iter().copied(), meaning);
+        }
+    }
+
+    fn note_visible_hand_reveal_v3(
+        &mut self,
+        observer: PlayerId,
+        owner: PlayerId,
+        definitions: impl Iterator<Item = u16> + Clone,
+        meaning: RevealV3,
+    ) {
+        self.reveal_meaning_v3.reveal_group(
+            observer,
+            owner,
+            definitions
+                .clone()
+                .map(|id| crate::card_def::CARD_DEFS[usize::from(id)].name),
+            meaning,
+        );
+        if observer == owner {
+            return;
+        }
+        if let Some(knowledge) = &mut self.reveal_knowledge_v4 {
+            for name in definitions {
+                meaning.apply(&mut knowledge[observer.index()], owner, name);
+            }
+            self.bind_reveal_names_v4(observer, owner);
+        }
+    }
+
+    /// The legacy observation and sampler use object rows. Bind the public
+    /// minima to deterministic representatives inside this sampled world.
+    fn bind_reveal_names_v4(&mut self, observer: PlayerId, owner: PlayerId) {
+        let Some(knowledge) = &self.reveal_knowledge_v4 else {
+            return;
+        };
+        let mut hand = self.players[owner.index()].hand.clone();
+        hand.sort_unstable();
+        let mut rows = Vec::new();
+        for (def, minimum) in knowledge[observer.index()].hand(owner) {
+            for &object in hand
+                .iter()
+                .filter(|&&id| {
+                    let card = self.objects.get(id);
+                    card.card_def == def && !card.v4.is_token && card.spell_copy_origin.is_none()
+                })
+                .take(minimum)
+            {
+                rows.push(HandKnowledgeEntry {
+                    object,
+                    zone_change_count: self.objects.get(object).zone_change_count,
+                });
+            }
+        }
+        rows.sort_unstable_by_key(|entry| entry.object);
+        self.hand_knowledge[observer.index()][owner.index()] = rows;
+    }
+
+    /// An effect or paid cost visibly shows one whole group at once. The
+    /// legacy copy-bound ledger is updated in its original order.
+    #[cfg_attr(test, track_caller)]
+    pub(crate) fn reveal_public_hand_group_v3(
+        &mut self,
+        owner: PlayerId,
+        objects: impl Iterator<Item = ObjectId> + Clone,
+    ) -> Result<(), String> {
+        use crate::reveal_meaning_v3::RevealV3;
+        for object in objects.clone() {
+            for observer in [PlayerId::P0, PlayerId::P1] {
+                self.reveal_distinct_hand_card_with_meaning_v3(
+                    observer,
+                    owner,
+                    object,
+                    RevealV3::Omit,
+                )?;
+            }
+        }
+        self.note_public_hand_reveal_group_v3(owner, objects, RevealV3::Present);
+        Ok(())
+    }
+
     /// A card of `owner`'s hand has just left face down to a public zone
     /// (foretell), after its move was read by name. Under
     /// [`GameState::hand_departures_by_name_v1`] the other player cannot
@@ -3239,6 +3470,9 @@ impl GameState {
     /// about cards that remain: retaining them would reveal which hidden
     /// candidates were moved by elimination.
     pub(crate) fn clear_nonowner_hand_knowledge(&mut self, owner: PlayerId) {
+        if self.reveal_knowledge_v4.is_some() {
+            return;
+        }
         for observer in [PlayerId::P0, PlayerId::P1] {
             if observer != owner {
                 self.hand_knowledge[observer.index()][owner.index()].clear();
@@ -4132,6 +4366,7 @@ impl GameState {
         };
         ps.hand.remove(pos);
         ps.battlefield.push(id);
+        self.record_hand_departure_v3(id, Zone::Battlefield, true);
         self.forget_departing_hand_object(id, true);
         self.clear_object_relations(id);
         let turn = self.turn_key_v1();
@@ -4518,6 +4753,9 @@ mod tests {
         let before = plain.observation_journal.notes().len();
         journalled.reveal_library_top(PlayerId::P1, PlayerId::P0, 1);
         journalled.library_knowledge = plain.library_knowledge.clone();
+        journalled
+            .observation_journal
+            .record_damage_public_owner_v3(0, journalled.players[0].hand[0], PlayerId::P0);
         assert_eq!(journalled.observation_journal.notes().len(), before + 1);
         assert_eq!(journalled, plain);
         let hash = |state: &GameState| {

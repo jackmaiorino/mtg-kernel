@@ -3,9 +3,9 @@
 //! (resumed, revalidated, serial equal to parallel), and the refusals.
 
 use super::*;
+use crate::expanded_deck_training_v1::s_update_fixture_v1;
 use crate::expanded_deck_training_v1::{
-    execute_v1, initialize_any_math_v1, read_pinned, sha,
-    write_synthetic_fresh_source_with_parameters_v1, ExpandedDeckListV1, ExpandedEpisodeV1,
+    execute_v1, initialize_any_math_v1, read_pinned, sha, ExpandedEpisodeV1,
     ExpandedTrainingCommandV1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
 };
 use crate::native_expanded_training_run_v1::{
@@ -16,15 +16,9 @@ use crate::s_transformer_v1::{SConfigV1, SModelV1};
 use crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3;
 use std::path::Path;
 
-/// A small S for tests; the card table keeps S's 257 rows.
-const SMALL_V1: SConfigV1 = SConfigV1 {
-    d_model: 8,
-    layers: 1,
-    heads: 2,
-    ffn: 16,
-    card_dim: 4,
-    card_vocab: 257,
-};
+/// A small S for tests; the card table keeps S's 257 rows. The public
+/// saved-batch fixture (`s_update_fixture_v1`) trains the same S.
+const SMALL_V1: SConfigV1 = s_update_fixture_v1::TEST_CONFIG_V1;
 
 fn on_large_stack(body: fn()) {
     let run = std::thread::Builder::new()
@@ -52,94 +46,22 @@ fn temp_root(label: &str) -> PathBuf {
 /// A fresh-initialization net-8 source (V4) without a checkpoint: the
 /// net-8 opponent, and the S learner's shell.
 fn net8_source(root: &Path) -> ExpandedModelSourceV1 {
-    let identity = FRESH_FEATURE_IDENTITY_V4;
-    let descriptor =
-        write_synthetic_fresh_source_with_parameters_v1(&root.join("net8"), identity, |_| {});
-    let bytes = serde_json::to_vec(&descriptor).unwrap();
-    let path = root.join("net8-descriptor.json");
-    fs::write(&path, &bytes).unwrap();
-    ExpandedModelSourceV1 {
-        play_import: PinnedFileV1 {
-            path,
-            sha256: sha(&bytes),
-        },
-        feature_transfer: FrozenPlayObservationTransferV3 {
-            expected_feature_contract_digest: identity.feature_contract_digest.into(),
-            expected_feature_encoding_digest: identity.feature_encoding_digest.into(),
-        },
-        checkpoint: None,
-        s_learner: None,
-    }
+    s_update_fixture_v1::net8_source_v1(root).unwrap()
 }
 
 /// `shell` with an S learner whose initial state carries nonzero Adam
 /// moments and step, which the fresh start must drop.
 fn s_source(root: &Path, shell: &ExpandedModelSourceV1) -> ExpandedModelSourceV1 {
-    let model = SModelV1::init_pilot_scheme_v1(SMALL_V1, 20_261_103).unwrap();
-    let mut grad = vec![1.0e-3f32; model.values_v1().len()];
-    for range in model.layout_v1().gauge_ranges_v1() {
-        grad[range].fill(0.0);
-    }
-    let mut state = STrainStateV1::fresh_optimizer_v1(model);
-    // One step with a nonzero gradient moves the parameters and leaves
-    // nonzero moments and step 1, so the start's reset is visible.
-    state.adam_step_with_gradient_v1(&grad, 1.0e-4).unwrap();
-    assert_eq!(state.adam_step_v1(), 1);
-    assert!(state.first_moments_v1().iter().any(|m| *m != 0.0));
-    assert!(state.second_moments_v1().iter().any(|m| *m != 0.0));
-    let bytes = encode_checkpoint_v1(&state);
-    let path = root.join("s0.bin");
-    fs::write(&path, &bytes).unwrap();
-    ExpandedModelSourceV1 {
-        s_learner: Some(Box::new(SLearnerSourceV1 {
-            schema: S_LEARNER_SOURCE_SCHEMA_V1.into(),
-            initial: PinnedFileV1 {
-                path,
-                sha256: sha(&bytes),
-            },
-        })),
-        ..shell.clone()
-    }
-}
-
-fn list(id: &str) -> ExpandedDeckListV1 {
-    let registration = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
-    let cards = registration.registered_configuration();
-    ExpandedDeckListV1 {
-        label: id.into(),
-        mainboard: cards.mainboard().to_vec(),
-        sideboard: cards.sideboard().to_vec(),
-    }
+    s_update_fixture_v1::s_source_v1(root, shell, SMALL_V1, s_update_fixture_v1::S_INIT_SEED_V1)
+        .unwrap()
 }
 
 fn episode(id: &str, seed: u64, opponent: Option<ExpandedModelSourceV1>) -> ExpandedEpisodeV1 {
-    let decks = [list("Affinity"), list("Terror")];
-    ExpandedEpisodeV1 {
-        id: id.into(),
-        seed,
-        starting_player: 0,
-        learner_seat: 0,
-        opponent,
-        opponent_kind: None,
-        opponent_search: None,
-        registered: decks.clone(),
-        selected: decks,
-        postboard: false,
-        max_physical_decisions: 100_000,
-        max_policy_steps: 1_000_000,
-        runtime_rules: None,
-        reset: None,
-        opening: None,
-        mulligan_modes: None,
-    }
+    s_update_fixture_v1::episode_v1(id, seed, opponent).unwrap()
 }
 
 fn gae() -> ExpandedLossSelectionV1 {
-    ExpandedLossSelectionV1::GaeAdvantageValueV1 {
-        gamma: 1.0,
-        lambda: 0.9,
-        entropy_coefficient: 0.0,
-    }
+    s_update_fixture_v1::loss_selection_v1()
 }
 
 fn collect(
@@ -422,6 +344,12 @@ fn s_learner_end_to_end_v1() {
     let parallel = run_config(&s, &net8, 2, root.join("run-parallel"));
     let first = run_native_expanded_training_v1(&parallel, Some(1)).unwrap();
     assert_eq!(first["completed_iterations"], 1);
+    let iteration: PinnedFileV1 = serde_json::from_value(first["iterations"][0].clone()).unwrap();
+    let iteration: Value = read_pinned(&iteration).unwrap();
+    let update: PinnedFileV1 = serde_json::from_value(iteration["update"].clone()).unwrap();
+    let update: Value = read_pinned(&update).unwrap();
+    assert_eq!(update["numerical_backend"], "native-cpu-exact-parallel-s");
+    assert_eq!(update["s_learner_workers_requested"], 2);
     let finished = run_native_expanded_training_v1(&parallel, None).unwrap();
     assert_eq!(finished["complete"], true);
     assert_eq!(finished["actual_identity"]["adam_step"], 2);
@@ -484,6 +412,7 @@ fn run_config(
         ],
         record_format: Default::default(),
         record_envelope: Default::default(),
+        verified_reads: Default::default(),
         learning_rate: 1.0e-3,
         value_coefficient: 0.5,
         update_backend: ExpandedUpdateBackendV1::Cpu,

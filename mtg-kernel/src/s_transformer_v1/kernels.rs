@@ -357,8 +357,8 @@ pub(super) fn layer_norm_row_v1(
     (mean, rstd)
 }
 
-/// LayerNorm backward for one row: accumulates `dgain`, `dbias` and writes
-/// `dx` (overwritten). `scratch` holds at least `x.len()` floats.
+/// LayerNorm backward for one row: emits the gain and bias additions and
+/// writes `dx` (overwritten). `scratch` holds at least `x.len()` floats.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn layer_norm_row_backward_v1(
     x: &[f32],
@@ -366,8 +366,7 @@ pub(super) fn layer_norm_row_backward_v1(
     rstd: f32,
     gain: &[f32],
     dy: &[f32],
-    dgain: &mut [f32],
-    dbias: &mut [f32],
+    mut add_parameter_gradient: impl FnMut(usize, f32, f32),
     dx: &mut [f32],
     scratch: &mut [f32],
 ) {
@@ -376,8 +375,7 @@ pub(super) fn layer_norm_row_backward_v1(
     let mut sum_dxhat_xhat = 0.0f32;
     for index in 0..width {
         let xhat = (x[index] - mean) * rstd;
-        dgain[index] += dy[index] * xhat;
-        dbias[index] += dy[index];
+        add_parameter_gradient(index, dy[index] * xhat, dy[index]);
         let dxhat = dy[index] * gain[index];
         scratch[index] = dxhat;
         sum_dxhat += dxhat;

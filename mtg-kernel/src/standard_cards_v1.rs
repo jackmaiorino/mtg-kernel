@@ -390,6 +390,12 @@ pub enum StandardTargetV1 {
     ArtifactOrLandV1,
     /// "Target permanent you control" (Devoted Caretaker).
     ControlledPermanentV1,
+    /// "Target player shuffles up to two target cards from their graveyard
+    /// into their library" (Krosan Reclamation) and "exile two target
+    /// lands" (Petradon): Premodern wave P2c's filters
+    /// (`eternal_premodern_p2c_v1::targets`).
+    PlayerThenUpToTwoOfTheirGraveyardCardsV1,
+    TwoLandsV1,
 }
 
 impl StandardTargetV1 {
@@ -405,6 +411,9 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p2d_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_premodern_p2c_v1::targets::counts(self) {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p1a_v1::targets::counts(self) {
@@ -517,6 +526,7 @@ impl StandardTargetV1 {
             | (Self::PlayerThenPlayerV1, 0 | 1)
             | (Self::PlayerThenGraveyardCardsV1, 0)
             | (Self::PlayerThenUpToThreeOfTheirGraveyardCardsV1, 0)
+            | (Self::PlayerThenUpToTwoOfTheirGraveyardCardsV1, 0)
             | (Self::OpponentThenUpToOneTheirCreatureV1, 0)
             | (Self::UpToOnePlayerV1, 0) => Some(None),
             (Self::PlayerThenArtifactV1, 1) | (Self::ArtifactThenCreatureV1, 0) => {
@@ -597,6 +607,7 @@ pub(crate) fn target_zone_allows(target: StandardTargetV1, zone: Zone) -> bool {
             target,
             StandardTargetV1::PlayerThenGraveyardCardsV1
                 | StandardTargetV1::PlayerThenUpToThreeOfTheirGraveyardCardsV1
+                | StandardTargetV1::PlayerThenUpToTwoOfTheirGraveyardCardsV1
                 | StandardTargetV1::CreatureThenGraveyardCardsV1
                 | StandardTargetV1::ArtifactThenArtifactCardInItsControllersGraveyardV1
         ) && zone == Zone::Graveyard)
@@ -826,6 +837,11 @@ pub(crate) fn legal_targets(
         return targets;
     }
     if let Some(targets) =
+        crate::eternal_premodern_p2c_v1::targets::legal_targets(target, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
         crate::eternal_premodern_p1a_v1::targets::legal_targets(target, controller, prefix, state)
     {
         return targets;
@@ -1051,6 +1067,11 @@ pub(crate) fn target_matches(
         return matches;
     }
     if let Some(matches) =
+        crate::eternal_premodern_p2c_v1::targets::target_matches(target, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
         crate::eternal_premodern_p2d_v1::targets::target_matches(target, controller, object, state)
     {
         return matches;
@@ -1257,6 +1278,9 @@ pub(crate) fn target_matches(
         | StandardTargetV1::OpponentArtifactV1 => false,
         // Answered by `eternal_premodern_p2d_v1::targets` above.
         StandardTargetV1::ArtifactOrLandV1 | StandardTargetV1::ControlledPermanentV1 => false,
+        // Answered by `eternal_premodern_p2c_v1::targets` above.
+        StandardTargetV1::PlayerThenUpToTwoOfTheirGraveyardCardsV1
+        | StandardTargetV1::TwoLandsV1 => false,
     }
 }
 
@@ -2326,6 +2350,9 @@ pub(crate) fn gain_control(state: &mut GameState, object: ObjectId, player: Play
     live.controller = player;
     live.summoning_sick = true;
     state.engine.combat.remove_from_combat(object);
+    // Echo is owed by whoever controls the creature since their last upkeep.
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_premodern_p2d_v1::control_changed(state, object, player);
 }
 
 /// Creates a token that's a copy of `original` (707.2): the same card

@@ -4,9 +4,26 @@ use mtg_kernel::expanded_deck_training_v1::{execute_v1, ExpandedTrainingCommandV
 
 fn main() {
     mtg_kernel::opt_out_of_power_throttling_v1();
-    if let Err(error) = run() {
-        eprintln!("expanded-deck training: {error}");
-        std::process::exit(1);
+    // The command runs on a thread with the census binary's 256 MiB stack:
+    // Windows gives the main thread 1 MiB, which the collection hooks' deep
+    // play (W5/SD1 capture continuations) can overflow. Stack size changes no
+    // computed byte.
+    let result = std::thread::Builder::new()
+        .name("expanded-deck-training".into())
+        .stack_size(256 << 20)
+        .spawn(run)
+        .expect("spawn the command thread")
+        .join();
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            eprintln!("expanded-deck training: {error}");
+            std::process::exit(1);
+        }
+        Err(_) => {
+            eprintln!("expanded-deck training: the command thread panicked");
+            std::process::exit(101);
+        }
     }
 }
 fn run() -> Result<(), String> {

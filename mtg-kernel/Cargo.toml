@@ -74,6 +74,12 @@ tensorize-cost-profile-v1 = []
 # (`s4a-search-profile` rows). Off by default; default builds compile the
 # spans to nothing, so uninstrumented timings use a build without it.
 s4a-profile-v1 = []
+# Measurement-only accounting of an S update's forward work (T3, #597):
+# behavior-replay and learner forward calls, their thread time and output
+# digests, which `s_update_fixture_v1 bench` reports. Off by default; default
+# builds compile the spans to nothing, so uninstrumented timings use a build
+# without it.
+s-update-profile-v1 = []
 # Test tooling only: test processes write the first committed event of each
 # kind to `MTG_EVENT_SAMPLES_V1` (event_history_v1::sample_harvest_v1), so
 # integration tests can supply the every-kind fixtures. Off by default; unit
@@ -83,6 +89,11 @@ event-sample-harvest-v1 = []
 # Non-Windows builds retain parser/stub support but never emit a production
 # build-capture tuple.
 native-training-store-v2-production = []
+# Measurement only (mtg-kernel#596): the opt-in checkpoint codec benchmark
+# (examples/checkpoint_codec_bench_v1.rs) and the synthetic fresh source
+# builder its fixture needs outside tests. Off by default; default builds
+# carry neither.
+checkpoint-codec-bench-v1 = []
 
 [[bin]]
 name = "kernel_limited_common_env"
@@ -179,6 +190,10 @@ required-features = ["flat-action-diagnostic"]
 [[example]]
 name = "native_flat_tensorizer_diagnostic"
 required-features = ["native-flat-tensorizer-diagnostic"]
+
+[[example]]
+name = "checkpoint_codec_bench_v1"
+required-features = ["checkpoint-codec-bench-v1"]
 
 [[bin]]
 name = "saved_input_scalar_diagnostic"

@@ -674,7 +674,8 @@ fn shared_triumph_gives_the_chosen_type_plus_one_plus_one() {
     let fanatic = put(&mut state, P1, "Mogg Fanatic", Zone::Battlefield);
     let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
     let triumph = put(&mut state, P0, "Shared Triumph", Zone::Hand);
-    let goblin = statics::triumph_type_options(&state)
+    put(&mut state, P0, "Mogg Fanatic", Zone::Hand);
+    let goblin = statics::triumph_type_options(&state, P0)
         .iter()
         .position(|subtype| *subtype == Subtype::Goblin)
         .expect("a Goblin option");
@@ -904,4 +905,65 @@ fn veteran_brawlers_cant_attack_or_block_around_untapped_lands() {
     };
     state.objects.get_mut(land).tapped = true;
     assert!(legal_blockers(&mut state, elves).contains(&brawlers));
+}
+
+/// Echo is owed by whoever controls the creature since their last upkeep,
+/// which includes gaining control of it (702.30a).
+#[test]
+fn echo_is_owed_by_a_new_controller_after_a_control_change() {
+    let mut state = islands();
+    let allure = put(&mut state, P0, "Legacy's Allure", Zone::Battlefield);
+    state
+        .eternal_v1
+        .get_or_insert_with(Default::default)
+        .p1b
+        .treasure_counters
+        .push((
+            mtg_kernel::state::ObjectLinkV4 {
+                object: allure,
+                zone_change_count: 0,
+            },
+            2,
+        ));
+    let riders = put(&mut state, P1, "Avalanche Riders", Zone::Battlefield);
+    activate(&mut state, allure, 0, &[Target::Object(riders)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(riders).controller, P0);
+    let mut asked = 0;
+    to_next_turn(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption { .. } => {
+            asked += 1;
+            Some(Action::ChooseEffectOption(1))
+        }
+        _ => None,
+    });
+    assert_eq!(asked, 1, "the new controller owes echo");
+    assert_eq!(zone(&state, riders), Zone::Graveyard);
+}
+
+/// Shared Triumph offers the creature types of its chooser's own cards, so
+/// the number of options does not depend on the opponent's hidden cards.
+#[test]
+fn shared_triumph_options_do_not_depend_on_the_opponents_hidden_cards() {
+    let offered = |hidden: bool| {
+        let mut state = islands();
+        put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+        if hidden {
+            put(&mut state, P1, "Mogg Fanatic", Zone::Hand);
+            put(&mut state, P1, "Hypnotic Specter", Zone::Library);
+        }
+        let triumph = put(&mut state, P0, "Shared Triumph", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::W], 1);
+        cast(&mut state, triumph, &[]);
+        let mut offered = 0;
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectOption { option_count, .. } => {
+                offered = option_count;
+                Action::ChooseEffectOption(0)
+            }
+            other => first_answer(other),
+        });
+        offered
+    };
+    assert_eq!(offered(false), offered(true));
 }

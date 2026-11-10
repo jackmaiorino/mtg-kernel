@@ -75,6 +75,7 @@ pub struct ExportInputV1<'a> {
 /// The export: the canonical state, its bytes and its handle table.
 #[derive(Clone, Debug)]
 pub struct InfosetV1 {
+    pub schema: &'static str,
     pub state: GameState,
     pub bytes: Vec<u8>,
     pub sha256: String,
@@ -205,7 +206,7 @@ pub(crate) fn contract_pins(state: &GameState) -> Vec<ObjectId> {
 /// `DealDamageToTargetEqualToChosenCostCreaturePower` read it), with no
 /// captured last-known power, no payment by its own source, no grant and
 /// no catalog-owned payment record (`fixed_source_damage_v3`).
-fn paid_costs_unread_v1(state: &GameState, item: &crate::state::StackItem) -> bool {
+fn paid_cost_effect_unread_v1(state: &GameState, item: &crate::state::StackItem) -> bool {
     use crate::effect::EffectOp;
     let source = item.v4.ability_source_contract.map(|c| c.source);
     item.kind == crate::state::StackItemKind::ActivatedAbility
@@ -220,12 +221,55 @@ fn paid_costs_unread_v1(state: &GameState, item: &crate::state::StackItem) -> bo
                     | EffectOp::DealDamage { .. }
             )
         )
+        && !crate::fixed_source_damage_v3::tracked(state, item)
+}
+
+fn paid_costs_unread_v1(state: &GameState, item: &crate::state::StackItem) -> bool {
+    paid_cost_effect_unread_v1(state, item)
         && item
             .v4
             .paid_cost_refs
             .iter()
             .all(|p| p.power_lki.is_none() && p.object != item.source)
-        && !crate::fixed_source_damage_v3::tracked(state, item)
+}
+
+/// Mark each independently unread public receipt by its containing stack
+/// position. A pending reader with the same raw object cannot change this
+/// occurrence's eligibility. The marker is consumed by the rewrite walker.
+pub(super) fn mark_detached_receipts_v4(
+    state: &GameState,
+    tagged: &mut Value,
+    viewer: PlayerId,
+) -> Result<Vec<(PlayerId, u16)>, ExportErrorV1> {
+    let bit = 1 << viewer.index();
+    let mut detached = Vec::new();
+    for (index, item) in state.stack.iter().enumerate() {
+        if !paid_cost_effect_unread_v1(state, item) {
+            continue;
+        }
+        let Some(source) = item.v4.ability_source_contract else {
+            continue;
+        };
+        for (position, receipt) in item.v4.paid_cost_refs.iter().enumerate() {
+            // A payment with the source's printing might be self-payment.
+            // Exclude it by public name in every copy assignment.
+            if receipt.visible_to_mask & bit == 0
+                || receipt.power_lki.is_some()
+                || receipt.card_def == source.card_def
+            {
+                continue;
+            }
+            let row = tagged["stack"][index]["v4"]["paid_cost_refs"][position]
+                .as_object_mut()
+                .ok_or_else(|| refuse(RefusalCodeV1::R2, "public paid-cost receipt shape"))?;
+            row.insert(
+                super::rewrite::DETACHED_PAID_V4.into(),
+                json!(detached.len()),
+            );
+            detached.push((receipt.owner, receipt.card_def));
+        }
+    }
+    Ok(detached)
 }
 
 /// Amendment 43.5: the paid-cost records (object, epoch) whose live
@@ -448,18 +492,19 @@ fn knowledge_check(
     // may claim more than V's conservative readings.
     // Revision c (lead ruling 15, fallback D): P claims no hand facts, so
     // only the validity mutants that claim them check them.
-    let mut hand = multiset(
-        state.players[opp.index()]
-            .hand
-            .iter()
-            .map(|id| state.objects.get(*id).card_def),
-    );
-    if hand_claims && subtract(&mut hand, projection.hand_facts.iter().map(|f| f.card_def)).is_err()
-    {
-        return Err(refuse(
-            RefusalCodeV1::R5,
-            "hand facts claim a card the hand does not hold",
-        ));
+    if hand_claims {
+        let mut hand = multiset(
+            state.players[opp.index()]
+                .hand
+                .iter()
+                .map(|id| state.objects.get(*id).card_def),
+        );
+        if subtract(&mut hand, projection.hand_facts.iter().map(|f| f.card_def)).is_err() {
+            return Err(refuse(
+                RefusalCodeV1::R5,
+                "hand facts claim a card the hand does not hold",
+            ));
+        }
     }
     for owner in [PlayerId::P0, PlayerId::P1] {
         let projected: BTreeSet<(u32, u32, u32)> = projection.library[owner.index()]
@@ -503,6 +548,7 @@ fn tracked_order(
     projection: &ProjectionV1,
     l3: bool,
     opp_hand: Option<&[ObjectId]>,
+    recovery_v3: bool,
 ) -> Result<Vec<ObjectId>, ExportErrorV1> {
     let mut keyed: Vec<((usize, u32), ObjectId)> = state
         .objects
@@ -523,8 +569,32 @@ fn tracked_order(
         return Ok(out);
     }
     keyed.sort_by_key(|(key, _)| *key);
-    if keyed.windows(2).any(|w| w[0].0 == w[1].0) {
-        return Err(refuse(RefusalCodeV1::R2, R2_ORDER_DETAIL_V1));
+    let mut start = 0;
+    while start < keyed.len() {
+        let mut end = start + 1;
+        while end < keyed.len() && keyed[end].0 == keyed[start].0 {
+            end += 1;
+        }
+        if end - start > 1 {
+            let owners: BTreeSet<_> = keyed[start..end]
+                .iter()
+                .map(|(_, id)| state.objects.get(*id).owner.index())
+                .collect();
+            let public_rollbacks = keyed[start..end].iter().all(|(_, id)| {
+                is_public(state.objects.get(*id).zone)
+                    && projection.current_span(*id).is_some_and(|span| {
+                        span.start_pos == u32::MAX
+                            && span.start_event == state.engine.event_history.len()
+                    })
+            });
+            if !recovery_v3 || !public_rollbacks || owners.len() != end - start {
+                return Err(refuse(RefusalCodeV1::R2, R2_ORDER_DETAIL_V1));
+            }
+            // Only public owner seats break this synthetic rollback tie.
+            // Equal-owner copies still refuse; no native order is consulted.
+            keyed[start..end].sort_by_key(|(_, id)| state.objects.get(*id).owner.index());
+        }
+        start = end;
     }
     let mut out: Vec<ObjectId> = keyed.into_iter().map(|(_, id)| id).collect();
     out.extend(opp_hand.unwrap_or(&[]).iter().copied());
@@ -756,14 +826,155 @@ pub(crate) fn export_v1(
     input: &ExportInputV1<'_>,
     options: ExportOptionsV1,
 ) -> Result<InfosetV1, ExportErrorV1> {
+    export_versioned(input, options, false, false, None)
+}
+
+/// Opt in to event-time identity visibility. Historical v1 remains unchanged.
+/// Active face-down public objects refuse until the canonical allocator can
+/// represent them. A snapshot without visibility provenance also refuses.
+pub fn export_v2(input: &ExportInputV1<'_>) -> Result<InfosetV1, ExportErrorV1> {
+    export_versioned(input, ExportOptionsV1::default(), true, false, None)
+}
+
+/// Opt in to bounded recovery from historical export refusals (#579).
+/// This successor retains v2 event-time visibility and preserves v1/v2.
+pub fn export_v3(input: &ExportInputV1<'_>) -> Result<InfosetV1, ExportErrorV1> {
+    export_versioned(input, ExportOptionsV1::default(), true, true, None)
+}
+
+/// Opt in to viewer-local reveal-name constraints. Only the event-time public
+/// transcript can supply hand minima. Old copy rows remain outside this mode's
+/// refill evidence and are never used to select the named hand occupants.
+pub fn export_reveal_v4(input: &ExportInputV1<'_>) -> Result<InfosetV1, ExportErrorV1> {
+    export_reveal_v4_from_journal(input, &input.state.reveal_meaning_v3)
+}
+
+struct RevealEvidenceV4 {
+    knowledge: crate::reveal_meaning_v3::RevealKnowledgeV3,
+    possible_eventless_moves: Vec<u16>,
+}
+
+pub(crate) fn export_reveal_v4_from_journal(
+    input: &ExportInputV1<'_>,
+    journal: &crate::reveal_meaning_v3::RevealJournalV3,
+) -> Result<InfosetV1, ExportErrorV1> {
+    let transcript = journal
+        .transcript(input.viewer)
+        .ok_or_else(|| refuse(RefusalCodeV1::R8, "visible reveal transcript unavailable"))?;
+    let mut reducer = crate::reveal_meaning_v3::RevealReducerV3::default();
+    reducer
+        .absorb(&transcript)
+        .map_err(|detail| refuse(RefusalCodeV1::R8, detail))?;
+    let possible_eventless_moves = reducer.possible_eventless_moves(input.viewer.opponent());
+    export_versioned(
+        input,
+        ExportOptionsV1::default(),
+        true,
+        true,
+        Some(RevealEvidenceV4 {
+            knowledge: reducer.opponent_knowledge(input.viewer),
+            possible_eventless_moves,
+        }),
+    )
+}
+
+/// The audited W1 pool has no persistent damage-identity custody consumer.
+/// Gate by public decklists and operation phase, never by a private object's
+/// membership in a retained ledger. Other pools keep the historical refusal.
+pub(super) fn damage_pool_audited_v3(decklists: [&[u16]; 2], digest: &str) -> bool {
+    digest == "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851"
+        && decklists.iter().all(|deck| {
+            deck.iter().all(|card| {
+                crate::runtime_decks::RUNTIME_DECKS
+                    .iter()
+                    .any(|known| known.card_ids.contains(card))
+            })
+        })
+}
+
+fn damage_history_ready_v3(input: &ExportInputV1<'_>) -> bool {
+    let state = input.state;
+    damage_pool_audited_v3(
+        input.decklists,
+        crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256,
+    ) && state.stack.is_empty()
+        && state.engine.pending_cast.is_none()
+        && state.engine.pending_activation.is_none()
+        && state.engine.pending_effect.is_none()
+        && state.engine.pending_triggers.is_empty()
+}
+
+fn export_versioned(
+    input: &ExportInputV1<'_>,
+    options: ExportOptionsV1,
+    visibility_v2: bool,
+    recovery_v3: bool,
+    reveal_evidence_v4: Option<RevealEvidenceV4>,
+) -> Result<InfosetV1, ExportErrorV1> {
     let state = input.state;
     let v = input.viewer;
     let opp = v.opponent();
     let mutant = options.mutant;
     let is = |m: MutantV1| mutant == Some(m);
 
+    // The canonical allocator does not model hidden sideboards. Refuse from
+    // the explicit public profile before any projection or name-sensitive
+    // validation, including when both private lists are empty or depleted.
+    if crate::eternal_outside_game_v1::outside_game_profile(state).is_some() {
+        return Err(refuse(
+            RefusalCodeV1::R2,
+            "outside-game profile is not representable in infoset export",
+        ));
+    }
+
     // Step 2 (the projection feeds step 1's I1 and I4).
-    let projection = project_v1(state, input.journal, v);
+    if visibility_v2 {
+        // Refuse before any name-sensitive invariant, seam or allocation.
+        // Face-down status and the right to look are viewer-observable;
+        // neither this decision nor its detail consults the hidden name.
+        if state.objects.iter().any(|(_, o)| {
+            is_public(o.zone)
+                && o.v4
+                    .face_down_v1
+                    .is_some_and(|f| f.lookers & (1 << v.index()) == 0)
+        }) {
+            return Err(refuse(
+                RefusalCodeV1::R2,
+                "active face-down object is not representable in infoset v2",
+            ));
+        }
+        for (index, event) in state.engine.event_history.iter().enumerate() {
+            let object = match event {
+                crate::event::CommittedEvent::ZoneChange { object, .. }
+                | crate::event::CommittedEvent::SpellCast { spell: object, .. } => *object,
+                _ => continue,
+            };
+            if state
+                .observation_journal
+                .visibility_v2(index, object)
+                .is_none()
+            {
+                return Err(refuse(
+                    RefusalCodeV1::R2,
+                    "event-time visibility provenance unavailable for infoset v2",
+                ));
+            }
+        }
+    }
+    let mut projection = if visibility_v2 {
+        super::projection::project_v2(state, input.journal, v)
+    } else {
+        project_v1(state, input.journal, v)
+    };
+    if let Some(evidence) = &reveal_evidence_v4 {
+        // The old guard treated every reveal as a possible event-less move.
+        // Search arrivals and continuously public non-stack transfers now
+        // have positive evidence. Other reference, epoch and seam checks
+        // still apply, including for a potentially ambiguous stack return.
+        projection
+            .revealed
+            .clone_from(&evidence.possible_eventless_moves);
+    }
     // Step 1.
     invariants(state, &projection, input.decklists)?;
     if is(MutantV1::L7) {
@@ -868,6 +1079,11 @@ pub(crate) fn export_v1(
 
     // Live references (collect pass): R(o), R1, R1b, R2 inputs.
     let mut tagged = tagged_value(state);
+    let detached_receipts = if reveal_evidence_v4.is_some() {
+        mark_detached_receipts_v4(state, &mut tagged, v)?
+    } else {
+        Vec::new()
+    };
     let mut refs: Vec<(RefV1, &'static str)> = Vec::new();
     {
         let mut record = |r: RefV1, region: &'static str| refs.push((r, region));
@@ -895,7 +1111,11 @@ pub(crate) fn export_v1(
     // same-name copy V later drew, so R1b's name-level join test must
     // refuse in both worlds before tracking decides the tombstone; so does
     // R1 `same_name_batch` below (Sol round 2).
-    let unread_paid = unread_paid_costs_v1(state, &tagged, v);
+    let unread_paid = if reveal_evidence_v4.is_none() {
+        unread_paid_costs_v1(state, &tagged, v)
+    } else {
+        BTreeSet::new()
+    };
     let paid_tomb = |r: &RefV1| -> bool {
         r.class == ClassV1::Live
             && r.paid_cost
@@ -904,6 +1124,9 @@ pub(crate) fn export_v1(
             && matches!(r.generations.as_slice(), [g]
                 if projection.span_of(r.object, *g).is_some()
                     && unread_paid.contains(&(r.object, *g)))
+    };
+    let detached_paid = |r: &RefV1| -> Option<(PlayerId, u16)> {
+        r.detached_paid_v4.map(|index| detached_receipts[index])
     };
 
     // Lead ruling 7 (a): a live reference keeps its link across an unlinked
@@ -929,7 +1152,18 @@ pub(crate) fn export_v1(
     // every other test still runs, on every reference it does not refuse,
     // and the export refuses with the reveal subclass only where it would
     // otherwise deliver (the end of this function).
-    let hand = same_name_hand_v1(state, &projection, &refs, opp);
+    let checked_refs = (!detached_receipts.is_empty()).then(|| {
+        refs.iter()
+            .filter(|(r, _)| detached_paid(r).is_none())
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    let hand = same_name_hand_v1(
+        state,
+        &projection,
+        checked_refs.as_deref().unwrap_or(&refs),
+        opp,
+    );
     if hand.seam.is_some() {
         return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_DETAIL));
     }
@@ -958,6 +1192,7 @@ pub(crate) fn export_v1(
     let bounds = projection.batch_bounds(input.marks);
     for (r, region) in &refs {
         if *region == "live"
+            && detached_paid(r).is_none()
             && !hand.reveal_refuses(r)
             && batch_twin_v1(state, &projection, &bounds, r).is_some()
         {
@@ -968,7 +1203,7 @@ pub(crate) fn export_v1(
     // R1b (a name-level, public-event predicate), then R1 and R2. A
     // reference the reveal-triggered rule refused takes none of them.
     for (r, region) in &refs {
-        if *region != "live" || hand.reveal_refuses(r) {
+        if *region != "live" || detached_paid(r).is_some() || hand.reveal_refuses(r) {
             continue;
         }
         for &g in &r.generations {
@@ -1009,7 +1244,11 @@ pub(crate) fn export_v1(
         }
     }
     for (r, region) in &refs {
-        if *region != "live" || projection.tracked(r.object) || hand.reveal_refuses(r) {
+        if *region != "live"
+            || detached_paid(r).is_some()
+            || projection.tracked(r.object)
+            || hand.reveal_refuses(r)
+        {
             continue;
         }
         if pinned_untracked.contains(&r.object) || paid_tomb(r) {
@@ -1083,7 +1322,25 @@ pub(crate) fn export_v1(
     // soundness check and the validity mutants, which still claim them.
     let hand_mutant =
         is(MutantV1::L8) || is(MutantV1::L11) || is(MutantV1::L12) || is(MutantV1::L14);
-    let mut bound_names: Vec<u16> = Vec::new();
+    let mut bound_names = Vec::new();
+    if let Some(evidence) = &reveal_evidence_v4 {
+        let hand_size = state.players[opp.index()].hand.len();
+        for (def, count) in evidence.knowledge.hand(opp) {
+            if count > hand_size - bound_names.len() {
+                return Err(refuse(
+                    RefusalCodeV1::R8,
+                    "reveal minima exceed the public hand size",
+                ));
+            }
+            bound_names.extend(std::iter::repeat_n(def, count));
+        }
+    }
+    if reveal_evidence_v4.is_some() && pinned_defs(opp).iter().any(|id| bound_names.contains(id)) {
+        return Err(refuse(
+            RefusalCodeV1::R7,
+            "reveal-name bound overlaps an unresolved physical pin",
+        ));
+    }
     for f in projection
         .hand_facts
         .iter()
@@ -1096,6 +1353,12 @@ pub(crate) fn export_v1(
     }
     bound_names.sort_by_key(|d| name_key(*d));
     subtract(&mut pool5, bound_names.iter().copied()).map_err(|d| {
+        if reveal_evidence_v4.is_some() {
+            return refuse(
+                RefusalCodeV1::R8,
+                "reveal minima exceed the public refill pool",
+            );
+        }
         fault(
             FaultCodeV1::I4,
             format!("{} known in the hand beyond the decklist", card_name(d)),
@@ -1314,6 +1577,7 @@ pub(crate) fn export_v1(
         &projection,
         is(MutantV1::L3),
         (!is(MutantV1::L14)).then_some(opp_hand_tracked.as_slice()),
+        recovery_v3,
     )?;
     if is(MutantV1::L8) || is(MutantV1::L14) {
         // Mutant L8's bound copies take `C:` handles (invented continuity);
@@ -1409,6 +1673,9 @@ pub(crate) fn export_v1(
     };
     let mut p0: HashMap<ObjectId, u32> = HashMap::new();
     for (r, region) in &refs {
+        if detached_paid(r).is_some() {
+            continue;
+        }
         // Mutant L4 links raw history references to current handles; its
         // epochs map on the same path, so they count toward p0 too.
         let raw_l4 =
@@ -1472,6 +1739,13 @@ pub(crate) fn export_v1(
             .min_by_key(|d| name_key(*d))
             .unwrap_or(0)
     };
+    let damage_ready = recovery_v3 && damage_history_ready_v3(input);
+    let damage_event = |e: usize| {
+        matches!(
+            state.engine.event_history[e],
+            crate::event::CommittedEvent::Damage { .. }
+        )
+    };
     let event_kind_ok = |e: usize| -> bool {
         matches!(
             state.engine.event_history[e],
@@ -1483,6 +1757,15 @@ pub(crate) fn export_v1(
                 // unlinked reference in it becomes an unnamed tombstone.
                 | crate::event::CommittedEvent::PublishedCastIdentityV1 { .. }
         )
+            // This marker precedes a face-down battlefield departure. It
+            // carries only an object/epoch, so v2 can preserve it with an
+            // unnamed tombstone rather than revealing the old incarnation.
+            || (visibility_v2
+                && matches!(
+                    state.engine.event_history[e],
+                    crate::event::CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange { .. }
+                ))
+            || (damage_ready && damage_event(e))
     };
     let mut timestamps: BTreeSet<u64> = BTreeSet::new();
     let pinned_set: BTreeSet<ObjectId> = pinned_untracked.iter().copied().collect();
@@ -1497,10 +1780,15 @@ pub(crate) fn export_v1(
             // becomes a placeholder tombstone, so that the rest of the export
             // runs every other test; the export then refuses with the reveal
             // subclass instead of delivering these bytes.
-            if paid_tomb(&r) || reveal_placeholder(&r) {
-                let def = state.objects.get(o).card_def;
+            let historical = detached_paid(&r).or_else(|| {
+                (paid_tomb(&r) || reveal_placeholder(&r)).then(|| {
+                    let source = state.objects.get(o);
+                    (source.owner, source.card_def)
+                })
+            });
+            if let Some((owner, def)) = historical {
                 let id = tomb_base + tombstones.len() as u32;
-                tombstones.push(template(state.objects.get(o).owner, def, Zone::Command, 0));
+                tombstones.push(template(owner, def, Zone::Command, 0));
                 handles.push(HandleV1::H {
                     e: paid_e,
                     j: paid_k,
@@ -1554,7 +1842,15 @@ pub(crate) fn export_v1(
                     }
                     let named = match r.class {
                         ClassV1::Event(e) => {
-                            if event_kind_ok(e) {
+                            if recovery_v3 && damage_event(e) {
+                                // Keep identities already justified through
+                                // this historical event. An unnamed endpoint
+                                // receives the ordinary per-reference H slot.
+                                let item = projection.event_items[e];
+                                projection.tracked_after(o, item)
+                                    && item > 0
+                                    && projection.tracked_after(o, item - 1)
+                            } else if event_kind_ok(e) {
                                 projection.event_observed[e].contains(&o)
                             } else {
                                 let item = projection.event_items[e];
@@ -1563,7 +1859,18 @@ pub(crate) fn export_v1(
                         }
                         _ => false,
                     };
-                    let owner = state.objects.get(o).owner;
+                    let owner = match r.class {
+                        ClassV1::Event(e) if recovery_v3 && damage_event(e) && !named => state
+                            .observation_journal
+                            .damage_public_owner_v3(e, o)
+                            .ok_or_else(|| {
+                                refuse(
+                                    RefusalCodeV1::R2,
+                                    "unobserved Damage owner has no public event-time proof",
+                                )
+                            })?,
+                        _ => state.objects.get(o).owner,
+                    };
                     let def = if named {
                         state.objects.get(o).card_def
                     } else {
@@ -1808,6 +2115,16 @@ pub(crate) fn export_v1(
     let mut out: GameState = serde_json::from_value(tagged)
         .map_err(|e| refuse(RefusalCodeV1::R2, format!("the export does not load: {e}")))?;
     out.resample_future_randomness_for_search_v3(INFOSET_RNG_SEED_V1);
+    let has_reveal_knowledge = reveal_evidence_v4.is_some();
+    out.reveal_knowledge_v4 = reveal_evidence_v4.map(|evidence| {
+        let mut viewers = [Default::default(), Default::default()];
+        viewers[v.index()] = evidence.knowledge;
+        viewers
+    });
+    if has_reveal_knowledge {
+        out.hand_departures_by_name_v1 = false;
+        out.hand_knowledge_by_name_v2 = false;
+    }
     crate::effect::refresh_binding_fingerprints_v1(&mut out);
     static_assertions(&out, &handles, v)?;
     // Lead ruling 19: every other test passed, so the reveal-triggered rule
@@ -1815,9 +2132,20 @@ pub(crate) fn export_v1(
     if !hand.reveal.is_empty() || reveal_used.get() {
         return Err(refuse(RefusalCodeV1::R1, R1_SAME_NAME_HAND_REVEAL_DETAIL));
     }
-    let bytes = canonical_bytes(&out, &handles);
+    let schema = if has_reveal_knowledge {
+        super::INFOSET_SCHEMA_REVEAL_V4
+    } else if recovery_v3 {
+        super::INFOSET_SCHEMA_V3
+    } else if visibility_v2 {
+        super::INFOSET_SCHEMA_V2
+    } else {
+        INFOSET_SCHEMA_V1
+    };
+    let labels: Vec<String> = handles.iter().map(HandleV1::label).collect();
+    let bytes = canonical_bytes_with_schema(&out, &labels, schema);
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
     Ok(InfosetV1 {
+        schema,
         state: out,
         bytes,
         sha256,
@@ -2409,8 +2737,23 @@ fn canonical_bytes(state: &GameState, handles: &[HandleV1]) -> Vec<u8> {
 }
 
 fn canonical_bytes_from_labels(state: &GameState, labels: &[String]) -> Vec<u8> {
+    canonical_bytes_with_schema(state, labels, INFOSET_SCHEMA_V1)
+}
+
+pub(crate) fn canonical_digest_with_schema(
+    state: &GameState,
+    labels: &[String],
+    schema: &str,
+) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(canonical_bytes_with_schema(state, labels, schema))
+    )
+}
+
+fn canonical_bytes_with_schema(state: &GameState, labels: &[String], schema: &str) -> Vec<u8> {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(INFOSET_SCHEMA_V1.as_bytes());
+    bytes.extend_from_slice(schema.as_bytes());
     bytes.push(b'\n');
     bytes.extend_from_slice(&serde_json::to_vec(&labels).expect("labels serialize"));
     bytes.push(b'\n');

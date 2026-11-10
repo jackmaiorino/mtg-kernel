@@ -9,6 +9,7 @@ pub(crate) use key_step::V4SearchActionTokenV1;
 #[cfg(test)]
 pub(super) mod library_tests;
 mod sampler;
+pub(crate) use sampler::SlotFilterV1;
 pub(super) fn redeterminize_call_v62(
     state: &mut GameState,
     actor: PlayerId,
@@ -309,7 +310,29 @@ fn validate_library_origin_candidates_v4(
     Ok(())
 }
 
+/// The future-chance stream `FutureChanceV3` installs for a sample `seed`:
+/// the first eight bytes (little-endian) of
+/// SHA256("mtg-kernel/v4-search-future-chance/v3\0" || seed LE).
+pub(crate) fn future_chance_seed_v3(seed: u64) -> u64 {
+    let mut hash = Sha256::new();
+    hash.update(b"mtg-kernel/v4-search-future-chance/v3\0");
+    hash.update(seed.to_le_bytes());
+    let bytes = hash.finalize();
+    u64::from_le_bytes(bytes[..8].try_into().expect("eight digest bytes"))
+}
+
 impl FastActorSessionV1 {
+    /// SD1 (opt-in, never on a default path): a clone of this session whose
+    /// hidden state is kept exactly as it is (no redeterminization) and whose
+    /// future engine randomness is replaced by the stream `future` seeds
+    /// (`resample_future_randomness_for_search_v3`). Nothing the actor
+    /// observes changes, so the live decision and its candidates stay valid.
+    pub(crate) fn kernel_clone_with_future_randomness_v1(&self, future: u64) -> Self {
+        let mut copy = self.clone();
+        copy.state.resample_future_randomness_for_search_v3(future);
+        copy
+    }
+
     #[cfg(test)]
     pub(crate) fn kernel_search_redeterminized_clone_v4(&self, seed: u64) -> Result<Self, Error> {
         self.search_clone_v4_inner(seed, |_, _| {})
@@ -319,7 +342,7 @@ impl FastActorSessionV1 {
         seed: u64,
         mode: V4SearchSampleMode,
     ) -> Result<Self, Error> {
-        self.search_clone_v4_mode_inner(seed, mode, |_, _| Ok(()), None)
+        self.search_clone_v4_mode_inner(seed, mode, |_, _| Ok(()), None, None)
     }
     /// `kernel_search_redeterminized_clone_mode_v4` with a fallible hook that
     /// edits the sampled hidden state after the whole-object shuffle and the
@@ -336,7 +359,25 @@ impl FastActorSessionV1 {
         hook: impl FnOnce(&mut GameState, PlayerId) -> Result<(), Error>,
         encoding_failure: &mut Option<V4BoundaryEncodingFailureV1>,
     ) -> Result<Self, Error> {
-        self.search_clone_v4_mode_inner(seed, mode, hook, Some(encoding_failure))
+        self.search_clone_v4_mode_inner(seed, mode, hook, Some(encoding_failure), None)
+    }
+    /// SD1 (opt-in, diagnostic only): `kernel_search_redeterminized_clone_hooked_v4`
+    /// in `FutureChanceV3` mode whose whole-object determinization permutes
+    /// only the unknown slots `filter` keeps (`SlotFilterV1`).
+    pub(crate) fn kernel_search_partial_clone_hooked_v1(
+        &self,
+        seed: u64,
+        filter: SlotFilterV1,
+        hook: impl FnOnce(&mut GameState, PlayerId) -> Result<(), Error>,
+        encoding_failure: &mut Option<V4BoundaryEncodingFailureV1>,
+    ) -> Result<Self, Error> {
+        self.search_clone_v4_mode_inner(
+            seed,
+            V4SearchSampleMode::FutureChanceV3,
+            hook,
+            Some(encoding_failure),
+            Some(filter),
+        )
     }
     #[cfg(test)]
     pub(crate) fn kernel_search_redeterminized_clone_library_v2(
@@ -359,6 +400,7 @@ impl FastActorSessionV1 {
                 Ok(())
             },
             None,
+            None,
         )
     }
     fn search_clone_v4_mode_inner(
@@ -367,6 +409,7 @@ impl FastActorSessionV1 {
         mode: V4SearchSampleMode,
         after_sample: impl FnOnce(&mut GameState, PlayerId) -> Result<(), Error>,
         encoding_failure: Option<&mut Option<V4BoundaryEncodingFailureV1>>,
+        partial: Option<SlotFilterV1>,
     ) -> Result<Self, Error> {
         if self.flat_action_contract_mode != FlatActionContractModeV1::V3 {
             return Err(Error::UnsupportedActionContract);
@@ -391,7 +434,9 @@ impl FastActorSessionV1 {
             .ok_or(Error::NoLiveDecision)?
             .candidates;
         let mut copy = self.clone();
-        let sample = if mode == V4SearchSampleMode::FutureChanceV3 {
+        let sample = if let (V4SearchSampleMode::FutureChanceV3, Some(filter)) = (mode, partial) {
+            sampler::redeterminize_partial_v1(&mut copy.state, actor, seed, plan.as_ref(), filter)
+        } else if mode == V4SearchSampleMode::FutureChanceV3 {
             sampler::redeterminize_with_library_plan_classified(
                 &mut copy.state,
                 actor,
@@ -423,12 +468,8 @@ impl FastActorSessionV1 {
         if mode == V4SearchSampleMode::FutureChanceV3 {
             // `seed` already derives from visible root, experiment and
             // simulation ordinal. Separate future chance from hidden-pool RNG.
-            let mut hash = Sha256::new();
-            hash.update(b"mtg-kernel/v4-search-future-chance/v3\0");
-            hash.update(seed.to_le_bytes());
-            let bytes = hash.finalize();
-            let future = u64::from_le_bytes(bytes[..8].try_into().expect("eight digest bytes"));
-            copy.state.resample_future_randomness_for_search_v3(future);
+            copy.state
+                .resample_future_randomness_for_search_v3(future_chance_seed_v3(seed));
         }
         after_sample(&mut copy.state, actor)?;
         let mut current = copy.current.take().ok_or(Error::NoLiveDecision)?;
@@ -752,7 +793,7 @@ mod tests {
         );
         // Without a sink the same sample gives the same error.
         assert!(matches!(
-            s.search_clone_v4_mode_inner(8172, V4SearchSampleMode::Legacy, unencodable, None),
+            s.search_clone_v4_mode_inner(8172, V4SearchSampleMode::Legacy, unencodable, None, None),
             Err(Error::SampleBoundaryEncodingFailed)
         ));
     }

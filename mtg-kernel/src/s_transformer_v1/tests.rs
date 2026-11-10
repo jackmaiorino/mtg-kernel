@@ -367,3 +367,115 @@ fn updates_are_deterministic_across_runs_and_resume() {
     assert_eq!(receipt["run_to_run_identical"].as_bool(), Some(true));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn parallel_gae_preserves_full_adam_checkpoint() {
+    let model = SModelV1::init_parity_v1(TINY_V1, 72).unwrap();
+    let mut warm = STrainStateV1::fresh_optimizer_v1(model);
+    let mut work = SWorkV1::default();
+    let mut data = tiny_groups_v1(81, 15);
+    // These two-substep groups cross the worker block boundaries. Use the
+    // same card repeatedly in both the object and reference paths.
+    for (rows, _, _) in &mut data {
+        for (tensor, _) in rows {
+            tensor.object_card_ids.fill(1);
+            tensor.action_ref_card_ids.fill(1);
+        }
+    }
+    data[0].1 = 0.0;
+    data[1].1 = -0.0;
+    let groups = as_groups_v1(&data);
+    warm.train_step_gae_v1(&groups, 0.5, 1.0e-4, &mut work)
+        .unwrap();
+    assert!(warm.first_moments_v1().iter().any(|m| *m != 0.0));
+    assert!(warm.second_moments_v1().iter().any(|m| *m != 0.0));
+    let model = warm.model_v1();
+    let mut serial_grad = vec![0.0; model.layout_v1().total];
+    model
+        .gae_loss_gradient_v1(&groups, 0.5, &mut serial_grad, &mut work)
+        .unwrap();
+    let before = encode_checkpoint_v1(&warm);
+    let mut serial = warm.clone();
+    let expected = serial
+        .train_step_gae_v1(&groups, 0.5, 1.0e-4, &mut work)
+        .unwrap();
+    let expected_checkpoint = encode_checkpoint_v1(&serial);
+    let loss_bits = |loss: SLossV1| {
+        [
+            loss.policy_sum,
+            loss.value_sum,
+            loss.policy_term,
+            loss.value_term,
+            loss.loss,
+        ]
+        .map(f32::to_bits)
+    };
+    for workers in [2, 3, 5] {
+        let mut parallel_grad = vec![0.0; serial_grad.len()];
+        model
+            .gae_loss_gradient_parallel_v1(&groups, 0.5, &mut parallel_grad, workers, &mut work)
+            .unwrap();
+        for (index, (actual, expected)) in parallel_grad.iter().zip(&serial_grad).enumerate() {
+            assert_eq!(
+                actual.to_bits(),
+                expected.to_bits(),
+                "gradient {index}, workers {workers}"
+            );
+        }
+        let mut parallel = decode_checkpoint_v1(&before).unwrap();
+        let actual = parallel
+            .train_step_gae_with_workers_v1(&groups, 0.5, 1.0e-4, &mut work, workers)
+            .unwrap();
+        assert_eq!(actual.loss.group_count, expected.loss.group_count);
+        assert_eq!(loss_bits(actual.loss), loss_bits(expected.loss));
+        assert_eq!(actual.adam_step, expected.adam_step);
+        assert_eq!(actual.after_state_sha256, expected.after_state_sha256);
+        assert_eq!(encode_checkpoint_v1(&parallel), expected_checkpoint);
+    }
+}
+
+#[test]
+fn parallel_gae_reports_first_batch_error_without_updating_adam() {
+    let model = SModelV1::init_parity_v1(TINY_V1, 73).unwrap();
+    let mut state = STrainStateV1::fresh_optimizer_v1(model);
+    let before = encode_checkpoint_v1(&state);
+    let data = tiny_groups_v1(82, 8);
+    let mut groups = as_groups_v1(&data);
+    groups[1].substeps[1].selected = usize::MAX;
+    groups[2].substeps.clear();
+    let error = |state: &mut STrainStateV1, workers| {
+        state
+            .train_step_gae_with_workers_v1(&groups, 0.5, 1.0e-4, &mut SWorkV1::default(), workers)
+            .unwrap_err()
+    };
+    let expected = error(&mut state, 1);
+    assert!(
+        expected.starts_with("S group 1 substep 1: selected"),
+        "{expected}"
+    );
+    assert_eq!(error(&mut state, 2), expected);
+    assert_eq!(encode_checkpoint_v1(&state), before);
+}
+
+/// The tape-size bound the saved-batch fixture reports equals the lengths a
+/// forward actually leaves in its tape, for the S shape and the small test
+/// shape, after both larger and smaller decisions.
+#[test]
+fn tape_bytes_bound_matches_the_buffers_a_forward_sizes() {
+    let mut rng = SplitMixV1::new(91);
+    for (config, seed) in [(SConfigV1::s_v1(), 5), (TINY_V1, 6)] {
+        let model = SModelV1::init_parity_v1(config, seed).unwrap();
+        let mut tape = STapeV1::default();
+        for _ in 0..6 {
+            let t = synthetic_decision_v1(&mut rng, super::tools::PARITY_SHAPE_V1);
+            let input = SInputV1::of_tensor_v1(&t);
+            let counts = input.validate_v1(&config).unwrap();
+            model.forward_v1(input, &mut tape).unwrap();
+            assert_eq!(
+                STapeV1::bytes_for_counts_v1(&config, counts),
+                tape.live_bytes_v1(),
+                "{counts:?}"
+            );
+        }
+    }
+}

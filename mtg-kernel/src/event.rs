@@ -2077,6 +2077,10 @@ pub enum CommittedEvent {
     DrakusethDamageSourceV76 {
         journal: Box<crate::drakuseth_damage_source_v76::JournalV76>,
     },
+    NishobaDamageSourceV1 {
+        source: crate::state::AbilitySourceContractV4,
+        damage_history_index: u64,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2877,6 +2881,16 @@ pub fn apply_replacements(
                 },
             )
         {
+            return None;
+        }
+        // Phantom Nishoba (Premodern wave P2c): damage that can't be
+        // prevented is dealt, but the counter still comes off.
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::eternal_premodern_p2c_v1::statics::prevent_damage(
+            state,
+            damage,
+            damage_cannot_be_prevented,
+        ) {
             return None;
         }
     }
@@ -4423,6 +4437,67 @@ fn commit_with_entry_batch_and_source_color(
     let progenitus_input = progenitus_plan
         .as_ref()
         .map(|plan| plan.record_input(state));
+    // Exile does not have the battlefield/stack reveal-on-exit rule. A
+    // concealed exiled card can enter a hidden zone without naming itself.
+    let concealed_exile_departure = match &event {
+        ProposedEvent::ZoneChange(change)
+            if matches!(change.to_zone, Zone::Hand | Zone::Library)
+                && !(change.to_zone == Zone::Library
+                    && change.library_insert_visibility == LibraryInsertVisibility::Public) =>
+        {
+            let object = state.objects.get(change.object);
+            (object.zone == Zone::Exile)
+                .then_some(object.v4.face_down_v1)
+                .flatten()
+                .map(|face| (change.object, face.lookers))
+        }
+        _ => None,
+    };
+    #[cfg(feature = "eternal-fixtures")]
+    let nishoba_source = match &event {
+        ProposedEvent::Damage(damage) => {
+            crate::eternal_premodern_p2c_v1::nishoba_damage_source(state, damage.source)
+        }
+        _ => None,
+    };
+    // A Damage endpoint is attributable to its indexed public object before
+    // damage hooks can move it. Nominal zone markers and anonymous hidden
+    // sources do not suffice. A face-down battlefield permanent still has a
+    // public owner and is visibly the permanent dealing/receiving the damage;
+    // concealed exile/stack correspondence is deliberately not admitted.
+    let damage_public_owners = match &event {
+        ProposedEvent::Damage(damage) => {
+            let target = match damage.target {
+                Target::Object(object) => Some(object),
+                _ => None,
+            };
+            std::iter::once(damage.source)
+                .chain(target)
+                .filter_map(|id| {
+                    let object = state.objects.try_get(id)?;
+                    let public = match object.zone {
+                        Zone::Battlefield => state.players[object.controller.index()]
+                            .battlefield
+                            .contains(&id),
+                        Zone::Graveyard if object.v4.face_down_v1.is_none() => {
+                            state.players[object.owner.index()].graveyard.contains(&id)
+                        }
+                        Zone::Exile if object.v4.face_down_v1.is_none() => {
+                            state.exile.contains(&id)
+                        }
+                        Zone::Stack if object.v4.face_down_v1.is_none() => {
+                            state.stack.iter().any(|item| {
+                                item.kind == crate::state::StackItemKind::Spell && item.source == id
+                            })
+                        }
+                        _ => false,
+                    };
+                    public.then_some((id, object.owner))
+                })
+                .collect::<Vec<_>>()
+        }
+        _ => Vec::new(),
+    };
     let Some(MaterializedEventV1 {
         committed,
         alesha_power_departure,
@@ -4519,7 +4594,47 @@ fn commit_with_entry_batch_and_source_color(
         }
     );
     let entry_history_index = state.engine.event_history.len();
+    if let CommittedEvent::Damage { source, target, .. } = &committed {
+        for (object, owner) in damage_public_owners {
+            if object == *source || *target == Target::Object(object) {
+                state.observation_journal.record_damage_public_owner_v3(
+                    entry_history_index,
+                    object,
+                    owner,
+                );
+            }
+        }
+    }
+    if let CommittedEvent::ZoneChange { object, .. } = &committed {
+        let mask = concealed_exile_departure
+            .filter(|(id, _)| id == object)
+            .map(|(_, mask)| mask)
+            .unwrap_or_else(|| {
+                state
+                    .objects
+                    .get(*object)
+                    .v4
+                    .face_down_v1
+                    .map_or(3, |f| f.lookers)
+            });
+        state
+            .observation_journal
+            .record_visibility_v2(entry_history_index, *object, mask);
+    }
     state.engine.event_history.push(committed);
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(source) = nishoba_source.filter(|source| {
+        matches!(state.engine.event_history.get(entry_history_index),
+            Some(CommittedEvent::Damage { source: object, amount, .. })
+                if *object == source.source && *amount > 0)
+    }) {
+        let receipt = CommittedEvent::NishobaDamageSourceV1 {
+            source,
+            damage_history_index: entry_history_index as u64,
+        };
+        state.engine.event_log.push(receipt.clone());
+        state.engine.event_history.push(receipt);
+    }
     record_copied_token_entry_v1(state, entry_history_index);
     crate::effect::curator_v1::record_entry(state, entry_history_index);
     if !tutelage_observers.is_empty()
@@ -6093,10 +6208,15 @@ fn batch_with_aura_token_hosts_v1(
     let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     if needs_final_zone_pt_plan_v1(state, &events) {
         let mut replaced = state.clone();
+        #[cfg(feature = "eternal-fixtures")]
+        let nishoba_batch =
+            crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(&mut replaced, &events);
         let survivors = events
             .into_iter()
             .filter_map(|event| apply_replacements(&mut replaced, event))
             .collect::<Vec<_>>();
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_premodern_p2c_v1::statics::end_damage_batch(&mut replaced, nishoba_batch);
         if let Some((_, source)) = replaced.engine.halted {
             halt_zone_pt_v1(state, source);
             return;
@@ -6149,10 +6269,15 @@ fn batch_with_aura_token_hosts_v1(
         );
         return;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    let nishoba_batch =
+        crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(state, &events);
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
         .filter_map(|e| apply_replacements(state, e))
         .collect();
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, nishoba_batch);
     commit_batch_survivors(
         state,
         survivors,
@@ -6777,6 +6902,15 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
 /// later, it doesn't replace the cast event itself).
 pub fn log_spell_cast(state: &mut GameState, spell: ObjectId, controller: PlayerId) {
     let committed = CommittedEvent::SpellCast { spell, controller };
+    let mask = state
+        .objects
+        .get(spell)
+        .v4
+        .face_down_v1
+        .map_or(3, |f| f.lookers);
+    state
+        .observation_journal
+        .record_visibility_v2(state.engine.event_history.len(), spell, mask);
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
     let kaito_cast = state.engine.event_history.len() - 1;
@@ -7074,6 +7208,8 @@ fn materialize_zone_change_v1(
     });
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
+    let source_face = state.objects.get(id).v4.face_down_v1;
+    let source_face_down = source_face.is_some();
     let nine_lives_cast_entry = to_zone == Zone::Battlefield
         && from_zone == Zone::Stack
         && crate::card_def::CARD_DEFS[usize::from(state.objects.get(id).card_def)].name
@@ -7128,6 +7264,7 @@ fn materialize_zone_change_v1(
             Zone::Battlefield => entering_face_down.is_none(),
             _ => true,
         };
+        state.record_hand_departure_v3(id, to_zone, named);
         state.forget_departing_hand_object(id, named);
     } else {
         state.forget_hand_object(id);
@@ -7435,10 +7572,36 @@ fn materialize_zone_change_v1(
         // Returning a publicly identified card to hand does not make that
         // identity secret again. The owner sees it through `own_hand`; the
         // other observer receives an incarnation-bound known-hand fact.
+        let meaning = match (from_zone, source_face_down) {
+            (Zone::Battlefield | Zone::Stack, true) => crate::reveal_meaning_v3::RevealV3::Present,
+            (
+                Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile | Zone::Command,
+                false,
+            ) => crate::reveal_meaning_v3::RevealV3::PublicTransfer(from_zone),
+            _ => crate::reveal_meaning_v3::RevealV3::Omit,
+        };
         // spellbench-public-reveal: hand card revealed by the card rules.
         for observer in [PlayerId::P0, PlayerId::P1] {
+            // Unlike battlefield/stack exits, concealed exile does not reveal
+            // its name. Capture look permission before reset_for_zone_change
+            // clears the face-down marker. Omit only suppresses the V3 journal;
+            // it does not suppress the legacy known-hand row below.
+            if from_zone == Zone::Exile
+                && observer != owner
+                && source_face.is_some_and(|face| face.lookers & (1 << observer.index()) == 0)
+            {
+                continue;
+            }
+            // A permitted look establishes a viewer-visible hand name, but
+            // concealed exile is not a continuously public arrival. Preserve
+            // that existence fact without claiming a distinct arriving copy.
+            let meaning = if from_zone == Zone::Exile && source_face_down {
+                crate::reveal_meaning_v3::RevealV3::Present
+            } else {
+                meaning
+            };
             state
-                .reveal_distinct_hand_card(observer, owner, id)
+                .reveal_distinct_hand_card_with_meaning_v3(observer, owner, id, meaning)
                 .expect("just moved this live public object into its owner's hand");
         }
     } else if to_zone == Zone::Hand && informed_observer_mask != 0 {

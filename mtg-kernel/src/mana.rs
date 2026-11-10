@@ -1189,6 +1189,13 @@ fn gather_sources_for_spell_restrictions_v1(
                 choices.push(color);
             }
         }
+        // Reflecting Pool's colors (Premodern wave P2c).
+        #[cfg(feature = "eternal-fixtures")]
+        for color in crate::eternal_premodern_p2c_v1::statics::pool_colors(state, id) {
+            if !choices.contains(&color) {
+                choices.push(color);
+            }
+        }
         // The Tainted lands' Swamp-gated colors (Premodern wave P2a).
         #[cfg(feature = "eternal-fixtures")]
         for &color in crate::eternal_premodern_p2a_v1::statics::tainted_colors(state, id) {

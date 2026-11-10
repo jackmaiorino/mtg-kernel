@@ -24,8 +24,8 @@ def unique_object(pairs):
     return result
 
 
-def strict_json(raw):
-    return json.loads(raw, object_pairs_hook=unique_object,
+def strict_json(raw, *, loads=json.loads):
+    return loads(raw, object_pairs_hook=unique_object,
         parse_constant=lambda value: (_ for _ in ()).throw(ValueError('Nonfinite JSON: '+value)))
 
 

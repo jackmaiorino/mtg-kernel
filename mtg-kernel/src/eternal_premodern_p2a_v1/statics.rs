@@ -53,14 +53,19 @@ fn active_with_id<'a>(
 
 // ---- Untap steps and tapped entries -------------------------------------------------
 
+/// Stasis: "Players skip their untap steps." Whether the untap step is
+/// skipped as a whole, so nothing happens during it.
+pub(crate) fn untap_step_skipped(state: &GameState) -> bool {
+    active_with_id(state, static_ids().stasis, STASIS, None)
+        .next()
+        .is_some()
+}
+
 /// Stasis: "Players skip their untap steps." Forsaken City: "This land
 /// does not untap during your untap step." Whether `object` stays tapped
 /// through the untap step.
 pub(crate) fn prevents_untap_step(state: &GameState, object: ObjectId) -> bool {
-    if active_with_id(state, static_ids().stasis, STASIS, None)
-        .next()
-        .is_some()
-    {
+    if untap_step_skipped(state) {
         return true;
     }
     state
