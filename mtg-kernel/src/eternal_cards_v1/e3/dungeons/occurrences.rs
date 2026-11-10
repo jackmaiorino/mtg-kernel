@@ -31,6 +31,7 @@ pub struct RoomEntryV1 {
 pub enum RoomJournalV1 {
     Entered(RoomEntryV1),
     Published { entered_at: usize, item: StackItemId },
+    Removed { last_room: usize, occurrence: usize, colors: u8 },
 }
 
 fn journal(event: &CommittedEvent) -> Option<RoomJournalV1> {
@@ -107,6 +108,43 @@ pub(crate) fn is_bound(op: &EffectOp) -> bool {
     matches!(op, EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::RoomBoundV1 { .. })))
 }
 
+/// The room belongs to the dungeon. The venturing card is only provenance.
+pub(crate) fn source_colors(state: &GameState, effect: &EffectOp) -> Result<u8, &'static str> {
+    let entry = bound_entry(state, effect).ok_or("room source lost its native entry")?;
+    let active = active_entry(state, entry.player)
+        .is_some_and(|active| active.occurrence == entry.occurrence);
+    let start = entry.entered_at + 1;
+    let mut departures = state.engine.event_history[start..]
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, event)| match journal(event) {
+            Some(RoomJournalV1::Removed { last_room, occurrence, colors })
+                if occurrence == entry.occurrence => Some((start + offset, last_room, colors)),
+            _ => None,
+        });
+    let Some((at, last_room, colors)) = departures.next() else {
+        return if active {
+            Ok(crate::eternal_legacy_e9a_v1::statics::painter_mask(state))
+        } else {
+            Err("room source lost its dungeon removal")
+        };
+    };
+    if active
+        || departures.next().is_some()
+        || colors & !0x1f != 0
+        || entry.entered_at > last_room
+        || last_room >= at
+        || !entry_at(state, last_room).is_some_and(|last| {
+            last.occurrence == entry.occurrence && last.player == entry.player
+                && last.dungeon == entry.dungeon
+                && leads_to(last.dungeon, last.room).is_some_and(<[u16]>::is_empty)
+        })
+    {
+        return Err("room source has malformed dungeon removal");
+    }
+    Ok(colors)
+}
+
 fn for_item(state: &GameState, item: &StackItem) -> Option<RoomEntryV1> {
     let entry = bound_entry(state, item.inline_effect.as_ref()?)?;
     let spec = room_target_spec(entry.dungeon, entry.room);
@@ -143,6 +181,7 @@ pub(crate) fn validate_pending(state: &GameState, pending: &PendingTrigger) -> R
         return Ok(());
     }
     let entry = bound_entry(state, &pending.effect).ok_or("room trigger lost its native entry")?;
+    source_colors(state, &pending.effect)?;
     if pending.controller != entry.player
         || pending.source != entry.source.source
         || pending.source_contract != Some(entry.source)
@@ -179,6 +218,14 @@ pub(crate) fn published(state: &GameState, item: &StackItem) -> Option<RoomEntry
         .then_some(entry)
 }
 
+pub(crate) fn validate_stack_target_source(state: &GameState, item: &StackItem) -> Result<(), String> {
+    if let Some(effect) = item.inline_effect.as_ref().filter(|effect| is_bound(effect)) {
+        published(state, item).ok_or("room source lost its native publication")?;
+        source_colors(state, effect)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_resolving(
     state: &GameState,
     pending: &EffectContinuation,
@@ -186,8 +233,9 @@ pub(crate) fn validate_resolving(
     if !pending.resolving_item.inline_effect.as_ref().is_some_and(is_bound) {
         return Ok(());
     }
-    let entry = published(state, &pending.resolving_item)
-        .ok_or("room resolution lost its native publication")?;
+    let item = &pending.resolving_item;
+    let entry = published(state, item).ok_or("room resolution lost its native publication")?;
+    source_colors(state, item.inline_effect.as_ref().ok_or("room resolution lost its effect")?)?;
     if pending.ctx.source != entry.source.source
         || pending.ctx.controller != entry.player
         || pending.ctx.ability_source_contract != Some(entry.source)
@@ -249,7 +297,16 @@ fn bottommost(state: &GameState, player: PlayerId) -> Option<BottommostV1> {
     Some(BottommostV1::ForgottenRealms { entry, includes_legacy_rooms: first.room != 1 })
 }
 
-fn remove(state: &mut GameState, player: PlayerId, dungeon: u16) {
+fn remove(state: &mut GameState, player: PlayerId, bottom: BottommostV1) {
+    let dungeon = bottom.dungeon();
+    if let BottommostV1::ForgottenRealms { entry, .. } = bottom {
+        let colors = crate::eternal_legacy_e9a_v1::statics::painter_mask(state);
+        record(state, JournalV1::DungeonRoomV1(RoomJournalV1::Removed {
+            last_room: entry.entered_at,
+            occurrence: entry.occurrence,
+            colors,
+        }));
+    }
     let marker = &mut state.players[player.index()].dungeon;
     if let Err(index) = marker.completed_dungeons.binary_search(&dungeon) {
         marker.completed_dungeons.insert(index, dungeon);
@@ -341,7 +398,7 @@ impl BottommostV1 {
 /// even while room abilities from the old occurrence still wait.
 pub(crate) fn complete_bottommost(state: &mut GameState, player: PlayerId) {
     if let Some(bottom) = bottommost(state, player) {
-        remove(state, player, bottom.dungeon());
+        remove(state, player, bottom);
     }
 }
 
@@ -354,7 +411,7 @@ pub(crate) fn complete_ready(state: &mut GameState, protected: &[PendingTrigger]
             continue;
         };
         if !bottom.has_waiting_room(state, protected) {
-            remove(state, player, bottom.dungeon());
+            remove(state, player, bottom);
             changed = true;
         }
     }

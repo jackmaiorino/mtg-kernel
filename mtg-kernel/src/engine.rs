@@ -3576,6 +3576,9 @@ pub fn legal_targets_for(
 
 #[derive(Debug, Clone, Copy)]
 struct TargetingSource {
+    /// A native dungeon uses its own color or departure LKI. The object
+    /// fields still hold provenance and never supply its characteristics.
+    dungeon_colors: Option<Result<u8, ()>>,
     types_override: Option<crate::source_type_hexproof_v1::SourceTypesV1>,
     object: ObjectId,
     card_def: u16,
@@ -3592,6 +3595,7 @@ struct TargetingSource {
 
 fn targeting_source_for_object(state: &GameState, object: ObjectId) -> Option<TargetingSource> {
     state.objects.try_get(object).map(|live| TargetingSource {
+        dungeon_colors: None,
         types_override: None,
         object,
         card_def: live.card_def,
@@ -3665,6 +3669,7 @@ fn spell_sourced_trigger_targeting_source(item: &StackItem) -> Option<TargetingS
     }
     let spell = item.v4.source_contract?;
     (spell.zone == Zone::Stack && spell.source == item.source).then_some(TargetingSource {
+        dungeon_colors: None,
         types_override: None,
         object: item.source,
         card_def: spell.card_def,
@@ -3698,6 +3703,7 @@ fn triggered_ability_targeting_source(
     } = effect
     {
         return Some(TargetingSource {
+            dungeon_colors: None,
             types_override: None,
             object: original.source,
             card_def: original.card_def,
@@ -3715,7 +3721,13 @@ fn triggered_ability_targeting_source(
         EffectOp::PutPlusOnePlusOneCounterOnTargetOtherThan { other_than } => Some(*other_than),
         _ => None,
     };
+    let dungeon_colors = crate::eternal_cards_v1::e3::dungeons::occurrences::is_bound(effect)
+        .then(|| {
+            crate::eternal_cards_v1::e3::dungeons::occurrences::source_colors(state, effect)
+                .map_err(|_| ())
+        });
     source_contract.map(|contract| TargetingSource {
+        dungeon_colors,
         types_override: None,
         object: source,
         card_def: contract.card_def,
@@ -3941,6 +3953,12 @@ fn legal_targets_unrestricted_v1(
     source: Option<TargetingSource>,
     state: &GameState,
 ) -> Vec<Target> {
+    let dungeon_colors = match source.and_then(|source| source.dungeon_colors) {
+        Some(Ok(colors)) => Some(colors),
+        Some(Err(())) => return Vec::new(),
+        None => None,
+    };
+    let source = source.filter(|_| dungeon_colors.is_none());
     if spec
         == TargetSpec::StandardV1(
             crate::standard_cards_v1::StandardTargetV1::OneToThreeDistinctAnyTargetsV1,
@@ -4841,6 +4859,24 @@ fn legal_targets_unrestricted_v1(
             targets.retain(|target| !matches!(target, Target::Object(id) if crate::source_type_hexproof_v1::active_rule(state, *id, controller).is_some_and(|rule| crate::source_type_hexproof_v1::protects(rule, types))));
         }
     }
+    if let Some(colors) = dungeon_colors.filter(|&colors| colors != 0) {
+        targets.retain(|&target| {
+            if crate::eternal_cards_v1::e3::veil_protects_from_colors(state, target, controller, colors) {
+                return false;
+            }
+            let Target::Object(object) = target else {
+                return true;
+            };
+            let color_count = colors.count_ones();
+            !crate::controlled_creature_grants_v1::protects_from_colors(state, object, colors)
+                && !crate::eternal_pauper_e6b_v1::protected_from_colors(state, object, colors)
+                && !crate::standard_legends_v1::hexproof_from_color_mask(state, object, controller, colors)
+                && !(color_count == 1
+                    && has_effective_keyword(state, object, Keywords::PROTECTION_FROM_MONOCOLORED))
+                && !(color_count > 1
+                    && crate::eternal_vintage_e7b_v1::statics::has_protection_from_multicolored(state, object))
+        });
+    }
     if spec == TargetSpec::KickerControlledCreatures {
         targets.retain(|target| !targets_chosen.contains(target));
     }
@@ -5017,6 +5053,7 @@ pub(crate) fn effect_target_is_legal_from_ability_source_with_power_lki(
             &targets[..index],
             controller,
             Some(TargetingSource {
+                dungeon_colors: None,
                 types_override: None,
                 object: source.source,
                 card_def: source.card_def,
@@ -5270,6 +5307,7 @@ fn activation_legal_targets_with_source_lki(
         targets_chosen,
         controller,
         Some(TargetingSource {
+            dungeon_colors: None,
             types_override: None,
             object: source,
             card_def: captured_source
@@ -19071,6 +19109,8 @@ pub(crate) fn stack_targets_still_legal(
     item: &StackItem,
     state: &GameState,
 ) -> Result<bool, String> {
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::dungeons::occurrences::validate_stack_target_source(state, item)?;
     let Some(spec) = validated_stack_item_target_spec(item, state)? else {
         return Ok(true);
     };
@@ -19226,6 +19266,7 @@ pub(crate) fn stack_targets_still_legal(
                     item.controller,
                     match item.kind {
                         StackItemKind::Spell => Some(TargetingSource {
+                            dungeon_colors: None,
                             types_override: None,
                             object: item.source,
                             card_def: state.objects.get(item.source).card_def,
@@ -19256,6 +19297,7 @@ pub(crate) fn stack_targets_still_legal(
                                 // Battlemage) targets from its producing spell's incarnation,
                                 // authenticated above by `validate_spell_sourced_trigger`.
                                 Some(TargetingSource {
+                                    dungeon_colors: None,
                                     types_override: None,
                                     object: item.source,
                                     card_def: spell.card_def,

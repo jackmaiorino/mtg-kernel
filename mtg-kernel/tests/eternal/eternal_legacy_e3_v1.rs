@@ -1746,6 +1746,126 @@ fn taking_initiative_advances_the_current_forgotten_realms_dungeon_both_seats() 
     }
 }
 
+fn paid_black_painter(state: &mut GameState, player: PlayerId) -> ObjectId {
+    let painter = put(state, player, "Painter's Servant", Zone::Hand);
+    pool(state, player, &[], 2);
+    cast(state, painter, &[]);
+    assert!(matches!(settle(state), Some(Decision::ChooseEffectOption { option_count: 5, .. })));
+    act(state, Action::ChooseEffectOption(2));
+    settled(state);
+    assert_eq!(state.objects.get(painter).v4.chosen_color, Some(ManaColor::B));
+    painter
+}
+
+#[test]
+fn fungi_cavern_targets_using_the_active_dungeons_characteristics_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        for painted in [false, true] {
+            let mut state = islands();
+            state.active_player = actor;
+            state.priority_player = actor;
+            in_room(&mut state, actor, LOST_MINE, 3);
+            if painted {
+                paid_black_painter(&mut state, actor);
+            }
+            let enforcer = put(&mut state, opponent, "Mystic Enforcer", Zone::Battlefield);
+            let chaplain = put(&mut state, opponent, "Beloved Chaplain", Zone::Battlefield);
+            let shroud = put(&mut state, opponent, "Nimble Mongoose", Zone::Battlefield);
+            let acererak = put(&mut state, actor, ACERERAK, Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::B], 2);
+            cast(&mut state, acererak, &[]);
+            assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { option_count: 2, .. })));
+            act(&mut state, Action::ChooseEffectOption(1));
+            let Some(Decision::ChooseTargets { player, legal_targets, .. }) = settle(&mut state) else {
+                panic!("Fungi Cavern must have legal targets");
+            };
+            assert_eq!(player, actor);
+            assert_eq!(legal_targets.contains(&Target::Object(enforcer)), !painted);
+            assert!(legal_targets.contains(&Target::Object(chaplain)));
+            assert!(!legal_targets.contains(&Target::Object(shroud)));
+            let target = if painted { chaplain } else { enforcer };
+            let power = engine::effective_power(&state, target);
+            act(&mut state, Action::ChooseTarget(Target::Object(target)));
+            settled(&mut state);
+            assert_eq!(engine::effective_power(&state, target), power - 4);
+        }
+    }
+}
+
+#[test]
+fn fungi_cavern_keeps_painted_color_after_its_dungeon_leaves_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        in_room(&mut state, actor, LOST_MINE, 3);
+        let painter = paid_black_painter(&mut state, actor);
+        let aluren = put(&mut state, actor, "Aluren", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::G; 2], 2);
+        cast(&mut state, aluren, &[]);
+        settled(&mut state);
+        let target = put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Battlefield);
+        let acererak = put(&mut state, actor, ACERERAK, Zone::Hand);
+        cast(&mut state, acererak, &[]);
+        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { option_count: 2, .. })));
+        act(&mut state, Action::ChooseEffectOption(1)); // Fungi Cavern.
+        choose_target(&mut state, Target::Object(target));
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor));
+        let fungi = state.stack.last().unwrap().v4.stack_item_id;
+        let mut active = state.clone();
+
+        cast(&mut state, acererak, &[]); // Reach Temple with Fungi still waiting.
+        pass_until(&mut state, |state| {
+            state.players[actor.index()].dungeon.room_id == Some(7) && state.stack.len() == 2
+        });
+        cast(&mut state, acererak, &[]); // Complete Lost Mine before choosing the new dungeon.
+        assert!(matches!(settle(&mut state), Some(Decision::ChooseEffectOption { option_count: 3, .. })));
+        assert_eq!(state.players[actor.index()].dungeon.completed_dungeons, vec![LOST_MINE]);
+        act(&mut state, Action::ChooseEffectOption(1)); // Mad Mage's Yawning Portal.
+        pass_until(&mut state, |state| {
+            let marker = &state.players[actor.index()].dungeon;
+            marker.dungeon_id == Some(MAD_MAGE) && marker.room_id == Some(1) && state.stack.len() == 2
+        });
+
+        for (branch, departed) in [(&mut active, false), (&mut state, true)] {
+            let bounce = put(branch, actor, "Echoing Truth", Zone::Hand);
+            pool(branch, actor, &[ManaColor::U], 1);
+            cast(branch, bounce, &[Target::Object(painter)]);
+            pass_until(branch, |state| state.objects.get(painter).zone == Zone::Hand);
+            let blessing = put(branch, actor, "Benevolent Blessing", Zone::Hand);
+            pool(branch, actor, &[ManaColor::W], 1);
+            cast(branch, blessing, &[Target::Object(target)]);
+            assert!(matches!(settle(branch), Some(Decision::ChooseEffectOption { option_count: 5, .. })));
+            act(branch, Action::ChooseEffectOption(2));
+            pass_until(branch, |state| state.objects.get(blessing).v4.chosen_color == Some(ManaColor::B));
+            assert!(branch.stack.iter().any(|item| item.v4.stack_item_id == fungi));
+            let power = engine::effective_power(branch, target);
+
+            let saved = serde_json::to_value(branch).unwrap();
+            if departed {
+                let mut forged = saved.clone();
+                let removal = forged["engine"]["event_history"].as_array_mut().unwrap().iter_mut()
+                    .find_map(|row| row.get_mut("EternalOwnedDrawV1")?.get_mut("journal")?
+                        .get_mut("DungeonRoomV1")?.get_mut("Removed"))
+                    .expect("original Lost Mine removal");
+                assert_eq!(removal["colors"], serde_json::json!(mtg_kernel::card_def::mana_color_mask(ManaColor::B)));
+                // The first room of this occurrence was Fungi Cavern, not its bottom room.
+                removal["last_room"] = removal["occurrence"].clone();
+                let mut forged: GameState = serde_json::from_value(forged).unwrap();
+                for _ in 0..2 {
+                    assert!(matches!(next(&mut forged), Decision::CastSpellOrPass { .. }));
+                    act(&mut forged, Action::Pass);
+                }
+                assert!(matches!(engine::advance_until_decision(&mut forged), Decision::Halted { .. }));
+            }
+            let mut restored: GameState = serde_json::from_value(saved).unwrap();
+            settled(&mut restored);
+            assert_eq!(engine::effective_power(&restored, target), if departed { power } else { power - 4 });
+        }
+    }
+}
+
 #[test]
 fn veils_of_fear_costs_two_life_unless_a_card_is_discarded() {
     let mut state = islands();
