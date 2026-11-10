@@ -22992,6 +22992,8 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
     if !def.is_executable() {
         return Keywords(found.0 & wanted.0);
     }
+    let (text, text_face) = crate::full_text_v1::active_definition(state, id)
+        .map_or((def, obj.v4.face_index), |definition| (definition, 0));
     let printed_active = crate::continuous_characteristics_v1::printed_abilities_active(state, id);
     if printed_active && obj.v4.copied_end_step_sacrifices_v1 != 0 {
         found = found | Keywords::HASTE;
@@ -23023,7 +23025,7 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
     found = found | crate::starting_life_statics_v1::self_bonus(state, id).keywords;
     if printed_active {
         let removed = crate::standard_creatures_v1::removed_printed_keywords(state, id);
-        found = found | Keywords(def.keywords_for_face(obj.v4.face_index).0 & !removed.0);
+        found = found | Keywords(text.keywords_for_face(text_face).0 & !removed.0);
     }
     #[cfg(feature = "standard-magezero-fixtures")]
     if asks(Keywords::HASTE) && crate::standard_cards_v1::has_copied_haste(state, id) {
