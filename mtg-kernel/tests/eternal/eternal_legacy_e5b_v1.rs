@@ -1653,7 +1653,12 @@ fn quantum_riddler_draws_one_more_while_its_controller_holds_one_card_or_none() 
 
 fn cast_jace_for_riddler(state: &mut GameState, drawer: PlayerId) {
     let jace = put(state, drawer, "Jace, Wielder of Mysteries", Zone::Hand);
-    pool(state, drawer, &[ManaColor::U, ManaColor::U, ManaColor::U], 1);
+    pool(
+        state,
+        drawer,
+        &[ManaColor::U, ManaColor::U, ManaColor::U],
+        1,
+    );
     cast(state, jace, &[]);
     settled(state);
     assert_eq!(zone(state, jace), Zone::Battlefield);
@@ -1691,10 +1696,18 @@ fn quantum_riddler_stops_extra_draws_on_an_initial_jace_win_both_seats() {
             let start = state.engine.event_history.len();
             let riddler = cast_riddler_with_warp(&mut state, drawer);
             let winner = if jace { drawer } else { drawer.opponent() };
-            assert_eq!(settle(&mut state), Some(Decision::GameOver { winner: Some(winner) }));
+            assert_eq!(
+                settle(&mut state),
+                Some(Decision::GameOver {
+                    winner: Some(winner)
+                })
+            );
             assert_eq!(zone(&state, riddler), Zone::Battlefield);
             assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
-            assert_eq!(riddler_draws_since(&state, start, drawer), vec![None; if jace { 1 } else { 2 }]);
+            assert_eq!(
+                riddler_draws_since(&state, start, drawer),
+                vec![None; if jace { 1 } else { 2 }]
+            );
         }
     }
 }
@@ -1720,11 +1733,19 @@ fn quantum_riddler_stops_remaining_extra_draws_when_an_extra_wins_both_seats() {
 
         let start = state.engine.event_history.len();
         let second = cast_riddler_with_warp(&mut state, drawer);
-        assert_eq!(settle(&mut state), Some(Decision::GameOver { winner: Some(drawer) }));
+        assert_eq!(
+            settle(&mut state),
+            Some(Decision::GameOver {
+                winner: Some(drawer)
+            })
+        );
         assert_eq!(zone(&state, first), Zone::Battlefield);
         assert_eq!(zone(&state, second), Zone::Battlefield);
         assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
-        assert_eq!(riddler_draws_since(&state, start, drawer), vec![Some(last), None]);
+        assert_eq!(
+            riddler_draws_since(&state, start, drawer),
+            vec![Some(last), None]
+        );
     }
 }
 
