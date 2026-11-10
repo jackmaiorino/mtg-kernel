@@ -18,6 +18,8 @@ mod eternal_legacy_e7a_v1;
 mod eternal_legacy_e8a_v1;
 #[path = "eternal/eternal_legacy_e9a_v1.rs"]
 mod eternal_legacy_e9a_v1;
+#[path = "eternal/eternal_outside_game_v1.rs"]
+mod eternal_outside_game_v1;
 #[path = "eternal/eternal_pauper_e1_v1.rs"]
 mod eternal_pauper_e1_v1;
 #[path = "eternal/eternal_pauper_e6a_v1.rs"]

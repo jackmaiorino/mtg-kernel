@@ -195,6 +195,37 @@ fn content_identity_with_companion(ids: &[u16], companion: Option<u16>) -> Strin
     format!("custom-v1:{:x}", hash.finalize())
 }
 
+/// One seat's cards outside the game, sorted by id: fully supported,
+/// nontoken cards within the custom-deck input bound.
+fn resolve_outside_the_game(rows: &[CustomCardCountV1]) -> Result<Vec<u16>, String> {
+    if !cfg!(feature = "eternal-fixtures") && !rows.is_empty() {
+        return Err("cards outside the game need the eternal-fixtures build".to_string());
+    }
+    let mut ids = Vec::new();
+    for row in rows {
+        if row.count == 0 {
+            return Err(format!("zero copies of {:?} outside the game", row.name));
+        }
+        let id = card_id_by_name(&row.name)
+            .ok_or_else(|| format!("unknown card {:?} outside the game", row.name))?;
+        let card = &CARD_DEFS[id as usize];
+        if card.is_token || !card.has_full_support() {
+            return Err(format!(
+                "card {:?} outside the game is a token or lacks full engine support",
+                row.name
+            ));
+        }
+        if ids.len().saturating_add(row.count as usize) > MAX_CUSTOM_DECK_CARDS_V1 {
+            return Err(format!(
+                "cards outside the game exceed the {MAX_CUSTOM_DECK_CARDS_V1}-card input limit"
+            ));
+        }
+        ids.extend(std::iter::repeat_n(id, row.count as usize));
+    }
+    ids.sort_unstable();
+    Ok(ids)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "request_type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum LimitedRequestV1 {
@@ -206,6 +237,12 @@ pub enum LimitedRequestV1 {
         env_seed: u64,
         max_physical_decisions: u64,
         max_policy_steps: u64,
+        /// Each seat's cards outside the game (a best-of-three game's
+        /// sideboard without a companion in use), which wish and learn
+        /// effects read. They are absent from the public deck identity and
+        /// require the London mulligan schema, as companions do.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        outside_the_game: Option<[Vec<CustomCardCountV1>; 2]>,
     },
     Step {
         schema_version: u32,
@@ -259,6 +296,12 @@ pub struct LimitedReplyV1 {
     pub mulligan_rules: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observation_rules: Option<String>,
+    /// Public capability, never an identity or count from either private list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outside_game_rules: Option<String>,
+    /// The current chooser's outside-game choices in effect-option order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outside_game_options: Option<Vec<crate::eternal_outside_game_v1::OutsideGameOptionV1>>,
     pub request_id: Option<String>,
     pub kernel_version: String,
     pub card_db_hash: u64,
@@ -275,6 +318,8 @@ impl LimitedReplyV1 {
             combat_rules: None,
             mulligan_rules: None,
             observation_rules: None,
+            outside_game_rules: None,
+            outside_game_options: None,
             request_id,
             kernel_version: KERNEL_VERSION.to_string(),
             card_db_hash: KERNEL_CARDDB_HASH,
@@ -282,14 +327,27 @@ impl LimitedReplyV1 {
         }
     }
 
-    fn state(request_id: String, response: RlSessionResponseV1) -> Self {
+    fn state(
+        request_id: String,
+        response: RlSessionResponseV1,
+        session: &RlEpisodeSessionV1,
+    ) -> Self {
+        let mut outside_game_options = None;
         let body = match response {
-            RlSessionResponseV1::Decision(decision) => LimitedReplyBodyV1::Decision {
-                decision: Box::new(decision),
-            },
+            RlSessionResponseV1::Decision(decision) => {
+                outside_game_options = session.outside_game_options(decision.acting_player);
+                LimitedReplyBodyV1::Decision {
+                    decision: Box::new(decision),
+                }
+            }
             RlSessionResponseV1::Terminal(terminal) => LimitedReplyBodyV1::Terminal { terminal },
         };
-        Self::new(Some(request_id), body)
+        let mut reply = Self::new(Some(request_id), body);
+        reply.outside_game_options = outside_game_options;
+        reply.outside_game_rules =
+            crate::eternal_outside_game_v1::outside_game_profile(session.game_state())
+                .map(str::to_string);
+        reply
     }
 
     fn error(request_id: Option<String>, code: &str, message: &str) -> Self {
@@ -459,15 +517,25 @@ impl LimitedJsonlServerV1 {
                 env_seed,
                 max_physical_decisions,
                 max_policy_steps,
+                outside_the_game,
                 ..
             } => {
                 let mut ids = [Vec::new(), Vec::new()];
                 let mut companions = [None, None];
+                let mut outside = [Vec::new(), Vec::new()];
                 for (seat, deck) in decks.iter().enumerate() {
-                    match deck.resolve_with_companion() {
-                        Ok((resolved, companion)) => {
+                    let resolved = deck.resolve_with_companion().and_then(|resolved| {
+                        let cards = match outside_the_game {
+                            Some(rows) => resolve_outside_the_game(&rows[seat])?,
+                            None => Vec::new(),
+                        };
+                        Ok((resolved, cards))
+                    });
+                    match resolved {
+                        Ok(((resolved, companion), cards)) => {
                             ids[seat] = resolved;
                             companions[seat] = companion;
+                            outside[seat] = cards;
                         }
                         Err(error) => {
                             return LimitedReplyV1::error(
@@ -489,6 +557,7 @@ impl LimitedJsonlServerV1 {
                         deck_ids,
                         [&ids[0], &ids[1]],
                         companions,
+                        outside_the_game.as_ref().map(|_| outside),
                         self.priority_mode,
                         self.foundations_combat,
                         true,
@@ -499,6 +568,12 @@ impl LimitedJsonlServerV1 {
                         Some(request_id),
                         "unsupported_deck",
                         "companions need the London mulligan schema",
+                    );
+                } else if outside_the_game.is_some() {
+                    return LimitedReplyV1::error(
+                        Some(request_id),
+                        "unsupported_deck",
+                        "cards outside the game need the London mulligan schema",
                     );
                 } else {
                     RlEpisodeSessionV1::reset_with_custom_decks_v1(
@@ -514,7 +589,8 @@ impl LimitedJsonlServerV1 {
                 };
                 match session {
                     Ok(session) => {
-                        let reply = LimitedReplyV1::state(request_id, session.current_response());
+                        let reply =
+                            LimitedReplyV1::state(request_id, session.current_response(), &session);
                         self.active = Some(session);
                         reply
                     }
@@ -541,7 +617,7 @@ impl LimitedJsonlServerV1 {
                     *selected_index,
                     selected_action_id,
                 ) {
-                    Ok(response) => LimitedReplyV1::state(request_id, response),
+                    Ok(response) => LimitedReplyV1::state(request_id, response, session),
                     Err(error) => LimitedReplyV1::session_error(request_id, error),
                 }
             }

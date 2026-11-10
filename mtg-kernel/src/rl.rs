@@ -12118,6 +12118,14 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
     let choice = pending
         .choice
         .as_ref()
+        .filter(|choice| {
+            !matches!(
+                choice,
+                crate::effect::PendingEffectChoice::ChooseOption { player, options, .. }
+                    if *player != acting_player
+                        && crate::eternal_outside_game_v1::is_outside_game_choice(options)
+            )
+        })
         .map(|choice| -> Result<PendingEffectChoiceSemanticV4> {
             match choice {
                 crate::effect::PendingEffectChoice::ChooseOption {
