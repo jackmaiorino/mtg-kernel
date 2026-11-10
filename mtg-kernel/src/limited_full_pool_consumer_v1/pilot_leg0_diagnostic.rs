@@ -71,8 +71,15 @@ fn retained_numeric_pilot_leg_zero_encodes_the_original_pilfer_menu() {
 
     let native = owner.fixture_state();
     assert!(native.engine.halted.is_none());
-    let pending = native.engine.pending_effect.as_ref().expect("resolving Pilfer");
-    assert_eq!(CARD_DEFS[usize::from(native.objects.get(pending.ctx.source).card_def)].name, "Pilfer");
+    let pending = native
+        .engine
+        .pending_effect
+        .as_ref()
+        .expect("resolving Pilfer");
+    assert_eq!(
+        CARD_DEFS[usize::from(native.objects.get(pending.ctx.source).card_def)].name,
+        "Pilfer"
+    );
     assert_eq!(pending.ctx.controller, PlayerId::P1);
     assert_eq!(pending.ctx.targets, [Target::Player(PlayerId::P0)]);
 
@@ -83,7 +90,10 @@ fn retained_numeric_pilot_leg_zero_encodes_the_original_pilfer_menu() {
     assert_eq!(expected.acting_player, PlayerSeatV1::P1);
     assert_eq!(expected.decision_kind, FastActorDecisionKindV1::Surface);
     let bound = owner.encode(expected).unwrap_or_else(|error| {
-        panic!("pilot Pilfer projection: {error:?}; {:?}", owner.fixture_projection_error())
+        panic!(
+            "pilot Pilfer projection: {error:?}; {:?}",
+            owner.fixture_projection_error()
+        )
     });
     let actions = bound.fixture_backend_v75().actions();
     assert_eq!(actions.len(), 5);
