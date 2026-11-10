@@ -159,3 +159,20 @@ under `fdn110-ward-20261025/ci40272003668`; the E: root is
 kind order. This standalone event fragment tests serialization; it does not
 make the artificial mixed fixture a valid native replay or qualify a gameplay
 profile or Drakuseth consumers.
+
+## Appended ordered-graveyard event samples (November 10, 2026)
+
+The four samples below came from successful native producers at `442e15adcad577f40ead2f35e5abef1746d9a429`.
+The original payloads and producer results are recorded in
+`E:/codex-eternal-feb-442e-evidence/manifest.json`,
+SHA-256 `09f6b145c9ce2436bf63b218dd48cc145b0a57ade360985aac3a2cc3ee287360`.
+The trigger payload came from the dedicated trigger producer. The preceding
+315 event payloads retain their bytes and order. This append records sample
+provenance for the serialization corpus.
+
+| Event kind | Native producer | Original payload SHA-256 |
+| --- | --- | --- |
+| `FullTextTriggerCapturedV1` | `full_text_v1::tests::registered::volrath_native_cast_captures_and_pays_for_palinchron_text_both_seats` | `65a43e5302575fafe8031f927a6eb3222e4cc2a3c3ec01f6283e46e0f9d3e9d9` |
+| `FullTextBatchEntryV1` | `full_text_v1::tests::registered::volrath_native_mixed_batch_records_real_entry_and_order_both_seats` | `394a93b7526863ac5701a2d2ff0ec2b5b6214e4c9baf7066a78f6fc1cbf9b37b` |
+| `FullTextRestrictedUseV1` | `full_text_v1::tests::registered::volrath_native_wall_mana_records_the_exact_restricted_use_both_seats` | `0bd55de5fe06b428512681fe48b103250bfa4c1f166e4490d983130440f45844` |
+| `OrderedGraveyardControlGainedV1` | `full_text_v1::tests::registered::volrath_native_paid_control_transfer_records_the_new_controller_both_seats` | `3abcb5e812c0516f90ccdee856e29df8db7067a738d8f7d7147754286ddcce4f` |
