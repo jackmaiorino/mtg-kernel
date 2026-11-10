@@ -20069,9 +20069,10 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
     if state.engine.halted.is_some() {
         return;
     }
-    if ctx.stack_item_id.is_some_and(|id| {
-        crate::fixed_source_damage_v3::has_donated_payment(state, id)
-    }) {
+    if ctx
+        .stack_item_id
+        .is_some_and(|id| crate::fixed_source_damage_v3::has_donated_payment(state, id))
+    {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,
@@ -20506,9 +20507,9 @@ fn execute_with_native_row_v1(
         EffectOp::DealDamage { target, amount } => {
             if crate::gorehorn_damage_v1::owns_context(state, ctx)
                 || crate::equipment_damage_source_v4::owns_context(state, ctx)
-                || ctx.stack_item_id.is_some_and(|id| {
-                    crate::fixed_source_damage_v3::has_donated_payment(state, id)
-                })
+                || ctx
+                    .stack_item_id
+                    .is_some_and(|id| crate::fixed_source_damage_v3::has_donated_payment(state, id))
             {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,

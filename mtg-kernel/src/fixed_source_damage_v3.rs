@@ -145,7 +145,6 @@ pub(crate) fn requires_other_successor(state: &GameState) -> bool {
             })
 }
 
-
 fn is_record(e: &CommittedEvent) -> bool {
     matches!(
         e,
@@ -395,13 +394,16 @@ pub(crate) fn has_payment(state: &GameState, id: StackItemId) -> bool {
         })
 }
 pub(crate) fn has_donated_payment(state: &GameState, id: StackItemId) -> bool {
-    cfg!(feature = "eternal-fixtures") && state
-        .engine
-        .event_history
-        .scan_for_v1(&[EventKindV1::FixedDamagePaidV3])
-        .iter()
-        .any(|event| matches!(event, CommittedEvent::FixedDamagePaidV3 { payment }
-            if payment.item.v4.stack_item_id == id && donated_fanatic(&payment.item)))
+    cfg!(feature = "eternal-fixtures")
+        && state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::FixedDamagePaidV3])
+            .iter()
+            .any(|event| {
+                matches!(event, CommittedEvent::FixedDamagePaidV3 { payment }
+            if payment.item.v4.stack_item_id == id && donated_fanatic(&payment.item))
+            })
 }
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
     if !tracked(state, item) {

@@ -2808,7 +2808,8 @@ fn donated_historical_damage_source(state: &GameState, event: &ProposedEvent) ->
     let ProposedEvent::Damage(damage) = event else {
         return None;
     };
-    damage.historical_source
+    damage
+        .historical_source
         .filter(|id| crate::fixed_source_damage_v3::has_donated_payment(state, *id))
         .map(|_| damage.source)
 }
@@ -2817,9 +2818,10 @@ fn require_donated_damage_surrounding_owner(
     state: &GameState,
     damage: &DamageProposed,
 ) -> Result<(), String> {
-    if damage.historical_source.is_some_and(|id| {
-        crate::fixed_source_damage_v3::has_donated_payment(state, id)
-    }) && crate::linked_aura_operation_v1::needs_surrounding_operation_owner(state)
+    if damage
+        .historical_source
+        .is_some_and(|id| crate::fixed_source_damage_v3::has_donated_payment(state, id))
+        && crate::linked_aura_operation_v1::needs_surrounding_operation_owner(state)
     {
         return Err("donated Fanatic damage lost its surrounding native event owner".into());
     }
@@ -6067,7 +6069,10 @@ fn preflight_wide_batch_v59(state: &mut GameState, events: &[ProposedEvent]) -> 
 }
 
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
-    if events.iter().any(|event| refuse_unowned_donated_damage(state, event)) {
+    if events
+        .iter()
+        .any(|event| refuse_unowned_donated_damage(state, event))
+    {
         return;
     }
     if crate::graveyard_order_v1::owns_operation(state) {

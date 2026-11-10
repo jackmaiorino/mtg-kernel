@@ -502,7 +502,8 @@ fn volrath_native_paid_fanatic_uses_original_damage_source_both_seats() {
             };
             let mother =
                 protect.then(|| put(&mut state, opponent, "Mother of Runes", Zone::Battlefield));
-            let strands = prevent.then(|| put(&mut state, opponent, "Prismatic Strands", Zone::Hand));
+            let strands =
+                prevent.then(|| put(&mut state, opponent, "Prismatic Strands", Zone::Hand));
             let source = cast_volrath(&mut state, player);
             settled(&mut state);
             assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
@@ -671,19 +672,21 @@ fn volrath_native_paid_fanatic_uses_original_damage_source_both_seats() {
                     }));
                 }
                 if protect {
-                    let mut forged: GameState = serde_json::from_slice(
-                        &serde_json::to_vec(branch).unwrap(),
-                    ).unwrap();
-                    let removal = forged.engine.event_history.iter_mut().find_map(|event| {
-                        match event {
+                    let mut forged: GameState =
+                        serde_json::from_slice(&serde_json::to_vec(branch).unwrap()).unwrap();
+                    let removal = forged
+                        .engine
+                        .event_history
+                        .iter_mut()
+                        .find_map(|event| match event {
                             CommittedEvent::FixedDamageRemovedV3 { removal }
                                 if removal.item.v4.stack_item_id == item.v4.stack_item_id =>
                             {
                                 Some(removal)
                             }
                             _ => None,
-                        }
-                    }).unwrap();
+                        })
+                        .unwrap();
                     removal.outcome = fixed_source_damage_v3::OutcomeV3::Resolved;
                     assert!(fixed_source_damage_v3::validate_state(&forged).is_err());
                 }
