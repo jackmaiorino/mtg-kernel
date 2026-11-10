@@ -1,7 +1,7 @@
 //! Last-known source facts for the physical Bombardment activation.
 use super::*;
 use crate::card_def::{CostComponent, PermanentFilter, TargetSpec};
-use crate::state::AbilitySourceContractV4;
+use crate::state::{AbilitySourceContractV4, BombardmentLkiV1, BombardmentPaidV1};
 
 pub(crate) fn selected(state: &GameState, item: &StackItem) -> bool {
     if !cfg!(feature = "eternal-fixtures")
@@ -36,7 +36,43 @@ pub(crate) fn selected(state: &GameState, item: &StackItem) -> bool {
 pub(crate) fn needs_lki(state: &GameState, item: &StackItem) -> bool {
     item.v4.ability_source_contract.is_some_and(|source| {
         state.objects.get(item.source).zone_change_count != source.zone_change_count
-    }) && !matches!(item.v4.paid_cost_refs.as_slice(), [cost] if cost.object == item.source)
+            && (!item.v4.bombardment_lki_v1.is_empty() || captured(state, source).next().is_some())
+    })
+}
+
+pub(crate) fn mark_paid(state: &mut GameState, id: StackItemId, start: usize) -> Result<(), String> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return Ok(());
+    }
+    let Some(item) = state.stack.last().filter(|item| item.v4.stack_item_id == id) else {
+        return Err("Bombardment payment lost the actual new stack row".into());
+    };
+    if !selected(state, item) {
+        return Ok(());
+    }
+    let [cost] = item.v4.paid_cost_refs.as_slice() else {
+        return Err("Bombardment lost its native creature payment".into());
+    };
+    if cost.object == item.source {
+        return Ok(());
+    }
+    let mut payment = state.engine.event_history.iter().enumerate().skip(start);
+    let (sacrifice_at, _) = payment.find(|(_, event)| {
+        matches!(event, CommittedEvent::Sacrificed { object, controller_before, .. }
+            if *object == cost.object && *controller_before == item.controller)
+    }).ok_or("Bombardment native payment lost its sacrifice")?;
+    let (move_at, _) = payment.find(|(_, event)| {
+        matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, controller_before }
+            if *object == cost.object && *to == cost.zone && *controller_before == item.controller)
+    }).ok_or("Bombardment native payment lost its zone change")?;
+    let paid = BombardmentPaidV1 {
+        sacrifice_at: u32::try_from(sacrifice_at).map_err(|_| "Bombardment sacrifice index overflow")?,
+        move_at: u32::try_from(move_at).map_err(|_| "Bombardment move index overflow")?,
+        cost: *cost,
+    };
+    state.stack.last_mut().expect("actual paid stack row").v4.bombardment_lki_v1 =
+        BombardmentLkiV1(Some(paid));
+    Ok(())
 }
 
 fn same_incarnation(a: AbilitySourceContractV4, b: AbilitySourceContractV4) -> bool {
@@ -47,39 +83,27 @@ fn same_incarnation(a: AbilitySourceContractV4, b: AbilitySourceContractV4) -> b
         && a.zone_change_count == b.zone_change_count
 }
 
-fn zone_change_into(
-    state: &GameState,
-    object: ObjectId,
-    generation: u32,
-) -> Option<(usize, &CommittedEvent)> {
-    let later = state.objects.try_get(object)?.zone_change_count.checked_sub(generation)?;
-    state.engine.event_history.scan_for_v1(&[EventKindV1::ZoneChange])
-        .iter().enumerate().rev()
-        .filter(|(_, event)| matches!(event, CommittedEvent::ZoneChange { object: id, .. }
-            if *id == object))
-        .nth(usize::try_from(later).ok()?)
-}
-
-fn validate_payment(state: &GameState, item: &StackItem) -> Result<(), String> {
-    let [cost] = item.v4.paid_cost_refs.as_slice() else {
-        return Err("Bombardment lost its native creature payment".into());
-    };
-    let Some((moved_at, CommittedEvent::ZoneChange { from: Zone::Battlefield, to, controller_before, .. })) =
-        zone_change_into(state, cost.object, cost.zone_change_count)
-    else {
-        return Err("Bombardment creature payment lost its actual move".into());
-    };
-    if cost.zone_change_count == 0 || cost.zone != *to || *controller_before != item.controller
-        || state.objects.get(cost.object).owner != cost.owner
+fn validate_payment(state: &GameState, item: &StackItem, paid: BombardmentPaidV1) -> Result<(), String> {
+    let history = &state.engine.event_history;
+    let cost = paid.cost;
+    if item.v4.paid_cost_refs.as_slice() != [cost]
+        || paid.sacrifice_at >= paid.move_at
+        || cost.object == item.source
+        || cost.zone_change_count == 0
+        || state.objects.try_get(cost.object).is_none_or(|live| live.owner != cost.owner)
         || item.v4.target_spec != Some(TargetSpec::AnyTarget)
         || item.targets.len() != 1
         || item.v4.target_contracts.len() != 1
         || item.inline_effect.as_ref() != Some(&crate::fixed_source_damage_v3::printed_root())
-        || !state.engine.event_history[..moved_at].iter().rev()
-            .take_while(|event| !matches!(event, CommittedEvent::ZoneChange { object, .. }
-                if *object == cost.object))
-            .any(|event| matches!(event, CommittedEvent::Sacrificed { object, controller_before, .. }
-                if *object == cost.object && *controller_before == item.controller))
+        || !matches!(history.get(paid.sacrifice_at as usize),
+            Some(CommittedEvent::Sacrificed { object, controller_before, .. })
+                if *object == cost.object && *controller_before == item.controller)
+        || !matches!(history.get(paid.move_at as usize),
+            Some(CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, controller_before })
+                if *object == cost.object && *to == cost.zone && *controller_before == item.controller)
+        || history[paid.sacrifice_at as usize + 1..paid.move_at as usize].iter().any(|event| {
+            matches!(event, CommittedEvent::ZoneChange { object, .. } if *object == cost.object)
+        })
     {
         return Err("Bombardment source, target or sacrifice proof changed".into());
     }
@@ -98,31 +122,30 @@ fn captured(state: &GameState, source: AbilitySourceContractV4) -> impl Iterator
 pub(crate) fn departed_source(state: &GameState, item: &StackItem) -> Result<Option<HistoricalDamageSourceV1>, String> {
     let source = item.v4.ability_source_contract.ok_or("Bombardment lost its source")?;
     crate::engine::validate_historical_ability_source_contract(state, source)?;
-    if state.objects.get(source.source).zone_change_count == source.zone_change_count {
-        return Ok(None);
+    let paid = item.v4.bombardment_lki_v1.0;
+    if let Some(paid) = paid {
+        validate_payment(state, item, paid)?;
     }
-    validate_payment(state, item)?;
     if !needs_lki(state, item) {
-        // This lane is for a waiting enchantment that later leaves. An
-        // animated Bombardment sacrificed as its own cost is a separate path.
         return Ok(None);
     }
-    let generation = source.zone_change_count.checked_add(1).ok_or("Bombardment generation overflow")?;
-    let Some((left_at, CommittedEvent::ZoneChange { from: Zone::Battlefield, controller_before, .. })) =
-        zone_change_into(state, source.source, generation)
-    else {
-        return Err("Bombardment lost its original native battlefield departure".into());
-    };
     let mut captures = captured(state, source);
     let Some((capture_at, facts)) = captures.next() else {
         return Err("departed Bombardment has no native last-known source receipt".into());
     };
-    let entry_at = if source.zone_change_count == 0 { None } else {
-        zone_change_into(state, source.source, source.zone_change_count).map(|(index, _)| index)
+    let history = &state.engine.event_history;
+    let moved_source = |event: &CommittedEvent| {
+        matches!(event, CommittedEvent::ZoneChange { object, .. } if *object == source.source)
     };
-    if captures.next().is_some() || capture_at >= left_at
-        || entry_at.is_some_and(|entry| entry >= capture_at)
-        || facts.source.controller != *controller_before
+    if captures.next().is_some()
+        || !matches!(history[capture_at + 1..].iter().find(|event| moved_source(event)),
+            Some(CommittedEvent::ZoneChange { from: Zone::Battlefield, to, controller_before, .. })
+                if *to != Zone::Battlefield && *controller_before == facts.source.controller)
+        || paid.is_some_and(|paid| {
+            let moved_at = paid.move_at as usize;
+            moved_at >= capture_at
+                || history[moved_at + 1..capture_at].iter().any(moved_source)
+        })
     {
         return Err("Bombardment last-known source differs from its actual departure".into());
     }
@@ -137,7 +160,7 @@ pub(crate) fn before_departure(state: &mut GameState, object: ObjectId) {
     if source.zone != Zone::Battlefield {
         return;
     }
-    if state.stack.iter().any(|item| selected(state, item)
+    if state.stack.iter().any(|item| !item.v4.bombardment_lki_v1.is_empty() && selected(state, item)
         && item.v4.ability_source_contract.is_some_and(|saved| same_incarnation(saved, source)))
         && captured(state, source).next().is_none()
     {

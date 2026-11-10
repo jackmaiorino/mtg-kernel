@@ -1371,6 +1371,11 @@ pub(crate) fn acquire_owner(
     {
         return Ok(None);
     }
+    if crate::source_power_activation_v1::bombardment::selected(state, item)
+        && crate::source_power_activation_v1::bombardment::needs_lki(state, item)
+    {
+        return Err("Crystal execution cannot retain the departed Bombardment source loan".into());
+    }
     validate(state)?;
     if state
         .stack

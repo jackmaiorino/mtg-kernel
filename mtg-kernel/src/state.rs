@@ -1666,7 +1666,37 @@ pub struct StackStateV4 {
     pub inspiration_started_v1: InspirationStartedV1,
     #[serde(default, skip_serializing_if = "HighSocietyHunterStartedV45::is_empty")]
     pub high_society_hunter_started_v45: HighSocietyHunterStartedV45,
+    #[serde(default, skip_serializing_if = "BombardmentLkiV1::is_empty")]
+    pub bombardment_lki_v1: BombardmentLkiV1,
 }
+
+/// Native paid Bombardment activations after the departure-LKI contract.
+/// Older stack rows write neither serialized bytes nor a hash domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BombardmentPaidV1 {
+    pub sacrifice_at: u32,
+    pub move_at: u32,
+    pub cost: PaidCostRefV4,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BombardmentLkiV1(pub Option<BombardmentPaidV1>);
+impl BombardmentLkiV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for BombardmentLkiV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(paid) = self.0 {
+            b"bombardment-lki/v1".hash(state);
+            paid.hash(state);
+        }
+    }
+}
+
 /// Empty writes no historical bytes or Hash domain. The pointer owns one
 /// original Hunter publication after its real engine removal has started.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

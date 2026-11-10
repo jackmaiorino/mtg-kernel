@@ -29757,6 +29757,12 @@ fn push_paid_activation(
     #[cfg(feature = "eternal-fixtures")]
     crate::extra_turn_v1::record_publication(state, stack_item_id);
     crate::source_power_activation_v1::record_paid(state, stack_item_id);
+    if crate::source_power_activation_v1::bombardment::mark_paid(
+        state, stack_item_id, frozen.payment_history_start,
+    ).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, pending.source));
+        return;
+    }
     crate::librarian_activation_v1::record_paid(state, stack_item_id);
     if crate::krenko_v1::record_paid(
         state,

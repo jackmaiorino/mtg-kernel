@@ -1991,6 +1991,7 @@ fn circle_of_protection_blue_uses_waiting_bombardments_actual_departure_both_sea
                 if player == opponent));
             assert_eq!(zone(&state, sacrifice), Zone::Graveyard);
             assert_eq!(state.stack[0].v4.paid_cost_refs[0].object, sacrifice);
+            assert!(!state.stack[0].v4.bombardment_lki_v1.is_empty());
             assert_eq!(zone(&state, source), Zone::Battlefield);
             act(&mut state, Action::Pass);
 
@@ -2013,6 +2014,15 @@ fn circle_of_protection_blue_uses_waiting_bombardments_actual_departure_both_sea
                     run_until(&mut state, |s| zone(s, painter) == Zone::Graveyard, |_, _| None);
                 }
                 assert_eq!(engine::object_color_mask(&state, source) & blue, 0);
+                // Recovery and a real draw add later incarnations of the
+                // sacrificed object without changing the indexed payment.
+                mtg_kernel::event::propose_and_commit(
+                    &mut state, mtg_kernel::event::ProposedEvent::zone_change(sacrifice, Zone::Library),
+                );
+                mtg_kernel::event::propose_and_commit(
+                    &mut state, mtg_kernel::event::ProposedEvent::draw(opponent),
+                );
+                assert_eq!(zone(&state, sacrifice), Zone::Hand);
                 let (capture_at, facts) = state.engine.event_history.iter().enumerate()
                     .find_map(|(index, event)| match event {
                         CommittedEvent::SourceDamageBeforeLeavingV1 { damage_source }
@@ -2022,25 +2032,39 @@ fn circle_of_protection_blue_uses_waiting_bombardments_actual_departure_both_sea
                 assert_eq!(facts.source.zone_change_count, original);
                 assert_eq!(facts.color_mask & blue != 0, !painter_first);
 
-                for missing in [false, true] {
+                for mutation in 0..3 {
                     let mut forged: GameState = serde_json::from_slice(
                         &serde_json::to_vec(&state).unwrap(),
                     ).unwrap();
-                    if missing {
+                    if mutation == 0 {
                         let paid = forged.engine.event_history.iter().find(|event| {
                             matches!(event, CommittedEvent::Sacrificed { object, .. } if *object == sacrifice)
                         }).unwrap().clone();
                         forged.engine.event_history[capture_at] = paid;
-                    } else {
+                    } else if mutation == 1 {
                         let CommittedEvent::SourceDamageBeforeLeavingV1 { damage_source } =
                             &mut forged.engine.event_history[capture_at]
                         else { panic!("original source receipt absent") };
                         damage_source.source.zone_change_count += 1;
+                    } else {
+                        forged.stack[0].v4.paid_cost_refs[0].object = painter;
                     }
                     let before = forged.state_hash();
                     assert!(engine::step(&mut forged, Action::Pass).is_err());
                     assert_eq!(forged.state_hash(), before);
                 }
+                let mut predecessor = state.clone();
+                predecessor.stack[0].v4.bombardment_lki_v1 = Default::default();
+                let paid = predecessor.engine.event_history.iter().find(|event| {
+                    matches!(event, CommittedEvent::Sacrificed { object, .. } if *object == sacrifice)
+                }).unwrap().clone();
+                predecessor.engine.event_history[capture_at] = paid;
+                let mut predecessor: GameState = serde_json::from_slice(
+                    &serde_json::to_vec(&predecessor).unwrap(),
+                ).unwrap();
+                assert!(predecessor.stack[0].v4.bombardment_lki_v1.is_empty());
+                settled(&mut predecessor);
+                assert_eq!(life(&predecessor, actor), 19);
             }
             if late_circle {
                 // A native entry after the paid source has already left.

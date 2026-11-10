@@ -288,6 +288,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         validate_item(state, item)?;
         if bombardment::selected(state, item) {
             bombardment::departed_source(state, item)?;
+        } else if !item.v4.bombardment_lki_v1.is_empty() {
+            return Err("Bombardment LKI marker belongs to a different native ability".into());
         }
     }
     if state.engine.event_log.iter().any(|event| {
