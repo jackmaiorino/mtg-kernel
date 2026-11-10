@@ -20069,6 +20069,15 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
     if state.engine.halted.is_some() {
         return;
     }
+    if ctx.stack_item_id.is_some_and(|id| {
+        crate::fixed_source_damage_v3::has_donated_payment(state, id)
+    }) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     if crate::linked_aura_operation_v1::needs_event_owner(state)
         && crate::linked_aura_operation_v1::event(
             state,
