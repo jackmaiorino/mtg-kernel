@@ -8919,12 +8919,31 @@ pub(crate) fn validate_initiative_trigger_binding(
     let definition = crate::card_def::CARD_DEFS
         .get(binding.source.card_def as usize)
         .ok_or("Initiative trigger source definition is missing")?;
+    let initiative_granter = crate::eternal_vintage_v1::initiative_granter(definition.name);
+    let native_room = matches!(
+        binding.kind,
+        InitiativeTriggerKindV1::UndercityRoomBoundV1 { .. }
+    );
+    let allowed = if native_room {
+        (initiative_granter || definition.name == crate::eternal_cards_v1::e3::dungeons::ACERERAK)
+            && crate::eternal_cards_v1::e3::dungeons::occurrences::bound_undercity_entry(
+                state, binding,
+            )
+            .is_some()
+    } else {
+        initiative_granter
+    };
+    let source_definition_matches = if native_room {
+        crate::engine::source_card_def_matches(state, binding.source, source.card_def)
+    } else {
+        source.card_def == binding.source.card_def
+    };
     if binding.source.controller != binding.player
         || binding.source.zone != Zone::Battlefield
         || binding.source.attached_to.is_some()
-        || !crate::eternal_vintage_v1::initiative_granter(definition.name)
+        || !allowed
         || !definition.is_executable()
-        || source.card_def != binding.source.card_def
+        || !source_definition_matches
         || source.owner != binding.source.owner
         || source.zone_change_count < binding.source.zone_change_count
         || (source.zone_change_count == binding.source.zone_change_count
@@ -8996,7 +9015,7 @@ fn resolve_monarch_trigger(
     Ok(())
 }
 
-fn validate_initiative_continuation_root(
+pub(crate) fn validate_initiative_continuation_root(
     state: &GameState,
     pending: &EffectContinuation,
     binding: InitiativeTriggerBindingV1,
@@ -9014,7 +9033,7 @@ fn validate_initiative_continuation_root(
     Ok(())
 }
 
-fn undercity_next_rooms(
+pub(crate) fn undercity_next_rooms(
     state: &GameState,
     player: PlayerId,
 ) -> Result<(Option<UndercityRoomV1>, Vec<UndercityRoomV1>), String> {
@@ -9100,8 +9119,7 @@ fn validate_undercity_throne_metadata(
     chosen: Option<EffectObjectBinding>,
 ) -> Result<(), String> {
     validate_initiative_continuation_root(state, pending, binding)?;
-    if binding.kind != InitiativeTriggerKindV1::UndercityRoom(UndercityRoomV1::ThroneOfTheDeadThree)
-    {
+    if binding.kind.undercity_room() != Some(UndercityRoomV1::ThroneOfTheDeadThree) {
         return Err("Throne continuation is not owned by the Throne room".to_string());
     }
     let current = bind_library_exact(state, binding.player);
@@ -9191,16 +9209,12 @@ fn enter_undercity_room(
     if from_room != expected_from || !legal_rooms.contains(&room) {
         return Err("Undercity entry no longer follows the exact room graph".to_string());
     }
-    event::log_initiative_trigger(
+    crate::eternal_cards_v1::e3::dungeons::occurrences::enter_undercity(
         state,
         binding.player,
         binding.source,
-        InitiativeTriggerKindV1::UndercityRoom(room),
-    )?;
-    let dungeon = &mut state.players[binding.player.index()].dungeon;
-    dungeon.dungeon_id = Some(crate::state::UNDERCITY_DUNGEON_ID_V1);
-    dungeon.room_id = Some(room.stable_id());
-    Ok(())
+        room,
+    )
 }
 
 fn until_players_next_turn_expiry(state: &GameState, player: PlayerId) -> Result<u32, String> {
@@ -9317,7 +9331,12 @@ fn stage_undercity_venture(
     if !path.is_empty() || !continuation.frames.is_empty() {
         return Err("venture trigger is not a root-only effect".to_string());
     }
-    crate::eternal_cards_v1::e3::dungeons::occurrences::complete_bottommost(state, binding.player);
+    use crate::eternal_cards_v1::e3::dungeons;
+    dungeons::occurrences::complete_bottommost(state, binding.player);
+    if cfg!(feature = "eternal-fixtures") && dungeons::in_forgotten_realms(state, binding.player) {
+        dungeons::venture(state, continuation, path)?;
+        return Ok(false);
+    }
     let (from_room, legal_rooms) = undercity_next_rooms(state, binding.player)?;
     match legal_rooms.as_slice() {
         [] => Err("Undercity route has no next room".to_string()),
@@ -10726,6 +10745,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::eternal_sideboard_s1d_v1::validate_circle_choice(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::e3::dungeons::occurrences::validate_resolving(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::dungeons::validate_initiative_venture_choice(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_sideboard_s1a_v1::surgical::validate_continuation(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
@@ -15614,7 +15635,8 @@ fn drive_resumable_inner_with_native_row_v1(
                             return Ok(ResumableProgress::Suspended);
                         }
                     }
-                    InitiativeTriggerKindV1::UndercityRoom(room) => {
+                    InitiativeTriggerKindV1::UndercityRoom(room)
+                    | InitiativeTriggerKindV1::UndercityRoomBoundV1 { room, .. } => {
                         if !path.is_empty() || !continuation.frames.is_empty() {
                             return Err(
                                 "Undercity room ability is not a root-only effect".to_string()

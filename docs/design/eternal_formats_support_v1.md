@@ -595,8 +595,14 @@ New, each built once in the first wave that needs it:
   triggered room ability from that dungeon remains. Another venture completes
   the old dungeon before starting a new one, even while an old room waits.
   Restored snapshots that already marked completion keep their recorded result.
-  The existing separate route graphs still limit switching venture sources
-  while a different dungeon is active above its bottom room.
+  Taking or keeping the initiative advances an active Forgotten Realms
+  dungeon. Acererak advances an active Undercity. Their next-dungeon menus
+  still follow the source's native venture instruction.
+  New Eternal room triggers use the dungeon's characteristics for targeting.
+  Painter's Servant can color the active dungeon. A room that outlasts its
+  dungeon uses the colors recorded at removal. New bound Undercity rooms
+  require a successor to the frozen observation profiles.
+  Serra's Emissary's existing type choices still omit Dungeon.
   Temple of Dumathoin and Mad Wizard's Lair bind each draw attempt to the
   native venture entry and published room ability. The Lair reveals and
   offers only cards actually drawn, and an immediate Jace win ends the

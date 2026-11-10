@@ -7298,6 +7298,12 @@ pub fn log_initiative_trigger(
     mut source: crate::state::AbilitySourceContractV4,
     kind: crate::state::InitiativeTriggerKindV1,
 ) -> Result<crate::state::InitiativeTriggerBindingV1, String> {
+    if matches!(
+        kind,
+        crate::state::InitiativeTriggerKindV1::UndercityRoomBoundV1 { .. }
+    ) {
+        return Err("a bound Undercity room requires a native dungeon entry".into());
+    }
     let live = state
         .objects
         .try_get(source.source)
