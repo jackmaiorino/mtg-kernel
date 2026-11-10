@@ -53,7 +53,7 @@ mod tests;
 pub mod tools;
 pub(crate) mod update_profile_v1;
 #[cfg(test)]
-mod verified_row_v1;
+pub(crate) mod verified_row_v1;
 
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::training_math_v1::TrainingMathV1;
