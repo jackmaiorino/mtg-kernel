@@ -1260,6 +1260,49 @@ What S1a and S1b left pending, and what covers it now:
   seats with seeded random actions, and the test requires each Leyline to be put onto the
   battlefield from an opening hand.
 
+### S1j: Archon of Absolution
+
+After S1i, Archon of Absolution is the only gap of Vintage Mono-White Initiative (12.2% of the
+field), the largest single-card gain left in the three formats. S1j adds it as a Full card. The
+Vintage full 75 share goes from 80.9% to 93.1%, and the list joins `PLAYABLE_75`. Its sideboard
+Leyline of the Void makes its best-of-three matches native (S1i).
+
+S1j is built in `src/eternal_sideboard_s1j_v1.rs` and `build_eternal_s1j_v1.rs`, the new tail of
+the recipe chains after S1g's. Behavior follows the card's current Oracle text and rulings,
+checked against its XMage source (`CantAttackYouUnlessPayAllEffect` with {1} for the player and
+the planeswalkers they control):
+
+- Archon of Absolution, {3}{W}, Creature - Archon 3/2: "Flying. Protection from white.
+  Creatures can't attack you or planeswalkers you control unless their controller pays {1} for
+  each of those creatures."
+  - Flying is the printed keyword. Protection from white joins wave P1a's printed protection
+    table, which wave E6b's checks apply to targeting, blocking, damage and attachments.
+  - The last ability is a cost to attack (508.1g). In a two-player game every attacking
+    creature attacks the defending player or a planeswalker they control, so a declaration
+    costs {1} for each attacking creature and each Archon the defending player controls whose
+    abilities apply. The active player's own Archons cost them nothing. A Phyrexian Metamorph
+    copying an Archon taxes too, since a copy takes the copied definition.
+  - Legality: 508.1f taps the attacking creatures before the cost is paid (508.1h and 508.1i),
+    so a declaration is legal only if its cost can be paid with its attackers without
+    vigilance tapped. An attacking mana creature can't pay its own tax, and a vigilant one can.
+    `validate_declare_attackers` checks this with the effect-mana check (`can_pay_effect_mana`)
+    on a copy of the state with those attackers tapped. The legal action lists build attack
+    menus from the subsets that check accepts, so the JSONL session and the policy surface offer
+    only declarations whose cost can be paid, and no payment is ever partial.
+  - Requirements: a player is never required to pay a cost to attack (508.1d), and the card's
+    2019-10-04 ruling lets a creature that attacks "if able" stay home. While the defending
+    player controls an Archon whose abilities apply every attack has a cost, so goad and
+    "attacks each combat if able" require nothing.
+  - Payment: once the declaration commits and its attackers are tapped, the cost is paid with
+    the effect-mana payment (`pay_effect_mana`, the ordinary mana plan with Treasures, as
+    Overencumbered's {N}), before attack triggers are collected. It is deterministic, like the
+    other automatic payments, and public through its mana events.
+- Consumers: a sideboard Archon rarely reaches the battlefield, so, as in S1h, a white deck
+  with four Archons in its mainboard and a creature deck with mana creatures play each other
+  through public sessions, in both seats with ranked and seeded random actions, checking
+  natural terminals and replay. The test requires an attack declared and paid for against an
+  Archon, and an attack menu that leaves out a declaration its player can't pay for.
+
 ## Execution
 
 Family workers implement bounded card groups in their own worktrees; one integrator owns
