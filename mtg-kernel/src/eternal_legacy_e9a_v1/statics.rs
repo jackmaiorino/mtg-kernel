@@ -269,10 +269,17 @@ fn performed_without_stack(state: &GameState, source: ObjectId, index: u8) -> bo
         || crate::eternal_legacy_e7a_v1::is_special_activation(state, source, index)
 }
 
-/// Split second: whether it keeps `source`'s ability `index` from being
-/// activated now.
-pub(crate) fn split_second_blocks(state: &GameState, source: ObjectId, index: u8) -> bool {
-    split_second_active(state) && !performed_without_stack(state, source, index)
+/// Split second, and Abeyance (Premodern wave P3d): whether they keep
+/// `player` from activating `source`'s ability `index` now. Both allow mana
+/// abilities and special actions.
+pub(crate) fn activation_blocked(
+    state: &GameState,
+    player: PlayerId,
+    source: ObjectId,
+    index: u8,
+) -> bool {
+    (split_second_active(state) || crate::eternal_premodern_p3d_v1::abeyance_active(state, player))
+        && !performed_without_stack(state, source, index)
 }
 
 /// Activation restrictions: Cephalid Coliseum's threshold ("Activate only if

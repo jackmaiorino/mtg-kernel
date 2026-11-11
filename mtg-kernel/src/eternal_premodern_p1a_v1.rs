@@ -453,7 +453,7 @@ pub(crate) fn legal_object_target(
 }
 
 /// Target `index`, if it is a player still legal under `spec`.
-fn legal_player_target(
+pub(crate) fn legal_player_target(
     ctx: &ExecCtx,
     state: &GameState,
     index: usize,

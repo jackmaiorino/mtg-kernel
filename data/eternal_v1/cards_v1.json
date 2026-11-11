@@ -28247,6 +28247,95 @@
     "destroy_artifact"
    ],
    "java_file": "Mage.Sets/src/mage/cards/u/UktabiOrangutan.java"
+  },
+  {
+   "name": "Abeyance",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-enchantress",
+    "premodern-replenish"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "cast_prohibition",
+    "activation_prohibition",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/Abeyance.java"
+  },
+  {
+   "name": "Karmic Justice",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-enchantress"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "destroy_trigger",
+    "destroy_target"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KarmicJustice.java"
+  },
+  {
+   "name": "Sacred Ground",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-landstill-uw-control",
+    "premodern-bw-control",
+    "premodern-enchantress"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "graveyard_trigger",
+    "return_from_graveyard",
+    "put_onto_battlefield"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SacredGround.java"
   }
  ]
 }

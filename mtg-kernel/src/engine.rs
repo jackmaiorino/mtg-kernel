@@ -328,6 +328,12 @@ pub struct EngineState {
     /// Synchronous typed Inspiration owner; excluded from snapshots and Hash input.
     #[serde(skip)]
     pub(crate) inspiration_runtime_v1: effect::InspirationRuntimeV1,
+    /// Whose spell or ability is resolving, for Premodern wave P3d's
+    /// departure triggers. Set only while effects run; excluded from
+    /// snapshots, Hash input and comparisons.
+    #[serde(skip)]
+    #[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+    pub(crate) departure_cause_v1: crate::eternal_premodern_p3d_v1::DepartureCauseV1,
     #[serde(
         default,
         skip_serializing_if = "crate::twinflame_tyrant_v1::combat::StateV38::is_empty"
@@ -12470,11 +12476,11 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
     if let Some(companion) = crate::eternal_lurrus_v1::companion_action(state, player) {
         out.push((companion, 0));
     }
-    // Split second (Legolas's Quick Reflexes): only mana abilities and
-    // special actions while it is on the stack.
+    // Split second (Legolas's Quick Reflexes) and Abeyance: only mana
+    // abilities and special actions.
     #[cfg(feature = "eternal-fixtures")]
     out.retain(|&(source, index)| {
-        !crate::eternal_legacy_e9a_v1::statics::split_second_blocks(state, source, index)
+        !crate::eternal_legacy_e9a_v1::statics::activation_blocked(state, player, source, index)
     });
     out
 }

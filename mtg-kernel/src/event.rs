@@ -5781,6 +5781,16 @@ fn materialize_event_v1(
                     crate::card_def::CardType::Creature,
                 );
             if !mode.is_scene() {
+                // Karmic Justice and Sacred Ground (Premodern wave P3d) read
+                // the permanent before it moves.
+                #[cfg(feature = "eternal-fixtures")]
+                if from == Zone::Battlefield && z.to_zone == Zone::Graveyard {
+                    crate::eternal_premodern_p3d_v1::note_departure(
+                        state,
+                        z.object,
+                        controller_before,
+                    );
+                }
                 crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
                 if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
                     crate::engine::record_different_controller_target_departure(state, z.object);
@@ -6754,7 +6764,29 @@ struct EntryBatchCommitContextV1 {
     token_input: Option<crate::doubling_season_v48::TokenInputV48>,
     token_requests: Vec<crate::doubling_season_v48::TokenRequestV48>,
 }
+/// Commits one batch of simultaneous survivors. Karmic Justice and Sacred
+/// Ground (Premodern wave P3d) read the batch before any of its moves.
 fn commit_batch_survivors(
+    state: &mut GameState,
+    survivors: Vec<ProposedEvent>,
+    authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
+    context: EntryBatchCommitContextV1,
+    prepared_zone_plan: Option<FinalZonePtPlanV1>,
+) {
+    #[cfg(feature = "eternal-fixtures")]
+    let enclosing = crate::eternal_premodern_p3d_v1::begin_departure_batch(state, &survivors);
+    commit_batch_survivors_ordered(
+        state,
+        survivors,
+        authority_batch,
+        context,
+        prepared_zone_plan,
+    );
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_premodern_p3d_v1::end_departure_batch(state, enclosing);
+}
+
+fn commit_batch_survivors_ordered(
     state: &mut GameState,
     survivors: Vec<ProposedEvent>,
     authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,

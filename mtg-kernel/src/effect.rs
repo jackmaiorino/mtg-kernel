@@ -13080,7 +13080,22 @@ fn drive_with_native_row_v1(
     result
 }
 
+/// Drives the pending continuation in the departure scope of the spell or
+/// ability it resolves (Premodern wave P3d's Karmic Justice and Sacred
+/// Ground).
 fn drive_resumable_inner_with_native_row_v1(
+    state: &mut GameState,
+    supplied_owner: Option<&NativeExecutionOwnerV1>,
+) -> Result<ResumableProgress, String> {
+    #[cfg(feature = "eternal-fixtures")]
+    let enclosing = crate::eternal_premodern_p3d_v1::enter_pending_resolution(state);
+    let result = drive_resumable_in_departure_scope_v1(state, supplied_owner);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_premodern_p3d_v1::leave_resolution(state, enclosing);
+    result
+}
+
+fn drive_resumable_in_departure_scope_v1(
     state: &mut GameState,
     supplied_owner: Option<&NativeExecutionOwnerV1>,
 ) -> Result<ResumableProgress, String> {
@@ -20372,7 +20387,22 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
     execute_with_native_row_v1(op, ctx, state, None);
 }
 
+/// Runs `op` in the departure scope of the spell or ability `ctx` resolves
+/// (Premodern wave P3d's Karmic Justice and Sacred Ground).
 fn execute_with_native_row_v1(
+    op: &EffectOp,
+    ctx: &ExecCtx,
+    state: &mut GameState,
+    native_proof: Option<&NativeExecutionProofV1<'_>>,
+) {
+    #[cfg(feature = "eternal-fixtures")]
+    let enclosing = crate::eternal_premodern_p3d_v1::enter_resolution(state, ctx);
+    execute_in_departure_scope_v1(op, ctx, state, native_proof);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_premodern_p3d_v1::leave_resolution(state, enclosing);
+}
+
+fn execute_in_departure_scope_v1(
     op: &EffectOp,
     ctx: &ExecCtx,
     state: &mut GameState,

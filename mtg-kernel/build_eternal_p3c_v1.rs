@@ -1,6 +1,6 @@
 //! Card-database recipes for the eternal catalog's Premodern sideboard wave
-//! P3c. This module is the tail of the recipe chains: wave P3b's tables
-//! fall through to these, and its own defaults are the chains' base values.
+//! P3c. Wave P3b's tables fall through to these, and these fall through to
+//! wave P3d's (`build_eternal_p3d_v1.rs`).
 //! Runtime programs live in `src/eternal_premodern_p3c_v1.rs`. Every row is
 //! keyed by a name that occurs only in the eternal registry.
 
@@ -53,7 +53,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
     match name {
         "Druid Lyrist" => &DRUID_LYRIST,
         "Spike Feeder" => &SPIKE_FEEDER,
-        _ => &[],
+        _ => super::build_eternal_p3d_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -79,28 +79,28 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::Creature",
             "crate::eternal_premodern_p3c_v1::dominate",
         ),
-        _ => return None,
+        _ => return super::build_eternal_p3d_v1::special_for(name),
     })
 }
 
 /// No P3c card has kicker.
-pub(super) fn kicker_cost_for(_name: &str) -> Option<&'static str> {
-    None
+pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
+    super::build_eternal_p3d_v1::kicker_cost_for(name)
 }
 
 /// No P3c card is an Aura or Equipment.
-pub(super) fn attachment_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn attachment_for(name: &str) -> &'static str {
+    super::build_eternal_p3d_v1::attachment_for(name)
 }
 
 /// No P3c card has flashback.
-pub(super) fn flashback_for(_name: &str) -> String {
-    "None".to_string()
+pub(super) fn flashback_for(name: &str) -> String {
+    super::build_eternal_p3d_v1::flashback_for(name)
 }
 
 /// No P3c card has an alternative cost.
-pub(super) fn alt_cost_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn alt_cost_for(name: &str) -> &'static str {
+    super::build_eternal_p3d_v1::alt_cost_for(name)
 }
 
 /// Printed evergreen keywords. Ihsan's Shade's and Iridescent Angel's
@@ -109,7 +109,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "Iridescent Angel" => &["Keywords::FLYING"],
         "Multani, Maro-Sorcerer" => &["Keywords::SHROUD"],
-        _ => &[],
+        _ => super::build_eternal_p3d_v1::keywords_for(name),
     }
 }
 
@@ -129,6 +129,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "enters_with_2_plus_one_counters;activated:2_remove_counter:plus_one_counter_on_target_creature;activated:remove_counter:gain_2"
         }
         "Uktabi Orangutan" => "etb:destroy_target_artifact",
-        _ => "none",
+        _ => super::build_eternal_p3d_v1::trigger_recipe_for(name),
     }
 }

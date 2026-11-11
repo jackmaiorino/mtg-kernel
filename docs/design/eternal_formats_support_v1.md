@@ -1489,8 +1489,9 @@ of the recipe chains after P3c's. Behavior follows each card's current Oracle te
   The zone-change choke point (`event::materialize_event_v1`) hands each battlefield-to-graveyard
   move inside the scope to this module, which reads the permanent before it moves and queues the
   triggers in wave P1a's queue. The watching permanents are the Karmic Justices and Sacred
-  Grounds on the battlefield, read as a batch of simultaneous moves begins, so one that leaves
-  in the same batch still sees the others (603.10a).
+  Grounds on the battlefield. A batch of simultaneous moves reads them and its departing
+  permanents as it begins, so one that leaves in the same batch still sees the others
+  (603.10a).
 - Sacred Ground: "Whenever a spell or ability an opponent controls causes a land to be put
   into your graveyard from the battlefield, return that card to the battlefield." Destruction
   and sacrifice both count, and so does a land its owner no longer controlled. The trigger
