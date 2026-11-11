@@ -329,7 +329,12 @@ def report(root: Path, out: Path) -> dict:
         sdir = root / f"search-{bank}"
         if not (sdir / f"run-search-{bank}.json").exists():
             continue
-        srows = pass_rows(sdir, f"search-{bank}", provenance)
+        searched = pass_rows(sdir, f"search-{bank}", provenance)
+        # A state where any chooser's search stopped early (incomplete or faulted) is excluded for every chooser and
+        # counted: the fixed binary makes such a state an error row (review r1, finding 1); rows from earlier binaries
+        # record the flags, so the report applies the same rule.
+        failed = [r for r in searched if any(c["incomplete"] or c["faults"] for c in r["choosers"].values())]
+        srows = [r for r in searched if r not in failed]
         prices = {}
         rollouts = {}
         # Resampled worlds come from the price and single passes; the true state from the price pass and the
@@ -350,7 +355,11 @@ def report(root: Path, out: Path) -> dict:
         names = list(srows[0]["choosers"].keys())
         choosers = ["sampled"] + names
         nonclean = {m: sum(1 for st in prices[m][0].values() for sc in st.values() if not clean(sc)) for m in prices}
-        bank_out = {"states": len(srows), "repeat_checks": {m: prices[m][1] for m in prices},
+        bank_out = {"states": len(srows), "states_searched": len(searched),
+                    "failed_search_states": [{"id": r["id"], "index": r["index"], "class": r["class"],
+                                              "choosers": sorted(n for n, c in r["choosers"].items()
+                                                                 if c["incomplete"] or c["faults"])} for r in failed],
+                    "repeat_checks": {m: prices[m][1] for m in prices},
                     "actions_with_nonnatural_rollouts": nonclean, "rollouts_per_action": rollouts, "choosers": {}}
         for mode in ("worlds", "true"):
             scored = prices[mode][0]

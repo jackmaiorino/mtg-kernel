@@ -192,6 +192,23 @@ class Agreement(unittest.TestCase):
             self.assertEqual(out["banks"]["ordinary"]["contrasts"], {})
             self.assertEqual(out["banks"]["ordinary"]["rollouts_per_action"]["price-ordinary/worlds"], 2)
 
+    def test_a_state_with_an_incomplete_search_is_excluded_for_every_chooser(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Fixture(Path(d))
+            root = f.d / "run"
+            bad = search_row("h", 0, {"a": 0, "b": 1})
+            bad["choosers"]["b"]["incomplete"] = True
+            write_pass(root / "search-ordinary", "search-ordinary", [search_row("g", 0, {"a": 0, "b": 1}), bad],
+                       f.fp("search"))
+            prices = [{**price_row(i, 1, 0, 1, [0, 1], [1, 1]), "class": "ordinary|0|1"} for i in ("g", "h")]
+            write_pass(root / "price-ordinary", "price-ordinary", prices, f.fp("price"))
+            out = sp.report(root, f.d / "report")["banks"]["ordinary"]
+            self.assertEqual((out["states"], out["states_searched"]), (1, 2))
+            self.assertEqual(out["failed_search_states"], [{"id": "h", "index": 1, "class": "ordinary",
+                                                            "choosers": ["b"]}])
+            self.assertEqual(out["choosers"]["a"]["worlds"]["states"], 1)
+            self.assertEqual(out["choosers"]["b"]["worlds"]["mean_gap"], 0.5)
+
 
 if __name__ == "__main__":
     unittest.main()
