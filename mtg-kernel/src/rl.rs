@@ -1101,7 +1101,7 @@ pub struct PublicShroudV1 {
     /// Grove's grant, Sylvan Safekeeper's ability), seat 0's battlefield
     /// first, each in public battlefield order.
     pub permanents: Vec<CardStableRefV1>,
-    /// Each seat's shroud (Solitary Confinement).
+    /// Each seat's shroud (Solitary Confinement, True Believer).
     pub players: [bool; 2],
 }
 
@@ -1923,8 +1923,8 @@ pub fn enable_public_shroud_v1(state: &mut GameState) {
     state.public_shroud_v1 = true;
 }
 
-/// Each seat's shroud: Solitary Confinement's "You have shroud." Only the
-/// eternal catalog has a card that grants it.
+/// Each seat's shroud: Solitary Confinement's and True Believer's "You have
+/// shroud." Only the eternal catalog has cards that grant it.
 fn public_player_shroud_v1(state: &GameState) -> [bool; 2] {
     if !cfg!(feature = "eternal-fixtures") {
         return [false; 2];

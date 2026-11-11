@@ -2942,6 +2942,14 @@ fn apply_replacements_inner(
             )
         });
     if let ProposedEvent::Damage(damage) = &mut proposed {
+        // Sphere of Law (Premodern sideboard wave P3a) applies first: before
+        // the increases, the redirection and every shield.
+        #[cfg(feature = "eternal-fixtures")]
+        if !damage_cannot_be_prevented
+            && crate::eternal_premodern_p3a_v1::statics::sphere_of_law_prevents(state, damage)
+        {
+            return None;
+        }
         if crate::twinflame_tyrant_v1::replace(state, damage).is_err() {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
