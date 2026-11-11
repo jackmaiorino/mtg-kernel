@@ -37,6 +37,8 @@ use crate::native_policy_value_net_v1::v8_inclusion_v1::{
 };
 use crate::native_policy_value_net_v1::{
     accumulate_input_major_row_v1,
+    no_negative_zero_or_nan_v1,
+    rounds_to_nearest_v1,
     NativeEncodedDecisionViewV1,
     NativeNamedParameterV1,
     NativePolicyValueErrorV1,
@@ -5169,6 +5171,37 @@ trait ReverseGradientSinkV1<'t> {
         d_input: &mut Vec<f32>,
     ) -> Result<(), NativePolicyTrainErrorV1>;
 
+    /// [`Self::linear_v1`] for a caller that reads every `d_input` row only
+    /// from column `first_read` on. A sink may leave the columns before it
+    /// at zero instead of computing them.
+    #[allow(clippy::too_many_arguments)]
+    fn linear_read_from_v1(
+        &mut self,
+        parameters: &[NativeNamedParameterV1],
+        weight_index: usize,
+        bias_index: usize,
+        input: &'t [f32],
+        rows: usize,
+        input_dim: usize,
+        output_dim: usize,
+        d_output: &[f32],
+        first_read: usize,
+        d_input: &mut Vec<f32>,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        let _ = first_read;
+        self.linear_v1(
+            parameters,
+            weight_index,
+            bias_index,
+            input,
+            rows,
+            input_dim,
+            output_dim,
+            d_output,
+            d_input,
+        )
+    }
+
     /// Each object's card-embedding row receives the embedding part of that
     /// object's `d_object_input` row; padding token 0 receives nothing.
     fn card_embedding_dims_v1<D: NetDimsV1>(
@@ -5412,6 +5445,8 @@ fn reverse_decision_into_dims_v1<'t, D: NetDimsV1>(
         d_action_hidden,
         two_layer_second_pre,
         two_layer_first_output,
+        // Read below from the pooled action references on.
+        tape.action_feature_dim,
         d_action_input,
     )?;
     resize_zeroed_v1(d_action_ref_pooled, action_count * D::HIDDEN);
@@ -5441,6 +5476,8 @@ fn reverse_decision_into_dims_v1<'t, D: NetDimsV1>(
             d_action_ref_hidden,
             two_layer_second_pre,
             two_layer_first_output,
+            // Read below from the referenced node on.
+            ACTION_REF_FEATURE_DIM_V1,
             d_action_ref_input,
         )?;
         for (action_ref, &node_index) in action_ref_node_indices.iter().enumerate() {
@@ -5461,6 +5498,8 @@ fn reverse_decision_into_dims_v1<'t, D: NetDimsV1>(
         d_state_hidden,
         two_layer_second_pre,
         two_layer_first_output,
+        // Read below from the pooled object groups on.
+        STATE_DIM_V1,
         d_state_input,
     )?;
     for (object, group) in object_groups.iter().copied().enumerate() {
@@ -5480,6 +5519,8 @@ fn reverse_decision_into_dims_v1<'t, D: NetDimsV1>(
         d_object_hidden,
         two_layer_second_pre,
         two_layer_first_output,
+        // Every column is read below.
+        0,
         d_node_input,
     )?;
     resize_zeroed_v1(d_object_base, object_count * D::HIDDEN);
@@ -5514,6 +5555,8 @@ fn reverse_decision_into_dims_v1<'t, D: NetDimsV1>(
             d_edge_hidden,
             two_layer_second_pre,
             two_layer_first_output,
+            // Read below from the source node on.
+            EDGE_FEATURE_DIM_V1,
             d_edge_input,
         )?;
         for edge in 0..edge_count {
@@ -5585,6 +5628,8 @@ fn reverse_decision_into_dims_v1<'t, D: NetDimsV1>(
         d_object_base,
         two_layer_second_pre,
         two_layer_first_output,
+        // The card embedding's sinks read from the embedding on.
+        OBJECT_FEATURE_DIM_V1,
         d_object_input,
     )?;
     sink.card_embedding_dims_v1::<D>(object_card_ids, d_object_input);
@@ -5711,6 +5756,7 @@ fn two_layer_backward_into<'t>(
     d_output: &[f32],
     d_second_pre: &mut Vec<f32>,
     d_first_output: &mut Vec<f32>,
+    first_read: usize,
     d_input: &mut Vec<f32>,
 ) -> Result<(), NativePolicyTrainErrorV1> {
     two_layer_backward_into_dims_v1::<Net8DimsV1>(
@@ -5722,10 +5768,13 @@ fn two_layer_backward_into<'t>(
         d_output,
         d_second_pre,
         d_first_output,
+        first_read,
         d_input,
     )
 }
 
+/// The backward of a two-layer encoder. The caller reads every `d_input`
+/// row only from column `first_read` on (`linear_read_from_v1`).
 #[allow(clippy::too_many_arguments)]
 fn two_layer_backward_into_dims_v1<'t, D: NetDimsV1>(
     parameters: &[NativeNamedParameterV1],
@@ -5736,6 +5785,7 @@ fn two_layer_backward_into_dims_v1<'t, D: NetDimsV1>(
     d_output: &[f32],
     d_second_pre: &mut Vec<f32>,
     d_first_output: &mut Vec<f32>,
+    first_read: usize,
     d_input: &mut Vec<f32>,
 ) -> Result<(), NativePolicyTrainErrorV1> {
     #[cfg(test)]
@@ -5760,7 +5810,7 @@ fn two_layer_backward_into_dims_v1<'t, D: NetDimsV1>(
         d_first_output,
     )?;
     apply_tanh_gradient(tape.first_output.values_v1(arena), d_first_output)?;
-    sink.linear_v1(
+    sink.linear_read_from_v1(
         parameters,
         spec.first_weight,
         spec.first_bias,
@@ -5769,6 +5819,7 @@ fn two_layer_backward_into_dims_v1<'t, D: NetDimsV1>(
         spec.input_dim,
         D::HIDDEN,
         d_first_output,
+        first_read,
         d_input,
     )
 }
@@ -5780,9 +5831,17 @@ fn two_layer_backward_into_dims_v1<'t, D: NetDimsV1>(
 pub(super) struct InputMajorWeightsV1 {
     /// The architecture's hidden width (`NetDimsV1::HIDDEN`).
     hidden: usize,
-    /// By parameter index: `(input_dim, weight_t)` for a `[hidden, input]`
-    /// weight, `weight_t[input * hidden + output]`.
-    weights: Vec<Option<(usize, Vec<f32>)>>,
+    /// By parameter index, for a `[hidden, input]` weight.
+    weights: Vec<Option<InputMajorWeightV1>>,
+}
+
+struct InputMajorWeightV1 {
+    input_dim: usize,
+    /// `weight_t[input * hidden + output]`.
+    weight_t: Vec<f32>,
+    /// Whether every weight is finite, which lets the row kernel pass over
+    /// zero inputs (`accumulate_input_major_row_v1`).
+    finite: bool,
 }
 
 impl InputMajorWeightsV1 {
@@ -5809,7 +5868,12 @@ impl InputMajorWeightsV1 {
                             weight_t[input * hidden + output] = value;
                         }
                     }
-                    Some((input_dim, weight_t))
+                    let finite = parameter.values.iter().all(|value| value.is_finite());
+                    Some(InputMajorWeightV1 {
+                        input_dim,
+                        weight_t,
+                        finite,
+                    })
                 }
                 _ => None,
             })
@@ -5817,13 +5881,17 @@ impl InputMajorWeightsV1 {
         Self { hidden, weights }
     }
 
-    /// The input-major weight for a layer with these dimensions, if held.
-    fn get_v1(&self, weight_index: usize, input_dim: usize, output_dim: usize) -> Option<&[f32]> {
+    /// The input-major weight for a layer with these dimensions, if held,
+    /// and whether all of it is finite.
+    fn get_v1(
+        &self,
+        weight_index: usize,
+        input_dim: usize,
+        output_dim: usize,
+    ) -> Option<(&[f32], bool)> {
         match self.weights.get(weight_index)? {
-            Some((held_input_dim, weight_t))
-                if *held_input_dim == input_dim && output_dim == self.hidden =>
-            {
-                Some(weight_t)
+            Some(held) if held.input_dim == input_dim && output_dim == self.hidden => {
+                Some((&held.weight_t, held.finite))
             }
             _ => None,
         }
@@ -5903,17 +5971,22 @@ fn linear_forward_into_arena_guarded_v1(
             let input_row = &input[row * input_dim..(row + 1) * input_dim];
             let output_row = &mut output_values[row * output_dim..(row + 1) * output_dim];
             match (input_major, guard) {
-                (Some(weight_t), None) => {
+                (Some((weight_t, finite)), None) => {
                     output_row.copy_from_slice(bias);
-                    accumulate_input_major_row_v1(weight_t, input_row, output_row);
+                    accumulate_input_major_row_v1(weight_t, finite, input_row, output_row);
                 }
-                (Some(weight_t), Some(column)) => {
+                (Some((weight_t, finite)), Some(column)) => {
                     output_row.copy_from_slice(bias);
                     let (before, rest) = weight_t.split_at(column * output_dim);
                     let (guarded, after) = rest.split_at(output_dim);
-                    accumulate_input_major_row_v1(before, &input_row[..column], output_row);
+                    accumulate_input_major_row_v1(before, finite, &input_row[..column], output_row);
                     add_nonzero_products_v1(output_row, input_row[column], guarded);
-                    accumulate_input_major_row_v1(after, &input_row[column + 1..], output_row);
+                    accumulate_input_major_row_v1(
+                        after,
+                        finite,
+                        &input_row[column + 1..],
+                        output_row,
+                    );
                 }
                 (None, None) => linear_forward_ordered_v1(weight, bias, input_row, output_row),
                 (None, Some(column)) => {

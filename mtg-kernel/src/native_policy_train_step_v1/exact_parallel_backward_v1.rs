@@ -14,6 +14,15 @@
 //! unchanged and elements are independent, so phase B hands disjoint row
 //! blocks of the gradient tensors to different threads.
 //!
+//! A hidden-width weight's gradient is accumulated transposed, [input,
+//! output], and written back in the parameter's layout after the last block
+//! (`GradientTensorsV1`). A layer row's output gradient then stays in
+//! registers while the row's inputs are walked, and an input that is zero
+//! costs one comparison: its terms are zeros, and `replay_input_major_v1`
+//! leaves them out only where that changes no bit. The encoders' first
+//! layers read one-hot features, padding and pooled sums of nothing, so most
+//! of their inputs are zero.
+//!
 //! Every gradient bit, the gauge evidence and the first failure reported equal
 //! the sequential pass's: the gauge is observed in the sequential order before
 //! the blocks run, and failures are merged in visiting order, a substep's
@@ -31,8 +40,16 @@ const EXACT_BACKWARD_MIN_SUBSTEPS_PER_WORKER_V1: usize = 32;
 /// each).
 const EXACT_BACKWARD_BLOCK_SUBSTEPS_V1: usize = 512;
 
-/// Phase A chunks and phase B gradient blocks per worker, for load balance.
+/// Phase A chunks per worker, for load balance.
 const EXACT_BACKWARD_ITEMS_PER_WORKER_V1: usize = 8;
+
+/// The largest phase B row block, as a divisor of one worker's share of the
+/// block's work: a gradient tensor is split only when it is larger than
+/// that. Every further row block of a tensor is one more pass over that
+/// layer's output gradients (for a tensor in its own shape, over its
+/// inputs), so tensors are split no further than an even load needs. The
+/// many small tensors fill the gaps.
+const EXACT_BACKWARD_ROW_BLOCK_SHARE_DIVISOR_V1: usize = 1;
 
 /// One linear layer's backward step for one substep: its input (borrowed from
 /// the tape) and its output gradient (in `SubstepTermsV1::d_outputs`).
@@ -44,6 +61,9 @@ struct LinearTermsV1<'t> {
     input_dim: usize,
     output_dim: usize,
     d_output: Range<usize>,
+    /// Whether every value of the output gradient is finite. Only then is
+    /// the term of an input that is zero a zero (`replay_input_major_v1`).
+    d_output_finite: bool,
 }
 
 /// Everything phase B needs from one substep's backward. Buffers are cleared
@@ -78,6 +98,35 @@ impl<'t> ReverseGradientSinkV1<'t> for RecordTermsV1<'_, 't> {
         d_output: &[f32],
         d_input: &mut Vec<f32>,
     ) -> Result<(), NativePolicyTrainErrorV1> {
+        self.linear_read_from_v1(
+            parameters,
+            weight_index,
+            bias_index,
+            input,
+            rows,
+            input_dim,
+            output_dim,
+            d_output,
+            0,
+            d_input,
+        )
+    }
+
+    /// Computes the input gradient's columns from `first_read` on and leaves
+    /// the columns before it zero: nothing reads them.
+    fn linear_read_from_v1(
+        &mut self,
+        parameters: &[NativeNamedParameterV1],
+        weight_index: usize,
+        bias_index: usize,
+        input: &'t [f32],
+        rows: usize,
+        input_dim: usize,
+        output_dim: usize,
+        d_output: &[f32],
+        first_read: usize,
+        d_input: &mut Vec<f32>,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
         let weight = &parameters[weight_index].values;
         // `linear_backward_into`'s checks. The gradient tensors it also checks
         // are allocated with the parameters' shapes.
@@ -88,8 +137,16 @@ impl<'t> ReverseGradientSinkV1<'t> for RecordTermsV1<'_, 't> {
         {
             return Err(NativePolicyTrainErrorV1::ParameterManifest);
         }
+        let first_read = first_read.min(input_dim);
         resize_zeroed_v1(d_input, rows * input_dim);
-        input_gradient_rows_v1(weight, input_dim, output_dim, d_output, d_input);
+        input_gradient_rows_v1(weight, input_dim, output_dim, d_output, first_read, d_input);
+        // A test that reads a column this sink did not compute meets a NaN.
+        #[cfg(test)]
+        if first_read > 0 {
+            for d_input_row in d_input.chunks_exact_mut(input_dim) {
+                d_input_row[..first_read].fill(f32::NAN);
+            }
+        }
         let terms = &mut *self.terms;
         let start = terms.d_outputs.len();
         terms.d_outputs.extend_from_slice(d_output);
@@ -101,6 +158,10 @@ impl<'t> ReverseGradientSinkV1<'t> for RecordTermsV1<'_, 't> {
             input_dim,
             output_dim,
             d_output: start..terms.d_outputs.len(),
+            // No early exit, so the pass vectorizes.
+            d_output_finite: d_output
+                .iter()
+                .fold(true, |finite, value| finite & value.is_finite()),
         });
         Ok(())
     }
@@ -150,6 +211,80 @@ struct GradientBlockV1<'v> {
     width: usize,
     values: &'v mut [f32],
     cost: u64,
+    layout: GradientLayoutV1,
+}
+
+/// What the rows of a phase B block are.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GradientLayoutV1 {
+    /// The tensor's own shape: its first dimension.
+    Tensor,
+    /// A hidden-width weight transposed: its inputs, each the hidden width
+    /// of outputs wide.
+    InputMajor,
+}
+
+/// Phase B's gradient tensors. A hidden-width weight accumulates transposed
+/// and every other tensor in its own shape; all of them start at +0.0.
+struct GradientTensorsV1 {
+    gradients: Vec<Vec<f32>>,
+    /// By parameter index: the `[input, hidden]` transpose of a `[hidden,
+    /// input]` weight's gradient, or empty for a tensor that is not one.
+    input_major: Vec<Vec<f32>>,
+    hidden: usize,
+}
+
+impl GradientTensorsV1 {
+    fn zeroed_dims_v1<D: NetDimsV1>(parameters: &[NativeNamedParameterV1]) -> Self {
+        let hidden = D::HIDDEN;
+        // The widths `replay_input_major_v1` is built for.
+        let replayed_transposed = matches!(hidden, HIDDEN_DIM_V1 | W_HIDDEN_DIM_V1);
+        let input_major = parameters
+            .iter()
+            .enumerate()
+            .map(|(index, parameter)| match *parameter.shape.as_slice() {
+                [output_dim, input_dim]
+                    if replayed_transposed
+                        && output_dim == hidden
+                        && index != CARD_EMBEDDING
+                        && input_dim > 0
+                        && parameter.values.len() == hidden * input_dim =>
+                {
+                    vec![0.0; parameter.values.len()]
+                }
+                _ => Vec::new(),
+            })
+            .collect();
+        Self {
+            gradients: parameters
+                .iter()
+                .map(|parameter| vec![0.0; parameter.values.len()])
+                .collect(),
+            input_major,
+            hidden,
+        }
+    }
+
+    /// Every gradient in its parameter's shape.
+    fn into_gradients_v1(self) -> Vec<Vec<f32>> {
+        let Self {
+            mut gradients,
+            input_major,
+            hidden,
+        } = self;
+        for (gradient, input_major) in gradients.iter_mut().zip(&input_major) {
+            if input_major.is_empty() {
+                continue;
+            }
+            let input_dim = input_major.len() / hidden;
+            for (input, outputs) in input_major.chunks_exact(hidden).enumerate() {
+                for (output, &value) in outputs.iter().enumerate() {
+                    gradient[output * input_dim + input] = value;
+                }
+            }
+        }
+        gradients
+    }
 }
 
 type BackwardResultV1 =
@@ -274,10 +409,7 @@ fn backward_dims_v1<D: NetDimsV1>(
         .as_ref()
         .map_or(visits.len(), |(index, _)| *index);
 
-    let mut gradients = parameters
-        .iter()
-        .map(|parameter| vec![0.0; parameter.values.len()])
-        .collect::<Vec<_>>();
+    let mut gradients = GradientTensorsV1::zeroed_dims_v1::<D>(parameters);
     let mut terms = Vec::new();
     for block in visits[..backward_end].chunks(controls.block_substeps_v1()) {
         terms.resize_with(block.len(), SubstepTermsV1::default);
@@ -304,7 +436,7 @@ fn backward_dims_v1<D: NetDimsV1>(
     if let Some((_, error)) = gauge_failure {
         return Err(error);
     }
-    Ok((gradients, gauge))
+    Ok((gradients.into_gradients_v1(), gauge))
 }
 
 /// Phase A: every substep's activation gradients and kept terms, with one
@@ -402,11 +534,13 @@ fn record_substep_dims_v1<'g, D: NetDimsV1>(
     )
 }
 
-/// Splits every gradient tensor this block touches into row blocks of about
-/// equal work (one multiply-add per element and layer row), largest first.
+/// Splits the gradient tensors this block touches into row blocks, largest
+/// first: a tensor whose work (one multiply-add per element and layer row)
+/// is more than one worker's share is cut into equal row blocks of at most
+/// that share, and every other tensor is one block.
 fn gradient_blocks_v1<'v>(
     parameters: &[NativeNamedParameterV1],
-    gradients: &'v mut [Vec<f32>],
+    gradients: &'v mut GradientTensorsV1,
     terms: &[SubstepTermsV1<'_>],
     workers: usize,
 ) -> Vec<GradientBlockV1<'v>> {
@@ -415,7 +549,7 @@ fn gradient_blocks_v1<'v>(
 
 fn gradient_blocks_dims_v1<'v, D: NetDimsV1>(
     parameters: &[NativeNamedParameterV1],
-    gradients: &'v mut [Vec<f32>],
+    gradients: &'v mut GradientTensorsV1,
     terms: &[SubstepTermsV1<'_>],
     workers: usize,
 ) -> Vec<GradientBlockV1<'v>> {
@@ -424,6 +558,11 @@ fn gradient_blocks_dims_v1<'v, D: NetDimsV1>(
         .iter()
         .map(|parameter| parameter.shape.iter().skip(1).product::<usize>().max(1))
         .collect::<Vec<_>>();
+    let GradientTensorsV1 {
+        gradients,
+        input_major,
+        hidden,
+    } = gradients;
     let mut costs = vec![0u64; gradients.len()];
     for substep in terms {
         for linear in &substep.linears {
@@ -443,11 +582,23 @@ fn gradient_blocks_dims_v1<'v, D: NetDimsV1>(
         );
         costs[CARD_EMBEDDING] += substep.d_card_embeddings.len() as u64;
     }
-    let target =
-        (costs.iter().sum::<u64>() / (workers * EXACT_BACKWARD_ITEMS_PER_WORKER_V1) as u64).max(1);
+    let target = (costs.iter().sum::<u64>()
+        / (workers * EXACT_BACKWARD_ROW_BLOCK_SHARE_DIVISOR_V1) as u64)
+        .max(1);
     let mut blocks = Vec::new();
-    for (tensor, ((values, width), cost)) in gradients.iter_mut().zip(widths).zip(costs).enumerate()
+    for (tensor, (((gradient, input_major), width), cost)) in gradients
+        .iter_mut()
+        .zip(input_major)
+        .zip(widths)
+        .zip(costs)
+        .enumerate()
     {
+        // A transposed weight's rows are its inputs, each `hidden` wide.
+        let (values, width, layout) = if input_major.is_empty() {
+            (gradient, width, GradientLayoutV1::Tensor)
+        } else {
+            (input_major, *hidden, GradientLayoutV1::InputMajor)
+        };
         let rows = values.len() / width;
         if cost == 0 || rows == 0 {
             continue;
@@ -465,6 +616,7 @@ fn gradient_blocks_dims_v1<'v, D: NetDimsV1>(
                 width,
                 values,
                 cost: cost * block_rows as u64 / rows as u64,
+                layout,
             });
         }
     }
@@ -472,23 +624,29 @@ fn gradient_blocks_dims_v1<'v, D: NetDimsV1>(
     blocks
 }
 
-/// `linear_backward_into`'s input gradient: for each row, the outputs' terms
-/// in output order. Elements are independent, so the vector width changes
-/// no bit (AVX2 does not enable FMA).
+/// `linear_backward_into`'s input gradient for the columns from `first_read`
+/// on: for each row, the outputs' terms in output order. Elements are
+/// independent, so the vector width changes no bit (AVX2 does not enable
+/// FMA).
 fn input_gradient_rows_v1(
     weight: &[f32],
     input_dim: usize,
     output_dim: usize,
     d_output: &[f32],
+    first_read: usize,
     d_input: &mut [f32],
 ) {
     #[cfg(target_arch = "x86_64")]
     if std::arch::is_x86_feature_detected!("avx2") {
         // SAFETY: AVX2 support was detected at run time just above.
-        unsafe { input_gradient_rows_avx2_v1(weight, input_dim, output_dim, d_output, d_input) };
+        unsafe {
+            input_gradient_rows_avx2_v1(
+                weight, input_dim, output_dim, d_output, first_read, d_input,
+            )
+        };
         return;
     }
-    input_gradient_rows_body_v1(weight, input_dim, output_dim, d_output, d_input);
+    input_gradient_rows_body_v1(weight, input_dim, output_dim, d_output, first_read, d_input);
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -498,10 +656,16 @@ unsafe fn input_gradient_rows_avx2_v1(
     input_dim: usize,
     output_dim: usize,
     d_output: &[f32],
+    first_read: usize,
     d_input: &mut [f32],
 ) {
-    input_gradient_rows_body_v1(weight, input_dim, output_dim, d_output, d_input);
+    input_gradient_rows_body_v1(weight, input_dim, output_dim, d_output, first_read, d_input);
 }
+
+/// Columns whose sums one pass over the outputs keeps in registers: the
+/// hidden width of an encoder's pooled inputs, then the card embedding's.
+const INPUT_GRADIENT_WIDE_COLUMNS_V1: usize = 64;
+const INPUT_GRADIENT_NARROW_COLUMNS_V1: usize = 16;
 
 #[inline(always)]
 fn input_gradient_rows_body_v1(
@@ -509,6 +673,7 @@ fn input_gradient_rows_body_v1(
     input_dim: usize,
     output_dim: usize,
     d_output: &[f32],
+    first_read: usize,
     d_input: &mut [f32],
 ) {
     if input_dim == 0 || output_dim == 0 {
@@ -518,12 +683,61 @@ fn input_gradient_rows_body_v1(
         .chunks_exact_mut(input_dim)
         .zip(d_output.chunks_exact(output_dim))
     {
-        for (d_value, weight_row) in d_output_row.iter().zip(weight.chunks_exact(input_dim)) {
-            for (d_input, weight) in d_input_row.iter_mut().zip(weight_row) {
-                *d_input += *d_value * *weight;
+        let mut column = first_read;
+        while column + INPUT_GRADIENT_WIDE_COLUMNS_V1 <= input_dim {
+            input_gradient_columns_v1::<INPUT_GRADIENT_WIDE_COLUMNS_V1>(
+                weight,
+                input_dim,
+                column,
+                d_output_row,
+                d_input_row,
+            );
+            column += INPUT_GRADIENT_WIDE_COLUMNS_V1;
+        }
+        while column + INPUT_GRADIENT_NARROW_COLUMNS_V1 <= input_dim {
+            input_gradient_columns_v1::<INPUT_GRADIENT_NARROW_COLUMNS_V1>(
+                weight,
+                input_dim,
+                column,
+                d_output_row,
+                d_input_row,
+            );
+            column += INPUT_GRADIENT_NARROW_COLUMNS_V1;
+        }
+        if column < input_dim {
+            for (d_value, weight_row) in d_output_row.iter().zip(weight.chunks_exact(input_dim)) {
+                for (d_input, weight) in d_input_row[column..].iter_mut().zip(&weight_row[column..])
+                {
+                    *d_input += *d_value * *weight;
+                }
             }
         }
     }
+}
+
+/// One row's input gradient for the `C` columns from `first`: each column
+/// receives the outputs' terms in output order, as in the loop over whole
+/// rows, with the `C` sums in registers instead of read from and written to
+/// the row for every output.
+#[inline(always)]
+fn input_gradient_columns_v1<const C: usize>(
+    weight: &[f32],
+    input_dim: usize,
+    first: usize,
+    d_output_row: &[f32],
+    d_input_row: &mut [f32],
+) {
+    let d_input_columns = &mut d_input_row[first..first + C];
+    let mut sums: [f32; C] = (&*d_input_columns).try_into().expect("column count");
+    for (d_value, weight_row) in d_output_row.iter().zip(weight.chunks_exact(input_dim)) {
+        let weights: &[f32; C] = weight_row[first..first + C]
+            .try_into()
+            .expect("column count");
+        for column in 0..C {
+            sums[column] += *d_value * weights[column];
+        }
+    }
+    d_input_columns.copy_from_slice(&sums);
 }
 
 /// Phase B: the block's elements receive the sequential pass's additions in
@@ -573,8 +787,21 @@ fn replay_block_body_dims_v1<D: NetDimsV1>(
         rows: block_rows,
         width,
         values,
+        layout,
         ..
     } = block;
+    if layout == GradientLayoutV1::InputMajor {
+        match width {
+            HIDDEN_DIM_V1 => {
+                replay_input_major_v1::<HIDDEN_DIM_V1>(tensor, block_rows, values, terms)
+            }
+            W_HIDDEN_DIM_V1 => {
+                replay_input_major_v1::<W_HIDDEN_DIM_V1>(tensor, block_rows, values, terms)
+            }
+            width => panic!("no transposed replay at hidden width {width}"),
+        }
+        return;
+    }
     let first = block_rows.start;
     for substep in terms {
         if tensor == CARD_EMBEDDING {
@@ -627,6 +854,73 @@ fn replay_block_body_dims_v1<D: NetDimsV1>(
                             values[output_index - first] +=
                                 d_output[row * linear.output_dim + output_index];
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Phase B for a block of a hidden-width weight's transposed gradient:
+/// `values` holds the inputs `inputs`, each `N` outputs wide. Every element
+/// receives the sequential pass's additions in its order (substeps in
+/// visiting order, then the layer's rows in order), except the terms of the
+/// inputs that are zero where leaving them out changes no bit:
+///
+/// - A term is the row's output gradient times the input. With that
+///   gradient finite (`d_output_finite`) and the input a zero, it is a zero
+///   of either sign.
+/// - With round-to-nearest, adding a zero changes a sum only if the sum is
+///   a negative zero or a signaling NaN. No element is a negative zero or a
+///   NaN when the block starts (read here), a sum that is not a negative
+///   zero never becomes one (two numbers sum to a negative zero only when
+///   both are), and arithmetic never yields a signaling NaN.
+/// - The thread's rounding is read here once. A thread outside the pinned
+///   state adds every term, as does a target without that register.
+///
+/// The elements start at +0.0, so in the pinned state the first condition
+/// of the second point holds for every block.
+#[inline(always)]
+fn replay_input_major_v1<const N: usize>(
+    tensor: usize,
+    inputs: Range<usize>,
+    values: &mut [f32],
+    terms: &[SubstepTermsV1<'_>],
+) {
+    let zeros_add_nothing = rounds_to_nearest_v1() && no_negative_zero_or_nan_v1(values);
+    for substep in terms {
+        for linear in &substep.linears {
+            if linear.weight_index != tensor {
+                continue;
+            }
+            assert!(
+                linear.output_dim == N && inputs.end <= linear.input_dim,
+                "the exact parallel backward needs validated parameter shapes"
+            );
+            let d_output = &substep.d_outputs[linear.d_output.clone()];
+            let pass_zero_inputs = zeros_add_nothing && linear.d_output_finite;
+            #[cfg(test)]
+            if pass_zero_inputs {
+                ZERO_INPUT_ROWS_PASSED_FOR_TEST_V1
+                    .with(|rows| rows.set(rows.get() + linear.rows as u64));
+            }
+            for (input_row, d_row) in linear
+                .input
+                .chunks_exact(linear.input_dim)
+                .zip(d_output.chunks_exact(N))
+            {
+                // A copy, so the row stays in registers across the inputs.
+                let d_row: [f32; N] = d_row.try_into().expect("output gradient row width");
+                for (gradient_row, &input) in
+                    values.chunks_exact_mut(N).zip(&input_row[inputs.clone()])
+                {
+                    if pass_zero_inputs && input == 0.0 {
+                        continue;
+                    }
+                    let gradient_row: &mut [f32; N] =
+                        gradient_row.try_into().expect("gradient row width");
+                    for output in 0..N {
+                        gradient_row[output] += d_row[output] * input;
                     }
                 }
             }
@@ -741,6 +1035,9 @@ impl ControlsV1 {
 
 #[cfg(test)]
 thread_local! {
+    /// Layer rows this thread replayed with their zero inputs passed over,
+    /// counted once per block of a transposed weight.
+    static ZERO_INPUT_ROWS_PASSED_FOR_TEST_V1: Cell<u64> = const { Cell::new(0) };
     static EXACT_BACKWARD_RUNS_FOR_TEST_V1: Cell<u64> = const { Cell::new(0) };
     static EXACT_BACKWARD_HOOKS_FOR_TEST_V1: Cell<ExactBackwardHooksForTestV1> =
         const { Cell::new(ExactBackwardHooksForTestV1::NONE) };
