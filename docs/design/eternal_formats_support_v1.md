@@ -1153,6 +1153,43 @@ enters-tapped ability, as under Blood Moon. Drop of Honey's state trigger is che
 triggers are collected, so creatures that all leave and return within one event batch, such
 as a flicker of every creature, don't trigger it (its ruling says they do).
 
+### S1h: Overload qualification
+
+After S1g the two largest Pauper gaps are Partial S1 definitions. Vandalblast is the only gap
+of 13 lists (18.6% of the field) and Electrickery of Boros Moxite (1.3%); Boros Synthesizer
+(0.4%) lists both. S1d built overload as the card's paid Adventure form, and the later repair
+added the paid graveyard and Future Sight permissions, Retrace's land discard, the Omniscience
+and Bolas's Citadel routes, and free casts that offer only the ordinary form (see S1d above).
+That repair left "the affected overload fixtures and consumers" to qualify. S1h qualifies them
+and marks both cards Full. Their rules are unchanged.
+
+- Fixtures: the overload fixtures in `tests/eternal/eternal_sideboard_s1d_v1.rs` cover each
+  card's overloaded effect, the paid graveyard permission with a restore, Retrace's land
+  discard, a free cascade, Omniscience, Future Sight's paid library permission with a restore
+  and as the only legal form, and Bolas's Citadel. They run in the Eternal group, which runs
+  every `eternal_integration` module. They passed on Linux in each pull request run and on
+  hosted Windows in the Eternal jobs dispatched at #635's head `88262eb8` and #640's head
+  `bd168234`. For these pull requests the hosted Windows Eternal job replaces the local
+  native packet (the maintainer's decision), so that is their native execution.
+- Copies: Chandra, Hope's Beacon is the one registry card that copies a spell other than
+  itself. Its trigger copies the first instant or sorcery spell its controller casts each
+  turn; Storm, Replicate, Casualty and Chain of Vapor copy only their own spell. A copy of an
+  overloaded spell is overloaded too (702.96c). A new S1h test casts an overloaded Vandalblast
+  and an overloaded Electrickery under Chandra and checks that each copy, with no targets,
+  affects every object the overloaded text names.
+- Consumers: in Eternal builds a Full card reaches the registered best-of-three match, the
+  custom-deck session with its JSONL server and policy observation v5, and the census. The
+  15 lists join `PLAYABLE_75`, so the best-of-three harness plays their matches through that
+  server with seeded random actions and random sideboarding, checking natural terminals and
+  replay. The harness also counts overloaded casts (the spell mode choice of an overload card
+  with the overload form selected) and requires at least one. Policy encoders, training and
+  Spellbench entries for eternal formats stay separate work, and frozen encoders keep refusing
+  unsupported state (see the card contract).
+
+The Pauper full 75 share goes from 64.8% to 85.1%, and 11 Partial S1 definitions remain. As
+for every cast, the pending cast menu has no interleaved mana activation, so an overload cost
+is paid with the ordinary mana plan.
+
 ## Execution
 
 Family workers implement bounded card groups in their own worktrees; one integrator owns
