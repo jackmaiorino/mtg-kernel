@@ -29,9 +29,10 @@
 //!
 //! One repetition replays `execute_update_inner_v1` from `checkpoint_started`
 //! through its v2 item-for-item comparison, with the same calls in the same
-//! order: snapshot, state digest, `ParameterBitsV1` conversion and format
-//! resolution, encode, seal, durable publication, the continuation loader's
-//! readback, the readback digest and (v2) the restored snapshot comparison.
+//! order: snapshot, state digest, the checkpoint's tensors (borrowed from the
+//! snapshot, `ParameterBitsRefV1`) and format resolution, encode, seal,
+//! durable publication, the continuation loader's readback, the readback
+//! digest and (v2) the restored snapshot comparison.
 //! The process digest memo is emptied before each repetition, so the first
 //! digest misses as it does after a real update; the readback then runs with
 //! whatever the publication left in the process caches, as in production.
@@ -48,7 +49,9 @@
 //! updates-per-hour or full-node claim: a faster codec stage does not by
 //! itself establish a complete-update or fleet gain (mtg-kernel#594).
 
-use super::checkpoint_container_v1::{self, CheckpointRecordFormatV1};
+use super::checkpoint_container_v1::{
+    self, same_tensors_v1, CheckpointRecordFormatV1, ParameterBitsRefV1,
+};
 use super::record_envelope_v1::{self, RecordEnvelopeV1};
 use super::s_learner_v1::S_LEARNER_STATE_FILE_V1;
 use super::{
@@ -56,7 +59,7 @@ use super::{
     read_checkpoint_v1, read_pinned_bytes, read_pinned_shared_v1, serialize_json_v1,
     verified_bytes_cache_v1, CollectionSamplerV1, ExpandedCheckpointV1, ExpandedDeckListV1,
     ExpandedEpisodeV1, ExpandedLossSelectionV1, ExpandedModelSourceV1, ExpandedTrainingCommandV1,
-    ExpandedUpdateBackendV1, ParameterBitsV1, PinnedFileV1, UpdateBackwardExecutionV1,
+    ExpandedUpdateBackendV1, PinnedFileV1, UpdateBackwardExecutionV1,
     DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, MAX_FILE_BYTES,
 };
 use crate::native_policy_train_step_v1::{
@@ -1217,33 +1220,30 @@ const UPDATE_CELLS_V1: [CellV1; 5] = [
 
 /// The checkpoint an update writes for `snapshot`: `metadata`'s members
 /// (everything but the state) with the snapshot's step, anchor, digest and
-/// tensor bits, exactly as `execute_update_inner_v1` assembles it.
-fn checkpoint_of_snapshot_v1(
+/// tensors, borrowed, exactly as `execute_update_inner_v1` assembles it.
+fn checkpoint_of_snapshot_v1<'a>(
     metadata: &ExpandedCheckpointV1,
-    snapshot: &NativePolicyValueTrainSnapshotV1,
+    snapshot: &'a NativePolicyValueTrainSnapshotV1,
     state_sha256: String,
-) -> ExpandedCheckpointV1 {
-    ExpandedCheckpointV1 {
-        state_sha256,
-        adam_step: snapshot.adam_step,
-        scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
-        parameters: snapshot
-            .parameters
+) -> ExpandedCheckpointV1<ParameterBitsRefV1<'a>> {
+    let borrowed = |tensors: &'a [NativeNamedParameterV1]| {
+        tensors
             .iter()
-            .map(ParameterBitsV1::from_native)
-            .collect(),
-        first_moments: snapshot
-            .first_moments
-            .iter()
-            .map(ParameterBitsV1::from_native)
-            .collect(),
-        second_moments: snapshot
-            .second_moments
-            .iter()
-            .map(ParameterBitsV1::from_native)
-            .collect(),
-        ..metadata.clone()
-    }
+            .map(ParameterBitsRefV1::of_native_v1)
+            .collect()
+    };
+    let mut checkpoint = checkpoint_container_v1::with_tensors_v1(
+        metadata,
+        [
+            borrowed(&snapshot.parameters),
+            borrowed(&snapshot.first_moments),
+            borrowed(&snapshot.second_moments),
+        ],
+    );
+    checkpoint.state_sha256 = state_sha256;
+    checkpoint.adam_step = snapshot.adam_step;
+    checkpoint.scorer_bias_anchor_bits = snapshot.scorer_bias_anchor_bits;
+    checkpoint
 }
 
 /// Empties the process digest memo (`state_digest_memo_v1`) of every stream
@@ -1424,14 +1424,6 @@ fn load_ordinary_state_v1(
     })
 }
 
-fn same_tensors_v1(got: &[NativeNamedParameterV1], saved: &[ParameterBitsV1]) -> bool {
-    got.len() == saved.len()
-        && got
-            .iter()
-            .zip(saved)
-            .all(|(g, s)| ParameterBitsV1::from_native(g) == *s)
-}
-
 /// One repetition of the ordinary sequence: its stages, its total, what it
 /// published and the state digest it published under.
 struct PublishedV1 {
@@ -1504,7 +1496,9 @@ fn ordinary_sequence_v1(
         })?;
     }
     let (steps, total) = sequence.finish_v1();
-    drop((snapshot, checkpoint, sealed, restored));
+    // The checkpoint borrows the snapshot, so it goes first.
+    drop(checkpoint);
+    drop((snapshot, sealed, restored));
     Ok(PublishedV1 {
         steps,
         total,

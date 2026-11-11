@@ -28,6 +28,17 @@
 //! [`export_v1`] reproduces the v1 JSON bytes `publish_json` writes for the
 //! same checkpoint.
 //!
+//! # Tensors where they are held
+//!
+//! [`ExpandedCheckpointV1`] is generic over its tensors ([`TensorBitsV1`]):
+//! a decoded checkpoint owns [`ParameterBitsV1`]s, and an update publishes a
+//! checkpoint of [`ParameterBitsRefV1`]s, which borrow the snapshot it
+//! records instead of copying every value's bits. Either way each format
+//! writes the same bytes: the v1 JSON through the same derived serialization,
+//! the container through one encoder. The encoder writes into a sink
+//! ([`SinkV1`]): a buffer, or a comparison with existing bytes, which is how
+//! [`decode_v1`] checks its re-encoding without holding a copy of it.
+//!
 //! # Default, identity and config bytes (the default switch)
 //!
 //! The 16-run acceptance measurement accepted v2, so an update writes the
@@ -56,7 +67,8 @@
 //! `python/tools/checkpoint_container_v1.py`.
 
 use super::{ExpandedCheckpointV1, ParameterBitsV1};
-use serde::{Deserialize, Serialize};
+use crate::native_policy_value_net_v1::NativeNamedParameterV1;
+use serde::{Deserialize, Serialize, Serializer};
 use std::borrow::Cow;
 
 /// The container's first eight bytes.
@@ -106,7 +118,7 @@ impl CheckpointRecordFormatV1 {
     /// The format an update writes for `saved`: `V1` or `V2`, never `Auto`.
     /// An explicit `V2` outside the scope gate is an error; `Auto` falls back
     /// to `V1` there.
-    pub(crate) fn resolve_v1(self, saved: &ExpandedCheckpointV1) -> Result<Self, String> {
+    pub(crate) fn resolve_v1<T>(self, saved: &ExpandedCheckpointV1<T>) -> Result<Self, String> {
         match self {
             Self::V1 => Ok(Self::V1),
             Self::V2 => admit_writer_v1(saved).map(|()| Self::V2),
@@ -125,7 +137,7 @@ impl CheckpointRecordFormatV1 {
 /// GAE loss, the platform's math, and none of the optional continuation,
 /// transfer, distillation or input-contract members. Anything else is
 /// refused by name and keeps writing v1 JSON.
-pub(crate) fn admit_writer_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
+pub(crate) fn admit_writer_v1<T>(saved: &ExpandedCheckpointV1<T>) -> Result<(), String> {
     use crate::native_flat_tensorizer_v4::{
         FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4,
     };
@@ -161,6 +173,158 @@ pub(crate) fn admit_writer_v1(saved: &ExpandedCheckpointV1) -> Result<(), String
     } else {
         Err("the v2 checkpoint writer admits only ordinary fresh V4, FlatV7 or FlatV8 checkpoints with the terminal or GAE loss; this kind has no v2 identity replay and keeps record_format v1".into())
     }
+}
+
+/// One tensor's values as the codec reads them: their `f32` bit patterns
+/// themselves (a decoded checkpoint), or the `f32` values whose `to_bits`
+/// they are (a snapshot being published).
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum TensorValuesV1<'a> {
+    Bits(&'a [u32]),
+    Floats(&'a [f32]),
+}
+
+impl TensorValuesV1<'_> {
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Bits(bits) => bits.len(),
+            Self::Floats(floats) => floats.len(),
+        }
+    }
+}
+
+/// A checkpoint tensor: its name, its shape and its values' bit patterns,
+/// wherever they are held. The codec writes, compares and serializes every
+/// implementation the same way, so a [`ParameterBitsV1`] and a
+/// [`ParameterBitsRefV1`] of the same tensor publish the same bytes.
+pub(crate) trait TensorBitsV1 {
+    fn name_v1(&self) -> &str;
+    fn shape_v1(&self) -> &[usize];
+    fn values_v1(&self) -> TensorValuesV1<'_>;
+}
+
+impl TensorBitsV1 for ParameterBitsV1 {
+    fn name_v1(&self) -> &str {
+        &self.name
+    }
+
+    fn shape_v1(&self) -> &[usize] {
+        &self.shape
+    }
+
+    fn values_v1(&self) -> TensorValuesV1<'_> {
+        TensorValuesV1::Bits(&self.values)
+    }
+}
+
+impl TensorBitsV1 for NativeNamedParameterV1 {
+    fn name_v1(&self) -> &str {
+        self.name
+    }
+
+    fn shape_v1(&self) -> &[usize] {
+        &self.shape
+    }
+
+    fn values_v1(&self) -> TensorValuesV1<'_> {
+        TensorValuesV1::Floats(&self.values)
+    }
+}
+
+/// A snapshot tensor as a checkpoint records it, borrowed: what
+/// `ParameterBitsV1::from_native` copies, without the copy. Its serialization
+/// is that `ParameterBitsV1`'s, member for member and value for value.
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename = "ParameterBitsV1")]
+pub(crate) struct ParameterBitsRefV1<'a> {
+    name: &'static str,
+    shape: &'a [usize],
+    #[serde(serialize_with = "serialize_bits_v1")]
+    values: &'a [f32],
+}
+
+/// `ParameterBitsV1`'s members, which [`ParameterBitsRefV1`] repeats in
+/// order: a member added there fails to compile here until the view has it.
+const _: fn(ParameterBitsV1) = |bits| {
+    let ParameterBitsV1 {
+        name: _,
+        shape: _,
+        values: _,
+    } = bits;
+};
+
+impl<'a> ParameterBitsRefV1<'a> {
+    pub(crate) fn of_native_v1(tensor: &'a NativeNamedParameterV1) -> Self {
+        Self {
+            name: tensor.name,
+            shape: &tensor.shape,
+            values: &tensor.values,
+        }
+    }
+}
+
+impl TensorBitsV1 for ParameterBitsRefV1<'_> {
+    fn name_v1(&self) -> &str {
+        self.name
+    }
+
+    fn shape_v1(&self) -> &[usize] {
+        self.shape
+    }
+
+    fn values_v1(&self) -> TensorValuesV1<'_> {
+        TensorValuesV1::Floats(self.values)
+    }
+}
+
+/// The values' bit patterns as the sequence of `u32`s a `Vec<u32>` writes.
+fn serialize_bits_v1<S: Serializer>(values: &&[f32], serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(values.iter().map(|value| value.to_bits()))
+}
+
+/// Whether two values hold the same bit patterns. Branch-free within a block
+/// so the comparison runs at memory speed.
+fn same_bits_v1<L: Copy, R: Copy>(
+    left: &[L],
+    right: &[R],
+    left_bits: impl Fn(L) -> u32,
+    right_bits: impl Fn(R) -> u32,
+) -> bool {
+    const BLOCK: usize = 1024;
+    left.len() == right.len()
+        && left
+            .chunks(BLOCK)
+            .zip(right.chunks(BLOCK))
+            .all(|(left, right)| {
+                left.iter().zip(right).fold(true, |same, (&l, &r)| {
+                    same & (left_bits(l) == right_bits(r))
+                })
+            })
+}
+
+fn same_values_v1(left: TensorValuesV1<'_>, right: TensorValuesV1<'_>) -> bool {
+    use TensorValuesV1::{Bits, Floats};
+    match (left, right) {
+        (Bits(left), Bits(right)) => left == right,
+        (Floats(left), Floats(right)) => same_bits_v1(left, right, f32::to_bits, f32::to_bits),
+        (Floats(floats), Bits(bits)) | (Bits(bits), Floats(floats)) => {
+            same_bits_v1(floats, bits, f32::to_bits, |bits| bits)
+        }
+    }
+}
+
+/// Whether two tensor lists hold the same tensors: the same count and, in
+/// order, the same names, the same shapes and the same value bits (`to_bits`,
+/// so a signed zero or a NaN payload counts), compared where each is held.
+/// For a list of snapshot tensors and a list of `ParameterBitsV1`, this is
+/// whether `ParameterBitsV1::from_native` of the first equals the second.
+pub(crate) fn same_tensors_v1<L: TensorBitsV1, R: TensorBitsV1>(left: &[L], right: &[R]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.name_v1() == right.name_v1()
+                && left.shape_v1() == right.shape_v1()
+                && same_values_v1(left.values_v1(), right.values_v1())
+        })
 }
 
 /// Whether `bytes` carry the container magic. A v1 JSON checkpoint starts
@@ -202,7 +366,7 @@ fn element_count_v1(shape: &[usize]) -> Result<usize, String> {
         .ok_or_else(|| "checkpoint container tensor shape overflows".to_owned())
 }
 
-fn sections_of_v1(saved: &ExpandedCheckpointV1) -> [&[ParameterBitsV1]; 3] {
+fn sections_of_v1<T>(saved: &ExpandedCheckpointV1<T>) -> [&[T]; 3] {
     [
         &saved.parameters,
         &saved.first_moments,
@@ -211,9 +375,17 @@ fn sections_of_v1(saved: &ExpandedCheckpointV1) -> [&[ParameterBitsV1]; 3] {
 }
 
 /// `saved` with its three tensor sections empty: the container's document.
-/// The destructuring names every field, so a field added to the checkpoint
-/// fails to compile here until the container carries it.
-fn document_of_v1(saved: &ExpandedCheckpointV1) -> ExpandedCheckpointV1 {
+fn document_of_v1<T>(saved: &ExpandedCheckpointV1<T>) -> ExpandedCheckpointV1 {
+    with_tensors_v1(saved, [Vec::new(), Vec::new(), Vec::new()])
+}
+
+/// `saved`'s members with `tensors` as its parameters, first moments and
+/// second moments. The destructuring names every field, so a field added to
+/// the checkpoint fails to compile here until the container carries it.
+pub(crate) fn with_tensors_v1<T, U>(
+    saved: &ExpandedCheckpointV1<T>,
+    [parameters, first_moments, second_moments]: [Vec<U>; 3],
+) -> ExpandedCheckpointV1<U> {
     let ExpandedCheckpointV1 {
         schema,
         feature_contract_digest,
@@ -256,9 +428,9 @@ fn document_of_v1(saved: &ExpandedCheckpointV1) -> ExpandedCheckpointV1 {
         ex1: ex1.clone(),
         adam_step: *adam_step,
         scorer_bias_anchor_bits: *scorer_bias_anchor_bits,
-        parameters: Vec::new(),
-        first_moments: Vec::new(),
-        second_moments: Vec::new(),
+        parameters,
+        first_moments,
+        second_moments,
         trajectories: trajectories.clone(),
         loss_identity: loss_identity.clone(),
         gamma_bits: *gamma_bits,
@@ -274,16 +446,95 @@ fn document_of_v1(saved: &ExpandedCheckpointV1) -> ExpandedCheckpointV1 {
     }
 }
 
-/// Encodes `saved` as a container. Refuses a tensor whose value count is not
-/// the product of its shape.
-pub(crate) fn encode_v1(saved: &ExpandedCheckpointV1) -> Result<Vec<u8>, String> {
+/// Where an encoding goes as it is produced: appended to a buffer, or
+/// compared with bytes that claim to be that encoding ([`CompareSinkV1`]).
+trait SinkV1 {
+    fn put_v1(&mut self, bytes: &[u8]);
+    fn zeros_v1(&mut self, count: usize);
+    /// Bytes produced so far.
+    fn len_v1(&self) -> usize;
+}
+
+impl SinkV1 for Vec<u8> {
+    fn put_v1(&mut self, bytes: &[u8]) {
+        self.extend_from_slice(bytes);
+    }
+
+    fn zeros_v1(&mut self, count: usize) {
+        self.resize(self.len() + count, 0);
+    }
+
+    fn len_v1(&self) -> usize {
+        self.len()
+    }
+}
+
+/// Compares an encoding with `expected` as it is produced: `same` stays true
+/// exactly while every byte so far equals `expected`'s byte at its offset.
+struct CompareSinkV1<'a> {
+    expected: &'a [u8],
+    at: usize,
+    same: bool,
+}
+
+impl SinkV1 for CompareSinkV1<'_> {
+    fn put_v1(&mut self, bytes: &[u8]) {
+        let end = self.at.saturating_add(bytes.len());
+        self.same = self.same && self.expected.get(self.at..end) == Some(bytes);
+        self.at = end;
+    }
+
+    fn zeros_v1(&mut self, count: usize) {
+        let end = self.at.saturating_add(count);
+        self.same = self.same && self.expected.get(self.at..end).is_some_and(all_zero_v1);
+        self.at = end;
+    }
+
+    fn len_v1(&self) -> usize {
+        self.at
+    }
+}
+
+/// Writes each value's little-endian bit pattern, a few thousand at a time.
+fn put_values_v1(sink: &mut impl SinkV1, values: TensorValuesV1<'_>) {
+    fn put<V: Copy>(sink: &mut impl SinkV1, values: &[V], bits: impl Fn(V) -> u32) {
+        const CHUNK_VALUES: usize = 4096;
+        let mut buffer = [0u8; CHUNK_VALUES * 4];
+        for chunk in values.chunks(CHUNK_VALUES) {
+            for (slot, &value) in buffer.chunks_exact_mut(4).zip(chunk) {
+                slot.copy_from_slice(&bits(value).to_le_bytes());
+            }
+            sink.put_v1(&buffer[..chunk.len() * 4]);
+        }
+    }
+    match values {
+        TensorValuesV1::Bits(bits) => put(sink, bits, |bits| bits),
+        TensorValuesV1::Floats(floats) => put(sink, floats, f32::to_bits),
+    }
+}
+
+/// Everything of a container's encoding but its tensor values: the document,
+/// the table, where each tensor starts and the total length.
+struct FrameV1 {
+    document: Vec<u8>,
+    table: Vec<u8>,
+    data_start: usize,
+    /// Each tensor's offset from the data start, in section order.
+    offsets: Vec<usize>,
+    total: usize,
+}
+
+/// The frame of `saved`'s container. Refuses a tensor whose value count is
+/// not the product of its shape; every refusal of [`encode_v1`] is made here,
+/// before anything is written.
+fn frame_v1<T: TensorBitsV1>(saved: &ExpandedCheckpointV1<T>) -> Result<FrameV1, String> {
     let document = serde_json::to_vec(&document_of_v1(saved)).map_err(|e| e.to_string())?;
     let mut entries = Vec::new();
     let mut offset = 0usize;
     for (section, tensors) in SECTION_NAMES_V1.iter().zip(sections_of_v1(saved)) {
         for (ordinal, tensor) in tensors.iter().enumerate() {
-            let count = element_count_v1(&tensor.shape)?;
-            if count != tensor.values.len() {
+            let count = element_count_v1(tensor.shape_v1())?;
+            if count != tensor.values_v1().len() {
                 return Err("checkpoint container tensor length differs from its shape".into());
             }
             let byte_length = count
@@ -292,8 +543,8 @@ pub(crate) fn encode_v1(saved: &ExpandedCheckpointV1) -> Result<Vec<u8>, String>
             entries.push(SectionEntryV1 {
                 section: (*section).to_owned(),
                 ordinal,
-                name: tensor.name.clone(),
-                shape: tensor.shape.clone(),
+                name: tensor.name_v1().to_owned(),
+                shape: tensor.shape_v1().to_vec(),
                 offset: offset as u64,
                 byte_length: byte_length as u64,
             });
@@ -307,6 +558,7 @@ pub(crate) fn encode_v1(saved: &ExpandedCheckpointV1) -> Result<Vec<u8>, String>
     let data_length = entries
         .last()
         .map_or(0, |last| (last.offset + last.byte_length) as usize);
+    let offsets = entries.iter().map(|entry| entry.offset as usize).collect();
     let table = SectionTableV1 {
         state_format: STATE_FORMAT_V1.to_owned(),
         sections: entries,
@@ -316,26 +568,70 @@ pub(crate) fn encode_v1(saved: &ExpandedCheckpointV1) -> Result<Vec<u8>, String>
     let total = data_start
         .checked_add(data_length)
         .ok_or("checkpoint container size overflows")?;
-    let mut bytes = Vec::with_capacity(total);
-    bytes.extend_from_slice(MAGIC_V1);
-    bytes.extend_from_slice(&CONTAINER_VERSION_V1.to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes());
-    bytes.extend_from_slice(&(document.len() as u64).to_le_bytes());
-    bytes.extend_from_slice(&(table.len() as u64).to_le_bytes());
-    bytes.extend_from_slice(&document);
-    bytes.extend_from_slice(&table);
-    bytes.resize(data_start, 0);
-    for tensors in sections_of_v1(saved) {
-        for tensor in tensors {
-            let start = align_up_v1(bytes.len() - data_start)? + data_start;
-            bytes.resize(start, 0);
-            for value in &tensor.values {
-                bytes.extend_from_slice(&value.to_le_bytes());
-            }
-        }
+    Ok(FrameV1 {
+        document,
+        table,
+        data_start,
+        offsets,
+        total,
+    })
+}
+
+/// Writes `saved`'s container, framed by `frame` (its own [`frame_v1`]),
+/// into `sink`: the header, the document, the table, zero padding to the
+/// data start, then each tensor at its offset with zero padding between.
+fn write_v1<T: TensorBitsV1>(
+    saved: &ExpandedCheckpointV1<T>,
+    frame: &FrameV1,
+    sink: &mut impl SinkV1,
+) {
+    sink.put_v1(MAGIC_V1);
+    sink.put_v1(&CONTAINER_VERSION_V1.to_le_bytes());
+    sink.put_v1(&0u32.to_le_bytes());
+    sink.put_v1(&(frame.document.len() as u64).to_le_bytes());
+    sink.put_v1(&(frame.table.len() as u64).to_le_bytes());
+    sink.put_v1(&frame.document);
+    sink.put_v1(&frame.table);
+    let tensors = sections_of_v1(saved).into_iter().flatten();
+    for (tensor, offset) in tensors.zip(&frame.offsets) {
+        sink.zeros_v1(frame.data_start + offset - sink.len_v1());
+        put_values_v1(sink, tensor.values_v1());
     }
-    debug_assert_eq!(bytes.len(), total);
+    if frame.offsets.is_empty() {
+        sink.zeros_v1(frame.data_start - sink.len_v1());
+    }
+}
+
+/// Encodes `saved` as a container. Refuses a tensor whose value count is not
+/// the product of its shape.
+pub(crate) fn encode_v1<T: TensorBitsV1>(
+    saved: &ExpandedCheckpointV1<T>,
+) -> Result<Vec<u8>, String> {
+    let frame = frame_v1(saved)?;
+    let mut bytes = Vec::with_capacity(frame.total);
+    write_v1(saved, &frame, &mut bytes);
+    debug_assert_eq!(bytes.len(), frame.total);
     Ok(bytes)
+}
+
+/// Whether `bytes` are exactly [`encode_v1`]'s encoding of `saved`: the
+/// encoding is compared with them as it is produced, never held. Refuses
+/// what [`encode_v1`] refuses.
+fn encodes_to_v1<T: TensorBitsV1>(
+    saved: &ExpandedCheckpointV1<T>,
+    bytes: &[u8],
+) -> Result<bool, String> {
+    let frame = frame_v1(saved)?;
+    if frame.total != bytes.len() {
+        return Ok(false);
+    }
+    let mut sink = CompareSinkV1 {
+        expected: bytes,
+        at: 0,
+        same: true,
+    };
+    write_v1(saved, &frame, &mut sink);
+    Ok(sink.same && sink.at == bytes.len())
 }
 
 struct HeaderV1 {
@@ -503,8 +799,19 @@ fn open_record_v1(bytes: &[u8]) -> Result<Cow<'_, [u8]>, String> {
 /// Decodes a container into the checkpoint it encodes. Refuses anything that
 /// is not the canonical encoding of what it decodes to (see
 /// [`check_structure_v1`]); as a second guard the decoded checkpoint is
-/// re-encoded and compared byte for byte.
+/// re-encoded and compared byte for byte, as the re-encoding is produced
+/// ([`encodes_to_v1`]), without holding a copy of it.
 pub(crate) fn decode_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
+    let saved = decode_sections_v1(bytes)?;
+    if !encodes_to_v1(&saved, bytes)? {
+        return Err("checkpoint container is not in canonical form".into());
+    }
+    Ok(saved)
+}
+
+/// The checkpoint a container's checked structure and tensor values make,
+/// before [`decode_v1`]'s second guard.
+fn decode_sections_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
     let CheckedV1 {
         mut saved,
         sections,
@@ -525,9 +832,6 @@ pub(crate) fn decode_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
             "first_moments" => saved.first_moments.push(tensor),
             _ => saved.second_moments.push(tensor),
         }
-    }
-    if encode_v1(&saved)? != bytes {
-        return Err("checkpoint container is not in canonical form".into());
     }
     Ok(saved)
 }
