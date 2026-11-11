@@ -20,7 +20,8 @@ fn declared_leylines_require_the_native_opening_profile() {
             EternalRegisteredDeckV1::new_with_native_opening_v1(format, "native", main, side, None)
                 .unwrap();
         }
-        // Retain the capability diagnostic while these printings are Partial.
+        // Ordinary preflight refuses a Full printing that needs the native
+        // opening profile, and a Partial one for its capability.
         let result = preflight_fully_supported_deck(&[swamp, card_def]);
         if CARD_DEFS[usize::from(card_def)].has_full_support() {
             assert!(matches!(

@@ -243,13 +243,11 @@ const SNAPSHOTS: [&str; 2] = [
 ];
 
 /// Executable S1 implementations with known missing reachable branches.
-const PARTIAL_S1: [&str; 9] = [
+const PARTIAL_S1: [&str; 7] = [
     "Circle of Protection: Blue",
     "Coalition Honor Guard",
     "Hullbreacher",
     "Lavinia, Azorius Renegade",
-    "Leyline of Sanctity",
-    "Leyline of the Void",
     "Martyr of Sands",
     "Meddling Mage",
     "Standard Bearer",
@@ -575,7 +573,7 @@ pub(crate) enum Policy {
     Random(u64),
 }
 
-fn splitmix64(state: &mut u64) -> u64 {
+pub(crate) fn splitmix64(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
     let mut z = *state;
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);

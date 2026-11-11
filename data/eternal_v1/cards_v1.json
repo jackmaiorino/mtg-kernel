@@ -26149,7 +26149,7 @@
   },
     {
    "name": "Leyline of the Void",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{2}{B}{B}",
    "mana_value": 4,
    "colors": [
@@ -27230,7 +27230,7 @@
   },
     {
    "name": "Leyline of Sanctity",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{2}{W}{W}",
    "mana_value": 4,
    "colors": [
