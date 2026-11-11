@@ -287,10 +287,70 @@ def report(root: Path, out: Path) -> dict:
                     rec["sims_mean"] = sum(r["choosers"][name]["completed"] for r in srows) / len(srows)
                     rec["incomplete"] = sum(1 for r in srows if r["choosers"][name]["incomplete"])
                     rec["extra"] = c0.get("extra")
+        # Paired contrasts by state (DEFINITIONS section 4), primary worlds.
+        by = {}
+        for x in per_state:
+            if x["bank"] == bank:
+                by.setdefault(x["chooser"], {})[(x["id"], x["index"])] = x["gap"]
+        contrasts = {}
+        for budget in ("16k", "4k"):
+            for a, b in ((f"puct4-roll-{budget}", f"ucb-roll-{budget}"), (f"puct4-vh0-{budget}", f"ucb-vh0-{budget}"),
+                         (f"ucb-vh0-{budget}", f"ucb-roll-{budget}"), (f"puct4-vh0-{budget}", f"puct4-roll-{budget}"),
+                         (f"puct1-roll-{budget}", f"puct4-roll-{budget}")):
+                if a in by and b in by:
+                    keys = sorted(set(by[a]) & set(by[b]))
+                    d = [by[a][k] - by[b][k] for k in keys]
+                    contrasts[f"{a} - {b}"] = {"states": len(d), "mean": sum(d) / len(d) if d else None,
+                                               "ci": bootstrap(d)}
+        for kind in ("ucb-roll", "puct4-roll", "puct1-roll", "ucb-vh0", "puct4-vh0"):
+            a, b = f"{kind}-16k", f"{kind}-4k"
+            if a in by and b in by:
+                keys = sorted(set(by[a]) & set(by[b]))
+                d = [by[a][k] - by[b][k] for k in keys]
+                contrasts[f"{a} - {b}"] = {"states": len(d), "mean": sum(d) / len(d) if d else None, "ci": bootstrap(d)}
+        bank_out["contrasts"] = contrasts
         result["banks"][bank] = bank_out
+    chart(result, out / "gap-chart.png")
     (out / "summary.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
     (out / "per-state.jsonl").write_text("".join(json.dumps(x) + "\n" for x in per_state), encoding="utf-8")
     return result
+
+
+def chart(result: dict, path: Path) -> None:
+    """Mean gap over the argmax pick with 95% intervals, per chooser, one panel per bank (primary worlds)."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+    banks = [b for b in ("ordinary", "flagged") if b in result["banks"]]
+    if not banks:
+        return
+    fig, axes = plt.subplots(1, len(banks), figsize=(6.2 * len(banks), 4.6), squeeze=False)
+    for ax, bank in zip(axes[0], banks):
+        ch = result["banks"][bank]["choosers"]
+        names = [n for n in ch if ch[n]["worlds"]["mean_gap"] is not None]
+        names.sort(key=lambda n: (n != "sampled", n.split("-")[-1] != "16k", n))
+        ys = list(range(len(names)))[::-1]
+        for y, n in zip(ys, names):
+            m, ci = ch[n]["worlds"]["mean_gap"], ch[n]["worlds"]["ci"]
+            color = "#8a8a8a" if n == "sampled" else ("#2a6fdb" if "roll" in n else "#d9822b")
+            ax.plot(ci, [y, y], color=color, lw=2)
+            ax.plot([m], [y], "o", color=color, ms=6)
+        ax.axvline(0, color="#444", lw=0.8)
+        ax.set_yticks(ys)
+        ax.set_yticklabels(names, fontsize=9)
+        ax.set_title(f"{bank} states (n = {result['banks'][bank]['states']})", fontsize=11)
+        ax.set_xlabel("win-probability gap over the policy's top action (95% CI)", fontsize=9)
+        ax.grid(axis="x", color="#ddd", lw=0.6)
+        for s in ("top", "right"):
+            ax.spines[s].set_visible(False)
+    fig.text(0.01, 0.01, "blue: rollout leaf; orange: value leaf; grey: sampled action. Resampled worlds, N = 64, CRN.",
+             fontsize=8, color="#555")
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
 
 
 def main(argv=None) -> int:
