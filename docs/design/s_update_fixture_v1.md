@@ -133,9 +133,11 @@ target/release/s_update_fixture_v1 bench fixture=$F-s batch=warmed path=prepared
 target/release/s_update_fixture_v1 bench fixture=$F-s batch=warmed path=prepared workers=4 verified_replay_tape_bytes=67108864 out=$T/B1
 ```
 
-The ordered preparation replays and checks every other row as before. It
-decodes each learner row without replaying it, and the GAE targets come from
-the recorded first values, as in the reference. The parallel learner
+The ordered preparation replays and checks every other row as before,
+always through the reference forward: unlike the prepared reference, it does
+not take them through the row memo when `MTG_KERNEL_ROW_CACHE_REPLAY_OTHER_SEAT=1`
+asks. It decodes each learner row without replaying it, and the GAE targets
+come from the recorded first values, as in the reference. The parallel learner
 (`s_transformer_v1::parallel`) records the same tasks in the same order. Each
 task reserves its worker's tape within the cap, replays the learner row and
 compares the logit and value bits with the stored row before its backward.
