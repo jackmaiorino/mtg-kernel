@@ -1057,6 +1057,9 @@ pub enum CreatureSacrificeFilter {
     Token,
     Nontoken,
     PermanentType(CardType),
+    /// A permanent with any of these colors, as a mask (Dystopia: "a green
+    /// or white permanent"). Appended for the eternal catalog's wave P3b.
+    PermanentColorsV1(u8),
 }
 
 /// Typed predicate for a private library search. The first consumer is
@@ -1364,6 +1367,10 @@ pub enum EffectCond {
     ControllerAttackedThisTurn,
     /// Intervening recheck using the captured original controller.
     OpponentLostLifeThisTurn,
+    /// It is the resolving ability's controller's turn: "that player" of a
+    /// trigger at the beginning of each upkeep is its controller on their
+    /// own turn and the opponent otherwise (Dystopia).
+    ControllersTurnV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -11192,17 +11199,18 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     }
                 }
                 EffectTargetSelectionPurpose::CopyTarget { choice } => {
-                    standard_copy::validate(state, pending, choice)?;
+                    let view = standard_copy::staging_view(state, pending)?;
+                    standard_copy::validate(&view, pending, choice)?;
                     let mut all = selected.clone();
                     all.extend(legal.iter().cloned());
-                    let expected = standard_copy::candidates(state, pending, choice)?;
+                    let expected = standard_copy::candidates(&view, pending, choice)?;
                     if all.len() != expected.len()
                         || !all.iter().all(|x| expected.contains(x))
                         || *chooser != pending.ctx.controller
                         || *path != choice.path
                         || *ordered
                         || *min_targets
-                            != u16::from(!standard_copy::can_keep(state, pending, choice)?)
+                            != u16::from(!standard_copy::can_keep(&view, pending, choice)?)
                         || *max_targets != 1
                     {
                         return Err("copy target candidates changed".into());
@@ -13073,7 +13081,22 @@ fn drive_with_native_row_v1(
     result
 }
 
+/// Drives the pending continuation in the departure scope of the spell or
+/// ability it resolves (Premodern wave P3d's Karmic Justice and Sacred
+/// Ground).
 fn drive_resumable_inner_with_native_row_v1(
+    state: &mut GameState,
+    supplied_owner: Option<&NativeExecutionOwnerV1>,
+) -> Result<ResumableProgress, String> {
+    #[cfg(feature = "eternal-fixtures")]
+    let enclosing = crate::eternal_premodern_p3d_v1::enter_pending_resolution(state);
+    let result = drive_resumable_in_departure_scope_v1(state, supplied_owner);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_premodern_p3d_v1::leave_resolution(state, enclosing);
+    result
+}
+
+fn drive_resumable_in_departure_scope_v1(
     state: &mut GameState,
     supplied_owner: Option<&NativeExecutionOwnerV1>,
 ) -> Result<ResumableProgress, String> {
@@ -18993,6 +19016,9 @@ fn creature_sacrifice_bindings(
             CreatureSacrificeFilter::PermanentType(card_type) => {
                 crate::engine::object_has_type(state, object_id, card_type)
             }
+            CreatureSacrificeFilter::PermanentColorsV1(mask) => {
+                crate::engine::object_color_mask(state, object_id) & mask != 0
+            }
             _ => {
                 crate::engine::object_has_type(state, object_id, CardType::Creature)
                     && (filter != CreatureSacrificeFilter::Token || object.v4.is_token)
@@ -20362,7 +20388,22 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
     execute_with_native_row_v1(op, ctx, state, None);
 }
 
+/// Runs `op` in the departure scope of the spell or ability `ctx` resolves
+/// (Premodern wave P3d's Karmic Justice and Sacred Ground).
 fn execute_with_native_row_v1(
+    op: &EffectOp,
+    ctx: &ExecCtx,
+    state: &mut GameState,
+    native_proof: Option<&NativeExecutionProofV1<'_>>,
+) {
+    #[cfg(feature = "eternal-fixtures")]
+    let enclosing = crate::eternal_premodern_p3d_v1::enter_resolution(state, ctx);
+    execute_in_departure_scope_v1(op, ctx, state, native_proof);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_premodern_p3d_v1::leave_resolution(state, enclosing);
+}
+
+fn execute_in_departure_scope_v1(
     op: &EffectOp,
     ctx: &ExecCtx,
     state: &mut GameState,
@@ -25073,6 +25114,7 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             .hand
             .is_empty(),
         EffectCond::CreatureDiedThisTurn => state.creature_died_this_turn_v1(),
+        EffectCond::ControllersTurnV1 => state.active_player == ctx.controller,
         EffectCond::OpponentLostLifeThisTurn => {
             crate::life_loss_turn_v1::opponent_lost_life(state, ctx.controller).unwrap_or(false)
         }

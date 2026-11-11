@@ -427,6 +427,14 @@ pub enum StandardTargetV1 {
     DividedFourDamageCreaturesV1,
     /// "Target creature or Vehicle you control" (Perilous Snare).
     ControlledCreatureOrVehicleV1,
+    /// "Target nonblack creature with mana value X" for a fixed X
+    /// (Plaguebearer): Premodern wave P3b's filter
+    /// (`eternal_premodern_p3b_v1::targets`).
+    NonblackCreatureManaValueV1(u8),
+    /// "Distribute two -2/-1 counters among one or two target creatures"
+    /// (Contagion): two picks, one counter each. Premodern wave P3f's
+    /// filter (`eternal_premodern_p3f_v1::targets`).
+    DividedTwoCountersCreaturesV1,
 }
 
 impl StandardTargetV1 {
@@ -457,6 +465,12 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p1a_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_premodern_p3b_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_premodern_p3f_v1::targets::counts(self) {
             return counts;
         }
         match self {
@@ -909,6 +923,16 @@ pub(crate) fn legal_targets(
         return targets;
     }
     if let Some(targets) =
+        crate::eternal_premodern_p3b_v1::targets::legal_targets(target, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
+        crate::eternal_premodern_p3f_v1::targets::legal_targets(target, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
         crate::eternal_sideboard_s1c_v1::targets::legal_targets(target, controller, prefix, state)
     {
         return targets;
@@ -1164,6 +1188,16 @@ pub(crate) fn target_matches(
         return matches;
     }
     if let Some(matches) =
+        crate::eternal_premodern_p3b_v1::targets::target_matches(target, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
+        crate::eternal_premodern_p3f_v1::targets::target_matches(target, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
         crate::eternal_sideboard_s1c_v1::targets::target_matches(target, controller, object, state)
     {
         return matches;
@@ -1384,6 +1418,10 @@ pub(crate) fn target_matches(
         // Answered by `eternal_sideboard_s1b_v1::targets` above.
         StandardTargetV1::DividedFourDamageCreaturesV1
         | StandardTargetV1::ControlledCreatureOrVehicleV1 => false,
+        // Answered by `eternal_premodern_p3b_v1::targets` above.
+        StandardTargetV1::NonblackCreatureManaValueV1(_) => false,
+        // Answered by `eternal_premodern_p3f_v1::targets` above.
+        StandardTargetV1::DividedTwoCountersCreaturesV1 => false,
     }
 }
 
@@ -3328,9 +3366,17 @@ pub fn blue_suns_twilight() -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::GainControlOfTargetCreatureCopyAtXFive)
 }
 
+/// "Target creature with mana value X or less": Blue Sun's Twilight, and
+/// Dominate in eternal builds (wave P3c).
+fn x_bounded_creature_target(def: &CardDef) -> bool {
+    (def.cost.x_count != 0 && def.name == BLUE_SUNS_TWILIGHT)
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_premodern_p3c_v1::statics::x_bounded_creature_target(def))
+}
+
 /// Whether this card's spell targets depend on more than its target spec.
 pub(crate) fn filters_cast_targets(def: &CardDef) -> bool {
-    def.cost.x_count != 0 && def.name == BLUE_SUNS_TWILIGHT
+    x_bounded_creature_target(def)
 }
 
 /// "Target creature with mana value X or less": the kernel announces X after
@@ -3344,7 +3390,7 @@ pub(crate) fn cast_target_allowed(
     state: &GameState,
 ) -> bool {
     match target {
-        Target::Object(object) if def.name == BLUE_SUNS_TWILIGHT => {
+        Target::Object(object) if x_bounded_creature_target(def) => {
             crate::engine::x_target_is_payable(
                 def,
                 source,
@@ -3381,8 +3427,8 @@ pub(crate) fn minimum_x(def: &CardDef, targets: &[Target], state: &GameState) ->
             }
         }
     }
-    match (def.name, targets.first()) {
-        (BLUE_SUNS_TWILIGHT, Some(Target::Object(object))) if def.cost.x_count != 0 => {
+    match targets.first() {
+        Some(Target::Object(object)) if x_bounded_creature_target(def) => {
             u8::try_from(mana_value(state, *object)).unwrap_or(u8::MAX)
         }
         _ => 0,

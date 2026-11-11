@@ -1185,6 +1185,13 @@ pub(crate) fn has_type_override(
     {
         return Some(answer);
     }
+    // Lurking Skirge's Phyrexian Imp, no longer an enchantment (Premodern
+    // wave P3f).
+    if let Some(answer) =
+        crate::eternal_premodern_p3f_v1::has_type_override(state, object, card_type)
+    {
+        return Some(answer);
+    }
     let eternal = state.eternal_v1.as_ref()?;
     let vintage = &eternal.vintage;
     if vintage.karn_animated.is_empty() && vintage.robots.is_empty() && vintage.copies.is_empty() {

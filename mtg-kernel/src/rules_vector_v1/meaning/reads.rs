@@ -228,7 +228,7 @@ pub(crate) fn effect_cond(cond: &EffectCond, env: &Env, out: &mut Collector) {
                 at_least(i64::from(*minimum)),
             );
         }
-        EffectCond::OpponentLostLifeThisTurn => {
+        EffectCond::OpponentLostLifeThisTurn | EffectCond::ControllersTurnV1 => {
             out.atoms.push(Atom::Opaque);
         }
         EffectCond::ControllerAttackedThisTurn => {
