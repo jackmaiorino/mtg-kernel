@@ -1078,6 +1078,79 @@ rulings, checked against its XMage source:
   exiled card gets an until-end-of-turn play permission, so costs and timing still apply (its
   ruling). Clue and Food tokens are the Standard registry's.
 
+### S1g: Legacy sideboards
+
+After S1f the census lists 24 non-Full sideboard cards among Legacy's mainboard-playable lists.
+Six are Partial S1 definitions, and 18 are absent from the registry. Four of the absent
+cards are the only gap of five lists (12.5% of the field): Damping Sphere (Lands 4.5%,
+Sewer-Cam 2.7%, Painter 0.8%, Mono-Black Midrange 0.5%), Drop of Honey (Lands), Alpine Moon and
+Ghost Vacuum (Sneak and Show, 4.0%). S1g adds the four. The Legacy full 75 share goes from 33.8%
+to 46.3%, and the five lists join `PLAYABLE_75`. Damping Sphere also sits in three Legacy
+sideboards that have other gaps.
+
+S1g is built in `src/eternal_sideboard_s1g_v1.rs` and `build_eternal_s1g_v1.rs`, the new tail
+of the recipe chains after S1f's. Behavior follows each card's current Oracle text and
+rulings, checked against its XMage source:
+
+- Damping Sphere: "If a land is tapped for two or more mana, it produces {C} instead of any
+  other type and amount. Each spell a player casts costs {1} more to cast for each other spell
+  that player has cast this turn." While a Sphere's abilities apply:
+  - A land's mana ability with {T} in its cost that would add two or more mana adds one {C}
+    instead. Its costs and other effects stay: Ancient Tomb still deals 2 damage to its
+    controller. The replacement sits where Contamination's does. The payment planner offers
+    such a land as one {C}: an assembled Urza land, and Eldrazi Temple for an Eldrazi spell.
+    A manual activation adds one {C}: Ancient Tomb, City of Traitors, Gaea's Cradle with two or
+    more creatures, Serra's Sanctum with two or more enchantments, and a bundle such as
+    "{T}: Add {W}{U}". A land tapped for one mana is unchanged. Restricted mana keeps its
+    restriction (106.6a).
+  - Each spell costs {1} more for each other spell its caster has cast this turn, counted
+    from the cast history whether or not the Sphere was on the battlefield (its ruling). The
+    increase joins the spell tax hook (Defense Grid's). Mana value is unchanged (its ruling).
+- Drop of Honey: "At the beginning of your upkeep, destroy the creature with the least power.
+  It can't be regenerated. If two or more creatures are tied for least power, you choose one
+  of them. When there are no creatures on the battlefield, sacrifice this enchantment."
+  - The upkeep trigger doesn't target (its ruling). On resolution it finds the creatures with
+    the least power. Those with indestructible are passed over while another of them can be
+    destroyed, and nothing is destroyed when all of them are indestructible (its rulings). One
+    is destroyed and can't be regenerated (wave P1a's record). With two or more, the trigger's
+    controller chooses through the E3 resolution choice, and no player acts in between.
+  - The sacrifice is a state trigger (603.8), as wave P2c's Phyrexian Devourer's is. It
+    triggers while no creature is on the battlefield and not again until it leaves the stack,
+    and the Drop is sacrificed on resolution even if a creature is back by then (its ruling).
+- Alpine Moon: "As this enchantment enters, choose a nonbasic land card name. Lands your
+  opponents control with the chosen name lose all land types and abilities, and they gain
+  '{T}: Add one mana of any color.'"
+  - The name is an entry choice like Pithing Needle's, recorded with the Alpine Moon's
+    battlefield incarnation. The options are every nonbasic land name in the executable
+    registry, front faces and land back faces, one per name in definition order. Unlike
+    Pithing Needle's visible names, a land not yet seen can be named.
+  - Each land an opponent of the Moon's controller controls with that name joins wave E8a's
+    land-type setter at the Moon's timestamp. Its abilities are removed at that timestamp,
+    and its land types are removed unless a later Blood Moon, Harbinger of the Seas or
+    Spreading Seas sets them again (613.7). It has "{T}: Add one mana of any color" whatever
+    the order, since that ability is gained in layer 6. Supertypes and other card types stay
+    (its ruling).
+- Ghost Vacuum: "{T}: Exile target card from a graveyard. {6}, {T}, Sacrifice this artifact:
+  Put each creature card exiled with this artifact onto the battlefield under your control
+  with a flying counter on it. Each of them is a 1/1 Spirit in addition to its other types.
+  Activate only as a sorcery."
+  - Each exile is recorded with the Vacuum's battlefield incarnation and the exiled card's
+    incarnation. The second ability reads the records of the sacrificed incarnation on
+    resolution (607.2a). Each recorded card still in exile that is a creature card enters at
+    once under the ability's controller.
+  - Each one that enters is recorded with a timestamp. It has base power and toughness 1/1
+    in layer 7b, so counters and modifications still apply. It gains the Spirit subtype in
+    layer 4 and has flying from its flying counter. The engine has no flying counter kind, so
+    the counter is a module record of that incarnation, as wave P3f's -2/-1 counters are.
+
+The records are pruned as each turn begins: Alpine Moon's names and Ghost Vacuum's exiles and
+Spirits whose incarnations left the battlefield or exile, and Drop of Honey's triggered state
+once its trigger left the stack.
+
+Known gaps (S1g): no effect removes counters from the Spirits, so their flying counter is not
+a counter other effects can count or remove. A land entering under Alpine Moon keeps an
+enters-tapped ability, as under Blood Moon.
+
 ## Execution
 
 Family workers implement bounded card groups in their own worktrees; one integrator owns
