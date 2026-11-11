@@ -402,6 +402,10 @@ fn paid_portent_retargeted_by_misdirection_looks_at_the_new_target() {
                 }
                 other => panic!("Misdirection's new target: {other:?}"),
             }
+            // The answer applies as Misdirection finishes resolving; the
+            // retargeted Portent then waits on the stack.
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert_eq!(zone(&state, misdirection), Zone::Graveyard);
             assert_eq!(receipt_count(&state, "Retargeted"), 1);
             let row = state.stack.iter().find(|row| row.source == source).unwrap();
             assert_eq!(row.targets, vec![Target::Player(actor)]);
