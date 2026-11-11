@@ -1036,7 +1036,10 @@ rulings, checked against its XMage source:
     a permanent's types through the engine follows: Karn, the Great Creator's lock then covers
     every permanent its controller's opponents control, mana abilities included; Null Rod,
     Stony Silence and Collector Ouphe cover every permanent; affinity counts every permanent
-    its caster controls; artifact removal can target any permanent.
+    its caster controls; artifact removal can target any permanent; Beseech the Mirror's
+    bargain can sacrifice any of its caster's permanents. A sacrifice's provenance keeps no
+    record of the types it left with, so in eternal builds the bargain check of a cast's
+    provenance accepts any permanent card.
   - Every object in every zone is colorless (layer 5), through `engine::object_color_mask`, as
     a color-setting effect at the Lattice's timestamp. Painter's Servant's color, added with a
     later timestamp, still applies, and a later setting overwrites the Lattice's (613.7): Wild
@@ -1059,7 +1062,8 @@ rulings, checked against its XMage source:
   module record of the Aura's battlefield incarnation. Cast, it targets an opponent; on
   resolution, if that player is still a legal target, the Aura enters and is recorded with
   them, and otherwise it doesn't resolve. Entering any other way, it enchants its
-  controller's opponent (303.4f). A state-based action puts it into its owner's graveyard when
+  controller's opponent (303.4f), so Show and Tell and Replenish may put it onto the
+  battlefield although they leave other Auras. A state-based action puts it into its owner's graveyard when
   the player it enchants is no longer an opponent of its controller (704.5m). The entry
   trigger's tokens are created under the control of the player it entered enchanting. The
   combat trigger is controlled by the Aura's controller and triggers as the beginning of
