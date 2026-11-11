@@ -1217,6 +1217,49 @@ consumers of every event kind, now runs with its sample in the workspace library
 and hosted Windows. It stays Partial for now: the one list that needs it, White Aggro, also needs
 Standard Bearer, whose broader targeting coverage is pending.
 
+### S1i: Leyline qualification
+
+After S1h the largest Legacy gap is Leyline of the Void, the only gap of five Legacy lists
+(Eldrazi 5.0%, Death and Taxes Yorion black-white 4.0%, Hogaak Moonshadow 1.8%, Mardu Energy
+0.9%, Saga Storm 0.6%) and of Vintage Blue Tempo (1.8%). S1i qualifies it and Leyline of
+Sanctity, which shares its native opening path, and marks both Full; their rules are unchanged.
+The Legacy full 75 share goes from 56.1% to 68.4% and the Vintage share from 79.1% to 80.9%.
+The six lists join `PLAYABLE_75`, and seven Partial S1 definitions remain. Leyline of the Void
+also sits in Mystic Forge Combo (with Extinguisher Battleship), Vintage Mono-White Initiative
+(12.2%, with Archon of Absolution), Scam (with Apostle's Blessing) and RUG Control (with
+Hullbreacher), and Leyline of Sanctity in LED Dredge (with Kiora's Dismissal).
+
+What S1a and S1b left pending, and what covers it now:
+
+- Fixtures: the native opening fixtures in `tests/eternal/eternal_opening_v1.rs` and
+  `tests/eternal/eternal_bo3_v1/eternal_bo3_leyline_v1.rs` (the Leyline and Chancellor order
+  with restores and the first spell in both seats, kept cards only and a tampered owner
+  refused, no nonactor menu, the snapshot Void 75 boarded into a native game two and replayed
+  to its terminal, Sanctity's first-spell player targets in both seats) and the best-of-three
+  module's real London keeps run in the Eternal group. They passed on Linux in each pull
+  request run and on hosted Windows in the Eternal jobs dispatched at #635's, #640's and
+  #644's heads, which take the place of the native packet for these pull requests, as in S1h.
+- Event sample: row 322 of `data/event_history_v1/every_kind_samples.json`, `EternalOpeningV1`,
+  is a genuine native sample, and the every-kind event-history checks run with it in the
+  workspace library group on Linux and hosted Windows.
+- Consumers: a Leyline deck registers with the native opening profile, and the JSONL
+  custom-deck session keeps refusing it (the registration rule above), so its consumers are the
+  registered best-of-three match through `start_game_with_native_opening_v1` and the census.
+  The best-of-three harness registers both decks of a match natively when either 75 needs the
+  profile and plays those games in process with the same seeded random policy. London
+  mulligans and every later decision take a random action among the policy surface's legal
+  actions (`PolicySurfaceV5` and `policy_legal_action_candidates_v5`, the menu the JSONL
+  session offers), and a random seat starts no new spell or ability while it controls two
+  stack items. Each kept-hand choice takes a random legal opening card or finishes, and a
+  trigger order too large for the action list takes the listed order. The session games'
+  Ward filters exist for policy observation v5, which these games don't build. Each game is
+  played twice and must reach the same natural terminal with the same action transcript and
+  state hash, and sided-in casts are counted as in the session games.
+- Opening window: sideboard Leylines reach an opening hand too rarely to exercise it, so, as in
+  S1h, two Legacy decks with four of each Leyline in their mainboards play native games in both
+  seats with seeded random actions, and the test requires each Leyline to be put onto the
+  battlefield from an opening hand.
+
 ## Execution
 
 Family workers implement bounded card groups in their own worktrees; one integrator owns
