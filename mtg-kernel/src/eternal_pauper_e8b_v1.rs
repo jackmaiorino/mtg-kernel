@@ -1769,9 +1769,13 @@ pub(crate) fn spell_cost_reduction(
 /// Splice onto Arcane's cost for an Arcane spell: the only splice card in
 /// the catalog is Desperate Ritual ({1}{R}), so the spliced cards are the
 /// Desperate Rituals in the caster's hand and their count is announced like
-/// X. `None` for every other spell and outside eternal builds.
+/// X. `None` for every other spell, for an Arcane spell with its own X
+/// (Sickening Shoal, wave S1e), whose X holds that announcement, and
+/// outside eternal builds.
 pub(crate) fn splice_cost(definition: &CardDef) -> Option<Cost> {
-    (cfg!(feature = "eternal-fixtures") && definition.subtypes.contains(&Subtype::Arcane))
+    (cfg!(feature = "eternal-fixtures")
+        && definition.subtypes.contains(&Subtype::Arcane)
+        && definition.cost.x_count == 0)
         .then_some(SPLICE_COST)
 }
 
@@ -1795,7 +1799,6 @@ pub(crate) fn splice_cap(
 ) -> Option<u8> {
     if splice_cost(definition).is_none()
         || crate::eternal_cards_v1::replicate_cost(definition.name).is_some()
-        || definition.cost.x_count != 0
     {
         return None;
     }

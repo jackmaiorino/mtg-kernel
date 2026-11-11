@@ -435,6 +435,10 @@ pub enum StandardTargetV1 {
     /// (Contagion): two picks, one counter each. Premodern wave P3f's
     /// filter (`eternal_premodern_p3f_v1::targets`).
     DividedTwoCountersCreaturesV1,
+    /// "Up to one target artifact, creature, or planeswalker an opponent
+    /// controls" (Azure Beastbinder). Vintage wave S1e's filter
+    /// (`eternal_sideboard_s1e_v1::targets`).
+    UpToOneOpponentArtifactCreatureOrPlaneswalkerV1,
 }
 
 impl StandardTargetV1 {
@@ -471,6 +475,9 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p3f_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_sideboard_s1e_v1::targets::counts(self) {
             return counts;
         }
         match self {
@@ -933,6 +940,11 @@ pub(crate) fn legal_targets(
         return targets;
     }
     if let Some(targets) =
+        crate::eternal_sideboard_s1e_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
         crate::eternal_sideboard_s1c_v1::targets::legal_targets(target, controller, prefix, state)
     {
         return targets;
@@ -1198,6 +1210,11 @@ pub(crate) fn target_matches(
         return matches;
     }
     if let Some(matches) =
+        crate::eternal_sideboard_s1e_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
         crate::eternal_sideboard_s1c_v1::targets::target_matches(target, controller, object, state)
     {
         return matches;
@@ -1422,6 +1439,8 @@ pub(crate) fn target_matches(
         StandardTargetV1::NonblackCreatureManaValueV1(_) => false,
         // Answered by `eternal_premodern_p3f_v1::targets` above.
         StandardTargetV1::DividedTwoCountersCreaturesV1 => false,
+        // Answered by `eternal_sideboard_s1e_v1::targets` above.
+        StandardTargetV1::UpToOneOpponentArtifactCreatureOrPlaneswalkerV1 => false,
     }
 }
 
@@ -2498,6 +2517,9 @@ pub(crate) fn gain_control(state: &mut GameState, object: ObjectId, player: Play
     // Echo is owed by whoever controls the creature since their last upkeep.
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_premodern_p2d_v1::control_changed(state, object, player);
+    // A suspend cast's haste ends with its caster's control (wave S1e).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1e_v1::control_changed(state, object);
 }
 
 /// Creates a token that's a copy of `original` (707.2): the same card
@@ -3414,14 +3436,15 @@ pub(crate) fn minimum_x(def: &CardDef, targets: &[Target], state: &GameState) ->
             return minimum;
         }
         // "Exile X cards from your graveyard" (wave P1a): X is the number
-        // of cards the cast chose to exile.
+        // of cards the cast chose to exile. Sickening Shoal's alternative
+        // cost (wave S1e): X is the exiled card's mana value.
         if let Some(pending) = state.engine.pending_cast.as_ref() {
             if state
                 .objects
                 .try_get(pending.spell)
                 .is_some_and(|spell| std::ptr::eq(&CARD_DEFS[spell.card_def as usize], def))
             {
-                if let Some(x) = crate::engine::forced_cast_x(pending, def) {
+                if let Some(x) = crate::engine::forced_cast_x(pending, def, state) {
                     return u8::try_from(x).unwrap_or(u8::MAX);
                 }
             }

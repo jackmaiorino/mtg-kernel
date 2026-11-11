@@ -28544,6 +28544,166 @@
    ],
    "java_file": "Mage/src/main/java/mage/game/permanent/token/PhyrexianMinionToken.java",
    "is_token": true
+  },
+  {
+   "name": "Azure Beastbinder",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Rat",
+    "Rogue"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-jewel-shops"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "vigilance",
+    "evasion",
+    "attack_trigger",
+    "up_to_one_target",
+    "lose_all_abilities",
+    "set_base_power_toughness",
+    "until_your_next_turn"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AzureBeastbinder.java"
+  },
+  {
+   "name": "Suspend",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-oath-of-druids"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "exile_target",
+    "time_counters",
+    "suspend",
+    "haste"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/Suspend.java"
+  },
+  {
+   "name": "Sickening Shoal",
+   "engine_capability": "full",
+   "mana_cost": "{X}{B}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [
+    "Arcane"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-dredge"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "alt_cost",
+    "exile_from_hand_cost",
+    "x_cost",
+    "minus_x_minus_x"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SickeningShoal.java"
+  },
+  {
+   "name": "Unable to Scream",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-doomsday"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "aura",
+    "lose_all_abilities",
+    "type_change",
+    "set_base_power_toughness",
+    "face_down"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UnableToScream.java"
+  },
+  {
+   "name": "Portal to Phyrexia",
+   "engine_capability": "full",
+   "mana_cost": "{9}",
+   "mana_value": 9,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-underworld-breach"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "sacrifice_each_opponent",
+    "upkeep_trigger",
+    "reanimation",
+    "subtype_grant"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PortalToPhyrexia.java"
   }
  ]
 }

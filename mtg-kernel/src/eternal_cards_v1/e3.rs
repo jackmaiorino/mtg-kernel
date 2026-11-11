@@ -1223,6 +1223,9 @@ pub(crate) fn drive(
         EternalOpV1::P3bV1(op) => {
             crate::eternal_premodern_p3b_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::S1eV1(op) => {
+            crate::eternal_sideboard_s1e_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::OutsideGameV1(op) => {
             crate::eternal_outside_game_v1::drive(state, continuation, op, path)
         }

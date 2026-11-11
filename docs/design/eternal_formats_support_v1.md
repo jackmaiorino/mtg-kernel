@@ -942,6 +942,74 @@ The Legacy Bant Control mainboard leaves the playable inventory because it
 contains Lavinia. Across the three MTGGoldfish formats, 41 distinct
 sideboard cards remain outside Full.
 
+### S1e: Vintage sideboards
+
+After S1 the census lists 12 non-Full sideboard cards among Vintage's mainboard-playable
+lists. Seven of them are absent from the registry and are the only gap of eight lists (37.2%
+of the field). S1e adds the five whose engine paths exist or are local, completing five lists
+(24.7%): Azure Beastbinder (Jewel Shops, 16.2%), Suspend (Oath of Druids, 3.5%), Sickening
+Shoal (Dredge, 3.4%), Unable to Scream (Doomsday, 1.3%) and Portal to Phyrexia (Underworld
+Breach, 0.3%). The Vintage full 75 share goes from 41.9% to 66.6%, and the five lists join
+`PLAYABLE_75`. The other two, Mycosynth Lattice (Raker Shops 6.6%, Sphere Shops 1.6%) and
+Overencumbered (Lurrus Breach, 4.3%), need global layer effects (every permanent an artifact,
+everything colorless, mana spent as any color) and an Aura that enchants a player; they are
+the next wave, S1f. The remaining Vintage gaps wait on the Partial Leyline of the Void and
+Hullbreacher.
+
+S1e is built in `src/eternal_sideboard_s1e_v1.rs` (with a `targets` submodule) and
+`build_eternal_s1e_v1.rs`, the new tail of the recipe chains after P3f's. Behavior follows each
+card's current Oracle text and rulings, checked against its XMage source:
+
+- Azure Beastbinder: "Vigilance. This creature can't be blocked by creatures with power 2 or
+  greater. Whenever this creature attacks, up to one target artifact, creature, or
+  planeswalker an opponent controls loses all abilities until your next turn. If it's a
+  creature, it also has base power and toughness 2/2 until your next turn." The block
+  restriction is the blocker hook, read with the blocker's current power as blockers are
+  declared, so a later power increase doesn't remove a block (its 2024-07-26 ruling). The
+  trigger's target is a new filter with zero or one pick. On resolution a legal target's
+  battlefield incarnation is recorded with the trigger's controller and a new timestamp, and
+  whether it is a creature then. The record joins the ability removal chain at that
+  timestamp, so abilities gained later apply (its ruling), and a creature's record sets base
+  power and toughness 2/2 in layer 7b at the same timestamp, so a later setting overwrites it
+  and counters and modifications still apply (its rulings). A record ends as its controller's
+  next turn begins. A planeswalker that loses its abilities keeps its loyalty but can't
+  activate loyalty abilities; an artifact loses its mana and static abilities.
+- Suspend: "Exile target creature and put two time counters on it. If it doesn't have suspend,
+  it gains suspend." The exiled card (a token ceases to exist) gets two time counters and joins
+  wave E7a's suspended cards, so its owner removes a counter at each of their upkeeps and may
+  cast it without paying its mana cost when the last is removed (702.62a). No catalog creature
+  has printed suspend, so the card always gains it. E7a's suspend had no creature card, so it
+  lacked the haste of 702.62a ("If you cast a creature spell this way, it gains haste until you
+  lose control of the spell or the permanent it becomes"); S1e records the spell its owner casts
+  from that trigger and gives the permanent it becomes haste while that player controls it.
+  A control change through the engine's control helper ends the record.
+- Sickening Shoal: "You may exile a black card with mana value X from your hand rather than pay
+  this spell's mana cost. Target creature gets -X/-X until end of turn." The alternative cost
+  is the black-card exile of Contagion's without the life. Choosing the exiled card announces X
+  as its mana value (601.2b), so the cast asks for no X, and the spell's mana value on the stack
+  is X plus 2 (202.3e). Paid normally, X is announced and paid as usual. The -X/-X is the
+  engine's until-end-of-turn pump of the target. It is an Arcane instant, the first with X:
+  splice onto Arcane announces the number of spliced cards where X is announced (wave E8b), so
+  Desperate Ritual, the catalog's only splice card, can't be spliced onto it. No snapshot deck
+  plays both; Vintage Dredge is the only one with the Shoal.
+- Unable to Scream: "Enchant creature. Enchanted creature loses all abilities and is a Toy
+  artifact creature with base power and toughness 0/2 in addition to its other types. As long
+  as enchanted creature is face down, it can't be turned face up." An ordinary creature Aura
+  whose effects, while its abilities apply, are hooks on the exact host it is attached to: the
+  artifact and creature types are added in layer 4 and the Toy subtype with them, its other
+  types stay; the ability removal and the 0/2 setting use the Aura's timestamp. A face-down
+  host (a manifested card) can't be turned face up while it is enchanted.
+- Portal to Phyrexia: "When this artifact enters, each opponent sacrifices three creatures of
+  their choice. At the beginning of your upkeep, put target creature card from a graveyard onto
+  the battlefield under your control. It's a Phyrexian in addition to its other types." The
+  opponent chooses three creatures they control (all of them with three or fewer), which are
+  sacrificed at once through the E3 choice annihilator uses. The upkeep trigger targets a
+  creature card in any graveyard, as Reanimate does, and puts it onto the battlefield with the
+  Phyrexian subtype as part of the entry (611.2e), as Valkyrie's Call grants Angel.
+
+The records are pruned as each turn begins: Beastbinder's records of the player whose turn
+begins and of permanents that left the battlefield, and suspend casts whose permanents left.
+
 ## Execution
 
 Family workers implement bounded card groups in their own worktrees; one integrator owns
