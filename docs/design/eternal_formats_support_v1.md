@@ -1199,12 +1199,17 @@ choice, restore, disclosure and transport checks were pending.
 - Consumers: in Eternal builds a Full card reaches the registered best-of-three match, the
   custom-deck session with its JSONL server and policy observation v5, and the census. The
   best-of-three harness plays the 20 lists' matches through that server with seeded random
-  actions and random sideboarding, checking natural terminals and replay. It also counts the
-  overloaded casts (the spell mode choice of an overload card with the overload form selected)
-  and the replies that carry a search look, and requires at least one overloaded cast and one
-  Surgical Extraction search. Policy encoders, training and Spellbench entries for eternal
-  formats stay separate work, and frozen encoders keep refusing unsupported state (see the card
-  contract).
+  actions and random sideboarding, checking natural terminals and replay. There the four cards
+  are sideboard copies, drawn too rarely to reach each branch: its first run with the 20 lists
+  chose no overload form, reached Surgical Extraction's search look 7 times and Extirpate's
+  none. So, as for wave P2a's statics, a red deck with both overload cards and a white-black
+  deck with both extractions play each other through public sessions, in both seats with
+  ranked and with seeded random actions, checking natural terminals and replay. The test
+  requires an overload form chosen from the JSONL action list, an overloaded spell (cast with
+  the Omen method) on the public stack and both search looks in the replies. A cast whose only
+  legal form is the overload takes it with no choice, so the stack count includes those casts.
+  Policy encoders, training and Spellbench entries for eternal formats stay separate work, and
+  frozen encoders keep refusing unsupported state (see the card contract).
 
 As for every cast, the pending cast menu has no interleaved mana activation, so an overload cost
 is paid with the ordinary mana plan. Martyr of Sands' last pending check, the three event-history
