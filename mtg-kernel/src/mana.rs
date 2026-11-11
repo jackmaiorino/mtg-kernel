@@ -1159,7 +1159,8 @@ fn gather_sources_for_spell_restrictions_v1(
         {
             continue;
         }
-        let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
+        let def = crate::full_text_v1::mana_definition(state, id)
+            .expect("battlefield mana source has a catalog definition");
         // `produces_mana` also covers one-shot production such as
         // Burning-Tree Emissary's ETB trigger. The generated
         // primary mana-choice contract is the narrower repeatable tap-source

@@ -1,0 +1,50 @@
+{
+  "status": "complete",
+  "preparation_sha256": "5b222bd619efbd12678982aab1a6de3af85dec56a6cafaccf65d1797f2c95f5c",
+  "claim": "cb368b271cb548f0bde64a977f69381a",
+  "completed_utc": "2026-11-10T09:23:22.8096279Z",
+  "exact_removed": [
+    {
+      "path": "D:\\mtg-kernel-limited552-target\\release\\deps\\libmtg_kernel-6482c4982cb8d17e.rlib",
+      "bytes": 622962310,
+      "sha256": "1b6ba83f2688924893fd642fe6a9929c0ba45866b71f27a58f5b1bd2f14d9404",
+      "regeneration_argv": "cargo build --release --locked --offline --no-default-features --features limited-fdn-fixtures -p mtg-kernel --lib"
+    },
+    {
+      "path": "D:\\mtg-kernel-limited552-target\\release\\deps\\libmtg_kernel-6482c4982cb8d17e.rmeta",
+      "bytes": 301310571,
+      "sha256": "5ad632356f40ff9f6d0bca1ac422326aa36425824a7e9948b51db1810ed8d22a",
+      "regeneration_argv": "cargo build --release --locked --offline --no-default-features --features limited-fdn-fixtures -p mtg-kernel --lib"
+    },
+    {
+      "path": "D:\\mtg-kernel-limited552-target\\release\\deps\\libmtg_kernel-74e4e48ff974253d.rmeta",
+      "bytes": 128423063,
+      "sha256": "7af6507324658649f9a0ecc8dd8983e19d4df24dd80256d6c8e2bf756c242441",
+      "regeneration_argv": "cargo check --release --locked --offline --no-default-features --features limited-fdn-fixtures -p mtg-kernel --lib"
+    },
+    {
+      "path": "D:\\mtg-kernel-limited552-target\\release\\deps\\libmtg_kernel-aad4ea93b5e1751a.rlib",
+      "bytes": 585831882,
+      "sha256": "3776335ce30f6b8066e29860afa6045260923386f56c290cc3045c5b1509207e",
+      "regeneration_argv": "cargo build --release --locked --offline --no-default-features --features eternal-fixtures,event-sample-harvest-v1 -p mtg-kernel --lib"
+    },
+    {
+      "path": "D:\\mtg-kernel-limited552-target\\release\\deps\\libmtg_kernel-aad4ea93b5e1751a.rmeta",
+      "bytes": 278703299,
+      "sha256": "c0ac51b6e9a9b461553ca93fd45a59cee19a3ef93140420b2b8c2a643bc89199",
+      "regeneration_argv": "cargo build --release --locked --offline --no-default-features --features eternal-fixtures,event-sample-harvest-v1 -p mtg-kernel --lib"
+    },
+    {
+      "path": "D:\\mtg-kernel-limited552-target\\release\\deps\\libmtg_kernel-e4efa248951d444d.rmeta",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "regeneration_argv": "cargo check --release --locked --offline --no-default-features --features limited-fdn-fixtures -p mtg-kernel --lib"
+    }
+  ],
+  "d_free_before": 64354234368,
+  "d_free_after": 66271477760,
+  "observed_delta": 1917243392,
+  "new_candidate_copy_bytes": 236419072,
+  "two_stage_caps_bytes": 268435456,
+  "preserved_admission_bytes": 65498251264
+}

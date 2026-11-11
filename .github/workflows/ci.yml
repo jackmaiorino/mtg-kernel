@@ -269,6 +269,10 @@ jobs:
     # Pull requests from forks never run on the self-hosted runners.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
     steps:
+      - name: Limit affected hosted builds to one Cargo job
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux' && (matrix.group == 'trace' || matrix.group == 'limited-store')
+        run: echo 'CARGO_BUILD_JOBS=1' >> "$GITHUB_ENV"
+
       # Windows can resolve `bash` to the WSL launcher in System32 first;
       # put Git Bash ahead of it for every later step.
       - name: Use Git Bash for bash steps on Windows
@@ -373,11 +377,49 @@ jobs:
       # Pauper, Legacy and Vintage catalog: the Standard catalog plus
       # data/eternal_v1. The Standard suite also runs on it, since every
       # Standard card keeps its id and program in this build.
+      - name: Capture registered full-text native event samples
+        if: matrix.group == 'eternal'
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = Linux ]; then
+            export CARGO_BUILD_JOBS=1
+          fi
+          samples="$PWD/feb-native-event-samples"
+          mkdir -p "$samples"
+          git rev-parse HEAD > "$samples/source.txt"
+          # Only actual native producers may populate these directories.
+          # Lower-level synthetic fixtures and every-kind consumers stay out.
+          for producer in \
+            volrath_native_mixed_batch_records_real_entry_and_order_both_seats \
+            volrath_native_cast_captures_and_pays_for_palinchron_text_both_seats \
+            volrath_native_wall_mana_records_the_exact_restricted_use_both_seats \
+            volrath_native_paid_control_transfer_records_the_new_controller_both_seats
+          do
+            mkdir -p "$samples/$producer"
+            MTG_EVENT_SAMPLES_V1="$samples/$producer" \
+              python python/tools/run_rust_lib_filters.py --features eternal-fixtures \
+              "full_text_v1::tests::registered::$producer" 2>&1 | tee "$samples/$producer.log"
+          done
+
+      - name: Retain registered full-text native event samples
+        if: always() && matrix.group == 'eternal'
+        uses: actions/upload-artifact@v4
+        with:
+          name: feb-native-event-samples-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: feb-native-event-samples/
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Validate the eternal catalog
         if: matrix.group == 'eternal'
         run: |
+          # Bound concurrent compiler work after repeated hosted Linux
+          # shutdowns while compiling the large feature catalogs.
+          if [ "$RUNNER_OS" = Linux ]; then
+            export CARGO_BUILD_JOBS=1
+          fi
           cargo clippy --release --locked -p mtg-kernel --all-targets --features eternal-fixtures -- -D warnings
-          python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_ has_a_fixed_seat_human_prompt
+          python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_ has_a_fixed_seat_human_prompt full_text_v1::tests:: graveyard_order_v1::tests:: premodern_ordered_public_v1::
           python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures
           python python/tools/run_rust_integration_tests.py standard_integration --features eternal-fixtures
 
@@ -450,7 +492,7 @@ jobs:
             expanded_deck_training_v1::public_features:: \
             expanded_deck_training_v1::stack_features:: \
             expanded_deck_training_v1::tests::ordinary_trainer_v4_update_rejects_fixed_partition_backward_on_cuda \
-            learned_bo3_v1::public_evaluation:: \
+            learned_bo3_v1::public_evaluation::             regret_census_v1::stage4a::blunder_census:: \
             paired_bo1_harness_v1::continuation_capture_tests:: \
             phase1_bo3_collection_v1::combat_audit:: \
             phase1_bo3_collection_v1::continuation:: \
@@ -525,6 +567,9 @@ jobs:
 
       - name: Build the shared Limited ${{ matrix.part }}
         run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            export CARGO_BUILD_JOBS=1
+          fi
           if [ '${{ matrix.part }}' = tests ]; then
             cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib --no-run
           else
@@ -686,9 +731,11 @@ jobs:
         if: runner.environment == 'github-hosted'
         uses: actions/download-artifact@v4
         with:
-          pattern: limited-build-${{ matrix.os }}-*-${{ github.run_attempt }}
-          merge-multiple: true
-          path: limited-build
+          # A partial retry keeps successful producer artifacts from the prior
+          # attempt. Every match belongs to this run and its immutable head.
+          pattern: limited-build-${{ matrix.os }}-*
+          merge-multiple: false
+          path: ${{ runner.temp }}/shared-limited-build
 
       # Cargo reuses an output only when it is newer than every source file
       # it recorded. Unpacked files get one time after this checkout, so the
@@ -697,11 +744,19 @@ jobs:
       - name: Unpack the shared Limited build as current output
         if: runner.environment == 'github-hosted'
         run: |
+          staging="${RUNNER_TEMP:?}/shared-limited-build"
+          if [ "$RUNNER_OS" = Windows ]; then
+            staging=$(cygpath -u "$staging")
+          fi
           mkdir -p target
-          for archive in limited-build/limited-*.tar; do
+          # Keep attempts in separate directories to avoid concurrent writes
+          # to the same tar file. Select the newest available attempt per part.
+          for part in binaries tests; do
+            archive=$(find "$staging" -mindepth 2 -maxdepth 2 -type f -path "*/limited-build-*-$part-*/limited-$part.tar" | sort -V | tail -n 1)
+            test -n "$archive" || { echo "Missing shared Limited $part artifact" >&2; exit 1; }
             tar -xf "$archive" -C target
           done
-          rm -rf limited-build
+          rm -rf -- "$staging"
           stamp=$(date +%s)
           find target -exec touch -d "@$stamp" {} +
 

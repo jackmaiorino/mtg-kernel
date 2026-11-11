@@ -106,6 +106,7 @@ pub struct CaptureV1 {
 /// Genuine batch ownership retains entry-time controller/incarnation before
 /// later collection. Effective power and observers are sampled only after
 /// the complete simultaneous entry board, counters and attachments exist.
+#[derive(Clone)]
 pub(crate) struct EntryBatchV1 {
     entries: Vec<EntryV1>,
 }
@@ -721,7 +722,10 @@ pub(crate) fn resolve_removed(
         let start = state.engine.event_history.len();
         crate::event::propose_and_commit(state, ProposedEvent::draw(ctx.controller));
         Some(
-            state.engine.event_history[start..]
+            state
+                .engine
+                .event_history
+                .range_v2(start..)
                 .iter()
                 .position(|event| {
                     matches!(event,
@@ -760,11 +764,27 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         return Err("Garruk private journal entered mutable collection log".into());
     }
     if enabled() {
-        for (index, event) in state.engine.event_history.iter().enumerate() {
-            if crate::trigger::battlefield_entry_object(event).is_some()
-                && state.engine.event_history.iter().filter(|event|matches!(event,
-                    CommittedEvent::GarrukEntryObservationV1 {entry,..} if entry.entry_history_index==index as u64)).count()!=1 {
-                return Err("Garruk catalog entry lost its independent original observation".into())
+        // Every battlefield entry needs exactly one observation naming its
+        // position. Count the observations of each position in one pass,
+        // then check the entries, instead of rescanning the whole history
+        // for each entry: the same verdict, linear rather than quadratic.
+        let history = &state.engine.event_history;
+        let mut observations = vec![0usize; history.len()];
+        for event in history.iter() {
+            if let CommittedEvent::GarrukEntryObservationV1 { entry, .. } = event {
+                if let Some(count) = usize::try_from(entry.entry_history_index)
+                    .ok()
+                    .and_then(|index| observations.get_mut(index))
+                {
+                    *count += 1;
+                }
+            }
+        }
+        for (event, observed) in history.iter().zip(&observations) {
+            if crate::trigger::battlefield_entry_object(event).is_some() && *observed != 1 {
+                return Err(
+                    "Garruk catalog entry lost its independent original observation".into(),
+                );
             }
         }
     }

@@ -1095,7 +1095,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 {
                     return Err("Liliana sacrifice completion moved or reused".into());
                 }
-                let events = &state.engine.event_history[*input as usize + 1..position];
+                let events = state
+                    .engine
+                    .event_history
+                    .range_v2(*input as usize + 1..position);
                 let logged = events
                     .iter()
                     .filter_map(|e| match e {
@@ -1143,7 +1146,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 {
                     return Err("Liliana token completion moved or reused".into());
                 }
-                let created = state.engine.event_history[*input as usize + 1..position]
+                let created = state
+                    .engine
+                    .event_history
+                    .range_v2(*input as usize + 1..position)
                     .iter()
                     .filter_map(|e| match e {
                         E::CreateToken {

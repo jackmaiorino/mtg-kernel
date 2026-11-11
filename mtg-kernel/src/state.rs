@@ -1629,6 +1629,13 @@ pub struct StackStateV4 {
         skip_serializing_if = "crate::cauldron_grants_v1::CauldronGrantRecordV1::is_empty"
     )]
     pub cauldron_grant: crate::cauldron_grants_v1::CauldronGrantRecordV1,
+    /// Physical source and text-producing card for a layer-3 ability.
+    /// Public schemas refuse this unrepresented producer.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::full_text_v1::FullTextActivationRecordV1::is_empty"
+    )]
+    pub full_text_activation_v1: crate::full_text_v1::FullTextActivationRecordV1,
     /// Optional additional cost actually paid for this exact cast or the
     /// triggered ability produced by it. Internal cast provenance only;
     /// existing public stack schemas continue to expose the associated
@@ -2943,6 +2950,27 @@ impl GameState {
         // exact pre-existing literal (`PlayerId::P0`) supplied structurally:
         // this function's own body and behavior are unchanged.
         Self::new_from_libraries_with_starting_player_v1(lib0, lib1, names, seed, PlayerId::P0)
+    }
+
+    /// Native reset for the explicit simultaneous graveyard ordering profile.
+    /// Consumers that cannot represent its decision refuse this public mode.
+    #[cfg(feature = "eternal-fixtures")]
+    pub fn new_from_libraries_with_graveyard_order_v1(
+        lib0: &[u16],
+        lib1: &[u16],
+        names: impl Fn(u16) -> String,
+        seed: u64,
+        starting_player: PlayerId,
+    ) -> GameState {
+        let mut state = Self::new_from_libraries_with_starting_player_v1(
+            lib0,
+            lib1,
+            names,
+            seed,
+            starting_player,
+        );
+        state.engine.runtime_rules = crate::engine::RuntimeRulesV1::OWNER_ORDERED_GRAVEYARD_V1;
+        state
     }
 
     /// Opt-in sibling of [`GameState::new_from_libraries`] taking an explicit

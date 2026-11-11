@@ -2081,6 +2081,27 @@ pub enum CommittedEvent {
         source: crate::state::AbilitySourceContractV4,
         damage_history_index: u64,
     },
+    FullTextTriggerCapturedV1 {
+        capture: Box<crate::full_text_v1::DonatedTriggerCaptureV1>,
+    },
+    FullTextBatchEntryV1 {
+        entry_history_index: u64,
+        host: crate::state::AbilitySourceContractV4,
+        donor: crate::state::ObjectLinkV4,
+        text_definition: u16,
+    },
+    FullTextRestrictedUseV1 {
+        host: crate::state::ObjectLinkV4,
+        donor: crate::state::ObjectLinkV4,
+        turn: u32,
+        active: PlayerId,
+        kind: crate::state::AbilityKindV4,
+        index: u8,
+    },
+    OrderedGraveyardControlGainedV1 {
+        permanent: crate::state::ObjectLinkV4,
+        controller: PlayerId,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2321,7 +2342,7 @@ fn niv_mizzet_visionary_damage_amount_v1(
     if marker_index <= history_index
         || marker_count != 1
         || observer_receipt_count != 1
-        || state.engine.event_history[history_index + 1..marker_index]
+        || state.engine.event_history.range_v2(history_index + 1..marker_index)
             .iter()
             .any(|entry| {
                 !matches!(entry, CommittedEvent::NivMizzetVisionaryDamageV1 { damage_history_index: linked, .. } if *linked == damage_history_index)
@@ -2776,7 +2797,49 @@ pub(crate) fn add_soul_counter_to_ability_source_v1(
 /// active replacement that applies to `event` and hasn't already touched it
 /// (loop-prevention via `touched_by`), applies it, and marks it touched.
 /// Returns `None` if the event ends up fully prevented.
-pub fn apply_replacements(
+pub fn apply_replacements(state: &mut GameState, proposed: ProposedEvent) -> Option<ProposedEvent> {
+    if refuse_unowned_donated_damage(state, &proposed) {
+        return None;
+    }
+    apply_replacements_inner(state, proposed)
+}
+
+fn donated_historical_damage_source(state: &GameState, event: &ProposedEvent) -> Option<ObjectId> {
+    let ProposedEvent::Damage(damage) = event else {
+        return None;
+    };
+    damage
+        .historical_source
+        .filter(|id| crate::fixed_source_damage_v3::has_donated_payment(state, *id))
+        .map(|_| damage.source)
+}
+
+fn require_donated_damage_surrounding_owner(
+    state: &GameState,
+    damage: &DamageProposed,
+) -> Result<(), String> {
+    if damage
+        .historical_source
+        .is_some_and(|id| crate::fixed_source_damage_v3::has_donated_payment(state, id))
+        && crate::linked_aura_operation_v1::needs_surrounding_operation_owner(state)
+    {
+        return Err("donated Fanatic damage lost its surrounding native event owner".into());
+    }
+    Ok(())
+}
+
+fn refuse_unowned_donated_damage(state: &mut GameState, event: &ProposedEvent) -> bool {
+    let Some(source) = donated_historical_damage_source(state, event) else {
+        return false;
+    };
+    state.engine.halted = Some((
+        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+        source,
+    ));
+    true
+}
+
+fn apply_replacements_inner(
     state: &mut GameState,
     mut proposed: ProposedEvent,
 ) -> Option<ProposedEvent> {
@@ -3163,13 +3226,16 @@ pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(
         if *index as usize != at || installations.is_empty() {
             return Err(installations.first().map_or(ObjectId(0), |r| r.source));
         }
-        let expected: Vec<_> = state.engine.event_history[..at]
+        let expected: Vec<_> = state
+            .engine
+            .event_history
+            .range_v2(..at)
             .iter()
             .filter_map(|e| {
                 let CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement } = e else {
                     return None;
                 };
-                (!state.engine.event_history[..at].iter().any(|e| {
+                (!state.engine.event_history.range_v2(..at).iter().any(|e| {
                     matches!(e,
                 CommittedEvent::ExileIfDiesReplacementExpiredV1 { replacement: r, .. }
                 if r == replacement)
@@ -3191,7 +3257,7 @@ pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(
                 .map_or(installations[0].source, |r| r.source));
         }
         for replacement in installations {
-            let install = state.engine.event_history[..at].iter().filter(|e| matches!(e,
+            let install = state.engine.event_history.range_v2(..at).iter().filter(|e| matches!(e,
                 CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement: r } if r == replacement)).count();
             let expiry = state.engine.event_history.scan_for_v1(&[EventKindV1::ExileIfDiesReplacementExpiredV1]).iter().enumerate().filter(|(position, e)| matches!(e,
                 CommittedEvent::ExileIfDiesReplacementExpiredV1 {
@@ -3437,6 +3503,9 @@ fn preflight_wide_life_v59(state: &mut GameState, event: &ProposedEvent) -> bool
 }
 
 pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
+    if refuse_unowned_donated_damage(state, &event) {
+        return;
+    }
     if !preflight_wide_life_v59(state, &event) {
         return;
     }
@@ -3587,11 +3656,12 @@ pub(crate) fn commit_twinflame_ordered_scalar(
     damage.historical_source = choice.historical_source;
     damage.niv_damage_origin_v1 = choice.niv_damage_origin_v1;
     damage.touched_by = choice.touched.clone();
+    require_donated_damage_surrounding_owner(state, &damage)?;
     let proposed = ProposedEvent::Damage(damage);
     let gain = lifelink_gain_for(state, &proposed);
     let at = u32::try_from(state.engine.event_history.len())
         .map_err(|_| "ordered damage index overflow")?;
-    commit(state, proposed);
+    commit_crystal_owned_damage(state, proposed);
     let gain_at = if let Some((player, amount)) = gain {
         let index = u32::try_from(state.engine.event_history.len())
             .map_err(|_| "ordered gain index overflow")?;
@@ -3618,6 +3688,7 @@ fn prepare_commit_crystal_damage(
     {
         return Err("Crystal damage operation has invalid input or foreign authority".into());
     }
+    require_donated_damage_surrounding_owner(state, &damage)?;
     let preventers = crate::effect::crystal_prevention_v1::applicable(state, &damage);
     let original = BatchDamageV2 {
         source: damage.source,
@@ -3664,7 +3735,7 @@ fn prepare_commit_crystal_damage(
     let prepared = if guaranteed_zero {
         None
     } else {
-        apply_replacements(state, ProposedEvent::Damage(damage))
+        apply_replacements_inner(state, ProposedEvent::Damage(damage))
     };
     if state.engine.halted.is_some() {
         return Err("Crystal damage preparation halted".into());
@@ -3684,7 +3755,7 @@ fn prepare_commit_crystal_damage(
         let gain = lifelink_gain_for(state, &final_event);
         let at = u32::try_from(state.engine.event_history.len())
             .map_err(|_| "Crystal damage history exceeds u32")?;
-        commit(state, final_event);
+        commit_crystal_owned_damage(state, final_event);
         if !matches!(
             state.engine.event_history.get(at as usize),
             Some(CommittedEvent::Damage { .. })
@@ -3830,7 +3901,7 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
             None,
             None,
             None,
-            (None, None),
+            (None, None, None),
             ((None, false), None, input, None, Some(&plan)),
             None,
         );
@@ -3967,6 +4038,9 @@ pub(crate) fn propose_and_commit_gorehorn_owned(
 /// Applies the (possibly rewritten) proposal to `GameState` and appends the
 /// resulting `CommittedEvent` to the event log for this resolution.
 pub fn commit(state: &mut GameState, event: ProposedEvent) {
+    if refuse_unowned_donated_damage(state, &event) {
+        return;
+    }
     if !preflight_wide_life_v59(state, &event) {
         return;
     }
@@ -3989,6 +4063,23 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
 }
 
 pub(crate) fn commit_without_linked_aura_v1(state: &mut GameState, event: ProposedEvent) {
+    if refuse_unowned_donated_damage(state, &event) {
+        return;
+    }
+    commit_after_authority_check(state, event);
+}
+
+// The Crystal interpreter's two scalar commit paths have already authenticated
+// the exact removed row or replacement answer before dispatching this event.
+fn commit_crystal_owned_damage(state: &mut GameState, event: ProposedEvent) {
+    if donated_historical_damage_source(state, &event).is_some() {
+        commit_after_authority_check(state, event);
+    } else {
+        commit(state, event);
+    }
+}
+
+fn commit_after_authority_check(state: &mut GameState, event: ProposedEvent) {
     if !preflight_wide_life_v59(state, &event) {
         return;
     }
@@ -4040,7 +4131,7 @@ fn commit_with_ability_lki_and_entry_batch(
         abilities_removed_before,
         frozen_death_captures,
         authority_batch,
-        entry_batches,
+        (entry_batches.0, entry_batches.1, None),
         (entry_context, None, None, None, None),
         None,
     );
@@ -4125,6 +4216,7 @@ fn commit_with_entry_batch_and_source_color(
     entry_batches: (
         Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
         Option<&mut crate::arahbo_v1::EntryBatchV1>,
+        Option<&mut Vec<u64>>,
     ),
     entry_context: EntryContextWithSourceColorV1<'_>,
     mut progenitus_completions: Option<&mut Vec<crate::progenitus_v1::CompletionV1>>,
@@ -4259,7 +4351,7 @@ fn commit_with_entry_batch_and_source_color(
     let conqueror_single = (!defer_raid_entry)
         .then(|| crate::bloodthirsty_conqueror_v49::RecorderV49::capture(state))
         .flatten();
-    let (mut garruk_batch, mut arahbo_batch) = entry_batches;
+    let (mut garruk_batch, mut arahbo_batch, donated_entries) = entry_batches;
     let progenitus_plan = match crate::progenitus_v1::plan(state, &event, abilities_removed_before)
     {
         Ok(plan) => plan,
@@ -4633,6 +4725,15 @@ fn commit_with_entry_batch_and_source_color(
         state.engine.event_history.push(receipt);
     }
     record_copied_token_entry_v1(state, entry_history_index);
+    if let Err(source) =
+        crate::full_text_v1::record_entry_trigger(state, entry_history_index, donated_entries)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        return;
+    }
     crate::effect::curator_v1::record_entry(state, entry_history_index);
     if !tutelage_observers.is_empty()
         && matches!(
@@ -4969,6 +5070,7 @@ fn initialize_materialized_entry_v1(
 
 /// A fresh, private numeric scene plan. It contains no executable permission and
 /// never survives this synchronous commit. Departures read the original scene.
+#[derive(Clone)]
 struct FinalZonePtPlanV1 {
     departures: Vec<(crate::state::ObjectLinkV4, (i32, i32))>,
 }
@@ -5970,6 +6072,16 @@ fn preflight_wide_batch_v59(state: &mut GameState, events: &[ProposedEvent]) -> 
 }
 
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
+    if events
+        .iter()
+        .any(|event| refuse_unowned_donated_damage(state, event))
+    {
+        return;
+    }
+    if crate::graveyard_order_v1::owns_operation(state) {
+        crate::graveyard_order_v1::effect_batch(state, events);
+        return;
+    }
     if !preflight_wide_batch_v59(state, &events) {
         return;
     }
@@ -6339,6 +6451,7 @@ pub(crate) fn commit_twinflame_prepared_combat(
     }
     Ok(())
 }
+#[derive(Clone)]
 struct EntryBatchCommitContextV1 {
     garruk_batch: Option<crate::garruks_uprising_v1::EntryBatchV1>,
     arahbo_batch: Option<crate::arahbo_v1::EntryBatchV1>,
@@ -6353,9 +6466,65 @@ struct EntryBatchCommitContextV1 {
 fn commit_batch_survivors(
     state: &mut GameState,
     survivors: Vec<ProposedEvent>,
+    authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
+    context: EntryBatchCommitContextV1,
+    prepared_zone_plan: Option<FinalZonePtPlanV1>,
+) {
+    use crate::graveyard_order_v1 as graveyard_order;
+    let ordered_scene = if graveyard_order::needs_ordered_entry_scene(state, &survivors) {
+        match graveyard_order::PreparedBatchV1::capture(
+            state,
+            &survivors,
+            graveyard_order::BatchV1::Effect,
+        ) {
+            Ok(Some(batch)) => {
+                let Ok(mut quote) = graveyard_order::quote_scene(state) else {
+                    graveyard_order::halt(state);
+                    return;
+                };
+                commit_batch_survivors_native(
+                    &mut quote,
+                    survivors.clone(),
+                    authority_batch.clone(),
+                    context.clone(),
+                    prepared_zone_plan.clone(),
+                    None,
+                );
+                match batch.prepare_ordered_entry(state, quote) {
+                    Ok(Some(scene)) => Some(scene),
+                    Ok(None) => return,
+                    Err(_) => {
+                        graveyard_order::halt(state);
+                        return;
+                    }
+                }
+            }
+            Ok(None) => None,
+            Err(_) => {
+                graveyard_order::halt(state);
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    commit_batch_survivors_native(
+        state,
+        survivors,
+        authority_batch,
+        context,
+        prepared_zone_plan,
+        ordered_scene,
+    );
+}
+
+fn commit_batch_survivors_native(
+    state: &mut GameState,
+    survivors: Vec<ProposedEvent>,
     mut authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
     context: EntryBatchCommitContextV1,
     prepared_zone_plan: Option<FinalZonePtPlanV1>,
+    ordered_scene: Option<crate::graveyard_order_v1::OrderedEntrySceneV1>,
 ) {
     if !preflight_wide_batch_v59(state, &survivors) {
         return;
@@ -6500,7 +6669,26 @@ fn commit_batch_survivors(
     };
     let greatwurm_history_start = state.engine.event_history.len();
     let mut progenitus_completions = Vec::new();
+    let mut donated_entries = Vec::new();
     let mut counter_inputs = planned_counter_inputs.into_iter();
+    let graveyard_batch = match crate::graveyard_order_v1::PreparedBatchV1::capture(
+        state,
+        &survivors,
+        crate::graveyard_order_v1::BatchV1::Effect,
+    ) {
+        Ok(batch) => batch,
+        Err(_) => {
+            crate::graveyard_order_v1::halt(state);
+            return;
+        }
+    };
+    if graveyard_batch
+        .as_ref()
+        .is_some_and(|batch| batch.begin(state, ordered_scene.as_ref()).is_err())
+    {
+        crate::graveyard_order_v1::halt(state);
+        return;
+    }
     crate::linked_aura_operation_v1::begin_batch(state);
     if cfg!(feature = "limited-fdn-fixtures") {
         let ability_removals = survivors
@@ -6530,7 +6718,11 @@ fn commit_batch_survivors(
                 Some(removed),
                 captures,
                 authority_batch.as_mut(),
-                (garruk_batch.as_mut(), arahbo_batch.as_mut()),
+                (
+                    garruk_batch.as_mut(),
+                    arahbo_batch.as_mut(),
+                    Some(&mut donated_entries),
+                ),
                 (
                     (None, true),
                     frozen_color,
@@ -6557,7 +6749,11 @@ fn commit_batch_survivors(
                 None,
                 captures,
                 authority_batch.as_mut(),
-                (garruk_batch.as_mut(), arahbo_batch.as_mut()),
+                (
+                    garruk_batch.as_mut(),
+                    arahbo_batch.as_mut(),
+                    Some(&mut donated_entries),
+                ),
                 (
                     (None, true),
                     frozen_color,
@@ -6573,6 +6769,13 @@ fn commit_batch_survivors(
     if state.engine.halted.is_none() {
         if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
             halt_zone_pt_v1(state, source);
+            return;
+        }
+    }
+    if graveyard_batch.is_some() {
+        finish_graveyard_order_batch(state, graveyard_batch, ordered_scene);
+        if state.engine.halted.is_some() || crate::graveyard_order_v1::paused(state) {
+            crate::linked_aura_operation_v1::end_batch(state);
             return;
         }
     }
@@ -6613,6 +6816,15 @@ fn commit_batch_survivors(
             }
         }
     }
+    if state.engine.halted.is_none() {
+        for marker in donated_entries {
+            if crate::full_text_v1::record_batch_entry_trigger(state, marker).is_err() {
+                crate::graveyard_order_v1::halt(state);
+                crate::linked_aura_operation_v1::end_batch(state);
+                return;
+            }
+        }
+    }
     if let Some(batch) = authority_batch {
         batch.finish(state);
     }
@@ -6649,6 +6861,18 @@ fn commit_batch_survivors(
         batch.finish(state);
     }
     crate::linked_aura_operation_v1::end_batch(state);
+}
+
+fn finish_graveyard_order_batch(
+    state: &mut GameState,
+    batch: Option<crate::graveyard_order_v1::PreparedBatchV1>,
+    ordered_scene: Option<crate::graveyard_order_v1::OrderedEntrySceneV1>,
+) {
+    if let Some(batch) = batch {
+        if batch.finish(state, ordered_scene).is_err() {
+            crate::graveyard_order_v1::halt(state);
+        }
+    }
 }
 
 /// The payment caller has already validated one complete sacrifice group.
@@ -6731,6 +6955,24 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
             return;
         }
     };
+    let graveyard_batch = match crate::graveyard_order_v1::PreparedBatchV1::capture(
+        state,
+        &planned_events,
+        crate::graveyard_order_v1::BatchV1::SacrificeCost,
+    ) {
+        Ok(batch) => batch,
+        Err(_) => {
+            crate::graveyard_order_v1::halt(state);
+            return;
+        }
+    };
+    if graveyard_batch
+        .as_ref()
+        .is_some_and(|batch| batch.begin(state, None).is_err())
+    {
+        crate::graveyard_order_v1::halt(state);
+        return;
+    }
     for (&id, captures) in chosen.iter().zip(captures) {
         let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
         log_sacrifice(state, id);
@@ -6747,7 +6989,7 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
                 progenitus_ability_removed,
                 Some(captures),
                 None,
-                (None, None),
+                (None, None, None),
                 ((None, false), frozen_color, None, None, zone_plan.as_ref()),
                 Some(&mut progenitus_completions),
             );
@@ -6758,6 +7000,7 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
             halt_zone_pt_v1(state, source);
         }
     }
+    finish_graveyard_order_batch(state, graveyard_batch, None);
 }
 /// One simultaneous SBA death group. Preserve the existing direct-commit
 /// semantics while freezing death observers before any member leaves.
@@ -6774,6 +7017,24 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
             return;
         }
     };
+    let graveyard_batch = match crate::graveyard_order_v1::PreparedBatchV1::capture(
+        state,
+        &planned_events,
+        crate::graveyard_order_v1::BatchV1::StateBasedDeaths,
+    ) {
+        Ok(batch) => batch,
+        Err(_) => {
+            crate::graveyard_order_v1::halt(state);
+            return;
+        }
+    };
+    if graveyard_batch
+        .as_ref()
+        .is_some_and(|batch| batch.begin(state, None).is_err())
+    {
+        crate::graveyard_order_v1::halt(state);
+        return;
+    }
     crate::linked_aura_operation_v1::begin_batch(state);
     let mut progenitus_completions = Vec::new();
     let progenitus_removed = dying
@@ -6831,7 +7092,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
                     progenitus_ability_removed,
                     None,
                     None,
-                    (None, None),
+                    (None, None, None),
                     ((None, false), frozen_color, None, None, zone_plan.as_ref()),
                     Some(&mut progenitus_completions),
                 );
@@ -6845,6 +7106,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
             }
         }
         crate::linked_aura_operation_v1::end_batch(state);
+        finish_graveyard_order_batch(state, graveyard_batch, None);
         return;
     }
     let events = dying
@@ -6877,7 +7139,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
             progenitus_ability_removed,
             Some(captures),
             None,
-            (None, None),
+            (None, None, None),
             ((None, false), frozen_color, None, None, zone_plan.as_ref()),
             Some(&mut progenitus_completions),
         );
@@ -6888,6 +7150,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         }
     }
     crate::linked_aura_operation_v1::end_batch(state);
+    finish_graveyard_order_batch(state, graveyard_batch, None);
 }
 
 /// Logs a `SpellCast` marker with no accompanying state mutation (casting
@@ -8879,7 +9142,7 @@ mod arahbo_entry_tests {
                 equipment,
                 crate::card_def::CardType::Creature
             ));
-            assert!(state.engine.event_history[start..].iter().any(|event|matches!(event,CommittedEvent::ArahboTokenCaptureV1 {capture} if capture.root==RootV1::OtherNontokenCatEntry)));
+            assert!(state.engine.event_history.range_v2(start..).iter().any(|event|matches!(event,CommittedEvent::ArahboTokenCaptureV1 {capture} if capture.root==RootV1::OtherNontokenCatEntry)));
             settle(&mut state);
             assert_eq!(state.engine.event_history.iter().filter(|event|matches!(event,CommittedEvent::CreateToken {token_def,..} if Some(*token_def)==crate::card_def::card_id_by_name("Cat Token"))).count(),2);
         }
@@ -10158,7 +10421,10 @@ pub(crate) fn lathril_damage_v1(
         || *amount <= 0
         || amount != captured_amount
         || recipient != player
-        || !state.engine.event_history[damage_index + 1..index]
+        || !state
+            .engine
+            .event_history
+            .range_v2(damage_index + 1..index)
             .iter()
             .all(|entry| {
                 matches!(entry,
@@ -10497,8 +10763,7 @@ fn copied_token_entry_v1(
     let rows = state
         .engine
         .event_history
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::CopiedTokenAbilitiesEnteredV1])
         .filter_map(|(at, e)| match e {
             CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
                 source: actual,
@@ -10855,7 +11120,11 @@ pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<()
             return Err("copied abilities survived an ordinary zone change".into());
         }
     }
-    for event in &state.engine.event_history {
+    for (_, event) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::CopiedTokenAbilitiesEnteredV1])
+    {
         let CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
             source, instances, ..
         } = event

@@ -629,7 +629,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 }
             }
             CommittedEvent::ZulAshurCleanupV1 { cleanup: c } => {
-                let expected:Vec<_>=installations(state).filter(|i|i.index<c.index && !state.engine.event_history[..at].iter().any(|e|
+                let expected:Vec<_>=installations(state).filter(|i|i.index<c.index && !state.engine.event_history.range_v2(..at).iter().any(|e|
                     matches!(e,CommittedEvent::ZulAshurExpiredV1{expiry} if expiry.installation==i.index))).map(|i|i.index).collect();
                 if c.index as usize!=at || c.occurrence.checked_add(1)!=Some(c.index)
                     || !matches!(state.engine.event_history.get(c.occurrence as usize),

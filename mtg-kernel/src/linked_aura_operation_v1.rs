@@ -230,6 +230,10 @@ pub(crate) fn locally_owned(state: &GameState) -> bool {
     state.engine.linked_aura_operation_v1.runtime.is_some()
 }
 
+pub(crate) fn clear_runtime_for_graveyard_checkpoint(state: &mut GameState) {
+    state.engine.linked_aura_operation_v1.runtime = None;
+}
+
 /// Borrow the existing enclosing operation of a published entry checkpoint.
 pub(crate) fn pending_original_operation(state: &GameState) -> Option<(&GameState, &OperationV1)> {
     if let Some(p) = &state.engine.linked_aura_operation_v1.pending_kinship_v1 {
@@ -900,17 +904,41 @@ fn replay_general_current_slots_v69(
     used_banner: bool,
     current_slots: Option<&genesis_current_slots_v69::InputV69>,
 ) -> Result<(GameState, Option<Decision>), String> {
+    replay_general_input_v1(
+        ReplayInputV1::Borrowed(original),
+        operation,
+        answers,
+        used_banner,
+        current_slots,
+        None,
+    )
+}
+
+enum ReplayInputV1<'a> {
+    Borrowed(&'a GameState),
+    DrakeValidation(Box<GameState>),
+}
+
+fn replay_general_input_v1(
+    input: ReplayInputV1<'_>,
+    operation: &OperationV1,
+    answers: &[GeneralAnswerV36],
+    used_banner: bool,
+    current_slots: Option<&genesis_current_slots_v69::InputV69>,
+    restore_original: Option<&dyn Fn() -> Result<GameState, String>>,
+) -> Result<(GameState, Option<Decision>), String> {
+    let original: &GameState = match &input {
+        ReplayInputV1::Borrowed(original) => original,
+        ReplayInputV1::DrakeValidation(original) => original,
+    };
     if has_pending(original) || locally_owned(original) {
         return Err("entry operation cannot recursively own another public checkpoint".into());
     }
     crate::effect::validate_pending_effect_choice(original)?;
-    // Before any clone, so the staged world inherits the history's chain.
+    // Before staging, so the staged world inherits the history's chain.
     let origin = original_sha256(original);
-    let mut staged = match current_slots {
-        Some(input) => genesis_current_slots_v69::materialize(original, operation, input)?,
-        None => original.clone(),
-    };
-    staged.engine.linked_aura_operation_v1.runtime = Some(Box::new(RunnerV1 {
+    let returns_aura = potentially_returns_aura(original);
+    let runner = RunnerV1 {
         kinship_start: None,
         kinship_plans: Vec::new(),
         original_stack: original.stack.clone(),
@@ -933,8 +961,26 @@ fn replay_general_current_slots_v69(
         )
         .then(|| Box::new(original.clone())),
         active_fake_aura_entry_v50: None,
-    }));
-    if potentially_returns_aura(original) {
+    };
+    let (mut staged, original) = match input {
+        ReplayInputV1::Borrowed(original) => {
+            let staged = match current_slots {
+                Some(input) => genesis_current_slots_v69::materialize(original, operation, input)?,
+                None => original.clone(),
+            };
+            (staged, Some(original))
+        }
+        ReplayInputV1::DrakeValidation(original) => {
+            if current_slots.is_some()
+                || !crate::drake_hatcher_v1::custody::enclosing_replay_active_v1()
+            {
+                return Err("owned Drake replay requires its validation scope".into());
+            }
+            (*original, None)
+        }
+    };
+    staged.engine.linked_aura_operation_v1.runtime = Some(Box::new(runner));
+    if returns_aura {
         staged
             .engine
             .event_history
@@ -954,6 +1000,16 @@ fn replay_general_current_slots_v69(
         return Err("entry replay did not consume every confirmed answer".into());
     }
     if let Some((mut checkpoint, choice)) = runner.checkpoint {
+        // A suspended operation must retain its exact original world. Only
+        // this uncommon path reconstructs the owned validation input again;
+        // a completed Drake replay consumes its input without a second copy.
+        let restored = if original.is_none() {
+            let restore = restore_original.ok_or("owned Drake replay lost its original factory")?;
+            Some(restore()?)
+        } else {
+            None
+        };
+        let original = original.or(restored.as_ref()).expect("replay original");
         if current_slots.is_some()
             && (!runner.used_banner
                 || !matches!(choice, GeneralChoiceV36::Color { .. })
@@ -1088,13 +1144,15 @@ fn replay_general_current_slots_v69(
             .event_history
             .push(CommittedEvent::BannerEntryOperationCompletedV1 { operation, entries });
     }
-    crate::drake_hatcher_v1::custody::enclose(
-        original,
-        operation,
-        answers,
-        runner.used_banner,
-        &mut staged,
-    )?;
+    if let Some(original) = original {
+        crate::drake_hatcher_v1::custody::enclose(
+            original,
+            operation,
+            answers,
+            runner.used_banner,
+            &mut staged,
+        )?;
+    }
     Ok((staged, result))
 }
 
@@ -1118,7 +1176,10 @@ fn record_answer(
     host: EffectObjectBinding,
     start: usize,
 ) -> Result<(), String> {
-    let returned = state.engine.event_history[start..]
+    let returned = state
+        .engine
+        .event_history
+        .range_v2(start..)
         .iter()
         .position(|event| {
             matches!(event,
@@ -1189,7 +1250,7 @@ fn choose(
                 .stack
                 .iter()
                 .any(|item| item.v4.stack_item_id == original.v4.stack_item_id);
-            let departed=snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|
+            let departed=snapshot.engine.event_history.range_v2(runner.original_history_len..).iter().any(|event|
                 matches!(event,CommittedEvent::ZoneChange {object,from:crate::state::Zone::Stack,..} if *object==original.source));
             if absent && !departed {
                 snapshot.stack.insert(
@@ -1920,7 +1981,7 @@ fn answer_color_plan(state: &mut GameState, index: usize) -> Result<bool, String
                 .stack
                 .iter()
                 .any(|i| i.v4.stack_item_id == original.v4.stack_item_id);
-            let departed = snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|
+            let departed = snapshot.engine.event_history.range_v2(runner.original_history_len..).iter().any(|event|
                 matches!(event, CommittedEvent::ZoneChange { object, from: crate::state::Zone::Stack, .. } if *object == original.source));
             if absent && !departed {
                 snapshot.stack.insert(
@@ -2174,7 +2235,7 @@ fn answer_kinship_plan(state: &mut GameState, index: usize) -> Result<bool, Stri
                 .stack
                 .iter()
                 .any(|i| i.v4.stack_item_id == original.v4.stack_item_id);
-            let departed=snapshot.engine.event_history[r.original_history_len..].iter().any(|e|matches!(e,CommittedEvent::ZoneChange{object,from:Zone::Stack,..}if *object==original.source));
+            let departed=snapshot.engine.event_history.range_v2(r.original_history_len..).iter().any(|e|matches!(e,CommittedEvent::ZoneChange{object,from:Zone::Stack,..}if *object==original.source));
             if absent && !departed {
                 snapshot.stack.insert(
                     r.original_stack
@@ -2568,7 +2629,7 @@ pub(crate) fn choose_created_token_v48(
                     .stack
                     .iter()
                     .any(|row| row.v4.stack_item_id == original.v4.stack_item_id);
-                let departed = snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|matches!(event,CommittedEvent::ZoneChange {object,from:Zone::Stack,..} if *object==original.source));
+                let departed = snapshot.engine.event_history.range_v2(runner.original_history_len..).iter().any(|event|matches!(event,CommittedEvent::ZoneChange {object,from:Zone::Stack,..} if *object==original.source));
                 if absent && !departed {
                     snapshot.stack.insert(
                         runner
@@ -2754,6 +2815,11 @@ pub(crate) fn run_drake_operation_v1(
     *state = next;
     Ok(())
 }
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 pub(crate) fn replay_drake_enclosing_v1(
     original: &GameState,
     operation: &OperationV1,
@@ -2761,6 +2827,63 @@ pub(crate) fn replay_drake_enclosing_v1(
     used_banner: bool,
 ) -> Result<GameState, String> {
     replay_general(original, operation, answers, used_banner).map(|(world, _)| world)
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+thread_local! {
+    static BORROWED_DRAKE_REPLAY_FOR_TEST: std::cell::Cell<bool> = const {
+        std::cell::Cell::new(false)
+    };
+}
+
+/// Run an entire recorded game with the former staging path, including
+/// reentrant validation, for receipt and timing comparisons in one binary.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn with_borrowed_drake_replays_for_test<T>(run: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            BORROWED_DRAKE_REPLAY_FOR_TEST.with(|mode| mode.set(self.0));
+        }
+    }
+    let _restore = Restore(BORROWED_DRAKE_REPLAY_FOR_TEST.with(|mode| mode.replace(true)));
+    run()
+}
+
+/// Consume the restored input of a custody validation. The original is
+/// reconstructed only if the operation must retain a suspended checkpoint.
+pub(crate) fn replay_drake_enclosing_owned_v1(
+    original: GameState,
+    operation: &OperationV1,
+    answers: &[GeneralAnswerV36],
+    used_banner: bool,
+    restore_original: &dyn Fn() -> Result<GameState, String>,
+) -> Result<GameState, String> {
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    if BORROWED_DRAKE_REPLAY_FOR_TEST.with(std::cell::Cell::get) {
+        return replay_drake_enclosing_v1(&original, operation, answers, used_banner);
+    }
+    replay_general_input_v1(
+        ReplayInputV1::DrakeValidation(Box::new(original)),
+        operation,
+        answers,
+        used_banner,
+        None,
+        Some(restore_original),
+    )
+    .map(|(world, _)| world)
 }
 
 /// Deliberately invalid saved-output mutation for the Drake memoization test.

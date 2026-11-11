@@ -2604,7 +2604,10 @@ fn mobilize(ctx: &ExecCtx, state: &mut GameState, count: u8) {
             ctx,
             state,
         );
-        let created = state.engine.event_history[start..]
+        let created = state
+            .engine
+            .event_history
+            .range_v2(start..)
             .iter()
             .filter_map(|event| match event {
                 CommittedEvent::CreateToken { object, .. } => Some(*object),
