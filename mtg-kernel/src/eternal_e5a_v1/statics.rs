@@ -210,7 +210,9 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
 
 // ---- Oko's Elks and The Fantasticar ------------------------------------------------
 
-fn elk_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
+/// The timestamp at which an Oko's +1 made `object`'s battlefield
+/// incarnation an Elk, a layer 4, 5 and 6 setting.
+pub(crate) fn elk_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
     let live = state.objects.try_get(object)?;
     if live.zone != Zone::Battlefield {
         return None;

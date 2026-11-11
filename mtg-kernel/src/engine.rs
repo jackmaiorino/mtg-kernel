@@ -8163,12 +8163,19 @@ fn validate_optional_additional_paid_refs(
             let def = card_def::CARD_DEFS
                 .get(paid.card_def as usize)
                 .ok_or("Bargain paid permanent definition is missing")?;
+            // The sacrifice was an artifact, enchantment or token as it left
+            // the battlefield. In the eternal catalog any permanent card may
+            // have been an artifact then: Liquimetal Coating makes one an
+            // artifact (wave S1b) and Mycosynth Lattice every one (wave
+            // S1f), and the provenance keeps no record of its types.
+            let eligible = def.is_token
+                || def.has_type(CardType::Artifact)
+                || def.has_type(CardType::Enchantment)
+                || (cfg!(feature = "eternal-fixtures") && has_permanent_card_type(def));
             if paid.controller != controller
                 || paid.zone != Zone::Graveyard
                 || paid.visible_to_mask != 0b11
-                || !(def.is_token
-                    || def.has_type(CardType::Artifact)
-                    || def.has_type(CardType::Enchantment))
+                || !eligible
             {
                 return Err("Bargain paid provenance is not one eligible sacrifice".to_string());
             }
@@ -8196,6 +8203,19 @@ fn validate_optional_additional_paid_refs(
         }
     }
     Ok(())
+}
+
+/// Whether either face of `def` has a permanent card type.
+fn has_permanent_card_type(def: &card_def::CardDef) -> bool {
+    [
+        CardType::Artifact,
+        CardType::Creature,
+        CardType::Enchantment,
+        CardType::Land,
+        CardType::Planeswalker,
+    ]
+    .iter()
+    .any(|card_type| def.types.contains(card_type) || def.types_for_face(1).contains(card_type))
 }
 
 /// Whether an `AltCostDef::condition` currently holds against `player`'s
@@ -9391,14 +9411,22 @@ pub(crate) fn normal_cast_reduction_count(
             [player.index()]
         .battlefield
         .iter()
-        .filter(|&&object| {
-            let object = state.objects.get(object);
+        .filter(|&&id| {
+            let object = state.objects.get(id);
             object.zone == Zone::Battlefield
                 && object.controller == player
-                && card_def::CARD_DEFS[object.card_def as usize]
-                    .types
-                    .iter()
-                    .any(|card_type| types.contains(card_type))
+                && if cfg!(feature = "eternal-fixtures") {
+                    // Each permanent's current types: Mycosynth Lattice's
+                    // artifacts count (wave S1f), and an Elk of Oko's doesn't.
+                    types
+                        .iter()
+                        .any(|&card_type| object_has_type(state, id, card_type))
+                } else {
+                    card_def::CARD_DEFS[object.card_def as usize]
+                        .types
+                        .iter()
+                        .any(|card_type| types.contains(card_type))
+                }
         })
         .count() as u32,
         card_def::DynamicCountDef::TenCreatureCardsInAllGraveyardsV1 => {
@@ -22863,7 +22891,18 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
                         && (card_type == CardType::Creature
                             || (animation.artifact && card_type == CardType::Artifact))
                 },
-            );
+            )
+            // A Mycosynth Lattice with a later timestamp (wave S1f).
+            || (card_type == CardType::Artifact
+                && crate::eternal_sideboard_s1f_v1::adds_artifact(state, id));
+    }
+    // Mycosynth Lattice: "All permanents are artifacts in addition to their
+    // other types", face-down permanents included, unless a later
+    // type-setting effect applies (wave S1f).
+    #[cfg(feature = "eternal-fixtures")]
+    if card_type == CardType::Artifact && crate::eternal_sideboard_s1f_v1::adds_artifact(state, id)
+    {
+        return true;
     }
     // Unable to Scream: "is a Toy artifact creature ... in addition to its
     // other types", a face-down host included (wave S1e).
@@ -22949,6 +22988,15 @@ pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
         // Painter's addition (613.7).
         let setter = crate::eternal_premodern_p1a_v1::statics::color_override_timed(state, id)
             .and_then(|(_, timestamp)| timestamp);
+        // Mycosynth Lattice: "All cards that aren't on the battlefield,
+        // spells, and permanents are colorless", unless a later setting
+        // overwrites it; a later Painter's Servant still adds its color
+        // (wave S1f).
+        if let Some(lattice) =
+            crate::eternal_sideboard_s1f_v1::colorless_timestamp(state, id, setter)
+        {
+            return crate::eternal_legacy_e9a_v1::statics::painter_mask_after(state, Some(lattice));
+        }
         let painted = crate::eternal_legacy_e9a_v1::statics::painter_mask_after(state, setter);
         if painted != 0 {
             return unpainted_object_color_mask(state, id) | painted;

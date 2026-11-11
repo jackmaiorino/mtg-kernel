@@ -28704,6 +28704,101 @@
     "subtype_grant"
    ],
    "java_file": "Mage.Sets/src/mage/cards/p/PortalToPhyrexia.java"
+  },
+  {
+   "name": "Mycosynth Lattice",
+   "engine_capability": "full",
+   "mana_cost": "{6}",
+   "mana_value": 6,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mystic-forge-combo",
+    "legacy-tron",
+    "legacy-red-stompy",
+    "legacy-green-cloudpost",
+    "legacy-blue-cloudpost",
+    "vintage-raker-shops",
+    "vintage-sphere-shops"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "type_change",
+    "color_change",
+    "spend_mana_as_any_color"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MycosynthLattice.java"
+  },
+  {
+   "name": "Overencumbered",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "aura",
+    "enchant_player",
+    "etb_trigger",
+    "token_creation",
+    "beginning_of_combat_trigger",
+    "attack_prohibition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/Overencumbered.java"
+  },
+  {
+   "name": "Junk Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [
+    "Junk"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "impulse_play"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/JunkToken.java",
+   "is_token": true
   }
  ]
 }
