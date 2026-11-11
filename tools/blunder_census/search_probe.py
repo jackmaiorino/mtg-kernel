@@ -79,13 +79,28 @@ def build_bank(census: Path, panel: str, pricing_cases: Path, pricing_jobs: Path
 
 # ---------------------------------------------------------------- runner
 
+def file_sha(path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def fingerprint(exe: str, jobs: Path, env_extra: dict) -> dict:
+    """What a chunk's rows depend on besides its states: the executable, the label jobs and every setting, with each
+    file-valued setting (sources, choosers) bound by content. The sources pin each model by sha256."""
+    env = {k: ({"path": v, "sha256": file_sha(v)} if k in ("PRICE_SOURCES", "PROBE_CHOOSERS") else v)
+           for k, v in sorted(env_extra.items())}
+    return {"exe_sha256": file_sha(exe), "jobs_sha256": file_sha(jobs), "env": env}
+
+
 def run_chunks(exe: str, states: Path, jobs: Path, out: Path, tag: str, workers: int, env_extra: dict,
                chunk: int) -> dict:
-    """Runs the states in chunks of `chunk` (one process each) on `workers` concurrent processes, longest-first is
-    unknown so chunks go in file order. Resumable: a chunk with a done marker is skipped. Writes run-<tag>.json when
-    every chunk is complete (one row per requested state, no error row)."""
+    """Runs the states in chunks of `chunk` (one process each) on `workers` concurrent processes, in file order.
+    Resumable: a chunk whose done marker carries this pass's fingerprint and the chunk's states hash is skipped. A done
+    marker written under any other configuration, or without a fingerprint, stops the pass before anything runs, so a
+    resume never mixes configurations. Writes run-<tag>.json when every chunk is complete (one row per requested
+    state, no error row)."""
     lines = [x for x in states.read_text(encoding="utf-8").splitlines() if x.strip()]
     out.mkdir(parents=True, exist_ok=True)
+    fp = fingerprint(exe, jobs, env_extra)
     parts = []
     for k in range(0, len(lines), chunk):
         c = k // chunk
@@ -95,6 +110,13 @@ def run_chunks(exe: str, states: Path, jobs: Path, out: Path, tag: str, workers:
             p.write_text(body, encoding="utf-8")
             (out / f"done-{tag}-{c:04d}.json").unlink(missing_ok=True)
         parts.append((c, p, len(lines[k:k + chunk])))
+    for c, p, _ in parts:
+        done = out / f"done-{tag}-{c:04d}.json"
+        if done.exists():
+            rec = json.loads(done.read_text(encoding="utf-8"))
+            if rec.get("fingerprint") != fp or rec.get("states_sha256") != file_sha(p):
+                raise SystemExit(f"{done}: written under another configuration; refusing to mix configurations "
+                                 "(move the pass directory aside to rerun it)")
 
     def one(item):
         c, p, count = item
@@ -111,7 +133,8 @@ def run_chunks(exe: str, states: Path, jobs: Path, out: Path, tag: str, workers:
         errors = sum(1 for r in rows if json.loads(r)["kind"] == "error")
         rec = {"chunk": c, "file": rows_path.name, "states_file": p.name, "exit": code, "states": count,
                "rows": len(rows), "errors": errors, "seconds": time.monotonic() - started,
-               "complete": code == 0 and len(rows) == count and errors == 0}
+               "complete": code == 0 and len(rows) == count and errors == 0,
+               "fingerprint": fp, "states_sha256": file_sha(p)}
         if rec["complete"]:
             done.write_text(json.dumps(rec), encoding="utf-8")
         return rec
@@ -119,8 +142,8 @@ def run_chunks(exe: str, states: Path, jobs: Path, out: Path, tag: str, workers:
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=workers) as pool:
         results = list(pool.map(one, parts))
-    record = {"tag": tag, "states": str(states), "jobs": str(jobs),
-              "exe_sha256": hashlib.sha256(Path(exe).read_bytes()).hexdigest(), "env": env_extra,
+    record = {"tag": tag, "states": str(states), "jobs": str(jobs), "fingerprint": fp,
+              "exe_sha256": fp["exe_sha256"], "env": env_extra,
               "expected": len(lines), "workers": workers, "chunk": chunk, "chunks": results,
               "complete": all(r["complete"] for r in results), "seconds": time.monotonic() - started}
     name = f"run-{tag}.json" if record["complete"] else f"run-{tag}.failed.json"
@@ -198,14 +221,19 @@ def bootstrap(values: list[float], seed: int = 20261111, reps: int = 2000) -> li
 
 
 def action_scores(price_rows: list[dict], mode: str) -> tuple[dict, int]:
-    """(id, index) -> action -> per-rollout scores (None for a rollout without a natural outcome). A repeated action
-    must reproduce its scores exactly; the count of repeats checked is returned."""
+    """(id, index) -> action -> per-rollout scores. A rollout without a natural outcome (an invalid forced row, a
+    truncation, a halt, the step bound) is None, and the arm's invalid and non-natural counts must account for every
+    None. A repeated action must reproduce its scores exactly; the count of repeats checked is returned."""
     out: dict = {}
     repeats = 0
     for r in price_rows:
         _, x, y = r["class"].rsplit("|", 2)
         state = out.setdefault((r["id"], r["index"]), {})
-        for a, scores in ((int(x), r[mode]["chosen"]), (int(y), r[mode]["alt"])):
+        arms = r[mode]
+        for side, (a, scores) in enumerate(((int(x), arms["chosen"]), (int(y), arms["alt"]))):
+            bad = arms.get("invalid", [0, 0])[side] + arms.get("unnatural", [0, 0])[side]
+            if sum(1 for v in scores if v is None) != bad:
+                raise SystemExit(f"{r['id']}/{r['index']}: null scores do not match the invalid and non-natural counts")
             if a in state:
                 repeats += 1
                 if state[a] != scores:
@@ -214,11 +242,18 @@ def action_scores(price_rows: list[dict], mode: str) -> tuple[dict, int]:
     return out, repeats
 
 
-def paired(sa: list, sb: list) -> tuple[float, int] | None:
-    pairs = [(a, b) for a, b in zip(sa, sb) if a is not None and b is not None]
-    if len(pairs) < max(2, len(sa) // 2):
+def clean(scores) -> bool:
+    """The base pricing mode's validity rule for one arm: every rollout has a natural outcome."""
+    return bool(scores) and all(v is not None for v in scores)
+
+
+def paired(sa: list, sb: list) -> float | None:
+    """Mean paired difference, or None (the state is invalid for this chooser, counted) unless both arms are clean, of
+    equal length and at least two rollouts: one invalid or non-natural rollout on either side invalidates the state,
+    as in the base mode's `case_gap`."""
+    if not (clean(sa) and clean(sb)) or len(sa) != len(sb) or len(sa) < 2:
         return None
-    return sum(a - b for a, b in pairs) / len(pairs), len(pairs)
+    return sum(a - b for a, b in zip(sa, sb)) / len(sa)
 
 
 def report(root: Path, out: Path) -> dict:
@@ -242,7 +277,9 @@ def report(root: Path, out: Path) -> dict:
             prices[mode] = (scored, repeats)
         names = list(srows[0]["choosers"].keys())
         choosers = ["sampled"] + names
-        bank_out = {"states": len(srows), "repeat_checks": {m: prices[m][1] for m in prices}, "choosers": {}}
+        nonclean = {m: sum(1 for st in prices[m][0].values() for sc in st.values() if not clean(sc)) for m in prices}
+        bank_out = {"states": len(srows), "repeat_checks": {m: prices[m][1] for m in prices},
+                    "actions_with_nonnatural_rollouts": nonclean, "choosers": {}}
         for mode in ("worlds", "true"):
             scored = prices[mode][0]
             for name in choosers:
@@ -253,19 +290,17 @@ def report(root: Path, out: Path) -> dict:
                         fallback += 1
                     st = scored.get((r["id"], r["index"]), {})
                     base = st.get(r["argmax"])
-                    vals = [x for x in (base or []) if x is not None]
-                    value = sum(vals) / len(vals) if vals else None
+                    value = sum(base) / len(base) if clean(base) else None
                     decided = value is not None and (value < 0.05 or value > 0.95)
                     decided_n += decided
                     if pick == r["argmax"]:
                         g = 0.0
                     else:
                         differ += 1
-                        p = paired(st.get(pick, []), base or []) if base is not None and pick in st else None
-                        if p is None:
+                        g = paired(st.get(pick, []), base or [])
+                        if g is None:
                             invalid += 1
                             continue
-                        g = p[0]
                     gaps.append(g)
                     if not decided and value is not None:
                         live.append(g)
@@ -286,6 +321,7 @@ def report(root: Path, out: Path) -> dict:
                     c0 = srows[0]["choosers"][name]
                     rec["sims_mean"] = sum(r["choosers"][name]["completed"] for r in srows) / len(srows)
                     rec["incomplete"] = sum(1 for r in srows if r["choosers"][name]["incomplete"])
+                    rec["faulted"] = sum(1 for r in srows if r["choosers"][name]["faults"])
                     rec["extra"] = c0.get("extra")
         # Paired contrasts by state (DEFINITIONS section 4), primary worlds.
         by = {}

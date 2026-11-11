@@ -121,6 +121,22 @@ fn root_pick(root: &FastActorSessionV1, tree: &Tree) -> Result<(Option<u32>, Val
     })
 }
 
+/// A search that stopped early (a fault, or `incomplete`: world sampling that
+/// kept failing, a floating-point or option refusal) is an error for the
+/// whole state, never a row: its pick would rest on less work than the
+/// budget. Ordinary budget exhaustion (`cap_reached`) and a root without an
+/// edge of eight backups (the counted fallback) are not failures.
+pub(super) fn check_selection(name: &str, sel: &super::arms::Selection) -> Result<(), String> {
+    if sel.incomplete || !sel.faults.is_empty() {
+        return Err(format!(
+            "chooser {name}: search incomplete or faulted ({} faults: {:?})",
+            sel.faults.len(),
+            sel.faults.first()
+        ));
+    }
+    Ok(())
+}
+
 /// One state's row.
 pub(super) fn search_state(
     job: &LabelJob,
@@ -177,6 +193,7 @@ pub(super) fn search_state(
         let (sel, tree) = roles.select_e_options(&ctx, None, 1, None, None, None, &options);
         let wall = started.elapsed().as_secs_f64();
         let cpu = super::process_cpu::seconds()? - cpu0;
+        check_selection(&chooser.name, &sel)?;
         let (pick, root) = root_pick(&s, &tree)?;
         if pick.is_some_and(|p| p as usize >= legal) {
             return Err(format!("chooser {}: pick outside the menu", chooser.name));
@@ -245,5 +262,26 @@ mod tests {
         assert_eq!(o.value_leaf.unwrap().horizon, Horizon::H0);
         assert!(chooser(Some(4.0), None, "rollout").options(&logits).is_err());
         assert!(chooser(None, None, "h9").options(&logits).is_err());
+    }
+
+    #[test]
+    fn incomplete_or_faulted_searches_fail_the_state() {
+        use super::super::arms::Selection;
+        let done = Selection {
+            cap_reached: true,
+            completed: 40,
+            ..Selection::default()
+        };
+        assert!(check_selection("x", &done).is_ok());
+        let incomplete = Selection {
+            incomplete: true,
+            ..done.clone()
+        };
+        assert!(check_selection("x", &incomplete).is_err());
+        let faulted = Selection {
+            faults: vec!["boom".into()],
+            ..done
+        };
+        assert!(check_selection("x", &faulted).is_err());
     }
 }
