@@ -37,6 +37,8 @@ use crate::native_policy_value_net_v1::v8_inclusion_v1::{
 };
 use crate::native_policy_value_net_v1::{
     accumulate_input_major_row_v1,
+    all_finite_and_not_negative_v1,
+    all_finite_v1,
     no_negative_zero_or_nan_v1,
     rounds_to_nearest_v1,
     NativeEncodedDecisionViewV1,
@@ -1865,7 +1867,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             if name != *expected_name
                 || shape != *expected_shape
                 || expected_shape.iter().product::<usize>() != values.len()
-                || values.iter().any(|value| !value.is_finite())
+                || !all_finite_v1(values)
                 || (ordinal == CARD_EMBEDDING
                     && values[..D::CARD_EMBEDDING]
                         .iter()
@@ -1894,10 +1896,8 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             let second = &self.second_moments[ordinal];
             if first.len() != values.len()
                 || second.len() != values.len()
-                || first.iter().any(|value| !value.is_finite())
-                || second
-                    .iter()
-                    .any(|value| !value.is_finite() || *value < 0.0)
+                || !all_finite_v1(first)
+                || !all_finite_and_not_negative_v1(second)
                 || (ordinal == CARD_EMBEDDING
                     && (first[..D::CARD_EMBEDDING]
                         .iter()
@@ -6425,7 +6425,7 @@ fn validate_parameter_manifest_dims_v1<D: NetDimsV1>(
                 parameter.name != *expected_name
                     || parameter.shape.as_slice() != *expected_shape
                     || expected_shape.iter().product::<usize>() != parameter.values.len()
-                    || parameter.values.iter().any(|value| !value.is_finite())
+                    || !all_finite_v1(&parameter.values)
             })
         || parameters
             .iter()
@@ -6456,10 +6456,8 @@ fn validate_optimizer_state_dims_v1<D: NetDimsV1>(
             .any(|((parameter, first), second)| {
                 first.len() != parameter.values.len()
                     || second.len() != parameter.values.len()
-                    || first.iter().any(|value| !value.is_finite())
-                    || second
-                        .iter()
-                        .any(|value| !value.is_finite() || *value < 0.0)
+                    || !all_finite_v1(first)
+                    || !all_finite_and_not_negative_v1(second)
             })
         || first_moments[CARD_EMBEDDING][..D::CARD_EMBEDDING]
             .iter()
@@ -6526,11 +6524,8 @@ fn validate_owned_train_snapshot_dims_v1<D: NetDimsV1>(
                     || second.shape != parameter.shape
                     || first.values.len() != parameter.values.len()
                     || second.values.len() != parameter.values.len()
-                    || first.values.iter().any(|value| !value.is_finite())
-                    || second
-                        .values
-                        .iter()
-                        .any(|value| !value.is_finite() || *value < 0.0)
+                    || !all_finite_v1(&first.values)
+                    || !all_finite_and_not_negative_v1(&second.values)
             })
         || snapshot.first_moments[CARD_EMBEDDING].values[..D::CARD_EMBEDDING]
             .iter()

@@ -21,7 +21,7 @@ mod leyline;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 56] = [
+const PLAYABLE_75: [(&str, &str); 72] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -89,6 +89,11 @@ const PLAYABLE_75: [(&str, &str); 56] = [
     ("vintage", "vintage-4c-psychic-frog"),
     ("vintage", "vintage-eldrazi"),
     ("vintage", "vintage-grixis-lurrus-control"),
+    ("vintage", "vintage-jewel-shops"),
+    ("vintage", "vintage-oath-of-druids"),
+    ("vintage", "vintage-dredge"),
+    ("vintage", "vintage-doomsday"),
+    ("vintage", "vintage-underworld-breach"),
     ("premodern", "premodern-sligh-rdw"),
     ("premodern", "premodern-goblins"),
     ("premodern", "premodern-rg-aggro"),
@@ -96,6 +101,17 @@ const PLAYABLE_75: [(&str, &str); 56] = [
     ("premodern", "premodern-oath-of-druids"),
     ("premodern", "premodern-white-weenie"),
     ("premodern", "premodern-stasis"),
+    ("premodern", "premodern-terrageddon"),
+    ("premodern", "premodern-mono-black-aggro"),
+    ("premodern", "premodern-survival"),
+    ("premodern", "premodern-the-rock"),
+    ("premodern", "premodern-mono-red-control"),
+    ("premodern", "premodern-psychatog"),
+    ("premodern", "premodern-elves"),
+    ("premodern", "premodern-reanimator"),
+    ("premodern", "premodern-enchantress"),
+    ("premodern", "premodern-madness-threshold"),
+    ("premodern", "premodern-mono-black-control"),
 ];
 
 fn id(name: &str) -> u16 {

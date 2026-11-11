@@ -33,7 +33,7 @@ fn static_ids() -> &'static StaticIds {
 /// The battlefield permanents with definition `id`, named `name`, whose
 /// printed abilities apply, controlled by `controller` if given. Compares
 /// definition ids first.
-fn active_with_id<'a>(
+pub(crate) fn active_with_id<'a>(
     state: &'a GameState,
     id: Option<u16>,
     name: &'a str,
@@ -112,7 +112,7 @@ pub(crate) fn chill_tax(state: &GameState, definition: &CardDef, method: CastMet
 /// The colors of the spell `definition` becomes when cast as `method`'s form
 /// (601.2a): a split half's or an Adventure's own cost's, none face down
 /// (disguise and morph), with Painter's Servant's color.
-fn form_colors(state: &GameState, definition: &CardDef, method: CastMethodV4) -> u8 {
+pub(crate) fn form_colors(state: &GameState, definition: &CardDef, method: CastMethodV4) -> u8 {
     let face_down = method == CastMethodV4::Alternative
         && definition
             .alt_cost

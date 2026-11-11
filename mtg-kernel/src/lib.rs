@@ -328,6 +328,16 @@ pub mod eternal_premodern_p2c_v1;
 pub mod eternal_premodern_p2d_v1;
 /// Premodern sideboard card programs of the eternal catalog (wave P3a).
 pub mod eternal_premodern_p3a_v1;
+/// Premodern sideboard card programs of the eternal catalog (wave P3b).
+pub mod eternal_premodern_p3b_v1;
+/// Premodern sideboard card programs of the eternal catalog (wave P3c).
+pub mod eternal_premodern_p3c_v1;
+/// Premodern sideboard card programs of the eternal catalog (wave P3d).
+pub mod eternal_premodern_p3d_v1;
+/// Premodern sideboard card programs of the eternal catalog (wave P3e).
+pub mod eternal_premodern_p3e_v1;
+/// Premodern sideboard card programs of the eternal catalog (wave P3f).
+pub mod eternal_premodern_p3f_v1;
 /// Legacy sideboard card programs of the eternal catalog (wave S1a).
 pub mod eternal_sideboard_s1a_v1;
 /// Legacy sideboard card programs of the eternal catalog, part 2 (wave S1b).
@@ -336,6 +346,8 @@ pub mod eternal_sideboard_s1b_v1;
 pub mod eternal_sideboard_s1c_v1;
 /// Pauper sideboard card programs of the eternal catalog (wave S1d).
 pub mod eternal_sideboard_s1d_v1;
+/// Vintage sideboard card programs of the eternal catalog (wave S1e).
+pub mod eternal_sideboard_s1e_v1;
 /// Vintage graveyard and tempo card programs of the eternal catalog (wave
 /// E7b).
 pub mod eternal_vintage_e7b_v1;

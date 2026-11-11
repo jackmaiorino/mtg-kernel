@@ -889,6 +889,30 @@ fn consign_to_memory_counters_a_colorless_spell_but_not_a_colored_one() {
     );
 }
 
+/// Replicated once, Consign to Memory and its copy both target a colorless
+/// spell: the copy counters it and the original then has no legal target.
+#[test]
+fn replicated_consign_to_memory_counters_a_colorless_spell() {
+    let mut state = islands();
+    let bauble = put(&mut state, P0, "Vexing Bauble", Zone::Hand);
+    let consign = put(&mut state, P0, "Consign to Memory", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 2);
+    cast(&mut state, bauble, &[]);
+    cast(&mut state, consign, &[Target::Object(bauble)]);
+    match next(&mut state) {
+        Decision::ChooseEffectOption { option_count, .. } => {
+            assert_eq!(option_count, 2, "replicate zero or one time");
+            act(&mut state, Action::ChooseEffectOption(1));
+        }
+        other => panic!("expected the replicate count, got {other:?}"),
+    }
+    settle_first(&mut state);
+    assert_eq!(zone(&state, bauble), Zone::Graveyard, "countered");
+    assert_eq!(zone(&state, consign), Zone::Graveyard);
+    assert!(state.stack.is_empty());
+    assert_eq!(state.players[0].mana_pool, [0; 6], "paid {{U}} and {{1}}");
+}
+
 // ---- Energy spells ------------------------------------------------------------------
 
 #[test]

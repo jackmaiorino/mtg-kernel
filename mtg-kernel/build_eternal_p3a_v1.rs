@@ -25,7 +25,7 @@ const CRIMSON_ACOLYTE: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
         "Crimson Acolyte" => &CRIMSON_ACOLYTE,
-        _ => &[],
+        _ => super::build_eternal_p3b_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -55,7 +55,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::None",
             "crate::eternal_premodern_p3a_v1::tranquil_domain",
         ),
-        _ => return None,
+        _ => return super::build_eternal_p3b_v1::special_for(name),
     })
 }
 
@@ -63,7 +63,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
 pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
     match name {
         "Overload" => Some("{2}"),
-        _ => None,
+        _ => super::build_eternal_p3b_v1::kicker_cost_for(name),
     }
 }
 
@@ -71,7 +71,7 @@ pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
 pub(super) fn attachment_for(name: &str) -> &'static str {
     match name {
         "Essence Flare" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 2, toughness: 0, keywords: Keywords::NONE, per_controlled_subtype: None }))",
-        _ => "None",
+        _ => super::build_eternal_p3b_v1::attachment_for(name),
     }
 }
 
@@ -94,6 +94,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Tranquil Domain" => "spell:destroy_all_non_aura_enchantments",
         "True Believer" => "static:you_have_shroud",
         "Warmth" => "opponent_casts_red_spell:gain_2_life",
-        _ => "none",
+        _ => super::build_eternal_p3b_v1::trigger_recipe_for(name),
     }
 }

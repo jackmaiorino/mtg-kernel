@@ -27675,6 +27675,1035 @@
     "life_gain"
    ],
    "java_file": "Mage.Sets/src/mage/cards/w/Warmth.java"
+  },
+  {
+   "name": "Dystopia",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-aggro",
+    "premodern-mono-black-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "cumulative_upkeep",
+    "age_counters",
+    "life_payment",
+    "upkeep_trigger",
+    "each_player_sacrifice",
+    "color_filter"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/Dystopia.java"
+  },
+  {
+   "name": "Engineered Plague",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-aggro",
+    "premodern-psychatog",
+    "premodern-the-rock",
+    "premodern-mono-black-control",
+    "premodern-bw-control",
+    "legacy-mono-black-pox"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "as_enters_choose_creature_type",
+    "static_ability",
+    "minus_toughness"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EngineeredPlague.java"
+  },
+  {
+   "name": "Gloom",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-aggro",
+    "legacy-mono-black-pox"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "cost_increase",
+    "color_filter",
+    "activation_cost_increase"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/Gloom.java"
+  },
+  {
+   "name": "Goblin Tinkerer",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin",
+    "Artificer"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-survival"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "tap_cost",
+    "destroy_target",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GoblinTinkerer.java"
+  },
+  {
+   "name": "Haunting Echoes",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}{B}",
+   "mana_value": 5,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-psychatog",
+    "premodern-the-rock",
+    "premodern-bw-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "exile_graveyard",
+    "library_search",
+    "exile_same_name",
+    "shuffle"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HauntingEchoes.java"
+  },
+  {
+   "name": "Mogg Salvage",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "alternative_cost",
+    "free_cast_condition",
+    "destroy_target"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MoggSalvage.java"
+  },
+  {
+   "name": "Plaguebearer",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Zombie"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-aggro",
+    "premodern-the-rock"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "x_cost",
+    "destroy_target",
+    "mana_value_check",
+    "color_filter"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/Plaguebearer.java"
+  },
+  {
+   "name": "Ray of Revelation",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-terrageddon",
+    "premodern-madness-threshold",
+    "premodern-grow",
+    "premodern-other-control",
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "destroy_target",
+    "flashback"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RayOfRevelation.java"
+  },
+  {
+   "name": "Xantid Swarm",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Insect"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-survival",
+    "premodern-enchantress",
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "flying",
+    "attack_trigger",
+    "cast_prohibition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/x/XantidSwarm.java"
+  },
+  {
+   "name": "Zuran Orb",
+   "engine_capability": "full",
+   "mana_cost": "{0}",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-fastbond-lands",
+    "premodern-terrageddon",
+    "premodern-survival",
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "gain_life"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/z/ZuranOrb.java"
+  },
+  {
+   "name": "Crumble",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-reanimator"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "destroy_target",
+    "destroy_artifact",
+    "cant_be_regenerated",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/Crumble.java"
+  },
+  {
+   "name": "Dominate",
+   "engine_capability": "full",
+   "mana_cost": "{X}{1}{U}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-psychatog"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "x_cost",
+    "gain_control",
+    "mana_value_check"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/Dominate.java"
+  },
+  {
+   "name": "Druid Lyrist",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Druid"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "activated_ability",
+    "tap_ability",
+    "sacrifice_cost",
+    "destroy_target",
+    "enchantment_removal"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DruidLyrist.java"
+  },
+  {
+   "name": "Ihsan's Shade",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}{B}{B}",
+   "mana_value": 6,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Shade",
+    "Knight"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 5,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-reanimator"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "protection_from_color"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/IhsansShade.java"
+  },
+  {
+   "name": "Iridescent Angel",
+   "engine_capability": "full",
+   "mana_cost": "{5}{W}{U}",
+   "mana_value": 7,
+   "colors": [
+    "W",
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Angel"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-reanimator"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "flying",
+    "protection_from_color"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/IridescentAngel.java"
+  },
+  {
+   "name": "Multani, Maro-Sorcerer",
+   "engine_capability": "full",
+   "mana_cost": "{4}{G}{G}",
+   "mana_value": 6,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elemental"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-reanimator"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "shroud",
+    "characteristic_defining"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MultaniMaroSorcerer.java"
+  },
+  {
+   "name": "Spike Feeder",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Spike"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "enters_with_counters",
+    "remove_counter_cost",
+    "plus_one_counters",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SpikeFeeder.java"
+  },
+  {
+   "name": "Uktabi Orangutan",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Ape"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves",
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "etb_trigger",
+    "destroy_target",
+    "destroy_artifact"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UktabiOrangutan.java"
+  },
+  {
+   "name": "Abeyance",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-enchantress",
+    "premodern-replenish"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "cast_prohibition",
+    "activation_prohibition",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/Abeyance.java"
+  },
+  {
+   "name": "Karmic Justice",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-enchantress"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "destroy_trigger",
+    "destroy_target"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KarmicJustice.java"
+  },
+  {
+   "name": "Sacred Ground",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-landstill-uw-control",
+    "premodern-bw-control",
+    "premodern-enchantress"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "graveyard_trigger",
+    "return_from_graveyard",
+    "put_onto_battlefield"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SacredGround.java"
+  },
+  {
+   "name": "Absolute Law",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-madness-threshold"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "static_ability",
+    "protection_grant",
+    "protection_from_color"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AbsoluteLaw.java"
+  },
+  {
+   "name": "Kor Haven",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "premodern-madness-threshold"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "colorless_mana",
+    "activated_ability",
+    "damage_prevention"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KorHaven.java"
+  },
+  {
+   "name": "Winter Orb",
+   "engine_capability": "full",
+   "mana_cost": "{2}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-madness-threshold"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "static_ability",
+    "untap_step",
+    "untap_prohibition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WinterOrb.java"
+  },
+  {
+   "name": "Contagion",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}{B}",
+   "mana_value": 5,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "alt_cost",
+    "pay_life_cost",
+    "exile_from_hand_cost",
+    "minus_counters",
+    "divided_counters"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/Contagion.java"
+  },
+  {
+   "name": "Lurking Skirge",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "dies_trigger",
+    "intervening_if",
+    "animate",
+    "type_change",
+    "flying"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LurkingSkirge.java"
+  },
+  {
+   "name": "Phyrexian Processor",
+   "engine_capability": "full",
+   "mana_cost": "{4}",
+   "mana_value": 4,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "as_enters_choice",
+    "pay_life",
+    "activated_ability",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PhyrexianProcessor.java"
+  },
+  {
+   "name": "Phyrexian Minion Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Phyrexian",
+    "Minion"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "token_creation",
+    "characteristic_defining"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/PhyrexianMinionToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Azure Beastbinder",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Rat",
+    "Rogue"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-jewel-shops"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "vigilance",
+    "evasion",
+    "attack_trigger",
+    "up_to_one_target",
+    "lose_all_abilities",
+    "set_base_power_toughness",
+    "until_your_next_turn"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AzureBeastbinder.java"
+  },
+  {
+   "name": "Suspend",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-oath-of-druids"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "exile_target",
+    "time_counters",
+    "suspend",
+    "haste"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/Suspend.java"
+  },
+  {
+   "name": "Sickening Shoal",
+   "engine_capability": "full",
+   "mana_cost": "{X}{B}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [
+    "Arcane"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-dredge"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "alt_cost",
+    "exile_from_hand_cost",
+    "x_cost",
+    "minus_x_minus_x"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SickeningShoal.java"
+  },
+  {
+   "name": "Unable to Scream",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-doomsday"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "aura",
+    "lose_all_abilities",
+    "type_change",
+    "set_base_power_toughness",
+    "face_down"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UnableToScream.java"
+  },
+  {
+   "name": "Portal to Phyrexia",
+   "engine_capability": "full",
+   "mana_cost": "{9}",
+   "mana_value": 9,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-underworld-breach"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "sacrifice_each_opponent",
+    "upkeep_trigger",
+    "reanimation",
+    "subtype_grant"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PortalToPhyrexia.java"
   }
  ]
 }

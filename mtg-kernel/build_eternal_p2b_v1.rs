@@ -131,7 +131,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Birds of Paradise" | "Glory" => &["Keywords::FLYING"],
         "Blastoderm" => &["Keywords::SHROUD"],
         "Caller of the Claw" => &["Keywords::FLASH"],
-        _ => &[],
+        _ => super::build_eternal_p3b_v1::keywords_for(name),
     }
 }
 
@@ -142,7 +142,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
 pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Nantuko Vigilante" | "Birchlore Rangers" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[], generic: 3, x_count: 0 })], condition: AltCostCondition::DisguiseFromHand })",
-        _ => "None",
+        _ => super::build_eternal_p3b_v1::alt_cost_for(name),
     }
 }
 
@@ -156,7 +156,7 @@ pub(super) fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => "None".to_string(),
+        _ => super::build_eternal_p3b_v1::flashback_for(name),
     }
 }
 

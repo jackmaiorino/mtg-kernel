@@ -328,6 +328,12 @@ pub struct EngineState {
     /// Synchronous typed Inspiration owner; excluded from snapshots and Hash input.
     #[serde(skip)]
     pub(crate) inspiration_runtime_v1: effect::InspirationRuntimeV1,
+    /// Whose spell or ability is resolving, for Premodern wave P3d's
+    /// departure triggers. Set only while effects run; excluded from
+    /// snapshots, Hash input and comparisons.
+    #[serde(skip)]
+    #[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+    pub(crate) departure_cause_v1: crate::eternal_premodern_p3d_v1::DepartureCauseV1,
     #[serde(
         default,
         skip_serializing_if = "crate::twinflame_tyrant_v1::combat::StateV38::is_empty"
@@ -6235,10 +6241,13 @@ fn activation_mana_payment(
         crate::standard_cards_v1::spend_as_any_color(state, player, source, reduced)
     });
     // Anointed Peacekeeper: abilities of sources with the chosen name cost
-    // {2} more to activate.
+    // {2} more to activate. Gloom: abilities of white enchantments cost {3}
+    // more (eternal wave P3b).
     #[cfg(feature = "eternal-fixtures")]
     {
-        let tax = crate::eternal_vintage_v1::activation_tax(state, source);
+        let tax = crate::eternal_vintage_v1::activation_tax(state, source).saturating_add(
+            crate::eternal_premodern_p3b_v1::statics::gloom_activation_tax(state, source),
+        );
         if tax > 0 {
             let mut cost = printed.unwrap_or(Cost::zero());
             cost.generic = cost.generic.saturating_add(tax);
@@ -7639,6 +7648,20 @@ fn commit_cost_components_from_plan_v1(
     mana_plan: Option<&mana::PaymentPlan>,
 ) -> Option<u16> {
     let mut mana_spent = 0;
+    // An ability without a mana cost can still owe a cost increase (Gloom on
+    // a white enchantment's sacrifice ability, Anointed Peacekeeper on a
+    // named source's tap ability). Its plan was derived with the other
+    // components unpaid, so pay it first.
+    if !components.iter().any(|component| {
+        matches!(
+            component,
+            CostComponent::Mana(_) | CostComponent::ConvokeMana(_)
+        )
+    }) {
+        if let Some(plan) = mana_plan {
+            mana_spent = pay_plan(state, player, plan);
+        }
+    }
     for c in components {
         match c {
             CostComponent::Tap => event::propose_and_commit(state, ProposedEvent::tap(source)),
@@ -8247,6 +8270,12 @@ fn alt_cost_condition_met(
             cfg!(feature = "eternal-fixtures")
                 && crate::eternal_sideboard_s1a_v1::statics::massacre_free(state, player)
         }
+        // Mogg Salvage: "If an opponent controls an Island and you control a
+        // Mountain" (eternal wave P3b).
+        card_def::AltCostCondition::OpponentIslandYouMountainV1 => {
+            cfg!(feature = "eternal-fixtures")
+                && crate::eternal_premodern_p3b_v1::statics::mogg_salvage_free(state, player)
+        }
         card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
             let subtype_id = subtype.stable_id();
             state.players[player.index()].battlefield.iter().any(|&id| {
@@ -8686,8 +8715,18 @@ fn x_graveyard_exile_candidates(
 }
 
 /// An "exile X cards from your graveyard" cast announces X as the number of
-/// cards it exiled.
-pub(crate) fn forced_cast_x(pending: &PendingCast, def: &card_def::CardDef) -> Option<u16> {
+/// cards it exiled, and Sickening Shoal's alternative cost as the mana value
+/// of the card it exiles.
+pub(crate) fn forced_cast_x(
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+    state: &GameState,
+) -> Option<u16> {
+    // Sickening Shoal's alternative cost: the exiled black card's mana value
+    // is X (eternal wave S1e).
+    if let Some(x) = crate::eternal_sideboard_s1e_v1::shoal_forced_x(pending, def, state) {
+        return Some(x);
+    }
     pending_x_graveyard_exile(pending, def)?;
     u16::try_from(pending.sacrifice_chosen.len()).ok()
 }
@@ -10373,7 +10412,7 @@ fn maximum_payable_x(
 ) -> Option<u16> {
     let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
     // "Exile X cards from your graveyard": X is the number exiled.
-    if let Some(x) = forced_cast_x(pending, def) {
+    if let Some(x) = forced_cast_x(pending, def, state) {
         return pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
             .map(|_| x);
     }
@@ -12294,6 +12333,13 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
 /// creates an activated ability, never uses the stack, and retains priority.
 fn can_turn_face_up(state: &GameState, player: PlayerId, id: ObjectId) -> bool {
     let object = state.objects.get(id);
+    // Unable to Scream: "As long as enchanted creature is face down, it
+    // can't be turned face up." (eternal wave S1e)
+    if cfg!(feature = "eternal-fixtures")
+        && crate::eternal_sideboard_s1e_v1::cant_turn_face_up(state, id)
+    {
+        return false;
+    }
     // A manifested creature card turns face up for its mana cost.
     if cfg!(feature = "eternal-fixtures") {
         if let Some(cost) = crate::eternal_legacy_e7a_v1::turn_face_up_cost(state, id) {
@@ -12509,11 +12555,11 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
     if let Some(companion) = crate::eternal_lurrus_v1::companion_action(state, player) {
         out.push((companion, 0));
     }
-    // Split second (Legolas's Quick Reflexes): only mana abilities and
-    // special actions while it is on the stack.
+    // Split second (Legolas's Quick Reflexes) and Abeyance: only mana
+    // abilities and special actions.
     #[cfg(feature = "eternal-fixtures")]
     out.retain(|&(source, index)| {
-        !crate::eternal_legacy_e9a_v1::statics::split_second_blocks(state, source, index)
+        !crate::eternal_legacy_e9a_v1::statics::activation_blocked(state, player, source, index)
     });
     out
 }
@@ -22058,6 +22104,15 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     (object.zone == Zone::Battlefield && object.controller == p).then_some(id)
                 })
                 .collect::<Vec<_>>();
+            // Winter Orb (Premodern sideboard wave P3e): an untapped Orb, read
+            // before anything untaps, holds back the lands that would untap
+            // so that only one of them does, the active player choosing.
+            let orb = if cfg!(feature = "eternal-fixtures") {
+                crate::eternal_premodern_p3e_v1::untap_limited(state)
+            } else {
+                None
+            };
+            let mut held_lands = Vec::new();
             for id in permanents {
                 // Undiscovered Paradise returns instead (Premodern wave P2c).
                 #[cfg(feature = "eternal-fixtures")]
@@ -22072,9 +22127,16 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     && (!cfg!(feature = "eternal-fixtures")
                         || !crate::eternal_vintage_v1::prevents_untap_step(state, id))
                 {
-                    attempt_untap(state, id);
+                    if orb.is_some() && crate::eternal_premodern_p3e_v1::holds_untap(state, id) {
+                        held_lands.push(id);
+                    } else {
+                        attempt_untap(state, id);
+                    }
                 }
                 state.objects.get_mut(id).summoning_sick = false;
+            }
+            if let Some(orb) = orb {
+                crate::eternal_premodern_p3e_v1::untap_one_land(state, p, orb, held_lands);
             }
             // Bender's Waterskin: "Untap this artifact during each other
             // player's untap step."
@@ -22802,6 +22864,14 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
                             || (animation.artifact && card_type == CardType::Artifact))
                 },
             );
+    }
+    // Unable to Scream: "is a Toy artifact creature ... in addition to its
+    // other types", a face-down host included (wave S1e).
+    #[cfg(feature = "eternal-fixtures")]
+    if matches!(card_type, CardType::Artifact | CardType::Creature)
+        && crate::eternal_sideboard_s1e_v1::adds_artifact_creature(state, id)
+    {
+        return true;
     }
     if let Some(face) = state.objects.get(id).v4.face_down_v1 {
         return face.disguised && card_type == CardType::Creature;
@@ -24482,6 +24552,11 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_sideboard_s1c_v1::statics::is_extra_swamp(state, id) {
         subtype_ids.push(card_def::Subtype::Swamp.stable_id());
+    }
+    // Unable to Scream: "is a Toy artifact creature" (eternal wave S1e).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1e_v1::is_toy(state, id) {
+        subtype_ids.push(card_def::Subtype::Toy.stable_id());
     }
     subtype_ids.sort_unstable();
     if crate::continuous_characteristics_v1::land_type_timestamp(state, id).is_some()

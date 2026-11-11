@@ -254,9 +254,9 @@ pub(crate) fn islands_controlled_by(state: &GameState, player: PlayerId) -> u8 {
     u8::try_from(count).unwrap_or(u8::MAX)
 }
 
-/// Shared quote and payment restriction for Lavinia and Meddling Mage.
-/// Lavinia checks the selected form and announced X. Alternative costs and
-/// additional payments do not change mana value.
+/// Shared quote and payment restriction for Lavinia, Meddling Mage and
+/// Abeyance. Lavinia checks the selected form and announced X. Alternative
+/// costs and additional payments do not change mana value.
 pub(crate) fn cast_prohibited(
     state: &GameState,
     player: PlayerId,
@@ -272,6 +272,10 @@ pub(crate) fn cast_prohibited(
         return false;
     };
     if crate::eternal_sideboard_s1b_v1::mage_prohibits(state, def, method) {
+        return true;
+    }
+    // Abeyance (Premodern wave P3d) bars instant and sorcery forms.
+    if crate::eternal_premodern_p3d_v1::abeyance_prohibits_cast(state, player, def, method) {
         return true;
     }
     if active_controlled_by(state, LAVINIA, player.opponent()).is_empty() {

@@ -61,8 +61,8 @@ pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
     }
 }
 
-/// "Enters with N +1/+1 counters": Triskelion (three) and Phantom Nishoba
-/// (seven).
+/// "Enters with N +1/+1 counters": Triskelion (three), Phantom Nishoba
+/// (seven) and Spike Feeder (two, wave P3c).
 pub(crate) fn apply_entry_counters(
     state: &mut GameState,
     object: ObjectId,
@@ -74,6 +74,7 @@ pub(crate) fn apply_entry_counters(
     let count = match text_name {
         Some(TRISKELION) => 3,
         Some(PHANTOM_NISHOBA) => 7,
+        Some(crate::eternal_premodern_p3c_v1::SPIKE_FEEDER) => 2,
         _ => return,
     };
     let live = state.objects.get(object);

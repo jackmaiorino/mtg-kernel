@@ -73,8 +73,11 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
         return Keywords::NONE;
     }
     let controller = live.controller;
-    // Vintara Snapper's conditional shroud (wave P2b).
-    let mut keywords = crate::eternal_premodern_p2b_v1::statics::granted_keywords(state, object);
+    // Vintara Snapper's conditional shroud (wave P2b), Lurking Skirge's
+    // flying (wave P3f) and a suspend cast's haste (wave S1e).
+    let mut keywords = crate::eternal_premodern_p2b_v1::statics::granted_keywords(state, object)
+        | crate::eternal_premodern_p3f_v1::granted_keywords(state, object)
+        | crate::eternal_sideboard_s1e_v1::granted_keywords(state, object);
     if crate::engine::has_effective_subtype(state, object, Subtype::Goblin)
         && active_permanents(state, GOBLIN_WARCHIEF, Some(controller))
             .next()
