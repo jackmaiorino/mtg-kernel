@@ -645,7 +645,29 @@ fn drive(
         } else {
             act(opp, &s, &d, &mut c)
         }
-        .map_err(|e| format!("{e:?}"))?;
+        .map_err(|e| {
+            #[cfg(test)]
+            {
+                let state = s.game_state();
+                let actions = s.diagnostic_current_action_semantics().unwrap_or_default();
+                let projected_attacks = s
+                    .flat_policy_observation_v4(d)
+                    .map(|observation| observation.projection.creatures_attacked_this_turn);
+                eprintln!(
+                    "stage4a fixture game={} decks={:?} seed={} turn={} phase={:?} step={} attacked={} projected_attacks={:?} actions={:?}",
+                    setup.game,
+                    setup.decks,
+                    setup.seed,
+                    state.turn,
+                    state.step,
+                    d.step,
+                    state.creatures_attacked_this_turn_v1(),
+                    projected_attacks,
+                    &actions[..actions.len().min(4)],
+                );
+            }
+            format!("{e:?}")
+        })?;
         if visit(&s, &d, a)? {
             return Ok((s, false));
         }

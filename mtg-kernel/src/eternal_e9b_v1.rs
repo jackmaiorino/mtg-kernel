@@ -925,19 +925,23 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         SOWING_MYCOSPAWN => &SOWING_MYCOSPAWN_TRIGGERS,
         THIEF_OF_EXISTENCE => &THIEF_OF_EXISTENCE_TRIGGERS,
         VAMPIRE_SOVEREIGN => &VAMPIRE_SOVEREIGN_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_sideboard_s1d_v1::triggers_for(name),
     }
 }
 
 /// Target specs of this module's triggered abilities, per ability. `None`
 /// for every other card.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // `triggers_for` falls through to wave S1b's cards, so they answer first.
+    if let Some(spec) = crate::eternal_sideboard_s1b_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     let own = triggers_for(name)
         .iter()
         .any(|trigger| (trigger.effect)() == *effect)
         || delayed_effect_matches(name, effect);
     if !own {
-        return None;
+        return crate::eternal_sideboard_s1d_v1::trigger_target_spec(name, effect);
     }
     Some(match name {
         BOGGART_TRAWLER if *effect == exile_target_graveyard() => TargetSpec::AnyPlayer,
@@ -947,7 +951,7 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
         ),
         THIEF_OF_EXISTENCE if *effect == thief_draw() => TargetSpec::TargetOpponent,
         VAMPIRE_SOVEREIGN if *effect == sovereign_drain() => TargetSpec::TargetOpponent,
-        _ => TargetSpec::None,
+        _ => return crate::eternal_sideboard_s1d_v1::trigger_target_spec(name, effect),
     })
 }
 
@@ -2061,12 +2065,15 @@ pub(crate) fn special_activation(
 /// This module's Auras that the Standard Aura entry attaches: Wild Growth
 /// ("Enchant land").
 pub(crate) fn is_aura(def: &CardDef) -> bool {
-    def.name == WILD_GROWTH
+    def.name == WILD_GROWTH || crate::eternal_sideboard_s1d_v1::is_aura(def)
 }
 
 /// Whether this module's Aura `def` may enchant `host`. `None` for every
 /// other definition.
 pub(crate) fn aura_host_legal(def: &CardDef, host: ObjectId, state: &GameState) -> Option<bool> {
+    if let Some(legal) = crate::eternal_sideboard_s1d_v1::aura_host_legal(def, host, state) {
+        return Some(legal);
+    }
     (def.name == WILD_GROWTH).then(|| {
         state.objects.get(host).zone == Zone::Battlefield
             && crate::engine::object_has_type(state, host, CardType::Land)
@@ -2113,7 +2120,8 @@ pub(crate) fn mana_abilities_active(
 /// "Start your engines!" (Momentum Breaker), read by the Standard speed
 /// designation.
 pub(crate) fn starts_engines(name: &str) -> bool {
-    cfg!(feature = "eternal-fixtures") && name == MOMENTUM_BREAKER
+    cfg!(feature = "eternal-fixtures")
+        && (name == MOMENTUM_BREAKER || crate::eternal_sideboard_s1b_v1::starts_engines(name))
 }
 
 /// Secluded Courtyard: "As this land enters, choose a creature type." It

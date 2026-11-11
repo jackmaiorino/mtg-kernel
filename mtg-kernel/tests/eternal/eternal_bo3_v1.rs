@@ -15,10 +15,13 @@ use mtg_kernel::ids::PlayerId;
 use mtg_kernel::limited_session_v1::CustomCardCountV1;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[path = "eternal_bo3_v1/eternal_bo3_leyline_v1.rs"]
+mod leyline;
+
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 15] = [
+const PLAYABLE_75: [(&str, &str); 49] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -29,20 +32,63 @@ const PLAYABLE_75: [(&str, &str); 15] = [
         "pauper",
         "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c",
     ),
+    ("pauper", "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"),
     ("pauper", "pauper-mono-red-rally"),
     ("pauper", "pauper-esper-affinity"),
+    ("pauper", "pauper-ruby-storm"),
     ("pauper", "pauper-golgari-gardens"),
     (
         "pauper",
         "pauper-dimir-control-1e2279c1-d135-4609-8b99-83f2ab98c424",
     ),
+    ("pauper", "pauper-familiars"),
+    ("pauper", "pauper-esper-ephemerate"),
+    (
+        "pauper",
+        "pauper-turbo-fog-fe589501-15e6-4511-b259-e066f9f36c51",
+    ),
+    (
+        "pauper",
+        "pauper-mono-blue-faeries-f7d232c7-2c3c-4459-b219-f3e8d9abbec6",
+    ),
+    ("pauper", "pauper-dimir-affinity"),
+    ("pauper", "pauper-gruul-ponza"),
     ("pauper", "pauper-rakdos-madness"),
+    ("pauper", "pauper-mardu-synthesizer"),
+    ("pauper", "pauper-food-gardens"),
+    ("pauper", "pauper-glintblade"),
     ("pauper", "burn-3854fe58-5ff9-4046-bac9-ae9617c3caf5"),
+    ("pauper", "pauper-dimir-terror"),
     ("pauper", "pauper-azorius-gates"),
     ("pauper", "pauper-esper-faeries"),
+    ("legacy", "legacy-dimir-tempo"),
+    ("legacy", "legacy-izzet-delver"),
     ("legacy", "legacy-doomsday"),
+    ("legacy", "legacy-aluren"),
+    ("legacy", "legacy-the-epic-storm"),
+    ("legacy", "legacy-stiflenought"),
+    ("legacy", "legacy-affinity-stompy"),
+    ("legacy", "legacy-esper-control"),
+    (
+        "legacy",
+        "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3",
+    ),
     ("legacy", "legacy-reanimator"),
+    ("legacy", "legacy-8-cast"),
+    ("vintage", "vintage-esper-lurrus-control"),
+    ("vintage", "vintage-dimir-lurrus-control"),
+    ("vintage", "vintage-lurrus-po"),
+    ("vintage", "vintage-counter-vine"),
+    ("vintage", "vintage-jeskai-lurrus"),
+    ("vintage", "vintage-blue-tinker"),
+    ("vintage", "vintage-stiflenought"),
+    ("vintage", "vintage-beseech-storm"),
+    ("vintage", "vintage-lurrus-drs"),
     ("vintage", "vintage-red-prison"),
+    ("vintage", "vintage-sultai-psychic-frog"),
+    ("vintage", "vintage-4c-psychic-frog"),
+    ("vintage", "vintage-eldrazi"),
+    ("vintage", "vintage-grixis-lurrus-control"),
 ];
 
 fn id(name: &str) -> u16 {
@@ -478,6 +524,240 @@ fn match_seats_the_starting_player_first_and_refuses_bad_configurations() {
     assert_eq!(game.start().game_index, 2);
     assert_eq!(game.player_in_seat(0), PlayerId::P1);
     assert_eq!(game.session_decks()[1], game.game_deck(PlayerId::P0).deck);
+}
+
+#[test]
+fn native_opening_match_uses_real_london_keeps_and_preserves_the_profile_both_seats() {
+    use mtg_kernel::engine::{self, Action, Decision};
+    use mtg_kernel::eternal_opening_v1::RecordV1;
+    use mtg_kernel::eternal_outside_game_v1::outside_the_game;
+    use mtg_kernel::event::CommittedEvent;
+    use mtg_kernel::state::{GameState, Step, Target, Zone};
+
+    let [p0, p1] = [PlayerId::P0, PlayerId::P1];
+    let void = id("Leyline of the Void");
+    let sanctity = id("Leyline of Sanctity");
+    let chancellor = id("Chancellor of the Annex");
+    let companion = id("Yorion, Sky Nomad");
+    let bolt = id("Lightning Bolt");
+    let dart = id("Lava Dart");
+    let make_main = |basic| {
+        [
+            vec![basic; 68],
+            vec![void; 4],
+            vec![sanctity; 4],
+            vec![chancellor; 4],
+        ]
+        .concat()
+    };
+    let format = EternalFormatV1::Legacy;
+    let main = make_main(id("Island"));
+    assert!(matches!(
+        EternalRegisteredDeckV1::new_v1(format, "legacy", main.clone(), vec![], None),
+        Err(EternalBo3ErrorV1::NativeOpeningSetup { .. })
+    ));
+    let mut unrelated = main.clone();
+    unrelated[0] = id("Meddling Mage");
+    assert!(matches!(
+        EternalRegisteredDeckV1::new_with_native_opening_v1(
+            format,
+            "unrelated",
+            unrelated,
+            vec![],
+            None
+        ),
+        Err(EternalBo3ErrorV1::UnsupportedCard { .. })
+    ));
+    let zero = EternalRegisteredDeckV1::new_with_native_opening_v1(
+        format,
+        "zero",
+        main,
+        vec![companion, bolt],
+        Some(companion),
+    )
+    .unwrap();
+    let one = EternalRegisteredDeckV1::new_with_native_opening_v1(
+        format,
+        "one",
+        make_main(id("Swamp")),
+        vec![dart],
+        None,
+    )
+    .unwrap();
+    let legacy =
+        EternalRegisteredDeckV1::new_v1(format, "legacy", vec![id("Island"); 60], vec![], None)
+            .unwrap();
+    assert!(matches!(
+        EternalBestOfThreeMatchV1::new_v1([legacy.clone(), one.clone()], p0),
+        Err(EternalBo3ErrorV1::OpeningProfileMismatch)
+    ));
+    let mut ordinary =
+        EternalBestOfThreeMatchV1::new_v1([legacy.clone(), legacy.clone()], p0).unwrap();
+    assert!(matches!(
+        ordinary.start_game_with_native_opening_v1(
+            p0,
+            PlayDrawChoiceV1::Play,
+            [
+                legacy.registered_configuration().clone(),
+                legacy.registered_configuration().clone()
+            ],
+            12,
+        ),
+        Err(EternalBo3ErrorV1::OpeningProfileMismatch)
+    ));
+
+    for starting_match_player in [p0, p1] {
+        let mut bo3 =
+            EternalBestOfThreeMatchV1::new_v1([zero.clone(), one.clone()], starting_match_player)
+                .unwrap();
+        let configurations = [
+            zero.registered_configuration().clone(),
+            one.registered_configuration().clone(),
+        ];
+        let before = bo3.match_state().clone();
+        assert!(matches!(
+            bo3.start_game_v1(
+                starting_match_player,
+                PlayDrawChoiceV1::Play,
+                configurations.clone()
+            ),
+            Err(EternalBo3ErrorV1::OpeningProfileMismatch)
+        ));
+        assert_eq!(bo3.match_state(), &before);
+
+        // This shuffle gives native seat 0 Void and Sanctity after one
+        // mulligan, and seat 1 Sanctity and Chancellor in its original seven.
+        let (game, mut state) = bo3
+            .start_game_with_native_opening_v1(
+                starting_match_player,
+                PlayDrawChoiceV1::Play,
+                configurations.clone(),
+                12,
+            )
+            .unwrap();
+        assert_eq!(game.player_in_seat(0), starting_match_player);
+        assert_eq!(state.starting_player, p0);
+        for seat in [p0, p1] {
+            let match_player = game.player_in_seat(seat.index());
+            assert_eq!(state.players[seat.index()].hand.len(), 7);
+            let outside = [if match_player == p0 { bolt } else { dart }];
+            assert_eq!(outside_the_game(&state, seat), &outside);
+        }
+        assert_eq!(state.exile.len(), 1);
+        let companion_object = state.objects.get(state.exile[0]);
+        assert_eq!(companion_object.card_def, companion);
+        assert_eq!(game.player_in_seat(companion_object.owner.index()), p0);
+
+        for (seat, mulligan) in [(p0, true), (p1, false)] {
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::ChooseLondonMulligan { player, mulligan_count: 0 } if player == seat));
+            engine::step(&mut state, Action::ChooseLondonMulligan { mulligan }).unwrap();
+        }
+        let Decision::ChooseLondonBottom {
+            player,
+            remaining: 1,
+            candidates,
+        } = engine::advance_until_decision(&mut state)
+        else {
+            panic!("expected the real London bottom after the redraw");
+        };
+        assert_eq!(player, p0);
+        let bottom = candidates
+            .into_iter()
+            .find(|&card| state.objects.get(card).card_def == sanctity)
+            .unwrap();
+        engine::step(&mut state, Action::ChooseLondonBottom(bottom)).unwrap();
+        assert_eq!(state.players[0].library.last(), Some(&bottom));
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::ChooseLondonMulligan { player, mulligan_count: 1 } if player == p0));
+        engine::step(&mut state, Action::ChooseLondonMulligan { mulligan: false }).unwrap();
+        assert_eq!(state.players[0].hand.len(), 6);
+
+        let mut state: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        for (seat, card) in [(p0, void), (p1, sanctity)] {
+            let Decision::ChooseEternalOpeningV1 {
+                player,
+                legal_cards,
+            } = engine::advance_until_decision(&mut state)
+            else {
+                panic!("expected a native kept-hand opening choice");
+            };
+            assert_eq!(player, seat);
+            assert_eq!(state.step, Step::Untap);
+            assert!(state.stack.is_empty());
+            assert!(!legal_cards.contains(&bottom));
+            assert!(legal_cards
+                .iter()
+                .all(|&id| state.objects.get(id).owner == seat));
+            let chosen = legal_cards
+                .iter()
+                .copied()
+                .find(|&id| state.objects.get(id).card_def == card)
+                .unwrap();
+            engine::step(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(chosen)),
+            )
+            .unwrap();
+            assert_eq!(state.objects.get(chosen).zone, Zone::Battlefield);
+            if seat == p1 {
+                let reveal = legal_cards
+                    .into_iter()
+                    .find(|&id| state.objects.get(id).card_def == chancellor)
+                    .unwrap();
+                assert!(matches!(engine::advance_until_decision(&mut state),
+                    Decision::ChooseEternalOpeningV1 { player, legal_cards } if player == p1 && legal_cards.contains(&reveal)));
+                engine::step(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(reveal)),
+                )
+                .unwrap();
+                assert_eq!(state.objects.get(reveal).zone, Zone::Hand);
+                assert!(state
+                    .engine
+                    .event_history
+                    .iter()
+                    .any(|event| matches!(event,
+                    CommittedEvent::EternalOpeningV1 { record: RecordV1::Revealed(source) }
+                        if source.source == reveal)));
+            }
+            assert!(
+                matches!(engine::advance_until_decision(&mut state), Decision::ChooseEternalOpeningV1 { player, .. } if player == seat)
+            );
+            engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+        }
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+
+        bo3.record_game_result_v1(GameOutcomeV1::Win {
+            winner: starting_match_player,
+        })
+        .unwrap();
+        let mut sideboarded = configurations;
+        let mut new_main = sideboarded[1].mainboard().to_vec();
+        let basic = new_main[0];
+        new_main[0] = dart;
+        sideboarded[1] = EternalConfigurationV1::new_v1(new_main, vec![basic]);
+        let next_starter = starting_match_player.opponent();
+        let (next, mut state) = bo3
+            .start_game_with_native_opening_v1(
+                next_starter,
+                PlayDrawChoiceV1::Play,
+                sideboarded,
+                12,
+            )
+            .unwrap();
+        assert_eq!(next.start().game_index, 2);
+        assert_eq!(next.player_in_seat(0), next_starter);
+        let one_seat = if next.player_in_seat(0) == p1 { p0 } else { p1 };
+        assert_eq!(outside_the_game(&state, one_seat), &[basic]);
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::ChooseLondonMulligan { player, mulligan_count: 0 } if player == p0)
+        );
+    }
 }
 
 #[test]

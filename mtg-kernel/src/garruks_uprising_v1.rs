@@ -158,6 +158,7 @@ fn enabled() -> bool {
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct EntryCharacteristicsV1 {
     pub face_down: Option<crate::state::FaceDownV1>,
+    pub manifested_v1: bool,
     pub x_counters: Option<i32>,
     pub time_counters: Option<u8>,
     pub stun_counters_v48: Option<i16>,
@@ -292,6 +293,7 @@ pub(crate) fn acquire_permanent_entry(
         original: live.clone(),
         characteristics: EntryCharacteristicsV1 {
             face_down,
+            manifested_v1: false,
             x_counters,
             time_counters,
             stun_counters_v48: None,

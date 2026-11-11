@@ -542,6 +542,16 @@ pub(crate) fn dynamic_count(count: DynamicCountDef, out: &mut Collector) -> AmtF
             );
             AmtF::Dynamic
         }
+        DynamicCountDef::SpellTargetsBlueSpellV1 => {
+            // One iff a chosen target is a blue spell (Mystical Dispute).
+            out.read(
+                RelF::ObjectController,
+                Some(ZoneF::Stack),
+                Some(ObjF::Spell),
+                AggF::Characteristic,
+            );
+            AmtF::Dynamic
+        }
         DynamicCountDef::SpellTargetsTappedCreature => {
             // One iff a chosen target is a tapped battlefield creature.
             // Vocabulary gap: no tapped-status aggregate; nearest is a

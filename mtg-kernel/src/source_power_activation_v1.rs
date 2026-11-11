@@ -8,6 +8,8 @@ use crate::ids::{ObjectId, StackItemId};
 use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{GameState, StackItem, StackItemKind, Target, Zone};
 
+pub(crate) mod bombardment;
+
 fn is_program(effect: Option<&EffectOp>) -> bool {
     matches!(
         effect,
@@ -284,6 +286,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     // before any action mutates priority, mana, targets or continuation state.
     for item in &state.stack {
         validate_item(state, item)?;
+        if bombardment::selected(state, item) {
+            bombardment::departed_source(state, item)?;
+        } else if !item.v4.bombardment_lki_v1.is_empty() {
+            return Err("Bombardment LKI marker belongs to a different native ability".into());
+        }
     }
     if state.engine.event_log.iter().any(|event| {
         matches!(

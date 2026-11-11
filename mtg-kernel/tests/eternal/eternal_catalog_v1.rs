@@ -7,8 +7,8 @@
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
-    card_id_by_name, preflight_fully_supported_deck, CardCapability, TargetSpec, CARD_DEFS,
-    KERNEL_CARDDB_HASH,
+    card_id_by_name, preflight_fully_supported_deck, CardCapability, DeckPreflightError,
+    TargetSpec, CARD_DEFS, KERNEL_CARDDB_HASH,
 };
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1, LimitedJsonlServerV1};
 use serde_json::{json, Value};
@@ -242,6 +242,33 @@ const SNAPSHOTS: [&str; 2] = [
     "data/eternal_v1/meta_snapshot_mtgtop8_premodern_20261101.json",
 ];
 
+/// Executable S1 implementations with known missing reachable branches.
+const PARTIAL_S1: [&str; 13] = [
+    "Circle of Protection: Blue",
+    "Coalition Honor Guard",
+    "Electrickery",
+    "Extirpate",
+    "Hullbreacher",
+    "Lavinia, Azorius Renegade",
+    "Leyline of Sanctity",
+    "Leyline of the Void",
+    "Martyr of Sands",
+    "Meddling Mage",
+    "Standard Bearer",
+    "Surgical Extraction",
+    "Vandalblast",
+];
+
+/// Volrath's Shapeshifter and the S1 cards above are the registry's only
+/// Partial definitions.
+pub(crate) fn expected_capability(name: &str) -> CardCapability {
+    if name == "Volrath's Shapeshifter" || PARTIAL_S1.contains(&name) {
+        CardCapability::Partial
+    } else {
+        CardCapability::Full
+    }
+}
+
 /// One zone's decklist rows.
 fn snapshot_rows(rows: &Value) -> Vec<CustomCardCountV1> {
     rows.as_array()
@@ -281,18 +308,28 @@ fn eternal_registry_follows_the_pauper_and_standard_ids() {
     let standard = registry_names("data/standard/magezero_v1/cards_v1.json");
     let eternal = registry_names("data/eternal_v1/cards_v1.json");
     assert_eq!(standard.len(), STANDARD_DEFINITIONS);
-    let partial = "Volrath's Shapeshifter";
-    assert_eq!(eternal.last().map(String::as_str), Some(partial));
     let expected: Vec<&String> = pauper.iter().chain(&standard).chain(&eternal).collect();
     assert_eq!(CARD_DEFS.len(), expected.len());
     for (id, name) in expected.into_iter().enumerate() {
         assert_eq!(CARD_DEFS[id].name, name, "id {id}");
-        let capability = if name == partial {
-            CardCapability::Partial
-        } else {
-            CardCapability::Full
-        };
-        assert_eq!(CARD_DEFS[id].capability, capability, "id {id} ({name})");
+        assert_eq!(
+            CARD_DEFS[id].capability,
+            expected_capability(name),
+            "{name}"
+        );
+    }
+    for name in PARTIAL_S1 {
+        let id = card_id_by_name(name).unwrap();
+        assert!(CARD_DEFS[usize::from(id)].is_executable());
+        assert!(matches!(
+            preflight_fully_supported_deck(&[id]),
+            Err(DeckPreflightError::NotFullySupported {
+                index: 0,
+                card_def,
+                name: rejected,
+                capability: CardCapability::Partial,
+            }) if card_def == id && rejected == name
+        ));
     }
     println!("eternal catalog hash {KERNEL_CARDDB_HASH:#018x}");
 }
