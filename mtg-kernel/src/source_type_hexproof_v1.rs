@@ -191,6 +191,19 @@ pub(crate) fn validate_snapshot_types(
     Ok(())
 }
 
+/// The arena length `validate_snapshot_types` compares with its bound (0
+/// without source-type inputs): a snapshot that passed once passes again
+/// under any bound at least this.
+pub(crate) fn snapshot_arena_len(
+    snapshot: &crate::controlled_creature_grants_v1::DepartureColorV1,
+) -> u64 {
+    snapshot
+        .source_type_input_v1
+        .0
+        .as_ref()
+        .map_or(0, |input| u64::from(input.arena_len))
+}
+
 fn validate_snapshot_types_full(
     snapshot: &crate::controlled_creature_grants_v1::DepartureColorV1,
     arena_bound: usize,

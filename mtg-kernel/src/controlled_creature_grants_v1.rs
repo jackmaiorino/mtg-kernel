@@ -1,7 +1,7 @@
 //! Immutable definition-owned continuous controlled-creature grants.
 //! No serialized state, delayed expiry or printed-card name executor.
 use crate::card_def::{CardType, ControlledCreatureGrantDef, Keywords, CARD_DEFS};
-use crate::event_history_v1::EventKindV1;
+use crate::event_history_v1::{EventKindV1, ProvedV1};
 use crate::ids::ObjectId;
 use crate::state::{GameState, Zone};
 
@@ -325,81 +325,169 @@ pub(crate) fn validate_color_history(state: &GameState) -> Result<(), String> {
         }
         return Ok(());
     }
+    let history = &state.engine.event_history;
+    // A proof covers the snapshot type checks only within the arena they
+    // passed in.
+    let proof = history
+        .proof_v1(ProvedV1::ColorDepartures)
+        .filter(|(_, arena)| *arena <= state.objects.len() as u64);
+    match proof {
+        Some((from, _)) => {
+            let since = validate_color_history_since(state, from);
+            #[cfg(test)]
+            crate::event_history_v1::proof_tests_v1::assert_same(
+                ProvedV1::ColorDepartures,
+                &since,
+                &validate_color_history_full(state),
+            );
+            since?;
+        }
+        None => validate_color_history_full(state)?,
+    }
+    let (from, arena) = proof.unwrap_or((0, 0));
+    let snapshot_arena = |event: &CommittedEvent| match event {
+        CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } => {
+            crate::source_type_hexproof_v1::snapshot_arena_len(snapshot)
+        }
+        _ => 0,
+    };
+    let arena = if from == 0 {
+        history
+            .of_kinds_v2(&[EventKindV1::ProtectionSourceColorDepartureV1])
+            .map(|(_, event)| snapshot_arena(event))
+            .fold(arena, u64::max)
+    } else {
+        history
+            .range_v2(from..)
+            .iter()
+            .map(snapshot_arena)
+            .fold(arena, u64::max)
+    };
+    history.set_proof_v1(ProvedV1::ColorDepartures, history.len(), arena);
+    Ok(())
+}
+/// Every check of every departure and departure snapshot. A proof of
+/// `ProvedV1::ColorDepartures` covers all of them but the live ones in
+/// `validate_departed_source`.
+fn validate_color_history_full(state: &GameState) -> Result<(), String> {
     // Departures and their snapshots: the only events this loop checks.
     for (at, event) in state.engine.event_history.of_kinds_v2(&[
         EventKindV1::ProtectionSourceColorDepartureV1,
         EventKindV1::ZoneChange,
     ]) {
-        if let CommittedEvent::ProtectionSourceColorDepartureV1 {
-            snapshot,
-            departure_history_index,
-        } = event
+        validate_color_event(state, at, event)?;
+    }
+    Ok(())
+}
+/// The full check's result given a proof at `from`: the live checks of each
+/// earlier snapshot, then every check of the events from `from` on, in
+/// history order like the full check.
+fn validate_color_history_since(state: &GameState, from: usize) -> Result<(), String> {
+    use crate::event::CommittedEvent;
+    for (at, event) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[EventKindV1::ProtectionSourceColorDepartureV1])
+    {
+        if at >= from {
+            break;
+        }
+        if let CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = event {
+            validate_departed_source(state, snapshot)?;
+        }
+    }
+    for (offset, event) in state
+        .engine
+        .event_history
+        .range_v2(from..)
+        .iter()
+        .enumerate()
+    {
+        validate_color_event(state, from + offset, event)?;
+    }
+    Ok(())
+}
+/// Every check of one departure or departure snapshot at `at`; other events
+/// have none.
+fn validate_color_event(
+    state: &GameState,
+    at: usize,
+    event: &crate::event::CommittedEvent,
+) -> Result<(), String> {
+    use crate::event::CommittedEvent;
+    if let CommittedEvent::ProtectionSourceColorDepartureV1 {
+        snapshot,
+        departure_history_index,
+    } = event
+    {
+        let index =
+            usize::try_from(*departure_history_index).map_err(|_| "color departure index")?;
+        if index != at + 1
+            || !(snapshot.source.zone == Zone::Battlefield
+                || (crate::source_type_hexproof_v1::enabled()
+                    && snapshot.source.zone == Zone::Stack))
+            || snapshot.color_mask & !0x1f != 0
+            || !matches!(state.engine.event_history.get(index),
+                Some(CommittedEvent::ZoneChange { object, from, to, controller_before })
+                if *object == snapshot.source.source && *from == snapshot.source.zone && to != from
+                    && *controller_before == snapshot.source.controller)
         {
-            let index =
-                usize::try_from(*departure_history_index).map_err(|_| "color departure index")?;
-            if index != at + 1
-                || !(snapshot.source.zone == Zone::Battlefield
-                    || (crate::source_type_hexproof_v1::enabled()
-                        && snapshot.source.zone == Zone::Stack))
-                || snapshot.color_mask & !0x1f != 0
-                || !matches!(state.engine.event_history.get(index),
-                    Some(CommittedEvent::ZoneChange { object, from, to, controller_before })
-                    if *object == snapshot.source.source && *from == snapshot.source.zone && to != from
-                        && *controller_before == snapshot.source.controller)
-            {
-                return Err("color snapshot lacks exact committed battlefield departure".into());
-            }
-            if crate::source_type_hexproof_v1::enabled() != snapshot.source_types_v1.0.is_some()
-                || crate::source_type_hexproof_v1::enabled()
-                    != snapshot.source_type_input_v1.0.is_some()
-                || snapshot
-                    .source_types_v1
-                    .0
-                    .is_some_and(|types| !types.valid())
-            {
-                return Err("source-type departure projection missing or foreign".into());
-            }
-            if crate::source_type_hexproof_v1::enabled() {
-                crate::source_type_hexproof_v1::validate_snapshot_types(
-                    snapshot,
-                    state.objects.len(),
-                )?;
-            }
-            validate_snapshot_object(snapshot)?;
-            let live = state
-                .objects
-                .try_get(snapshot.source.source)
-                .ok_or("color source disappeared")?;
-            if snapshot.source.owner != live.owner
-                || live.zone_change_count <= snapshot.source.zone_change_count
-                || (live.card_def != snapshot.source.card_def
-                    && !crate::standard_cards_v1::had_card_def(
-                        state,
-                        snapshot.source.source,
-                        snapshot.source.zone_change_count,
-                        snapshot.source.card_def,
-                    ))
-            {
-                return Err("color departure changed original definition/owner/incarnation".into());
-            }
+            return Err("color snapshot lacks exact committed battlefield departure".into());
         }
-        let missing_snapshot = match event {
-            CommittedEvent::ZoneChange {
-                object, from, to, ..
-            } if (*from == Zone::Battlefield
-                || (crate::source_type_hexproof_v1::enabled() && *from == Zone::Stack))
-                && to != from =>
-            {
-                !matches!(at.checked_sub(1).and_then(|p| state.engine.event_history.get(p)),
-                        Some(CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, departure_history_index })
-                            if snapshot.source.source == *object
-                                && usize::try_from(*departure_history_index).ok() == Some(at))
-            }
-            _ => false,
-        };
-        if missing_snapshot {
-            return Err("battlefield departure lost its independent source color snapshot".into());
+        if crate::source_type_hexproof_v1::enabled() != snapshot.source_types_v1.0.is_some()
+            || crate::source_type_hexproof_v1::enabled()
+                != snapshot.source_type_input_v1.0.is_some()
+            || snapshot
+                .source_types_v1
+                .0
+                .is_some_and(|types| !types.valid())
+        {
+            return Err("source-type departure projection missing or foreign".into());
         }
+        if crate::source_type_hexproof_v1::enabled() {
+            crate::source_type_hexproof_v1::validate_snapshot_types(snapshot, state.objects.len())?;
+        }
+        validate_snapshot_object(snapshot)?;
+        validate_departed_source(state, snapshot)?;
+    }
+    let missing_snapshot = match event {
+        CommittedEvent::ZoneChange {
+            object, from, to, ..
+        } if (*from == Zone::Battlefield
+            || (crate::source_type_hexproof_v1::enabled() && *from == Zone::Stack))
+            && to != from =>
+        {
+            !matches!(at.checked_sub(1).and_then(|p| state.engine.event_history.get(p)),
+                    Some(CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, departure_history_index })
+                        if snapshot.source.source == *object
+                            && usize::try_from(*departure_history_index).ok() == Some(at))
+        }
+        _ => false,
+    };
+    if missing_snapshot {
+        return Err("battlefield departure lost its independent source color snapshot".into());
+    }
+    Ok(())
+}
+/// The checks of a departure snapshot that read the live state: its source
+/// still exists with the snapshot's owner, a later incarnation, and the
+/// snapshot's definition or a recorded copy of it.
+fn validate_departed_source(state: &GameState, snapshot: &DepartureColorV1) -> Result<(), String> {
+    let live = state
+        .objects
+        .try_get(snapshot.source.source)
+        .ok_or("color source disappeared")?;
+    if snapshot.source.owner != live.owner
+        || live.zone_change_count <= snapshot.source.zone_change_count
+        || (live.card_def != snapshot.source.card_def
+            && !crate::standard_cards_v1::had_card_def(
+                state,
+                snapshot.source.source,
+                snapshot.source.zone_change_count,
+                snapshot.source.card_def,
+            ))
+    {
+        return Err("color departure changed original definition/owner/incarnation".into());
     }
     Ok(())
 }

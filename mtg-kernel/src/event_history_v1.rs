@@ -22,7 +22,9 @@
 //! so a digest hashes only the events appended since the previous one, and
 //! a validator's memo of one unchanged prefix
 //! ([`EventHistoryV1::prefix_memo_v1`]), so a validation rechecks only the
-//! events appended since an earlier complete one.
+//! events appended since an earlier complete one. Some validators keep
+//! proofs the same way ([`EventHistoryV1::proof_v1`]): the lengths at which
+//! their checks that read only the history passed.
 
 use crate::event::CommittedEvent;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -905,28 +907,130 @@ impl Clone for ChainV2 {
 /// A shared memo about the first `covered` events.
 pub(crate) type PrefixMemoV1 = (usize, Arc<dyn Any + Send + Sync>);
 
-/// What a validator established about the first `covered` events, kept only
-/// while those events stay unchanged: `push` keeps it, the other counting
-/// methods keep it only when they leave the first `covered` events alone,
-/// and `retain`, `clear` and any `DerefMut` access drop it. Clones carry it.
-/// Only an acceleration, like the chain: never compared, hashed, printed or
-/// recorded.
-#[derive(Default)]
-struct PrefixSlotV1(Mutex<Option<PrefixMemoV1>>);
+/// The validators that keep proofs with the history
+/// ([`EventHistoryV1::proof_v1`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProvedV1 {
+    /// Arahbo's entry, observation and capture-count checks.
+    ArahboObservations,
+    /// Garruk's Uprising's entry, observation and capture-count checks.
+    GarrukObservations,
+    /// The color departure checks that read only the history and the
+    /// snapshots.
+    ColorDepartures,
+}
 
-impl PrefixSlotV1 {
-    fn get(&self) -> Option<PrefixMemoV1> {
-        self.0.lock().ok().and_then(|slot| slot.clone())
+const PROVED_V1: usize = 3;
+
+/// Each validator keeps its latest proofs...
+const PROOFS_RECENT_V1: usize = 8;
+/// ...and the first one recorded in each block of this many events, so a
+/// copy of an earlier prefix (a Drake verification replay) keeps one near
+/// its end.
+const PROOFS_STRIDE_V1: usize = 64;
+
+/// For each validator, the history lengths at which its history-only checks
+/// passed, each with its data, shortest first.
+#[derive(Clone, Default)]
+struct ProofsV1([Vec<(usize, u64)>; PROVED_V1]);
+
+impl ProofsV1 {
+    fn longest(&self) -> usize {
+        self.0
+            .iter()
+            .filter_map(|proofs| proofs.last().map(|(covered, _)| *covered))
+            .max()
+            .unwrap_or(0)
     }
 
-    /// Drops the memo unless it covers at most the first `len` events.
+    fn keep(&mut self, len: usize) {
+        for proofs in &mut self.0 {
+            let kept = proofs.partition_point(|(covered, _)| *covered <= len);
+            proofs.truncate(kept);
+        }
+    }
+
+    /// Whether a proof of `validator` at least `covered` long is kept.
+    fn covers(&self, validator: ProvedV1, covered: usize) -> bool {
+        self.0[validator as usize]
+            .last()
+            .is_some_and(|(last, _)| *last >= covered)
+    }
+
+    fn record(&mut self, validator: ProvedV1, covered: usize, data: u64) {
+        let proofs = &mut self.0[validator as usize];
+        proofs.push((covered, data));
+        let recent = proofs.len().saturating_sub(PROOFS_RECENT_V1);
+        let mut index = 0;
+        let mut block = None;
+        proofs.retain(|(covered, _)| {
+            let first_in_block = block != Some(covered / PROOFS_STRIDE_V1);
+            block = Some(covered / PROOFS_STRIDE_V1);
+            index += 1;
+            index > recent || first_in_block
+        });
+    }
+}
+
+/// What validators established about the first `covered` events: one
+/// validator's memo and the validators' proofs. Each is kept only while the
+/// events it covers stay unchanged: `push` keeps them, the other counting
+/// methods keep those that cover only events they leave alone, and
+/// `retain`, `clear` and any `DerefMut` access drop them all. Clones carry
+/// them. Only an acceleration, like the chain: never compared, hashed,
+/// printed or recorded.
+#[derive(Clone, Default)]
+struct PrefixMemosV1 {
+    memo: Option<PrefixMemoV1>,
+    /// Shared by clones until one of them records.
+    proofs: Option<Arc<ProofsV1>>,
+}
+
+#[derive(Default)]
+struct PrefixSlotV1(Mutex<PrefixMemosV1>);
+
+impl PrefixSlotV1 {
+    fn get(&self) -> PrefixMemosV1 {
+        self.0.lock().map(|slot| slot.clone()).unwrap_or_default()
+    }
+
+    fn memo(&self) -> Option<PrefixMemoV1> {
+        self.0.lock().ok().and_then(|slot| slot.memo.clone())
+    }
+
+    fn proof(&self, validator: ProvedV1, len: usize) -> Option<(usize, u64)> {
+        let slot = self.0.lock().ok()?;
+        let proofs = &slot.proofs.as_ref()?.0[validator as usize];
+        let end = proofs.partition_point(|(covered, _)| *covered <= len);
+        end.checked_sub(1).map(|at| proofs[at])
+    }
+
+    /// Records a proof unless one at least as long is kept. Copies the
+    /// proofs only when a clone shares them.
+    fn record(&self, validator: ProvedV1, covered: usize, data: u64) {
+        if let Ok(mut slot) = self.0.lock() {
+            let proofs = slot.proofs.get_or_insert_with(Default::default);
+            if !proofs.covers(validator, covered) {
+                Arc::make_mut(proofs).record(validator, covered, data);
+            }
+        }
+    }
+
+    /// Drops what covers more than the first `len` events.
     fn keep(&mut self, len: usize) {
         let slot = self
             .0
             .get_mut()
             .unwrap_or_else(|poison| poison.into_inner());
-        if slot.as_ref().is_some_and(|(covered, _)| *covered > len) {
-            *slot = None;
+        if slot
+            .memo
+            .as_ref()
+            .is_some_and(|(covered, _)| *covered > len)
+        {
+            slot.memo = None;
+        }
+        if let Some(proofs) = slot.proofs.as_mut().filter(|proofs| proofs.longest() > len) {
+            Arc::make_mut(proofs).keep(len);
         }
     }
 
@@ -934,7 +1038,7 @@ impl PrefixSlotV1 {
         *self
             .0
             .get_mut()
-            .unwrap_or_else(|poison| poison.into_inner()) = None;
+            .unwrap_or_else(|poison| poison.into_inner()) = PrefixMemosV1::default();
     }
 }
 
@@ -1353,7 +1457,7 @@ impl EventHistoryV1 {
     /// the current length.
     pub(crate) fn prefix_memo_v1(&self) -> Option<PrefixMemoV1> {
         self.prefix
-            .get()
+            .memo()
             .filter(|(covered, _)| *covered <= self.events.len())
     }
 
@@ -1363,8 +1467,33 @@ impl EventHistoryV1 {
     pub(crate) fn set_prefix_memo_v1(&self, covered: usize, memo: Arc<dyn Any + Send + Sync>) {
         if covered <= self.events.len() {
             if let Ok(mut slot) = self.prefix.0.lock() {
-                *slot = Some((covered, memo));
+                slot.memo = Some((covered, memo));
             }
+        }
+    }
+
+    /// The longest proof `validator` recorded about a prefix of these events
+    /// that is unchanged since: `(covered, data)`, meaning its checks that
+    /// read only the history passed on the first `covered` events.
+    pub(crate) fn proof_v1(&self, validator: ProvedV1) -> Option<(usize, u64)> {
+        #[cfg(test)]
+        if proof_tests_v1::off() {
+            return None;
+        }
+        self.prefix.proof(validator, self.events.len())
+    }
+
+    /// Records that `validator`'s checks that read only the history passed on
+    /// the first `covered` events, with `data` (ignored past the end, or when
+    /// a proof at least as long is kept). The caller must have checked
+    /// exactly these events.
+    pub(crate) fn set_proof_v1(&self, validator: ProvedV1, covered: usize, data: u64) {
+        #[cfg(test)]
+        if proof_tests_v1::off() {
+            return;
+        }
+        if covered <= self.events.len() {
+            self.prefix.record(validator, covered, data);
         }
     }
 
@@ -1639,6 +1768,52 @@ pub(crate) mod guard_tests_v1 {
             .unwrap_or_default();
         drop(outer);
         (result, sites)
+    }
+}
+
+/// Test-only controls of the validators' proofs: a mode that uses and
+/// records none, a count of the validations that used one, and the check
+/// that each such validation gives the full check's result.
+#[cfg(test)]
+pub(crate) mod proof_tests_v1 {
+    use std::cell::Cell;
+
+    thread_local! {
+        static OFF: Cell<bool> = const { Cell::new(false) };
+        static USES: Cell<u64> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn off() -> bool {
+        OFF.with(Cell::get)
+    }
+
+    /// Runs `f` with no proof used or recorded, as before proofs.
+    pub(crate) fn without_proofs<T>(f: impl FnOnce() -> T) -> T {
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                OFF.with(|off| off.set(self.0));
+            }
+        }
+        let _restore = Restore(OFF.with(|off| off.replace(true)));
+        f()
+    }
+
+    /// Validations on this thread that used a proof.
+    pub(crate) fn uses() -> u64 {
+        USES.with(Cell::get)
+    }
+
+    /// Counts a validation that used a proof, and asserts it gave what the
+    /// full check gives.
+    #[track_caller]
+    pub(crate) fn assert_same(
+        validator: super::ProvedV1,
+        proved: &Result<(), String>,
+        full: &Result<(), String>,
+    ) {
+        USES.with(|uses| uses.set(uses.get() + 1));
+        assert_eq!(proved, full, "{validator:?} proof changed the verdict");
     }
 }
 

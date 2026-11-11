@@ -1206,3 +1206,148 @@ fn a_prefix_memo_lasts_exactly_while_its_events_are_unchanged() {
     short.pop();
     assert_eq!(memo(&short), None);
 }
+
+#[test]
+fn proofs_last_exactly_while_their_events_are_unchanged() {
+    let proof = |history: &EventHistoryV1| history.proof_v1(ProvedV1::ArahboObservations);
+    let mut history = EventHistoryV1::from((0..10).map(tap).collect::<Vec<_>>());
+    assert_eq!(proof(&history), None);
+    history.set_proof_v1(ProvedV1::ArahboObservations, 11, 0);
+    assert_eq!(proof(&history), None, "a proof past the end is never kept");
+    history.set_proof_v1(ProvedV1::ArahboObservations, 6, 3);
+    assert_eq!(proof(&history), Some((6, 3)));
+    history.set_proof_v1(ProvedV1::ArahboObservations, 6, 4);
+    history.set_proof_v1(ProvedV1::ArahboObservations, 5, 4);
+    assert_eq!(
+        proof(&history),
+        Some((6, 3)),
+        "a shorter proof never replaces one"
+    );
+    // Each validator has its own, beside the Drake memo.
+    history.set_prefix_memo_v1(4, Arc::new(()));
+    history.set_proof_v1(ProvedV1::ColorDepartures, 8, 9);
+    assert_eq!(history.proof_v1(ProvedV1::GarrukObservations), None);
+    assert_eq!(history.proof_v1(ProvedV1::ColorDepartures), Some((8, 9)));
+    assert_eq!(
+        history.prefix_memo_v1().map(|(covered, _)| covered),
+        Some(4)
+    );
+
+    // Appending and changing only later events keep them; clones carry them.
+    history.push(tap(10));
+    history.insert(8, tap(11));
+    history.remove(8);
+    history.truncate(9);
+    history.pop();
+    assert_eq!(proof(&history), Some((6, 3)));
+    assert_eq!(history.proof_v1(ProvedV1::ColorDepartures), Some((8, 9)));
+    assert_eq!(proof(&history.clone()), Some((6, 3)));
+    let prefix = history.prefix_v1(7);
+    assert_eq!(proof(&prefix), Some((6, 3)));
+    assert_eq!(prefix.proof_v1(ProvedV1::ColorDepartures), None);
+    assert_eq!(proof(&history.prefix_v1(5)), None);
+    // A copy records without changing the original's.
+    let copy = history.clone();
+    copy.set_proof_v1(ProvedV1::ArahboObservations, 7, 5);
+    assert_eq!(proof(&copy), Some((7, 5)));
+    assert_eq!(proof(&history), Some((6, 3)));
+
+    // Never part of what the history is.
+    let plain = EventHistoryV1::from(history.iter().cloned().collect::<Vec<_>>());
+    assert_eq!(history, plain);
+    assert_eq!(
+        serde_json::to_vec(&history).unwrap(),
+        serde_json::to_vec(&plain).unwrap()
+    );
+    let restored: EventHistoryV1 =
+        serde_json::from_slice(&serde_json::to_vec(&history).unwrap()).unwrap();
+    assert_eq!(proof(&restored), None);
+
+    // Any change to the covered events drops them.
+    type Change = fn(&mut EventHistoryV1);
+    let changes: [Change; 7] = [
+        |h| h.insert(5, tap(20)),
+        |h| {
+            h.remove(5);
+        },
+        |h| h.truncate(5),
+        |h| h.retain(|_| true),
+        |h| h.clear(),
+        |h| h[0] = tap(21),
+        |h| {
+            for _ in h.iter_mut() {}
+        },
+    ];
+    for change in changes {
+        let mut changed = history.clone();
+        change(&mut changed);
+        assert_eq!(proof(&changed), None);
+        assert_eq!(changed.proof_v1(ProvedV1::ColorDepartures), None);
+        assert_eq!(proof(&history), Some((6, 3)));
+    }
+    let mut short = history.clone();
+    short.truncate(6);
+    assert_eq!(proof(&short), Some((6, 3)));
+    short.pop();
+    assert_eq!(proof(&short), None);
+
+    // The test switch uses and records none.
+    let off = proof_tests_v1::without_proofs(|| {
+        history.set_proof_v1(ProvedV1::GarrukObservations, 9, 0);
+        proof(&history)
+    });
+    assert_eq!(off, None);
+    assert_eq!(history.proof_v1(ProvedV1::GarrukObservations), None);
+}
+
+#[test]
+fn each_validator_keeps_its_recent_proofs_and_one_per_block() {
+    let history = EventHistoryV1::from((0..1000).map(tap).collect::<Vec<_>>());
+    let mut recorded = Vec::new();
+    for covered in (3..1000).step_by(7) {
+        history.set_proof_v1(ProvedV1::GarrukObservations, covered, covered as u64);
+        recorded.push(covered);
+    }
+    let kept = |history: &EventHistoryV1| {
+        let mut kept = Vec::new();
+        let mut len = history.len();
+        while let Some((covered, data)) = history
+            .prefix_v1(len)
+            .proof_v1(ProvedV1::GarrukObservations)
+        {
+            assert_eq!(data, covered as u64);
+            kept.push(covered);
+            match covered.checked_sub(1) {
+                Some(shorter) => len = shorter,
+                None => break,
+            }
+        }
+        kept.reverse();
+        kept
+    };
+    let mut expected: Vec<usize> = recorded[..recorded.len() - PROOFS_RECENT_V1]
+        .iter()
+        .copied()
+        .filter({
+            let mut block = None;
+            move |covered| {
+                let first = block != Some(covered / PROOFS_STRIDE_V1);
+                block = Some(covered / PROOFS_STRIDE_V1);
+                first
+            }
+        })
+        .collect();
+    expected.extend(&recorded[recorded.len() - PROOFS_RECENT_V1..]);
+    assert_eq!(kept(&history), expected);
+    // So a copy of any prefix keeps a proof less than two blocks short of it.
+    for len in [10, 64, 65, 300, 640, 999] {
+        let covered = history
+            .prefix_v1(len)
+            .proof_v1(ProvedV1::GarrukObservations)
+            .map_or(0, |(covered, _)| covered);
+        assert!(
+            len - covered < 2 * PROOFS_STRIDE_V1,
+            "{len} keeps {covered}"
+        );
+    }
+}
