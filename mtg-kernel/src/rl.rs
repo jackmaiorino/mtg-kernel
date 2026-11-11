@@ -1751,6 +1751,20 @@ pub fn build_deck_pair_state_with_starting_player_v1(
     // environment that callers might otherwise retain.
     preflight_fully_supported_deck(p0_deck)?;
     preflight_fully_supported_deck(p1_deck)?;
+    Ok(deal_validated_deck_pair_v1(
+        seed,
+        [p0_deck, p1_deck],
+        starting_player,
+    ))
+}
+
+/// Shared native shuffle and alternating opening deal. The owning entry
+/// point admits both complete decks before calling this function.
+pub(crate) fn deal_validated_deck_pair_v1(
+    seed: u64,
+    [p0_deck, p1_deck]: [&[u16]; 2],
+    starting_player: PlayerId,
+) -> GameState {
     let mut shuffle_rng = SplitMix64::seed(seed);
     let lib0 = shuffled(p0_deck, &mut shuffle_rng);
     let lib1 = shuffled(p1_deck, &mut shuffle_rng);
@@ -1765,7 +1779,7 @@ pub fn build_deck_pair_state_with_starting_player_v1(
         event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P0));
         event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P1));
     }
-    Ok(state)
+    state
 }
 
 pub fn build_burn_mirror_state(seed: u64) -> GameState {
@@ -1979,6 +1993,16 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    if crate::eternal_opening_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Eternal opening actions require their consumer successor".into(),
+        ));
+    }
+    if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state) {
+        return Err(RlContractError(
+            "Meddling Mage named entry requires its consumer successor".into(),
+        ));
+    }
     crate::full_text_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::continuous_characteristics_v1::refuse_land_override_consumer(state, acting_player)
         .map_err(RlContractError)?;
@@ -2397,6 +2421,16 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     accept_fake: bool,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<ObservationV2> {
+    if crate::eternal_opening_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Eternal opening actions require their consumer successor".into(),
+        ));
+    }
+    if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state) {
+        return Err(RlContractError(
+            "Meddling Mage named entry requires its consumer successor".into(),
+        ));
+    }
     if text_mode != ObservationTextModeV2::PremodernOrderedV1Artifact {
         crate::full_text_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
@@ -2721,6 +2755,12 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         crate::effect::temporary_control_v1::refuse_legacy_observation(state)
             .map_err(RlContractError)?;
     }
+    crate::eternal_cards_v1::owned_draws_v1::portent::refuse_legacy(state)
+        .map_err(RlContractError)?;
+    crate::eternal_cards_v1::owned_draws_v1::standstill::refuse_legacy(state)
+        .map_err(RlContractError)?;
+    crate::eternal_cards_v1::owned_draws_v1::bonder::refuse_legacy(state)
+        .map_err(RlContractError)?;
     let ordered_full_text = text_mode == ObservationTextModeV2::PremodernOrderedV1Artifact;
     if ordered_full_text {
         crate::fixed_source_damage_v3::validate_state(state).map_err(RlContractError)?;
@@ -5490,6 +5530,12 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             "Banishing Light requires its selected public/Human successor".into(),
         ));
     }
+    crate::eternal_cards_v1::owned_draws_v1::portent::refuse_legacy(request.state)
+        .map_err(RlContractError)?;
+    crate::eternal_cards_v1::owned_draws_v1::standstill::refuse_legacy(request.state)
+        .map_err(RlContractError)?;
+    crate::eternal_cards_v1::owned_draws_v1::bonder::refuse_legacy(request.state)
+        .map_err(RlContractError)?;
     if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "Crystal requires its selected public/Human successor".into(),
@@ -6149,8 +6195,14 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             })
             .transpose()
     };
+    let show_and_tell_hand = show_and_tell_hand_projection(state)?;
+    let pending_effect = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .or(show_and_tell_hand.as_ref());
     for (index, item) in state.stack.iter().enumerate() {
-        let resolving = state.engine.pending_effect.as_ref().is_some_and(|pending| {
+        let resolving = pending_effect.is_some_and(|pending| {
             pending.resolving_item.v4.stack_item_id == item.v4.stack_item_id
         });
         if let Some(payment) = if resolving { None } else { ward_payment(item)? } {
@@ -6216,7 +6268,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     }
     let mut decision_local_library = None;
     let mut pending_ward_payment = None;
-    if let Some(pending) = &state.engine.pending_effect {
+    if let Some(pending) = pending_effect {
         crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
         if matches!(
             pending.choice.as_ref(),
@@ -7146,7 +7198,9 @@ fn core_surface_action_candidates_fake_scoped_v50(
             | Decision::ChooseVariableCastTargets { .. }
             | Decision::ChooseVariableCastKicker { .. }
             | Decision::ChooseEntryColorV36 { .. }
-            | Decision::ChooseEntryCreatureTypeV1 { .. } => {
+            | Decision::ChooseEntryCreatureTypeV1 { .. }
+            | Decision::ChooseMeddlingMageNameV1 { .. }
+            | Decision::ChooseEternalOpeningV1 { .. } => {
                 return Err(RlContractError(
                     "variable cast targeting requires its legal-action successor".into(),
                 ))
@@ -7711,7 +7765,10 @@ fn core_surface_action_candidates_fake_scoped_v50(
                 let actor = (*player).into();
                 let pending_sources = pending
                     .iter()
-                    .map(|p| card_ref(state, p.source))
+                    .map(|p| match owned_draw_pending_source_ref(state, p)? {
+                        Some(source) => Ok(source),
+                        None => card_ref(state, p.source),
+                    })
                     .collect::<Result<Vec<_>>>()?;
                 for order in permutations(pending.len())? {
                     push_action(
@@ -7784,6 +7841,8 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseVariableCastKicker { player, .. }
             | Decision::ChooseEntryColorV36 { player, .. }
             | Decision::ChooseEntryCreatureTypeV1 { player, .. }
+            | Decision::ChooseMeddlingMageNameV1 { player, .. }
+            | Decision::ChooseEternalOpeningV1 { player, .. }
             | Decision::ChooseOptionalCost { player, .. }
             | Decision::ChooseSpellCopyPayment { player, .. }
             | Decision::ChooseSpellCopyRetarget { player, .. }
@@ -11126,6 +11185,12 @@ fn continuous_effects_common_v2(
     accept_crystal: bool,
 ) -> Result<Vec<ContinuousEffectPublicV2>> {
     let (accept_cant_block, accept_gourmand) = accept_cant_block;
+    crate::eternal_cards_v1::owned_draws_v1::portent::refuse_legacy(state)
+        .map_err(RlContractError)?;
+    crate::eternal_cards_v1::owned_draws_v1::standstill::refuse_legacy(state)
+        .map_err(RlContractError)?;
+    crate::eternal_cards_v1::owned_draws_v1::bonder::refuse_legacy(state)
+        .map_err(RlContractError)?;
     if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(state) {
         return Err(RlContractError(
             "player hexproof and controlled-creature noncombat prevention require a public successor".into(),
@@ -11686,6 +11751,12 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                 })
         })
         .collect::<Result<Vec<_>>>()?;
+    let show_and_tell_hand = show_and_tell_hand_projection(state)?;
+    let pending_effect = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .or(show_and_tell_hand.as_ref());
     let current_stage = if state.engine.halted.is_some() {
         EngineDecisionStageV2::Halted
     } else if state.pending_legend_rule_v1.is_some() {
@@ -11704,7 +11775,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
         EngineDecisionStageV2::PendingOptionalCostSacrifice
     } else if state.engine.pending_spell_copy.is_some() {
         EngineDecisionStageV2::PendingSpellCopy
-    } else if state.engine.pending_effect.is_some() || state.engine.pending_land_play.is_some() {
+    } else if pending_effect.is_some() || state.engine.pending_land_play.is_some() {
         EngineDecisionStageV2::PendingEffect
     } else if !state.engine.pending_triggers.is_empty() {
         EngineDecisionStageV2::PendingTriggers
@@ -11870,7 +11941,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
             .as_ref()
             .map(|p| pending_spell_copy_semantic_v2(state, acting_player, p))
             .transpose()?,
-        pending_effect: if let Some(pending) = state.engine.pending_effect.as_ref() {
+        pending_effect: if let Some(pending) = pending_effect {
             Some(if accept_akroma {
                 pending_effect_semantic_v4_akroma_inner_fake_v50(
                     state,
@@ -12005,7 +12076,9 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     None
                 };
                 Ok(PendingTriggerSemanticV2 {
-                    source: if let Some(source) = prepared_source
+                    source: if let Some(source) = owned_draw_pending_source_ref(state, p)? {
+                        Some(source)
+                    } else if let Some(source) = prepared_source
                         .or(fake_source)
                         .or(conqueror_source)
                         .or(panda_source)
@@ -12047,6 +12120,73 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
             })
             .collect::<Result<Vec<_>>>()?,
     })
+}
+
+/// Reuse the historical hand-selection projection without putting a second
+/// executable continuation in the game or exposing earlier private answers.
+fn show_and_tell_hand_projection(
+    state: &GameState,
+) -> Result<Option<crate::effect::EffectContinuation>> {
+    use crate::effect::{EffectContinuation, EffectObjectBinding, ExecCtx};
+    use crate::eternal_cards_v1::e3::{self, E3ChoiceKindV1, E3ChoiceV1};
+    use crate::linked_aura_operation_v1::GeneralChoiceV36;
+
+    let Some(checkpoint) = state
+        .engine
+        .linked_aura_operation_v1
+        .pending_meddling_mage_v1
+        .as_ref()
+    else {
+        return Ok(None);
+    };
+    let GeneralChoiceV36::ShowAndTellV1 { choice, .. } = &checkpoint.choice else {
+        return Ok(None);
+    };
+    if choice.physical.is_some() {
+        return Ok(None);
+    }
+    let item = checkpoint.original.stack.last().ok_or_else(|| {
+        RlContractError("Show and Tell hand projection lost its original spell".into())
+    })?;
+    let mut ctx = ExecCtx::no_targets(item.source, item.controller);
+    ctx.stack_item_id = Some(item.v4.stack_item_id);
+    let mut projection = EffectContinuation {
+        resolving_item: item.clone(),
+        ctx,
+        frames: Vec::new(),
+        choice: None,
+        answered_choice_guard: None,
+    };
+    e3::offer(
+        &mut projection,
+        E3ChoiceV1 {
+            kind: E3ChoiceKindV1::ShowAndTellV1 {
+                chosen: Vec::new(),
+                later: Vec::new(),
+            },
+            player: choice.player,
+            candidates: choice
+                .candidates
+                .iter()
+                .map(|source| Target::Object(source.source))
+                .collect(),
+            bindings: choice
+                .candidates
+                .iter()
+                .map(|source| EffectObjectBinding {
+                    object: source.source,
+                    expected_zone: source.zone,
+                    expected_zone_change_count: source.zone_change_count,
+                })
+                .collect(),
+            min: 0,
+            max: 1,
+            ordered: false,
+            path: Vec::new(),
+            remaining: Vec::new(),
+        },
+    );
+    Ok(Some(projection))
 }
 
 fn pending_effect_semantic_v4(
@@ -12286,7 +12426,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                         crate::effect::EffectTargetSelectionPurpose::EternalV1 { choice }
                             if choice.library_search()
                     )) && acting_player == *player;
-                    let redact_search_shape = matches!(
+                    let redact_search_shape = (matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
@@ -12299,7 +12439,11 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
-                    ) && acting_player != *player;
+                    ) || matches!(
+                        purpose,
+                        crate::effect::EffectTargetSelectionPurpose::EternalV1 { choice }
+                            if choice.is_extraction_search()
+                    )) && acting_player != *player;
                     let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
                         if chooser_private {
                             return Ok(Vec::new());
@@ -12629,11 +12773,15 @@ fn pending_activation_semantic_v2(
 ) -> Result<PendingActivationSemanticV2> {
     engine::validate_pending_activation(state, p)
         .map_err(|error| RlContractError(format!("invalid pending activation: {error}")))?;
-    let object_cost_chosen = p
-        .object_cost_chosen
-        .iter()
-        .map(|binding| binding.object)
-        .collect::<Vec<_>>();
+    let object_cost_chosen =
+        if p.controller != acting_player && engine::pending_martyr_reveal_v1(state) {
+            Vec::new()
+        } else {
+            p.object_cost_chosen
+                .iter()
+                .map(|binding| binding.object)
+                .collect()
+        };
     Ok(PendingActivationSemanticV2 {
         source: visible_card_ref(state, p.source, acting_player)?,
         controller: p.controller.into(),
@@ -13810,6 +13958,68 @@ pub(crate) fn public_pending_opponent_hand_source_v2(
         return stack_source_ref(state, item).map(Some);
     }
     Ok(None)
+}
+
+/// These two native draw producers carry public historical source contracts.
+/// Read the authenticated contract, never a returned card's current hidden zone.
+fn owned_draw_pending_source_ref(
+    state: &GameState,
+    pending: &crate::trigger::PendingTrigger,
+) -> Result<Option<CardStableRefV1>> {
+    use crate::eternal_cards_v1::owned_draws_v1::{portent, standstill};
+    if portent::bound(&pending.effect).is_none() && standstill::bound(&pending.effect).is_none() {
+        return Ok(None);
+    }
+    crate::engine::validate_pending_trigger_identity(state, pending).map_err(RlContractError)?;
+    if state
+        .engine
+        .pending_triggers
+        .iter()
+        .chain(
+            state
+                .pending_legend_rule_v1
+                .iter()
+                .flat_map(|legend| legend.waiting_triggers()),
+        )
+        .filter(|row| *row == pending)
+        .count()
+        != 1
+    {
+        return Err(RlContractError(
+            "owned draw pending source lacks one native queue row".into(),
+        ));
+    }
+    let (source, card_def, owner, controller, zone, generation) = if portent::bound(&pending.effect)
+        .is_some()
+    {
+        let source = portent::pending_source(state, &pending.effect).map_err(RlContractError)?;
+        (
+            source.source,
+            source.card_def,
+            source.owner,
+            source.controller,
+            source.zone,
+            source.zone_change_count,
+        )
+    } else {
+        let source = standstill::pending_source(state, &pending.effect).map_err(RlContractError)?;
+        (
+            source.source,
+            source.card_def,
+            source.owner,
+            source.controller,
+            source.zone,
+            source.zone_change_count,
+        )
+    };
+    Ok(Some(CardStableRefV1 {
+        arena_id: source.0,
+        card_db_id: card_def,
+        owner: owner.into(),
+        controller: controller.into(),
+        zone,
+        zone_change_count: generation,
+    }))
 }
 
 fn frozen_stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {

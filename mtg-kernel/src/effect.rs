@@ -64,7 +64,7 @@ mod nonland_sacrifice_payment_v1 {
             .collect()
     }
 
-    fn remaining(root: &EffectOp, path: &[u16]) -> Result<Vec<EffectFrame>, String> {
+    pub(super) fn remaining(root: &EffectOp, path: &[u16]) -> Result<Vec<EffectFrame>, String> {
         let mut op = root;
         let mut prefix = Vec::new();
         let mut frames = Vec::new();
@@ -993,6 +993,7 @@ pub use inspiration_resolution_v1::{
     InspirationDepartureV1, InspirationInputKindV1, InspirationInputV1, InspirationOperationV1,
     InspirationResolutionReceiptV1,
 };
+pub(crate) use standard_selection_v1::metamorph_copy_candidates;
 pub use standard_selection_v1::{
     ObjectSelectionActionV1, ObjectSelectionFilterV1, ObjectSelectionRuleV1,
 };
@@ -7903,7 +7904,7 @@ fn validate_counter_target_unless_pays_frame(
     Ok(())
 }
 
-fn validated_definition_owned_root_effect(
+pub(crate) fn validated_definition_owned_root_effect(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Result<Box<EffectOp>, String> {
@@ -8067,6 +8068,101 @@ pub(crate) fn effect_op_at_structural_path<'a>(
         }
         _ => None,
     }
+}
+
+pub(crate) fn jace_draw_replacement_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    drawer: PlayerId,
+    path: &[u16],
+    remaining: &[EffectFrame],
+) -> bool {
+    if state.eternal_owned_draw_progress_v1.is_some() {
+        return crate::eternal_cards_v1::owned_draws_v1::draw_stage_matches(
+            state, pending, drawer, path, remaining,
+        );
+    }
+    let root = match pending.resolving_item.inline_effect.as_ref() {
+        Some(EffectOp::ResolveMonarchTrigger { binding }) => {
+            return path.is_empty()
+                && remaining.is_empty()
+                && drawer == binding.player
+                && validate_monarch_trigger_binding(state, *binding).is_ok();
+        }
+        Some(op) if *op == crate::eternal_cards_v1::delayed_upkeep_draw() => {
+            // The ordinary stack provenance check authenticates the exact
+            // Bauble trigger before an answer can use this single draw.
+            return path.is_empty() && remaining.is_empty() && drawer == pending.ctx.controller;
+        }
+        Some(op) if *op == crate::eternal_vintage_v1::coveted_jewel_changes_hands() => {
+            return drawer == pending.ctx.controller.opponent()
+                && crate::eternal_vintage_v1::coveted_jewel_draw_stage_matches(
+                    state,
+                    &pending.ctx,
+                    path,
+                    remaining,
+                );
+        }
+        Some(EffectOp::NivMizzetVisionaryDrawV1 {
+            damage_history_index,
+        }) => {
+            return path.is_empty()
+                && drawer == pending.ctx.controller
+                && event::resolve_niv_mizzet_visionary_draw_count_v1(
+                    state,
+                    &pending.ctx,
+                    *damage_history_index,
+                )
+                .is_ok_and(|count| {
+                    count > 0
+                        && draw_remainder_matches(
+                            remaining,
+                            &[],
+                            path,
+                            PlayerRef::Controller,
+                            count as u32,
+                        )
+                });
+        }
+        _ => match validated_definition_owned_root_effect(state, pending) {
+            Ok(root) => root,
+            Err(_) => return false,
+        },
+    };
+    if *root == crate::eternal_vintage_v1::paradoxical_outcome() {
+        return drawer == pending.ctx.controller
+            && crate::eternal_vintage_v1::paradoxical_outcome_v1::draw_stage_matches(
+                state, pending, path, remaining,
+            );
+    }
+    let Some(EffectOp::DrawCards { player, count }) =
+        path.iter().try_fold(root.as_ref(), |op, ordinal| match op {
+            EffectOp::Sequence(steps) => steps.get(usize::from(*ordinal)),
+            _ => None,
+        })
+    else {
+        return false;
+    };
+    if *count == 0 || pending.ctx.resolve_player(*player, state) != drawer {
+        return false;
+    }
+    nonland_sacrifice_payment_v1::remaining(&root, path)
+        .is_ok_and(|siblings| draw_remainder_matches(remaining, &siblings, path, *player, *count))
+}
+
+fn draw_remainder_matches(
+    remaining: &[EffectFrame],
+    siblings: &[EffectFrame],
+    path: &[u16],
+    player: PlayerRef,
+    total: u32,
+) -> bool {
+    remaining == siblings
+        || matches!(
+            remaining.split_last(),
+            Some((EffectFrame::Program { op: EffectOp::DrawCards { player: found, count }, path: tail_path }, prefix))
+                if *found == player && *count > 0 && *count < total && tail_path.as_slice() == path && prefix == siblings
+        )
 }
 
 fn validate_exile_chosen_graveyard_frame(
@@ -8831,12 +8927,31 @@ pub(crate) fn validate_initiative_trigger_binding(
     let definition = crate::card_def::CARD_DEFS
         .get(binding.source.card_def as usize)
         .ok_or("Initiative trigger source definition is missing")?;
+    let initiative_granter = crate::eternal_vintage_v1::initiative_granter(definition.name);
+    let native_room = matches!(
+        binding.kind,
+        InitiativeTriggerKindV1::UndercityRoomBoundV1 { .. }
+    );
+    let allowed = if native_room {
+        (initiative_granter || definition.name == crate::eternal_cards_v1::e3::dungeons::ACERERAK)
+            && crate::eternal_cards_v1::e3::dungeons::occurrences::bound_undercity_entry(
+                state, binding,
+            )
+            .is_some()
+    } else {
+        initiative_granter
+    };
+    let source_definition_matches = if native_room {
+        crate::engine::source_card_def_matches(state, binding.source, source.card_def)
+    } else {
+        source.card_def == binding.source.card_def
+    };
     if binding.source.controller != binding.player
         || binding.source.zone != Zone::Battlefield
         || binding.source.attached_to.is_some()
-        || !crate::eternal_vintage_v1::initiative_granter(definition.name)
+        || !allowed
         || !definition.is_executable()
-        || source.card_def != binding.source.card_def
+        || !source_definition_matches
         || source.owner != binding.source.owner
         || source.zone_change_count < binding.source.zone_change_count
         || (source.zone_change_count == binding.source.zone_change_count
@@ -8890,10 +9005,15 @@ pub(crate) fn validate_monarch_trigger_binding(
     Ok(())
 }
 
-/// Draws one card for the monarch trigger's binding player -- 306.3's "the
-/// monarch draws a card." Synchronous: unlike the Initiative Undercity route,
-/// this trigger never needs a player choice, so it resolves through ordinary
-/// `execute` rather than the resumable interpreter.
+fn controls_definition(state: &GameState, player: PlayerId, card_def: u16) -> bool {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .any(|&id| state.objects.get(id).card_def == card_def)
+}
+
+/// Draws one card for the monarch trigger's binding player (726.2). The
+/// resumable interpreter owns this draw when that player has a dredge choice.
 fn resolve_monarch_trigger(
     state: &mut GameState,
     binding: MonarchTriggerBindingV1,
@@ -8903,7 +9023,7 @@ fn resolve_monarch_trigger(
     Ok(())
 }
 
-fn validate_initiative_continuation_root(
+pub(crate) fn validate_initiative_continuation_root(
     state: &GameState,
     pending: &EffectContinuation,
     binding: InitiativeTriggerBindingV1,
@@ -8921,7 +9041,7 @@ fn validate_initiative_continuation_root(
     Ok(())
 }
 
-fn undercity_next_rooms(
+pub(crate) fn undercity_next_rooms(
     state: &GameState,
     player: PlayerId,
 ) -> Result<(Option<UndercityRoomV1>, Vec<UndercityRoomV1>), String> {
@@ -9007,8 +9127,7 @@ fn validate_undercity_throne_metadata(
     chosen: Option<EffectObjectBinding>,
 ) -> Result<(), String> {
     validate_initiative_continuation_root(state, pending, binding)?;
-    if binding.kind != InitiativeTriggerKindV1::UndercityRoom(UndercityRoomV1::ThroneOfTheDeadThree)
-    {
+    if binding.kind.undercity_room() != Some(UndercityRoomV1::ThroneOfTheDeadThree) {
         return Err("Throne continuation is not owned by the Throne room".to_string());
     }
     let current = bind_library_exact(state, binding.player);
@@ -9098,30 +9217,12 @@ fn enter_undercity_room(
     if from_room != expected_from || !legal_rooms.contains(&room) {
         return Err("Undercity entry no longer follows the exact room graph".to_string());
     }
-    let dungeon = &mut state.players[binding.player.index()].dungeon;
-    if room == UndercityRoomV1::ThroneOfTheDeadThree {
-        match dungeon
-            .completed_dungeons
-            .binary_search(&crate::state::UNDERCITY_DUNGEON_ID_V1)
-        {
-            Ok(_) => {}
-            Err(index) => dungeon
-                .completed_dungeons
-                .insert(index, crate::state::UNDERCITY_DUNGEON_ID_V1),
-        }
-        dungeon.dungeon_id = None;
-        dungeon.room_id = None;
-    } else {
-        dungeon.dungeon_id = Some(crate::state::UNDERCITY_DUNGEON_ID_V1);
-        dungeon.room_id = Some(room.stable_id());
-    }
-    event::log_initiative_trigger(
+    crate::eternal_cards_v1::e3::dungeons::occurrences::enter_undercity(
         state,
         binding.player,
         binding.source,
-        InitiativeTriggerKindV1::UndercityRoom(room),
-    )?;
-    Ok(())
+        room,
+    )
 }
 
 fn until_players_next_turn_expiry(state: &GameState, player: PlayerId) -> Result<u32, String> {
@@ -9230,13 +9331,19 @@ fn take_initiative(
 }
 
 fn stage_undercity_venture(
-    state: &GameState,
+    state: &mut GameState,
     continuation: &mut EffectContinuation,
     binding: InitiativeTriggerBindingV1,
     path: Vec<u16>,
 ) -> Result<bool, String> {
     if !path.is_empty() || !continuation.frames.is_empty() {
         return Err("venture trigger is not a root-only effect".to_string());
+    }
+    use crate::eternal_cards_v1::e3::dungeons;
+    dungeons::occurrences::complete_bottommost(state, binding.player);
+    if cfg!(feature = "eternal-fixtures") && dungeons::in_forgotten_realms(state, binding.player) {
+        dungeons::venture(state, continuation, path)?;
+        return Ok(false);
     }
     let (from_room, legal_rooms) = undercity_next_rooms(state, binding.player)?;
     match legal_rooms.as_slice() {
@@ -9415,6 +9522,19 @@ fn validate_answered_choice_guard(
                     Some(EffectAnsweredChoiceGuard::AttachReturningAura { .. })
                 ) {
                     return Err("bound Aura attachment has no answered choice guard".to_string());
+                }
+            } else if let EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
+                crate::eternal_cards_v1::EternalOpV1::OwnedDrawCompletedV1 { ordinal },
+            )) = op
+            {
+                // This continuation belongs to a committed draw attempt and can
+                // sit below either an open prompt or its authenticated answer.
+                if !cfg!(feature = "eternal-fixtures")
+                    || !crate::eternal_cards_v1::owned_draws_v1::completion_matches(
+                        state, pending, *ordinal, path,
+                    )
+                {
+                    return Err("bound Eternal draw completion lost its native attempt".into());
                 }
             } else if matches!(op, EffectOp::StandardV1(inner) if inner.is_bound_continuation()) {
                 if !matches!(
@@ -10571,6 +10691,15 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crystal_prevention_v1::validate(state)?;
     inspiration_resolution_v1::validate(state)?;
     let Some(pending) = state.engine.pending_effect.as_ref() else {
+        if state.coveted_jewel_draw_progress_v1.is_some() {
+            return Err("Coveted Jewel draw progress lost its continuation".into());
+        }
+        if state.paradoxical_outcome_draw_progress_v1.is_some() {
+            return Err("Paradoxical Outcome draw progress lost its continuation".into());
+        }
+        if state.eternal_owned_draw_progress_v1.is_some() {
+            return Err("Eternal draw progress lost its continuation".into());
+        }
         return Ok(());
     };
     if matches!(
@@ -10620,6 +10749,30 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     }
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1d_v1::validate_circle_choice(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::dungeons::occurrences::validate_resolving(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::dungeons::validate_initiative_venture_choice(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1a_v1::surgical::validate_continuation(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_e7b_v1::dredge::validate_jace_or_hullbreacher(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_e7b_v1::dredge::validate_bauble_draw(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_e7b_v1::dredge::validate_coveted_jewel_draw(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_v1::paradoxical_outcome_v1::validate(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::owned_draws_v1::validate(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(EffectOp::ResolveMonarchTrigger { binding }) =
+        pending.resolving_item.inline_effect.as_ref()
+    {
+        crate::eternal_vintage_e7b_v1::dredge::validate_monarch_draw(state, pending, *binding)?;
+    }
     thousand_year_storm_v1::validate_continuation(state, pending)?;
     blasphemous_edict_v1::validate(state, pending)?;
     liliana_dreadhorde_v1::validate_continuation(state, pending)?;
@@ -12743,7 +12896,10 @@ pub(crate) fn resumable_program_supported(op: &EffectOp) -> bool {
 
 /// Regeneration (wave E7b): the objects of a destroy that regenerate
 /// instead are left out of it.
-fn without_regenerated_v1(state: &mut GameState, objects: Vec<ObjectId>) -> Vec<ObjectId> {
+pub(crate) fn without_regenerated_v1(
+    state: &mut GameState,
+    objects: Vec<ObjectId>,
+) -> Vec<ObjectId> {
     if !cfg!(feature = "eternal-fixtures") {
         return objects;
     }
@@ -12815,6 +12971,12 @@ pub(crate) fn validate_resolution_play_authorization(
     permission: crate::engine::resolution_cast_v1::ResolutionPermissionV1,
 ) -> Result<(), String> {
     if let EffectFrame::EternalSelectionV1 { choice, selected } = answer {
+        crate::eternal_cards_v1::owned_draws_v1::rooms::validate_child(
+            state,
+            suspended,
+            choice,
+            permission.card,
+        )?;
         return crate::eternal_cards_v1::e3::dungeons::validate_resolution_cast(
             suspended, choice, selected, permission,
         );
@@ -12867,7 +13029,13 @@ pub(crate) fn validate_resolution_play_authorization(
 }
 
 fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
-    inspiration_resolution_v1::drive(state)
+    let result = inspiration_resolution_v1::drive(state);
+    if result.is_err() || state.engine.halted.is_some() {
+        state.coveted_jewel_draw_progress_v1 = None;
+        state.paradoxical_outcome_draw_progress_v1 = None;
+        state.eternal_owned_draw_progress_v1 = None;
+    }
+    result
 }
 
 fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, String> {
@@ -12983,6 +13151,17 @@ fn drive_resumable_inner_with_native_row_v1(
         let EffectFrame::Program { op, path } = frame else {
             match frame {
                 EffectFrame::EternalSelectionV1 { choice, selected } => {
+                    if matches!(
+                        &choice.kind,
+                        crate::eternal_cards_v1::e3::E3ChoiceKindV1::MadWizardV1 { .. }
+                    ) {
+                        crate::eternal_cards_v1::owned_draws_v1::rooms::record_answer(
+                            state,
+                            &continuation,
+                            &choice,
+                            &selected,
+                        )?;
+                    }
                     // Mad Wizard's Lair: a chosen card is cast during this
                     // resolution (608.2g).
                     if let Some(card) = crate::eternal_cards_v1::e3::dungeons::resolution_cast_card(
@@ -13069,7 +13248,7 @@ fn drive_resumable_inner_with_native_row_v1(
                     discard_payment_v1::finish(state, &mut continuation, &choice, &selected)?;
                 }
                 EffectFrame::DiscardDraw { choice, selected } => {
-                    standard_discard::finish(state, &continuation, &choice, &selected)?
+                    standard_discard::finish(state, &mut continuation, &choice, &selected)?
                 }
                 EffectFrame::ExileBatchSelect { choice, selected } => {
                     standard_exile::finish_batch_selection(
@@ -14957,7 +15136,20 @@ fn drive_resumable_inner_with_native_row_v1(
                     return Err("discard choice changed".to_string());
                 }
                 continuation.answered_choice_guard = None;
-                crate::standard_cards_v1::discard_chosen_then_draw(state, player, &cards);
+                let count = crate::standard_cards_v1::discard_chosen(state, player, &cards);
+                if count != 0 {
+                    continuation.frames.push(EffectFrame::Program {
+                        op: EffectOp::DrawCards {
+                            player: if player == continuation.ctx.controller {
+                                PlayerRef::Controller
+                            } else {
+                                PlayerRef::Opponent
+                            },
+                            count,
+                        },
+                        path,
+                    });
+                }
             }
             EffectOp::StandardV1(
                 crate::standard_cards_v1::StandardOpV1::PutCreatureOrPlaneswalkerFromEachGraveyard,
@@ -15451,7 +15643,8 @@ fn drive_resumable_inner_with_native_row_v1(
                             return Ok(ResumableProgress::Suspended);
                         }
                     }
-                    InitiativeTriggerKindV1::UndercityRoom(room) => {
+                    InitiativeTriggerKindV1::UndercityRoom(room)
+                    | InitiativeTriggerKindV1::UndercityRoomBoundV1 { room, .. } => {
                         if !path.is_empty() || !continuation.frames.is_empty() {
                             return Err(
                                 "Undercity room ability is not a root-only effect".to_string()
@@ -16232,6 +16425,12 @@ fn drive_resumable_inner_with_native_row_v1(
                 }
             }
             EffectOp::SelectObjectsV1 { rule } => {
+                if matches!(rule.action, ObjectSelectionActionV1::EnterAsCopyV1)
+                    && crate::eternal_vintage_v1::paid_metamorph_copy_is_suppressed(state, &continuation.ctx)
+                {
+                    // The remaining frame enters Metamorph with its own 0/0 characteristics.
+                    continue;
+                }
                 standard_selection_v1::begin(state, &mut continuation, rule, path)?;
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
@@ -16932,14 +17131,77 @@ fn drive_resumable_inner_with_native_row_v1(
                 }
             }
             // Dredge (wave E7b): each card drawn may be dredged instead.
+            EffectOp::ResolveMonarchTrigger { binding }
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
+                        state,
+                        &continuation,
+                        PlayerRef::Controller,
+                    ) =>
+            {
+                validate_monarch_trigger_binding(state, binding)?;
+                if crate::eternal_vintage_e7b_v1::dredge::drive_draws(
+                    state,
+                    &mut continuation,
+                    PlayerRef::Controller,
+                    1,
+                    path,
+                )? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::NivMizzetVisionaryDrawV1 { damage_history_index }
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
+                        state,
+                        &continuation,
+                        PlayerRef::Controller,
+                    ) =>
+            {
+                let count = event::resolve_niv_mizzet_visionary_draw_count_v1(
+                    state,
+                    &continuation.ctx,
+                    damage_history_index,
+                )?;
+                continuation.frames.push(EffectFrame::Program {
+                    op: EffectOp::DrawCards {
+                        player: PlayerRef::Controller,
+                        count: u32::try_from(count.max(0)).unwrap_or(0),
+                    },
+                    path,
+                });
+            }
+            EffectOp::EachPlayerControllingDefinitionDrawsCard { card_def }
+                if cfg!(feature = "eternal-fixtures") =>
+            {
+                crate::eternal_cards_v1::owned_draws_v1::bonder::begin(
+                    state, &mut continuation, card_def, &path,
+                )?;
+            }
             EffectOp::DrawCards { player, count }
                 if cfg!(feature = "eternal-fixtures")
-                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_dredge(
+                    && (crate::eternal_cards_v1::owned_draws_v1::draw_stage_matches(
+                        state,
+                        &continuation,
+                        continuation.ctx.resolve_player(player, state),
+                        &path,
+                        &continuation.frames,
+                    ) || crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
                         state,
                         &continuation,
                         player,
-                    ) =>
+                    )) =>
             {
+                if crate::eternal_cards_v1::owned_draws_v1::fixed::begin(
+                    state,
+                    &mut continuation,
+                    player,
+                    count,
+                    &path,
+                )? {
+                    continue;
+                }
                 if crate::eternal_vintage_e7b_v1::dredge::drive_draws(
                     state,
                     &mut continuation,
@@ -16953,7 +17215,7 @@ fn drive_resumable_inner_with_native_row_v1(
             }
             EffectOp::DrawCardsDynamic { player, count }
                 if cfg!(feature = "eternal-fixtures")
-                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_dredge(
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
                         state,
                         &continuation,
                         player,
@@ -18430,6 +18692,8 @@ pub(crate) fn battlefield_exile_until_source_leaves(card_def: u16) -> bool {
             | "Portable Hole"
             | "Leyline Binding"
             | "Static Prison"
+            | "Temporary Lockdown"
+            | "Perilous Snare"
     )
 }
 
@@ -20519,6 +20783,50 @@ fn execute_with_native_row_v1(
             }
             let target = ctx.resolve_target(*target);
             let mut proposal = event::damage_from_exec_ctx_v1(ctx, target, *amount);
+            if let Some(proof) = native_proof.filter(|proof| proof.ctx == ctx) {
+                let origin = if crate::source_power_activation_v1::bombardment::selected(
+                    state,
+                    &proof.owner.item,
+                ) {
+                    match crate::source_power_activation_v1::bombardment::departed_source(
+                        state,
+                        &proof.owner.item,
+                    ) {
+                        Ok(facts) => facts.map(|facts| {
+                            EternalDamageLkiV1(EternalDamageOriginV1::Historical(facts))
+                        }),
+                        Err(_) => {
+                            state.engine.halted = Some((
+                                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                ctx.source,
+                            ));
+                            return;
+                        }
+                    }
+                } else {
+                    None
+                };
+                if let event::ProposedEvent::Damage(damage) = &mut proposal {
+                    damage.eternal_damage_lki_v1 = origin.or_else(|| {
+                        crate::fixed_source_damage_v3::waiting_bombardment_source(state, ctx.source)
+                            .then_some(EternalDamageLkiV1(EternalDamageOriginV1::Live(ctx.source)))
+                    });
+                }
+            }
+            match crate::fixed_source_damage_v3::native_fanatic_damage(state, ctx, op) {
+                Ok(id) => {
+                    if let event::ProposedEvent::Damage(damage) = &mut proposal {
+                        damage.historical_source = id;
+                    }
+                }
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            }
             if let Some(origin) = ctx.niv_damage_origin_v1 {
                 if !crate::event::niv_damage_origin_matches_context_v1(
                     origin,
@@ -20925,16 +21233,12 @@ fn execute_with_native_row_v1(
         }
         EffectOp::DrawCards { player, count } => {
             let player = ctx.resolve_player(*player, state);
-            for _ in 0..*count {
-                event::propose_and_commit(state, event::ProposedEvent::draw(player));
-            }
+            event::draw_instruction(state, player, *count);
         }
         EffectOp::DrawCardsDynamic { player, count } => {
             let player = ctx.resolve_player(*player, state);
             let count = crate::engine::evaluate_dynamic_value(state, *count, ctx.controller);
-            for _ in 0..count.max(0) {
-                event::propose_and_commit(state, event::ProposedEvent::draw(player));
-            }
+            event::draw_instruction(state, player, count.max(0) as u32);
         }
         EffectOp::BindLathrilCombatTokensV1 | EffectOp::LathrilCombatTokensV1 { .. } => {
             state.engine.halted = Some((
@@ -20970,16 +21274,10 @@ fn execute_with_native_row_v1(
             }
         }
         EffectOp::EachPlayerControllingDefinitionDrawsCard { card_def } => {
-            // APNAP-stable order: P0 then P1. Bonder's Ornament's own
-            // "getPlayersInRange" iteration order never affects the
-            // deterministic outcome here (each player's draw depends only on
-            // their own battlefield), so a fixed iteration order is safe.
+            // Historical atomic behavior for catalogs without Eternal draw
+            // replacements. The Eternal interpreter owns ordered continuations.
             for player in [PlayerId::P0, PlayerId::P1] {
-                let controls_named = state.players[player.index()]
-                    .battlefield
-                    .iter()
-                    .any(|&id| state.objects.get(id).card_def == *card_def);
-                if controls_named {
+                if controls_definition(state, player, *card_def) {
                     event::propose_and_commit(state, event::ProposedEvent::draw(player));
                 }
             }
@@ -27558,6 +27856,15 @@ pub(crate) mod kaito_cunning_v75;
 pub(crate) mod liliana_dreadhorde_v1;
 pub(crate) mod vivien_reid_v1;
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if state.stack.iter().any(|item| {
+        (ctx.stack_item_id == Some(item.v4.stack_item_id)
+            || (item.source == ctx.source
+                && crate::fixed_source_damage_v3::paid_bombardment_self(item)))
+            && crate::source_power_activation_v1::bombardment::selected(state, item)
+            && crate::source_power_activation_v1::bombardment::needs_lki(state, item)
+    }) {
+        return true;
+    }
     if ctx.stack_item_id.is_some_and(|id| {
         state.stack.iter().any(|item| {
             item.v4.stack_item_id == id && crate::full_text_v1::is_donated_trigger(item)
@@ -27653,6 +27960,47 @@ pub(crate) struct NativeExecutionOwnerV1 {
 struct NativeExecutionProofV1<'a> {
     owner: &'a NativeExecutionOwnerV1,
     ctx: &'a ExecCtx,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EternalDamageLkiV1(EternalDamageOriginV1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EternalDamageOriginV1 {
+    Historical(crate::event::HistoricalDamageSourceV1),
+    Live(ObjectId),
+}
+
+impl std::hash::Hash for EternalDamageLkiV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self.0 {
+            EternalDamageOriginV1::Historical(facts) => std::hash::Hash::hash(&facts, state),
+            EternalDamageOriginV1::Live(source) => {
+                std::hash::Hash::hash(b"native-live-damage/v1", state);
+                std::hash::Hash::hash(&source, state);
+            }
+        }
+    }
+}
+
+impl EternalDamageLkiV1 {
+    pub(crate) fn for_minsc(proof: crate::eternal_vintage_e7b_v1::minsc::DamageLoanV1) -> Self {
+        Self(EternalDamageOriginV1::Historical(proof.facts()))
+    }
+
+    pub(crate) fn source(self) -> ObjectId {
+        match self.0 {
+            EternalDamageOriginV1::Historical(facts) => facts.source.source,
+            EternalDamageOriginV1::Live(source) => source,
+        }
+    }
+
+    pub(crate) fn facts(self) -> Option<crate::event::HistoricalDamageSourceV1> {
+        match self.0 {
+            EternalDamageOriginV1::Historical(facts) => Some(facts),
+            EternalDamageOriginV1::Live(_) => None,
+        }
+    }
 }
 
 fn validated_native_execution_root_v1(

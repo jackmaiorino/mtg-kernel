@@ -198,6 +198,8 @@ fn run_goldfish(state: &mut GameState) -> RunResult {
 
         match decision {
             Decision::ChooseEntryCreatureTypeV1 { .. }
+            | Decision::ChooseMeddlingMageNameV1 { .. }
+            | Decision::ChooseEternalOpeningV1 { .. }
             | Decision::ChooseFullRangeCastXValueV59 { .. } => {
                 unreachable!(
                     "this fixed script has no creature-type entry or full-range cast-X successor"

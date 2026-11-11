@@ -37,6 +37,8 @@ pub(crate) const THASSAS_ORACLE: &str = "Thassa's Oracle";
 pub(crate) const BRAIN_FREEZE: &str = "Brain Freeze";
 pub(crate) const TENDRILS_OF_AGONY: &str = "Tendrils of Agony";
 pub(crate) const GALVANIC_RELAY: &str = "Galvanic Relay";
+pub(crate) const GRAPESHOT: &str = "Grapeshot";
+pub(crate) const EMPTY_THE_WARRENS: &str = "Empty the Warrens";
 
 /// Per-game state of the E3 cards, inside `EternalStateV1::e3`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -298,10 +300,17 @@ pub enum E3ChoiceKindV1 {
     /// A choice owned by the outside-the-game zone's module (Karn's exile
     /// card, learn's discard).
     OutsideGameV1(crate::eternal_outside_game_v1::OutsideGameChoiceV1),
+    /// A wave S1c choice (`eternal_sideboard_s1c_v1`).
+    S1cV1(crate::eternal_sideboard_s1c_v1::S1cChoiceV1),
+    /// Surgical Extraction's optional subset of the target owner's matches.
+    SurgicalExtractionV1,
+    /// Extirpate's optional hidden matches. Public graveyard matches are mandatory.
+    ExtirpateV1,
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
-/// order; `bindings` binds every object candidate to its incarnation.
+/// order; `bindings` binds every object candidate and any mandatory Extirpate
+/// graveyard match to its incarnation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct E3ChoiceV1 {
     pub kind: E3ChoiceKindV1,
@@ -316,6 +325,13 @@ pub struct E3ChoiceV1 {
 }
 
 impl E3ChoiceV1 {
+    pub(crate) fn is_extraction_search(&self) -> bool {
+        matches!(
+            self.kind,
+            E3ChoiceKindV1::SurgicalExtractionV1 | E3ChoiceKindV1::ExtirpateV1
+        )
+    }
+
     /// Whether the candidates are hidden from the other player (hand or
     /// library cards).
     pub(crate) fn chooser_private(&self) -> bool {
@@ -341,6 +357,9 @@ impl E3ChoiceV1 {
             return kind.chooser_private();
         }
         if let E3ChoiceKindV1::E9bV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
+        if let E3ChoiceKindV1::S1cV1(kind) = &self.kind {
             return kind.chooser_private();
         }
         if let E3ChoiceKindV1::E9aV1(kind) = &self.kind {
@@ -372,6 +391,8 @@ impl E3ChoiceV1 {
                 | E3ChoiceKindV1::PunisherV1 { room: 2, .. }
                 | E3ChoiceKindV1::OublietteV1 { stage: 0, .. }
                 | E3ChoiceKindV1::E5aV1(_)
+                | E3ChoiceKindV1::SurgicalExtractionV1
+                | E3ChoiceKindV1::ExtirpateV1
         )
     }
 
@@ -379,7 +400,9 @@ impl E3ChoiceV1 {
     /// (a search).
     pub(crate) fn library_search(&self) -> bool {
         match &self.kind {
-            E3ChoiceKindV1::DoomsdayV1 => true,
+            E3ChoiceKindV1::DoomsdayV1
+            | E3ChoiceKindV1::SurgicalExtractionV1
+            | E3ChoiceKindV1::ExtirpateV1 => true,
             E3ChoiceKindV1::E5aV1(kind) => kind.library_search(),
             E3ChoiceKindV1::E7aV1(kind) => kind.library_search(),
             E3ChoiceKindV1::E8aV1(kind) => kind.library_search(),
@@ -402,6 +425,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E8bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E8aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9bV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::S1cV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P1bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P2aV1(kind) => kind.public_purpose(),
@@ -417,6 +441,8 @@ impl E3ChoiceV1 {
             | E3ChoiceKindV1::PunisherV1 { room: 2, .. }
             | E3ChoiceKindV1::OublietteV1 { stage: 0, .. }
             | E3ChoiceKindV1::MadWizardV1 { .. }
+            | E3ChoiceKindV1::SurgicalExtractionV1
+            | E3ChoiceKindV1::ExtirpateV1
             | E3ChoiceKindV1::E5aV1(_) => crate::rl::TargetSelectionPurposeV4::CardSelection,
             E3ChoiceKindV1::AnnihilatorV1
             | E3ChoiceKindV1::PunisherV1 { .. }
@@ -458,6 +484,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E8bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E8aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9bV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::S1cV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P2aV1(kind) => out.extend(kind.referenced_bindings()),
@@ -535,6 +562,28 @@ pub(crate) fn validate_selection(
         || pending.frames != choice.remaining
     {
         return Err("eternal choice prompt changed its shape".to_string());
+    }
+    if let E3ChoiceKindV1::E8aV1(
+        crate::eternal_legacy_e8a_v1::E8aChoiceV1::VialHandToBattlefieldV1 { paid_at },
+    ) = &choice.kind
+    {
+        crate::eternal_legacy_e8a_v1::validate_vial_hand_choice(state, pending, choice, *paid_at)?;
+        if min != 0
+            || selected.len() > 1
+            || !legal.iter().map(|candidate| candidate.target).eq(choice
+                .candidates
+                .iter()
+                .copied()
+                .filter(|target| !selected.iter().any(|candidate| candidate.target == *target)))
+        {
+            return Err("Aether Vial hand prompt changed its original menu order".into());
+        }
+    }
+    if matches!(
+        &choice.kind,
+        E3ChoiceKindV1::E8aV1(crate::eternal_legacy_e8a_v1::E8aChoiceV1::HandToBattlefieldV1)
+    ) {
+        crate::eternal_legacy_e8a_v1::validate_legacy_hand_choice(state, pending)?;
     }
     let mut offered = selected
         .iter()
@@ -631,12 +680,7 @@ pub(crate) fn finish_selection(
         }
         E3ChoiceKindV1::ShowAndTellV1 { chosen, later } => {
             let mut chosen = chosen.clone();
-            if let Some(card) = bindings.first() {
-                // The next player sees the choice before making theirs.
-                // spellbench-public-reveal: hand card revealed by the card rules.
-                state.reveal_hand_card(choice.player.opponent(), choice.player, card.object)?;
-                chosen.push(*card);
-            }
+            chosen.extend(bindings.first().copied());
             stage_show_and_tell(state, continuation, later, chosen, choice.path.clone())
         }
         E3ChoiceKindV1::SneakAttackV1 { source } => {
@@ -768,6 +812,27 @@ pub(crate) fn finish_selection(
         E3ChoiceKindV1::E9bV1(kind) => {
             crate::eternal_e9b_v1::finish_selection(state, continuation, choice, kind, bindings)
         }
+        E3ChoiceKindV1::S1cV1(kind) => crate::eternal_sideboard_s1c_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::SurgicalExtractionV1 => crate::eternal_sideboard_s1a_v1::surgical::finish(
+            state,
+            continuation,
+            choice,
+            &bindings,
+            crate::eternal_sideboard_s1a_v1::surgical::ExtractionV1::Surgical,
+        ),
+        E3ChoiceKindV1::ExtirpateV1 => crate::eternal_sideboard_s1a_v1::surgical::finish(
+            state,
+            continuation,
+            choice,
+            &bindings,
+            crate::eternal_sideboard_s1a_v1::surgical::ExtractionV1::Extirpate,
+        ),
     }
 }
 
@@ -780,6 +845,14 @@ pub(crate) fn drive(
     path: Vec<u16>,
 ) -> Result<bool, String> {
     match op {
+        op if super::owned_draws_v1::recognizes(op) => {
+            super::owned_draws_v1::begin(state, continuation, op, &path)?;
+            Ok(false)
+        }
+        EternalOpV1::OwnedDrawCompletedV1 { ordinal } => {
+            super::owned_draws_v1::complete(state, continuation, *ordinal, &path)?;
+            Ok(continuation.choice.is_some())
+        }
         EternalOpV1::MayImprintFromHandV1 => {
             let Some(contract) = continuation.ctx.ability_source_contract else {
                 return Err("imprint lost its source".to_string());
@@ -951,7 +1024,15 @@ pub(crate) fn drive(
             );
             Ok(true)
         }
+        EternalOpV1::EnterRoomV1 { dungeon, room } => {
+            dungeons::enter_selected_room(state, continuation, *dungeon, *room)?;
+            Ok(false)
+        }
         EternalOpV1::RoomAbilityV1 { dungeon, room } => {
+            dungeons::resolve_room(state, continuation, *dungeon, *room, path)
+        }
+        EternalOpV1::RoomBoundV1 { dungeon, room, .. } => {
+            dungeons::occurrences::validate_resolving(state, continuation)?;
             dungeons::resolve_room(state, continuation, *dungeon, *room, path)
         }
         EternalOpV1::AcererakEntersV1 => {
@@ -1007,6 +1088,13 @@ pub(crate) fn drive(
             )
         }
         EternalOpV1::ShowAndTellV1 => {
+            use crate::eternal_sideboard_s1b_v1::meddling_mage_entry::show_and_tell;
+            if show_and_tell::printed(&continuation.resolving_item) {
+                if !path.is_empty() {
+                    return Err("Show and Tell changed its native root".into());
+                }
+                return crate::linked_aura_operation_v1::resolve_show_and_tell(state, continuation);
+            }
             let first = state.active_player;
             stage_show_and_tell(
                 state,
@@ -1069,6 +1157,23 @@ pub(crate) fn drive(
             crate::eternal_legacy_e8a_v1::drive(state, continuation, op, path)
         }
         EternalOpV1::E9bV1(op) => crate::eternal_e9b_v1::drive(state, continuation, op, path),
+        EternalOpV1::S1dV1(op) => {
+            crate::eternal_sideboard_s1d_v1::drive(state, continuation, op, path)
+        }
+        EternalOpV1::S1cV1(op) => {
+            crate::eternal_sideboard_s1c_v1::drive(state, continuation, op, path)
+        }
+        EternalOpV1::S1aV1(crate::eternal_sideboard_s1a_v1::S1aOpV1::SurgicalExtractionV1) => {
+            crate::eternal_sideboard_s1a_v1::surgical::drive(
+                state,
+                continuation,
+                path,
+                crate::eternal_sideboard_s1a_v1::surgical::ExtractionV1::Surgical,
+            )
+        }
+        EternalOpV1::S1bV1(op) => {
+            crate::eternal_sideboard_s1b_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::E9aV1(op) => {
             crate::eternal_legacy_e9a_v1::drive(state, continuation, op, path)
         }
@@ -1083,6 +1188,34 @@ pub(crate) fn drive(
         }
         EternalOpV1::P1aV1(op) => {
             crate::eternal_premodern_p1a_v1::drive(state, continuation, op, path)
+        }
+        EternalOpV1::DelayedUpkeepDrawV1 => crate::eternal_vintage_e7b_v1::dredge::drive_draws(
+            state,
+            continuation,
+            PlayerRef::Controller,
+            1,
+            path,
+        ),
+        EternalOpV1::VintageV1(
+            crate::eternal_vintage_v1::VintageOpV1::CovetedJewelChangesHandsV1,
+        ) => {
+            crate::eternal_vintage_v1::begin_coveted_jewel_draws(state, continuation, &path)?;
+            Ok(false)
+        }
+        EternalOpV1::VintageV1(crate::eternal_vintage_v1::VintageOpV1::ParadoxicalOutcomeV1) => {
+            crate::eternal_vintage_v1::paradoxical_outcome_v1::begin(state, continuation, &path)?;
+            Ok(false)
+        }
+        EternalOpV1::VintageV1(
+            crate::eternal_vintage_v1::VintageOpV1::ParadoxicalOutcomeDrawCompletedV1 { ordinal },
+        ) => {
+            crate::eternal_vintage_v1::paradoxical_outcome_v1::complete(
+                state,
+                continuation,
+                *ordinal,
+                &path,
+            )?;
+            Ok(false)
         }
         EternalOpV1::P2bV1(op) => {
             crate::eternal_premodern_p2b_v1::drive(state, continuation, op, path)
@@ -1111,6 +1244,7 @@ pub(crate) fn contains_player_choice(op: &EternalOpV1) -> bool {
             | EternalOpV1::AnnihilatorV1 { .. }
             | EternalOpV1::AtraxaRevealV1
             | EternalOpV1::RoomAbilityV1 { .. }
+            | EternalOpV1::RoomBoundV1 { .. }
             | EternalOpV1::AcererakEntersV1
             | EternalOpV1::AcererakAttacksV1
     ) || matches!(op, EternalOpV1::E5bV1(op) if op.contains_player_choice())
@@ -1297,13 +1431,21 @@ pub(crate) fn wins_instead_of_drawing_from_empty_library(
     player: PlayerId,
 ) -> bool {
     state.players[player.index()].library.is_empty()
-        && state.players[player.index()]
-            .battlefield
-            .iter()
-            .any(|&permanent| {
-                state.objects.get(permanent).controller == player
-                    && printed_battlefield_source(state, permanent, JACE)
-            })
+        && jace_draw_replacement_source(state, player).is_some()
+}
+
+pub(crate) fn jace_draw_replacement_source(
+    state: &GameState,
+    player: PlayerId,
+) -> Option<ObjectId> {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .find(|&permanent| {
+            state.objects.get(permanent).controller == player
+                && printed_battlefield_source(state, permanent, JACE)
+        })
 }
 
 /// Applies Jace's replacement for a draw `player` would make.
@@ -1356,6 +1498,39 @@ fn burden_count(state: &GameState, ring: ObjectLinkV4) -> u32 {
                 .map(|(_, count)| *count)
         })
         .unwrap_or(0)
+}
+
+fn ring_link(source: AbilitySourceContractV4) -> ObjectLinkV4 {
+    ObjectLinkV4 {
+        object: source.source,
+        zone_change_count: source.zone_change_count,
+    }
+}
+
+pub(super) fn ring_burden_count(state: &GameState, source: AbilitySourceContractV4) -> u32 {
+    burden_count(state, ring_link(source))
+}
+
+pub(super) fn quote_ring_draw_count(state: &GameState, source: AbilitySourceContractV4) -> u32 {
+    let ring = ring_link(source);
+    burden_count(state, ring).saturating_add(u32::from(link_live(state, ring, Zone::Battlefield)))
+}
+
+pub(super) fn begin_ring_draws(state: &mut GameState, source: AbilitySourceContractV4) -> u32 {
+    let ring = ring_link(source);
+    let count = burden_count(state, ring);
+    if !link_live(state, ring, Zone::Battlefield) {
+        // The original incarnation's counters survive its departure as LKI.
+        return count;
+    }
+    let total = count.saturating_add(1);
+    let counters = &mut e3_mut(state).burden_counters;
+    if let Some((_, count)) = counters.iter_mut().find(|(entry, _)| *entry == ring) {
+        *count = total;
+    } else {
+        counters.push((ring, total));
+    }
+    total
 }
 
 /// Whether `player` has protection from everything (The One Ring).
@@ -1843,7 +2018,8 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         THE_ONE_RING => &THE_ONE_RING_TRIGGERS,
         CHROME_MOX => &CHROME_MOX_TRIGGERS,
-        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY => &FLUSTERSTORM_TRIGGERS,
+        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY | GRAPESHOT
+        | EMPTY_THE_WARRENS => &FLUSTERSTORM_TRIGGERS,
         THASSAS_ORACLE => &THASSAS_ORACLE_TRIGGERS,
         EMRAKUL => &EMRAKUL_TRIGGERS,
         ATRAXA => &ATRAXA_TRIGGERS,
@@ -1857,8 +2033,8 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     match name {
         dungeons::ACERERAK => Some(dungeons::trigger_target_spec(effect)),
         THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM | BRAIN_FREEZE
-        | TENDRILS_OF_AGONY | GALVANIC_RELAY | THASSAS_ORACLE | EMRAKUL | ATRAXA
-        | RAPH_AND_MIKEY => Some(TargetSpec::None),
+        | TENDRILS_OF_AGONY | GALVANIC_RELAY | GRAPESHOT | EMPTY_THE_WARRENS | THASSAS_ORACLE
+        | EMRAKUL | ATRAXA | RAPH_AND_MIKEY => Some(TargetSpec::None),
         _ => None,
     }
 }
@@ -1926,13 +2102,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
             let Some(contract) = ctx.ability_source_contract else {
                 return;
             };
-            let count = burden_count(
-                state,
-                ObjectLinkV4 {
-                    object: contract.source,
-                    zone_change_count: contract.zone_change_count,
-                },
-            );
+            let count = ring_burden_count(state, contract);
             if count > 0 {
                 event::propose_and_commit(
                     state,
@@ -1948,31 +2118,8 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 halt(state, ctx.source);
                 return;
             };
-            let ring = ObjectLinkV4 {
-                object: contract.source,
-                zone_change_count: contract.zone_change_count,
-            };
-            if link_live(state, ring, Zone::Battlefield) {
-                let e3 = e3_mut(state);
-                match e3
-                    .burden_counters
-                    .iter_mut()
-                    .find(|(entry, _)| *entry == ring)
-                {
-                    Some((_, count)) => *count = count.saturating_add(1),
-                    None => e3.burden_counters.push((ring, 1)),
-                }
-            }
-            // Last-known counters if the Ring has left the battlefield.
-            let count = burden_count(state, ring);
-            crate::effect::execute(
-                &EffectOp::DrawCards {
-                    player: PlayerRef::Controller,
-                    count,
-                },
-                ctx,
-                state,
-            );
+            let count = begin_ring_draws(state, contract);
+            super::owned_draws_v1::draw_uninterrupted(state, ctx.controller, count);
         }
         EternalOpV1::SacrificeSourceV1 => {
             let Some(contract) = ctx.ability_source_contract else {
@@ -1994,35 +2141,13 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         }
         EternalOpV1::VeilOfSummerV1 => {
             let player = ctx.controller;
-            if opponent_cast_blue_or_black_spell_this_turn(state, player) {
-                crate::effect::execute(
-                    &EffectOp::DrawCards {
-                        player: PlayerRef::Controller,
-                        count: 1,
-                    },
-                    ctx,
-                    state,
-                );
-            }
-            let permanents = state.players[player.index()]
-                .battlefield
-                .iter()
-                .map(|&object| link(state, object))
-                .collect();
-            let turn = state.turn_key_v1();
-            let e3 = e3_mut(state);
-            e3.veils.retain(|veil| veil.turn == turn);
-            e3.veils.push(VeilV1 {
-                player,
-                turn,
-                permanents,
-            });
-        }
-        EternalOpV1::EnterRoomV1 { dungeon, room } => {
-            if dungeons::enter_room(state, ctx, *dungeon, *room).is_err() {
-                halt(state, ctx.source);
+            if !opponent_cast_blue_or_black_spell_this_turn(state, player)
+                || super::owned_draws_v1::draw_uninterrupted(state, player, 1)
+            {
+                apply_veil_protection(state, player);
             }
         }
+        EternalOpV1::EnterRoomV1 { .. } => halt(state, ctx.source),
         EternalOpV1::RevealUntilCreatureAttackingV1 => {
             if reveal_until_creature_attacking(state, ctx.controller).is_err() {
                 halt(state, ctx.source);
@@ -2043,6 +2168,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | EternalOpV1::AnnihilatorV1 { .. }
         | EternalOpV1::AtraxaRevealV1
         | EternalOpV1::RoomAbilityV1 { .. }
+        | EternalOpV1::RoomBoundV1 { .. }
         | EternalOpV1::AcererakEntersV1
         | EternalOpV1::AcererakAttacksV1 => {
             // Choice leaves run only inside the resumable interpreter.
@@ -2074,6 +2200,8 @@ pub(crate) fn player_targetable(
     !player_protected(state, player)
         // Solitary Confinement: "You have shroud." (Premodern wave P1b)
         && !crate::eternal_premodern_p1b_v1::statics::player_has_shroud(state, player)
+        // Leyline of Sanctity: "You have hexproof." (wave S1b)
+        && (controller == player || !crate::eternal_sideboard_s1b_v1::player_hexproof(state, player))
         && (controller == player
             || active_veils(state, player).next().is_none()
             || !source_blue_or_black(state, source))
@@ -2144,7 +2272,10 @@ fn blue_or_black_mask() -> u8 {
 
 /// Whether an opponent of `player` cast a blue or black spell this turn.
 /// The turn begins at its `UpkeepBegan` marker; no spell is cast earlier.
-fn opponent_cast_blue_or_black_spell_this_turn(state: &GameState, player: PlayerId) -> bool {
+pub(super) fn opponent_cast_blue_or_black_spell_this_turn(
+    state: &GameState,
+    player: PlayerId,
+) -> bool {
     for event in state.engine.event_history.iter().rev() {
         match event {
             CommittedEvent::UpkeepBegan { .. } => return false,
@@ -2164,12 +2295,56 @@ fn opponent_cast_blue_or_black_spell_this_turn(state: &GameState, player: Player
     false
 }
 
+pub(super) fn apply_veil_protection(state: &mut GameState, player: PlayerId) {
+    let permanents = state.players[player.index()]
+        .battlefield
+        .iter()
+        .map(|&object| link(state, object))
+        .collect();
+    let turn = state.turn_key_v1();
+    let e3 = e3_mut(state);
+    e3.veils.retain(|veil| veil.turn == turn);
+    e3.veils.push(VeilV1 {
+        player,
+        turn,
+        permanents,
+    });
+}
+
 fn active_veils(state: &GameState, player: PlayerId) -> impl Iterator<Item = &VeilV1> {
     let turn = state.turn_key_v1();
     e3(state)
         .into_iter()
         .flat_map(|e3| e3.veils.iter())
         .filter(move |veil| veil.player == player && veil.turn == turn)
+}
+
+/// Veil's current shield tested against an original departed source's colors.
+pub(crate) fn veil_protects_from_colors(
+    state: &GameState,
+    target: Target,
+    controller: PlayerId,
+    colors: u8,
+) -> bool {
+    if colors & blue_or_black_mask() == 0 {
+        return false;
+    }
+    match target {
+        Target::Player(player) => {
+            player != controller && active_veils(state, player).next().is_some()
+        }
+        Target::Object(object) => state.objects.try_get(object).is_some_and(|live| {
+            live.zone == Zone::Battlefield
+                && live.controller != controller
+                && active_veils(state, live.controller).any(|veil| {
+                    veil.permanents.contains(&ObjectLinkV4 {
+                        object,
+                        zone_change_count: live.zone_change_count,
+                    })
+                })
+        }),
+        Target::StackItem(_) => false,
+    }
 }
 
 /// Whether a targeting source is blue or black.
@@ -2224,6 +2399,8 @@ pub(crate) fn has_storm(name: &str) -> bool {
         || name == BRAIN_FREEZE
         || name == TENDRILS_OF_AGONY
         || name == GALVANIC_RELAY
+        || name == GRAPESHOT
+        || name == EMPTY_THE_WARRENS
 }
 
 /// Whether a Storm trigger copies a targeted spell, whose copies may choose
@@ -2409,7 +2586,8 @@ pub(crate) fn delayed_triggers(
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     match name {
         CITY_OF_TRAITORS => *effect == sacrifice_source(),
-        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY => {
+        FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY | GRAPESHOT
+        | EMPTY_THE_WARRENS => {
             matches!(effect, EffectOp::CreateStormCopies { .. })
         }
         dungeons::ACERERAK => dungeons::delayed_effect_matches(effect),
@@ -2450,6 +2628,10 @@ pub(crate) fn cant_attack(state: &GameState, object: ObjectId) -> bool {
     }
     // Veteran Brawlers (wave P2d).
     if crate::eternal_premodern_p2d_v1::statics::cant_attack(state, object) {
+        return true;
+    }
+    // Light of Day (wave S1c).
+    if crate::eternal_sideboard_s1c_v1::statics::cant_attack(state, object) {
         return true;
     }
     e3(state).is_some_and(|e3| {
@@ -2568,7 +2750,7 @@ pub(crate) fn set_free_quote(state: &mut GameState, card: Option<ObjectId>) {
 /// artifact, creature, enchantment or land card in their hand. An Aura
 /// would need a host chosen as it enters (303.4f), which the engine models
 /// only for Aura spells, so Auras are not offered.
-fn show_and_tell_cards(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
+pub(crate) fn show_and_tell_cards(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
     hand_bindings(state, player, |def| {
         [
             CardType::Artifact,
@@ -2629,10 +2811,28 @@ fn stage_show_and_tell(
     if chosen.iter().any(|binding| !binding_live(state, *binding)) {
         return Err("a Show and Tell card left its owner's hand".to_string());
     }
-    for binding in chosen {
-        event::propose_and_commit(
+    // Historical Show and Tell prompts and spell copies use this continuation.
+    // A Metamorph copy requires the physical paid producer and private answers.
+    if chosen.iter().any(|binding| {
+        crate::eternal_sideboard_s1b_v1::meddling_mage_entry::vial::is_physical_metamorph_in_hand(
             state,
-            ProposedEvent::zone_change(binding.object, Zone::Battlefield),
+            binding.object,
+        )
+    }) {
+        return Err("Show and Tell Metamorph requires its native paid resolution".into());
+    }
+    for binding in &chosen {
+        let owner = state.objects.get(binding.object).owner;
+        // spellbench-public-reveal: both players have now chosen their cards.
+        state.reveal_hand_card(owner.opponent(), owner, binding.object)?;
+    }
+    if !chosen.is_empty() {
+        event::propose_and_commit_batch(
+            state,
+            chosen
+                .into_iter()
+                .map(|binding| ProposedEvent::zone_change(binding.object, Zone::Battlefield))
+                .collect(),
         );
     }
     Ok(false)

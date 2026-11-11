@@ -1844,6 +1844,8 @@ fn decision_texts(
         SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { .. })
         | SurfaceDecision::Decision(Decision::ChooseEntryCreatureTypeV1 { .. })
         | SurfaceDecision::Decision(Decision::ChooseFullRangeCastXValueV59 { .. }) => None,
+        SurfaceDecision::Decision(Decision::ChooseEternalOpeningV1 { .. })
+        | SurfaceDecision::Decision(Decision::ChooseMeddlingMageNameV1 { .. }) => None,
         SurfaceDecision::Decision(Decision::ChooseVariableCastTargets { .. })
         | SurfaceDecision::Decision(Decision::ChooseVariableCastKicker { .. }) => None,
         SurfaceDecision::Decision(Decision::CastSpellOrPass {
@@ -2034,6 +2036,10 @@ fn apply_by_indices(
         ),
         SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { .. }) => {
             Err("apply_by_indices:unsupported-banner-entry-color-protocol".to_string())
+        }
+        SurfaceDecision::Decision(Decision::ChooseEternalOpeningV1 { .. })
+        | SurfaceDecision::Decision(Decision::ChooseMeddlingMageNameV1 { .. }) => {
+            Err("apply_by_indices:unsupported-eternal-opening-or-mage-name-protocol".to_string())
         }
         SurfaceDecision::Decision(Decision::ChooseVariableCastTargets { .. })
         | SurfaceDecision::Decision(Decision::ChooseVariableCastKicker { .. }) => {

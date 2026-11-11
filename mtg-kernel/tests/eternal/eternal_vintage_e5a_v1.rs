@@ -610,6 +610,39 @@ fn bolas_citadel_casts_from_the_top_paying_life_and_plays_lands_from_it() {
     assert_eq!(state.players[1].life, 10);
 }
 
+/// A spell with its own alternative cost (Force of Will) cast from the top
+/// through Bolas's Citadel pays life equal to its mana value, with no cost
+/// choice, and keeps its target through the cast.
+#[test]
+fn bolas_citadel_casts_force_of_will_from_the_top_for_life() {
+    let mut state = islands();
+    put(&mut state, P0, "Bolas's Citadel", Zone::Battlefield);
+    let force = put(&mut state, P0, "Force of Will", Zone::Library);
+    put(&mut state, P0, "Brainstorm", Zone::Hand);
+    state.priority_player = P1;
+    let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::R], 0);
+    cast(&mut state, bolt, &[Target::Player(P0)]);
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass { player: P1, .. }
+    ));
+    act(&mut state, Action::Pass);
+    cast(&mut state, force, &[Target::Object(bolt)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, force), Zone::Graveyard);
+    assert_eq!(
+        zone(&state, bolt),
+        Zone::Graveyard,
+        "the Bolt was countered"
+    );
+    assert_eq!(
+        state.players[0].life, 15,
+        "five life for Force of Will and no Bolt damage"
+    );
+    assert_eq!(state.players[0].hand.len(), 1, "no blue card was exiled");
+}
+
 #[test]
 fn yawgmoths_will_casts_and_plays_from_the_graveyard_and_exiles_instead() {
     let mut state = islands();

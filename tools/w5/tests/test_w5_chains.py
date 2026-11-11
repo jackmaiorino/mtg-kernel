@@ -405,12 +405,27 @@ class ChainTests(unittest.TestCase):
     def test_c_chain_runs_segments_to_its_wall_and_matches_one_run(self):
         _, plan = self.node.stage0(c_wall=1.5)
         self.node.guard()
-        self.assertEqual(self.node.drive(plan, 'c1'), 0)
+        # Advance the driver's wall after each real stand-in segment. Host
+        # startup and filesystem latency must not decide whether two segments
+        # fit, while publication and state continuation still run in children.
+        wall = [time.time()]
+        run_trainer = chains.run_trainer
+
+        def run_segment(*args, **kwargs):
+            result = run_trainer(*args, **kwargs)
+            wall[0] += 1.0
+            return result
+
+        with mock.patch.object(chains, 'time', wraps=time) as clock, \
+                mock.patch.object(chains, 'run_trainer', side_effect=run_segment) as trainer:
+            clock.time.side_effect = lambda: wall[0]
+            self.assertEqual(self.node.drive(plan, 'c1'), 0)
+        self.assertEqual(trainer.call_count, 2)
         root = self.node.root
         end = json.loads((root / 'chains' / 'c1' / 'END.json').read_text())
         chain, records = retention.index(plan['chains']['c1']['manifest'])
         self.assertEqual(end['reason'], 'c-wall')
-        self.assertGreaterEqual(len(records), 8)
+        self.assertEqual(len(records), 8)
         self.assertEqual(end['last_valid_boundary'], records[-1]['boundary'])
         self.assertEqual(end['ledger_usec'], records[-1]['ledger_usec'])
         self.assertEqual([r['ledger_usec'] for r in records], [STEP_C * (i + 1) for i in range(len(records))])

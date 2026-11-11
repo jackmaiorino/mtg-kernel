@@ -162,6 +162,11 @@ pub enum P1bOpV1 {
     StandstillV1 { caster: PlayerId },
     /// City of Brass: 1 damage to its controller.
     CityDamageV1,
+    /// Exact native paid cast occurrence, source and trigger publication.
+    StandstillBoundV1 {
+        triggered_at: usize,
+        caster: PlayerId,
+    },
 }
 
 impl P1bOpV1 {
@@ -177,6 +182,7 @@ impl P1bOpV1 {
                 | Self::ReplenishV1
                 | Self::ConfinementUpkeepV1
                 | Self::StandstillV1 { .. }
+                | Self::StandstillBoundV1 { .. }
         )
     }
 }
@@ -823,7 +829,10 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         DECREE_OF_JUSTICE => matches!(op, P1bOpV1::DecreeSoldiersOfferV1),
         DECREE_OF_SILENCE => matches!(op, P1bOpV1::DecreeCounterV1 { .. }),
         PARALLAX_WAVE => matches!(op, P1bOpV1::WaveReturnV1 { .. }),
-        STANDSTILL => matches!(op, P1bOpV1::StandstillV1 { .. }),
+        STANDSTILL => matches!(
+            op,
+            P1bOpV1::StandstillV1 { .. } | P1bOpV1::StandstillBoundV1 { .. }
+        ),
         CITY_OF_BRASS => matches!(op, P1bOpV1::CityDamageV1),
         _ => false,
     }
@@ -1033,7 +1042,8 @@ pub(crate) fn execute(op: &P1bOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | P1bOpV1::SterlingGroveV1
         | P1bOpV1::ReplenishV1
         | P1bOpV1::ConfinementUpkeepV1
-        | P1bOpV1::StandstillV1 { .. } => halt(state, ctx.source),
+        | P1bOpV1::StandstillV1 { .. }
+        | P1bOpV1::StandstillBoundV1 { .. } => halt(state, ctx.source),
     }
 }
 
@@ -1584,7 +1594,9 @@ fn note_spell_casts(state: &mut GameState, events: &[CommittedEvent]) {
         let CommittedEvent::SpellCast { spell, controller } = *event else {
             continue;
         };
-        // Only Decree of Silence's counter needs the spell still on the stack.
+        // Decree needs a live target when it resolves. Standstill authenticates
+        // the paid cast here at native collection, then retains that occurrence
+        // independently of the spell's later departure before trigger resolution.
         let item = state
             .stack
             .iter()
@@ -1609,13 +1621,19 @@ fn note_spell_casts(state: &mut GameState, events: &[CommittedEvent]) {
         for standstill in standstills {
             let source = AbilitySourceContractV4::capture(state, standstill);
             let owner = state.objects.get(standstill).controller;
-            queue_trigger(
-                state,
-                source,
-                owner,
-                p1b(P1bOpV1::StandstillV1 { caster: controller }),
-                None,
-            );
+            let effect = match crate::eternal_cards_v1::owned_draws_v1::standstill::capture(
+                state, source, spell, controller,
+            ) {
+                Ok(Some(bound)) => bound,
+                // Copied/token sources retain their existing ordinary recipe;
+                // this physical successor does not claim their draw ownership.
+                Ok(None) => p1b(P1bOpV1::StandstillV1 { caster: controller }),
+                Err(_) => {
+                    halt(state, standstill);
+                    return;
+                }
+            };
+            queue_trigger(state, source, owner, effect, None);
         }
         // Decree of Silence: "Whenever an opponent casts a spell".
         let decrees = active_permanents(state, DECREE_OF_SILENCE, Some(controller.opponent()))
