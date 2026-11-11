@@ -1,6 +1,6 @@
 //! Card-database recipes for the eternal catalog's Vintage sideboard wave
-//! S1f. This module is the tail of the recipe chains: wave S1e's tables
-//! fall through to these, and its own defaults are the chains' base values.
+//! S1f. Wave S1e's tables fall through to these, and these fall through to
+//! wave S1g's (`build_eternal_s1g_v1.rs`), the tail of the recipe chains.
 //! Runtime programs live in `src/eternal_sideboard_s1f_v1.rs`. Every row is
 //! keyed by a name that occurs only in the eternal registry.
 
@@ -26,7 +26,7 @@ const JUNK: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
         "Junk Token" => &JUNK,
-        _ => &[],
+        _ => super::build_eternal_s1g_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -39,34 +39,34 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             target_spec: "TargetSpec::TargetOpponent",
             program: "crate::eternal_sideboard_s1f_v1::overencumbered",
         }),
-        _ => None,
+        _ => super::build_eternal_s1g_v1::special_for(name),
     }
 }
 
 /// No S1f card has kicker.
-pub(super) fn kicker_cost_for(_name: &str) -> Option<&'static str> {
-    None
+pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
+    super::build_eternal_s1g_v1::kicker_cost_for(name)
 }
 
 /// Overencumbered enchants a player, which `AttachmentDef` doesn't
 /// describe; the module records it.
-pub(super) fn attachment_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn attachment_for(name: &str) -> &'static str {
+    super::build_eternal_s1g_v1::attachment_for(name)
 }
 
 /// No S1f card has flashback.
-pub(super) fn flashback_for(_name: &str) -> String {
-    "None".to_string()
+pub(super) fn flashback_for(name: &str) -> String {
+    super::build_eternal_s1g_v1::flashback_for(name)
 }
 
 /// No S1f card has an alternative cost.
-pub(super) fn alt_cost_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn alt_cost_for(name: &str) -> &'static str {
+    super::build_eternal_s1g_v1::alt_cost_for(name)
 }
 
 /// No S1f card has an evergreen keyword.
-pub(super) fn keywords_for(_name: &str) -> &'static [&'static str] {
-    &[]
+pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
+    super::build_eternal_s1g_v1::keywords_for(name)
 }
 
 /// Card-database tokens for this wave's abilities.
@@ -75,6 +75,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Mycosynth Lattice" => "static:all_permanents_are_artifacts;static:all_objects_are_colorless;static:players_spend_mana_as_though_any_color",
         "Overencumbered" => "enchant:opponent;etb:enchanted_opponent_creates_clue_food_junk;combat:enchanted_opponents_turn_may_pay_one_per_artifact_else_creatures_cant_attack",
         "Junk Token" => "activated:tap_sacrifice_exile_top_card_play_this_turn_sorcery_speed",
-        _ => "none",
+        _ => super::build_eternal_s1g_v1::trigger_recipe_for(name),
     }
 }

@@ -275,12 +275,13 @@ const PORTAL_TRIGGERS: [TriggeredAbilityDef; 2] = [
     ),
 ];
 
-/// Triggered abilities of this module's cards.
+/// Triggered abilities of this module's cards, then of wave S1g's, the
+/// tail of the trigger tables.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         AZURE_BEASTBINDER => &BEASTBINDER_TRIGGERS,
         PORTAL_TO_PHYREXIA => &PORTAL_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_sideboard_s1g_v1::triggers_for(name),
     }
 }
 

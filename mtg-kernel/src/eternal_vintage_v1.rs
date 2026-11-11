@@ -2033,8 +2033,15 @@ pub(crate) fn restrict_produced_mana(
         },
         source_card_def: live.card_def,
     };
+    // "{T}: Add {C}{C}{C}", or one {C} under a Damping Sphere (wave S1g);
+    // the restriction stays on what the ability produced.
+    let added = if crate::eternal_sideboard_s1g_v1::damps(state, source) {
+        1
+    } else {
+        3
+    };
     let seat = &mut state.players[player.index()];
-    let produced = seat.mana_pool[color.pool_index()].min(3);
+    let produced = seat.mana_pool[color.pool_index()].min(added);
     seat.mana_pool[color.pool_index()] -= produced;
     for _ in 0..produced {
         seat.restricted_mana_pool.0.push(unit.clone());

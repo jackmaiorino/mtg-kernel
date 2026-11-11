@@ -21,7 +21,7 @@ mod leyline;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 75] = [
+const PLAYABLE_75: [(&str, &str); 80] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -75,6 +75,11 @@ const PLAYABLE_75: [(&str, &str); 75] = [
     ),
     ("legacy", "legacy-reanimator"),
     ("legacy", "legacy-8-cast"),
+    ("legacy", "legacy-lands"),
+    ("legacy", "legacy-sneak-and-show"),
+    ("legacy", "legacy-sewer-cam-combo"),
+    ("legacy", "legacy-painter"),
+    ("legacy", "legacy-mono-black-midrange"),
     ("vintage", "vintage-esper-lurrus-control"),
     ("vintage", "vintage-dimir-lurrus-control"),
     ("vintage", "vintage-lurrus-po"),

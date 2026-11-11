@@ -1266,6 +1266,17 @@ fn gather_sources_for_spell_restrictions_v1(
             });
         }
     }
+    // Damping Sphere: a land tapped for two or more mana produces one {C}
+    // instead (Legacy wave S1g). The planner's sources that yield more than
+    // one are an assembled Urza land, Serra's Sanctum, Tolarian Academy and
+    // Eldrazi Temple paying for a colorless Eldrazi spell.
+    #[cfg(feature = "eternal-fixtures")]
+    for source in &mut sources {
+        if source.yield_per_tap >= 2 && crate::eternal_sideboard_s1g_v1::damps(state, source.id) {
+            source.choices = vec![ManaColor::C];
+            source.yield_per_tap = 1;
+        }
+    }
     // Contamination: a land tapped for mana produces one {B} instead
     // (Premodern wave P2a).
     #[cfg(feature = "eternal-fixtures")]

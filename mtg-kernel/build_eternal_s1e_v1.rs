@@ -1,6 +1,6 @@
 //! Card-database recipes for the eternal catalog's Vintage sideboard wave
 //! S1e. Wave P3f's tables fall through to these, and these fall through to
-//! wave S1f's (`build_eternal_s1f_v1.rs`), the tail of the recipe chains.
+//! wave S1f's (`build_eternal_s1f_v1.rs`).
 //! Runtime programs live in `src/eternal_sideboard_s1e_v1.rs`. Every row is
 //! keyed by a name that occurs only in the eternal registry.
 
