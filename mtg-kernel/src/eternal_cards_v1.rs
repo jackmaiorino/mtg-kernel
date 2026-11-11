@@ -448,6 +448,9 @@ pub enum EternalOpV1 {
         dungeon: u16,
         room: u16,
     },
+    /// A leaf owned by Premodern sideboard wave P3a's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    P3aV1(crate::eternal_premodern_p3a_v1::P3aOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -512,6 +515,7 @@ impl EternalOpV1 {
             EternalOpV1::OutsideGameV1(op) => op.contains_player_choice(),
             EternalOpV1::S1cV1(op) => op.contains_player_choice(),
             EternalOpV1::S1aV1(op) => op.contains_player_choice(),
+            EternalOpV1::P3aV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -841,6 +845,10 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     if let Some(spec) = crate::eternal_sideboard_s1a_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }
+    // Premodern sideboard wave P3a's queued triggers.
+    if let Some(spec) = crate::eternal_premodern_p3a_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     // Premodern wave P2c.
     if let Some(spec) = crate::eternal_premodern_p2c_v1::trigger_target_spec(name, effect) {
         return Some(spec);
@@ -1055,6 +1063,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::OutsideGameV1(op) => crate::eternal_outside_game_v1::execute(op, ctx, state),
         EternalOpV1::S1cV1(op) => crate::eternal_sideboard_s1c_v1::execute(op, ctx, state),
         EternalOpV1::S1aV1(op) => crate::eternal_sideboard_s1a_v1::execute(op, ctx, state),
+        EternalOpV1::P3aV1(op) => crate::eternal_premodern_p3a_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1817,6 +1826,10 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_premodern_p2d_v1::delayed_triggers(
         state, events,
     ));
+    // Queues into wave P1a's queue, which is drained below.
+    triggers.extend(crate::eternal_premodern_p3a_v1::delayed_triggers(
+        state, events,
+    ));
     triggers.extend(crate::eternal_premodern_p1a_v1::delayed_triggers(
         state, events,
     ));
@@ -1880,6 +1893,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         || crate::eternal_e9b_v1::delayed_effect_matches(name, effect)
         || crate::eternal_sideboard_s1a_v1::delayed_effect_matches(name, effect)
         || crate::eternal_sideboard_s1b_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_premodern_p3a_v1::delayed_effect_matches(name, effect)
     {
         return true;
     }

@@ -12,18 +12,18 @@ contract:
   absent from state bytes and hashes when false, so earlier modes keep theirs.
 - Each policy observation of such a game has `projection.public_shroud`:
   `permanents`, the battlefield permanents with shroud (seat 0's battlefield first, in
-  public battlefield order), and `players`, each seat's shroud (Solitary Confinement).
-  Shroud from any source counts: printed (Argothian Enchantress), granted (Sterling Grove,
-  Sylvan Safekeeper's ability).
+  public battlefield order), and `players`, each seat's shroud (Solitary Confinement,
+  True Believer). Shroud from any source counts: printed (Argothian Enchantress),
+  granted (Sterling Grove, Sylvan Safekeeper's ability).
 - Only this observation lifts the refusal. Every other consumer of the same game (the flat
   policy encoders, earlier observation versions) still refuses shroud, so frozen encoders
   and goldens are unchanged.
 
-Schema 4 never represented a player's shroud either. Its refusal now covers Solitary
-Confinement's player shroud as well as a permanent's, so a schema 4 consumer never
-receives a state it cannot describe.
+Schema 4 never represented a player's shroud either. Its refusal now covers a player's
+shroud (Solitary Confinement, True Believer) as well as a permanent's, so a schema 4
+consumer never receives a state it cannot describe.
 
-Verification: `tests/eternal/eternal_public_shroud_v1.rs` plays Argothian Enchantress and
-Solitary Confinement games through both schemas (schema 5 reports the shroud, schema 4
-halts at the same step with its historical bytes), and the eternal catalog games run on
-schema 5.
+Verification: `tests/eternal/eternal_public_shroud_v1.rs` plays Argothian Enchantress,
+Solitary Confinement and True Believer games through both schemas (schema 5 reports the
+shroud, schema 4 halts at the same step with its historical bytes), and the eternal
+catalog games run on schema 5.

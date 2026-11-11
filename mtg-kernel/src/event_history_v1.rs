@@ -1273,6 +1273,11 @@ impl EventHistoryV1 {
             }
             guard_tests_v1::note_scan(std::panic::Location::caller(), !self.has_any(kinds));
         }
+        // The usual answer is none: the history's own counts give it without
+        // building a kind set or reading the tree.
+        if !self.has_any(kinds) {
+            return self.events.of_no_kinds();
+        }
         self.events
             .of_kinds(kinds.iter().map(|&kind| kind as usize))
     }

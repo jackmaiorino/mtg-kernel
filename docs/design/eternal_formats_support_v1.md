@@ -634,7 +634,10 @@ New, each built once in the first wave that needs it:
   the failures were confined to Portent and the copied Show and Tell fixture.
   The physical paid Portent successor binds
   its original cast, targeted-library look/order and optional shuffle before
-  scheduling the caster's draw at the next turn's upkeep. The delayed trigger
+  scheduling the caster's draw at the next turn's upkeep. A native retarget
+  while it is on the stack (Misdirection) journals an authenticated rebinding
+  of the paid row, so the look follows the new target; a control change of the
+  paid spell (Commandeer) still fails closed. The delayed trigger
   retains the original spell contract after source departure and the native
   APNAP publication path. Each draw attempt uses the common Started/Completed
   owner for Jace, Hullbreacher, Dredge and one Riddler adjustment, with terminal
@@ -973,6 +976,7 @@ reporting as E1 to E9:
 | P2b | Survival, Madness Threshold, and the cards Elves shares with them (17 of 19; Birchlore Rangers and Thornscape Battlemage stay out) | 17 | Survival and Madness Threshold playable (4%); Elves needs Birchlore Rangers, Thornscape Battlemage and wave P2a's Genesis and Wall of Blossoms |
 | P2c | Reanimator, Full English Breakfast (20 Full cards and Partial Volrath's Shapeshifter) | 20 Full | Reanimator playable; Full English Breakfast needs owning gameplay qualification |
 | Elves follow-up | Birchlore Rangers and Thornscape Battlemage | 2 | Elves mainboard integrated in #613 with both-seat public-session terminal and replay qualification |
+| P3a | Sideboards of Stiflenought, Sligh, Goblins, Oath of Druids, RG Aggro, Stasis and White Weenie (Anarchy, Chill, Crimson Acolyte, Cursed Totem, Essence Flare, Overload, Pyrostatic Pillar, Sphere of Law, Tranquil Domain, True Believer, Warmth) | 11 | Premodern full 75 0% to 34% |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -1274,3 +1278,67 @@ and Wall of Blossoms from wave P2a.
 Echo ignores a change of control between entering and the upkeep. Glory's protection applies
 to the creatures its controller controls as it resolves. Madness Threshold's Blastoderm and Vintara Snapper have
 shroud, so its games need the public shroud representation of Limited schema 5.
+
+### P3a: Premodern sideboards
+
+With S1 merged, every Premodern mainboard but Full English Breakfast's is Full (87.0% of the
+snapshot's 90.0%), and no full 75 is. The census lists 46 missing sideboard cards among the
+playable lists. P3a adds the eleven that complete seven 75s, the largest share per card:
+
+| Deck | Share | Missing sideboard cards |
+| --- | ---: | --- |
+| Stiflenought | 9% | Essence Flare |
+| Sligh | 8% | Anarchy, Overload, Pyrostatic Pillar |
+| Goblins | 7% | Anarchy, Overload |
+| Oath of Druids | 5% | Sphere of Law, Tranquil Domain, Warmth |
+| RG Aggro | 2% | Overload, Tranquil Domain |
+| Stasis | 2% | Chill, Cursed Totem |
+| White Weenie | 1% | Crimson Acolyte, True Believer |
+
+The full 75 share goes from 0% to 34% of the field. The seven decks join `PLAYABLE_75` and play
+the S2 best-of-three harness with random sideboarding.
+
+P3a is built in `src/eternal_premodern_p3a_v1.rs` (with a `statics` submodule) and
+`build_eternal_p3a_v1.rs`, the new tail of the recipe chain after wave P2b. Behavior follows
+each card's current Oracle text, checked against its XMage source:
+
+- Anarchy destroys all white permanents and Tranquil Domain all non-Aura enchantments, at once,
+  with P1a's batch: regeneration applies and indestructible permanents stay. Anarchy reads each
+  permanent's current colors (Painter's Servant, Wild Mongrel); Tranquil Domain reads current
+  types and subtypes, so Opalescence's animated enchantments and Urza's Saga are destroyed.
+- Overload uses the engine's single kicker decision. On resolution it destroys its target if the
+  artifact's current mana value is at most 2, or at most 5 when kicked. A token or face-down
+  artifact has mana value 0.
+- Pyrostatic Pillar and Warmth trigger from the cast event, after costs are paid, reading the
+  spell on the stack: a split half's own mana value and colors, announced X included. Copies are
+  not cast. The Pillar's trigger is controlled by the Pillar's controller and deals 2 damage to
+  the caster, from the Pillar, even if the spell was countered or the Pillar has left. Warmth
+  triggers only for spells its controller's opponent casts.
+- Chill adds {2} to the total cost of each red spell for each Chill, with the other increases:
+  also when the spell is cast without paying its mana cost, and before Trinisphere. The color is
+  the cast form's: a split half's or Adventure's own cost, colorless face down (Disguise and
+  morph), plus Painter's Servant's color.
+- Cursed Totem prohibits the activated abilities of creatures on the battlefield, mana abilities
+  and the automatic payment planner included, through the gate Null Rod and Clarion Conqueror
+  use. Abilities of creature cards in other zones (cycling, ninjutsu, Eternal Dragon) are
+  unaffected. Animated lands and Opalescence's enchantments are creatures while animated. Granted
+  abilities that skipped that gate (Katilda's mana, Rain of Filth's sacrifice) now check it.
+- Crimson Acolyte has printed protection from red, and its {W} ability gives any target creature
+  protection from red until end of turn, as one of wave E9a's protection records.
+- True Believer gives its controller shroud. Player shroud is now Solitary Confinement's or True
+  Believer's; only Solitary Confinement still prevents damage and skips the draw. Limited schema
+  5's public shroud reports the player, and schema 4 consumers refuse the game as before.
+- Sphere of Law prevents 2 of each damage event from a red source to its controller, for each
+  Sphere, unless damage can't be prevented. It applies first, before Twinflame Tyrant's and Ojer
+  Axonil's increases, redirection and every shield, so damage it absorbs spends no shield. The
+  source's color is the damage event's (a captured departure's color when one is recorded).
+- Essence Flare is an enchant creature Aura with +2/+0. As the enchanted creature's controller's
+  upkeep begins, the Aura's controller's trigger is queued with that creature bound, and it puts
+  a -0/-1 counter on the creature if it is still on the battlefield, through the counter
+  placement that applies Doubling Season.
+
+Known gaps:
+- The affected player does not choose the order of Sphere of Law and other replacement effects
+  (616.1). Sphere first is the best order except against Ojer Axonil's increase of damage above 2.
+- Sphere of Law reads an ordinary departed source's color in its current zone, as every
+  color-based prevention here does: a dead Wild Mongrel's chosen color is gone.

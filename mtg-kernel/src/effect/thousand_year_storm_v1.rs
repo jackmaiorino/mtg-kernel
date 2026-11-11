@@ -318,6 +318,126 @@ fn storm_rows(state: &GameState) -> impl Iterator<Item = (usize, &event::Committ
 fn storm_events(state: &GameState) -> impl Iterator<Item = &event::CommittedEvent> {
     storm_rows(state).map(|(_, event)| event)
 }
+/// The Storm rows, by what the checks below look them up by. While a
+/// `borrow_memo_v1` scope holds the state, one pass builds this and every
+/// lookup reads it; without a scope each lookup scans the Storm rows.
+struct IndexV1 {
+    /// Positions of every Storm row, ascending.
+    rows: Vec<usize>,
+    /// Cast receipts by spell-cast event and by spell stack item id.
+    cast_events: std::collections::HashMap<u64, usize>,
+    cast_spells: std::collections::HashMap<StackItemId, usize>,
+    /// Collections by cast receipt.
+    collected: std::collections::HashMap<u64, usize>,
+    /// Publications by item, and copies by trigger, at ascending positions.
+    published: std::collections::HashMap<StackItemId, Vec<usize>>,
+    copies: std::collections::HashMap<StackItemId, Vec<usize>>,
+}
+struct IndexKeyV1;
+fn index(state: &GameState) -> Option<std::rc::Rc<IndexV1>> {
+    if !crate::borrow_memo_v1::active(state) {
+        return None;
+    }
+    Some(crate::borrow_memo_v1::cached::<IndexKeyV1, (), _>(
+        state,
+        (),
+        || {
+            let mut index = IndexV1 {
+                rows: vec![],
+                cast_events: Default::default(),
+                cast_spells: Default::default(),
+                collected: Default::default(),
+                published: Default::default(),
+                copies: Default::default(),
+            };
+            for (at, e) in storm_rows(state) {
+                let event::CommittedEvent::ThousandYearStormV1 { journal } = e else {
+                    continue;
+                };
+                index.rows.push(at);
+                match journal {
+                    JournalV1::Cast { event, spell, .. } => {
+                        *index.cast_events.entry(*event).or_default() += 1;
+                        *index.cast_spells.entry(spell.v4.stack_item_id).or_default() += 1;
+                    }
+                    JournalV1::Collected { cast } => {
+                        *index.collected.entry(*cast).or_default() += 1;
+                    }
+                    JournalV1::Published { item, .. } => {
+                        index
+                            .published
+                            .entry(item.v4.stack_item_id)
+                            .or_default()
+                            .push(at);
+                    }
+                    JournalV1::Copy { trigger, .. } => {
+                        index.copies.entry(*trigger).or_default().push(at);
+                    }
+                    JournalV1::CastForm { .. } | JournalV1::TargetFaces { .. } => {}
+                }
+            }
+            std::rc::Rc::new(index)
+        },
+    ))
+}
+/// How many cast receipts name this spell-cast event.
+fn cast_event_count(state: &GameState, event: &u64) -> usize {
+    match index(state) {
+        Some(index) => index.cast_events.get(event).copied().unwrap_or(0),
+        None => storm_events(state).filter(|e|matches!(e,event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Cast{event:i,..}}if i==event)).count(),
+    }
+}
+/// How many cast receipts hold a spell with this stack item id.
+fn cast_spell_count(state: &GameState, id: StackItemId) -> usize {
+    match index(state) {
+        Some(index) => index.cast_spells.get(&id).copied().unwrap_or(0),
+        None => storm_events(state).filter(|e|matches!(e,event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Cast{spell:other,..}} if other.v4.stack_item_id==id)).count(),
+    }
+}
+/// How many collections name this cast receipt.
+fn collected_count(state: &GameState, cast: &u64) -> usize {
+    match index(state) {
+        Some(index) => index.collected.get(cast).copied().unwrap_or(0),
+        None => storm_events(state).filter(|e|matches!(e,event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Collected{cast:c}}if c==cast)).count(),
+    }
+}
+/// The published items with this stack item id, at positions before `before`.
+fn published_items(state: &GameState, id: StackItemId, before: usize) -> Vec<&StackItem> {
+    fn item(e: &event::CommittedEvent, id: StackItemId) -> Option<&StackItem> {
+        match e {
+            event::CommittedEvent::ThousandYearStormV1 {
+                journal: JournalV1::Published { item, .. },
+            } if item.v4.stack_item_id == id => Some(item.as_ref()),
+            _ => None,
+        }
+    }
+    let Some(index) = index(state) else {
+        return storm_rows(state)
+            .take_while(|(at, _)| *at < before)
+            .filter_map(|(_, e)| item(e, id))
+            .collect();
+    };
+    let Some(rows) = index.published.get(&id) else {
+        return vec![];
+    };
+    rows.iter()
+        .take_while(|at| **at < before)
+        .filter_map(|at| item(state.engine.event_history.get(*at)?, id))
+        .collect()
+}
+/// The copy rows of this trigger, in history order.
+fn copy_rows(state: &GameState, trigger: StackItemId) -> Vec<&event::CommittedEvent> {
+    let Some(index) = index(state) else {
+        return storm_events(state).collect();
+    };
+    index
+        .copies
+        .get(&trigger)
+        .into_iter()
+        .flatten()
+        .filter_map(|at| state.engine.event_history.get(*at))
+        .collect()
+}
 fn instant_or_sorcery(spell: &StackItem) -> Result<bool, String> {
     let source = spell
         .v4
@@ -421,7 +541,23 @@ pub(crate) fn record_cast(
     }
     Ok(())
 }
+struct CastKeyV1;
 pub(crate) fn cast_at(
+    state: &GameState,
+    index: u64,
+) -> Result<(&StackItem, &[AbilitySourceContractV4]), String> {
+    crate::borrow_memo_v1::cached::<CastKeyV1, u64, Result<(), String>>(state, index, || {
+        find_cast(state, index).map(|_| ())
+    })?;
+    let JournalV1::Cast {
+        spell, observers, ..
+    } = at(state, index)?
+    else {
+        return Err("Storm receipt is not a cast".into());
+    };
+    Ok((spell, observers))
+}
+fn find_cast(
     state: &GameState,
     index: u64,
 ) -> Result<(&StackItem, &[AbilitySourceContractV4]), String> {
@@ -433,11 +569,20 @@ pub(crate) fn cast_at(
     else {
         return Err("Storm receipt is not a cast".into());
     };
-    if event.checked_add(1)!=Some(index)||spell.is_copy||!instant_or_sorcery(spell)?
-        ||state.engine.event_history.get(*event as usize)!=Some(&event::CommittedEvent::SpellCast{spell:spell.source,controller:spell.controller})
-        ||storm_events(state).filter(|e|matches!(e,event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Cast{event:i,..}}if i==event)).count()!=1
-        ||!observers.windows(2).all(|p|p[0].source<p[1].source) {return Err("Storm cast/observer occurrence changed".into())}
-    if storm_events(state).filter(|e|matches!(e,event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Cast{spell:other,..}} if other.v4.stack_item_id==spell.v4.stack_item_id)).count()!=1 {
+    if event.checked_add(1) != Some(index)
+        || spell.is_copy
+        || !instant_or_sorcery(spell)?
+        || state.engine.event_history.get(*event as usize)
+            != Some(&event::CommittedEvent::SpellCast {
+                spell: spell.source,
+                controller: spell.controller,
+            })
+        || cast_event_count(state, event) != 1
+        || !observers.windows(2).all(|p| p[0].source < p[1].source)
+    {
+        return Err("Storm cast/observer occurrence changed".into());
+    }
+    if cast_spell_count(state, spell.v4.stack_item_id) != 1 {
         return Err("Storm actual finalized cast was replayed".into());
     }
     if state.thousand_year_storm_consumer_v1 {
@@ -455,7 +600,13 @@ pub(crate) fn cast_at(
     }
     Ok((spell, observers))
 }
+struct CountKeyV1;
 pub(crate) fn count(state: &GameState, index: u64) -> Result<u16, String> {
+    crate::borrow_memo_v1::cached::<CountKeyV1, u64, Result<u16, String>>(state, index, || {
+        count_uncached(state, index)
+    })
+}
+fn count_uncached(state: &GameState, index: u64) -> Result<u16, String> {
     casts::validate_roster(state)?;
     let (spell, _) = cast_at(state, index)?;
     let start = state
@@ -466,10 +617,21 @@ pub(crate) fn count(state: &GameState, index: u64) -> Result<u16, String> {
         .rposition(|e| matches!(e, event::CommittedEvent::LifeLossTurnBeganV1 { .. }))
         .map_or(0, |i| i + 1);
     let mut count = 0u16;
-    for (i, e) in storm_rows(state)
-        .skip_while(|(i, _)| *i < start)
-        .take_while(|(i, _)| *i < index as usize)
-    {
+    let rows: Vec<(usize, &event::CommittedEvent)> = match self::index(state) {
+        Some(found) => {
+            let low = found.rows.partition_point(|at| *at < start);
+            let high = found.rows.partition_point(|at| *at < index as usize);
+            found.rows[low..high.max(low)]
+                .iter()
+                .filter_map(|at| state.engine.event_history.get(*at).map(|e| (*at, e)))
+                .collect()
+        }
+        None => storm_rows(state)
+            .skip_while(|(i, _)| *i < start)
+            .take_while(|(i, _)| *i < index as usize)
+            .collect(),
+    };
+    for (i, e) in rows {
         if let event::CommittedEvent::ThousandYearStormV1 {
             journal: JournalV1::Cast { spell: prior, .. },
         } = e
@@ -558,15 +720,32 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
         .v4
         .ability_source_contract
         .ok_or("Storm captured observer absent")?;
-    if item.kind!=crate::state::StackItemKind::TriggeredAbility||item.source!=source.source||item.controller!=source.controller
-        ||!cast_at(state,index)?.1.contains(&source)||item.inline_effect.as_ref()!=Some(&program(state,index)?)
-        ||!item.targets.is_empty()||!item.v4.target_contracts.is_empty()||item.v4.target_spec.is_some()
-        ||item.is_copy||item.is_flashback||item.madness_offer||item.kicked||item.mode_chosen!=0
-        ||!item.discarded.is_empty()||!item.v4.paid_cost_refs.is_empty()||item.v4.optional_additional_cost_paid.is_some()
-        ||item.v4.source_contract.is_some()||item.v4.cast_method.is_some()||item.v4.activated_ability_index.is_some()
-        ||item.v4.granted_by.is_some()||item.v4.hidden_ability_source.is_some()||item.v4.cauldron_grant.0.is_some()||item.v4.x_value!=0
-        ||storm_events(state).filter(|e|matches!(e,event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Collected{cast}}if *cast==index)).count()!=1 {
-        return Err("Storm original source/controller/program metadata changed".into())
+    if item.kind != crate::state::StackItemKind::TriggeredAbility
+        || item.source != source.source
+        || item.controller != source.controller
+        || !cast_at(state, index)?.1.contains(&source)
+        || item.inline_effect.as_ref() != Some(&program(state, index)?)
+        || !item.targets.is_empty()
+        || !item.v4.target_contracts.is_empty()
+        || item.v4.target_spec.is_some()
+        || item.is_copy
+        || item.is_flashback
+        || item.madness_offer
+        || item.kicked
+        || item.mode_chosen != 0
+        || !item.discarded.is_empty()
+        || !item.v4.paid_cost_refs.is_empty()
+        || item.v4.optional_additional_cost_paid.is_some()
+        || item.v4.source_contract.is_some()
+        || item.v4.cast_method.is_some()
+        || item.v4.activated_ability_index.is_some()
+        || item.v4.granted_by.is_some()
+        || item.v4.hidden_ability_source.is_some()
+        || item.v4.cauldron_grant.0.is_some()
+        || item.v4.x_value != 0
+        || collected_count(state, &index) != 1
+    {
+        return Err("Storm original source/controller/program metadata changed".into());
     }
     Ok(())
 }
@@ -594,7 +773,10 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
     Ok(())
 }
 fn published_id(state: &GameState, id: StackItemId) -> bool {
-    storm_events(state).any(|e|matches!(e,event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Published{item,..}}if item.v4.stack_item_id==id))
+    match index(state) {
+        Some(index) => index.published.contains_key(&id),
+        None => storm_events(state).any(|e|matches!(e,event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Published{item,..}}if item.v4.stack_item_id==id)),
+    }
 }
 pub(crate) fn selected(state: &GameState, item: &StackItem) -> bool {
     item.inline_effect.as_ref().is_some_and(recipe) || published_id(state, item.v4.stack_item_id)
@@ -615,14 +797,7 @@ pub(crate) fn waiting(state: &GameState, ctx: &ExecCtx) -> bool {
 }
 pub(crate) fn validate_published(state: &GameState, item: &StackItem) -> Result<(), String> {
     validate_item(state, item)?;
-    let found = storm_events(state)
-        .filter_map(|e| match e {
-            event::CommittedEvent::ThousandYearStormV1 {
-                journal: JournalV1::Published { item: r, .. },
-            } if r.v4.stack_item_id == item.v4.stack_item_id => Some(r.as_ref()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let found = published_items(state, item.v4.stack_item_id, usize::MAX);
     if found != [item] {
         return Err("Storm full original published row changed".into());
     }
@@ -630,7 +805,7 @@ pub(crate) fn validate_published(state: &GameState, item: &StackItem) -> Result<
 }
 fn copies(state: &GameState, item: &StackItem) -> Result<u16, String> {
     let mut n = 0u16;
-    for e in storm_events(state) {
+    for e in copy_rows(state, item.v4.stack_item_id) {
         if let event::CommittedEvent::ThousandYearStormV1 {
             journal:
                 JournalV1::Copy {
@@ -805,6 +980,7 @@ pub(crate) fn exact_cast_tail(state: &GameState, index: usize, spell: &StackItem
 
 /// Structural validation of the new occurrence roster, within the existing raw-world contract.
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
     casts::validate_roster(state)?;
     targets::validate_state(state)?;
     for (index, e) in storm_rows(state) {
@@ -822,7 +998,9 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
             JournalV1::Collected { cast } => {
                 cast_at(state, *cast)?;
-                if *cast>=index as u64||storm_events(state).filter(|e|matches!(e,event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Collected{cast:c}}if c==cast)).count()!=1{return Err("Storm collection order or uniqueness changed".into())}
+                if *cast >= index as u64 || collected_count(state, cast) != 1 {
+                    return Err("Storm collection order or uniqueness changed".into());
+                }
             }
             JournalV1::Published { cast, item } => {
                 if *cast >= index as u64
@@ -837,15 +1015,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 validate_published(state, item)?;
             }
             JournalV1::Copy { trigger, .. } => {
-                let rows = storm_rows(state)
-                    .take_while(|(at, _)| *at < index)
-                    .filter_map(|(_, e)| match e {
-                        event::CommittedEvent::ThousandYearStormV1 {
-                            journal: JournalV1::Published { item, .. },
-                        } if item.v4.stack_item_id == *trigger => Some(item.as_ref()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
+                let rows = published_items(state, *trigger, index);
                 let [row] = rows.as_slice() else {
                     return Err("Storm copy lost original published trigger".into());
                 };
