@@ -80,6 +80,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 
+mod accumulate_transposed_v1;
 mod archive_distillation_v1;
 mod carryover_probe_v1;
 mod e_supported_policy_v1;

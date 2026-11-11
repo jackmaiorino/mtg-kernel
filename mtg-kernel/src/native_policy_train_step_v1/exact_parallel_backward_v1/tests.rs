@@ -546,6 +546,301 @@ fn the_input_gradient_from_a_first_read_column_matches_the_sequential_sink() {
     }
 }
 
+/// The reference sink and the transposed sequential sink on the same calls.
+struct ReferenceAndTransposedV1 {
+    /// The gradients: the reference's, then the transposed sink's.
+    gradients: [Vec<Vec<f32>>; 2],
+    /// Every layer's input gradient, in the same order.
+    d_inputs: [Vec<Vec<f32>>; 2],
+    /// The layers accumulated transposed, and those of them whose zero
+    /// inputs were passed over.
+    layers: (u64, u64),
+    /// Whether the scorer's second layer, whose bias takes its rows from the
+    /// last one back, was accumulated transposed over two rows or more.
+    reversed_bias: bool,
+}
+
+fn reference_and_transposed_v1(
+    bits: &mut TestBitsV1,
+    hidden: usize,
+    values: HiddenWidthValuesV1,
+) -> ReferenceAndTransposedV1 {
+    use super::super::accumulate_transposed_v1::{
+        transposed_layers_for_test_v1, AccumulateTransposedV1,
+    };
+    let parameters = hidden_width_parameters_v1(bits, hidden);
+    let mut substeps = hidden_width_substeps_v1(&parameters, bits, values);
+    // Cards as well: padding and repeated tokens.
+    let objects = 1 + bits.below(6);
+    let vocabulary = parameters[CARD_EMBEDDING].shape[0];
+    substeps.push(vec![SinkCallV1::Cards {
+        object_card_ids: (0..objects).map(|_| bits.below(vocabulary)).collect(),
+        d_object_input: bits.values(objects * OBJECT_ENCODER_INPUT),
+    }]);
+    let reversed_bias = parameters[SCORER_SECOND_WEIGHT].shape[0] == hidden
+        && substeps.iter().flatten().any(|call| {
+            matches!(
+                call,
+                SinkCallV1::Linear { weight_index, rows, .. }
+                    if *weight_index == SCORER_SECOND_WEIGHT && *rows >= 2
+            )
+        });
+
+    let mut expected = parameters
+        .iter()
+        .map(|parameter| vec![0.0f32; parameter.values.len()])
+        .collect::<Vec<_>>();
+    let mut expected_d_inputs = Vec::new();
+    for calls in &substeps {
+        expected_d_inputs.extend(run_calls_v1(
+            &parameters,
+            calls,
+            &mut AccumulateGradientsV1(&mut expected),
+        ));
+    }
+
+    let before = transposed_layers_for_test_v1();
+    let mut gradients = match hidden {
+        HIDDEN_DIM_V1 => GradientTensorsV1::zeroed_dims_v1::<Net8DimsV1>(&parameters),
+        _ => GradientTensorsV1::zeroed_dims_v1::<Net8W128DimsV1>(&parameters),
+    };
+    let mut sink = AccumulateTransposedV1::new_v1(&mut gradients);
+    let mut d_inputs = Vec::new();
+    for calls in &substeps {
+        d_inputs.extend(run_calls_v1(&parameters, calls, &mut sink));
+    }
+    let after = transposed_layers_for_test_v1();
+    ReferenceAndTransposedV1 {
+        gradients: [expected, gradients.into_gradients_v1()],
+        d_inputs: [expected_d_inputs, d_inputs],
+        layers: (after.0 - before.0, after.1 - before.1),
+        reversed_bias,
+    }
+}
+
+/// The sequential sink that accumulates hidden-width gradients transposed
+/// leaves every gradient and every input gradient exactly as the reference
+/// sink leaves them, at both hidden widths, and passes over the zero inputs
+/// of every layer while it does.
+#[test]
+fn the_transposed_sequential_sink_keeps_every_bit() {
+    let mut bits = TestBitsV1(0x4528_21e6_38d0_1377);
+    let (mut layers, mut passing, mut reversed_bias) = (0, 0, 0);
+    for round in 0..120 {
+        let hidden = [HIDDEN_DIM_V1, W_HIDDEN_DIM_V1][round % 2];
+        let run = reference_and_transposed_v1(&mut bits, hidden, HiddenWidthValuesV1::Sparse);
+        let [expected, actual] = &run.gradients;
+        assert_eq!(bits_v1(actual), bits_v1(expected), "round {round}");
+        let [expected, actual] = &run.d_inputs;
+        assert_eq!(bits_v1(actual), bits_v1(expected), "round {round}");
+        layers += run.layers.0;
+        passing += run.layers.1;
+        reversed_bias += usize::from(run.reversed_bias);
+    }
+    assert!(layers > 500, "{layers}");
+    // The scorer's bias order was among the transposed layers.
+    assert!(reversed_bias >= 5, "{reversed_bias}");
+    #[cfg(target_arch = "x86_64")]
+    assert_eq!(passing, layers);
+    #[cfg(not(target_arch = "x86_64"))]
+    assert_eq!(passing, 0);
+}
+
+/// With infinities, NaNs and overflow among the inputs and the output
+/// gradients, every element is what the reference sink makes it: the same
+/// bits, or a NaN where that is a NaN. A layer whose output gradient is not
+/// finite keeps every term.
+#[test]
+fn the_transposed_sequential_sink_keeps_values_that_are_not_finite() {
+    let mut bits = TestBitsV1(0xbe54_66cf_34e9_0c6c);
+    let (mut nans, mut infinities) = (0, 0);
+    let (mut layers, mut passing) = (0, 0);
+    for round in 0..120 {
+        let hidden = [HIDDEN_DIM_V1, W_HIDDEN_DIM_V1][round % 2];
+        let run = reference_and_transposed_v1(&mut bits, hidden, HiddenWidthValuesV1::NotFinite);
+        let [expected, actual] = &run.gradients;
+        assert_eq!(
+            bits_with_one_nan_v1(actual),
+            bits_with_one_nan_v1(expected),
+            "round {round}"
+        );
+        for value in expected.iter().flatten() {
+            nans += usize::from(value.is_nan());
+            infinities += usize::from(value.is_infinite());
+        }
+        let [expected, actual] = &run.d_inputs;
+        assert_eq!(
+            bits_with_one_nan_v1(actual),
+            bits_with_one_nan_v1(expected),
+            "round {round}"
+        );
+        layers += run.layers.0;
+        passing += run.layers.1;
+    }
+    assert!(nans > 100 && infinities > 100, "{nans} {infinities}");
+    // Some layers had an output gradient that is not finite.
+    assert!(passing < layers, "{passing} {layers}");
+}
+
+/// A layer added outside the pinned state ends the passing over for the
+/// rest of the backward. Rounding down, a cancellation and a negative zero
+/// term both leave a negative zero, and back in the pinned state the next
+/// zero term makes it positive: the reference's bits need that term.
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn a_layer_outside_the_pinned_state_ends_the_passing_over() {
+    use super::super::accumulate_transposed_v1::{
+        transposed_layers_for_test_v1, AccumulateTransposedV1,
+    };
+    use crate::deterministic_math_v1::{read_mxcsr_v1, write_mxcsr_v1};
+    struct Restore(u32);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            write_mxcsr_v1(self.0);
+        }
+    }
+    let restore = Restore(read_mxcsr_v1());
+    const ROUND_DOWN: u32 = 1 << 13;
+    const HIDDEN: usize = HIDDEN_DIM_V1;
+    let tensor = |shape: Vec<usize>| NativeNamedParameterV1 {
+        name: "synthetic",
+        values: vec![0.5; shape.iter().product()],
+        shape,
+    };
+    let parameters = vec![
+        tensor(vec![2, CARD_EMBEDDING_DIM_V1]),
+        tensor(vec![HIDDEN, 2]),
+        tensor(vec![HIDDEN]),
+    ];
+    let d_output = vec![1.0f32; HIDDEN];
+    // In the pinned state, rounding down, and in the pinned state again.
+    let layers: [(u32, [f32; 2]); 3] =
+        [(0, [1.0, 0.0]), (ROUND_DOWN, [-1.0, -0.0]), (0, [0.0, 0.0])];
+    let run = |sink: &mut dyn FnMut(&[f32], &mut Vec<f32>), count: usize| {
+        let mut d_inputs = Vec::new();
+        for (dirty, input) in &layers[..count] {
+            let mut d_input = Vec::new();
+            write_mxcsr_v1(restore.0 | dirty);
+            sink(input, &mut d_input);
+            write_mxcsr_v1(restore.0);
+            d_inputs.push(d_input);
+        }
+        d_inputs
+    };
+
+    let mut expected = parameters
+        .iter()
+        .map(|parameter| vec![0.0f32; parameter.values.len()])
+        .collect::<Vec<_>>();
+    let expected_d_inputs = run(
+        &mut |input, d_input| {
+            AccumulateGradientsV1(&mut expected)
+                .linear_v1(&parameters, 1, 2, input, 1, 2, HIDDEN, &d_output, d_input)
+                .unwrap()
+        },
+        3,
+    );
+    // The reference ends on positive zeros.
+    assert!(expected[1].iter().all(|value| value.to_bits() == 0));
+
+    let before = transposed_layers_for_test_v1();
+    let mut gradients = GradientTensorsV1::zeroed_dims_v1::<Net8DimsV1>(&parameters);
+    let mut sink = AccumulateTransposedV1::new_v1(&mut gradients);
+    let d_inputs = run(
+        &mut |input, d_input| {
+            sink.linear_v1(&parameters, 1, 2, input, 1, 2, HIDDEN, &d_output, d_input)
+                .unwrap()
+        },
+        3,
+    );
+    let after = transposed_layers_for_test_v1();
+    // Three layers, and only the first passed over its zero input.
+    assert_eq!((after.0 - before.0, after.1 - before.1), (3, 1));
+    assert_eq!(bits_v1(&gradients.into_gradients_v1()), bits_v1(&expected));
+    assert_eq!(bits_v1(&d_inputs), bits_v1(&expected_d_inputs));
+
+    // After the second layer every element is a negative zero, so passing
+    // over the third layer's zero inputs would have kept the wrong sign.
+    let mut gradients = GradientTensorsV1::zeroed_dims_v1::<Net8DimsV1>(&parameters);
+    let mut sink = AccumulateTransposedV1::new_v1(&mut gradients);
+    run(
+        &mut |input, d_input| {
+            sink.linear_v1(&parameters, 1, 2, input, 1, 2, HIDDEN, &d_output, d_input)
+                .unwrap()
+        },
+        2,
+    );
+    let all_are =
+        |values: &[f32], zero: f32| values.iter().all(|value| value.to_bits() == zero.to_bits());
+    assert!(all_are(&gradients.input_major[1], -0.0));
+    let third = &layers[2].1;
+    add_input_major_layer_v1(
+        HIDDEN,
+        &mut gradients.input_major[1],
+        third,
+        2,
+        &d_output,
+        true,
+    );
+    assert!(all_are(&gradients.input_major[1], -0.0));
+    // Every term added, they are the reference's positive zeros.
+    add_input_major_layer_v1(
+        HIDDEN,
+        &mut gradients.input_major[1],
+        third,
+        2,
+        &d_output,
+        false,
+    );
+    assert!(all_are(&gradients.input_major[1], 0.0));
+}
+
+/// A layer call whose output width is not the one the transposed tensor
+/// was laid out for is refused before any arithmetic.
+#[test]
+fn the_transposed_sequential_sink_refuses_another_width() {
+    use super::super::accumulate_transposed_v1::AccumulateTransposedV1;
+    let tensor = |shape: Vec<usize>| NativeNamedParameterV1 {
+        name: "synthetic",
+        values: vec![0.5; shape.iter().product()],
+        shape,
+    };
+    let parameters = vec![
+        tensor(vec![2, CARD_EMBEDDING_DIM_V1]),
+        tensor(vec![HIDDEN_DIM_V1, 2 * HIDDEN_DIM_V1]),
+        tensor(vec![2 * HIDDEN_DIM_V1]),
+    ];
+    let mut gradients = GradientTensorsV1::zeroed_dims_v1::<Net8DimsV1>(&parameters);
+    let before = gradients.input_major[1].clone();
+    assert!(!before.is_empty());
+    let mut sink = AccumulateTransposedV1::new_v1(&mut gradients);
+    // The same element count with the two dimensions exchanged, which the
+    // reference's own checks let through.
+    let input = vec![1.0f32; HIDDEN_DIM_V1];
+    let d_output = vec![1.0f32; 2 * HIDDEN_DIM_V1];
+    let mut d_input = Vec::new();
+    let refused = sink.linear_v1(
+        &parameters,
+        1,
+        2,
+        &input,
+        1,
+        HIDDEN_DIM_V1,
+        2 * HIDDEN_DIM_V1,
+        &d_output,
+        &mut d_input,
+    );
+    assert!(matches!(
+        refused,
+        Err(NativePolicyTrainErrorV1::ParameterManifest)
+    ));
+    assert!(d_input.is_empty());
+    assert_eq!(
+        bits_v1(&[gradients.input_major[1].clone()]),
+        bits_v1(&[before])
+    );
+}
+
 #[test]
 fn a_card_token_outside_the_embedding_panics_like_the_sequential_sink() {
     let parameters = synthetic_parameters_v1(&mut TestBitsV1(7));

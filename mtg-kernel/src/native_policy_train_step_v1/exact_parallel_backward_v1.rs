@@ -224,18 +224,20 @@ enum GradientLayoutV1 {
     InputMajor,
 }
 
-/// Phase B's gradient tensors. A hidden-width weight accumulates transposed
-/// and every other tensor in its own shape; all of them start at +0.0.
-struct GradientTensorsV1 {
-    gradients: Vec<Vec<f32>>,
+/// The backward's gradient tensors. A hidden-width weight accumulates
+/// transposed and every other tensor in its own shape; all of them start at
+/// +0.0. Phase B fills them in row blocks, and the sequential backward layer
+/// by layer (`AccumulateTransposedV1`).
+pub(super) struct GradientTensorsV1 {
+    pub(super) gradients: Vec<Vec<f32>>,
     /// By parameter index: the `[input, hidden]` transpose of a `[hidden,
     /// input]` weight's gradient, or empty for a tensor that is not one.
-    input_major: Vec<Vec<f32>>,
-    hidden: usize,
+    pub(super) input_major: Vec<Vec<f32>>,
+    pub(super) hidden: usize,
 }
 
 impl GradientTensorsV1 {
-    fn zeroed_dims_v1<D: NetDimsV1>(parameters: &[NativeNamedParameterV1]) -> Self {
+    pub(super) fn zeroed_dims_v1<D: NetDimsV1>(parameters: &[NativeNamedParameterV1]) -> Self {
         let hidden = D::HIDDEN;
         // The widths `replay_input_major_v1` is built for.
         let replayed_transposed = matches!(hidden, HIDDEN_DIM_V1 | W_HIDDEN_DIM_V1);
@@ -265,8 +267,24 @@ impl GradientTensorsV1 {
         }
     }
 
+    /// Every tensor in its own shape and none transposed, which is what the
+    /// reference's loops fill.
+    #[cfg(test)]
+    pub(super) fn in_parameter_shapes_v1<D: NetDimsV1>(
+        parameters: &[NativeNamedParameterV1],
+    ) -> Self {
+        Self {
+            gradients: parameters
+                .iter()
+                .map(|parameter| vec![0.0; parameter.values.len()])
+                .collect(),
+            input_major: vec![Vec::new(); parameters.len()],
+            hidden: D::HIDDEN,
+        }
+    }
+
     /// Every gradient in its parameter's shape.
-    fn into_gradients_v1(self) -> Vec<Vec<f32>> {
+    pub(super) fn into_gradients_v1(self) -> Vec<Vec<f32>> {
         let Self {
             mut gradients,
             input_major,
@@ -628,7 +646,7 @@ fn gradient_blocks_dims_v1<'v, D: NetDimsV1>(
 /// on: for each row, the outputs' terms in output order. Elements are
 /// independent, so the vector width changes no bit (AVX2 does not enable
 /// FMA).
-fn input_gradient_rows_v1(
+pub(super) fn input_gradient_rows_v1(
     weight: &[f32],
     input_dim: usize,
     output_dim: usize,
@@ -904,27 +922,115 @@ fn replay_input_major_v1<const N: usize>(
                 ZERO_INPUT_ROWS_PASSED_FOR_TEST_V1
                     .with(|rows| rows.set(rows.get() + linear.rows as u64));
             }
-            for (input_row, d_row) in linear
-                .input
-                .chunks_exact(linear.input_dim)
-                .zip(d_output.chunks_exact(N))
-            {
-                // A copy, so the row stays in registers across the inputs.
-                let d_row: [f32; N] = d_row.try_into().expect("output gradient row width");
-                for (gradient_row, &input) in
-                    values.chunks_exact_mut(N).zip(&input_row[inputs.clone()])
-                {
-                    if pass_zero_inputs && input == 0.0 {
-                        continue;
-                    }
-                    let gradient_row: &mut [f32; N] =
-                        gradient_row.try_into().expect("gradient row width");
-                    for output in 0..N {
-                        gradient_row[output] += d_row[output] * input;
-                    }
-                }
+            add_input_major_rows_v1::<N>(
+                values,
+                inputs.clone(),
+                linear.input,
+                linear.input_dim,
+                d_output,
+                pass_zero_inputs,
+            );
+        }
+    }
+}
+
+/// One layer call's terms for the inputs `inputs` of a hidden-width weight's
+/// transposed gradient: `values` holds those inputs, each `N` outputs wide,
+/// and every element receives the call's rows in order. With
+/// `pass_zero_inputs` the terms of the inputs that are zero are left out;
+/// the caller has established that this changes no bit.
+#[inline(always)]
+fn add_input_major_rows_v1<const N: usize>(
+    values: &mut [f32],
+    inputs: Range<usize>,
+    input: &[f32],
+    input_dim: usize,
+    d_output: &[f32],
+    pass_zero_inputs: bool,
+) {
+    for (input_row, d_row) in input.chunks_exact(input_dim).zip(d_output.chunks_exact(N)) {
+        // A copy, so the row stays in registers across the inputs.
+        let d_row: [f32; N] = d_row.try_into().expect("output gradient row width");
+        for (gradient_row, &input) in values.chunks_exact_mut(N).zip(&input_row[inputs.clone()]) {
+            if pass_zero_inputs && input == 0.0 {
+                continue;
+            }
+            let gradient_row: &mut [f32; N] = gradient_row.try_into().expect("gradient row width");
+            for output in 0..N {
+                gradient_row[output] += d_row[output] * input;
             }
         }
+    }
+}
+
+/// `add_input_major_rows_v1` for every input of a whole transposed gradient
+/// of the hidden width `hidden`: one layer call of the sequential backward.
+pub(super) fn add_input_major_layer_v1(
+    hidden: usize,
+    values: &mut [f32],
+    input: &[f32],
+    input_dim: usize,
+    d_output: &[f32],
+    pass_zero_inputs: bool,
+) {
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("avx2") {
+        // SAFETY: AVX2 support was detected at run time just above.
+        unsafe {
+            add_input_major_layer_avx2_v1(
+                hidden,
+                values,
+                input,
+                input_dim,
+                d_output,
+                pass_zero_inputs,
+            )
+        };
+        return;
+    }
+    add_input_major_layer_body_v1(hidden, values, input, input_dim, d_output, pass_zero_inputs);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn add_input_major_layer_avx2_v1(
+    hidden: usize,
+    values: &mut [f32],
+    input: &[f32],
+    input_dim: usize,
+    d_output: &[f32],
+    pass_zero_inputs: bool,
+) {
+    add_input_major_layer_body_v1(hidden, values, input, input_dim, d_output, pass_zero_inputs);
+}
+
+#[inline(always)]
+fn add_input_major_layer_body_v1(
+    hidden: usize,
+    values: &mut [f32],
+    input: &[f32],
+    input_dim: usize,
+    d_output: &[f32],
+    pass_zero_inputs: bool,
+) {
+    match hidden {
+        HIDDEN_DIM_V1 => add_input_major_rows_v1::<HIDDEN_DIM_V1>(
+            values,
+            0..input_dim,
+            input,
+            input_dim,
+            d_output,
+            pass_zero_inputs,
+        ),
+        W_HIDDEN_DIM_V1 => add_input_major_rows_v1::<W_HIDDEN_DIM_V1>(
+            values,
+            0..input_dim,
+            input,
+            input_dim,
+            d_output,
+            pass_zero_inputs,
+        ),
+        width => panic!("no transposed replay at hidden width {width}"),
     }
 }
 
