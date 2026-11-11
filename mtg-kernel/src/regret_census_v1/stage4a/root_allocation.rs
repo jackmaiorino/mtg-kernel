@@ -29,6 +29,11 @@ pub(crate) struct RootPrior {
 
 impl RootPrior {
     /// `softmax(logits / temperature)`; temperature 1 is the raw policy.
+    /// Its caller (`search_probe.rs`) needs the evaluator's CUDA feature.
+    #[cfg_attr(
+        not(feature = "experimental-burn-net8-packed-cuda-v1"),
+        allow(dead_code)
+    )]
     pub(crate) fn tempered(logits: &[f32], temperature: f64, c_puct: f64) -> Self {
         let scaled: Vec<f64> = logits.iter().map(|&x| f64::from(x) / temperature).collect();
         let max = scaled.iter().copied().fold(f64::NEG_INFINITY, f64::max);

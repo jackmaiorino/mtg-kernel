@@ -416,7 +416,11 @@ pub(crate) enum WorldMode {
     /// per simulation, the root resampled for the acting seat's information
     /// by `census_redeterminized_clone_v1` (the world model the pricing
     /// lane scores in), then fresh future randomness. Never parsed from the
-    /// environment.
+    /// environment; constructed only by `search_probe.rs` (CUDA feature).
+    #[cfg_attr(
+        not(feature = "experimental-burn-net8-packed-cuda-v1"),
+        allow(dead_code)
+    )]
     CensusV1,
 }
 
