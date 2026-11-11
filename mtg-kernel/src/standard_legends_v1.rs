@@ -293,6 +293,18 @@ pub(crate) fn katilda_mana_colors(
     state: &GameState,
     object: ObjectId,
 ) -> Vec<crate::mana::ManaColor> {
+    let colors = granted_mana_colors(state, object);
+    // A granted mana ability obeys the eternal prohibitions on activated
+    // abilities as a printed one does (Null Rod, Cursed Totem).
+    #[cfg(feature = "eternal-fixtures")]
+    if !colors.is_empty() && crate::eternal_vintage_v1::activations_prohibited(state, object) {
+        return Vec::new();
+    }
+    colors
+}
+
+/// The colors of the tap-for-one mana abilities granted to `object`.
+fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<crate::mana::ManaColor> {
     use crate::mana::ManaColor;
     // Chrome Mox's "add one mana of any of the exiled card's colors" uses
     // the same granted-color activation (tap, add one).

@@ -475,7 +475,7 @@ pub(crate) fn validate_root(
     Ok(())
 }
 pub(crate) fn selected(state: &GameState, item: &StackItem) -> bool {
-    state.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::GreatwurmPublishedV1{item:row,..}if row.v4.stack_item_id==item.v4.stack_item_id))
+    state.engine.event_history.of_kinds_v2(&[crate::event_history_v1::EventKindV1::GreatwurmPublishedV1]).any(|(_, e)|matches!(e,event::CommittedEvent::GreatwurmPublishedV1{item:row,..}if row.v4.stack_item_id==item.v4.stack_item_id))
         || item.kind==crate::state::StackItemKind::TriggeredAbility && item.v4.granted_by.is_none()
             && item.inline_effect.as_ref().is_some_and(recipe)
 }

@@ -26,6 +26,26 @@
 //! always take `tanhf`, so NaN payloads are untouched. The returned bits are
 //! the same; MXCSR status flags need not be (lanes a branch discards can
 //! raise the sticky inexact flag where `tanhf` does not).
+//!
+//! On Linux x86_64 with glibc, `tanhf` is fdlibm's in the releases this was
+//! written against (`sysdeps/ieee754/flt-32/s_tanhf.c` over `s_expm1f.c`):
+//! `x` itself below 2^-55, `-t / (t + 2)` with `t = expm1f(-2|x|)` below 1,
+//! `1 - 2 / (t + 2)` with `t = expm1f(2|x|)` below 22, and 1 above, all in
+//! single-precision operations with no fused multiply-add. `glibc::tanh8`
+//! performs the same operations on eight lanes with AVX2 and is proved the
+//! same way, against the loaded `tanhf` on every input, in the default MXCSR
+//! state. Symbols can be interposed on Linux, so its record's key binds
+//! every image loaded in the process (SHA-256 of each one's read-only
+//! segments as mapped, which hold no load address), the CPU features and
+//! `GLIBC_TUNABLES`. A `tanhf` that differs in any bit (newer glibc releases
+//! compute `tanhf` another way) is recorded as differing, so later processes
+//! do not repeat the comparison, and `tanhf` is called per value as before.
+//! A process with nowhere to keep a record (no `MTG_KERNEL_VECTOR_TANH_DIR`,
+//! `XDG_CACHE_HOME` or `HOME`, as under a launcher with a fixed environment,
+//! or a folder it cannot write) makes no comparison and calls `tanhf`:
+//! otherwise every such process would pay for the comparison again. Builds
+//! with debug assertions (unoptimized ones) always call `tanhf`: the
+//! comparison would take them minutes for every new binary.
 
 /// A token for the state the platform `tanhf` (and so every activation)
 /// depends on beyond its input: UCRT's FMA3 switch on Windows x86_64. Equal
@@ -50,6 +70,10 @@ pub(crate) fn prepare_v1() {
     #[cfg(all(windows, target_arch = "x86_64"))]
     if windows::default_mxcsr() && windows::fma3_enabled() {
         let _ = windows::proved();
+    }
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+    if glibc::default_mxcsr() {
+        let _ = glibc::proved();
     }
 }
 
@@ -87,6 +111,12 @@ pub(crate) fn libm_tanh_in_place_v1(values: &mut [f32]) {
     if windows::default_mxcsr() && windows::fma3_enabled() && windows::proved() {
         // SAFETY: `proved` holds only where AVX2 and FMA are present.
         unsafe { windows::tanh_in_place(values) };
+        return;
+    }
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+    if glibc::default_mxcsr() && glibc::proved() {
+        // SAFETY: `proved` holds only where AVX2 is present.
+        unsafe { glibc::tanh_in_place(values) };
         return;
     }
     for value in values {
@@ -606,6 +636,505 @@ mod windows {
     }
 }
 
+#[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+mod glibc {
+    use sha2::{Digest, Sha256};
+    use std::arch::x86_64::*;
+    use std::ffi::{c_char, c_int, c_void, OsString};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::OnceLock;
+
+    /// Version of the algorithm below; part of the proof record's key.
+    const ALGORITHM: &str = "mtg-kernel-vector-tanh-v1:glibc-fdlibm-tanhf-avx2";
+
+    // `s_expm1f.c`'s constants, as bits.
+    const LN2_HI: u32 = 0x3f31_7180;
+    const LN2_LO: u32 = 0x3717_f7d1;
+    const INVLN2: u32 = 0x3fb8_aa3b;
+    const Q1: u32 = 0xbd08_8889;
+    const Q2: u32 = 0x3ad0_0d01;
+    const Q3: u32 = 0xb8a6_70cd;
+    const Q4: u32 = 0x3686_7e54;
+    const Q5: u32 = 0xb457_edbb;
+
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    unsafe fn bits(value: u32) -> __m256 {
+        _mm256_castsi256_ps(_mm256_set1_epi32(value as i32))
+    }
+
+    /// `b` in the lanes `mask` sets, `a` elsewhere.
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    unsafe fn pick(a: __m256, b: __m256, mask: __m256i) -> __m256 {
+        _mm256_blendv_ps(a, b, _mm256_castsi256_ps(mask))
+    }
+
+    /// The algorithm on eight lanes. NaN lanes give an unspecified value
+    /// (callers replace them).
+    #[target_feature(enable = "avx2")]
+    pub(super) unsafe fn tanh8(x: __m256) -> __m256 {
+        let int = |value: i32| _mm256_set1_epi32(value);
+        let one = _mm256_set1_ps(1.0);
+        let two = _mm256_set1_ps(2.0);
+        let half = _mm256_set1_ps(0.5);
+        let sign_mask = bits(0x8000_0000);
+        let ax = _mm256_andnot_ps(sign_mask, x);
+        let sign = _mm256_and_ps(sign_mask, x);
+        // `tanhf`'s ranges, on the bits of |x| (non-negative as integers).
+        let ix = _mm256_castps_si256(ax);
+        // |x| < 2^-55, and zero: x.
+        let tiny = _mm256_cmpgt_epi32(int(0x2400_0000), ix);
+        // |x| >= 22, and infinity: 1 with x's sign.
+        let big = _mm256_cmpgt_epi32(ix, int(0x41af_ffff));
+        let at_least_one = _mm256_cmpgt_epi32(ix, int(0x3f7f_ffff));
+        // `expm1f` returns its argument below 2^-25, so where |x| < 2^-26.
+        let small = _mm256_cmpgt_epi32(int(0x3280_0000), ix);
+        // Each branch reads |x| replaced by a fixed value of its own range in
+        // the lanes that do not take it: the lanes it returns are unchanged,
+        // and the others (discarded) never reach an infinity, an invalid
+        // operation, an overflow or an underflow.
+        let ax_tanh = pick(pick(ax, half, tiny), _mm256_set1_ps(1.5), big);
+        let ax_expm1 = pick(ax_tanh, half, small);
+        // `expm1f`'s argument a: 2|x| where |x| >= 1 and -2|x| below, both
+        // exact products.
+        let negative = _mm256_andnot_ps(_mm256_castsi256_ps(at_least_one), sign_mask);
+        let a_small = _mm256_or_ps(_mm256_mul_ps(two, ax_tanh), negative);
+        let magnitude = _mm256_mul_ps(two, ax_expm1);
+        let a = _mm256_or_ps(magnitude, negative);
+        // `expm1f`'s argument reduction a = k ln2 + r, on the bits of |a|.
+        let hx = _mm256_castps_si256(magnitude);
+        // |a| > 0.5 ln2; below it k = 0 and r = a.
+        let reduced = _mm256_cmpgt_epi32(hx, int(0x3eb1_7218));
+        // And |a| < 1.5 ln2: k = -1 here, where a >= 2 when it is positive.
+        let nearest = _mm256_and_si256(reduced, _mm256_cmpgt_epi32(int(0x3f85_1592), hx));
+        // Otherwise k = (int)(invln2 * a + (a < 0 ? -0.5 : 0.5)), truncated.
+        let signed_half = _mm256_or_ps(half, _mm256_and_ps(a, sign_mask));
+        let k = _mm256_cvttps_epi32(_mm256_add_ps(_mm256_mul_ps(bits(INVLN2), a), signed_half));
+        let k = _mm256_and_si256(_mm256_blendv_epi8(k, int(-1), nearest), reduced);
+        // With k = 0 these give r = a and c = 0, as `expm1f` has them.
+        let t = _mm256_cvtepi32_ps(k);
+        let hi = _mm256_sub_ps(a, _mm256_mul_ps(t, bits(LN2_HI)));
+        let lo = _mm256_mul_ps(t, bits(LN2_LO));
+        let r = _mm256_sub_ps(hi, lo);
+        let c = _mm256_sub_ps(_mm256_sub_ps(hi, r), lo);
+        // The primary range.
+        let hfx = _mm256_mul_ps(half, r);
+        let hxs = _mm256_mul_ps(r, hfx);
+        let mut q = _mm256_add_ps(bits(Q4), _mm256_mul_ps(hxs, bits(Q5)));
+        q = _mm256_add_ps(bits(Q3), _mm256_mul_ps(hxs, q));
+        q = _mm256_add_ps(bits(Q2), _mm256_mul_ps(hxs, q));
+        q = _mm256_add_ps(bits(Q1), _mm256_mul_ps(hxs, q));
+        let r1 = _mm256_add_ps(one, _mm256_mul_ps(hxs, q));
+        let t3 = _mm256_sub_ps(_mm256_set1_ps(3.0), _mm256_mul_ps(r1, hfx));
+        let e = _mm256_mul_ps(
+            hxs,
+            _mm256_div_ps(
+                _mm256_sub_ps(r1, t3),
+                _mm256_sub_ps(_mm256_set1_ps(6.0), _mm256_mul_ps(r, t3)),
+            ),
+        );
+        // k == 0: r - (r*e - hxs).
+        let for_zero = _mm256_sub_ps(r, _mm256_sub_ps(_mm256_mul_ps(r, e), hxs));
+        // Every other k continues from e = (r*(e - c) - c) - hxs.
+        let e = _mm256_sub_ps(_mm256_sub_ps(_mm256_mul_ps(r, _mm256_sub_ps(e, c)), c), hxs);
+        // k == -1: 0.5*(r - e) - 0.5.
+        let for_minus_one = _mm256_sub_ps(_mm256_mul_ps(half, _mm256_sub_ps(r, e)), half);
+        // The others add k to the exponent of a y near 1.
+        let exponent = _mm256_slli_epi32::<23>(k);
+        let scaled =
+            |y: __m256| _mm256_castsi256_ps(_mm256_add_epi32(_mm256_castps_si256(y), exponent));
+        let e_minus_r = _mm256_sub_ps(e, r);
+        // k <= -2 or k > 56: y = 1 - (e - r), scaled, minus 1.
+        let for_far = _mm256_sub_ps(scaled(_mm256_sub_ps(one, e_minus_r)), one);
+        // 1 < k < 23: y = (1 - 2^-k) - (e - r), scaled.
+        let below_one = _mm256_castsi256_ps(_mm256_sub_epi32(
+            int(0x3f80_0000),
+            _mm256_srlv_epi32(int(0x0100_0000), k),
+        ));
+        let for_low = scaled(_mm256_sub_ps(below_one, e_minus_r));
+        // 23 <= k <= 56: y = (r - (e + 2^-k)) + 1, scaled.
+        let power = _mm256_castsi256_ps(_mm256_slli_epi32::<23>(_mm256_sub_epi32(int(0x7f), k)));
+        let for_high = scaled(_mm256_add_ps(
+            _mm256_sub_ps(r, _mm256_add_ps(e, power)),
+            one,
+        ));
+        let far = _mm256_or_si256(
+            _mm256_cmpgt_epi32(int(-1), k),
+            _mm256_cmpgt_epi32(k, int(56)),
+        );
+        let mut expm1 = pick(for_high, for_low, _mm256_cmpgt_epi32(int(23), k));
+        expm1 = pick(expm1, for_far, far);
+        expm1 = pick(expm1, for_minus_one, _mm256_cmpeq_epi32(k, int(-1)));
+        expm1 = pick(
+            expm1,
+            for_zero,
+            _mm256_cmpeq_epi32(k, _mm256_setzero_si256()),
+        );
+        expm1 = pick(expm1, a_small, small);
+        // `tanhf`: 1 - 2/(t + 2) where |x| >= 1 and -t/(t + 2) below.
+        let numerator = pick(_mm256_xor_ps(expm1, sign_mask), two, at_least_one);
+        let quotient = _mm256_div_ps(numerator, _mm256_add_ps(expm1, two));
+        let z = pick(quotient, _mm256_sub_ps(one, quotient), at_least_one);
+        // 1 - 1e-30 is 1 where |x| >= 22; then x's sign, and x where tiny.
+        pick(_mm256_xor_ps(pick(z, one, big), sign), x, tiny)
+    }
+
+    /// `tanh8` over a slice; NaN inputs take `tanhf`.
+    #[target_feature(enable = "avx2")]
+    pub(super) unsafe fn tanh_in_place(values: &mut [f32]) {
+        let mut chunks = values.chunks_exact_mut(8);
+        for chunk in &mut chunks {
+            let x = _mm256_loadu_ps(chunk.as_ptr());
+            let nan = _mm256_movemask_ps(_mm256_cmp_ps::<_CMP_UNORD_Q>(x, x));
+            if nan == 0 {
+                _mm256_storeu_ps(chunk.as_mut_ptr(), tanh8(x));
+            } else {
+                for value in chunk.iter_mut() {
+                    *value = value.tanh();
+                }
+            }
+        }
+        let rest = chunks.into_remainder();
+        if !rest.is_empty() {
+            let mut lanes = [0f32; 8];
+            lanes[..rest.len()].copy_from_slice(rest);
+            tanh_in_place(&mut lanes);
+            rest.copy_from_slice(&lanes[..rest.len()]);
+        }
+    }
+
+    /// Whether the calling thread's MXCSR control bits are the default:
+    /// every exception masked, flush-to-zero and denormals-are-zero off,
+    /// round to nearest. The proof runs in that state, so it is the one
+    /// where `tanh8` is proved; the status flags are ignored.
+    pub(super) fn default_mxcsr() -> bool {
+        crate::deterministic_math_v1::read_mxcsr_v1() & 0xffc0 == 0x1f80
+    }
+
+    /// Whether `tanh8` is proved equal to this process's `tanhf`.
+    pub(super) fn proved() -> bool {
+        static PROVED: OnceLock<bool> = OnceLock::new();
+        *PROVED.get_or_init(|| {
+            if cfg!(debug_assertions)
+                || std::env::var("MTG_KERNEL_VECTOR_TANH").is_ok_and(|v| v == "0")
+                || !is_x86_feature_detected!("avx2")
+            {
+                return false;
+            }
+            // The proof covers the default MXCSR state.
+            settle(record_dir(), key, || {
+                default_mxcsr().then(exhaustive_check).flatten()
+            })
+        })
+    }
+
+    /// `proved` over its inputs (testable): the record folder, the key and
+    /// the comparison (whether every bit is equal, if it could be made).
+    ///
+    /// A process that cannot keep the comparison's result does not make it:
+    /// every later process would make it again, and a trainer chain starts
+    /// one process per segment. So without a folder, or with one that cannot
+    /// be written, this is false and `compare` is not called. The record's
+    /// file is written before the comparison for that reason, and named for
+    /// its outcome afterwards. A comparison that could not be made leaves no
+    /// record.
+    pub(super) fn settle(
+        directory: Option<PathBuf>,
+        key: impl FnOnce() -> Option<String>,
+        compare: impl FnOnce() -> Option<bool>,
+    ) -> bool {
+        let Some(directory) = directory else {
+            return false;
+        };
+        let Some(key) = key() else {
+            return false;
+        };
+        let record = |outcome: &str| directory.join(format!("{key}.{outcome}"));
+        let recorded =
+            |outcome: &str| std::fs::read_to_string(record(outcome)).is_ok_and(|s| s.trim() == key);
+        if recorded("proved") {
+            return true;
+        }
+        if recorded("differs") {
+            return false;
+        }
+        let pending = record(&format!("tmp-{}", std::process::id()));
+        if std::fs::create_dir_all(&directory).is_err() || std::fs::write(&pending, &key).is_err() {
+            return false;
+        }
+        let equal = compare();
+        let kept = equal.is_some_and(|equal| {
+            std::fs::rename(&pending, record(if equal { "proved" } else { "differs" })).is_ok()
+        });
+        if !kept {
+            let _ = std::fs::remove_file(&pending);
+        }
+        equal == Some(true)
+    }
+
+    /// Where proof records live: `MTG_KERNEL_VECTOR_TANH_DIR`, else
+    /// `mtg-kernel/vector-tanh` under the user's cache folder
+    /// (`$XDG_CACHE_HOME` when it is an absolute path, else `$HOME/.cache`).
+    fn record_dir() -> Option<PathBuf> {
+        record_dir_from(|name| std::env::var_os(name))
+    }
+
+    /// `record_dir` over an environment lookup (testable).
+    pub(super) fn record_dir_from(var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+        let var = |name: &str| var(name).filter(|value| !value.is_empty());
+        if let Some(dir) = var("MTG_KERNEL_VECTOR_TANH_DIR") {
+            return Some(dir.into());
+        }
+        let cache = var("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".cache")));
+        cache.map(|base| base.join("mtg-kernel").join("vector-tanh"))
+    }
+
+    extern "C" {
+        fn tanhf(x: f32) -> f32;
+        fn dl_iterate_phdr(
+            callback: unsafe extern "C" fn(*mut ObjectV1, usize, *mut c_void) -> c_int,
+            data: *mut c_void,
+        ) -> c_int;
+    }
+
+    /// The leading fields of `struct dl_phdr_info` (`<link.h>`) on x86_64.
+    #[repr(C)]
+    #[allow(dead_code, reason = "the C layout; not every field is read")]
+    struct ObjectV1 {
+        /// Where the object is loaded: added to each header's `vaddr`.
+        base: u64,
+        name: *const c_char,
+        headers: *const ProgramHeaderV1,
+        header_count: u16,
+    }
+
+    /// `Elf64_Phdr`.
+    #[repr(C)]
+    #[allow(dead_code, reason = "the C layout; not every field is read")]
+    struct ProgramHeaderV1 {
+        kind: u32,
+        flags: u32,
+        offset: u64,
+        vaddr: u64,
+        paddr: u64,
+        file_size: u64,
+        memory_size: u64,
+        align: u64,
+    }
+
+    /// `hash_object`'s state. Nothing in it allocates while the loader calls.
+    struct ImagesV1<'a> {
+        hash: Sha256,
+        /// Addresses the results depend on, and whether a hashed segment
+        /// holds each.
+        covers: &'a [*const u8],
+        covered: &'a mut [bool],
+        /// An object this does not model: no key.
+        unmodelled: bool,
+    }
+
+    /// Hashes one loaded object's read-only segments as mapped
+    /// (`dl_iterate_phdr`'s callback, called with the loader's lock held).
+    unsafe extern "C" fn hash_object(
+        object: *mut ObjectV1,
+        size: usize,
+        data: *mut c_void,
+    ) -> c_int {
+        const LOAD: u32 = 1;
+        const WRITE: u32 = 2;
+        const READ: u32 = 4;
+        // SAFETY: `data` is the `ImagesV1` `images_digest` passed, used by
+        // this call alone.
+        let images = unsafe { &mut *data.cast::<ImagesV1<'_>>() };
+        if size < std::mem::offset_of!(ObjectV1, header_count) + std::mem::size_of::<u16>() {
+            images.unmodelled = true;
+            return 1;
+        }
+        // SAFETY: the loader passes a `dl_phdr_info` of at least `size`
+        // bytes, which covers the fields read here.
+        let object = unsafe { &*object };
+        let headers: &[ProgramHeaderV1] = if object.header_count == 0 {
+            &[]
+        } else {
+            // SAFETY: the loader's program header table of a loaded object.
+            unsafe { std::slice::from_raw_parts(object.headers, usize::from(object.header_count)) }
+        };
+        images.hash.update((headers.len() as u64).to_le_bytes());
+        for header in headers {
+            // A writable segment holds the relocated addresses and the data;
+            // code and constants are in the others.
+            if header.kind != LOAD || header.flags & WRITE != 0 {
+                continue;
+            }
+            let start = object.base.checked_add(header.vaddr);
+            let (Some(start), Ok(len)) = (start, usize::try_from(header.file_size)) else {
+                images.unmodelled = true;
+                return 1;
+            };
+            if header.flags & READ == 0 {
+                // Execute-only: its bytes cannot be read.
+                images.unmodelled = true;
+                return 1;
+            }
+            // SAFETY: a loaded object's readable segment is mapped for its
+            // file size at its load address, and stays mapped while the
+            // loader's lock is held.
+            let bytes = unsafe { std::slice::from_raw_parts(start as *const u8, len) };
+            images.hash.update(header.vaddr.to_le_bytes());
+            images.hash.update(header.file_size.to_le_bytes());
+            images.hash.update(header.flags.to_le_bytes());
+            images.hash.update(bytes);
+            for (covered, address) in images.covered.iter_mut().zip(images.covers) {
+                *covered |= (*address as u64).wrapping_sub(start) < header.file_size;
+            }
+        }
+        0
+    }
+
+    /// SHA-256 of the read-only segments, as mapped, of every object loaded
+    /// in this process, in the loader's order: the executable, the C library
+    /// and its math library, and anything else that could supply or replace
+    /// a symbol. Those segments are position independent, so the digest is
+    /// the same wherever the objects are loaded; it describes the code that
+    /// is running, not whatever files now have its names. `None` for anything
+    /// this does not model (an execute-only segment, a short `dl_phdr_info`,
+    /// 32-bit ELF structures) or if any of `covers` (addresses the results
+    /// depend on) lies outside the hashed segments, which only means no proof
+    /// record and so `tanhf` per value.
+    pub(super) fn images_digest(covers: &[*const u8]) -> Option<[u8; 32]> {
+        // The structures above are the 64-bit ELF ones (not x32's).
+        if std::mem::size_of::<usize>() != 8 {
+            return None;
+        }
+        let mut covered = vec![false; covers.len()];
+        let mut images = ImagesV1 {
+            hash: Sha256::new(),
+            covers,
+            covered: &mut covered,
+            unmodelled: false,
+        };
+        // SAFETY: `hash_object` matches the callback's C signature and
+        // `images` outlives the call.
+        unsafe { dl_iterate_phdr(hash_object, std::ptr::from_mut(&mut images).cast()) };
+        let ImagesV1 {
+            hash, unmodelled, ..
+        } = images;
+        (!unmodelled && covered.iter().all(|covered| *covered)).then(|| hash.finalize().into())
+    }
+
+    /// The proof's key: the algorithm, every loaded image, the CPU features
+    /// glibc can choose a `tanhf` by, and the tunables that can turn those
+    /// features off for it.
+    pub(super) fn key() -> Option<String> {
+        use std::os::unix::ffi::OsStrExt;
+        // `f32::tanh` calls the `tanhf` this crate links against. Its code
+        // and this module's must be in the hashed segments.
+        let covers: [*const u8; 4] = [
+            tanh8 as unsafe fn(__m256) -> __m256 as *const u8,
+            tanh_in_place as unsafe fn(&mut [f32]) as *const u8,
+            super::libm_tanh_in_place_v1 as fn(&mut [f32]) as *const u8,
+            tanhf as unsafe extern "C" fn(f32) -> f32 as *const u8,
+        ];
+        let images = images_digest(&covers)?;
+        let mut h = Sha256::new();
+        h.update(ALGORITHM.as_bytes());
+        h.update(images);
+        for (feature, on) in [
+            ("sse4.1", is_x86_feature_detected!("sse4.1")),
+            ("avx", is_x86_feature_detected!("avx")),
+            ("avx2", is_x86_feature_detected!("avx2")),
+            ("fma", is_x86_feature_detected!("fma")),
+            ("avx512f", is_x86_feature_detected!("avx512f")),
+            ("avx512vl", is_x86_feature_detected!("avx512vl")),
+        ] {
+            h.update(feature.as_bytes());
+            h.update([u8::from(on)]);
+        }
+        let tunables = std::env::var_os("GLIBC_TUNABLES").unwrap_or_default();
+        h.update((tunables.len() as u64).to_le_bytes());
+        h.update(tunables.as_bytes());
+        Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    }
+
+    /// The running C library's version, such as `2.39`.
+    #[cfg(test)]
+    pub(super) fn libc_version() -> String {
+        extern "C" {
+            fn gnu_get_libc_version() -> *const c_char;
+        }
+        // SAFETY: glibc returns a pointer to a static NUL-terminated string.
+        unsafe { std::ffi::CStr::from_ptr(gnu_get_libc_version()) }
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// `tanh8` against `tanhf` on every f32 input (NaN inputs excepted:
+    /// `tanh_in_place` sends them to `tanhf`): whether every bit is equal, or
+    /// `None` if the comparison could not be made (a worker that could not
+    /// be created or that panicked, or one outside the default MXCSR state).
+    pub(super) fn exhaustive_check() -> Option<bool> {
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(8)) as u64;
+        let span = (1u64 << 32) / threads;
+        let differs = AtomicBool::new(false);
+        let differs = &differs;
+        let complete = std::thread::scope(|s| {
+            let workers: Vec<_> = (0..threads)
+                .map(|t| {
+                    let end = if t + 1 == threads {
+                        1u64 << 32
+                    } else {
+                        (t + 1) * span
+                    };
+                    // A worker that cannot be created fails the check
+                    // (`spawn` would panic instead).
+                    std::thread::Builder::new().spawn_scoped(s, move || {
+                        // A new thread starts with its creator's MXCSR.
+                        if !default_mxcsr() {
+                            return false;
+                        }
+                        let mut lanes = [0f32; 8];
+                        let mut bits = t * span;
+                        while bits < end && !differs.load(Ordering::Relaxed) {
+                            for (i, lane) in lanes.iter_mut().enumerate() {
+                                *lane = f32::from_bits((bits + i as u64) as u32);
+                            }
+                            let mut out = [0f32; 8];
+                            // SAFETY: called only after AVX2 was detected.
+                            unsafe {
+                                _mm256_storeu_ps(
+                                    out.as_mut_ptr(),
+                                    tanh8(_mm256_loadu_ps(lanes.as_ptr())),
+                                )
+                            };
+                            for (x, y) in lanes.iter().zip(out) {
+                                if !x.is_nan() && x.tanh().to_bits() != y.to_bits() {
+                                    differs.store(true, Ordering::Relaxed);
+                                }
+                            }
+                            bits += 8;
+                        }
+                        true
+                    })
+                })
+                .collect();
+            // Workers not joined here are joined when the scope ends.
+            workers
+                .into_iter()
+                .all(|w| w.is_ok_and(|w| w.join().unwrap_or(false)))
+        });
+        if differs.load(Ordering::Relaxed) {
+            Some(false)
+        } else {
+            complete.then_some(true)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -745,5 +1274,289 @@ mod tests {
             "{:?}",
             windows::linked_tanhf()
         );
+    }
+
+    /// The C library releases whose `tanhf` `glibc::tanh8` was compared with
+    /// on every input when it was written: there the comparison must hold.
+    /// Elsewhere it only has to give an answer.
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+    fn glibc_tanhf_is_the_one_written_against() -> bool {
+        GLIBC_VERSIONS_COMPARED.contains(&glibc::libc_version().as_str())
+    }
+
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+    const GLIBC_VERSIONS_COMPARED: [&str; 1] = ["2.39"];
+
+    /// On glibc with AVX2, the eight-lane algorithm is compared with this
+    /// machine's `tanhf` on every f32 input (the proof `proved` runs), and
+    /// equals it where the C library is one it was written against.
+    /// Optimized builds only: an unoptimized one takes minutes.
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+    #[test]
+    fn glibc_vector_tanh_is_compared_with_tanhf_on_every_input_here() {
+        if cfg!(debug_assertions) || !is_x86_feature_detected!("avx2") {
+            return;
+        }
+        let equal = glibc::exhaustive_check();
+        assert!(equal.is_some());
+        if glibc_tanhf_is_the_one_written_against() {
+            assert_eq!(equal, Some(true));
+        }
+    }
+
+    /// The eight-lane algorithm at and around every range boundary of
+    /// `tanhf` and `expm1f`, both signs, in every lane, against `tanhf`.
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+    #[test]
+    fn glibc_vector_tanh_equals_tanhf_around_every_range_boundary() {
+        use std::arch::x86_64::*;
+        if !is_x86_feature_detected!("avx2") || !glibc_tanhf_is_the_one_written_against() {
+            return;
+        }
+        // Bits of |x| where `tanhf` or `expm1f(+-2|x|)` changes branch: zero,
+        // the smallest normal, 2^-55, 2^-26, 0.25 ln2, 0.75 ln2, 1, 22, the
+        // largest finite value and infinity.
+        let mut centers = vec![
+            0u32,
+            0x0080_0000,
+            0x2400_0000,
+            0x3280_0000,
+            0x3e31_7218,
+            0x3f05_1592,
+            0x3f80_0000,
+            0x41b0_0000,
+            0x7f7f_ffff,
+            0x7f80_0000,
+        ];
+        // And where the exponent k of 2|x| = k ln2 + r changes, with the
+        // middle of each k.
+        for k in 1..=64 {
+            let middle = k as f32 * std::f32::consts::LN_2 * 0.5;
+            let edge = (k as f32 - 0.5) * std::f32::consts::LN_2 * 0.5;
+            centers.extend([middle.to_bits(), edge.to_bits()]);
+        }
+        let mut inputs = Vec::new();
+        for center in centers {
+            for offset in -48i64..=48 {
+                let bits = i64::from(center) + offset;
+                if (0..=0x7f80_0000).contains(&bits) {
+                    inputs.push(f32::from_bits(bits as u32));
+                    inputs.push(-f32::from_bits(bits as u32));
+                }
+            }
+        }
+        let mut s = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..20_000 {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            inputs.push(f32::from_bits(s as u32));
+            inputs.push(((s >> 40) as f32 / (1u64 << 24) as f32 - 0.5) * 48.0);
+        }
+        inputs.retain(|x| !x.is_nan());
+        for lane in 0..8 {
+            for &x in &inputs {
+                // The other lanes hold values of other ranges.
+                let mut lanes = [0.3f32, -7.0, 1e-20, 30.0, -0.9, 2.5, -1e-9, 0.02];
+                lanes[lane] = x;
+                let mut out = [0f32; 8];
+                // SAFETY: AVX2 was detected above.
+                unsafe {
+                    _mm256_storeu_ps(
+                        out.as_mut_ptr(),
+                        glibc::tanh8(_mm256_loadu_ps(lanes.as_ptr())),
+                    )
+                };
+                for (input, output) in lanes.iter().zip(out) {
+                    assert_eq!(input.tanh().to_bits(), output.to_bits(), "{input:e}");
+                }
+            }
+        }
+    }
+
+    /// The loaded images have a digest (so a proof record can be keyed), the
+    /// same on every call.
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+    #[test]
+    fn glibc_image_digests_exist_and_are_stable() {
+        let first = glibc::key();
+        assert!(
+            first.as_ref().is_some_and(|key| key.len() == 64),
+            "{first:?}"
+        );
+        assert_eq!(first, glibc::key());
+        // An address in no loaded image's read-only segments (the stack).
+        let local = 0u8;
+        assert_eq!(glibc::images_digest(&[std::ptr::from_ref(&local)]), None);
+        assert!(glibc::images_digest(&[]).is_some());
+    }
+
+    /// Proof records go to the named folder, else the user's cache folder.
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+    #[test]
+    fn glibc_proof_record_folder_is_the_cache_folder() {
+        use std::ffi::OsString;
+        use std::path::PathBuf;
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == name)
+                    .map(|(_, v)| OsString::from(v))
+            }
+        };
+        let tail = |base: &str| PathBuf::from(base).join("mtg-kernel").join("vector-tanh");
+        assert_eq!(
+            glibc::record_dir_from(env(&[
+                ("MTG_KERNEL_VECTOR_TANH_DIR", "/proofs"),
+                ("XDG_CACHE_HOME", "/x"),
+                ("HOME", "/h"),
+            ])),
+            Some(PathBuf::from("/proofs"))
+        );
+        assert_eq!(
+            glibc::record_dir_from(env(&[("XDG_CACHE_HOME", "/x"), ("HOME", "/h")])),
+            Some(tail("/x"))
+        );
+        // A relative or empty `XDG_CACHE_HOME` is not one.
+        assert_eq!(
+            glibc::record_dir_from(env(&[("XDG_CACHE_HOME", "x"), ("HOME", "/h")])),
+            Some(tail("/h/.cache"))
+        );
+        assert_eq!(
+            glibc::record_dir_from(env(&[
+                ("MTG_KERNEL_VECTOR_TANH_DIR", ""),
+                ("XDG_CACHE_HOME", ""),
+                ("HOME", "/h"),
+            ])),
+            Some(tail("/h/.cache"))
+        );
+        assert_eq!(glibc::record_dir_from(env(&[])), None);
+    }
+
+    /// The comparison is made once per key and only where its result can be
+    /// kept: never without a folder or with one that cannot be written, and
+    /// not again once either outcome is recorded.
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+    #[test]
+    fn glibc_comparison_is_made_only_where_its_result_is_kept() {
+        use std::cell::Cell;
+        use std::path::PathBuf;
+        let folder = std::env::temp_dir().join(format!(
+            "mtg-kernel-vector-tanh-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let key = |name: &str| {
+            let name = name.to_owned();
+            move || Some(name)
+        };
+        let made = Cell::new(0);
+        let compare = |outcome: Option<bool>| {
+            let made = &made;
+            move || {
+                made.set(made.get() + 1);
+                outcome
+            }
+        };
+        let files = |folder: &PathBuf| {
+            let mut names: Vec<String> = std::fs::read_dir(folder)
+                .map(|entries| {
+                    entries
+                        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                        .collect()
+                })
+                .unwrap_or_default();
+            names.sort();
+            names
+        };
+
+        // No folder, and no key: no comparison.
+        assert!(!glibc::settle(None, key("a"), compare(Some(true))));
+        assert!(!glibc::settle(
+            Some(folder.clone()),
+            || None,
+            compare(Some(true))
+        ));
+        assert_eq!(made.get(), 0);
+        assert!(!folder.exists());
+
+        // A folder that cannot be made (its parent is a file): no comparison.
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = folder.join("file");
+        std::fs::write(&file, b"").unwrap();
+        assert!(!glibc::settle(
+            Some(file.join("under")),
+            key("a"),
+            compare(Some(true))
+        ));
+        assert_eq!(made.get(), 0);
+        std::fs::remove_file(&file).unwrap();
+
+        // Equal: recorded, and read by the next process without comparing.
+        assert!(glibc::settle(
+            Some(folder.clone()),
+            key("a"),
+            compare(Some(true))
+        ));
+        assert_eq!(made.get(), 1);
+        assert_eq!(files(&folder), ["a.proved"]);
+        assert_eq!(
+            std::fs::read_to_string(folder.join("a.proved")).unwrap(),
+            "a"
+        );
+        assert!(glibc::settle(
+            Some(folder.clone()),
+            key("a"),
+            compare(Some(false))
+        ));
+        assert_eq!(made.get(), 1);
+
+        // Differing: recorded too, and not compared again.
+        assert!(!glibc::settle(
+            Some(folder.clone()),
+            key("b"),
+            compare(Some(false))
+        ));
+        assert!(!glibc::settle(
+            Some(folder.clone()),
+            key("b"),
+            compare(Some(true))
+        ));
+        assert_eq!(made.get(), 2);
+        assert_eq!(files(&folder), ["a.proved", "b.differs"]);
+
+        // A comparison that could not be made leaves nothing, so the next
+        // process makes it.
+        assert!(!glibc::settle(
+            Some(folder.clone()),
+            key("c"),
+            compare(None)
+        ));
+        assert_eq!(files(&folder), ["a.proved", "b.differs"]);
+        assert!(glibc::settle(
+            Some(folder.clone()),
+            key("c"),
+            compare(Some(true))
+        ));
+        assert_eq!(made.get(), 4);
+
+        // A record that does not hold its key is not one.
+        std::fs::write(folder.join("d.proved"), "a").unwrap();
+        assert!(!glibc::settle(
+            Some(folder.clone()),
+            key("d"),
+            compare(Some(false))
+        ));
+        assert_eq!(made.get(), 5);
+        assert_eq!(
+            std::fs::read_to_string(folder.join("d.differs")).unwrap(),
+            "d"
+        );
+
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 }

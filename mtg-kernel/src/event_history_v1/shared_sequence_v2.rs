@@ -237,23 +237,28 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
         }
     }
 
-    fn leaf_at(&self, mut index: usize) -> Option<(&[T], usize)> {
+    /// The leaf holding the logical `index`, the position of the leaf's first
+    /// element, and the nodes after the leaf under its parent: each begins
+    /// where the one before it ends.
+    fn leaf_and_rest_at(&self, mut index: usize) -> Option<LeafAt<'_, T, C>> {
         if self.editable {
             let values = self.flat.get().expect("editable Vec");
-            return (index < values.len()).then_some((values.as_slice(), 0));
+            return (index < values.len()).then_some((values.as_slice(), 0, &[][..]));
         }
         let mut node = self.root.as_deref()?;
         if index >= node.len {
             return None;
         }
         let mut start = 0;
+        let mut rest: &[Arc<Node<T, C>>] = &[];
         loop {
             match &node.body {
-                Body::Leaf(values) => return Some((values.as_slice(), start)),
+                Body::Leaf(values) => return Some((values.as_slice(), start, rest)),
                 Body::Branch(children) => {
-                    for child in children {
+                    for (at, child) in children.iter().enumerate() {
                         if index < child.len {
                             node = child;
+                            rest = &children[at + 1..];
                             break;
                         }
                         index -= child.len;
@@ -262,6 +267,11 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
                 }
             }
         }
+    }
+
+    fn leaf_at(&self, index: usize) -> Option<(&[T], usize)> {
+        self.leaf_and_rest_at(index)
+            .map(|(leaf, start, _)| (leaf, start))
     }
 
     pub(crate) fn get(&self, index: usize) -> Option<&T> {
@@ -439,10 +449,10 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
         );
         Iter {
             sequence: self,
-            front: start,
-            back: end,
-            front_leaf: None,
-            back_leaf: None,
+            front: Default::default(),
+            siblings: Default::default(),
+            middle: start..end,
+            back: Default::default(),
         }
     }
 
@@ -483,46 +493,111 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
     }
 }
 
-/// Range cursor with independent front/back leaf caches. Sequential iteration
-/// descends the spine once per leaf, not once per element; nth skips directly.
-/// The per-element step is small enough to inline into a caller's loop, with
-/// the spine descent out of line, and `fold`/`rfold` walk whole leaf slices,
-/// so a scan of the history costs about what a scan of a slice does.
+/// Range cursor that walks each leaf as a slice. `front` and `back` are slice
+/// iterators over the unvisited elements of the leaf at each end, and `middle`
+/// is the logical range between them that neither has loaded yet. A step
+/// inside a leaf is a slice iterator's step. Moving forward to the next leaf
+/// takes the next of `siblings`, the nodes after the front leaf under its
+/// parent, so a forward walk descends the spine once per parent, not once per
+/// leaf. Moving backward descends it once per leaf.
+///
+/// The out-of-line steps take and return the cursor's fields by value and
+/// never borrow the cursor, so a loop over it can keep it in registers: the
+/// adapters that step element by element (`any`, `find`, `position`,
+/// `filter_map`, a `for` loop) then cost about what they cost over a slice.
+/// `nth` skips whole leaves and `fold`/`rfold` walk whole leaf slices.
 pub(crate) struct Iter<'a, T: Clone, const C: usize> {
     sequence: &'a SharedSequence<T, C>,
-    front: usize,
-    back: usize,
-    front_leaf: Option<(&'a [T], usize)>,
-    back_leaf: Option<(&'a [T], usize)>,
+    /// Unvisited elements of the leaf at the front.
+    front: std::slice::Iter<'a, T>,
+    /// The nodes after the front leaf under its parent. While `middle` is not
+    /// empty, the first of them begins at `middle.start`.
+    siblings: std::slice::Iter<'a, Arc<Node<T, C>>>,
+    /// Logical positions after `front`'s and before `back`'s.
+    middle: std::ops::Range<usize>,
+    /// Unvisited elements of the leaf at the back.
+    back: std::slice::Iter<'a, T>,
 }
 
 impl<T: Clone, const C: usize> Clone for Iter<'_, T, C> {
     fn clone(&self) -> Self {
         Self {
             sequence: self.sequence,
-            front: self.front,
-            back: self.back,
-            front_leaf: self.front_leaf,
-            back_leaf: self.back_leaf,
+            front: self.front.clone(),
+            siblings: self.siblings.clone(),
+            middle: self.middle.clone(),
+            back: self.back.clone(),
         }
     }
 }
 
-impl<'a, T: Clone, const C: usize> Iter<'a, T, C> {
-    /// The leaf holding the in-bounds logical `index`, and the leaf's start.
-    #[cold]
-    #[inline(never)]
-    fn locate(&self, index: usize) -> (&'a [T], usize) {
-        self.sequence.leaf_at(index).expect("cursor in bounds")
+/// What the front of a range loads next: the elements, the nodes after their
+/// leaf under its parent, and where the range then starts.
+struct FrontSegment<'a, T: Clone, const C: usize> {
+    elements: std::slice::Iter<'a, T>,
+    siblings: std::slice::Iter<'a, Arc<Node<T, C>>>,
+    middle_start: usize,
+}
+
+/// The first leaf segment of the non-empty `middle`. `siblings` are the nodes
+/// after the leaf that ends at `middle.start`: the first is the next leaf.
+/// With none left, or a branch next, the leaf is found from the root.
+#[inline(never)]
+fn front_segment<'a, T: Clone, const C: usize>(
+    sequence: &'a SharedSequence<T, C>,
+    mut siblings: std::slice::Iter<'a, Arc<Node<T, C>>>,
+    middle: std::ops::Range<usize>,
+) -> FrontSegment<'a, T, C> {
+    let next_leaf = siblings.next().and_then(|node| match &node.body {
+        Body::Leaf(values) => Some(values.as_slice()),
+        Body::Branch(_) => None,
+    });
+    let (leaf, start) = match next_leaf {
+        Some(leaf) => (leaf, middle.start),
+        None => {
+            let (leaf, start, rest) = sequence
+                .leaf_and_rest_at(middle.start)
+                .expect("cursor in bounds");
+            siblings = rest.iter();
+            (leaf, start)
+        }
+    };
+    let end = (middle.end - start).min(leaf.len());
+    FrontSegment {
+        elements: leaf[middle.start - start..end].iter(),
+        siblings,
+        middle_start: start + end,
+    }
+}
+
+/// The last leaf segment of the non-empty `middle`, and where `middle` then
+/// ends.
+#[inline(never)]
+fn back_segment<T: Clone, const C: usize>(
+    sequence: &SharedSequence<T, C>,
+    middle: std::ops::Range<usize>,
+) -> (std::slice::Iter<'_, T>, usize) {
+    let (leaf, start) = sequence.leaf_at(middle.end - 1).expect("cursor in bounds");
+    let from = middle.start.max(start) - start;
+    (leaf[from..middle.end - start].iter(), start + from)
+}
+
+impl<T: Clone, const C: usize> Iter<'_, T, C> {
+    /// Loads the first leaf segment of the non-empty `middle` into `front`.
+    #[inline(always)]
+    fn load_front(&mut self) {
+        let segment = front_segment(self.sequence, self.siblings.clone(), self.middle.clone());
+        self.front = segment.elements;
+        self.siblings = segment.siblings;
+        self.middle.start = segment.middle_start;
     }
 
-    /// The cached leaf when it holds `index`, else the leaf found afresh.
-    #[inline]
-    fn leaf_for(&self, cached: Option<(&'a [T], usize)>, index: usize) -> (&'a [T], usize) {
-        match cached {
-            Some((leaf, start)) if index >= start && index - start < leaf.len() => (leaf, start),
-            _ => self.locate(index),
-        }
+    /// Loads the last leaf segment of the non-empty `middle` into `back`.
+    #[inline(always)]
+    fn load_back(&mut self) {
+        let (elements, end) = back_segment(self.sequence, self.middle.clone());
+        self.back = elements;
+        self.middle.end = end;
     }
 }
 
@@ -530,20 +605,14 @@ impl<'a, T: Clone, const C: usize> Iterator for Iter<'a, T, C> {
     type Item = &'a T;
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.front == self.back {
-            return None;
+        if let Some(value) = self.front.next() {
+            return Some(value);
         }
-        let index = self.front;
-        self.front += 1;
-        if let Some((leaf, start)) = self.front_leaf {
-            // An index before the leaf wraps past its length and misses.
-            if let Some(value) = leaf.get(index.wrapping_sub(start)) {
-                return Some(value);
-            }
+        if self.middle.is_empty() {
+            return self.back.next();
         }
-        let (leaf, start) = self.locate(index);
-        self.front_leaf = Some((leaf, start));
-        Some(&leaf[index - start])
+        self.load_front();
+        self.front.next()
     }
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -552,73 +621,84 @@ impl<'a, T: Clone, const C: usize> Iterator for Iter<'a, T, C> {
     }
     #[inline]
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.front = self.front.saturating_add(n).min(self.back);
-        self.next()
+        if n < self.front.len() {
+            return self.front.nth(n);
+        }
+        let n = n - self.front.len();
+        self.front = Default::default();
+        if n >= self.middle.len() {
+            let n = n - self.middle.len();
+            self.middle.start = self.middle.end;
+            return self.back.nth(n);
+        }
+        if n != 0 {
+            // The next leaf is no longer the one `siblings` begins with.
+            self.middle.start += n;
+            self.siblings = Default::default();
+        }
+        self.load_front();
+        self.front.next()
     }
     /// One slice fold per leaf (`count`, `sum`, `for_each`, `last`, ...).
     #[inline]
-    fn fold<B, F>(self, init: B, mut f: F) -> B
+    fn fold<B, F>(mut self, init: B, mut f: F) -> B
     where
         F: FnMut(B, Self::Item) -> B,
     {
-        let mut accumulator = init;
-        let mut index = self.front;
-        let mut cached = self.front_leaf;
-        while index < self.back {
-            let (leaf, start) = self.leaf_for(cached, index);
-            let end = (self.back - start).min(leaf.len());
-            accumulator = leaf[index - start..end].iter().fold(accumulator, &mut f);
-            index = start + end;
-            cached = None;
+        let mut accumulator = std::mem::take(&mut self.front).fold(init, &mut f);
+        while !self.middle.is_empty() {
+            self.load_front();
+            accumulator = std::mem::take(&mut self.front).fold(accumulator, &mut f);
         }
-        accumulator
+        self.back.fold(accumulator, f)
     }
 }
 
 impl<T: Clone, const C: usize> DoubleEndedIterator for Iter<'_, T, C> {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.front == self.back {
-            return None;
+        if let Some(value) = self.back.next_back() {
+            return Some(value);
         }
-        self.back -= 1;
-        let index = self.back;
-        if let Some((leaf, start)) = self.back_leaf {
-            if let Some(value) = leaf.get(index.wrapping_sub(start)) {
-                return Some(value);
-            }
+        if self.middle.is_empty() {
+            return self.front.next_back();
         }
-        let (leaf, start) = self.locate(index);
-        self.back_leaf = Some((leaf, start));
-        Some(&leaf[index - start])
+        self.load_back();
+        self.back.next_back()
     }
     #[inline]
     fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
-        self.back = self.back.saturating_sub(n).max(self.front);
-        self.next_back()
+        if n < self.back.len() {
+            return self.back.nth_back(n);
+        }
+        let n = n - self.back.len();
+        self.back = Default::default();
+        if n >= self.middle.len() {
+            let n = n - self.middle.len();
+            self.middle.end = self.middle.start;
+            return self.front.nth_back(n);
+        }
+        self.middle.end -= n;
+        self.load_back();
+        self.back.next_back()
     }
     #[inline]
-    fn rfold<B, F>(self, init: B, mut f: F) -> B
+    fn rfold<B, F>(mut self, init: B, mut f: F) -> B
     where
         F: FnMut(B, Self::Item) -> B,
     {
-        let mut accumulator = init;
-        let mut index = self.back;
-        let mut cached = self.back_leaf;
-        while index > self.front {
-            let (leaf, start) = self.leaf_for(cached, index - 1);
-            let from = self.front.max(start) - start;
-            accumulator = leaf[from..index - start].iter().rfold(accumulator, &mut f);
-            index = start + from;
-            cached = None;
+        let mut accumulator = std::mem::take(&mut self.back).rfold(init, &mut f);
+        while !self.middle.is_empty() {
+            self.load_back();
+            accumulator = std::mem::take(&mut self.back).rfold(accumulator, &mut f);
         }
-        accumulator
+        self.front.rfold(accumulator, f)
     }
 }
 impl<T: Clone, const C: usize> ExactSizeIterator for Iter<'_, T, C> {
     #[inline]
     fn len(&self) -> usize {
-        self.back - self.front
+        self.front.len() + self.middle.len() + self.back.len()
     }
 }
 impl<T: Clone, const C: usize> FusedIterator for Iter<'_, T, C> {}
@@ -665,23 +745,34 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
             assert!(kind < C, "kind filter outside the sequence's count domain");
             wanted.insert(kind);
         }
-        let none: &[Arc<Node<T, C>>] = &[];
-        let mut iter = KindIter {
+        KindIter {
             kinds: wanted,
-            kind: self.kind,
+            sequence: self,
             skip,
             every: false,
-            open: [(none, 0); MAX_OPEN_BRANCHES],
-            depth: 0,
+            leaf: match self.editable {
+                true => self.flat.get().expect("editable Vec"),
+                false => &[],
+            },
+            position: 0,
+            siblings: &[],
+            resume: 0,
+        }
+    }
+
+    /// A kind filter that yields nothing and reads nothing: for a caller
+    /// whose own counts already show that none of its kinds is here.
+    pub(crate) fn of_no_kinds(&self) -> KindIter<'_, T, C> {
+        KindIter {
+            kinds: KindSet::default(),
+            sequence: self,
+            skip: true,
+            every: false,
             leaf: &[],
             position: 0,
-        };
-        if self.editable {
-            iter.leaf = self.flat.get().expect("editable Vec");
-        } else if let Some(root) = self.root.as_deref().filter(|root| iter.wanted(root)) {
-            iter.enter(root, 0);
+            siblings: &[],
+            resume: usize::MAX,
         }
-        iter
     }
 }
 
@@ -720,53 +811,103 @@ impl KindSet {
     }
 }
 
-/// Branches a kind filter holds open at once: one per level of the tree.
+/// A leaf, the position of its first element, and the nodes after it under
+/// its parent: each begins where the one before it ends.
+type LeafAt<'a, T, const C: usize> = (&'a [T], usize, &'a [Arc<Node<T, C>>]);
+
+/// The first leaf under `children` that counts a wanted kind and begins at or
+/// after `from`. `start` is where the first child begins.
+///
+/// The recursion is as deep as the tree is tall, which is at most 12 levels.
 /// Every child but a branch's last is full, because `from_vec` fills them,
 /// `append` adds a sibling only once the last child is full, and `prefix`
 /// cuts only the last. So a root `h` levels above its leaves holds more than
 /// `LEAF * FANOUT^(h - 1)` elements, and no length a `usize` can count needs
 /// more than 12 levels.
-const MAX_OPEN_BRANCHES: usize = 16;
+fn first_wanted_leaf<'a, T: Clone, const C: usize>(
+    children: &'a [Arc<Node<T, C>>],
+    mut start: usize,
+    from: usize,
+    kinds: &KindSet,
+    skip: bool,
+) -> Option<LeafAt<'a, T, C>> {
+    for (at, child) in children.iter().enumerate() {
+        let end = start + child.len;
+        if end > from && (!skip || kinds.any_counted(&child.counts)) {
+            match &child.body {
+                Body::Leaf(values) => {
+                    if start >= from {
+                        return Some((values, start, &children[at + 1..]));
+                    }
+                }
+                Body::Branch(grandchildren) => {
+                    let found = first_wanted_leaf(grandchildren, start, from, kinds, skip);
+                    if found.is_some() {
+                        return found;
+                    }
+                }
+            }
+        }
+        start = end;
+    }
+    None
+}
 
-/// Depth-first cursor over the subtrees that count a wanted kind. It holds
-/// its kinds and open branches inline, so a scan allocates nothing.
+/// Cursor over the leaves that count a wanted kind, in order. It steps
+/// through the leaves under one parent, then finds the next wanted leaf from
+/// the root, so it passes over a subtree that counts none of its kinds
+/// without reading it. It holds its kinds inline and nothing per level of the
+/// tree: a scan allocates nothing, and the cursor is cheap to build and to
+/// move even when it yields nothing.
 pub(crate) struct KindIter<'a, T: Clone, const C: usize> {
     kinds: KindSet,
-    kind: fn(&T) -> usize,
+    sequence: &'a SharedSequence<T, C>,
     /// Whether subtrees counting none of `kinds` are skipped.
     skip: bool,
     /// Whether every element is yielded, whatever its kind (tests).
     every: bool,
-    /// Unvisited children of each open branch, and the position of the
-    /// first, outermost first: the first `depth` entries are in use.
-    open: [(&'a [Arc<Node<T, C>>], usize); MAX_OPEN_BRANCHES],
-    depth: usize,
     /// Unvisited elements of the current leaf, and the position of the first.
     leaf: &'a [T],
     position: usize,
+    /// The nodes after the current leaf under its parent, and the position
+    /// where the first of them begins. Once they are spent, the search for
+    /// the next leaf resumes from that position.
+    siblings: &'a [Arc<Node<T, C>>],
+    resume: usize,
 }
 
-impl<'a, T: Clone, const C: usize> KindIter<'a, T, C> {
+impl<T: Clone, const C: usize> KindIter<'_, T, C> {
     fn wanted(&self, node: &Node<T, C>) -> bool {
         !self.skip || self.kinds.any_counted(&node.counts)
     }
 
-    /// Reads `node`, whose first element is at `start`, next.
-    fn enter(&mut self, node: &'a Node<T, C>, start: usize) {
-        match &node.body {
-            Body::Leaf(values) => {
-                self.leaf = values;
-                self.position = start;
-            }
-            Body::Branch(children) => {
-                let frame = self
-                    .open
-                    .get_mut(self.depth)
-                    .expect("sequence taller than any countable length");
-                *frame = (children, start);
-                self.depth += 1;
-            }
-        }
+    /// Moves to the first wanted leaf that begins at or after `resume`,
+    /// found from the root. False, for good, when there is none.
+    fn seek(&mut self) -> bool {
+        let tree = match self.sequence.editable {
+            // Cold editable storage is one leaf, which the filter began with.
+            true => None,
+            false => self.sequence.root.as_deref(),
+        };
+        let found = match tree {
+            Some(root) if self.resume < root.len && self.wanted(root) => match &root.body {
+                // A leaf root is read from its start or not at all.
+                Body::Leaf(values) => (self.resume == 0).then_some((values.as_slice(), 0, &[][..])),
+                Body::Branch(children) => {
+                    first_wanted_leaf(children, 0, self.resume, &self.kinds, self.skip)
+                }
+            },
+            _ => None,
+        };
+        let Some((leaf, start, siblings)) = found else {
+            self.resume = usize::MAX;
+            return false;
+        };
+        self.leaf = leaf;
+        self.position = start;
+        self.siblings = siblings;
+        self.resume = start + leaf.len();
+        true
     }
 }
 
@@ -779,19 +920,30 @@ impl<'a, T: Clone, const C: usize> Iterator for KindIter<'a, T, C> {
                 let position = self.position;
                 self.leaf = rest;
                 self.position += 1;
-                if self.every || self.kinds.contains((self.kind)(value)) {
+                if self.every || self.kinds.contains((self.sequence.kind)(value)) {
                     return Some((position, value));
                 }
             }
-            let innermost = self.depth.checked_sub(1)?;
-            let (children, start) = self.open[innermost];
-            let Some((child, rest)) = children.split_first() else {
-                self.depth = innermost;
-                continue;
-            };
-            self.open[innermost] = (rest, start + child.len);
-            if self.wanted(child) {
-                self.enter(child, start);
+            match self.siblings.split_first() {
+                Some((node, rest)) => match &node.body {
+                    // The next leaf under the same parent begins at `resume`.
+                    Body::Leaf(values) => {
+                        self.siblings = rest;
+                        let start = self.resume;
+                        self.resume += values.len();
+                        if self.wanted(node) {
+                            self.leaf = values;
+                            self.position = start;
+                        }
+                    }
+                    // Not a leaf: its leaves are found from the root.
+                    Body::Branch(_) => self.siblings = &[],
+                },
+                None => {
+                    if !self.seek() {
+                        return None;
+                    }
+                }
             }
         }
     }
@@ -860,6 +1012,19 @@ mod tests {
         assert!(tree
             .every_element_with_position()
             .eq(values.iter().enumerate()));
+        assert!(tree.of_no_kinds().next().is_none());
+        // A spent filter stays spent.
+        let mut spent = tree.of_kinds(0..C);
+        assert_eq!(spent.by_ref().count(), values.len());
+        assert!(spent.next().is_none() && spent.next().is_none());
+    }
+
+    /// A kind filter is built and moved once for every guarded check, most
+    /// of which find nothing. Up to 128 bytes the compiler copies a value
+    /// inline on any x86-64; past that each move is a call to `memcpy`.
+    #[test]
+    fn a_kind_filter_is_small_enough_to_move_inline() {
+        assert!(std::mem::size_of::<KindIter<'_, usize, 3>>() <= 128);
     }
 
     #[test]
@@ -1096,7 +1261,7 @@ mod tests {
         }
     }
 
-    /// The bound behind `MAX_OPEN_BRANCHES`: leaves share one depth, every
+    /// The bound on the kind filter's descent: leaves share one depth, every
     /// child but a branch's last is full, and a root above its leaves has a
     /// full first child and another, however the tree was built or cut.
     #[test]
@@ -1124,7 +1289,7 @@ mod tests {
                 assert!(children.len() >= 2, "a branch root has two children");
                 assert!(tree.len() > LEAF * FANOUT.pow(levels - 1));
             }
-            assert!(levels as usize <= MAX_OPEN_BRANCHES);
+            assert!(levels <= 12, "one frame of the descent per level");
         }
         for len in [0, 1, 64, 65, 2048, 2049, 70_000] {
             let values: Vec<_> = (0..len).collect();
@@ -1162,6 +1327,124 @@ mod tests {
             edited.as_mut_vec().push(7);
             edited.repack();
             check(&edited);
+        }
+    }
+
+    /// Every way of stepping a range cursor against a slice iterator: single
+    /// steps from both ends, skips inside a leaf, across leaves and past the
+    /// end, clones, folds and searches of what is left, in the interleavings
+    /// a fixed pseudo-random sequence reaches, over ranges that start and end
+    /// inside, at and across leaf boundaries.
+    fn cursor_oracle(tree: &SharedSequence<usize, 3>, values: &[usize], seed: &mut u64) {
+        let mut draw = |bound: usize| {
+            *seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (*seed >> 33) as usize % bound
+        };
+        let len = values.len();
+        for _ in 0..24 {
+            let start = draw(len + 1);
+            let end = start + draw((len - start).min(300) + 1);
+            let mut a = tree.range(start..end);
+            let mut b = values[start..end].iter();
+            loop {
+                assert_eq!(a.len(), b.len());
+                assert_eq!(a.size_hint(), b.size_hint());
+                match draw(24) {
+                    0..=5 => assert_eq!(a.next(), b.next()),
+                    6..=11 => assert_eq!(a.next_back(), b.next_back()),
+                    12..=14 => {
+                        let n = draw(70);
+                        assert_eq!(a.nth(n), b.nth(n));
+                    }
+                    15..=17 => {
+                        let n = draw(70);
+                        assert_eq!(a.nth_back(n), b.nth_back(n));
+                    }
+                    18 => {
+                        let n = draw(len + 2);
+                        assert_eq!(a.nth(n), b.nth(n));
+                    }
+                    19 => {
+                        let n = draw(len + 2);
+                        assert_eq!(a.nth_back(n), b.nth_back(n));
+                    }
+                    20 | 21 => {
+                        // What is left, by step and by fold, in both orders.
+                        assert!(a.clone().eq(b.clone()));
+                        assert!(a.clone().rev().eq(b.clone().rev()));
+                        let forwards = a.clone().fold(Vec::new(), |mut seen, value| {
+                            seen.push(*value);
+                            seen
+                        });
+                        assert!(forwards.iter().eq(b.clone()));
+                        let backwards = a.clone().rfold(Vec::new(), |mut seen, value| {
+                            seen.push(*value);
+                            seen
+                        });
+                        assert!(backwards.iter().eq(b.clone().rev()));
+                    }
+                    _ => {
+                        // The adapters that stop early step element by element.
+                        let target = start + draw(end - start + 1);
+                        assert_eq!(
+                            a.clone().position(|value| *value == target),
+                            b.clone().position(|value| *value == target)
+                        );
+                        assert_eq!(
+                            a.clone().rfind(|value| **value <= target),
+                            b.clone().rfind(|value| **value <= target)
+                        );
+                        assert_eq!(
+                            a.clone().any(|value| *value == target),
+                            b.clone().any(|value| *value == target)
+                        );
+                    }
+                }
+                if b.len() == 0 {
+                    assert_eq!(a.len(), 0);
+                    assert_eq!(a.next(), None);
+                    assert_eq!(a.next_back(), None);
+                    assert_eq!(a.nth(3), None);
+                    assert_eq!(a.nth_back(3), None);
+                    break;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn range_cursor_steps_match_a_slice_iterator_in_every_form() {
+        let mut seed = 0x5eed;
+        for len in [
+            0, 1, 2, 63, 64, 65, 127, 128, 129, 200, 2047, 2048, 2049, 4099,
+        ] {
+            let values: Vec<_> = (0..len).collect();
+            let built = SharedSequence::<_, 3>::from_vec(values.clone(), kind);
+            let mut pushed = SharedSequence::<_, 3>::new(kind);
+            for value in &values {
+                pushed.push(*value);
+            }
+            cursor_oracle(&built, &values, &mut seed);
+            cursor_oracle(&pushed, &values, &mut seed);
+            // A cut leaves a short last leaf, which later pushes fill.
+            let cut = len / 2 + 1;
+            let mut prefix = built.prefix(cut);
+            let mut expected = values[..cut.min(len)].to_vec();
+            for value in len..len + 70 {
+                prefix.push(value);
+                expected.push(value);
+            }
+            cursor_oracle(&prefix, &expected, &mut seed);
+            // Editable storage is one slice, and repacked it is a tree again.
+            let mut edited = built.clone();
+            edited.as_mut_vec().push(len);
+            let mut expected = values.clone();
+            expected.push(len);
+            cursor_oracle(&edited, &expected, &mut seed);
+            edited.repack();
+            cursor_oracle(&edited, &expected, &mut seed);
         }
     }
 

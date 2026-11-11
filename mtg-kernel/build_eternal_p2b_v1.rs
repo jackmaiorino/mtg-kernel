@@ -1,9 +1,10 @@
 //! Card-database recipes for the eternal catalog's Premodern wave P2b:
-//! Survival, Elves (partly) and Madness Threshold. This module is the tail
-//! of the recipe chain: wave P1a's tables, the last before it, fall through
-//! to these, whose own defaults are the chain's base values. Runtime
-//! programs live in `src/eternal_premodern_p2b_v1.rs`. Every row is keyed by
-//! a name that occurs only in the eternal registry.
+//! Survival, Elves (partly) and Madness Threshold. Wave P1a's tables fall
+//! through to these, and the activated ability, spell and trigger tables
+//! continue to sideboard wave P3a's, the chain's tail. The other tables'
+//! own defaults are the chain's base values. Runtime programs live in
+//! `src/eternal_premodern_p2b_v1.rs`. Every row is keyed by a name that
+//! occurs only in the eternal registry.
 
 use super::{AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, Special};
 use AbilityCostRecipe::{DiscardCards, ManaCost, Tap};
@@ -107,7 +108,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Tireless Tribe" => &TIRELESS_TRIBE,
         "Wirewood Symbiote" => &WIREWOOD_SYMBIOTE,
         "Yavimaya Hollow" => &YAVIMAYA_HOLLOW,
-        _ => &[],
+        _ => super::build_eternal_p3a_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -119,7 +120,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             target_spec: "TargetSpec::None",
             program: "crate::eternal_premodern_p2b_v1::chatter_of_the_squirrel",
         },
-        _ => return None,
+        _ => return super::build_eternal_p3a_v1::special_for(name),
     })
 }
 
@@ -213,6 +214,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Wirewood Symbiote" => "activated:return_elf:untap_target_creature:once_per_turn",
         "Yavimaya Granger" => "echo:2g;etb:may_search_basic_land_to_battlefield_tapped",
         "Yavimaya Hollow" => "mana:c;activated:g_tap:regenerate_target_creature",
-        _ => "none",
+        _ => super::build_eternal_p3a_v1::trigger_recipe_for(name),
     }
 }

@@ -44,7 +44,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 
-type Session = FastActorSessionV1;
+pub(super) type Session = FastActorSessionV1;
 type Counts = BTreeMap<&'static str, u64>;
 
 const STACK_BYTES: usize = 256 << 20;
@@ -55,7 +55,7 @@ const MAX_LEAVES: u64 = 4096;
 /// Menu rows kept in a case row (highest probability first).
 const TOP_ROWS: usize = 8;
 
-fn env_u64(name: &str, default: u64) -> Result<u64, String> {
+pub(super) fn env_u64(name: &str, default: u64) -> Result<u64, String> {
     match std::env::var(name) {
         Ok(text) => text
             .parse()
@@ -76,24 +76,28 @@ fn seat(p: PlayerId) -> PlayerSeatV1 {
     PlayerSeatV1::from(p)
 }
 
-fn step(s: &mut Session, d: &FastActorDecisionV1, a: u32) -> Result<(), String> {
+pub(super) fn step(s: &mut Session, d: &FastActorDecisionV1, a: u32) -> Result<(), String> {
     s.step(d.episode_id, d.step, a)
         .map(|_| ())
         .map_err(|e| format!("{e:?}"))
 }
 
-fn menu(s: &Session) -> Vec<ActionSemanticV1> {
+pub(super) fn menu(s: &Session) -> Vec<ActionSemanticV1> {
     s.diagnostic_current_action_semantics().unwrap_or_default()
 }
 
-fn pass_row(m: &[ActionSemanticV1]) -> Option<u32> {
+pub(super) fn pass_row(m: &[ActionSemanticV1]) -> Option<u32> {
     m.iter()
         .position(|x| matches!(x, ActionSemanticV1::Pass { .. }))
         .map(|i| i as u32)
 }
 
 /// The live decision equals record `r` (fail closed on any difference).
-fn matches_record(d: &FastActorDecisionV1, r: &RecordedDecision, i: usize) -> Result<(), String> {
+pub(super) fn matches_record(
+    d: &FastActorDecisionV1,
+    r: &RecordedDecision,
+    i: usize,
+) -> Result<(), String> {
     if d.step != r.step
         || d.physical_decision_id != r.physical_decision_id
         || acting(d).0 != r.actor
@@ -122,7 +126,7 @@ fn focal_lost(s: &Session, focal: PlayerId) -> Option<bool> {
     Some(t.winner.is_some_and(|w| w != seat(focal)))
 }
 
-fn softmax(logits: &[f32]) -> Vec<f64> {
+pub(super) fn softmax(logits: &[f32]) -> Vec<f64> {
     let max = logits
         .iter()
         .fold(f64::NEG_INFINITY, |m, &x| m.max(f64::from(x)));
@@ -211,13 +215,13 @@ impl Scorer {
 
 /// One blocker-inclusion decision: its include and exclude rows.
 #[derive(Debug, PartialEq, Eq)]
-struct BlockerScan {
-    include_row: Option<u32>,
-    exclude_row: Option<u32>,
+pub(super) struct BlockerScan {
+    pub(super) include_row: Option<u32>,
+    pub(super) exclude_row: Option<u32>,
 }
 
 /// A menu whose every row is a `ChooseBlockerInclusion` of one pair.
-fn blocker_scan_menu(m: &[ActionSemanticV1]) -> Option<BlockerScan> {
+pub(super) fn blocker_scan_menu(m: &[ActionSemanticV1]) -> Option<BlockerScan> {
     let mut scan: Option<(u32, u32, BlockerScan)> = None;
     for (row, action) in m.iter().enumerate() {
         let ActionSemanticV1::ChooseBlockerInclusion {
@@ -266,7 +270,7 @@ fn presence(s: &Session, id: ObjectId) -> Option<u32> {
 
 /// `w4_combat`'s rule: combat damage, its state-based actions and triggers
 /// are over at the current decision.
-fn past_combat(s: &Session, turn: (u32, PlayerId)) -> bool {
+pub(super) fn past_combat(s: &Session, turn: (u32, PlayerId)) -> bool {
     let state = s.game_state();
     if (state.turn, state.active_player) != turn || (state.step as u8) > (Step::CombatDamage as u8)
     {

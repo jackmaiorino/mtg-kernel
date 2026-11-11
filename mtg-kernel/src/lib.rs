@@ -181,6 +181,7 @@ pub mod banner_of_kinship_v1;
 pub mod bloodthirsty_conqueror_v49;
 pub mod bo3_match;
 pub mod bo3_session;
+pub(crate) mod borrow_memo_v1;
 pub mod bounded_staleness_async_harness_v1;
 pub mod bounded_staleness_async_production_v1;
 pub mod bounded_staleness_async_v1;
@@ -325,6 +326,8 @@ pub mod eternal_premodern_p2c_v1;
 /// Premodern White Weenie and Mono-Red Control card programs of the eternal
 /// catalog (wave P2d).
 pub mod eternal_premodern_p2d_v1;
+/// Premodern sideboard card programs of the eternal catalog (wave P3a).
+pub mod eternal_premodern_p3a_v1;
 /// Legacy sideboard card programs of the eternal catalog (wave S1a).
 pub mod eternal_sideboard_s1a_v1;
 /// Legacy sideboard card programs of the eternal catalog, part 2 (wave S1b).

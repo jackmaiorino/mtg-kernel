@@ -335,8 +335,15 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
     }
 }
 
-/// Solitary Confinement: "You have shroud." Whether `player` has shroud.
+/// Whether `player` has shroud: Solitary Confinement's or True Believer's
+/// (Premodern sideboard wave P3a) "You have shroud."
 pub(crate) fn player_has_shroud(state: &GameState, player: PlayerId) -> bool {
+    solitary_confinement(state, player)
+        || crate::eternal_premodern_p3a_v1::statics::player_has_shroud(state, player)
+}
+
+/// Whether `player` controls a Solitary Confinement whose abilities apply.
+fn solitary_confinement(state: &GameState, player: PlayerId) -> bool {
     active_with_id(
         state,
         static_ids().solitary_confinement,
@@ -350,14 +357,14 @@ pub(crate) fn player_has_shroud(state: &GameState, player: PlayerId) -> bool {
 /// Solitary Confinement: "Prevent all damage that would be dealt to you."
 pub(crate) fn prevents_damage(state: &GameState, damage: &DamageProposed) -> bool {
     match damage.target {
-        Target::Player(player) => player_has_shroud(state, player),
+        Target::Player(player) => solitary_confinement(state, player),
         _ => false,
     }
 }
 
 /// Solitary Confinement: "Skip your draw step."
 pub(crate) fn skips_draw_step(state: &GameState, player: PlayerId) -> bool {
-    player_has_shroud(state, player)
+    solitary_confinement(state, player)
 }
 
 /// Tsabo's Web: "Each land with an activated ability that isn't a mana

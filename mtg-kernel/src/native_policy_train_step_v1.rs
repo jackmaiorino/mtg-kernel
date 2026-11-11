@@ -41,6 +41,7 @@ use crate::native_policy_value_net_v1::{
     rounds_to_nearest_v1,
     NativeEncodedDecisionViewV1,
     NativeNamedParameterV1,
+    NativeNamedTensorRefV1,
     NativePolicyValueErrorV1,
     NativePolicyValueModelConfigV1,
     NativePolicyValueNetV1,
@@ -1092,7 +1093,8 @@ pub(crate) trait TrainableNetV1: Clone + std::fmt::Debug + Send + Sync {
         parameters: &[NativeNamedParameterV1],
     ) -> Result<(), NativePolicyValueErrorV1>;
     fn validate_parameters_v1(&self) -> Result<(), NativePolicyValueErrorV1>;
-    fn visit_parameters_v1(&self, visitor: impl FnMut(&'static str, &[usize], &[f32]));
+    /// Visits the model's own stored tensors, borrowed for as long as it is.
+    fn visit_parameters_v1<'a>(&'a self, visitor: impl FnMut(&'static str, &[usize], &'a [f32]));
     fn config_v1(&self) -> NativePolicyValueModelConfigV1;
     fn feature_transfer_config_v3(&self) -> NativePolicyValueModelConfigV1;
     fn feature_transfer_config_v4(&self) -> NativePolicyValueModelConfigV1;
@@ -1115,7 +1117,7 @@ impl TrainableNetV1 for NativePolicyValueNetV1 {
         NativePolicyValueNetV1::validate_parameters_v1(self)
     }
 
-    fn visit_parameters_v1(&self, visitor: impl FnMut(&'static str, &[usize], &[f32])) {
+    fn visit_parameters_v1<'a>(&'a self, visitor: impl FnMut(&'static str, &[usize], &'a [f32])) {
         NativePolicyValueNetV1::visit_parameters_v1(self, visitor)
     }
 
@@ -1152,7 +1154,7 @@ impl TrainableNetV1 for NativePolicyValueNetWideV1 {
         self.validate_parameters_wide_v1()
     }
 
-    fn visit_parameters_v1(&self, visitor: impl FnMut(&'static str, &[usize], &[f32])) {
+    fn visit_parameters_v1<'a>(&'a self, visitor: impl FnMut(&'static str, &[usize], &'a [f32])) {
         self.visit_parameters_wide_v1(visitor)
     }
 
@@ -1467,6 +1469,20 @@ impl NativePolicyValueTrainSnapshotV1 {
     }
 }
 
+/// The live state's model and Adam tensors, borrowed: what
+/// [`NativePolicyValueTrainSnapshotV1`] copies, in the same order and under
+/// the same names and shapes, with the values left in the state. A shared
+/// borrow, so the state cannot change while it lives. It has no digest of
+/// its own: the state's is `state_sha256_v1()` of the state it borrows.
+#[derive(Clone, Debug)]
+pub(crate) struct TrainTensorsV1<'a> {
+    pub(crate) adam_step: u64,
+    pub(crate) scorer_bias_anchor_bits: u32,
+    pub(crate) parameters: Vec<NativeNamedTensorRefV1<'a>>,
+    pub(crate) first_moments: Vec<NativeNamedTensorRefV1<'a>>,
+    pub(crate) second_moments: Vec<NativeNamedTensorRefV1<'a>>,
+}
+
 /// The net-8 train state; every narrow method keeps its name and meaning.
 pub(crate) type NativePolicyValueTrainStateV1 = NativePolicyValueTrainStateDimsV1<Net8DimsV1>;
 
@@ -1779,6 +1795,27 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         })
     }
 
+    /// [`Self::snapshot_dims_v1`] without the copy: the same validation, then
+    /// the same tensors in the same order, borrowed from the live state.
+    pub(crate) fn tensors_dims_v1(&self) -> Result<TrainTensorsV1<'_>, NativePolicyTrainErrorV1> {
+        self.validate_state_dims_v1()?;
+        let mut parameters = Vec::with_capacity(self.first_moments.len());
+        self.model.visit_parameters_v1(|name, shape, values| {
+            parameters.push(NativeNamedTensorRefV1 {
+                name,
+                shape: shape.to_vec(),
+                values,
+            });
+        });
+        Ok(TrainTensorsV1 {
+            adam_step: self.adam_step,
+            scorer_bias_anchor_bits: self.scorer_bias_anchor_bits,
+            first_moments: named_state_tensors_v1(&parameters, &self.first_moments),
+            second_moments: named_state_tensors_v1(&parameters, &self.second_moments),
+            parameters,
+        })
+    }
+
     pub(crate) fn state_sha256_dims_v1(&self) -> Result<[u8; 32], NativePolicyTrainErrorV1> {
         self.validate_state_dims_v1()?;
         Ok(hash_live_train_state_dims_v1(self))
@@ -2074,6 +2111,12 @@ impl NativePolicyValueTrainStateV1 {
         &self,
     ) -> Result<NativePolicyValueTrainSnapshotV1, NativePolicyTrainErrorV1> {
         self.snapshot_dims_v1()
+    }
+
+    /// The snapshot's tensors borrowed from the live state, after the same
+    /// validation (`tensors_dims_v1`).
+    pub(crate) fn tensors_v1(&self) -> Result<TrainTensorsV1<'_>, NativePolicyTrainErrorV1> {
+        self.tensors_dims_v1()
     }
 
     /// Domain-separated digest of every ordered parameter and moment bit plus
@@ -6767,6 +6810,23 @@ fn named_state_snapshot(
         .collect()
 }
 
+/// [`named_state_snapshot`] borrowed: each moment under its parameter's name
+/// and shape, its values left in place.
+fn named_state_tensors_v1<'a>(
+    parameters: &[NativeNamedTensorRefV1<'a>],
+    values: &'a [Vec<f32>],
+) -> Vec<NativeNamedTensorRefV1<'a>> {
+    parameters
+        .iter()
+        .zip(values)
+        .map(|(parameter, values)| NativeNamedTensorRefV1 {
+            name: parameter.name,
+            shape: parameter.shape.clone(),
+            values,
+        })
+        .collect()
+}
+
 fn add_indexed_rows(destination: &mut [f32], source: &[f32], indices: &[usize]) {
     add_indexed_rows_dims_v1::<Net8DimsV1>(destination, source, indices)
 }
@@ -11145,5 +11205,134 @@ mod tests {
                 golden.optimizer.learning_rate,
             )
             .is_ok());
+    }
+
+    /// `tensors_v1` against `snapshot_v1` for one valid state: the same step
+    /// and anchor, and in order the same names, shapes and value bits, read
+    /// in place from the state, hashing to the state's own digest.
+    fn assert_tensors_are_the_snapshot_v1(state: &NativePolicyValueTrainStateV1) {
+        use crate::expanded_deck_training_v1::checkpoint_container_v1::same_tensors_v1;
+        let tensors = state.tensors_v1().unwrap();
+        let snapshot = state.snapshot_v1().unwrap();
+        assert_eq!(
+            (tensors.adam_step, tensors.scorer_bias_anchor_bits),
+            (snapshot.adam_step, snapshot.scorer_bias_anchor_bits)
+        );
+        let sections = [
+            (&tensors.parameters, &snapshot.parameters),
+            (&tensors.first_moments, &snapshot.first_moments),
+            (&tensors.second_moments, &snapshot.second_moments),
+        ];
+        for (borrowed, owned) in sections {
+            // The codec's stream (`TensorBitsV1`) and the fields themselves.
+            assert!(same_tensors_v1(borrowed, owned));
+            assert_eq!(borrowed.len(), owned.len());
+            for (borrowed, owned) in borrowed.iter().zip(owned) {
+                assert_eq!((borrowed.name, &borrowed.shape), (owned.name, &owned.shape));
+                assert!(borrowed
+                    .values
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .eq(owned.values.iter().map(|value| value.to_bits())));
+            }
+        }
+        // Borrowed, not copied: the values are the state's own tensors.
+        let mut held = Vec::new();
+        state
+            .model
+            .visit_parameters_v1(|_, _, values| held.push(values.as_ptr()));
+        held.extend(state.first_moments.iter().map(|values| values.as_ptr()));
+        held.extend(state.second_moments.iter().map(|values| values.as_ptr()));
+        let viewed: Vec<_> = [
+            &tensors.parameters,
+            &tensors.first_moments,
+            &tensors.second_moments,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|tensor| tensor.values.as_ptr())
+        .collect();
+        assert_eq!(viewed, held);
+        // What the view reads hashes to the state's digest.
+        let owned = |tensors: &[NativeNamedTensorRefV1<'_>]| -> Vec<NativeNamedParameterV1> {
+            tensors
+                .iter()
+                .map(|tensor| NativeNamedParameterV1 {
+                    name: tensor.name,
+                    shape: tensor.shape.clone(),
+                    values: tensor.values.to_vec(),
+                })
+                .collect()
+        };
+        let copied = NativePolicyValueTrainSnapshotV1 {
+            adam_step: tensors.adam_step,
+            scorer_bias_anchor_bits: tensors.scorer_bias_anchor_bits,
+            parameters: owned(&tensors.parameters),
+            first_moments: owned(&tensors.first_moments),
+            second_moments: owned(&tensors.second_moments),
+        };
+        assert_eq!(
+            compute_owned_train_snapshot_sha256_v1(&copied),
+            state.state_sha256_v1().unwrap()
+        );
+    }
+
+    #[test]
+    fn the_borrowed_train_tensors_are_the_snapshot_and_hash_to_the_state_digest() {
+        let (forward, golden) = fixtures();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+        assert_tensors_are_the_snapshot_v1(&state);
+        // A trained state: Adam step 1, nonzero moments.
+        let step = &golden.steps[2];
+        let expected_outputs = expected_outputs_for_step(&model, &forward, step);
+        let substeps = substeps_for_step(&forward, step, &expected_outputs);
+        let groups = groups_for_step(step, &substeps);
+        state
+            .train_step_v1(
+                &groups[..8],
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            )
+            .unwrap();
+        assert_eq!(state.adam_step_v1(), 1);
+        assert!(state
+            .first_moments
+            .iter()
+            .flatten()
+            .any(|value| value.to_bits() != 0));
+        assert_tensors_are_the_snapshot_v1(&state);
+    }
+
+    #[test]
+    fn an_invalid_state_lends_no_tensors_and_fails_as_its_snapshot_does() {
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let valid = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        type StateChangeV1 = fn(&mut NativePolicyValueTrainStateV1);
+        let breaks: [(&str, StateChangeV1); 5] = [
+            ("Adam step past i32", |state| state.adam_step = u64::MAX),
+            ("a NaN first moment", |state| {
+                state.first_moments[3][0] = f32::NAN;
+            }),
+            ("a negative second moment", |state| {
+                state.second_moments[3][0] = -1.0;
+            }),
+            ("a missing moment tensor", |state| {
+                state.first_moments.pop();
+            }),
+            ("a different gauge anchor", |state| {
+                state.scorer_bias_anchor_bits ^= 1;
+            }),
+        ];
+        for (what, change) in breaks {
+            let mut state = valid.clone();
+            change(&mut state);
+            let refused = state.snapshot_v1().expect_err(what);
+            assert_eq!(state.tensors_v1().map(|_| ()), Err(refused), "{what}");
+        }
     }
 }

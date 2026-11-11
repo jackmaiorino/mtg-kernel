@@ -1,8 +1,9 @@
 //! The measurement-only S learner profile (`s-learner-profile-v1`) counts
 //! what the learner actually does and changes no result: its replay
 //! multiply-adds equal the analytic weight-gradient census, its byte counters
-//! equal the recorded term values, every span and drain is accounted for,
-//! and the serial and parallel full Adam states stay identical.
+//! equal the recorded term values, every span, phase, task and helper is
+//! accounted for, and the serial and parallel full Adam states stay
+//! identical.
 
 use mtg_kernel::s_transformer_v1::profile::SProfileAllocatorV1;
 use mtg_kernel::s_transformer_v1::tools::gae_bench_v1;
@@ -70,20 +71,40 @@ fn profile_counts_match_the_recorded_work_and_change_no_result() {
     }
     assert!(spans(profile, "sink_linear") >= 20 * substeps);
     for stage in [
-        "record_drain",
+        "phase",
         "score_merge",
         "replay_additions",
-        "replay_drain",
+        "shard_build",
+        "barrier",
     ] {
         assert_eq!(spans(profile, stage), 0, "serial {stage}");
     }
     assert_eq!(number(profile, &["terms", "linear_terms"]), 0);
-    assert_eq!(number(profile, &["drains", "record", "drains"]), 0);
+    assert_eq!(number(profile, &["pool", "updates"]), 0);
     assert!(profile["shards"].as_array().unwrap().is_empty());
     assert!(number(profile, &["stages", "gradient", "allocs"]) > 0);
     let sections = profile["backward_sections"].as_array().unwrap();
     assert_eq!(sections.len(), 3);
     assert_eq!(sections[2]["final_block"], true);
+    // Every synthetic substep's final block skips its object query rows:
+    // the census removes exactly their analytic work from the final layer.
+    let macs = &profile["macs"];
+    assert_eq!(number(macs, &["final_block_live_substeps"]), substeps);
+    assert_eq!(
+        macs["final_block_removed_total"],
+        macs["final_block_object_query_rows_total"]
+    );
+    for field in ["dx", "dw", "attention", "rows"] {
+        let layer = |index: usize| -> u64 {
+            ["ffn", "ln2", "proj", "attention", "qkv", "ln1"]
+                .iter()
+                .map(|section| number(&macs["layers"][index], &[section, field]))
+                .sum()
+        };
+        let removed = number(macs, &["final_block_removed_total", field]);
+        assert!(removed > 0, "{field}");
+        assert_eq!(layer(2) + removed, layer(1), "{field}");
+    }
     for layer in sections {
         for section in ["ffn", "ln2", "proj", "attention", "qkv", "ln1"] {
             assert_eq!(number(layer, &[section, "spans"]), substeps, "{section}");
@@ -102,22 +123,21 @@ fn profile_counts_match_the_recorded_work_and_change_no_result() {
         }
         let terms = &profile["terms"];
         let blocks = number(terms, &["blocks"]);
+        // Two sets of one slot per worker: block k records while block
+        // k - 1 replays, so the update takes one phase more than blocks.
         assert_eq!(
             blocks,
-            substeps.div_ceil(4),
-            "blocks of two substeps per worker"
+            substeps.div_ceil(2),
+            "blocks of one substep per worker"
         );
-        // A last block of one substep runs on the caller alone.
-        let helpers = blocks - u64::from(substeps % 4 == 1);
         assert_eq!(number(terms, &["block_substeps"]), substeps);
-        for stage in [
-            "record_drain",
-            "score_merge",
-            "replay_additions",
-            "replay_drain",
-        ] {
+        for stage in ["score_merge", "replay_additions"] {
             assert_eq!(spans(profile, stage), blocks, "{stage}");
         }
+        for stage in ["phase", "barrier"] {
+            assert_eq!(spans(profile, stage), blocks + 1, "{stage}");
+        }
+        assert_eq!(spans(profile, "shard_build"), 1);
         // Every recorded Linear call is one sink span; every stored value is
         // one counted byte group.
         let linear_terms = number(terms, &["linear_terms"]);
@@ -146,23 +166,33 @@ fn profile_counts_match_the_recorded_work_and_change_no_result() {
         assert!(shards.iter().all(|s| number(s, &["visits"]) == blocks));
         let scanned: u64 = shards.iter().map(|s| number(s, &["terms_scanned"])).sum();
         assert_eq!(scanned, shards.len() as u64 * linear_terms);
-        // Both drains per block, with one helper each and every helper joined.
-        for kind in ["record", "replay"] {
-            let drain = &profile["drains"][kind];
-            assert_eq!(number(drain, &["drains"]), blocks, "{kind}");
-            assert_eq!(number(drain, &["helper_spawns"]), helpers, "{kind}");
-            assert_eq!(number(drain, &["spawn_failures"]), 0, "{kind}");
-            assert_eq!(number(drain, &["joins"]), helpers, "{kind}");
-            assert_eq!(drain["busy_ns_by_worker"].as_array().unwrap().len(), 2);
+        // One helper for the whole update, spawned and joined once, in
+        // every phase.
+        let pool = &profile["pool"];
+        assert_eq!(number(pool, &["updates"]), 1);
+        assert_eq!(number(pool, &["worker_slots"]), 2);
+        assert_eq!(number(pool, &["helper_spawns"]), 1);
+        assert_eq!(number(pool, &["spawn_failures"]), 0);
+        assert_eq!(number(pool, &["joins"]), 1);
+        assert_eq!(number(pool, &["phases"]), blocks + 1);
+        assert_eq!(number(pool, &["record_phases"]), blocks);
+        assert_eq!(number(pool, &["replay_phases"]), blocks);
+        assert!(number(pool, &["wall_ns"]) >= number(pool, &["phase_wall_ns"]));
+        let busy = pool["busy_ns_by_worker"].as_array().unwrap();
+        let idle = pool["idle_ns_by_worker"].as_array().unwrap();
+        assert_eq!((busy.len(), idle.len()), (2, 2));
+        let tasks = &profile["tasks"];
+        for (kind, items) in [
+            ("record", substeps),
+            ("replay", shards.len() as u64 * blocks),
+            ("additions", blocks),
+        ] {
+            assert_eq!(sum(&tasks[kind]["items_by_worker"]), items, "{kind}");
+            assert_eq!(
+                tasks[kind]["busy_ns_by_worker"].as_array().unwrap().len(),
+                2
+            );
         }
-        assert_eq!(
-            sum(&profile["drains"]["record"]["items_by_worker"]),
-            substeps
-        );
-        assert_eq!(
-            sum(&profile["drains"]["replay"]["items_by_worker"]),
-            shards.len() as u64 * blocks
-        );
         let heap = &profile["heap"];
         assert!(number(heap, &["peak_live_bytes"]) >= number(heap, &["end_live_bytes"]));
         assert!(number(heap, &["peak_live_bytes"]) >= number(heap, &["start_live_bytes"]));

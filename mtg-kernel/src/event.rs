@@ -2942,6 +2942,14 @@ fn apply_replacements_inner(
             )
         });
     if let ProposedEvent::Damage(damage) = &mut proposed {
+        // Sphere of Law (Premodern sideboard wave P3a) applies first: before
+        // the increases, the redirection and every shield.
+        #[cfg(feature = "eternal-fixtures")]
+        if !damage_cannot_be_prevented
+            && crate::eternal_premodern_p3a_v1::statics::sphere_of_law_prevents(state, damage)
+        {
+            return None;
+        }
         if crate::twinflame_tyrant_v1::replace(state, damage).is_err() {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -10974,11 +10982,15 @@ pub(crate) fn lathril_item_selected_v1(state: &GameState, item: &crate::state::S
     matches!(
         item.inline_effect,
         Some(crate::effect::EffectOp::LathrilCombatTokensV1 { .. })
-    ) || state.engine.event_history.iter().any(|entry| {
-        matches!(entry,
+    ) || state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::LathrilCombatPublishedV1])
+        .any(|(_, entry)| {
+            matches!(entry,
             CommittedEvent::LathrilCombatPublishedV1 { item: original, .. }
             if original.v4.stack_item_id == item.v4.stack_item_id)
-    })
+        })
 }
 
 /// Only the engine's already-committed combat batch calls this handoff. Equal
@@ -11068,27 +11080,68 @@ fn record_copied_token_entry_v1(state: &mut GameState, creation: usize) {
             instances,
         });
 }
+/// The positions of copied-token ability entries by entered object and
+/// incarnation. While a `borrow_memo_v1` scope holds the state, one pass
+/// builds this; without a scope each lookup scans the entries.
+struct CopiedTokenEntriesV1(std::collections::HashMap<(ObjectId, u32), Vec<usize>>);
+struct CopiedTokenEntriesKeyV1;
+fn copied_token_entries_v1(state: &GameState) -> Option<std::rc::Rc<CopiedTokenEntriesV1>> {
+    if !crate::borrow_memo_v1::active(state) {
+        return None;
+    }
+    Some(crate::borrow_memo_v1::cached::<
+        CopiedTokenEntriesKeyV1,
+        (),
+        _,
+    >(state, (), || {
+        let mut entries = std::collections::HashMap::<(ObjectId, u32), Vec<usize>>::new();
+        for (at, event) in state
+            .engine
+            .event_history
+            .of_kinds_v2(&[crate::event_history_v1::EventKindV1::CopiedTokenAbilitiesEnteredV1])
+        {
+            if let CommittedEvent::CopiedTokenAbilitiesEnteredV1 { source, .. } = event {
+                entries
+                    .entry((source.source, source.zone_change_count))
+                    .or_default()
+                    .push(at);
+            }
+        }
+        std::rc::Rc::new(CopiedTokenEntriesV1(entries))
+    }))
+}
+
 fn copied_token_entry_v1(
     state: &GameState,
     source: crate::state::AbilitySourceContractV4,
 ) -> Result<u32, String> {
-    let rows = state
-        .engine
-        .event_history
-        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::CopiedTokenAbilitiesEnteredV1])
-        .filter_map(|(at, e)| match e {
-            CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
-                source: actual,
-                creation_history_index,
-                instances,
-            } if actual.source == source.source
-                && actual.zone_change_count == source.zone_change_count =>
-            {
-                Some((at, *actual, *creation_history_index, *instances))
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let pick = |at: usize, e: &CommittedEvent| match e {
+        CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
+            source: actual,
+            creation_history_index,
+            instances,
+        } if actual.source == source.source
+            && actual.zone_change_count == source.zone_change_count =>
+        {
+            Some((at, *actual, *creation_history_index, *instances))
+        }
+        _ => None,
+    };
+    let rows = match copied_token_entries_v1(state) {
+        Some(index) => index
+            .0
+            .get(&(source.source, source.zone_change_count))
+            .into_iter()
+            .flatten()
+            .filter_map(|at| pick(*at, state.engine.event_history.get(*at)?))
+            .collect::<Vec<_>>(),
+        None => state
+            .engine
+            .event_history
+            .of_kinds_v2(&[crate::event_history_v1::EventKindV1::CopiedTokenAbilitiesEnteredV1])
+            .filter_map(|(at, e)| pick(at, e))
+            .collect::<Vec<_>>(),
+    };
     let [(at, original, creation, count)] = rows.as_slice() else {
         return Err("copied token abilities lost unique entry".into());
     };
@@ -11353,7 +11406,7 @@ pub(crate) fn copied_token_item_selected_v1(
     item: &crate::state::StackItem,
 ) -> bool {
     matches!(item.inline_effect,Some(crate::effect::EffectOp::CopiedTokenEndStepSacrificeV1{..}))
-        || state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenSacrificePublishedV1{item:row,..} if row.v4.stack_item_id==item.v4.stack_item_id))
+        || state.engine.event_history.of_kinds_v2(&[crate::event_history_v1::EventKindV1::CopiedTokenSacrificePublishedV1]).any(|(_, e)|matches!(e,CommittedEvent::CopiedTokenSacrificePublishedV1{item:row,..} if row.v4.stack_item_id==item.v4.stack_item_id))
 }
 pub(crate) fn validate_published_copied_token_v1(
     state: &GameState,
@@ -11422,6 +11475,7 @@ pub(crate) fn copiable_token_abilities_v1(
 }
 
 pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<(), String> {
+    let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
     if crate::linked_aura_operation_v1::locally_owned(state) {
         return Ok(());
     }

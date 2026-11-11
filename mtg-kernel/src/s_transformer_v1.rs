@@ -159,6 +159,20 @@ pub(crate) struct LinearIdxV1 {
     pub(crate) in_dim: usize,
 }
 
+impl LinearIdxV1 {
+    /// The `Linear` of output rows `first..first + count`: the same inputs,
+    /// those weight rows and bias entries.
+    pub(crate) fn rows_v1(self, first: usize, count: usize) -> Self {
+        assert!(first + count <= self.out_dim, "S Linear rows out of range");
+        Self {
+            w: self.w + first * self.in_dim,
+            b: self.b + first,
+            out_dim: count,
+            in_dim: self.in_dim,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BlockIdxV1 {
     pub(crate) ln1_g: usize,
@@ -387,7 +401,9 @@ impl<'a> SInputV1<'a> {
         }
     }
 
-    pub(crate) fn validate_v1(&self, config: &SConfigV1) -> Result<CountsV1, String> {
+    /// The counts of a decision whose tensor shapes agree, before any value
+    /// is checked: `validate_v1`'s first checks.
+    pub(crate) fn shape_counts_v1(&self) -> Result<CountsV1, String> {
         if self.state.len() != STATE_DIM_V1 {
             return Err(format!("S input state has {} values", self.state.len()));
         }
@@ -422,6 +438,17 @@ impl<'a> SInputV1<'a> {
         {
             return Err("S input reference shapes differ".into());
         }
+        Ok(CountsV1 {
+            objects,
+            edges,
+            actions,
+            refs,
+        })
+    }
+
+    pub(crate) fn validate_v1(&self, config: &SConfigV1) -> Result<CountsV1, String> {
+        let counts = self.shape_counts_v1()?;
+        let (objects, actions) = (counts.objects, counts.actions);
         check_finite_v1("state", self.state)?;
         check_finite_v1("object_features", self.object_features)?;
         check_finite_v1("edge_features", self.edge_features)?;
@@ -434,12 +461,7 @@ impl<'a> SInputV1<'a> {
         check_indices_v1("action_ref_card_ids", self.ref_card_ids, config.card_vocab)?;
         check_indices_v1("action_ref_action_indices", self.ref_action, actions)?;
         check_indices_v1("action_ref_node_indices", self.ref_node, objects)?;
-        Ok(CountsV1 {
-            objects,
-            edges,
-            actions,
-            refs,
-        })
+        Ok(counts)
     }
 }
 
@@ -1242,6 +1264,103 @@ pub(crate) struct SBackScratchV1 {
     head_do: Vec<f32>,
     head_out: Vec<f32>,
     dscore: Vec<f32>,
+    /// The compact final block's residual adjoint rows `[m, d]`.
+    live_dx: Vec<f32>,
+    /// Its gathered activation rows (`[m, ffn]` or `[m, d]`) and one head's
+    /// probability rows (`[m, l]`).
+    live_rows: Vec<f32>,
+    live_probs: Vec<f32>,
+    /// Its query and key-value parts of the QKV adjoint (`[m, d]`, `[l, 2d]`).
+    live_dq: Vec<f32>,
+    live_dkv: Vec<f32>,
+}
+
+/// The query rows one block's backward visits, in token order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QueryRowsV1 {
+    /// Every token `0..l`.
+    All(usize),
+    /// The final block's live rows: the state token, then the action tokens
+    /// `1 + objects..1 + objects + actions`. Its forward computes no other
+    /// query row (`forward_validated_into_v1`), because the heads read only
+    /// these tokens.
+    Live { objects: usize, actions: usize },
+}
+
+impl QueryRowsV1 {
+    fn len(self) -> usize {
+        match self {
+            Self::All(tokens) => tokens,
+            Self::Live { actions, .. } => 1 + actions,
+        }
+    }
+
+    /// The token of row `r`: the final LayerNorm's slot order.
+    fn token(self, r: usize) -> usize {
+        match self {
+            Self::All(_) => r,
+            Self::Live { objects, .. } => {
+                if r == 0 {
+                    0
+                } else {
+                    objects + r
+                }
+            }
+        }
+    }
+}
+
+/// How the backward picks the final block's query rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FinalRowsV1 {
+    /// The live rows when `final_block_compacts_v1` allows them, else all.
+    Auto,
+    /// Every row: the reference the live rows must match.
+    #[cfg(test)]
+    All,
+    /// The live rows even without the finiteness check (tests show the
+    /// check is needed).
+    #[cfg(test)]
+    Live,
+}
+
+/// Grows `buffer` to at least `len` values. Callers write every value they
+/// later read.
+fn grown_v1(buffer: &mut Vec<f32>, len: usize) -> &mut [f32] {
+    if buffer.len() < len {
+        buffer.resize(len, 0.0);
+    }
+    &mut buffer[..len]
+}
+
+/// Copies `rows` (token order) of a `[tokens, width]` buffer to `out`.
+fn gather_rows_v1(source: &[f32], width: usize, rows: QueryRowsV1, out: &mut Vec<f32>) {
+    let out = grown_v1(out, rows.len() * width);
+    for r in 0..rows.len() {
+        let t = rows.token(r);
+        out[r * width..(r + 1) * width].copy_from_slice(&source[t * width..(t + 1) * width]);
+    }
+}
+
+/// Whether the final block's backward may visit only its live query rows
+/// (`QueryRowsV1::Live`) with every bit unchanged: every Q, K and V value of
+/// the block is finite.
+///
+/// The forward leaves the block's object rows of the probabilities,
+/// attention output, residual, LayerNorm, feed-forward activations and
+/// output at +0, and the final LayerNorm leaves their output adjoints at +0.
+/// Each object-row term the full backward computes is then a product of
+/// +0 with a finite value: a tape entry, a parameter, V (`dP = dO V^T`), K
+/// (`dQ = dS K`) or the object query itself (`dK = dS^T Q`), which the
+/// forward computes but never reads. Every such term is +0 or -0, and every
+/// accumulator it joins starts at +0 and only adds, so it is never -0 and
+/// adding a zero leaves it unchanged (an infinite or NaN accumulator stays
+/// the same too). The object rows' adjoints themselves stay +0: those of the
+/// residual and of the query part of the QKV adjoint, which the full path
+/// computes as sums of zeros. With a non-finite Q, K or V, a skipped term
+/// could be NaN, so the full backward runs and reports what it always did.
+fn final_block_compacts_v1(lt: &LayerTapeV1) -> bool {
+    lt.qkv.iter().all(|value| value.is_finite())
 }
 
 impl SModelV1 {
@@ -1281,7 +1400,8 @@ impl SModelV1 {
 
     /// Adds one decision's gradient to `grad`, given the loss's derivative
     /// with respect to its logits and its RL value. `tape` holds this
-    /// decision's forward.
+    /// decision's forward. `grad` starts as +0 values (`vec![0.0; n]`) and
+    /// holds only earlier decisions' terms.
     pub(crate) fn backward_v1(
         &self,
         input: SInputV1<'_>,
@@ -1310,6 +1430,23 @@ impl SModelV1 {
         grad: &mut SGradientSinkV1<'_>,
         ws: &mut SBackScratchV1,
     ) -> Result<(), String> {
+        self.backward_rows_v1(input, tape, dlogits, dvalue, grad, ws, FinalRowsV1::Auto)
+    }
+
+    /// The backward with a choice of the final block's query rows. The
+    /// gradient sink must start from +0 values (the callers' zeroed
+    /// buffers), so that no accumulator is ever -0.
+    #[allow(clippy::too_many_arguments)]
+    fn backward_rows_v1(
+        &self,
+        input: SInputV1<'_>,
+        tape: &STapeV1,
+        dlogits: &[f32],
+        dvalue: f32,
+        grad: &mut SGradientSinkV1<'_>,
+        ws: &mut SBackScratchV1,
+        choice: FinalRowsV1,
+    ) -> Result<(), String> {
         let config = self.layout.config;
         let counts = tape.counts.ok_or("S backward without a forward")?;
         if counts != input.validate_v1(&config)? || dlogits.len() != counts.actions {
@@ -1318,7 +1455,22 @@ impl SModelV1 {
         if matches!(grad, SGradientSinkV1::Direct(values) if values.len() != self.layout.total) {
             return Err("S gradient buffer has the wrong length".into());
         }
-        profile::backward_census_v1(&config, counts);
+        let live = match choice {
+            FinalRowsV1::Auto => final_block_compacts_v1(&tape.layers[config.layers - 1]),
+            #[cfg(test)]
+            FinalRowsV1::All => false,
+            #[cfg(test)]
+            FinalRowsV1::Live => true,
+        };
+        let final_rows = if live {
+            QueryRowsV1::Live {
+                objects: counts.objects,
+                actions: counts.actions,
+            }
+        } else {
+            QueryRowsV1::All(1 + counts.objects + counts.actions)
+        };
+        profile::backward_census_v1(&config, counts, final_rows.len());
         let lay = &self.layout;
         let (n, e, a, r) = (counts.objects, counts.edges, counts.actions, counts.refs);
         let d = config.d_model;
@@ -1408,25 +1560,65 @@ impl SModelV1 {
         let scale = 1.0 / (dh as f32).sqrt();
         for (layer, block) in lay.blocks.iter().enumerate().rev() {
             let lt = &tape.layers[layer];
+            // The query rows: every token, except that the final block may
+            // visit only its live rows (`final_block_compacts_v1`). Their
+            // operands and residual adjoint rows are gathered into compact
+            // `[m, width]` buffers; the full path reads the tape in place.
+            let rows = if layer + 1 == config.layers {
+                final_rows
+            } else {
+                QueryRowsV1::All(l)
+            };
+            let m = rows.len();
+            let live = matches!(rows, QueryRowsV1::Live { .. });
             // FFN.
             let section = profile::section_v1(SectionV1::Ffn, layer);
-            let dff = &mut ws.dwide[..l * ffn];
-            self.linear_bwd(block.ff2, l, &lt.ff_act, &ws.dx, grad, Some(dff));
-            kernels::gelu_backward_slice_v1(&lt.ff_pre, &mut ws.dwide[..l * ffn]);
-            self.linear_bwd(
-                block.ff0,
-                l,
-                &lt.ln2,
-                &ws.dwide[..l * ffn],
-                grad,
-                Some(&mut ws.dx2[..]),
-            );
+            if live {
+                gather_rows_v1(&ws.dx, d, rows, &mut ws.live_dx);
+                gather_rows_v1(&lt.ff_act, ffn, rows, &mut ws.live_rows);
+            }
+            {
+                let (x, dy) = if live {
+                    (&ws.live_rows[..m * ffn], &ws.live_dx[..m * d])
+                } else {
+                    (&lt.ff_act[..], &ws.dx[..])
+                };
+                self.linear_bwd(block.ff2, m, x, dy, grad, Some(&mut ws.dwide[..m * ffn]));
+            }
+            if live {
+                for r in 0..m {
+                    let t = rows.token(r);
+                    kernels::gelu_backward_slice_v1(
+                        &lt.ff_pre[t * ffn..(t + 1) * ffn],
+                        &mut ws.dwide[r * ffn..(r + 1) * ffn],
+                    );
+                }
+                gather_rows_v1(&lt.ln2, d, rows, &mut ws.live_rows);
+            } else {
+                kernels::gelu_backward_slice_v1(&lt.ff_pre, &mut ws.dwide[..l * ffn]);
+            }
+            {
+                let x = if live {
+                    &ws.live_rows[..m * d]
+                } else {
+                    &lt.ln2[..]
+                };
+                self.linear_bwd(
+                    block.ff0,
+                    m,
+                    x,
+                    &ws.dwide[..m * ffn],
+                    grad,
+                    Some(&mut ws.dx2[..m * d]),
+                );
+            }
             drop(section);
             // LN2: dx_mid = dx_out + LN2'(dln2).
             let section = profile::section_v1(SectionV1::Ln2, layer);
             {
                 let mut dmid = vec![0.0f32; d];
-                for t in 0..l {
+                for r in 0..m {
+                    let t = rows.token(r);
                     grad.layer_norm_v1(
                         block.ln2_g,
                         block.ln2_b,
@@ -1434,44 +1626,73 @@ impl SModelV1 {
                         lt.ln2_stats[2 * t],
                         lt.ln2_stats[2 * t + 1],
                         &self.values[block.ln2_g..block.ln2_g + d],
-                        &ws.dx2[t * d..(t + 1) * d],
+                        &ws.dx2[r * d..(r + 1) * d],
                         &mut dmid,
                         &mut ws.ln_scratch,
                     );
+                    let dx = if live { &mut ws.live_dx } else { &mut ws.dx };
                     for c in 0..d {
-                        ws.dx[t * d + c] += dmid[c];
+                        dx[r * d + c] += dmid[c];
                     }
                 }
             }
             drop(section);
             // Projection.
             let section = profile::section_v1(SectionV1::Proj, layer);
-            self.linear_bwd(
-                block.proj,
-                l,
-                &lt.attn,
-                &ws.dx,
-                grad,
-                Some(&mut ws.dattn[..]),
-            );
+            if live {
+                gather_rows_v1(&lt.attn, d, rows, &mut ws.live_rows);
+            }
+            {
+                let (x, dy) = if live {
+                    (&ws.live_rows[..m * d], &ws.live_dx[..m * d])
+                } else {
+                    (&lt.attn[..], &ws.dx[..])
+                };
+                self.linear_bwd(block.proj, m, x, dy, grad, Some(&mut ws.dattn[..m * d]));
+            }
+            if live {
+                // The object rows of `ws.dx` stay +0, as the full path
+                // leaves them; LN1 below adds to every row.
+                for r in 0..m {
+                    let t = rows.token(r);
+                    ws.dx[t * d..(t + 1) * d].copy_from_slice(&ws.live_dx[r * d..(r + 1) * d]);
+                }
+            }
             drop(section);
             // Attention, per head, through the ordered kernels:
             // dP = dO V^T, dV = P^T dO, dS = P * (dP - rowsum(P * dP)),
             // dQ = scale dS K, dK = scale dS^T Q; dS also feeds the bias.
+            // Query rows `r` (token `rows.token(r)`) against every key `j`;
+            // the reductions over query rows (dV, dK) run in token order.
             let section = profile::section_v1(SectionV1::Attention, layer);
             ws.dqkv.fill(0.0);
             for head in 0..h {
                 for j in 0..l {
                     for c in 0..dh {
-                        ws.head_q[j * dh + c] = lt.qkv[j * 3 * d + head * dh + c];
                         ws.head_k[j * dh + c] = lt.qkv[j * 3 * d + d + head * dh + c];
                         ws.head_vt[c * l + j] = lt.qkv[j * 3 * d + 2 * d + head * dh + c];
-                        ws.head_do[j * dh + c] = ws.dattn[j * d + head * dh + c];
                     }
                 }
-                let probs = &lt.probs[head * l * l..(head + 1) * l * l];
+                for r in 0..m {
+                    let i = rows.token(r);
+                    for c in 0..dh {
+                        ws.head_q[r * dh + c] = lt.qkv[i * 3 * d + head * dh + c];
+                        ws.head_do[r * dh + c] = ws.dattn[r * d + head * dh + c];
+                    }
+                }
+                let probs = if live {
+                    let out = grown_v1(&mut ws.live_probs, m * l);
+                    for r in 0..m {
+                        let i = rows.token(r);
+                        out[r * l..(r + 1) * l]
+                            .copy_from_slice(&lt.probs[(head * l + i) * l..(head * l + i + 1) * l]);
+                    }
+                    &ws.live_probs[..m * l]
+                } else {
+                    &lt.probs[head * l * l..(head + 1) * l * l]
+                };
                 gemm_v1(
-                    l,
+                    m,
                     l,
                     dh,
                     &ws.head_do,
@@ -1484,7 +1705,7 @@ impl SModelV1 {
                 gemm_v1(
                     l,
                     dh,
-                    l,
+                    m,
                     probs,
                     1,
                     l,
@@ -1497,9 +1718,10 @@ impl SModelV1 {
                         ws.dqkv[j * 3 * d + 2 * d + head * dh + c] = ws.head_out[j * dh + c];
                     }
                 }
-                for i in 0..l {
-                    let p_row = &probs[i * l..(i + 1) * l];
-                    let row = &mut ws.dscore[i * l..(i + 1) * l];
+                for r in 0..m {
+                    let i = rows.token(r);
+                    let p_row = &probs[r * l..(r + 1) * l];
+                    let row = &mut ws.dscore[r * l..(r + 1) * l];
                     let mut row_dot = 0.0f32;
                     for j in 0..l {
                         row_dot += p_row[j] * row[j];
@@ -1511,7 +1733,7 @@ impl SModelV1 {
                     }
                 }
                 gemm_v1(
-                    l,
+                    m,
                     dh,
                     l,
                     &ws.dscore,
@@ -1521,15 +1743,16 @@ impl SModelV1 {
                     InitV1::Zero,
                     &mut ws.head_out,
                 );
-                for i in 0..l {
+                for r in 0..m {
+                    let i = rows.token(r);
                     for c in 0..dh {
-                        ws.dqkv[i * 3 * d + head * dh + c] = ws.head_out[i * dh + c] * scale;
+                        ws.dqkv[i * 3 * d + head * dh + c] = ws.head_out[r * dh + c] * scale;
                     }
                 }
                 gemm_v1(
                     l,
                     dh,
-                    l,
+                    m,
                     &ws.dscore,
                     1,
                     l,
@@ -1544,9 +1767,17 @@ impl SModelV1 {
                 }
             }
             drop(section);
-            // QKV.
+            // QKV. The live final block splits the weight into its query rows,
+            // which only the live rows reach, and its key and value rows,
+            // which every token reaches. `dx2` adds the query part's terms,
+            // then the key and value terms, as the full product orders them;
+            // an object row's query terms are +0 there.
             let section = profile::section_v1(SectionV1::Qkv, layer);
-            self.linear_bwd(block.qkv, l, &lt.ln1, &ws.dqkv, grad, Some(&mut ws.dx2[..]));
+            if live {
+                self.qkv_backward_live_v1(block.qkv, rows, lt, grad, ws);
+            } else {
+                self.linear_bwd(block.qkv, l, &lt.ln1, &ws.dqkv, grad, Some(&mut ws.dx2[..]));
+            }
             drop(section);
             // LN1: dx_in = dx_mid + LN1'(dln1).
             let section = profile::section_v1(SectionV1::Ln1, layer);
@@ -1682,6 +1913,76 @@ impl SModelV1 {
         }
         Ok(())
     }
+
+    /// The live final block's QKV backward (`QueryRowsV1::Live`), from the
+    /// adjoint `ws.dqkv` whose object query rows are +0. The weight's query
+    /// rows take terms from the live rows only and its key and value rows
+    /// from every token, each in token order. `dx2` adds each row's query
+    /// terms before its key and value terms, as the full product orders
+    /// them; an object row starts its key terms from +0, the sum its zero
+    /// query terms give.
+    fn qkv_backward_live_v1(
+        &self,
+        qkv: LinearIdxV1,
+        rows: QueryRowsV1,
+        lt: &LayerTapeV1,
+        grad: &mut SGradientSinkV1<'_>,
+        ws: &mut SBackScratchV1,
+    ) {
+        let QueryRowsV1::Live { objects, actions } = rows else {
+            unreachable!("the full QKV backward is one Linear");
+        };
+        let d = self.layout.config.d_model;
+        let m = rows.len();
+        let l = 1 + objects + actions;
+        let query = qkv.rows_v1(0, d);
+        let key_value = qkv.rows_v1(d, 2 * d);
+        gather_rows_v1(&lt.ln1, d, rows, &mut ws.live_rows);
+        let dq = grown_v1(&mut ws.live_dq, m * d);
+        for r in 0..m {
+            let t = rows.token(r);
+            dq[r * d..(r + 1) * d].copy_from_slice(&ws.dqkv[t * 3 * d..t * 3 * d + d]);
+        }
+        let dkv = grown_v1(&mut ws.live_dkv, l * 2 * d);
+        for t in 0..l {
+            dkv[t * 2 * d..(t + 1) * 2 * d]
+                .copy_from_slice(&ws.dqkv[t * 3 * d + d..(t + 1) * 3 * d]);
+        }
+        let (x, dq, dkv) = (
+            &ws.live_rows[..m * d],
+            &ws.live_dq[..m * d],
+            &ws.live_dkv[..l * 2 * d],
+        );
+        grad.linear_v1(query, m, x, dq);
+        grad.linear_v1(key_value, l, &lt.ln1, dkv);
+        let w_query = &self.values[query.w..query.w + d * d];
+        let w_key_value = &self.values[key_value.w..key_value.w + 2 * d * d];
+        let dx2 = &mut ws.dx2[..l * d];
+        gemm_v1(1, d, d, dq, d, 1, w_query, InitV1::Zero, &mut dx2[..d]);
+        dx2[d..(1 + objects) * d].fill(0.0);
+        gemm_v1(
+            actions,
+            d,
+            d,
+            &dq[d..],
+            d,
+            1,
+            w_query,
+            InitV1::Zero,
+            &mut dx2[(1 + objects) * d..],
+        );
+        gemm_v1(
+            l,
+            d,
+            2 * d,
+            dkv,
+            2 * d,
+            1,
+            w_key_value,
+            InitV1::Existing,
+            dx2,
+        );
+    }
 }
 
 /// One substep of a physical decision: its inputs and the sampled action.
@@ -1772,9 +2073,9 @@ pub struct SWorkV1 {
 
 impl SModelV1 {
     /// The RT1 GAE loss of `groups` and its gradient, accumulated into `grad`
-    /// (which the caller zeroes). Groups run in order; each substep's forward
-    /// is followed at once by its backward, so one tape is live at a time.
-    /// Gauge ranges are zeroed at the end.
+    /// (which the caller fills with +0). Groups run in order; each substep's
+    /// forward is followed at once by its backward, so one tape is live at a
+    /// time. Gauge ranges are zeroed at the end.
     pub fn gae_loss_gradient_v1(
         &self,
         groups: &[SGroupV1<'_>],

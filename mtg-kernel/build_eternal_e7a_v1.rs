@@ -441,7 +441,7 @@ pub(super) fn flashback_for(name: &str) -> String {
 pub(super) fn attachment_for(name: &str) -> &'static str {
     match name {
         "Animate Dead" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: -1, toughness: 0, keywords: Keywords::NONE, per_controlled_subtype: None }))",
-        _ => "None",
+        _ => super::build_eternal_p3a_v1::attachment_for(name),
     }
 }
 
