@@ -32,8 +32,9 @@
 //!
 //! [`ExpandedCheckpointV1`] is generic over its tensors ([`TensorBitsV1`]):
 //! a decoded checkpoint owns [`ParameterBitsV1`]s, and an update publishes a
-//! checkpoint of [`ParameterBitsRefV1`]s, which borrow the snapshot it
-//! records instead of copying every value's bits. Either way each format
+//! checkpoint of [`ParameterBitsRefV1`]s, which borrow the live train state's
+//! tensors (`TrainTensorsV1`) instead of copying every value's bits. Either
+//! way each format
 //! writes the same bytes: the v1 JSON through the same derived serialization,
 //! the container through one encoder. The encoder writes into a sink
 //! ([`SinkV1`]): a buffer, or a comparison with existing bytes, which is how
@@ -67,7 +68,7 @@
 //! `python/tools/checkpoint_container_v1.py`.
 
 use super::{ExpandedCheckpointV1, ParameterBitsV1};
-use crate::native_policy_value_net_v1::NativeNamedParameterV1;
+use crate::native_policy_value_net_v1::{NativeNamedParameterV1, NativeNamedTensorRefV1};
 use serde::{Deserialize, Serialize, Serializer};
 use std::borrow::Cow;
 
@@ -231,9 +232,26 @@ impl TensorBitsV1 for NativeNamedParameterV1 {
     }
 }
 
-/// A snapshot tensor as a checkpoint records it, borrowed: what
-/// `ParameterBitsV1::from_native` copies, without the copy. Its serialization
-/// is that `ParameterBitsV1`'s, member for member and value for value.
+/// A live train state's tensor (`TrainTensorsV1`), read where the state holds
+/// it.
+impl TensorBitsV1 for NativeNamedTensorRefV1<'_> {
+    fn name_v1(&self) -> &str {
+        self.name
+    }
+
+    fn shape_v1(&self) -> &[usize] {
+        &self.shape
+    }
+
+    fn values_v1(&self) -> TensorValuesV1<'_> {
+        TensorValuesV1::Floats(self.values)
+    }
+}
+
+/// A tensor as a checkpoint records it, borrowed from a live train state or a
+/// snapshot: what `ParameterBitsV1::from_native` copies, without the copy.
+/// Its serialization is that `ParameterBitsV1`'s, member for member and value
+/// for value.
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename = "ParameterBitsV1")]
 pub(crate) struct ParameterBitsRefV1<'a> {
@@ -253,12 +271,25 @@ const _: fn(ParameterBitsV1) = |bits| {
     } = bits;
 };
 
-impl<'a> ParameterBitsRefV1<'a> {
-    pub(crate) fn of_native_v1(tensor: &'a NativeNamedParameterV1) -> Self {
+/// A snapshot's tensor, as a checkpoint records it.
+impl<'a> From<&'a NativeNamedParameterV1> for ParameterBitsRefV1<'a> {
+    fn from(tensor: &'a NativeNamedParameterV1) -> Self {
         Self {
             name: tensor.name,
             shape: &tensor.shape,
             values: &tensor.values,
+        }
+    }
+}
+
+/// A live train state's tensor, as a checkpoint records it: the values stay
+/// in the state.
+impl<'a> From<&'a NativeNamedTensorRefV1<'_>> for ParameterBitsRefV1<'a> {
+    fn from(tensor: &'a NativeNamedTensorRefV1<'_>) -> Self {
+        Self {
+            name: tensor.name,
+            shape: &tensor.shape,
+            values: tensor.values,
         }
     }
 }
