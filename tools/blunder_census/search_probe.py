@@ -136,7 +136,8 @@ def run_chunks(exe: str, states: Path, jobs: Path, out: Path, tag: str, workers:
         rec = {"chunk": c, "file": rows_path.name, "states_file": p.name, "exit": code, "states": count,
                "rows": len(rows), "errors": errors, "seconds": time.monotonic() - started,
                "complete": code == 0 and len(rows) == count and errors == 0,
-               "fingerprint": fp, "states_sha256": file_sha(p)}
+               "fingerprint": fp, "states_sha256": file_sha(p),
+               "rows_sha256": file_sha(rows_path) if rows_path.exists() else None}
         if rec["complete"]:
             done.write_text(json.dumps(rec), encoding="utf-8")
         return rec
@@ -179,6 +180,10 @@ def pass_provenance(out: Path, tag: str, record: dict) -> dict:
         expected = attested.get(c["states_file"]) if legacy else c.get("states_sha256")
         if (not legacy and c.get("fingerprint") != fp) or expected != states_sha:
             raise SystemExit(f"{out} {tag}: chunk {c['chunk']} provenance does not match the pass")
+        # Rows content is bound only for chunks written after rows hashing was added (records without the field
+        # bind the configuration and states, not the rows).
+        if "rows_sha256" in c and c["rows_sha256"] != file_sha(out / c["file"]):
+            raise SystemExit(f"{out} {tag}: chunk {c['chunk']} rows changed after the pass")
         done = out / f"done-{tag}-{c['chunk']:04d}.json"
         if not done.exists() or json.loads(done.read_text(encoding="utf-8")) != c:
             raise SystemExit(f"{out} {tag}: chunk {c['chunk']} has no matching done marker")
@@ -352,7 +357,9 @@ def report(root: Path, out: Path) -> dict:
                     env = provenance[tag]["env"]
                     rollouts[f"{tag}/{mode}"] = int(env["PRICE_N" if mode == "worlds" else "PRICE_N_TRUE"])
             prices[mode] = (scored, repeats)
-        names = list(srows[0]["choosers"].keys())
+        # Chooser names from every searched state (all rows carry the same list), so a bank whose states all failed
+        # still reports its counts.
+        names = list(searched[0]["choosers"].keys()) if searched else []
         choosers = ["sampled"] + names
         nonclean = {m: sum(1 for st in prices[m][0].values() for sc in st.values() if not clean(sc)) for m in prices}
         bank_out = {"states": len(srows), "states_searched": len(searched),
@@ -399,14 +406,14 @@ def report(root: Path, out: Path) -> dict:
                              "live_states": len(live), "live_mean_gap": sum(live) / len(live) if live else None,
                              "live_ci": bootstrap(live), "decided_states": decided_n}
                 rec["fallback"] = fallback
-                rec["cpu_mean"] = sum(cpu) / len(cpu)
-                rec["cpu_median"] = sorted(cpu)[len(cpu) // 2]
+                rec["cpu_mean"] = sum(cpu) / len(cpu) if cpu else None
+                rec["cpu_median"] = sorted(cpu)[len(cpu) // 2] if cpu else None
                 if name != "sampled":
-                    c0 = srows[0]["choosers"][name]
-                    rec["sims_mean"] = sum(r["choosers"][name]["completed"] for r in srows) / len(srows)
+                    rec["sims_mean"] = (sum(r["choosers"][name]["completed"] for r in srows) / len(srows)
+                                        if srows else None)
                     rec["incomplete"] = sum(1 for r in srows if r["choosers"][name]["incomplete"])
                     rec["faulted"] = sum(1 for r in srows if r["choosers"][name]["faults"])
-                    rec["extra"] = c0.get("extra")
+                    rec["extra"] = searched[0]["choosers"][name].get("extra")
         # Paired contrasts by state (DEFINITIONS section 4), primary worlds.
         by = {}
         for x in per_state:
@@ -443,6 +450,20 @@ def report(root: Path, out: Path) -> dict:
     return result
 
 
+def rollout_caption(result: dict) -> str:
+    """Resampled-world rollouts per action from every validated pass the report read, by pass kind (the tag without
+    its bank), for example "rollouts per action: price 64, single 16"."""
+    kinds: dict = {}
+    for bank, b in result["banks"].items():
+        for key, n in b["rollouts_per_action"].items():
+            tag, mode = key.rsplit("/", 1)
+            if mode == "worlds" and n:
+                kinds.setdefault(tag.removesuffix(f"-{bank}"), set()).add(n)
+    if not kinds:
+        return "no validated scoring pass"
+    return "rollouts per action: " + ", ".join(f"{k} {'/'.join(map(str, sorted(v)))}" for k, v in sorted(kinds.items()))
+
+
 def chart(result: dict, path: Path) -> None:
     """Mean gap over the argmax pick with 95% intervals, per chooser, one panel per bank (primary worlds)."""
     try:
@@ -473,11 +494,9 @@ def chart(result: dict, path: Path) -> None:
         ax.grid(axis="x", color="#ddd", lw=0.6)
         for s in ("top", "right"):
             ax.spines[s].set_visible(False)
-    ns = sorted({v for b in banks for k, v in result["banks"][b]["rollouts_per_action"].items()
-                 if k.startswith("price-") and k.endswith("/worlds")})
     fig.text(0.01, 0.01, "blue: rollout leaf; orange: value leaf; grey: sampled action. Resampled worlds, "
-             f"N = {', '.join(map(str, ns)) or '?'} rollouts per action, common random numbers. "
-             "n = the chooser's valid states.", fontsize=8, color="#555")
+             f"{rollout_caption(result)}, common random numbers. n = the chooser's valid states.",
+             fontsize=8, color="#555")
     fig.tight_layout(rect=(0, 0.04, 1, 1))
     fig.savefig(path, dpi=140)
     plt.close(fig)

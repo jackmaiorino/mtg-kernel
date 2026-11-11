@@ -209,6 +209,48 @@ class Agreement(unittest.TestCase):
             self.assertEqual(out["choosers"]["a"]["worlds"]["states"], 1)
             self.assertEqual(out["choosers"]["b"]["worlds"]["mean_gap"], 0.5)
 
+    def test_a_bank_whose_states_all_failed_still_reports_its_counts(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Fixture(Path(d))
+            root = f.d / "run"
+            bad = search_row("h", 0, {"a": 0, "b": 1})
+            bad["choosers"]["b"]["faults"] = ["boom"]
+            write_pass(root / "search-ordinary", "search-ordinary", [bad], f.fp("search"))
+            write_pass(root / "price-ordinary", "price-ordinary",
+                       [{**price_row("h", 1, 0, 1, [0, 1], [1, 1]), "class": "ordinary|0|1"}], f.fp("price"))
+            out = sp.report(root, f.d / "report")["banks"]["ordinary"]
+            self.assertEqual((out["states"], out["states_searched"], len(out["failed_search_states"])), (0, 1, 1))
+            self.assertEqual(out["choosers"]["b"]["worlds"]["states"], 0)
+            self.assertIsNone(out["choosers"]["b"]["worlds"]["mean_gap"])
+            self.assertIsNone(out["choosers"]["b"]["cpu_mean"])
+            self.assertTrue((f.d / "report" / "summary.json").exists())
+
+
+class Caption(unittest.TestCase):
+    def test_caption_reads_every_validated_pass(self):
+        both = {"banks": {"ordinary": {"rollouts_per_action": {"price-ordinary/worlds": 64, "single-ordinary/worlds": 48,
+                                                               "price-ordinary/true": 16}}}}
+        self.assertEqual(sp.rollout_caption(both), "rollouts per action: price 64, single 48")
+        singles = {"banks": {"flagged": {"rollouts_per_action": {"single-flagged/worlds": 16}}}}
+        self.assertEqual(sp.rollout_caption(singles), "rollouts per action: single 16")
+        self.assertEqual(sp.rollout_caption({"banks": {}}), "no validated scoring pass")
+
+
+class RowsHash(unittest.TestCase):
+    def test_rows_changed_after_the_pass_are_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Fixture(Path(d))
+            out = f.d / "p"
+            write_pass(out, "s", [search_row("g", 0, {"a": 0})], f.fp("search"))
+            rec = json.loads((out / "run-s.json").read_text())
+            rec["chunks"][0]["rows_sha256"] = sp.file_sha(out / "rows-s-0000.jsonl")
+            (out / "run-s.json").write_text(json.dumps(rec))
+            (out / "done-s-0000.json").write_text(json.dumps(rec["chunks"][0]))
+            self.assertEqual(len(sp.pass_rows(out, "s")), 1)
+            (out / "rows-s-0000.jsonl").write_text(json.dumps(search_row("g", 1, {"a": 1})) + "\n")
+            with self.assertRaises(SystemExit):
+                sp.pass_rows(out, "s")
+
 
 if __name__ == "__main__":
     unittest.main()
