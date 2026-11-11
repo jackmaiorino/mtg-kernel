@@ -312,9 +312,22 @@ jobs:
     # requests from forks never run on the self-hosted runners.
     runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     steps:
-      - name: Limit affected hosted builds to one Cargo job
+      # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
+      # heavy feature builds finished at two and four Cargo jobs (probe of
+      # 2026-11-11: Limited library tests 20 min at two jobs, over 42 min
+      # at one), so the builds below use two jobs instead of one.
+      - name: Add swap space for the heavy builds
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: |
+          sudo fallocate -l 12G /mnt/build.swap
+          sudo chmod 600 /mnt/build.swap
+          sudo mkswap /mnt/build.swap
+          sudo swapon /mnt/build.swap
+          free -m
+
+      - name: Limit affected hosted builds to two Cargo jobs
         if: runner.environment == 'github-hosted' && runner.os == 'Linux' && (matrix.group == 'trace' || matrix.group == 'limited-store')
-        run: echo 'CARGO_BUILD_JOBS=1' >> "$GITHUB_ENV"
+        run: echo 'CARGO_BUILD_JOBS=2' >> "$GITHUB_ENV"
 
       # Windows can resolve `bash` to the WSL launcher in System32 first;
       # put Git Bash ahead of it for every later step.
@@ -425,7 +438,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$RUNNER_OS" = Linux ]; then
-            export CARGO_BUILD_JOBS=1
+            export CARGO_BUILD_JOBS=2
           fi
           samples="$PWD/feb-native-event-samples"
           mkdir -p "$samples"
@@ -459,7 +472,7 @@ jobs:
           # Bound concurrent compiler work after repeated hosted Linux
           # shutdowns while compiling the large feature catalogs.
           if [ "$RUNNER_OS" = Linux ]; then
-            export CARGO_BUILD_JOBS=1
+            export CARGO_BUILD_JOBS=2
           fi
           cargo clippy --release --locked -p mtg-kernel --all-targets --features eternal-fixtures -- -D warnings
           python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_ has_a_fixed_seat_human_prompt full_text_v1::tests:: graveyard_order_v1::tests:: premodern_ordered_public_v1::
@@ -474,9 +487,9 @@ jobs:
           # The hosted Ubuntu runner ran out of memory compiling every
           # non-library target with full parallelism (shutdown signal, exit
           # 143, from 2026-10-27), and with the FDN catalog also at two units
-          # at a time, so that half builds one unit at a time.
+          # at a time, so that half builds two units at a time with swap.
           if [ "$MATRIX_GROUP" = workspace-targets ] && [ "$MATRIX_OS" = ubuntu-24.04 ]; then
-            export CARGO_BUILD_JOBS=1
+            export CARGO_BUILD_JOBS=2
           fi
           python python/tools/run_rust_workspace_tests.py --part "${MATRIX_GROUP#workspace-}" --no-fail-fast
         env:
@@ -578,6 +591,19 @@ jobs:
     # the source paths in Cargo's freshness records stay valid.
     runs-on: ${{ matrix.os }}
     steps:
+      # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
+      # heavy feature builds finished at two and four Cargo jobs (probe of
+      # 2026-11-11: Limited library tests 20 min at two jobs, over 42 min
+      # at one), so the builds below use two jobs instead of one.
+      - name: Add swap space for the heavy builds
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: |
+          sudo fallocate -l 12G /mnt/build.swap
+          sudo chmod 600 /mnt/build.swap
+          sudo mkswap /mnt/build.swap
+          sudo swapon /mnt/build.swap
+          free -m
+
       # Windows can resolve `bash` to the WSL launcher in System32 first;
       # put Git Bash ahead of it for every later step.
       - name: Use Git Bash for bash steps on Windows
@@ -614,7 +640,7 @@ jobs:
       - name: Build the shared Limited ${{ matrix.part }}
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
-            export CARGO_BUILD_JOBS=1
+            export CARGO_BUILD_JOBS=2
           fi
           if [ '${{ matrix.part }}' = tests ]; then
             cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib --no-run
