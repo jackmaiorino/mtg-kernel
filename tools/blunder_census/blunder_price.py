@@ -138,7 +138,8 @@ def run_shards(exe: str, cases: Path, jobs: Path, out: Path, shards: int, env_ex
                                   stderr=subprocess.STDOUT, env=env, creationflags=BELOW_NORMAL).returncode
         rows = rows_path.read_text(encoding="utf-8").splitlines() if rows_path.exists() else []
         errors = sum(1 for r in rows if json.loads(r)["kind"] == "error")
-        return {"shard": k, "file": rows_path.name, "exit": code, "cases": count, "rows": len(rows),
+        return {"shard": k, "file": rows_path.name, "cases_file": p.name, "exit": code, "cases": count,
+                "rows": len(rows),
                 "errors": errors, "complete": code == 0 and len(rows) == count and errors == 0}
 
     started = time.monotonic()
@@ -164,7 +165,12 @@ def rows(out: Path, tag: str) -> list[dict]:
     found = []
     for s in record["shards"]:
         name = s.get("file", f"rows-{tag}-{s['shard']:02d}.jsonl")
-        found += [json.loads(x) for x in (out / name).read_text(encoding="utf-8").splitlines() if x.strip()]
+        got = [json.loads(x) for x in (out / name).read_text(encoding="utf-8").splitlines() if x.strip()]
+        cases_name = s.get("cases_file", f"cases-{tag}-{s['shard']:02d}.jsonl")
+        asked = [json.loads(x) for x in (out / cases_name).read_text(encoding="utf-8").splitlines() if x.strip()]
+        if sorted((r["id"], r["index"]) for r in got) != sorted((c["id"], c["index"]) for c in asked):
+            raise SystemExit(f"{out} {tag}: shard {s['shard']} rows are not exactly its requested cases")
+        found += got
     keys = [(r["id"], r["index"]) for r in found]
     if len(keys) != len(set(keys)):
         raise SystemExit(f"{out} {tag}: duplicate case rows")
@@ -228,7 +234,13 @@ def summarize_price(out: Path, tag: str) -> dict:
         else:
             invalid[key] = invalid.get(key, 0) + 1
     table = {}
-    for (cls, mode), cases in sorted(result.items()):
+    for cls, mode in sorted(set(result) | set(invalid)):
+        cases = result.get((cls, mode), [])
+        if not cases:
+            table[f"{cls}/{mode}"] = {"cases": 0, "invalid_cases": invalid[(cls, mode)], "mean_gap": None, "ci": None,
+                                      "median_gap": None, "labels": None, "decided_share": None, "live_mean_gap": None,
+                                      "live_ci": None, "live_labels": None, "mean_value_chosen": None, "gaps": []}
+            continue
         gaps = [c["gap"] for c in cases]
         live = [c for c in cases if not c["decided"]]
         labels = {k: sum(1 for c in cases if c["label"] == k) / len(cases)

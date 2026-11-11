@@ -96,7 +96,7 @@ def main(argv=None) -> int:
     for p in PANELS:
         for cls in bp.CLASSES:
             e = price[p].get(f"{cls}/worlds")
-            if e and e["ci"]:
+            if e and e["cases"] and e["ci"]:
                 readings[f"{p}/{cls}"] = reading(e, own[f"{p}/{cls}"]["median"])
     summary = {"price": {p: {k: {x: v for x, v in e.items() if x != "gaps"} for k, e in price[p].items()} for p in PANELS},
                "same_state": same, "same_state_by_bank": by_bank, "own_p_good": own, "exposure": exposure, "readings": readings}
@@ -109,6 +109,10 @@ def main(argv=None) -> int:
             for mode in ("worlds", "true"):
                 e = price[p].get(f"{cls}/{mode}")
                 if not e:
+                    continue
+                if not e["cases"]:
+                    lines.append(f"| {p} | {NAMES[cls]} | {'resampled' if mode == 'worlds' else 'true state'} | "
+                                 f"0 ({e['invalid_cases']}) | n/a | n/a | | | | | | | | |")
                     continue
                 lab = e["labels"]
                 live = "n/a" if e["live_mean_gap"] is None else f"{e['live_mean_gap']:+.3f}"
@@ -145,7 +149,7 @@ def main(argv=None) -> int:
     for ax, cls in zip(axes, bp.CLASSES):
         for j, p in enumerate(PANELS):
             e = price[p].get(f"{cls}/worlds")
-            if not e:
+            if not e or not e["cases"]:
                 continue
             rng = random.Random(7)
             xs = [j + rng.uniform(-0.18, 0.18) for _ in e["gaps"]]

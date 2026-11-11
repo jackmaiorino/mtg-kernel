@@ -10,12 +10,14 @@ sys.path[:0] = [str(REPO / "tools" / "blunder_census")]
 import blunder_price as bp  # noqa: E402
 
 
-def write_pass(d: Path, tag: str, shard_rows: list[list[dict]], expected: int, complete=True):
+def write_pass(d: Path, tag: str, shard_rows: list[list[dict]], expected: int, complete=True, asked=None):
     shards = []
     for k, rows in enumerate(shard_rows):
         name = f"rows-{tag}-{k:02d}.jsonl"
         (d / name).write_text("".join(json.dumps(r) + "\n" for r in rows))
-        shards.append({"shard": k, "file": name})
+        cases = asked[k] if asked else [{"id": r["id"], "index": r["index"]} for r in rows]
+        (d / f"cases-{tag}-{k:02d}.jsonl").write_text("".join(json.dumps(c) + "\n" for c in cases))
+        shards.append({"shard": k, "file": name, "cases_file": f"cases-{tag}-{k:02d}.jsonl"})
     (d / f"run-{tag}.json").write_text(json.dumps({"complete": complete, "expected": expected, "shards": shards}))
 
 
@@ -75,6 +77,25 @@ class Manifest(unittest.TestCase):
             write_pass(d, "price", [[price_row(0, [0, 0], [1, 1]), price_row(1, [0.5, 0.5], [0.5, 0.5], invalid=(0, 2))]], 2)
             t = bp.summarize_price(d, "price")["c/worlds"]
             self.assertEqual((t["cases"], t["invalid_cases"], t["mean_gap"]), (1, 1, 1.0))
+
+
+class ReviewRound2(unittest.TestCase):
+    def test_rows_must_be_exactly_the_requested_cases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            # Requested A and B, returned A and C: same count, wrong identity.
+            a, c = price_row(0, [0, 0], [1, 1]), price_row(2, [0, 0], [1, 1])
+            write_pass(d, "swap", [[a, c]], 2, asked=[[{"id": a["id"], "index": 0}, {"id": "p/o0-t0-k0-s1", "index": 1}]])
+            with self.assertRaises(SystemExit):
+                bp.rows(d, "swap")
+
+    def test_a_class_with_only_invalid_cases_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            write_pass(d, "price", [[price_row(0, [0.5, 0.5], [0.5, 0.5], unnatural=(1, 0))]], 1)
+            t = bp.summarize_price(d, "price")
+            self.assertEqual((t["c/worlds"]["cases"], t["c/worlds"]["invalid_cases"]), (0, 1))
+            self.assertIsNone(t["c/worlds"]["mean_gap"])
 
 
 class Bootstrap(unittest.TestCase):
