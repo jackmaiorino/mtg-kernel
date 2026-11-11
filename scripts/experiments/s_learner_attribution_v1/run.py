@@ -487,6 +487,31 @@ def summarize(manifest):
     return "\n".join(lines)
 
 
+def gemm_macs(macs):
+    return macs["dx"] + macs["dw"] + macs["attention"]
+
+
+def backward_macs_summary(macs, substeps):
+    """The backward's GEMM multiply-adds. `total` counts the work that ran.
+    Reports before the compact final block (no `final_block_removed_total`)
+    ran every final-block object query row."""
+    total = macs["total"]
+    ran = gemm_macs(total)
+    unused = gemm_macs(macs["final_block_object_query_rows_total"])
+    removed_total = macs.get("final_block_removed_total")
+    removed = gemm_macs(removed_total) if removed_total else 0
+    full = ran + removed
+    line = (
+        f"Backward GEMM MACs per update: dx {total['dx']:,}, dw {total['dw']:,}, attention "
+        f"{total['attention']:,} ({ran:,} run); final-block object query rows {unused:,} "
+        f"({100 * unused / full:.1f}% of the full backward's {full:,})"
+    )
+    if removed_total is None:
+        return line + "."
+    live = macs["final_block_live_substeps"]
+    return line + f", {removed:,} of them skipped ({live} of {substeps} substeps compact)."
+
+
 def mean_of(reports, getter):
     return statistics.fmean(getter(r) for r in reports)
 
@@ -532,16 +557,8 @@ def profile_summary(profile_rows):
             label = f"{layer['layer']}{' (final)' if layer['final_block'] else ''}"
             lines.append(f"| {label} | " + " | ".join(cells) + " |")
         macs = reports[0]["macs"]
-        total = macs["total"]
-        dead = macs["final_block_object_query_rows_total"]
-        all_macs = total["dx"] + total["dw"] + total["attention"]
-        dead_macs = dead["dx"] + dead["dw"] + dead["attention"]
         lines.append("")
-        lines.append(
-            f"Backward GEMM MACs per update: dx {total['dx']:,}, dw {total['dw']:,}, attention "
-            f"{total['attention']:,}; final-block object query rows {dead_macs:,} "
-            f"({100 * dead_macs / all_macs:.1f}% of {all_macs:,})."
-        )
+        lines.append(backward_macs_summary(macs, substeps))
         terms = reports[0]["terms"]
         if terms["linear_terms"]:
             copied = (
@@ -567,20 +584,23 @@ def profile_summary(profile_rows):
                     f"Peak retained term capacity across all slots: "
                     f"{terms['peak_retained_term_capacity_bytes'] / 2**20:.2f} MiB."
                 )
-            for kind in ["record", "replay"]:
-                drain = reports[0]["drains"][kind]
-                busy = [mean_of(reports, lambda r, i=i: r["drains"][kind]["busy_ns_by_worker"][i])
-                        for i in range(len(drain["busy_ns_by_worker"]))]
-                wall = mean_of(reports, lambda r: r["drains"][kind]["wall_ns"])
-                max_busy = mean_of(reports, lambda r: r["drains"][kind]["sum_of_max_worker_busy_ns"])
-                lines.append(
-                    f"{kind} drains: {drain['drains']} drains, {drain['helper_spawns']} helper spawns, "
-                    f"{drain['joins']} joins, {drain['spawn_failures']} spawn failures; wall "
-                    f"{ms(wall):.3f} ms, busy by worker {[round(ms(b), 3) for b in busy]} ms, sum of "
-                    f"per-drain max busy {ms(max_busy):.3f} ms, spawn "
-                    f"{ms(mean_of(reports, lambda r: r['drains'][kind]['spawn_ns'])):.3f} ms, join wait "
-                    f"{ms(mean_of(reports, lambda r: r['drains'][kind]['join_wait_ns'])):.3f} ms."
-                )
+            if "pool" in reports[0]:
+                lines.extend(pool_summary(reports))
+            else:
+                for kind in ["record", "replay"]:
+                    drain = reports[0]["drains"][kind]
+                    busy = [mean_of(reports, lambda r, i=i: r["drains"][kind]["busy_ns_by_worker"][i])
+                            for i in range(len(drain["busy_ns_by_worker"]))]
+                    wall = mean_of(reports, lambda r: r["drains"][kind]["wall_ns"])
+                    max_busy = mean_of(reports, lambda r: r["drains"][kind]["sum_of_max_worker_busy_ns"])
+                    lines.append(
+                        f"{kind} drains: {drain['drains']} drains, {drain['helper_spawns']} helper spawns, "
+                        f"{drain['joins']} joins, {drain['spawn_failures']} spawn failures; wall "
+                        f"{ms(wall):.3f} ms, busy by worker {[round(ms(b), 3) for b in busy]} ms, sum of "
+                        f"per-drain max busy {ms(max_busy):.3f} ms, spawn "
+                        f"{ms(mean_of(reports, lambda r: r['drains'][kind]['spawn_ns'])):.3f} ms, join wait "
+                        f"{ms(mean_of(reports, lambda r: r['drains'][kind]['join_wait_ns'])):.3f} ms."
+                    )
             shards = reports[0]["shards"]
             total_params = sum(s["params"] for s in shards)
             total_shard_macs = sum(s["macs"] for s in shards)
@@ -604,6 +624,32 @@ def profile_summary(profile_rows):
             f"{heap['peak_live_bytes'] / 2**20:.1f} MiB, start {heap['start_live_bytes'] / 2**20:.1f} MiB."
         )
         lines.append("")
+    return lines
+
+
+def pool_summary(reports):
+    """Lines for a phased parallel update: its helpers, phases and every
+    worker's busy and idle time by task kind (reports with a `pool`)."""
+    pool = reports[0]["pool"]
+    workers = len(pool["busy_ns_by_worker"])
+    by_worker = lambda key: [
+        round(ms(mean_of(reports, lambda r, i=i: r["pool"][key][i])), 3) for i in range(workers)
+    ]
+    mean = lambda key: ms(mean_of(reports, lambda r: r["pool"][key]))
+    lines = [
+        f"Workers: {pool['helper_spawns']} helper spawns, {pool['joins']} joins, "
+        f"{pool['spawn_failures']} spawn failures per update (spawn {mean('spawn_ns'):.3f} ms, "
+        f"join wait {mean('join_wait_ns'):.3f} ms); {pool['phases']} phases "
+        f"({pool['record_phases']} recording, {pool['replay_phases']} replaying), "
+        f"{mean('phase_wall_ns'):.3f} ms in phases; busy by worker {by_worker('busy_ns_by_worker')} ms, "
+        f"idle in phases {by_worker('idle_ns_by_worker')} ms."
+    ]
+    for kind, task in reports[0]["tasks"].items():
+        busy = [
+            round(ms(mean_of(reports, lambda r, i=i, kind=kind: r["tasks"][kind]["busy_ns_by_worker"][i])), 3)
+            for i in range(len(task["busy_ns_by_worker"]))
+        ]
+        lines.append(f"{kind} tasks: {sum(task['items_by_worker'])} items, busy by worker {busy} ms.")
     return lines
 
 

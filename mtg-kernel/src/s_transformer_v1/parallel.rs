@@ -1,11 +1,24 @@
 //! The S learner's independent forward and adjoint pass records the terms
 //! of each parameter gradient. Replay keeps each parameter's original
 //! substep and row order, including additions to shared embeddings.
+//!
+//! One update runs in phases on workers it starts once: the caller and up to
+//! `workers - 1` scoped helpers. A block of substeps records its terms in
+//! one set of slots. With two sets, phase `k` records block `k` while block
+//! `k - 1` replays from the other set, so replay work fills the gaps that
+//! unequal substeps leave; with one set, record and replay phases alternate.
+//! Each parameter still receives its terms in substep order: a weight shard
+//! replays block `k - 1` in phase `k`, before block `k` in phase `k + 1`,
+//! and one task per block applies its non-weight additions in order. Every
+//! slot reserves an analytic bound ([`TermBoundV1`]) once per update, and
+//! all slots together reserve at most [`TERM_BUDGET_BYTES_V1`]
+//! ([`TermPlanV1`]).
 
 use super::profile::{self, DrainV1, StageV1};
 use super::*;
+use std::mem::size_of;
 use std::ops::Range;
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 use std::thread;
 
 struct LinearTermV1 {
@@ -13,6 +26,141 @@ struct LinearTermV1 {
     rows: usize,
     x: Range<usize>,
     dy: Range<usize>,
+}
+
+/// The term storage one update may reserve, all slots together. A substep
+/// whose bound alone exceeds it still runs, in a block of its own.
+pub(super) const TERM_BUDGET_BYTES_V1: usize = 64 << 20;
+
+/// The most one substep records: values, `Linear` terms and additions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct TermBoundV1 {
+    pub(super) values: usize,
+    pub(super) linears: usize,
+    pub(super) additions: usize,
+}
+
+impl TermBoundV1 {
+    /// The most a backward of a decision with these counts records, full or
+    /// with a compact final block (`QueryRowsV1::Live`), with every card id
+    /// non-padding (a padding card records no embedding row). The compact
+    /// block's FFN, projection and LN2 terms cover `m = 1 + actions` of the
+    /// `l` rows, but its QKV is two terms whose values, `m (d + d)` and
+    /// `l (d + 2d)`, exceed the full `l (d + 3d)` by `d (2m - l)` when
+    /// `2m > l`; the bound adds that excess.
+    pub(super) fn of_counts_v1(layout: &LayoutV1, counts: CountsV1) -> Self {
+        let config = layout.config;
+        let d = config.d_model;
+        let h = config.heads;
+        let cd = config.card_dim;
+        let (n, e, a, r) = (counts.objects, counts.edges, counts.actions, counts.refs);
+        let l = 1 + n + a;
+        let mut bound = Self::default();
+        let mut linear = |index: LinearIdxV1, rows: usize| {
+            if rows > 0 {
+                bound.values += rows * (index.in_dim + index.out_dim);
+                bound.linears += 1;
+            }
+        };
+        // Heads; then per block FFN, projection and QKV (the compact QKV
+        // records two terms); then the token inputs and the edge bias.
+        linear(layout.val2, 1);
+        linear(layout.val0, 1);
+        linear(layout.pol2, a);
+        linear(layout.pol0, a);
+        for block in &layout.blocks {
+            linear(block.ff2, l);
+            linear(block.ff0, l);
+            linear(block.proj, l);
+            linear(block.qkv, l);
+        }
+        linear(layout.state2, 1);
+        linear(layout.state0, 1);
+        linear(layout.obj2, n);
+        linear(layout.obj0, n);
+        linear(layout.act2, a);
+        linear(layout.act0, a);
+        linear(layout.ref2, r);
+        linear(layout.ref0, r);
+        linear(layout.edge, e);
+        bound.linears += 1;
+        bound.values += d * (2 * (1 + a)).saturating_sub(l);
+        // LayerNorm rows (gain and bias terms, two additions each): the
+        // final norm's live rows and both norms of every block.
+        let norm_rows = 1 + a + 2 * l * layout.blocks.len();
+        bound.values += norm_rows * 2 * d;
+        bound.additions += norm_rows * 2;
+        // Group rows, card rows of objects and references, and the reference
+        // bias's single values.
+        bound.values += n * d + (n + r) * cd + 2 * r * h;
+        bound.additions += n + n + r + 2 * r * h;
+        bound
+    }
+
+    /// The bound of a decision before validation: that of its counts when
+    /// its tensor shapes agree, and nothing otherwise, since the forward
+    /// refuses such a decision before it records. A decision the forward
+    /// accepts has exactly these counts, and a malformed one never makes an
+    /// update reserve more than a well-formed decision of its size.
+    pub(super) fn of_input_v1(layout: &LayoutV1, input: SInputV1<'_>) -> Self {
+        match input.shape_counts_v1() {
+            Ok(counts) => Self::of_counts_v1(layout, counts),
+            Err(_) => Self::default(),
+        }
+    }
+
+    fn max_v1(self, other: Self) -> Self {
+        Self {
+            values: self.values.max(other.values),
+            linears: self.linears.max(other.linears),
+            additions: self.additions.max(other.additions),
+        }
+    }
+
+    /// The bytes a slot reserves for this bound.
+    pub(super) fn bytes_v1(self) -> usize {
+        self.values * size_of::<f32>()
+            + self.linears * size_of::<LinearTermV1>()
+            + self.additions * size_of::<(usize, Range<usize>)>()
+    }
+}
+
+/// How one update holds its term records: `sets` sets of `slots` slots,
+/// each reserving `bound`, the largest substep's bound.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct TermPlanV1 {
+    pub(super) sets: usize,
+    pub(super) slots: usize,
+    pub(super) bound: TermBoundV1,
+}
+
+impl TermPlanV1 {
+    /// Two sets of one slot per worker when they fit in `budget_bytes`, so
+    /// a block records while the previous one replays. Otherwise one set of
+    /// as many slots as fit, at most two per worker and at least one, so the
+    /// reserved bytes never exceed `budget_bytes` or one slot's bound.
+    pub(super) fn new_v1(bound: TermBoundV1, workers: usize, budget_bytes: usize) -> Self {
+        let fit = budget_bytes / bound.bytes_v1().max(1);
+        if fit >= 2 * workers {
+            Self {
+                sets: 2,
+                slots: workers,
+                bound,
+            }
+        } else {
+            Self {
+                sets: 1,
+                slots: fit.clamp(1, 2 * workers),
+                bound,
+            }
+        }
+    }
+
+    /// The bytes all slots reserve when every slot is used.
+    #[cfg(test)]
+    pub(super) fn reserved_bytes_v1(self) -> usize {
+        self.sets * self.slots * self.bound.bytes_v1()
+    }
 }
 
 #[derive(Default)]
@@ -29,6 +177,24 @@ impl SGradientTermsV1 {
         self.additions.clear();
     }
 
+    /// Reserves room for `bound`, so recording a substep within it never
+    /// reallocates. A slot keeps its room across the blocks of an update.
+    fn reserve_v1(&mut self, bound: TermBoundV1) {
+        self.data.reserve_exact(bound.values);
+        self.linears.reserve_exact(bound.linears);
+        self.additions.reserve_exact(bound.additions);
+    }
+
+    /// What these records hold, in the units of [`TermBoundV1`].
+    #[cfg(test)]
+    pub(super) fn recorded_v1(&self) -> TermBoundV1 {
+        TermBoundV1 {
+            values: self.data.len(),
+            linears: self.linears.len(),
+            additions: self.additions.len(),
+        }
+    }
+
     fn store_v1(&mut self, values: &[f32]) -> Range<usize> {
         let start = self.data.len();
         self.data.extend_from_slice(values);
@@ -36,9 +202,8 @@ impl SGradientTermsV1 {
     }
 
     /// Live value bytes, live term-record bytes and reserved bytes of these
-    /// records (measurement only).
+    /// records.
     fn bytes_v1(&self) -> (usize, usize, usize) {
-        use std::mem::size_of;
         let addition = size_of::<(usize, Range<usize>)>();
         (
             self.data.len() * size_of::<f32>(),
@@ -167,63 +332,158 @@ impl SGradientSinkV1<'_> {
     }
 }
 
-struct WeightShardV1<'a> {
+struct WeightShardV1<'g> {
     offset: usize,
     start_row: usize,
     rows: usize,
-    values: &'a mut [f32],
+    values: &'g mut [f32],
 }
 
-fn replay_v1(
-    layout: &LayoutV1,
-    gradient: &mut [f32],
-    block: &[PreparedGaeV1<'_>],
-    workers: usize,
-) -> Result<(), String> {
-    // The non-weight terms do not overlap a Linear weight. The shared
-    // card and ref tables still receive each individual addition in order.
-    let additions = profile::span_v1(StageV1::ReplayAdditions);
-    for substep in block {
-        let terms = &substep.terms;
-        for &(offset, ref range) in &terms.additions {
-            add_values_v1(gradient, offset, &terms.data[range.clone()]);
+/// One update's gradient, split once for concurrent replay: the rows of
+/// every `Linear` weight in shards (largest first), and the other tensors
+/// (biases, LayerNorm parameters, embeddings, the reference bias) as runs of
+/// adjacent tensors in offset order.
+struct GradientPartsV1<'g> {
+    shards: Vec<Mutex<WeightShardV1<'g>>>,
+    rest: Mutex<Vec<(usize, &'g mut [f32])>>,
+}
+
+impl<'g> GradientPartsV1<'g> {
+    fn new_v1(layout: &LayoutV1, gradient: &'g mut [f32], workers: usize) -> Self {
+        let _build = profile::span_v1(StageV1::ShardBuild);
+        let mut shards = Vec::new();
+        let mut rest = Vec::new();
+        let mut remaining = gradient;
+        // `remaining` starts at `offset`; its first `run` values are
+        // non-weight tensors not yet split off.
+        let mut offset = 0;
+        let mut run = 0;
+        let target_size = layout.total.div_ceil(workers * 4);
+        for tensor in &layout.tensors {
+            if !tensor.linear {
+                run += tensor.len;
+                continue;
+            }
+            if run > 0 {
+                let (values, tail) = remaining.split_at_mut(run);
+                rest.push((offset, values));
+                remaining = tail;
+                offset += run;
+                run = 0;
+            }
+            let (values, tail) = remaining.split_at_mut(tensor.len);
+            remaining = tail;
+            offset += tensor.len;
+            let width = tensor.shape[1];
+            let rows_per_shard = target_size.div_ceil(width).max(4).next_multiple_of(4);
+            for (shard, values) in values.chunks_mut(rows_per_shard * width).enumerate() {
+                shards.push(WeightShardV1 {
+                    offset: tensor.offset,
+                    start_row: shard * rows_per_shard,
+                    rows: values.len() / width,
+                    values,
+                });
+            }
         }
-        for term in &terms.linears {
-            let index = term.index;
-            kernels::bias_grad_v1(
+        if run > 0 {
+            rest.push((offset, remaining));
+        }
+        shards.sort_by_key(|shard| std::cmp::Reverse(shard.values.len()));
+        Self {
+            shards: shards.into_iter().map(Mutex::new).collect(),
+            rest: Mutex::new(rest),
+        }
+    }
+}
+
+/// The non-weight values `offset..offset + len`. Every addition and bias
+/// term lies in one run, never in a `Linear` weight.
+fn rest_values_v1<'r>(
+    rest: &'r mut [(usize, &mut [f32])],
+    offset: usize,
+    len: usize,
+) -> &'r mut [f32] {
+    let run = rest
+        .partition_point(|(start, _)| *start <= offset)
+        .checked_sub(1)
+        .expect("S term before the first non-weight tensor");
+    let (start, values) = &mut rest[run];
+    &mut values[offset - *start..offset - *start + len]
+}
+
+/// One substep's non-weight terms, in its order: the LayerNorm, embedding
+/// and reference-bias additions, then the `Linear` bias terms. The shared
+/// card and reference tables receive each addition in turn.
+fn add_terms_v1(rest: &mut [(usize, &mut [f32])], terms: &SGradientTermsV1) {
+    for &(offset, ref range) in &terms.additions {
+        add_values_v1(
+            rest_values_v1(rest, offset, range.len()),
+            0,
+            &terms.data[range.clone()],
+        );
+    }
+    for term in &terms.linears {
+        let index = term.index;
+        kernels::bias_grad_v1(
+            term.rows,
+            index.out_dim,
+            &terms.data[term.dy.clone()],
+            rest_values_v1(rest, index.b, index.out_dim),
+        );
+    }
+}
+
+/// One substep's weight terms for one shard. A term covers whole rows of one
+/// weight, possibly only some of them (`LinearIdxV1::rows_v1`); it adds to
+/// the rows it shares with the shard. Weights are disjoint, so other
+/// weights' terms share nothing.
+fn replay_shard_terms_v1(
+    shard: &mut WeightShardV1<'_>,
+    terms: &SGradientTermsV1,
+    census: &mut profile::ShardCensusV1,
+) {
+    let width = shard.values.len() / shard.rows;
+    let shard_start = shard.offset + shard.start_row * width;
+    let shard_end = shard_start + shard.values.len();
+    for term in &terms.linears {
+        census.scanned_v1();
+        let index = term.index;
+        let start = shard_start.max(index.w);
+        let end = shard_end.min(index.w + index.out_dim * index.in_dim);
+        if start < end {
+            let rows = (end - start) / index.in_dim;
+            census.matched_v1(rows, term.rows, index.in_dim);
+            gemm_v1(
+                rows,
+                index.in_dim,
                 term.rows,
+                &terms.data[term.dy.start + (start - index.w) / index.in_dim..term.dy.end],
+                1,
                 index.out_dim,
-                &terms.data[term.dy.clone()],
-                &mut gradient[index.b..index.b + index.out_dim],
+                &terms.data[term.x.clone()],
+                InitV1::Existing,
+                &mut shard.values[start - shard_start..end - shard_start],
             );
         }
     }
-    drop(additions);
-    let build = profile::span_v1(StageV1::ReplayShardBuild);
-    let mut shards = Vec::new();
-    let mut remaining = gradient;
-    let target_size = layout.total.div_ceil(workers * 4);
-    for tensor in &layout.tensors {
-        let (values, tail) = remaining.split_at_mut(tensor.len);
-        remaining = tail;
-        if !tensor.linear {
-            continue;
-        }
-        let width = tensor.shape[1];
-        let rows_per_shard = target_size.div_ceil(width).max(4).next_multiple_of(4);
-        for (shard, values) in values.chunks_mut(rows_per_shard * width).enumerate() {
-            shards.push(WeightShardV1 {
-                offset: tensor.offset,
-                start_row: shard * rows_per_shard,
-                rows: values.len() / width,
-                values,
-            });
-        }
+}
+
+/// Replays recorded substeps into `gradient` on the calling thread, in
+/// order, as one block.
+#[cfg(test)]
+pub(super) fn replay_verified_test_terms_v1(
+    layout: &LayoutV1,
+    gradient: &mut [f32],
+    terms: Vec<SGradientTermsV1>,
+) -> Result<(), String> {
+    ensure_mxcsr_v1()?;
+    let parts = GradientPartsV1::new_v1(layout, gradient, 1);
+    let mut rest = parts.rest.into_inner().expect("S test gradient runs");
+    for substep in &terms {
+        add_terms_v1(&mut rest, substep);
     }
-    shards.sort_by_key(|shard| std::cmp::Reverse(shard.values.len()));
-    drop(build);
-    let _span = profile::span_v1(StageV1::ReplayDrain);
-    let replay = |_: &mut (), shard: WeightShardV1<'_>| {
+    for shard in parts.shards {
+        let mut shard = shard.into_inner().expect("S test shard");
         let mut census = profile::shard_v1(
             layout,
             shard.offset,
@@ -231,107 +491,11 @@ fn replay_v1(
             shard.rows,
             shard.values.len(),
         );
-        for substep in block {
-            let terms = &substep.terms;
-            for term in &terms.linears {
-                census.scanned_v1();
-                if term.index.w == shard.offset {
-                    census.matched_v1(term.rows, term.index.in_dim);
-                    gemm_v1(
-                        shard.rows,
-                        term.index.in_dim,
-                        term.rows,
-                        &terms.data[term.dy.start + shard.start_row..term.dy.end],
-                        1,
-                        term.index.out_dim,
-                        &terms.data[term.x.clone()],
-                        InitV1::Existing,
-                        shard.values,
-                    );
-                }
-            }
+        for substep in &terms {
+            replay_shard_terms_v1(&mut shard, substep, &mut census);
         }
-    };
-    drain_v1(
-        DrainV1::Replay,
-        &mut vec![(); workers],
-        shards.into_iter(),
-        replay,
-    )
-}
-
-#[cfg(test)]
-pub(super) fn replay_verified_test_terms_v1(
-    layout: &LayoutV1,
-    gradient: &mut [f32],
-    terms: Vec<SGradientTermsV1>,
-) -> Result<(), String> {
-    let block: Vec<_> = terms
-        .into_iter()
-        .map(|terms| PreparedGaeV1 {
-            terms,
-            ..PreparedGaeV1::default()
-        })
-        .collect();
-    replay_v1(layout, gradient, &block, 1)
-}
-
-/// Fixed-size, scoped workers. The caller also drains jobs, including any
-/// work left when the OS cannot start all requested helpers. `kind` only
-/// labels the measurement-only census (`profile`).
-fn drain_v1<T: Send, W: Send>(
-    kind: DrainV1,
-    workspaces: &mut [W],
-    items: impl Iterator<Item = T> + Send,
-    work: impl Fn(&mut W, T) + Sync,
-) -> Result<(), String> {
-    let census = profile::drain_v1(kind, workspaces.len());
-    let queue = Mutex::new(items);
-    let drain = |workspace: &mut W, worker: usize| -> Result<(), String> {
-        ensure_mxcsr_v1()?;
-        let mut busy = census.worker_v1(worker);
-        loop {
-            let item = queue.lock().expect("S learner job queue").next();
-            let Some(item) = item else { return Ok(()) };
-            let started = busy.item_started_v1();
-            work(workspace, item);
-            busy.item_done_v1(started);
-        }
-    };
-    let (caller, helpers) = workspaces
-        .split_first_mut()
-        .expect("S learner needs a worker");
-    let profile = super::update_profile_v1::current_v1();
-    thread::scope(|scope| {
-        let drain = &drain;
-        let profile = &profile;
-        let spawning = census.mark_v1();
-        let helpers: Vec<_> = helpers
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(index, workspace)| {
-                let helper = thread::Builder::new()
-                    .spawn_scoped(scope, move || {
-                        super::update_profile_v1::adopt_v1(profile);
-                        drain(workspace, 1 + index)
-                    })
-                    .ok();
-                census.spawned_v1(helper.is_some());
-                helper
-            })
-            .collect();
-        census.spawn_done_v1(spawning);
-        let result = drain(caller, 0);
-        let joining = census.mark_v1();
-        let joins = helpers.len();
-        for helper in helpers {
-            helper
-                .join()
-                .unwrap_or_else(|payload| std::panic::resume_unwind(payload))?;
-        }
-        census.join_done_v1(joining, joins);
-        result
-    })
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -351,43 +515,57 @@ struct PreparedGaeV1<'a> {
     score: Option<Result<(f32, f32), String>>,
 }
 
+fn read_v1<'s, T>(slot: &'s RwLock<T>) -> std::sync::RwLockReadGuard<'s, T> {
+    slot.read().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn write_v1<'s, T>(slot: &'s RwLock<T>) -> std::sync::RwLockWriteGuard<'s, T> {
+    slot.write().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The term bytes of the block recorded in slots `active`, with the
+/// capacity every slot retains (the other set and unused slots too).
 fn term_block_bytes_v1(
-    active: &[PreparedGaeV1<'_>],
-    inactive: &[PreparedGaeV1<'_>],
+    slots: &[RwLock<PreparedGaeV1<'_>>],
+    active: Range<usize>,
 ) -> profile::BlockBytesV1 {
     let mut bytes = profile::BlockBytesV1::default();
-    for slot in active {
-        let (values, records, capacity) = slot.terms.bytes_v1();
-        bytes.values += values;
-        bytes.records += records;
-        bytes.active_capacity += capacity;
+    for (index, slot) in slots.iter().enumerate() {
+        let (values, records, capacity) = read_v1(slot).terms.bytes_v1();
+        if active.contains(&index) {
+            bytes.values += values;
+            bytes.records += records;
+            bytes.active_capacity += capacity;
+        }
+        bytes.retained_capacity += capacity;
     }
-    bytes.retained_capacity = bytes.active_capacity
-        + inactive
-            .iter()
-            .map(|slot| slot.terms.bytes_v1().2)
-            .sum::<usize>();
     bytes
 }
 
 #[cfg(all(test, feature = "s-learner-profile-v1"))]
 #[test]
 fn partial_block_counts_inactive_slot_capacity_separately() {
-    let mut slots = [PreparedGaeV1::default(), PreparedGaeV1::default()];
-    let active_range = slots[0].terms.store_v1(&[1.0, 2.0]);
-    slots[0].terms.additions.push((0, active_range));
-    let old_range = slots[1].terms.store_v1(&[0.0; 32]);
-    slots[1].terms.additions.push((0, old_range));
+    let slots = [
+        RwLock::new(PreparedGaeV1::default()),
+        RwLock::new(PreparedGaeV1::default()),
+    ];
+    {
+        let mut active = write_v1(&slots[0]);
+        let active_range = active.terms.store_v1(&[1.0, 2.0]);
+        active.terms.additions.push((0, active_range));
+        let mut old = write_v1(&slots[1]);
+        let old_range = old.terms.store_v1(&[0.0; 32]);
+        old.terms.additions.push((0, old_range));
+    }
 
-    let (active, inactive) = slots.split_at(1);
-    let bytes = term_block_bytes_v1(active, inactive);
-    let (values, records, active_capacity) = slots[0].terms.bytes_v1();
+    let bytes = term_block_bytes_v1(&slots, 0..1);
+    let (values, records, active_capacity) = read_v1(&slots[0]).terms.bytes_v1();
     assert_eq!(bytes.values, values);
     assert_eq!(bytes.records, records);
     assert_eq!(bytes.active_capacity, active_capacity);
     assert_eq!(
         bytes.retained_capacity,
-        active_capacity + slots[1].terms.bytes_v1().2
+        active_capacity + read_v1(&slots[1]).terms.bytes_v1().2
     );
     assert!(bytes.retained_capacity > bytes.active_capacity);
 }
@@ -424,6 +602,341 @@ fn jobs_v1<'a>(
     })
 }
 
+/// One task of a phase.
+#[derive(Clone, Copy, Debug)]
+enum TaskV1 {
+    /// The forward and recorded backward of the substep in slot `i`.
+    Record(usize),
+    /// The replaying block's non-weight terms, substep by substep.
+    Additions,
+    /// The replaying block's weight terms in shard `i`, substep by substep.
+    Shard(usize),
+}
+
+/// The phase every worker of an update is in.
+#[derive(Default)]
+struct PhaseV1 {
+    /// Counts phases; each helper works once in every one.
+    generation: u64,
+    stop: bool,
+    tasks: Vec<TaskV1>,
+    next: usize,
+    /// The slots of the block this phase replays.
+    replaying: Range<usize>,
+    /// Helpers still working in this phase.
+    running: usize,
+    /// A helper panicked; the update ends and the caller re-raises it.
+    panicked: bool,
+    /// Each worker's refusal in this phase (an unpinned MXCSR).
+    errors: Vec<Option<String>>,
+}
+
+/// Settings of one parallel gradient; production uses the defaults.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct PipelineOptionsV1 {
+    pub(super) budget_bytes: usize,
+    /// The worker that panics as it starts the phase of this generation.
+    #[cfg(test)]
+    pub(super) panic_at: Option<(usize, u64)>,
+}
+
+impl Default for PipelineOptionsV1 {
+    fn default() -> Self {
+        Self {
+            budget_bytes: TERM_BUDGET_BYTES_V1,
+            #[cfg(test)]
+            panic_at: None,
+        }
+    }
+}
+
+/// The term storage one parallel gradient used.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct TermUseV1 {
+    pub(super) plan: TermPlanV1,
+    /// The bytes every slot's buffers held at the end, their peak (no slot
+    /// releases room during an update).
+    pub(super) capacity_bytes: usize,
+}
+
+/// Everything the workers of one update share.
+struct PipelineV1<'u, 'a, 'g> {
+    model: &'u SModelV1,
+    group_count: f32,
+    value_coefficient: f32,
+    slots: Vec<RwLock<PreparedGaeV1<'a>>>,
+    parts: GradientPartsV1<'g>,
+    phase: Mutex<PhaseV1>,
+    /// Helpers wait here for the next phase or the stop.
+    start: Condvar,
+    /// The caller waits here for the helpers to finish a phase.
+    done: Condvar,
+    #[cfg(test)]
+    panic_at: Option<(usize, u64)>,
+}
+
+/// A helper's end of one phase, also when its work panics.
+struct PhaseDoneV1<'p, 'u, 'a, 'g>(&'p PipelineV1<'u, 'a, 'g>);
+
+impl Drop for PhaseDoneV1<'_, '_, '_, '_> {
+    fn drop(&mut self) {
+        let mut phase = self.0.lock_v1();
+        phase.running = phase.running.saturating_sub(1);
+        if thread::panicking() {
+            phase.panicked = true;
+        }
+        if phase.running == 0 {
+            self.0.done.notify_all();
+        }
+    }
+}
+
+/// Stops the helpers when the caller leaves the update, also by a panic, so
+/// that the scope can join them.
+struct StopV1<'p, 'u, 'a, 'g>(&'p PipelineV1<'u, 'a, 'g>);
+
+impl Drop for StopV1<'_, '_, '_, '_> {
+    fn drop(&mut self) {
+        self.0.lock_v1().stop = true;
+        self.0.start.notify_all();
+    }
+}
+
+impl<'a> PipelineV1<'_, 'a, '_> {
+    fn lock_v1(&self) -> MutexGuard<'_, PhaseV1> {
+        self.phase.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// One worker's part of the current phase: tasks until none is left.
+    fn work_v1(&self, worker: usize, work: &mut SWorkV1, census: &profile::PoolCensusV1) {
+        if let Err(error) = ensure_mxcsr_v1() {
+            self.lock_v1().errors[worker] = Some(error);
+            return;
+        }
+        let mut busy = census.worker_v1(worker);
+        loop {
+            let (task, replaying) = {
+                let mut phase = self.lock_v1();
+                #[cfg(test)]
+                if self.panic_at == Some((worker, phase.generation)) {
+                    drop(phase);
+                    panic!("S learner worker {worker} panicked (test)");
+                }
+                let Some(&task) = phase.tasks.get(phase.next) else {
+                    return;
+                };
+                phase.next += 1;
+                (task, phase.replaying.clone())
+            };
+            let started = busy.item_started_v1();
+            let kind = self.run_v1(task, replaying, work);
+            busy.item_done_v1(kind, started);
+        }
+    }
+
+    fn run_v1(&self, task: TaskV1, replaying: Range<usize>, work: &mut SWorkV1) -> DrainV1 {
+        match task {
+            TaskV1::Record(index) => {
+                let mut slot = write_v1(&self.slots[index]);
+                if let Some(Ok(job)) = slot.job {
+                    let score = self.model.prepare_gae_v1(
+                        job,
+                        self.group_count,
+                        self.value_coefficient,
+                        work,
+                        &mut slot.terms,
+                    );
+                    slot.score = Some(score);
+                }
+                DrainV1::Record
+            }
+            TaskV1::Additions => {
+                let _span = profile::span_v1(StageV1::ReplayAdditions);
+                let mut rest = self
+                    .parts
+                    .rest
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                for slot in &self.slots[replaying] {
+                    add_terms_v1(&mut rest, &read_v1(slot).terms);
+                }
+                DrainV1::Additions
+            }
+            TaskV1::Shard(index) => {
+                let mut shard = self.parts.shards[index]
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                let mut census = profile::shard_v1(
+                    &self.model.layout,
+                    shard.offset,
+                    shard.start_row,
+                    shard.rows,
+                    shard.values.len(),
+                );
+                for slot in &self.slots[replaying] {
+                    replay_shard_terms_v1(&mut shard, &read_v1(slot).terms, &mut census);
+                }
+                DrainV1::Replay
+            }
+        }
+    }
+
+    /// A helper's loop: one turn per phase until the stop.
+    fn helper_v1(&self, worker: usize, work: &mut SWorkV1, census: &profile::PoolCensusV1) {
+        let mut seen = 0;
+        loop {
+            {
+                let mut phase = self.lock_v1();
+                while phase.generation == seen && !phase.stop {
+                    phase = self
+                        .start
+                        .wait(phase)
+                        .unwrap_or_else(PoisonError::into_inner);
+                }
+                if phase.stop {
+                    return;
+                }
+                seen = phase.generation;
+            }
+            let _done = PhaseDoneV1(self);
+            self.work_v1(worker, work, census);
+        }
+    }
+
+    /// Runs one phase on every worker, the caller included, and waits for
+    /// all of them. Reports the helpers' refusals first, in worker order,
+    /// then the caller's, as separate drains did.
+    fn phase_v1(
+        &self,
+        tasks: &[TaskV1],
+        replaying: Range<usize>,
+        helpers: usize,
+        work: &mut SWorkV1,
+        census: &profile::PoolCensusV1,
+    ) -> Result<(), String> {
+        let phase_span = profile::span_v1(StageV1::Phase);
+        let mark = census.mark_v1();
+        {
+            let mut phase = self.lock_v1();
+            phase.tasks.clear();
+            phase.tasks.extend_from_slice(tasks);
+            phase.next = 0;
+            phase.replaying = replaying;
+            for error in &mut phase.errors {
+                *error = None;
+            }
+            phase.running = helpers;
+            phase.generation += 1;
+        }
+        self.start.notify_all();
+        self.work_v1(0, work, census);
+        let barrier = profile::span_v1(StageV1::Barrier);
+        let mut phase = self.lock_v1();
+        while phase.running > 0 {
+            phase = self
+                .done
+                .wait(phase)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        drop(barrier);
+        drop(phase_span);
+        census.phase_done_v1(mark);
+        if phase.panicked {
+            return Err("S learner helper panicked".into());
+        }
+        let errors = &mut phase.errors;
+        let workers = errors.len();
+        match (1..workers)
+            .chain([0])
+            .find_map(|worker| errors[worker].take())
+        {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    /// The caller's side of an update: fills the next set with the next
+    /// block of jobs, runs each phase and merges every recorded block's loss
+    /// terms in order. Returns the policy and value sums.
+    fn phases_v1(
+        &self,
+        mut jobs: impl Iterator<Item = Result<GaeJobV1<'a>, String>>,
+        plan: TermPlanV1,
+        helpers: usize,
+        work: &mut SWorkV1,
+        census: &profile::PoolCensusV1,
+    ) -> Result<(f32, f32), String> {
+        let mut policy_sum = 0.0f32;
+        let mut value_sum = 0.0f32;
+        let mut joint = 0.0f32;
+        let mut value_error = 0.0f32;
+        let mut replaying: Option<Range<usize>> = None;
+        let mut next_set = 0;
+        let mut tasks = Vec::new();
+        loop {
+            // The next block records in the next set, unless that set is the
+            // one replaying (a single set alternates).
+            let first = next_set * plan.slots;
+            let mut len = 0;
+            if replaying.as_ref().is_none_or(|slots| slots.start != first) {
+                for (slot, job) in self.slots[first..first + plan.slots].iter().zip(&mut jobs) {
+                    let mut slot = write_v1(slot);
+                    slot.job = Some(job);
+                    slot.terms.reset_v1();
+                    slot.terms.reserve_v1(plan.bound);
+                    len += 1;
+                }
+            }
+            let recording = (len > 0).then(|| first..first + len);
+            if recording.is_some() {
+                next_set = (next_set + 1) % plan.sets;
+            }
+            if recording.is_none() && replaying.is_none() {
+                break;
+            }
+            tasks.clear();
+            if let Some(slots) = &recording {
+                tasks.extend(slots.clone().map(TaskV1::Record));
+            }
+            if replaying.is_some() {
+                tasks.push(TaskV1::Additions);
+                tasks.extend((0..self.parts.shards.len()).map(TaskV1::Shard));
+            }
+            census.phase_kinds_v1(len, replaying.is_some());
+            self.phase_v1(
+                &tasks,
+                replaying.clone().unwrap_or(0..0),
+                helpers,
+                work,
+                census,
+            )?;
+            if let Some(slots) = &recording {
+                profile::block_v1(len, len.min(helpers + 1), || {
+                    term_block_bytes_v1(&self.slots, slots.clone())
+                });
+                let _merge = profile::span_v1(StageV1::ScoreMerge);
+                for slot in &self.slots[slots.clone()] {
+                    let mut slot = write_v1(slot);
+                    let job = slot.job.take().expect("S learner scheduled job")?;
+                    let (selected, error) = slot.score.take().expect("S learner prepared job")?;
+                    if job.sub == 0 {
+                        joint = selected;
+                        value_error = error;
+                    } else {
+                        joint += selected;
+                    }
+                    if job.last {
+                        policy_sum += -joint * job.advantage;
+                        value_sum += value_error * value_error;
+                    }
+                }
+            }
+            replaying = recording;
+        }
+        Ok((policy_sum, value_sum))
+    }
+}
+
 impl SModelV1 {
     pub(super) fn gae_loss_gradient_parallel_v1(
         &self,
@@ -433,6 +946,28 @@ impl SModelV1 {
         workers: usize,
         caller_work: &mut SWorkV1,
     ) -> Result<SLossV1, String> {
+        self.gae_loss_gradient_planned_v1(
+            groups,
+            value_coefficient,
+            gradient,
+            workers,
+            caller_work,
+            PipelineOptionsV1::default(),
+        )
+        .map(|(loss, _)| loss)
+    }
+
+    /// The parallel GAE gradient under `options`, with the term storage it
+    /// used. `workers` counts the caller.
+    pub(super) fn gae_loss_gradient_planned_v1(
+        &self,
+        groups: &[SGroupV1<'_>],
+        value_coefficient: f32,
+        gradient: &mut [f32],
+        workers: usize,
+        caller_work: &mut SWorkV1,
+        options: PipelineOptionsV1,
+    ) -> Result<(SLossV1, TermUseV1), String> {
         ensure_mxcsr_v1()?;
         if groups.is_empty() {
             return Err("S update has no groups".into());
@@ -440,81 +975,108 @@ impl SModelV1 {
         if !value_coefficient.is_finite() || value_coefficient <= 0.0 {
             return Err("S value coefficient must be positive".into());
         }
-        let group_count = groups.len() as f32;
-        let mut policy_sum = 0.0f32;
-        let mut value_sum = 0.0f32;
-        let mut joint = 0.0f32;
-        let mut value_error = 0.0f32;
-        let mut jobs = jobs_v1(groups);
-        // One tape per worker, at most two contribution records per worker.
-        let mut helper_work = vec![SWorkV1::default(); workers - 1];
-        let mut workspaces: Vec<_> = std::iter::once(caller_work)
-            .chain(helper_work.iter_mut())
-            .collect();
-        let mut block: Vec<_> = (0..workers * 2).map(|_| PreparedGaeV1::default()).collect();
-        loop {
-            let mut len = 0;
-            for (slot, job) in block.iter_mut().zip(&mut jobs) {
-                slot.job = Some(job);
-                slot.terms.reset_v1();
-                len += 1;
-            }
-            if len == 0 {
-                break;
-            }
-            let active_workers = workers.min(len);
-            let (block, inactive) = block.split_at_mut(len);
-            let record = profile::span_v1(StageV1::RecordDrain);
-            drain_v1(
-                DrainV1::Record,
-                &mut workspaces[..active_workers],
-                block.iter_mut(),
-                |work, slot| {
-                    let Some(Ok(job)) = slot.job else { return };
-                    slot.score = Some(self.prepare_gae_v1(
-                        job,
-                        group_count,
-                        value_coefficient,
-                        work,
-                        &mut slot.terms,
-                    ));
-                },
-            )?;
-            drop(record);
-            profile::block_v1(len, active_workers, || term_block_bytes_v1(block, inactive));
-            let merge = profile::span_v1(StageV1::ScoreMerge);
-            for slot in block.iter_mut() {
-                let job = slot.job.take().expect("S learner scheduled job")?;
-                let (selected, error) = slot.score.take().expect("S learner prepared job")?;
-                if job.sub == 0 {
-                    joint = selected;
-                    value_error = error;
-                } else {
-                    joint += selected;
+        let bound = groups
+            .iter()
+            .flat_map(|group| &group.substeps)
+            .map(|substep| TermBoundV1::of_input_v1(&self.layout, substep.input))
+            .fold(TermBoundV1::default(), TermBoundV1::max_v1);
+        let plan = TermPlanV1::new_v1(bound, workers, options.budget_bytes);
+        // The worker census ends with this block, after every helper has
+        // joined and the pipeline has released the gradient.
+        let (sums, capacity_bytes) = {
+            let census = profile::pool_v1(workers);
+            // One tape and backward workspace per helper; the caller brings
+            // its own.
+            let mut helper_work = vec![SWorkV1::default(); workers - 1];
+            let pipeline = PipelineV1 {
+                model: self,
+                group_count: groups.len() as f32,
+                value_coefficient,
+                slots: (0..plan.sets * plan.slots)
+                    .map(|_| RwLock::default())
+                    .collect(),
+                parts: GradientPartsV1::new_v1(&self.layout, gradient, workers),
+                phase: Mutex::new(PhaseV1 {
+                    errors: vec![None; workers],
+                    ..PhaseV1::default()
+                }),
+                start: Condvar::new(),
+                done: Condvar::new(),
+                #[cfg(test)]
+                panic_at: options.panic_at,
+            };
+            let update_profile = super::update_profile_v1::current_v1();
+            let sums = thread::scope(|scope| {
+                // Stops every helper however the caller leaves, so that the
+                // scope can join them.
+                let stop = StopV1(&pipeline);
+                let spawning = census.mark_v1();
+                let helpers: Vec<_> = helper_work
+                    .iter_mut()
+                    .enumerate()
+                    .filter_map(|(index, work)| {
+                        let (pipeline, census, update_profile) =
+                            (&pipeline, &census, &update_profile);
+                        let helper = thread::Builder::new()
+                            .spawn_scoped(scope, move || {
+                                super::update_profile_v1::adopt_v1(update_profile);
+                                pipeline.helper_v1(1 + index, work, census);
+                                profile::helper_done_v1();
+                            })
+                            .ok();
+                        census.spawned_v1(helper.is_some());
+                        helper
+                    })
+                    .collect();
+                census.spawn_done_v1(spawning);
+                let sums =
+                    pipeline.phases_v1(jobs_v1(groups), plan, helpers.len(), caller_work, &census);
+                drop(stop);
+                let joining = census.mark_v1();
+                let joins = helpers.len();
+                let mut panic = None;
+                for helper in helpers {
+                    if let Err(payload) = helper.join() {
+                        panic.get_or_insert(payload);
+                    }
                 }
-                if job.last {
-                    policy_sum += -joint * job.advantage;
-                    value_sum += value_error * value_error;
+                census.join_done_v1(joining, joins);
+                if let Some(payload) = panic {
+                    std::panic::resume_unwind(payload);
                 }
-            }
-            drop(merge);
-            replay_v1(&self.layout, gradient, block, active_workers)?;
-        }
+                sums
+            });
+            let capacity_bytes: usize = pipeline
+                .slots
+                .iter()
+                .map(|slot| read_v1(slot).terms.bytes_v1().2)
+                .sum();
+            (sums, capacity_bytes)
+        };
+        let (policy_sum, value_sum) = sums?;
         for range in self.layout.gauge_ranges_v1() {
             gradient[range].fill(0.0);
         }
+        let group_count = groups.len() as f32;
         let loss = (policy_sum + value_coefficient * value_sum) / group_count;
         if !loss.is_finite() || gradient.iter().any(|g| !g.is_finite()) {
             return Err("S loss or gradient is not finite".into());
         }
-        Ok(SLossV1 {
+        let loss = SLossV1 {
             group_count: groups.len(),
             policy_sum,
             value_sum,
             policy_term: policy_sum / group_count,
             value_term: value_sum / group_count,
             loss,
-        })
+        };
+        Ok((
+            loss,
+            TermUseV1 {
+                plan,
+                capacity_bytes,
+            },
+        ))
     }
 
     fn prepare_gae_v1(

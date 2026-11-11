@@ -11,25 +11,30 @@
 //!   hash; each substep's forward, policy row and backward; the backward's
 //!   heads, per-layer sections and token inputs; the gradient sink's `Linear`
 //!   work (the weight-gradient GEMM on the serial path, the operand copies on
-//!   the parallel path); and the parallel path's record drain, score merge and
-//!   replay stages. With [`SProfileAllocatorV1`] installed (the binary does
-//!   so), each span also counts the allocator events of its thread;
+//!   the parallel path); and the parallel path's gradient split, phases,
+//!   phase barriers, score merges and replay additions. With
+//!   [`SProfileAllocatorV1`] installed (the binary does so), each span also
+//!   counts the allocator events of its thread;
 //! - the bytes the parallel path copies into its term records: `Linear`
 //!   inputs (activation operands) and output gradients (adjoints), and the
 //!   LayerNorm gain terms it materializes and bias terms it copies;
-//! - each drain's helper spawns, spawn failures and joins, the caller's spawn
-//!   and join-wait time and every worker's items and busy time;
+//! - the parallel update's helper spawns, spawn failures and joins, the
+//!   caller's spawn and join-wait time, its phases and their wall time, and
+//!   every worker's tasks and busy time by kind (record, replay shard,
+//!   additions) with its idle time in phases;
 //! - each replay shard's parameter count against the rows and multiply-adds
 //!   it replays, its time and its workers;
 //! - the peak live and reserved term bytes of one block and, with the
 //!   allocator, the process's peak live heap bytes;
-//! - an analytic multiply-add census of the backward by layer and section,
-//!   with the final block's object query rows (which no output reads) apart.
+//! - an analytic multiply-add census of the work the backward runs, by layer
+//!   and section, with the final block's object query rows (which no output
+//!   reads) apart: their analytic work and the part the backward skipped.
 //!
 //! Spans nest: `gradient` encloses the substep and replay spans, `backward`
 //! its sections, and those `sink_linear`. Every time is inclusive. Helper
-//! threads merge their counts into the process total when their drain ends;
-//! [`take_v1`] merges the caller's and returns and clears the total.
+//! threads merge their counts into the process total when they end with
+//! their update; [`take_v1`] merges the caller's and returns and clears the
+//! total.
 
 /// Inclusive span kinds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,16 +60,17 @@ pub(super) enum StageV1 {
     /// accumulation (serial) or the input and output-gradient copies
     /// (parallel).
     SinkLinear,
-    /// One block's forward and backward drain (parallel path, caller).
-    RecordDrain,
-    /// One block's ordered loss-term merge (parallel path).
+    /// One phase of the parallel path on the caller: its tasks and the
+    /// barrier.
+    Phase,
+    /// One block's ordered loss-term merge (parallel path, caller).
     ScoreMerge,
-    /// One block's serial additions and `Linear` bias gradients.
+    /// One block's additions and `Linear` bias gradients (one task).
     ReplayAdditions,
-    /// One block's weight-shard partition and sort.
-    ReplayShardBuild,
-    /// One block's weight-shard drain (parallel path, caller).
-    ReplayDrain,
+    /// The update's gradient split into weight shards and other tensors.
+    ShardBuild,
+    /// The caller's wait for the helpers at the end of a phase.
+    Barrier,
 }
 
 /// Per-layer backward sections, in backward order.
@@ -78,13 +84,15 @@ pub(super) enum SectionV1 {
     Ln1,
 }
 
-/// Which scoped drain a census describes.
+/// The kind of a parallel-path task.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DrainV1 {
-    /// Forward and recorded backward of one block's substeps.
+    /// The forward and recorded backward of one substep.
     Record = 0,
-    /// Replay of one block's weight-gradient terms by shard.
+    /// One shard's replay of a block's weight-gradient terms.
     Replay,
+    /// A block's additions and `Linear` bias gradients.
+    Additions,
 }
 
 #[derive(Default)]
@@ -121,13 +129,15 @@ mod imp {
         "back_heads",
         "back_inputs",
         "sink_linear",
-        "record_drain",
+        "phase",
         "score_merge",
         "replay_additions",
-        "replay_shard_build",
-        "replay_drain",
+        "shard_build",
+        "barrier",
     ];
     const SECTIONS_V1: usize = 6;
+    const TASKS_V1: usize = 3;
+    const TASK_NAMES_V1: [&str; TASKS_V1] = ["record", "replay", "additions"];
     const SECTION_NAMES_V1: [&str; SECTIONS_V1] = ["ffn", "ln2", "proj", "attention", "qkv", "ln1"];
     const F32_BYTES_V1: u64 = std::mem::size_of::<f32>() as u64;
 
@@ -305,20 +315,46 @@ mod imp {
         peak_retained_capacity_bytes: u64,
     }
 
+    /// One task kind's work by worker.
     #[derive(Default)]
-    struct DrainStatV1 {
-        drains: u64,
+    struct TaskStatV1 {
+        busy_ns: Vec<u64>,
+        items: Vec<u64>,
+        allocs: Vec<u64>,
+    }
+
+    /// The parallel updates' workers and phases.
+    #[derive(Default)]
+    struct PoolStatV1 {
+        updates: u64,
         worker_slots: u64,
         helper_spawns: u64,
         spawn_failures: u64,
         joins: u64,
         spawn_ns: u64,
         join_wait_ns: u64,
+        phases: u64,
+        record_phases: u64,
+        replay_phases: u64,
+        phase_wall_ns: u64,
         wall_ns: u64,
-        max_busy_ns: u64,
-        busy_ns: Vec<u64>,
-        items: Vec<u64>,
-        allocs: Vec<u64>,
+    }
+
+    impl PoolStatV1 {
+        fn add(&mut self, other: &Self) {
+            self.updates += other.updates;
+            self.worker_slots += other.worker_slots;
+            self.helper_spawns += other.helper_spawns;
+            self.spawn_failures += other.spawn_failures;
+            self.joins += other.joins;
+            self.spawn_ns += other.spawn_ns;
+            self.join_wait_ns += other.join_wait_ns;
+            self.phases += other.phases;
+            self.record_phases += other.record_phases;
+            self.replay_phases += other.replay_phases;
+            self.phase_wall_ns += other.phase_wall_ns;
+            self.wall_ns += other.wall_ns;
+        }
     }
 
     #[derive(Default)]
@@ -345,8 +381,11 @@ mod imp {
         inputs: MacsV1,
         macs: Vec<[MacsV1; SECTIONS_V1]>,
         dead: [MacsV1; SECTIONS_V1],
+        removed: [MacsV1; SECTIONS_V1],
+        live_final_substeps: u64,
         terms: TermsV1,
-        drains: [DrainStatV1; 2],
+        pool: PoolStatV1,
+        tasks: [TaskStatV1; TASKS_V1],
         shards: BTreeMap<(usize, usize), ShardStatV1>,
     }
 
@@ -388,6 +427,10 @@ mod imp {
             for (slot, other) in self.dead.iter_mut().zip(&other.dead) {
                 slot.add(other);
             }
+            for (slot, other) in self.removed.iter_mut().zip(&other.removed) {
+                slot.add(other);
+            }
+            self.live_final_substeps += other.live_final_substeps;
             let (t, o) = (&mut self.terms, &other.terms);
             t.linear_terms += o.linear_terms;
             t.linear_input_bytes += o.linear_input_bytes;
@@ -407,16 +450,8 @@ mod imp {
             t.peak_retained_capacity_bytes = t
                 .peak_retained_capacity_bytes
                 .max(o.peak_retained_capacity_bytes);
-            for (slot, other) in self.drains.iter_mut().zip(&other.drains) {
-                slot.drains += other.drains;
-                slot.worker_slots += other.worker_slots;
-                slot.helper_spawns += other.helper_spawns;
-                slot.spawn_failures += other.spawn_failures;
-                slot.joins += other.joins;
-                slot.spawn_ns += other.spawn_ns;
-                slot.join_wait_ns += other.join_wait_ns;
-                slot.wall_ns += other.wall_ns;
-                slot.max_busy_ns += other.max_busy_ns;
+            self.pool.add(&other.pool);
+            for (slot, other) in self.tasks.iter_mut().zip(&other.tasks) {
                 add_into_v1(&mut slot.busy_ns, &other.busy_ns);
                 add_into_v1(&mut slot.items, &other.items);
                 add_into_v1(&mut slot.allocs, &other.allocs);
@@ -567,8 +602,11 @@ mod imp {
         });
     }
 
-    /// The backward's multiply-adds for one substep, from its counts alone.
-    pub(crate) fn backward_census_v1(config: &SConfigV1, counts: CountsV1) {
+    /// The backward's multiply-adds for one substep, from its counts and the
+    /// number of query rows its final block visits (`final_rows`: every
+    /// token, or the state and action tokens when it skips the object query
+    /// rows).
+    pub(crate) fn backward_census_v1(config: &SConfigV1, counts: CountsV1, final_rows: usize) {
         let d = config.d_model;
         let h = config.heads;
         let dh = config.head_dim_v1();
@@ -601,22 +639,37 @@ mod imp {
         ] {
             inputs.add(&term);
         }
-        // Every layer's backward runs all `l` rows. Attention per head:
-        // dP = dO V^T, dV = P^T dO, dQ = dS K and dK = dS^T Q.
-        let mut block = [MacsV1::default(); SECTIONS_V1];
-        block[SectionV1::Ffn as usize] = linear(l, ffn, d, true);
-        block[SectionV1::Ffn as usize].add(&linear(l, d, ffn, true));
-        block[SectionV1::Ln2 as usize].rows = l as u64;
-        block[SectionV1::Proj as usize] = linear(l, d, d, true);
-        block[SectionV1::Attention as usize].attention = (4 * l * l * dh * h) as u64;
-        block[SectionV1::Attention as usize].rows = (h * l) as u64;
-        block[SectionV1::Qkv as usize] = linear(l, d, 3 * d, true);
-        block[SectionV1::Ln1 as usize].rows = l as u64;
+        // A block's backward over `m` query rows and all `l` keys. Attention
+        // per head: dP = dO V^T, dV = P^T dO, dQ = dS K and dK = dS^T Q,
+        // each `m * l * dh`. With fewer query rows than tokens, QKV splits
+        // into its query rows (the live rows) and its key and value rows
+        // (every token).
+        let block = |m: usize| {
+            let mut block = [MacsV1::default(); SECTIONS_V1];
+            block[SectionV1::Ffn as usize] = linear(m, ffn, d, true);
+            block[SectionV1::Ffn as usize].add(&linear(m, d, ffn, true));
+            block[SectionV1::Ln2 as usize].rows = m as u64;
+            block[SectionV1::Proj as usize] = linear(m, d, d, true);
+            block[SectionV1::Attention as usize].attention = (4 * m * l * dh * h) as u64;
+            block[SectionV1::Attention as usize].rows = (h * m) as u64;
+            block[SectionV1::Qkv as usize] = if m < l {
+                let mut qkv = linear(m, d, d, true);
+                qkv.add(&linear(l, d, 2 * d, true));
+                qkv
+            } else {
+                linear(l, d, 3 * d, true)
+            };
+            block[SectionV1::Ln1 as usize].rows = l as u64;
+            block
+        };
+        let full = block(l);
+        let last = block(final_rows);
         // The final block's forward skips its object query rows, so their
         // adjoints are zero: the FFN, LN2 and projection rows, the dP and dQ
         // rows and their zero terms in dV and dK, and the zero Q columns of
         // the QKV input and weight gradients. Their object keys and values
-        // stay live (milestone 3 must prove what can go, with signed zeros).
+        // stay live. The backward skips this work when every final-block
+        // Q, K and V value is finite (`final_block_compacts_v1`).
         let mut dead = [MacsV1::default(); SECTIONS_V1];
         dead[SectionV1::Ffn as usize] = linear(n, ffn, d, true);
         dead[SectionV1::Ffn as usize].add(&linear(n, d, ffn, true));
@@ -625,63 +678,71 @@ mod imp {
         dead[SectionV1::Attention as usize].attention = (4 * n * l * dh * h) as u64;
         dead[SectionV1::Attention as usize].rows = (h * n) as u64;
         dead[SectionV1::Qkv as usize] = linear(n, d, d, true);
+        let live = final_rows < l;
         with_acc_v1(|acc| {
             acc.substeps += 1;
+            acc.live_final_substeps += u64::from(live);
             acc.layers = acc.layers.max(config.layers);
             acc.heads.add(&heads);
             acc.inputs.add(&inputs);
             if acc.macs.len() < config.layers {
                 acc.macs.resize(config.layers, Default::default());
             }
-            for layer in &mut acc.macs[..config.layers] {
-                for (slot, macs) in layer.iter_mut().zip(&block) {
+            for (layer, slots) in acc.macs[..config.layers].iter_mut().enumerate() {
+                let macs = if layer + 1 == config.layers {
+                    &last
+                } else {
+                    &full
+                };
+                for (slot, macs) in slots.iter_mut().zip(macs) {
                     slot.add(macs);
                 }
             }
             for (slot, macs) in acc.dead.iter_mut().zip(&dead) {
                 slot.add(macs);
             }
+            if live {
+                for (slot, macs) in acc.removed.iter_mut().zip(&dead) {
+                    slot.add(macs);
+                }
+            }
         });
     }
 
     #[derive(Default)]
-    struct DrainRunV1 {
-        helper_spawns: u64,
-        spawn_failures: u64,
-        joins: u64,
-        spawn_ns: u64,
-        join_wait_ns: u64,
-        busy_ns: Vec<u64>,
-        items: Vec<u64>,
-        allocs: Vec<u64>,
+    struct PoolRunV1 {
+        stat: PoolStatV1,
+        tasks: [TaskStatV1; TASKS_V1],
     }
 
-    pub(crate) struct DrainCensusV1 {
-        kind: DrainV1,
+    /// The census of one parallel update's workers, from before the first
+    /// helper spawn to the last join.
+    pub(crate) struct PoolCensusV1 {
         workers: usize,
-        run: Mutex<DrainRunV1>,
+        run: Mutex<PoolRunV1>,
         start: Instant,
     }
 
     pub(crate) struct MarkV1(Instant);
 
-    pub(crate) fn drain_v1(kind: DrainV1, workers: usize) -> DrainCensusV1 {
-        let run = untracked_v1(|| DrainRunV1 {
-            busy_ns: vec![0; workers],
-            items: vec![0; workers],
-            allocs: vec![0; workers],
-            ..DrainRunV1::default()
+    pub(crate) fn pool_v1(workers: usize) -> PoolCensusV1 {
+        let run = untracked_v1(|| PoolRunV1 {
+            tasks: std::array::from_fn(|_| TaskStatV1 {
+                busy_ns: vec![0; workers],
+                items: vec![0; workers],
+                allocs: vec![0; workers],
+            }),
+            ..PoolRunV1::default()
         });
-        DrainCensusV1 {
-            kind,
+        PoolCensusV1 {
             workers,
             run: Mutex::new(run),
             start: Instant::now(),
         }
     }
 
-    impl DrainCensusV1 {
-        fn run_v1(&self, f: impl FnOnce(&mut DrainRunV1)) {
+    impl PoolCensusV1 {
+        fn run_v1(&self, f: impl FnOnce(&mut PoolRunV1)) {
             untracked_v1(|| f(&mut self.run.lock().unwrap_or_else(PoisonError::into_inner)));
         }
 
@@ -692,69 +753,81 @@ mod imp {
         pub(crate) fn spawned_v1(&self, spawned: bool) {
             self.run_v1(|run| {
                 if spawned {
-                    run.helper_spawns += 1;
+                    run.stat.helper_spawns += 1;
                 } else {
-                    run.spawn_failures += 1;
+                    run.stat.spawn_failures += 1;
                 }
             });
         }
 
         pub(crate) fn spawn_done_v1(&self, mark: MarkV1) {
             let ns = mark.0.elapsed().as_nanos() as u64;
-            self.run_v1(|run| run.spawn_ns += ns);
+            self.run_v1(|run| run.stat.spawn_ns += ns);
         }
 
         pub(crate) fn join_done_v1(&self, mark: MarkV1, joins: usize) {
             let ns = mark.0.elapsed().as_nanos() as u64;
             self.run_v1(|run| {
-                run.join_wait_ns += ns;
-                run.joins += joins as u64;
+                run.stat.join_wait_ns += ns;
+                run.stat.joins += joins as u64;
             });
         }
 
-        /// The census of worker `worker` (0: the caller) for this drain.
+        /// A phase with `records` record tasks and, if `replays`, one
+        /// block's replay.
+        pub(crate) fn phase_kinds_v1(&self, records: usize, replays: bool) {
+            self.run_v1(|run| {
+                run.stat.phases += 1;
+                run.stat.record_phases += u64::from(records > 0);
+                run.stat.replay_phases += u64::from(replays);
+            });
+        }
+
+        /// The caller's wall time of one phase, from its start to the
+        /// barrier's end.
+        pub(crate) fn phase_done_v1(&self, mark: MarkV1) {
+            let ns = mark.0.elapsed().as_nanos() as u64;
+            self.run_v1(|run| run.stat.phase_wall_ns += ns);
+        }
+
+        /// The census of worker `worker` (0: the caller) in one phase.
         pub(crate) fn worker_v1(&self, worker: usize) -> WorkerV1<'_> {
             WORKER.with(|slot| slot.set(worker));
             WorkerV1 {
                 census: self,
                 worker,
-                items: 0,
-                busy_ns: 0,
-                allocs: 0,
+                busy_ns: [0; TASKS_V1],
+                items: [0; TASKS_V1],
+                allocs: [0; TASKS_V1],
             }
         }
     }
 
-    impl Drop for DrainCensusV1 {
+    impl Drop for PoolCensusV1 {
         fn drop(&mut self) {
             let wall_ns = self.start.elapsed().as_nanos() as u64;
-            let run = std::mem::take(&mut *self.run.lock().unwrap_or_else(PoisonError::into_inner));
-            let kind = self.kind as usize;
-            let workers = self.workers as u64;
+            let mut run =
+                std::mem::take(&mut *self.run.lock().unwrap_or_else(PoisonError::into_inner));
+            run.stat.updates = 1;
+            run.stat.worker_slots = self.workers as u64;
+            run.stat.wall_ns = wall_ns;
             with_acc_v1(|acc| {
-                let stat = &mut acc.drains[kind];
-                stat.drains += 1;
-                stat.worker_slots += workers;
-                stat.helper_spawns += run.helper_spawns;
-                stat.spawn_failures += run.spawn_failures;
-                stat.joins += run.joins;
-                stat.spawn_ns += run.spawn_ns;
-                stat.join_wait_ns += run.join_wait_ns;
-                stat.wall_ns += wall_ns;
-                stat.max_busy_ns += run.busy_ns.iter().copied().max().unwrap_or(0);
-                add_into_v1(&mut stat.busy_ns, &run.busy_ns);
-                add_into_v1(&mut stat.items, &run.items);
-                add_into_v1(&mut stat.allocs, &run.allocs);
+                acc.pool.add(&run.stat);
+                for (slot, other) in acc.tasks.iter_mut().zip(&run.tasks) {
+                    add_into_v1(&mut slot.busy_ns, &other.busy_ns);
+                    add_into_v1(&mut slot.items, &other.items);
+                    add_into_v1(&mut slot.allocs, &other.allocs);
+                }
             });
         }
     }
 
     pub(crate) struct WorkerV1<'c> {
-        census: &'c DrainCensusV1,
+        census: &'c PoolCensusV1,
         worker: usize,
-        items: u64,
-        busy_ns: u64,
-        allocs: u64,
+        busy_ns: [u64; TASKS_V1],
+        items: [u64; TASKS_V1],
+        allocs: [u64; TASKS_V1],
     }
 
     pub(crate) struct ItemV1(Instant, u64);
@@ -765,27 +838,31 @@ mod imp {
             ItemV1(Instant::now(), allocs)
         }
 
-        pub(crate) fn item_done_v1(&mut self, item: ItemV1) {
-            self.busy_ns += item.0.elapsed().as_nanos() as u64;
-            self.items += 1;
-            self.allocs += allocs_now_v1().0 - item.1;
+        pub(crate) fn item_done_v1(&mut self, kind: DrainV1, item: ItemV1) {
+            let kind = kind as usize;
+            self.busy_ns[kind] += item.0.elapsed().as_nanos() as u64;
+            self.items[kind] += 1;
+            self.allocs[kind] += allocs_now_v1().0 - item.1;
         }
     }
 
     impl Drop for WorkerV1<'_> {
         fn drop(&mut self) {
-            let (worker, items, busy_ns, allocs) =
-                (self.worker, self.items, self.busy_ns, self.allocs);
+            let worker = self.worker;
+            let (busy_ns, items, allocs) = (self.busy_ns, self.items, self.allocs);
             self.census.run_v1(|run| {
-                run.busy_ns[worker] += busy_ns;
-                run.items[worker] += items;
-                run.allocs[worker] += allocs;
+                for (kind, task) in run.tasks.iter_mut().enumerate() {
+                    task.busy_ns[worker] += busy_ns[kind];
+                    task.items[worker] += items[kind];
+                    task.allocs[worker] += allocs[kind];
+                }
             });
-            if worker != 0 {
-                // A helper thread ends with its drain.
-                flush_thread_v1();
-            }
         }
+    }
+
+    /// A helper thread ends with its update: its counts join the total.
+    pub(crate) fn helper_done_v1() {
+        flush_thread_v1();
     }
 
     pub(crate) struct ShardCensusV1<'a> {
@@ -827,11 +904,12 @@ mod imp {
             self.scanned += 1;
         }
 
-        /// A matching term of `term_rows` rows and `in_dim` inputs.
-        pub(crate) fn matched_v1(&mut self, term_rows: usize, in_dim: usize) {
+        /// A matching term of `term_rows` rows and `in_dim` inputs that adds
+        /// to `weight_rows` of the shard's rows.
+        pub(crate) fn matched_v1(&mut self, weight_rows: usize, term_rows: usize, in_dim: usize) {
             self.matched += 1;
             self.term_rows += term_rows as u64;
-            self.macs += (self.rows * in_dim * term_rows) as u64;
+            self.macs += (weight_rows * in_dim * term_rows) as u64;
         }
     }
 
@@ -915,29 +993,33 @@ mod imp {
         for m in &acc.dead {
             dead_total.add(m);
         }
+        let mut removed_total = MacsV1::default();
+        for m in &acc.removed {
+            removed_total.add(m);
+        }
         let terms = &acc.terms;
-        let drains: serde_json::Map<String, Value> = ["record", "replay"]
+        let tasks: serde_json::Map<String, Value> = TASK_NAMES_V1
             .iter()
-            .zip(&acc.drains)
+            .zip(&acc.tasks)
             .map(|(name, stat)| {
                 (
                     (*name).to_owned(),
                     json!({
-                        "drains": stat.drains,
-                        "worker_slots": stat.worker_slots,
-                        "helper_spawns": stat.helper_spawns,
-                        "spawn_failures": stat.spawn_failures,
-                        "joins": stat.joins,
-                        "spawn_ns": stat.spawn_ns,
-                        "join_wait_ns": stat.join_wait_ns,
-                        "wall_ns": stat.wall_ns,
-                        "sum_of_max_worker_busy_ns": stat.max_busy_ns,
                         "busy_ns_by_worker": stat.busy_ns,
                         "items_by_worker": stat.items,
                         "allocs_by_worker": stat.allocs,
                     }),
                 )
             })
+            .collect();
+        let pool = &acc.pool;
+        let mut busy = Vec::new();
+        for task in &acc.tasks {
+            add_into_v1(&mut busy, &task.busy_ns);
+        }
+        let idle: Vec<u64> = busy
+            .iter()
+            .map(|busy| pool.phase_wall_ns.saturating_sub(*busy))
             .collect();
         let shards: Vec<Value> = acc
             .shards
@@ -974,6 +1056,9 @@ mod imp {
                 "total": total.json(),
                 "final_block_object_query_rows": Value::Object(sections_macs(&acc.dead)),
                 "final_block_object_query_rows_total": dead_total.json(),
+                "final_block_removed": Value::Object(sections_macs(&acc.removed)),
+                "final_block_removed_total": removed_total.json(),
+                "final_block_live_substeps": acc.live_final_substeps,
             },
             "terms": {
                 "linear_terms": terms.linear_terms,
@@ -993,7 +1078,23 @@ mod imp {
                 "peak_block_reserved_bytes": terms.peak_reserved_bytes,
                 "peak_retained_term_capacity_bytes": terms.peak_retained_capacity_bytes,
             },
-            "drains": drains,
+            "pool": {
+                "updates": pool.updates,
+                "worker_slots": pool.worker_slots,
+                "helper_spawns": pool.helper_spawns,
+                "spawn_failures": pool.spawn_failures,
+                "joins": pool.joins,
+                "spawn_ns": pool.spawn_ns,
+                "join_wait_ns": pool.join_wait_ns,
+                "phases": pool.phases,
+                "record_phases": pool.record_phases,
+                "replay_phases": pool.replay_phases,
+                "phase_wall_ns": pool.phase_wall_ns,
+                "wall_ns": pool.wall_ns,
+                "busy_ns_by_worker": busy,
+                "idle_ns_by_worker": idle,
+            },
+            "tasks": tasks,
             "shards": shards,
             "heap": {
                 "start_live_bytes": start,
@@ -1059,19 +1160,19 @@ mod imp {
     pub(crate) fn block_v1(_: usize, _: usize, _: impl FnOnce() -> super::BlockBytesV1) {}
 
     #[inline(always)]
-    pub(crate) fn backward_census_v1(_: &SConfigV1, _: CountsV1) {}
+    pub(crate) fn backward_census_v1(_: &SConfigV1, _: CountsV1, _: usize) {}
 
-    pub(crate) struct DrainCensusV1;
+    pub(crate) struct PoolCensusV1;
     pub(crate) struct MarkV1;
     pub(crate) struct WorkerV1;
     pub(crate) struct ItemV1;
 
     #[inline(always)]
-    pub(crate) fn drain_v1(_: DrainV1, _: usize) -> DrainCensusV1 {
-        DrainCensusV1
+    pub(crate) fn pool_v1(_: usize) -> PoolCensusV1 {
+        PoolCensusV1
     }
 
-    impl DrainCensusV1 {
+    impl PoolCensusV1 {
         #[inline(always)]
         pub(crate) fn mark_v1(&self) -> MarkV1 {
             MarkV1
@@ -1087,6 +1188,12 @@ mod imp {
         pub(crate) fn join_done_v1(&self, _: MarkV1, _: usize) {}
 
         #[inline(always)]
+        pub(crate) fn phase_kinds_v1(&self, _: usize, _: bool) {}
+
+        #[inline(always)]
+        pub(crate) fn phase_done_v1(&self, _: MarkV1) {}
+
+        #[inline(always)]
         pub(crate) fn worker_v1(&self, _: usize) -> WorkerV1 {
             WorkerV1
         }
@@ -1099,8 +1206,11 @@ mod imp {
         }
 
         #[inline(always)]
-        pub(crate) fn item_done_v1(&mut self, _: ItemV1) {}
+        pub(crate) fn item_done_v1(&mut self, _: DrainV1, _: ItemV1) {}
     }
+
+    #[inline(always)]
+    pub(crate) fn helper_done_v1() {}
 
     pub(crate) struct ShardCensusV1;
 
@@ -1114,7 +1224,7 @@ mod imp {
         pub(crate) fn scanned_v1(&mut self) {}
 
         #[inline(always)]
-        pub(crate) fn matched_v1(&mut self, _: usize, _: usize) {}
+        pub(crate) fn matched_v1(&mut self, _: usize, _: usize, _: usize) {}
     }
 
     /// `None`: this build has no profile.
@@ -1127,6 +1237,6 @@ pub use imp::take_v1;
 #[cfg(feature = "s-learner-profile-v1")]
 pub use imp::SProfileAllocatorV1;
 pub(super) use imp::{
-    addition_term_v1, backward_census_v1, block_v1, drain_v1, layer_norm_term_v1, linear_term_v1,
-    section_v1, shard_v1, span_v1,
+    addition_term_v1, backward_census_v1, block_v1, helper_done_v1, layer_norm_term_v1,
+    linear_term_v1, pool_v1, section_v1, shard_v1, span_v1, PoolCensusV1, ShardCensusV1,
 };
