@@ -978,6 +978,7 @@ reporting as E1 to E9:
 | Elves follow-up | Birchlore Rangers and Thornscape Battlemage | 2 | Elves mainboard integrated in #613 with both-seat public-session terminal and replay qualification |
 | P3a | Sideboards of Stiflenought, Sligh, Goblins, Oath of Druids, RG Aggro, Stasis and White Weenie (Anarchy, Chill, Crimson Acolyte, Cursed Totem, Essence Flare, Overload, Pyrostatic Pillar, Sphere of Law, Tranquil Domain, True Believer, Warmth) | 11 | Premodern full 75 0% to 34% |
 | P3b | Sideboards of Terrageddon, Mono-Black Aggro, Survival, The Rock and Mono-Red Control (Dystopia, Engineered Plague, Gloom, Goblin Tinkerer, Haunting Echoes, Mogg Salvage, Plaguebearer, Ray of Revelation, Xantid Swarm, Zuran Orb) | 10 | Premodern full 75 34% to 53% |
+| P3c | Sideboards of Psychatog, Elves and Reanimator (Crumble, Dominate, Druid Lyrist, Ihsan's Shade, Iridescent Angel, Multani, Maro-Sorcerer, Spike Feeder, Uktabi Orangutan) | 8 | Premodern full 75 53% to 58% |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -1418,3 +1419,47 @@ Known gaps:
   pool).
 - Xantid Swarm's ban, like Orim's Chant's, is checked where casts are offered from hand and by
   madness, not for casts granted while a spell resolves.
+
+### P3c: Premodern sideboards
+
+After P3b the census lists 25 missing sideboard cards among the playable lists. P3c adds eight
+that complete three more 75s:
+
+| Deck | Share | Missing sideboard cards |
+| --- | ---: | --- |
+| Psychatog | 3% | Dominate |
+| Elves | 1% | Druid Lyrist, Spike Feeder, Uktabi Orangutan |
+| Reanimator | 1% | Crumble, Ihsan's Shade, Iridescent Angel, Multani, Maro-Sorcerer |
+
+The full 75 share goes from 53% to 58% of the field, and the three decks join `PLAYABLE_75`.
+The other sideboards wait on harder cards: Enchantress, Landstill and BW Control on Sacred
+Ground's and Karmic Justice's cause tracking and on Circle of Protection: Red, Replenish on
+Alter Reality's text change, Grow and Other Control on Meddling Mage's Full contract, Madness
+Threshold on Winter Orb's untap choice, and Mono-Black Control on Contagion's -2/-1 counters,
+Lurking Skirge's type change and Phyrexian Processor's life payment.
+
+P3c is built in `src/eternal_premodern_p3c_v1.rs` (with a `statics` submodule) and
+`build_eternal_p3c_v1.rs`, the new tail of the recipe chains after P3b's. Spike Feeder brings
+the Spike creature type (stable id 380). Behavior follows each card's current Oracle text and
+rulings:
+
+- Dominate's "Gain control of target creature with mana value X or less." uses Blue Sun's
+  Twilight's targeting: the kernel announces X after targets, so a creature is a legal target
+  when some payable X reaches its mana value, and X is then at least that mana value. The pairs
+  of X and target are the ones 601.2b and 601.2c allow. The target is checked again on
+  resolution, and the control change has no duration.
+- Crumble destroys target artifact, which can't be regenerated, and that artifact's controller
+  gains life equal to its mana value, both read before the destruction. The life is gained also
+  when the artifact survives (indestructible), and not when the target is illegal.
+- Ihsan's Shade has printed protection from white, and Iridescent Angel flying and protection
+  from all colors (each of the five), through wave E6b's protection checks.
+- Multani, Maro-Sorcerer has shroud. Its power and toughness are each the number of cards in
+  all players' hands, a characteristic-defining ability in every zone, so a Multani cast with
+  no other card in either hand dies as a 0/0.
+- Druid Lyrist's "{G}, {T}, Sacrifice this creature: Destroy target enchantment." is an
+  ordinary activated ability.
+- Spike Feeder enters with two +1/+1 counters, as Triskelion does. "{2}, Remove a +1/+1
+  counter from Spike Feeder: Put a +1/+1 counter on target creature." and "Remove a +1/+1
+  counter from Spike Feeder: You gain 2 life." use the +1/+1 counter removal cost.
+- Uktabi Orangutan's "When Uktabi Orangutan enters, destroy target artifact." is an enters
+  trigger with a mandatory artifact target, its controller's own artifacts included.
