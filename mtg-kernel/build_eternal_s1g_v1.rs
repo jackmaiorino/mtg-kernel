@@ -1,6 +1,6 @@
 //! Card-database recipes for the eternal catalog's Legacy sideboard wave
-//! S1g. This module is the tail of the recipe chains: wave S1f's tables
-//! fall through to these, and its own defaults are the chains' base values.
+//! S1g. Wave S1f's tables fall through to these, and these fall through to
+//! wave S1j's (`build_eternal_s1j_v1.rs`), the tail of the recipe chains.
 //! Runtime programs live in `src/eternal_sideboard_s1g_v1.rs`. Every row is
 //! keyed by a name that occurs only in the eternal registry.
 
@@ -41,38 +41,38 @@ const GHOST_VACUUM: [ActivatedAbilityRecipe; 2] = [
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
         "Ghost Vacuum" => &GHOST_VACUUM,
-        _ => &[],
+        _ => super::build_eternal_s1j_v1::activated_ability_recipes_for(name),
     }
 }
 
 /// No S1g card is an instant, a sorcery or an Aura.
-pub(super) fn special_for(_name: &str) -> Option<Special> {
-    None
+pub(super) fn special_for(name: &str) -> Option<Special> {
+    super::build_eternal_s1j_v1::special_for(name)
 }
 
 /// No S1g card has kicker.
-pub(super) fn kicker_cost_for(_name: &str) -> Option<&'static str> {
-    None
+pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
+    super::build_eternal_s1j_v1::kicker_cost_for(name)
 }
 
 /// No S1g card is an Aura or an Equipment.
-pub(super) fn attachment_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn attachment_for(name: &str) -> &'static str {
+    super::build_eternal_s1j_v1::attachment_for(name)
 }
 
 /// No S1g card has flashback.
-pub(super) fn flashback_for(_name: &str) -> String {
-    "None".to_string()
+pub(super) fn flashback_for(name: &str) -> String {
+    super::build_eternal_s1j_v1::flashback_for(name)
 }
 
 /// No S1g card has an alternative cost.
-pub(super) fn alt_cost_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn alt_cost_for(name: &str) -> &'static str {
+    super::build_eternal_s1j_v1::alt_cost_for(name)
 }
 
 /// No S1g card has an evergreen keyword.
-pub(super) fn keywords_for(_name: &str) -> &'static [&'static str] {
-    &[]
+pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
+    super::build_eternal_s1j_v1::keywords_for(name)
 }
 
 /// Card-database tokens for this wave's abilities.
@@ -82,6 +82,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Drop of Honey" => "upkeep:destroy_creature_with_least_power_cant_be_regenerated_you_choose_ties;state:no_creatures_on_battlefield_sacrifice_this_enchantment",
         "Alpine Moon" => "etb:choose_nonbasic_land_card_name;static:opponent_lands_with_chosen_name_lose_land_types_and_abilities_gain_tap_add_any_color",
         "Ghost Vacuum" => "activated:tap_exile_target_card_from_a_graveyard;activated:six_tap_sacrifice_return_creature_cards_exiled_with_this_flying_counter_1_1_spirit_sorcery_speed",
-        _ => "none",
+        _ => super::build_eternal_s1j_v1::trigger_recipe_for(name),
     }
 }

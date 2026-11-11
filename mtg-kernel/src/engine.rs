@@ -12842,6 +12842,12 @@ fn goad_is_active(state: &GameState, goad: &crate::state::GoadStateV4) -> bool {
 }
 
 pub(crate) fn required_goaded_attackers(state: &GameState, eligible: &[ObjectId]) -> Vec<ObjectId> {
+    // 508.1d: a requirement never makes a player pay a cost to attack, and
+    // while Archon of Absolution taxes every attack none applies.
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1j_v1::attacks_have_a_cost(state) {
+        return Vec::new();
+    }
     eligible
         .iter()
         .copied()
@@ -12859,6 +12865,11 @@ pub(crate) fn required_goaded_attackers(state: &GameState, eligible: &[ObjectId]
 
 /// Attack requirements include printed statics without adding goad's rules.
 pub(crate) fn required_attackers(state: &GameState, eligible: &[ObjectId]) -> Vec<ObjectId> {
+    // 508.1d, as for goad above.
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1j_v1::attacks_have_a_cost(state) {
+        return Vec::new();
+    }
     let goaded = required_goaded_attackers(state, eligible);
     eligible
         .iter()
@@ -28284,6 +28295,12 @@ pub(crate) fn validate_declare_attackers(
     if dedup.len() != attackers.len() {
         return Err("duplicate attacker in declaration".to_string());
     }
+    // 508.1g to 508.1i: Archon of Absolution's cost to attack, payable once
+    // the declaration has tapped its attackers.
+    #[cfg(feature = "eternal-fixtures")]
+    if !crate::eternal_sideboard_s1j_v1::can_pay_attack_cost(state, attackers) {
+        return Err("the cost to attack with these creatures can't be paid".to_string());
+    }
 
     Ok(())
 }
@@ -28332,6 +28349,14 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
         if !has_effective_keyword(state, id, Keywords::VIGILANCE) {
             event::propose_and_commit(state, ProposedEvent::tap(id));
         }
+    }
+    // 508.1i: the cost to attack (Archon of Absolution), paid once the
+    // attackers are tapped. The declaration's check found this payment on
+    // the same state, so a failure is an engine fault and halts the game.
+    #[cfg(feature = "eternal-fixtures")]
+    if !crate::eternal_sideboard_s1j_v1::pay_attack_cost(state, &attackers) {
+        let source = attackers.first().copied().unwrap_or(ObjectId(0));
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
     }
     #[cfg(feature = "standard-magezero-fixtures")]
     crate::standard_cards_v1::record_attackers(state, attackers.len());

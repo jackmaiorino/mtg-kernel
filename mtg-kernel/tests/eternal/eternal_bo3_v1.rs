@@ -23,7 +23,7 @@ mod native;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 106] = [
+const PLAYABLE_75: [(&str, &str); 107] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -145,6 +145,7 @@ const PLAYABLE_75: [(&str, &str); 106] = [
     ),
     ("vintage", "vintage-sphere-shops"),
     ("vintage", "vintage-blue-tempo"),
+    ("vintage", "vintage-mono-white-initiative"),
     ("premodern", "premodern-sligh-rdw"),
     ("premodern", "premodern-goblins"),
     ("premodern", "premodern-rg-aggro"),

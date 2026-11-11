@@ -332,13 +332,17 @@ impl CombatScanV5 {
     /// met.
     ///
     /// Probing the smallest and the largest completion is exact for the
-    /// current requirements. Attacker legality is monotone in the declared
-    /// set (only omitting a goaded attacker is refused), so the largest
-    /// completion is legal whenever any is. A blocker declaration is legal
-    /// when an attacker's count is zero or reaches its minimum, and every
-    /// count between the two probes is reachable. A future requirement of
-    /// another shape needs `scan_accepts_exactly_the_answers_that_keep_a_
-    /// legal_completion` extended with it.
+    /// current requirements. Without a cost to attack, attacker legality is
+    /// monotone in the declared set (only omitting a required attacker is
+    /// refused), so the largest completion is legal whenever any is. Under
+    /// Archon of Absolution's cost (eternal builds, wave S1j) no attacker is
+    /// required, and a larger declaration costs more and leaves less mana,
+    /// so the smallest completion is legal whenever any is. A blocker
+    /// declaration is legal when an attacker's count is zero or reaches its
+    /// minimum, and every count between the two probes is reachable. A
+    /// future requirement of another shape needs `scan_accepts_exactly_the_
+    /// answers_that_keep_a_legal_completion` (or, for the cost, the S1j
+    /// eternal tests) extended with it.
     fn answer_keeps_a_legal_completion(
         &self,
         state: &GameState,
