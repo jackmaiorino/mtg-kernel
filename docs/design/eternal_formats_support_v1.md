@@ -1305,11 +1305,17 @@ the planeswalkers they control):
     Overencumbered's {N}), before attack triggers are collected. It is deterministic, like the
     other automatic payments, and public through its mana events.
 - Consumers: a sideboard Archon rarely reaches the battlefield, so, as in S1h, a white deck
-  with four Archons in its mainboard and a creature deck with mana creatures play each other
-  through public sessions, in both seats with ranked and seeded random actions, checking
-  natural terminals and replay. The test requires an attack declared and paid for against an
-  Archon, and an attacker scan step that offers only to leave a creature out because its
-  player couldn't pay for it.
+  and a green-white deck with mana creatures, each with four Archons in its mainboard, play
+  each other through public sessions, in both seats with ranked and seeded random actions,
+  checking natural terminals and replay. The test requires an attack declared and paid for
+  against an Archon, and an attacker scan step that offers only to leave a creature out
+  because its player couldn't pay for it.
+  - Design note after the first run: with Archons only in the white deck, the eight games
+    had no taxed attack and two steps that offered only to leave a creature out. The green
+    deck's creatures were dead by the time an Archon arrived, and a random seat often taps its
+    lands for mana that empties before combat. With Archons in both decks, either player's
+    attacks are taxed once the other has one, and a ranked seat, which taps lands only to cast
+    spells, pays for attackers with the mana it has left.
 
 ## Execution
 
