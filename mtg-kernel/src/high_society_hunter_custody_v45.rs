@@ -79,14 +79,36 @@ pub(crate) fn recipe(attack: bool) -> EffectOp {
         crate::high_society_hunter_v1::death_program()
     }
 }
+// Each capture's source and each attacking source's check of all its attacks
+// are remembered while a `borrow_memo_v1` scope holds the state, as are the
+// historical source contracts that death captures check. A validation looks a
+// capture up directly, from its root and from its operation, and each attack
+// checks every attack of its source, so without the memo a validation repeats
+// that work for every capture.
+struct SourceAtKeyV45;
 pub(crate) fn source_at(
     state: &GameState,
     capture: u64,
 ) -> Result<(AbilitySourceContractV4, bool), String> {
+    crate::borrow_memo_v1::cached::<SourceAtKeyV45, u64, _>(state, capture, || {
+        find_source(state, capture)
+    })
+}
+
+struct AttackerKeyV45;
+fn attacker(state: &GameState, source: AbilitySourceContractV4) -> Result<(), String> {
+    crate::borrow_memo_v1::cached::<AttackerKeyV45, AbilitySourceContractV4, _>(
+        state,
+        source,
+        || crate::high_society_hunter_v1::validate_source(state, source),
+    )
+}
+
+fn find_source(state: &GameState, capture: u64) -> Result<(AbilitySourceContractV4, bool), String> {
     let at = usize::try_from(capture).map_err(|_| "Hunter capture exceeds usize")?;
     let (source, attack) = match state.engine.event_history.get(at) {
         Some(CommittedEvent::HighSocietyHunterAttackCaptureV1 { source, .. }) => {
-            crate::high_society_hunter_v1::validate_source(state, *source)?;
+            attacker(state, *source)?;
             (*source, true)
         }
         Some(CommittedEvent::ControlledCreatureDeathCaptureV1 {
@@ -613,6 +635,7 @@ pub(crate) fn linked_paid_incarnation(
     Ok(None)
 }
 fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), String> {
+    let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
     if state
         .engine
         .event_log

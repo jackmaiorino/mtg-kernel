@@ -2878,6 +2878,36 @@ pub(crate) fn source_card_def_matches(
         )
 }
 
+/// The positions of Garruk entry observations whose snapshot is a spell copy,
+/// by entered object. While a `borrow_memo_v1` scope holds the state, one
+/// pass builds this; without a scope each check scans the observations.
+struct CopyEntriesV1(std::collections::HashMap<ObjectId, Vec<usize>>);
+struct CopyEntriesKeyV1;
+fn copy_entries(state: &GameState) -> Option<std::rc::Rc<CopyEntriesV1>> {
+    if !crate::borrow_memo_v1::active(state) {
+        return None;
+    }
+    Some(crate::borrow_memo_v1::cached::<CopyEntriesKeyV1, (), _>(
+        state,
+        (),
+        || {
+            let mut entries = std::collections::HashMap::<ObjectId, Vec<usize>>::new();
+            for (at, event) in state
+                .engine
+                .event_history
+                .of_kinds_v2(&[crate::event_history_v1::EventKindV1::GarrukEntryObservationV1])
+            {
+                if let CommittedEvent::GarrukEntryObservationV1 { entry, .. } = event {
+                    if entry.snapshot.spell_copy_origin.is_some() {
+                        entries.entry(entry.object).or_default().push(at);
+                    }
+                }
+            }
+            std::rc::Rc::new(CopyEntriesV1(entries))
+        },
+    ))
+}
+
 /// A resolved permanent spell copy is now a token, but keeps its immutable
 /// spell ancestry. Its independent entry snapshot, not a mutable token flag,
 /// distinguishes that ability source from an unentered or ceased Stack copy.
@@ -2886,19 +2916,38 @@ fn validate_historical_permanent_copy_source(
     contract: AbilitySourceContractV4,
     live: &crate::state::GameObject,
 ) -> Result<(), String> {
-    let mut entries = state
-        .engine
-        .event_history
-        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::GarrukEntryObservationV1])
-        .filter_map(|(at, event)| match event {
+    fn copy_entry(
+        source: ObjectId,
+        event: &CommittedEvent,
+    ) -> Option<&crate::garruks_uprising_v1::EntryV1> {
+        match event {
             CommittedEvent::GarrukEntryObservationV1 { entry, .. }
-                if entry.object == contract.source
-                    && entry.snapshot.spell_copy_origin.is_some() =>
+                if entry.object == source && entry.snapshot.spell_copy_origin.is_some() =>
             {
-                Some((at, entry.as_ref()))
+                Some(entry.as_ref())
             }
             _ => None,
-        });
+        }
+    }
+    let found: Vec<(usize, &crate::garruks_uprising_v1::EntryV1)> = match copy_entries(state) {
+        Some(index) => index
+            .0
+            .get(&contract.source)
+            .into_iter()
+            .flatten()
+            .filter_map(|at| {
+                let event = state.engine.event_history.get(*at)?;
+                Some((*at, copy_entry(contract.source, event)?))
+            })
+            .collect(),
+        None => state
+            .engine
+            .event_history
+            .of_kinds_v2(&[crate::event_history_v1::EventKindV1::GarrukEntryObservationV1])
+            .filter_map(|(at, event)| Some((at, copy_entry(contract.source, event)?)))
+            .collect(),
+    };
+    let mut entries = found.into_iter();
     let entry = entries.next();
     if live.spell_copy_origin.is_none() && entry.is_none() {
         return Ok(());
@@ -2943,7 +2992,20 @@ fn validate_historical_permanent_copy_source(
     Ok(())
 }
 
+struct HistoricalSourceKeyV1;
+/// Remembered while a `borrow_memo_v1` scope holds the state.
 pub(crate) fn validate_historical_ability_source_contract(
+    state: &GameState,
+    contract: AbilitySourceContractV4,
+) -> Result<(), String> {
+    crate::borrow_memo_v1::cached::<HistoricalSourceKeyV1, AbilitySourceContractV4, _>(
+        state,
+        contract,
+        || historical_ability_source_contract(state, contract),
+    )
+}
+
+fn historical_ability_source_contract(
     state: &GameState,
     contract: AbilitySourceContractV4,
 ) -> Result<(), String> {

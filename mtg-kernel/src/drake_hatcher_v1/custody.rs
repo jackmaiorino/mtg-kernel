@@ -1043,11 +1043,35 @@ fn world(state: &GameState) -> Result<GameState, String> {
     );
     // Written as if cleared, without cloning the state and its history.
     let history = &state.engine.event_history;
-    let mut value = time_serde_phase!(DrakeWorldSerialize, world_serde_v1::checkpoint_value(state))
-        .map_err(|e| e.to_string())?;
+    let mut value = time_serde_phase!(
+        DrakeWorldSerialize,
+        state
+            .objects
+            .omitted_v1(|| world_serde_v1::checkpoint_value(state))
+    )
+    .map_err(|e| e.to_string())?;
     time_serde_phase!(DrakeWorldStrip, strip_nested_receipts(&mut value, history))?;
-    time_serde_phase!(DrakeWorldDeserialize, serde_json::from_value(value))
-        .map_err(|e| e.to_string())
+    let mut world: GameState =
+        time_serde_phase!(DrakeWorldDeserialize, serde_json::from_value(value))
+            .map_err(|e| e.to_string())?;
+    world.objects = shared_arena(&state.objects)?;
+    Ok(world)
+}
+/// The object arena holds no history to strip or restore, and its JSON round
+/// trip is the identity, so a world shares the arena's copy-on-write vector
+/// instead of writing and reading it back. Test builds check the round trip on
+/// every call.
+fn shared_arena(
+    objects: &crate::ids::Arena<crate::state::GameObject>,
+) -> Result<crate::ids::Arena<crate::state::GameObject>, String> {
+    #[cfg(test)]
+    {
+        let written = serde_json::to_value(objects).map_err(|e| e.to_string())?;
+        let read: crate::ids::Arena<crate::state::GameObject> =
+            serde_json::from_value(written).map_err(|e| e.to_string())?;
+        assert!(read == *objects, "object arena JSON round trip changed it");
+    }
+    Ok(objects.clone())
 }
 // A sibling checkpoint retains its exact original history length and positions.
 // Only existing Drake records in that original are represented by their actual
@@ -1188,8 +1212,11 @@ fn restore_world(
     if start > history.len() {
         return Err("Drake operation original prefix absent".into());
     }
-    let mut value = time_serde_phase!(DrakeRestoreSerialize, serde_json::to_value(saved))
-        .map_err(|e| e.to_string())?;
+    let mut value = time_serde_phase!(
+        DrakeRestoreSerialize,
+        saved.objects.omitted_v1(|| serde_json::to_value(saved))
+    )
+    .map_err(|e| e.to_string())?;
     time_serde_phase!(
         DrakeRestoreHydrate,
         restore(&mut value, history, start, None)
@@ -1197,6 +1224,7 @@ fn restore_world(
     let mut input: GameState =
         time_serde_phase!(DrakeRestoreDeserialize, serde_json::from_value(value))
             .map_err(|e| e.to_string())?;
+    input.objects = shared_arena(&saved.objects)?;
     // The prefix keeps the actual history's chained prefixes, so the replay's
     // origin digest resumes at `start` instead of rehashing every event.
     input.engine.event_history = history.prefix_v1(start);
