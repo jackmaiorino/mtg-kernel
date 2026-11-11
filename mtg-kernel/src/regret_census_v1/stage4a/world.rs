@@ -412,6 +412,12 @@ pub(crate) enum WorldMode {
     /// its unknown slots and the deck prior), the actor's own library left in
     /// its realized order, fresh future randomness.
     TrueOwnLibraryV1,
+    /// `census-v1` (collab LANES/searchprobe-20261111; measurement only):
+    /// per simulation, the root resampled for the acting seat's information
+    /// by `census_redeterminized_clone_v1` (the world model the pricing
+    /// lane scores in), then fresh future randomness. Never parsed from the
+    /// environment.
+    CensusV1,
 }
 
 /// The environment switch of the s4a-budget runner (SD1's game harness);
@@ -440,6 +446,7 @@ impl WorldMode {
             Self::PinnedV1 => "pinned-v1",
             Self::TrueHandV1 => "true-hand-v1",
             Self::TrueOwnLibraryV1 => "true-own-library-v1",
+            Self::CensusV1 => "census-v1",
         }
     }
 

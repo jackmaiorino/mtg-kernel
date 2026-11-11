@@ -1278,9 +1278,19 @@ impl Roles {
                 Tree::default(),
             );
         }
+        if (options.allocation == RootAllocation::Puct) != options.root_prior.is_some() {
+            return (
+                Selection {
+                    incomplete: true,
+                    faults: vec!["a root prior requires PUCT allocation and PUCT a root prior".into()],
+                    ..Selection::default()
+                },
+                Tree::default(),
+            );
+        }
         if options.value_leaf.is_some()
             && (options.sharing
-                || options.allocation != RootAllocation::Uct
+                || options.allocation == RootAllocation::Halving
                 || ctx.bestline.is_some()
                 || ctx.interchange
                 || retain > 1
@@ -1336,8 +1346,11 @@ impl Roles {
             }
             Err(_) => 0.0,
         };
-        let mut allocator =
-            (options.allocation == RootAllocation::Halving).then(RootAllocator::default);
+        let mut allocator = match (options.allocation, &options.root_prior) {
+            (RootAllocation::Halving, _) => Some(RootAllocator::default()),
+            (RootAllocation::Puct, Some(prior)) => Some(RootAllocator::puct(prior.clone())),
+            _ => None,
+        };
         let mut sharing = options.sharing.then(Sharing::default);
         let mut stop_reason = None;
         if diag.path_log.is_none() {
@@ -1457,6 +1470,10 @@ impl Roles {
                 (super::world::WorldMode::TrueV1, _) => {
                     Ok(super::world::fresh_future_world(ctx.root, seed))
                 }
+                (super::world::WorldMode::CensusV1, _) => ctx
+                    .root
+                    .census_redeterminized_clone_v1(seed)
+                    .map(|w| super::world::fresh_future_world(&w, seed)),
                 (super::world::WorldMode::PinnedV1, Some(base)) => {
                     Ok(super::world::fresh_future_world(base, seed))
                 }
@@ -1675,7 +1692,11 @@ impl Roles {
                     .choice(key, node)
                     .map(|a| node.canon.edges[a].clone());
             }
-            sel.extra["root_allocation"] = json!("successive-halving-v1");
+            sel.extra["root_allocation"] = if allocator.is_puct() {
+                json!({"schema":"puct-root-v1","c_puct":options.root_prior.as_ref().map(|p| p.c_puct)})
+            } else {
+                json!("successive-halving-v1")
+            };
         }
         if options.cpu_seconds.is_some() || options.work_limit.is_some() {
             sel.extra["stop_reason"] = json!(stop_reason);
