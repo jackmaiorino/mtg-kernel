@@ -979,6 +979,7 @@ reporting as E1 to E9:
 | P3a | Sideboards of Stiflenought, Sligh, Goblins, Oath of Druids, RG Aggro, Stasis and White Weenie (Anarchy, Chill, Crimson Acolyte, Cursed Totem, Essence Flare, Overload, Pyrostatic Pillar, Sphere of Law, Tranquil Domain, True Believer, Warmth) | 11 | Premodern full 75 0% to 34% |
 | P3b | Sideboards of Terrageddon, Mono-Black Aggro, Survival, The Rock and Mono-Red Control (Dystopia, Engineered Plague, Gloom, Goblin Tinkerer, Haunting Echoes, Mogg Salvage, Plaguebearer, Ray of Revelation, Xantid Swarm, Zuran Orb) | 10 | Premodern full 75 34% to 53% |
 | P3c | Sideboards of Psychatog, Elves and Reanimator (Crumble, Dominate, Druid Lyrist, Ihsan's Shade, Iridescent Angel, Multani, Maro-Sorcerer, Spike Feeder, Uktabi Orangutan) | 8 | Premodern full 75 53% to 58% |
+| P3d | Sideboard of Enchantress (Abeyance, Karmic Justice, Sacred Ground) | 3 | Premodern full 75 58% to 66% |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -1463,3 +1464,46 @@ rulings:
   counter from Spike Feeder: You gain 2 life." use the +1/+1 counter removal cost.
 - Uktabi Orangutan's "When Uktabi Orangutan enters, destroy target artifact." is an enters
   trigger with a mandatory artifact target, its controller's own artifacts included.
+
+### P3d: Premodern sideboards
+
+After P3c the census lists 17 missing sideboard cards among the playable lists. P3d adds the
+three that complete Enchantress (8% of the field): Abeyance, Karmic Justice and Sacred Ground.
+The full 75 share goes from 58% to 66%, and Enchantress joins `PLAYABLE_75`. Landstill and BW
+Control also need Sacred Ground but still wait on Circle of Protection: Red.
+
+P3d is built in `src/eternal_premodern_p3d_v1.rs` and `build_eternal_p3d_v1.rs`, the new tail
+of the recipe chains after P3c's. Behavior follows each card's current Oracle text and rulings:
+
+- Abeyance: "Until end of turn, target player can't cast instant or sorcery spells, and that
+  player can't activate abilities that aren't mana abilities. Draw a card." records the player
+  for the turn. The cast check is the selected-form hook Lavinia and Meddling Mage use, so the
+  cast form's types decide (an Adventure's instant is barred, its creature is not), for
+  ordinary casts and for casts made while a spell resolves. The activation check is split
+  second's, so special actions stay legal, and mana abilities are never barred. Spells already
+  on the stack are unaffected.
+- Karmic Justice and Sacred Ground read which player's spell or ability made a permanent leave
+  the battlefield. While a spell or ability resolves, the engine keeps its controller in a
+  runtime scope that is never serialized or hashed, set where effects run (synchronous and
+  resumable); state-based actions, costs paid on activation and mana abilities run outside it.
+  The zone-change choke point (`event::materialize_event_v1`) hands each battlefield-to-graveyard
+  move inside the scope to this module, which reads the permanent before it moves and queues the
+  triggers in wave P1a's queue. The watching permanents are the Karmic Justices and Sacred
+  Grounds on the battlefield, read as a batch of simultaneous moves begins, so one that leaves
+  in the same batch still sees the others (603.10a).
+- Sacred Ground: "Whenever a spell or ability an opponent controls causes a land to be put
+  into your graveyard from the battlefield, return that card to the battlefield." Destruction
+  and sacrifice both count, and so does a land its owner no longer controlled. The trigger
+  returns the exact card that went to the graveyard, so a token or a card that has since left
+  the graveyard stays where it is.
+- Karmic Justice: "Whenever a spell or ability an opponent controls destroys a noncreature
+  permanent you control, you may destroy target permanent that opponent controls." A move is a
+  destruction unless the engine's sacrifice marker precedes it, so sacrifices don't trigger it
+  (its 2023-09-01 ruling), and a Karmic Justice destroyed by an opponent's spell or ability
+  triggers for itself. The target is any permanent the opponent controls; whether to destroy
+  it is chosen on resolution.
+
+Known gaps (P3d): an effect that puts a permanent into a graveyard without destroying or
+sacrificing it counts as a destruction for Karmic Justice. Effect mana paid during a resolution
+(Treasures) is inside the scope, but those are sacrifices of nonland tokens, which neither card
+counts.
