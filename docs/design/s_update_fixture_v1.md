@@ -84,6 +84,41 @@ All four subcommands refuse unknown, repeated and out-of-range arguments.
 `s_transformer_v1 gae-bench` is unchanged: it times synthetic learner work and
 ignores unknown keys, so it is not a fixture reader.
 
+## Verified serial replay
+
+Add `verified_replay_tape_bytes` to `command` or `bench` with
+`path=serial workers=1`. The cap is required for reuse and accepts 1 through
+67,108,864 bytes. For example, use the representative fixture above.
+
+```bash
+target/release/s_update_fixture_v1 bench fixture=$F-s batch=warmed path=serial workers=1 out=$T/A1
+target/release/s_update_fixture_v1 bench fixture=$F-s batch=warmed path=serial workers=1 verified_replay_tape_bytes=67108864 out=$T/B1
+target/release/s_update_fixture_v1 command fixture=$F-s batch=warmed path=serial workers=1 verified_replay_tape_bytes=67108864 out=$T/B2 > $T/B2.json
+target/release/expanded_deck_training_v1 $T/B2.json
+```
+
+The opt-in emits `mode=update_s_verified_serial` with a required
+`tape_cap_bytes`. It accepts ordinary S GAE with zero entropy, one worker
+and the fixture's default training math. The strict command rejects
+prepared, multiworker, EX1 and W5 options. Omitting the opt-in produces the
+original serial or prepared command. The native run driver still selects
+those reference paths.
+
+The opt-in receipt's `verified_replay.used` identifies a completed reused
+update. On fallback the receipt gives the reason and the reference update
+runs from the original state. The `attempt` fields report the candidate's
+learner and opponent replay forwards, completed backwards and peak retained
+tape capacity before forward. The cap includes one tape slot, retained
+layer headers and tape buffers. Inputs, gradients, backward scratch,
+transient allocations and allocator overhead are outside that cap.
+
+Compare `verified_replay.combined_replay_learner_seconds` with the serial
+reference's `behavior_replay_seconds + learner_update_seconds`. On reuse,
+the replay timer includes gradient computation. On fallback, the combined
+time includes both the discarded attempt and the reference replay and
+learner. Compare the complete-update elapsed time separately and verify the
+published checkpoint and continuation through `bench` or `verify`.
+
 ## Verification
 
 An update matches its batch's reference when every field of the batch
@@ -118,8 +153,8 @@ per calling thread and handed to the preparation and learner worker pools,
 so concurrent updates never mix counts. Default builds compile them to
 nothing; take uninstrumented timings from a default build.
 
-`counts_match_census` checks that every row was replayed once and every
-learner row forwarded and backpropagated once. When
+For the reference paths, `counts_match_census` checks that every row was
+replayed once and every learner row forwarded and backpropagated once. When
 `learner_forwards_repeat_replayed_rows` is true, the learner's forward calls
 and output digest equal the learner-row replay's. The learner then
 recomputed the outputs the replay had already authenticated, with one
@@ -127,6 +162,13 @@ recomputed the outputs the replay had already authenticated, with one
 mismatch leaves the duplicate metrics unavailable and fails the benchmark.
 The thread-time shares exclude hashing the outputs. Count one removed forward once; a shift
 between the preparation and learner timers is not a saving.
+
+Opt-in benches report `counts_match_execution` and
+`removed_learner_forwards`. Reuse must authenticate every replay row and
+backpropagate every learner row, with zero learner forwards. A fallback
+retains all discarded replay and backward calls in the stage totals and
+reports zero removed learner forwards. Compare the replay output digests of
+the reused update and the serial reference on the same batch.
 
 ## Timing procedure
 
@@ -140,5 +182,7 @@ same preflight and timing boundary on both arms. Record both SHAs, the
 Rust and linker versions, the release profile and the machine. A
 cloud container or CI-profile timing is not a qualified speedup; final
 acceptance goes through [T6 / #600](https://github.com/jackmaiorino/mtg-kernel/issues/600).
+Compare verified reuse with the one-worker serial reference. Record
+fallbacks separately and retain their complete timing and forward counts.
 
 The fixture uses synthetic weights and makes no playing-strength claim.
