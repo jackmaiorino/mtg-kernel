@@ -71,7 +71,12 @@ impl Chooser {
         let root_prior = match (self.temperature, self.c_puct) {
             (Some(t), Some(c)) if t > 0.0 && c > 0.0 => Some(RootPrior::tempered(logits, t, c)),
             (None, None) => None,
-            _ => return Err(format!("chooser {}: temperature and c_puct go together", self.name)),
+            _ => {
+                return Err(format!(
+                    "chooser {}: temperature and c_puct go together",
+                    self.name
+                ))
+            }
         };
         let value_leaf = match self.leaf.as_str() {
             "rollout" => None,
@@ -115,7 +120,10 @@ fn root_pick(root: &FastActorSessionV1, tree: &Tree) -> Result<(Option<u32>, Val
                 let mean = (node.n[e] > 0).then(|| node.mean(e));
                 edges.push(json!([live, node.n[e], mean]));
             }
-            (pick, json!({"found": true, "visits": node.visits, "edges": edges}))
+            (
+                pick,
+                json!({"found": true, "visits": node.visits, "edges": edges}),
+            )
         }
         Found::Miss => (None, json!({"found": false})),
     })
@@ -164,8 +172,7 @@ pub(super) fn search_state(
         return Err("the policy's logits do not cover the live menu".into());
     }
     let probs = softmax(&logits);
-    let argmax = (0..legal)
-        .fold(0, |b, i| if logits[i] > logits[b] { i } else { b }) as u32;
+    let argmax = (0..legal).fold(0, |b, i| if logits[i] > logits[b] { i } else { b }) as u32;
     let focal_policy = policy.fork_for_search_v1()?;
     let sample_seed = super::blunder_price::mix(&state.id, state.index, 0, SAMPLE_SALT);
     candidate
@@ -219,10 +226,9 @@ pub(super) fn search_state(
 /// Reads `PROBE_CHOOSERS` (a JSON list) and checks names are distinct.
 pub(super) fn choosers() -> Result<Vec<Chooser>, String> {
     let path = std::env::var("PROBE_CHOOSERS").map_err(|_| "PROBE_CHOOSERS is required")?;
-    let list: Vec<Chooser> = serde_json::from_slice(
-        &std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?,
-    )
-    .map_err(|e| format!("{path}: {e}"))?;
+    let list: Vec<Chooser> =
+        serde_json::from_slice(&std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?)
+            .map_err(|e| format!("{path}: {e}"))?;
     let mut names: Vec<&str> = list.iter().map(|c| c.name.as_str()).collect();
     names.sort_unstable();
     names.dedup();
@@ -253,14 +259,18 @@ mod tests {
         assert_eq!(o.allocation, RootAllocation::Uct);
         assert!(o.root_prior.is_none() && o.value_leaf.is_none());
         assert_eq!(o.world, Some(WorldMode::CensusV1));
-        let o = chooser(Some(4.0), Some(1.0), "h0").options(&logits).unwrap();
+        let o = chooser(Some(4.0), Some(1.0), "h0")
+            .options(&logits)
+            .unwrap();
         assert_eq!(o.allocation, RootAllocation::Puct);
         let p = o.root_prior.unwrap();
         assert!((p.probs.iter().sum::<f64>() - 1.0).abs() < 1e-12);
         // Temperature 4 flattens: exp(0.5) and exp(-0.5) ratios to the middle.
         assert!((p.probs[0] / p.probs[1] - 0.5f64.exp()).abs() < 1e-12);
         assert_eq!(o.value_leaf.unwrap().horizon, Horizon::H0);
-        assert!(chooser(Some(4.0), None, "rollout").options(&logits).is_err());
+        assert!(chooser(Some(4.0), None, "rollout")
+            .options(&logits)
+            .is_err());
         assert!(chooser(None, None, "h9").options(&logits).is_err());
     }
 

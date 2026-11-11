@@ -1282,7 +1282,9 @@ impl Roles {
             return (
                 Selection {
                     incomplete: true,
-                    faults: vec!["a root prior requires PUCT allocation and PUCT a root prior".into()],
+                    faults: vec![
+                        "a root prior requires PUCT allocation and PUCT a root prior".into(),
+                    ],
                     ..Selection::default()
                 },
                 Tree::default(),
