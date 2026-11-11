@@ -487,9 +487,8 @@ pub(crate) fn validate_source(
         return Ok(());
     };
     let capture = capture_at(state, index)?;
-    if source!=Some(capture.source) || state.engine.event_history.scan_for_v1(&[EventKindV1::GarrukDrawCollectedV1]).iter().filter(|event|matches!(event,
-        CommittedEvent::GarrukDrawCollectedV1 {capture_history_index} if *capture_history_index==index)).count()!=1 {
-        return Err("Garruk source changed its capture or collection".into())
+    if source != Some(capture.source) || collections(state, index).len() != 1 {
+        return Err("Garruk source changed its capture or collection".into());
     }
     Ok(())
 }
@@ -551,21 +550,104 @@ pub(crate) fn collect(
     Ok(pending)
 }
 
+/// The positions of Garruk journal rows by the capture they name, and the
+/// captures of each observation's (source, root). While a `borrow_memo_v1`
+/// scope holds the state, one pass builds this and the lookups below read
+/// it; without a scope each lookup scans the rows of its kind.
+#[derive(Default)]
+struct RowsV1 {
+    captures: std::collections::HashMap<(u64, AbilitySourceContractV4, RootV1), usize>,
+    collected: std::collections::HashMap<u64, Vec<usize>>,
+    published: std::collections::HashMap<u64, Vec<usize>>,
+    completed: std::collections::HashMap<u64, Vec<usize>>,
+    removed: std::collections::HashMap<u64, Vec<usize>>,
+}
+struct RowsKeyV1;
+fn rows(state: &GameState) -> Option<std::rc::Rc<RowsV1>> {
+    if !crate::borrow_memo_v1::active(state) {
+        return None;
+    }
+    Some(crate::borrow_memo_v1::cached::<RowsKeyV1, (), _>(
+        state,
+        (),
+        || {
+            let mut rows = RowsV1::default();
+            for (at, event) in state.engine.event_history.of_kinds_v2(&[
+                EventKindV1::GarrukDrawCaptureV1,
+                EventKindV1::GarrukDrawCollectedV1,
+                EventKindV1::GarrukDrawPublishedV1,
+                EventKindV1::GarrukDrawCompletedV1,
+                EventKindV1::GarrukDrawRemovedV1,
+            ]) {
+                let (map, capture) = match event {
+                    CommittedEvent::GarrukDrawCaptureV1 { capture } => {
+                        *rows
+                            .captures
+                            .entry((
+                                capture.observation_history_index,
+                                capture.source,
+                                capture.root,
+                            ))
+                            .or_default() += 1;
+                        continue;
+                    }
+                    CommittedEvent::GarrukDrawCollectedV1 {
+                        capture_history_index,
+                    } => (&mut rows.collected, capture_history_index),
+                    CommittedEvent::GarrukDrawPublishedV1 {
+                        capture_history_index,
+                        ..
+                    } => (&mut rows.published, capture_history_index),
+                    CommittedEvent::GarrukDrawCompletedV1 {
+                        capture_history_index,
+                        ..
+                    } => (&mut rows.completed, capture_history_index),
+                    CommittedEvent::GarrukDrawRemovedV1 {
+                        capture_history_index,
+                        ..
+                    } => (&mut rows.removed, capture_history_index),
+                    _ => continue,
+                };
+                map.entry(*capture).or_default().push(at);
+            }
+            std::rc::Rc::new(rows)
+        },
+    ))
+}
+/// The rows of `kind` that `pick` accepts, with their positions: from the
+/// index entry `indexed` when a scope is active, else from a kind scan.
+fn rows_of<'a, T>(
+    state: &'a GameState,
+    indexed: impl FnOnce(&RowsV1) -> Option<&Vec<usize>>,
+    kind: EventKindV1,
+    pick: impl FnMut(usize, &'a CommittedEvent) -> Option<T>,
+) -> Vec<T> {
+    crate::borrow_memo_v1::rows_v1(state, rows(state), indexed, &[kind], pick)
+}
+/// The collection rows naming capture `index`.
+fn collections(state: &GameState, index: u64) -> Vec<usize> {
+    rows_of(
+        state,
+        |rows| rows.collected.get(&index),
+        EventKindV1::GarrukDrawCollectedV1,
+        |at, event| {
+            matches!(event,CommittedEvent::GarrukDrawCollectedV1 {capture_history_index} if *capture_history_index==index).then_some(at)
+        },
+    )
+}
 fn publications(state: &GameState, index: u64) -> Vec<(usize, &StackItem)> {
-    state
-        .engine
-        .event_history
-        .scan_for_v1(&[EventKindV1::GarrukDrawPublishedV1])
-        .iter()
-        .enumerate()
-        .filter_map(|(at, event)| match event {
+    rows_of(
+        state,
+        |rows| rows.published.get(&index),
+        EventKindV1::GarrukDrawPublishedV1,
+        |at, event| match event {
             CommittedEvent::GarrukDrawPublishedV1 {
                 capture_history_index,
                 item,
             } if *capture_history_index == index => Some((at, item.as_ref())),
             _ => None,
-        })
-        .collect()
+        },
+    )
 }
 fn validate_item(state: &GameState, item: &StackItem, index: u64) -> Result<(), String> {
     let capture = capture_at(state, index)?;
@@ -760,6 +842,7 @@ pub(crate) fn is_history(event: &CommittedEvent) -> bool {
     )
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
     if state.engine.event_log.iter().any(is_history) {
         return Err("Garruk private journal entered mutable collection log".into());
     }
@@ -768,20 +851,20 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         // position. Count the observations of each position in one pass,
         // then check the entries, instead of rescanning the whole history
         // for each entry: the same verdict, linear rather than quadratic.
+        // Both passes read only the events of their kinds, as Arahbo's do.
         let history = &state.engine.event_history;
-        let mut observations = vec![0usize; history.len()];
-        for event in history.iter() {
+        let mut observations = std::collections::HashMap::<u64, usize>::new();
+        for (_, event) in history.of_kinds_v2(&[EventKindV1::GarrukEntryObservationV1]) {
             if let CommittedEvent::GarrukEntryObservationV1 { entry, .. } = event {
-                if let Some(count) = usize::try_from(entry.entry_history_index)
-                    .ok()
-                    .and_then(|index| observations.get_mut(index))
-                {
-                    *count += 1;
-                }
+                *observations.entry(entry.entry_history_index).or_default() += 1;
             }
         }
-        for (event, observed) in history.iter().zip(&observations) {
-            if crate::trigger::battlefield_entry_object(event).is_some() && *observed != 1 {
+        for (index, event) in
+            history.of_kinds_v2(&[EventKindV1::ZoneChange, EventKindV1::CreateToken])
+        {
+            if crate::trigger::battlefield_entry_object(event).is_some()
+                && observations.get(&(index as u64)).copied().unwrap_or(0) != 1
+            {
                 return Err(
                     "Garruk catalog entry lost its independent original observation".into(),
                 );
@@ -791,9 +874,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     for (observation, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::GarrukEntryObservationV1])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::GarrukEntryObservationV1])
     {
         if let CommittedEvent::GarrukEntryObservationV1 { entry, sources, .. } = event {
             let original = usize::try_from(entry.entry_history_index)
@@ -808,11 +889,20 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             {
                 return Err("Garruk observation lost its actual entry".into());
             }
+            let indexed = rows(state);
             for (source, root) in sources {
-                if state.engine.event_history.scan_for_v1(&[EventKindV1::GarrukDrawCaptureV1]).iter().filter(|event|matches!(event,
+                let captured = match &indexed {
+                    Some(rows) => rows
+                        .captures
+                        .get(&(observation as u64, *source, *root))
+                        .copied()
+                        .unwrap_or(0),
+                    None => state.engine.event_history.of_kinds_v2(&[EventKindV1::GarrukDrawCaptureV1]).filter(|(_, event)|matches!(event,
                     CommittedEvent::GarrukDrawCaptureV1 {capture} if capture.observation_history_index==observation as u64
-                        && capture.source==*source && capture.root==*root)).count()!=1 {
-                    return Err("Garruk original observer lost its mandatory draw capture".into())
+                        && capture.source==*source && capture.root==*root)).count(),
+                };
+                if captured != 1 {
+                    return Err("Garruk original observer lost its mandatory draw capture".into());
                 }
             }
         }
@@ -820,9 +910,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     for (at, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::GarrukDrawCaptureV1])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::GarrukDrawCaptureV1])
     {
         let CommittedEvent::GarrukDrawCaptureV1 { capture } = event else {
             continue;
@@ -832,8 +920,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             return Err("Garruk capture moved in its original journal".into());
         }
         let index = capture.history_index;
-        let collections: Vec<_> = state.engine.event_history.scan_for_v1(&[EventKindV1::GarrukDrawCollectedV1]).iter().enumerate().filter_map(|(at,event)|
-            matches!(event,CommittedEvent::GarrukDrawCollectedV1 {capture_history_index} if *capture_history_index==index).then_some(at)).collect();
+        let collections = collections(state, index);
         let collected = collections.len();
         if collections.iter().any(|collection| *collection <= at) {
             return Err("Garruk collection preceded its original capture".into());
@@ -908,13 +995,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             .iter()
             .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
             .collect();
-        let completions: Vec<_> = state
-            .engine
-            .event_history
-            .scan_for_v1(&[EventKindV1::GarrukDrawCompletedV1])
-            .iter()
-            .enumerate()
-            .filter_map(|(at, event)| match event {
+        let completions: Vec<_> = rows_of(
+            state,
+            |rows| rows.completed.get(&index),
+            EventKindV1::GarrukDrawCompletedV1,
+            |at, event| match event {
                 CommittedEvent::GarrukDrawCompletedV1 {
                     capture_history_index,
                     removal_history_index,
@@ -923,23 +1008,21 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     Some((at, *removal_history_index, *draw_history_index))
                 }
                 _ => None,
-            })
-            .collect();
-        let removals: Vec<_> = state
-            .engine
-            .event_history
-            .scan_for_v1(&[EventKindV1::GarrukDrawRemovedV1])
-            .iter()
-            .enumerate()
-            .filter_map(|(at, event)| match event {
+            },
+        );
+        let removals: Vec<_> = rows_of(
+            state,
+            |rows| rows.removed.get(&index),
+            EventKindV1::GarrukDrawRemovedV1,
+            |at, event| match event {
                 CommittedEvent::GarrukDrawRemovedV1 {
                     capture_history_index,
                     item,
                     kind,
                 } if *capture_history_index == index => Some((at, item.as_ref(), kind)),
                 _ => None,
-            })
-            .collect();
+            },
+        );
         if completions.is_empty() {
             let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
             if !removals.is_empty()
