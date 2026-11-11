@@ -1286,13 +1286,20 @@ the planeswalkers they control):
     so a declaration is legal only if its cost can be paid with its attackers without
     vigilance tapped. An attacking mana creature can't pay its own tax, and a vigilant one can.
     `validate_declare_attackers` checks this with the effect-mana check (`can_pay_effect_mana`)
-    on a copy of the state with those attackers tapped. The legal action lists build attack
-    menus from the subsets that check accepts, so the JSONL session and the policy surface offer
-    only declarations whose cost can be paid, and no payment is ever partial.
+    on a copy of the state with those attackers tapped, so no payment is ever partial.
+  - Every consumer offers only declarations that check accepts. The harness surface's attack
+    menus are the subsets it accepts. The policy surface's attacker scan, which the JSONL
+    session and the native best-of-three games use, offers an inclusion answer only if some
+    completion of the declaration passes it, probing the smallest and the largest completion.
+    A larger declaration costs more and leaves less mana, so under a cost the smallest
+    completion is legal whenever any is, and the probe stays exact. The scan's exactness note
+    names this shape, and a test checks the offered answers against every completion.
   - Requirements: a player is never required to pay a cost to attack (508.1d), and the card's
     2019-10-04 ruling lets a creature that attacks "if able" stay home. While the defending
     player controls an Archon whose abilities apply every attack has a cost, so goad and
-    "attacks each combat if able" require nothing.
+    "attacks each combat if able" require nothing: `required_goaded_attackers` and
+    `required_attackers` name no creature, for the declaration check and the flat action
+    filter alike.
   - Payment: once the declaration commits and its attackers are tapped, the cost is paid with
     the effect-mana payment (`pay_effect_mana`, the ordinary mana plan with Treasures, as
     Overencumbered's {N}), before attack triggers are collected. It is deterministic, like the
@@ -1301,7 +1308,8 @@ the planeswalkers they control):
   with four Archons in its mainboard and a creature deck with mana creatures play each other
   through public sessions, in both seats with ranked and seeded random actions, checking
   natural terminals and replay. The test requires an attack declared and paid for against an
-  Archon, and an attack menu that leaves out a declaration its player can't pay for.
+  Archon, and an attacker scan step that offers only to leave a creature out because its
+  player couldn't pay for it.
 
 ## Execution
 
