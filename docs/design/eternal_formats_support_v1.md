@@ -404,6 +404,388 @@ New, each built once in the first wave that needs it:
   `E3ChoiceKindV1::E9aV1`. Tolaria's banding loss changes nothing: no card here has
   banding.
 
+- S1a, built in `src/eternal_sideboard_s1a_v1.rs` (with `statics` and `targets` submodules)
+  and `build_eternal_s1a_v1.rs`, linked late in the recipe chains (before S1b and E9b): Legacy
+  sideboard cards. Rest in Peace, Leyline of the Void and Containment Priest join the zone-change
+  replacement hook Dauthi Voidwalker uses (exile instead of a graveyard; exile a nontoken
+  creature entering from anywhere but the stack). Leyline's opening-hand permission is offered
+  as the first upkeep begins, as Chancellor of the Annex's reveal is. Disruptor Flute names a
+  card as Anointed Peacekeeper does: spells with the name cost {3} more (own-spell increase) and
+  its non-mana activated abilities are prohibited like Pithing Needle's. Choke is an untap-step
+  prohibition, Defense Grid a spell tax by the caster's turn, Dread of Night a power/toughness
+  modifier. Mass effects (Rough // Tumble, a split card through the Adventure form; Brotherhood's
+  End; Meltdown; Serenity; Massacre's -2/-2 on exact incarnations) are `S1aOpV1` leaves, and
+  Massacre adds `AltCostCondition::OpponentPlainsYouSwampV1`. Lavinia's cast restriction is a
+  cast prohibition (X judged as 0), and her counter reads the mana a cast spent
+  (`payment.commit`), recorded only while she is in play. Carpet of Flowers is queued by the
+  main-phase hook as a choice of color and amount, clamped to the Islands at resolution.
+  Surgical Extraction now offers a native optional subset of matching cards in the owner's
+  graveyard, hand and library, then shuffles even when zero cards were chosen. Its scoped
+  JSONL search look contains the chooser's full hand and library name multisets; surviving
+  hand knowledge uses the existing observer-only ledger. Native qualification is pending.
+  New target shapes: noncreature artifact or enchantment, black or red permanent,
+  creature with power or toughness 1 or less, up to two artifacts and/or enchantments, an
+  enchantment, instant or sorcery spell, and a non-basic-land card in a graveyard.
+
+  Partial: Surgical Extraction remains unqualified for ordinary Full-deck admission while
+  its native choice, restore, disclosure and transport checks are pending. Frozen infoset
+  and search consumers refuse its active search. Lavinia's source repair checks selected X and spell
+  characteristics in the shared payment quote, including casts made during resolution. Its paid
+  both-seat X, Bestow, split, overload, Room, cascade, Madness and graveyard-cast checks remain unqualified;
+  Lavinia stays Partial. Mana value ignores alternative payments and includes announced X, as stated
+  in the [Ravnica Remastered rulings](https://media.wizards.com/2023/downloads/RVR_Release_Notes_XrN0zlJaFn/EN_MTGRVR_ReleaseNotes_20231120.pdf).
+  The native opening profile puts Leyline of the Void's opening action before
+  the first turn under rule 103.6. Legacy starts retain their first-upkeep behavior.
+  [Comprehensive Rules](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
+
+  Left out of the wave: Damping Sphere (its land replacement spans the mana planner and
+  every mana yield path), Collective
+  Brutality (escalate), Stronghold Gambit, Alpine Moon, Ghost Vacuum, Drop of Honey, Triumph
+  of Saint Katherine (miracle is Terminus-only and its cost needs generic mana) and From the
+  Ashes.
+- S1b, built in `src/eternal_sideboard_s1b_v1.rs` (with a `targets` submodule) and
+  `build_eternal_s1b_v1.rs`, linked last in the recipe chains (after S1a, before E9b; E6a's
+  kicker cost after S1d; E7a's alternative and ward costs): 26 of the 37 remaining Legacy
+  sideboard cards, the ones whose programs fit the existing primitives. Storm gains Grapeshot and Empty the Warrens
+  (E3's list) and dredge gains Shenanigans (E7b's table). Toxic Deluge's "pay X life" is
+  announced like Sickening Dreams' discard count (X up to the caster's life) and the life is
+  paid as the cast completes. Stony Silence reuses Null Rod's activation prohibition, and
+  Metallic Rebuke joins Kappa Cannoneer's improvise. Deafening Silence counts noncreature
+  spells per player and turn in module state (spells cast before it entered count);
+  Gaddock Teeg (new Kithkin and Advisor subtypes, stable ids 320 and 321), Meddling Mage and
+  Deafening Silence add to the E7a cast prohibition hook. Meddling Mage names a nonland card as
+  its resolving creature spell enters (Anointed Peacekeeper's letter, then name choice), so a
+  Mage that enters any other way names nothing. Sailors' Bane's reduction joins the spell cost
+  reductions of E8b and P1a. Temporary Lockdown and Perilous Snare use the linked "until this
+  leaves" exile (Lockdown records one link per exiled permanent). Perilous Snare starts the
+  Standard speed designation and its counter ability is gated to speed 4 by the activation
+  restriction hook. Tourach, Dread Cantor sees opponents' discards through the E7b discard
+  hook, its kicker uses E6a's kicker table, and protection from white joins the printed
+  protection mask. Extirpate's split second joins Legolas's Quick Reflexes' check. Leyline of
+  Sanctity is offered from an opening hand as the first upkeep begins (Chancellor of the
+  Annex's shape) and gives its controller hexproof through the E3 player targeting check.
+  Engineered Explosives records the colors its cast spent (Prismatic Ending's hook) as its
+  sunburst charge counters and keeps the count for the sacrificed incarnation's ability.
+  Liquimetal Coating records permanents that are artifacts this turn; the effective type
+  check reads it. New target filters: four-point divided damage among creatures (Pyrokinesis)
+  and a creature or Vehicle you control (Perilous Snare); Stern Dismissal and Extirpate use
+  S1c's and S1a's filters. Meddling Mage, Extirpate and Leyline of Sanctity are Partial.
+  The Meddling Mage candidate asks for a name before committing the actual entry.
+  A resumed entry checks the original operation, confirmed catalog choice, controller,
+  and native entry occurrence. The named-spell restriction uses the same quote and
+  payment gates for ordinary casts and resolution casts. The revised native menu names
+  individual split halves and Room doors, alternate Adventure and Omen spells, and
+  nonland back faces in the executable registry. It checks the selected spell name,
+  including disturb. Existing authenticated numeric choices retain their original
+  menu, serialization and hash. A legacy combined split name remains its literal
+  combined string and matches neither cast half. Names outside the registry
+  and the frozen observation paths remain outside this change. A pre-entry-owner
+  save without authenticated choice evidence still requires its historical engine. Leyline has
+  the same native opening path as Leyline of the Void.
+  A paid physical Phyrexian Metamorph copying a visible Mage chooses its own name
+  before entry. The entry keeps Metamorph's physical cast receipt, commits the Mage
+  characteristics and artifact type, and restores Metamorph's printing on departure.
+  Paid Reanimate uses a native pre-entry copy choice across both battlefields,
+  then installs the supported face-up Mage or Wall of Blossoms form before the
+  Mage name choice or the Wall's draw trigger. An unsupported legal copy
+  refuses the entire prompt. The saved copy binds the actual Reanimate cast
+  and entry window. The native runner authenticates its original graveyard
+  target during execution. Under the public native Eternal opening profile,
+  Aether Vial with four charge counters uses the same prospective copy owner.
+  The native replay binds the actual paid tap, reads the original live or
+  last-known charge count at resolution, and authenticates the controller's
+  private hand choice. Its supported face-up donors are Mage, Wall of Blossoms, the
+  printed Aether Vial and an Opalescence-animated Standstill, which needs no
+  as-enters choice. A Vial copy enters with zero counters. Frozen viewers
+  refuse the native profile from setup, independently of the hand or its
+  choice. Dress Down suppresses the physical copy choice before entry. The
+  selected paid-cast, Reanimate and Vial cases passed at `4d8cd0bb9`.
+  The paid physical Show and Tell successor keeps both hand selections private
+  until both players have answered. Its pre-entry copy menu uses the existing
+  battlefield, excluding the other entrant, and supports Mage, Wall of Blossoms
+  and Containment Priest forms. Mage names are selected before the simultaneous
+  entry. Priest replacements use the common pre-entry battlefield, so a Priest
+  in the same batch cannot exile the other entrant. The private checkpoint
+  retains confirmed-answer integrity, and ordinary hand prompts retain their
+  existing observer metadata and redaction without a second executable owner.
+  Source review and formatting passed; native qualification is pending.
+  Other noncast copy-entry producers remain outside this path. Copied Show
+  still lacks the shared pre-entry Priest replacement and does not support
+  the new Metamorph copy path; it is not qualified by this physical-spell repair.
+  Extirpate uses the shared extraction continuation to require all
+  public graveyard matches, offer any subset of the hidden matches, and provide the caster
+  a private look at the full searched hand and library. Native qualification of this
+  repair is pending. Rule 701.23 allows fail-to-find in the hidden zones.
+  [Comprehensive Rules](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
+  Not in this wave: Mycosynth Lattice (mana of any color needs a payment-planner change),
+  Extinguisher Battleship (station), Cityscape Leveler (unearth, Powerstone), Invasion
+  Submersible (waterbend, exhaust), Summon: Bahamut, Keen-Eyed Curator, Outland Liberator
+  (day and night), Fiery Confluence (choose three with repeats and per-instance targets),
+  Kiora's Dismissal (strive), Eowyn (a target filter that reads the source's power) and
+  Unlicensed Hearse (a single-graveyard target filter).
+- S1c (issue #365, Vintage-only sideboard cards), built in `src/eternal_sideboard_s1c_v1.rs`
+  (with a `targets` submodule) and `build_eternal_s1c_v1.rs`, linked late in the recipe
+  chains (after E8a and S1d, before S1a, S1b and E9b). Bounce-all (Hurkyl's Recall, Rebuild with
+  its cycling), Virtue's Ruin's destroy-all, Feed the Swarm's life loss (the destroyed
+  permanent's mana value), Lithomantic Barrage's 5 damage to a white and/or blue target,
+  Dark Petition's spell mastery mana and Wurmcoil Engine's two tokens (deathtouch and
+  lifelink Wurms) are module leaves. Spell Snare is a mana value 2 spell target; Mystical
+  Dispute's {2} reduction is `DynamicCountDef::SpellTargetsBlueSpellV1`; Snapback reuses
+  the blue-card exile alternative cost; Ravenous Trap adds
+  `AltCostCondition::OpponentThreeCardsToGraveyardThisTurnV1`, which counts the
+  opponent's cards moved to a graveyard since the last upkeep began. New target shapes
+  (`StandardTargetV1`): a creature or planeswalker with mana value N or less (Long
+  Goodbye) and a creature or enchantment an opponent controls (Feed the Swarm). Light of
+  Day's attack and block ban are engine hooks, Urborg extends Yavimaya's extra land type
+  and mana ability to Swamps, and Sphinx of the Steel Wind adds protection from red and
+  green to the color protection mask. Hullbreacher replaces an opponent's draw (except
+  their first actual draw in their draw step, tracked by Bowmasters' draw ordinal) with a
+  Treasure for its controller in `propose_and_commit_inner`. Argentum Masticore's upkeep trigger is
+  two selections (`E3ChoiceKindV1::S1cV1`): the card to discard (or none, sacrificing
+  it), then the reflexive destroy target among the opponent's nonland permanents with
+  mana value at most the discarded card's; it shares Stonecoil Serpent's protection from
+  multicolored and uses the Masticore creature type (stable id 260 from P2b). Not in this wave:
+  Archon of Absolution and Overencumbered (attack costs and taxes have no engine path),
+  Azure Beastbinder, Unable to Scream and Suspend (timed or aura-based ability removal
+  with new characteristics), Apostle's Blessing (protection from artifacts), Sickening
+  Shoal (X tied to an exiled card), Darksteel Angel (cannot lose the game) and Portal to
+  Phyrexia (subtype grant on reanimation).
+  Partial: the drawing player can choose dredge or let Hullbreacher replace the draw (616.1) on
+  resumable draw programs, including the monarch's draw, both Baubles' delayed
+  upkeep draws, Coveted Jewel's entry and unblocked combat draws, Paradoxical
+  Outcome, Psychic Frog, Plunder the Trollshaws, Tamiyo's -7, Twinned Vision,
+  The Endstone's land-play draw, Kishla Skimmer's graveyard-departure draw,
+  Chandra, Chill of Compliance's emblem draw, Bonder's Ornament, and both
+  selected-discard draw paths. Flame of Anor uses its original selected player
+  and resolves any other mode after both draw attempts, subject to that mode's
+  original target legality. Its native start binds both target contracts for
+  restore. A Jace win skips the other mode. Sensei's Divining Top moves only the original
+  permanent to its owner's library after its draw attempt, including when a
+  replacement prevents the draw. The One Ring counts its live burden increment
+  or the departed incarnation's retained burden once before its first attempt.
+  Veil of Summer applies its protection after the conditional draw attempt, or
+  immediately when the draw condition is false. Phyrexian Dragon Engine
+  discards the hand once after its original optional choice, then checks for
+  replacements using the resulting graveyard. A terminal Jace win skips
+  Top's move, Veil's protection and remaining Ring or Dragon Engine attempts,
+  with or without a replacement choice. The Jewel
+  combat continuation binds draw progress to the original trigger and transfers
+  only its original battlefield incarnation after the third attempt. Outcome
+  returns its legal targets in one batch and derives draw progress from actual
+  original-incarnation arrivals into the spell controller's hand. Both progress
+  checks validate continuation consistency. Plunder and Twinned Vision retain
+  their cast-origin conditions. Tamiyo's count uses the library size when her
+  ability starts, and the hand-size effect follows the last draw attempt if
+  play continues. The owned draw instructions journal their start and
+  actual completed attempts when the replacement continuation runs. Restore
+  checks saved progress against that native evidence.
+  An affected player can also choose between Jace's empty-library win and
+  Hullbreacher on fixed-count draw instructions and the covered owned draws.
+  Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
+  Their damage-draw interaction has no native qualification.
+  Curie's combat trigger binds the original source and controller. It uses
+  current base power for the same battlefield incarnation, or the base
+  power recorded in the native departure scene if that incarnation left.
+  The draw count is fixed before the first replacement attempt. Historical
+  serialized `CurieDrawV1` triggers retain their old fallback behavior.
+  Minsc & Boo's bound reflexive trigger uses the sacrificed Hamster's
+  effective power. It resolves its actual target and damage before draw
+  replacement attempts begin. An illegal target stops the whole trigger.
+  Historical serialized Minsc triggers retain their existing behavior.
+  Circle of Protection: Blue can choose a departed blue Minsc while its
+  authenticated reflexive trigger waits on the stack. The shield binds the
+  original battlefield incarnation and uses the color captured at departure.
+  Echo of Eons finishes both native shuffles before drawing in turn order.
+  Interrupted draws retain both native shuffle commits and each player's
+  completed attempts. The kernel has no generic shuffle event, so Echo
+  records its successful shuffle commits only when it owns a draw choice.
+  Each player applies Riddler once at the start of their draws. The first
+  player's event-time adjustment remains bound when the second player draws.
+  The shuffles normally remove Dredge cards from both graveyards before any
+  draw can use them. The selected Echo native cases passed at `4d8cd0bb9`.
+  Forgotten Realms dungeons and Undercity retain their bottom room until no
+  triggered room ability from that dungeon remains. Another venture completes
+  the old dungeon before starting a new one, even while an old room waits.
+  Restored snapshots that already marked completion keep their recorded result.
+  Taking or keeping the initiative advances an active Forgotten Realms
+  dungeon. Acererak advances an active Undercity. Their next-dungeon menus
+  still follow the source's native venture instruction.
+  New Eternal room triggers use the dungeon's characteristics for targeting.
+  Painter's Servant can color the active dungeon. A room that outlasts its
+  dungeon uses the colors recorded at removal. Frozen observation profiles
+  show a bound Undercity room like a bound Forgotten Realms room, as its
+  venture source's trigger with the engine's legal targets. Infoset exports
+  still refuse bound Undercity rooms.
+  Serra's Emissary's existing type choices still omit Dungeon.
+  Temple of Dumathoin and Mad Wizard's Lair bind each draw attempt to the
+  native venture entry and published room ability. The Lair reveals and
+  offers only cards actually drawn, and an immediate Jace win ends the
+  ability before the reveal. The paid Bonder's Ornament successor binds the
+  actual activation and original source, including native Metamorph copies.
+  It captures eligible controllers at resolution, draws in APNAP order and
+  retains each player's adjusted attempts across replacement choices. A Jace
+  win ends the ability before the next player's draw. Ordinary completed
+  activations retain current observations; an active owned choice requires
+  a successor. At `4d8cd0bb9`, the existing Bonder/Dredge competition case passed,
+  but all seven new Bonder cases stopped at a shared setup assertion before
+  native advance finalized payment. The helper now advances to priority and
+  verifies the paid stack row before checking tap and mana; it does not resolve
+  the draws. All seven passed at `1330bc320` in the 63-pass, 8-fail packet;
+  the failures were confined to Portent and the copied Show and Tell fixture.
+  The physical paid Portent successor binds
+  its original cast, targeted-library look/order and optional shuffle before
+  scheduling the caster's draw at the next turn's upkeep. The delayed trigger
+  retains the original spell contract after source departure and the native
+  APNAP publication path. Each draw attempt uses the common Started/Completed
+  owner for Jace, Hullbreacher, Dredge and one Riddler adjustment, with terminal
+  stop and restored progress validation. Raw or borrowed-ID scheduling cannot
+  replace the completed native parent. Genuine native spell copies retain the
+  historical Portent schedule and ordinary draw; their replacement ownership
+  remains outside this successor. That delayed draw names the ceased copy,
+  which keeps its final Stack marker and generation; a live spell still cannot
+  source an ability. Arcane Denial's predecessor draw records use the same
+  capture; no copied Arcane Denial fixture exists yet. Ordinary
+  pending and published triggers retain their public meaning through
+  authenticated original source contracts; suspended
+  owned replacement choices require an observation successor. Native1330 exposed
+  start/resume guards and an unavailable copy fixture producer; both source fixes
+  are committed, with native requalification pending.
+  The physical Standstill successor binds the exact finalized cast identity
+  and SpellCast occurrence, original battlefield source, native trigger
+  publication, and successful sacrifice marker plus source departure. The
+  caster's opponent receives one owned three-card instruction, with one
+  Riddler adjustment, per-attempt replacements and terminal stop. A sacrifice
+  replaced by exile still qualifies; a source that departed, returned, or
+  changed controller cannot be sacrificed by the old trigger. Native copied
+  permanents retain the ordinary predecessor route. Every Metamorph spell
+  sacrifices Standstill first, so the control copy comes from a paid Vial under
+  the native Eternal opening. Generic copied triggered
+  abilities have no shipped producer in this slice and are not authorized by
+  a copied bound receipt. Ordinary pending and published triggers retain existing
+  observations; suspended owned replacement choices require an observation
+  successor. Source review verified the ordinary V5/Human compatibility repair
+  and authenticated historical source projection. Native qualification of this
+  successor remains pending.
+  Generated draws from the remaining Premodern leaves, Arcane Denial and
+  Accumulated Knowledge still need their Jace/Hullbreacher origins.
+  Quantum Riddler adjusts the whole count once for uninterrupted fixed and
+  dynamic draw instructions. Named draws and top-level fixed draw instructions
+  from physical spells or printed triggers retain the adjusted count across
+  replacement choices using native start and completion receipts.
+  Nested or dynamic suspended draws, copies, the Coveted Jewel and Paradoxical
+  Outcome owners, and turn-based draws with replacement choices still need
+  count ownership. The selected Flame, Curie and Riddler cases passed at
+  `4d8cd0bb9`; those passes do not cover the remaining draw owners.
+- S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
+  `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
+  S1c, S1a, S1b and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload
+  (Vandalblast, Electrickery) is the Adventure form of the card that split cards
+  use to represent the paid overload cost from hand, a normal graveyard permission, or
+  Future Sight's paid library permission,
+  with no targets and the printed mana value on the stack (118.9c). Circle of
+  Protection: Blue offers a choice among the blue objects in the public zones and
+  records a shield (source incarnation, player, turn) that the damage replacement
+  pass uses up. Flagbearer (Standard Bearer, Coalition Honor Guard) constrains
+  target selection when an opponent announces a spell or activated ability.
+  Stonehorn Dignitary's skip is a pending flag the step machine reads as the
+  combat phase would begin.
+  Spreading Seas joins wave E8a's land-type setter (the enchanted land is an
+  Island and loses its other land types and abilities); Navigator's Compass adds
+  a land type and its mana ability until end of turn, the way Yavimaya does for
+  Forests. Waterbend is an option list (tap an artifact or creature, or pay the
+  rest with mana) that offers only completable branches. Martyr of Sands has one
+  native activation with a private selection of any number of white cards from
+  the payer's hand. Finishing reveals the selected cards, pays {1}, and
+  sacrifices the source. The paid reveal count sets the life gain on resolution.
+  Call Damage Control is one spell
+  with up to two target cards of different types from the graveyard (artifact,
+  creature, enchantment or land), each returned independently. New target shapes
+  are `StandardTargetV1::S1dV1`. Rhino and Flagbearer use new stable ids 361 and 362;
+  Nylea's Disciple uses Centaur's existing stable id 281 from P2c.
+  Partial: Martyr of Sands passed its native paid reveal and restore fixture;
+  event-history consumer qualification remains pending. Standard Bearer and Coalition Honor Guard now share bounded
+  complete-assignment checks for optional target counts, including early Finish,
+  restored selections and payable activations. All five optional-target native
+  cases passed. Goblin Welder uses the same check
+  for its two dependent slots. An artifact Flagbearer is required only if its
+  controller's graveyard contains a legal second target. Shatterskull Smashing
+  checks whether its announced allocation can include a Flagbearer at a payable
+  X. An empty allocation can still finish, and each selected target requires
+  at least one damage. Chandra, Flameshaper and the Flagbearers are in separate
+  shipped registries. Native qualification and broader targeting coverage are
+  pending. Vandalblast and Electrickery use the existing graveyard
+  permission for a paid overload and retain Retrace's land discard. A free-cast
+  permission offers the ordinary spell form with its original target requirement.
+  Omniscience can still cast the ordinary form for free or let its controller pay
+  for overload. Bolas's Citadel offers the ordinary form with its life payment.
+  If both Future Sight and Bolas's Citadel grant the library cast, the ordinary
+  form can still pay life and the overloaded form pays only its mana cost.
+  The paid overload retains its exact Future Sight permission in the finalized
+  cast publication. The current pending cast menu has no interleaved mana
+  activation action and these overload payments use the ordinary mana plan.
+  The affected overload fixtures and consumers still need qualification.
+  Circle of Protection: Blue now rechecks blue at damage time and matches genuine
+  historical damage to the chosen source incarnation. A native Stack-to-Battlefield
+  entry records the exact permanent that a chosen physical cast becomes, bound
+  to its published cast identity and first committed departure; later blinks do
+  not retarget its shield. Virtual permanent spell copies still need this binding.
+  The choice menu includes blue permanents, stack spells, face-up command
+  objects and supported public references from stack items and waiting effects.
+  Flickerwisp and Yorion's unchanged face-up exile links remain eligible
+  when their waiting return moves onto the stack. Parallax Wave and Petradon
+  contribute their exact live linked exiles only once the matching return
+  trigger is on the stack.
+  It uses the original incarnation and retained color for authenticated departed
+  damage sources. Eternal records the physical Mogg Fanatic's source immediately
+  before paying its sacrifice cost, even if Circle is absent. A later color or
+  zone change cannot affect that damage. Legacy unmarked Fanatic activations retain
+  the earlier execution path. Frozen observations show a paid physical Fanatic
+  as its ordinary activated ability. Goblin Bombardment's native activation sacrificing
+  another creature uses its live source while it remains on the battlefield.
+  If it leaves with that activation waiting, the actual departure captures its
+  last-known color and other damage characteristics, including when Circle enters
+  later. Newly paid activations carry a marker and refuse restore after departure
+  if the receipt is missing. Older unmarked rows retain their earlier behavior.
+  Eternal excludes the Crystal and Twinflame damage owners by catalog. When a
+  physical Goblin Bombardment or a Metamorph copying it is animated and
+  sacrificed as its own cost, the native payment captures the source before
+  sacrifice and binds it to the actual departure and published activation. For
+  Metamorph this records the copied activation separately from the physical
+  printing that pays the cost. Circle can offer the original source while the
+  activation waits, including after Painter leaves.
+  Unrelated graveyard and exile cards are excluded. Other
+  embedded effect references need explicit bindings, departed references need
+  last-known color and visibility evidence, and contextual hand and library
+  sources remain unsupported. An in-flight saved Circle menu with the old
+  broad roster refuses restore when it differs from the legal roster, preserving
+  the meaning of its original option indices. Selected paid Fanatic/Painter,
+  departed Minsc, Bombardment departure and self-sacrifice/copy/restore cases
+  passed at `4d8cd0bb9`. Policy observation v5 omits the shields.
+  [Comprehensive Rules, 609.7 and 702.96](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
+
+The Extirpate, Martyr and Lavinia repair batch is composed at `e8d06349e2956e3a386d10a77295ebcc928a991d`.
+The pinned Rust 1.94.1/MSVC standalone generator produced catalog hash
+`e19d5ece9b17ec1e` from that source; the prior capability-only hash was `a07edccb09460703`.
+Generator receipt SHA-256: `3fa633076153461982c151eaf6bc225d4dd73ef8feddd0b00a2784e3b7b97249`.
+The guarded native batch at `90bda0c0f` completed 24 passes and four fixture
+failures. Surgical, Extirpate, Martyr and the five optional Flagbearer cases
+passed. The Lavinia Bestow fixture accidentally provided an extra mana creature;
+the host is now summoning sick. Two Hullbreacher fixtures now use the available
+Opt, and the Niv/Hull combination is documented as absent from shipped catalogs.
+Those changed fixtures await rerun. The genuine `MartyrRevealPaidV1` sample is
+appended with its passing producer receipt in `data/event_history_v1/README.md`;
+the three event-history consumer checks remain pending.
+No capability labels or playable-deck counts are promoted by this source batch.
+
+The successor combines pre-entry Meddling Mage choices, the native Eternal
+opening window, paid overload permissions and Circle/Flagbearer source repairs.
+At generator source `2dfff92a7d76c620342bf7682e0e24d4a16d4217`, the pinned
+Rust 1.94.1/MSVC generator produced `0255dfef9c57f234` for the revised overload
+recipe. Receipt SHA-256:
+`a8df5a2a37bbfa58becd863e8e6efc8d7b562293517e8c0789957fca994f3f9c`.
+The following Circle menu change does not alter the registry or recipe inputs.
+Native qualification and genuine Mage/opening event samples remain pending.
+
 ## Card contract and verification
 
 Each card follows the existing contract: `engine_capability` Full only when every
@@ -475,6 +857,30 @@ mainboard cards before games two and three, from the registered configuration ea
 plays each against the next deck of its format in a seeded match with random actions, checking
 natural terminals, replay and that sided-in cards are cast.
 
+For the opt-in native opening window, register both decks with
+`EternalRegisteredDeckV1::new_with_native_opening_v1`, then call
+`EternalBestOfThreeMatchV1::start_game_with_native_opening_v1` for each game.
+Drive the returned `GameState` with `engine::advance_until_decision` and `engine::step`.
+It uses the ordinary shuffle and alternating deal, London mulligans, then kept-hand
+choices before untap. The prepared game's seat map still identifies the starting
+match player as native seat P0. Companion and outside-game setup retain their
+admitted configuration. This explicit registration admits the two executable
+Partial Leylines alongside Chancellor of the Annex and otherwise requires Full.
+Leyline of the Void and Leyline of Sanctity require this profile whenever either
+appears in a registered mainboard or sideboard. That registration rule applies
+even if a later catalog wave marks them Full. Ordinary declared game construction
+also refuses Full printings that require the opening owner. Catalog counts still
+follow the capability marks. Unenabled historical states retain the first-upkeep
+path, including the historical Chancellor route.
+
+The targeted rules fixtures board four Voids into the frozen Legacy Mardu Energy
+list against Izzet Delver, check a real pre-untap entry and cleanup discard to
+exile, then replay the native game-two actions to the same natural terminal.
+A separate registered game checks the first paid Lightning Bolt's legal player
+targets with and without Sanctity's opening action for both seats. These fixtures
+are pending native execution. The Leylines remain Partial and the tracked
+`PLAYABLE_75` census is unchanged.
+
 S3 is `src/eternal_outside_game_v1.rs`. Each player's cards outside the game (a best-of-three
 game's sideboard without a companion in use) are a sorted list in the eternal module state,
 set at reset from the custom-deck session's optional `outside_the_game` rows in the eternal
@@ -503,6 +909,35 @@ capability. Infoset exporters refuse this profile with one fixed R2 detail
 before projection: their canonical allocator does not yet represent hidden
 sideboards. This refusal depends on the public capability, not the remaining
 private cards. An empty, absent module extension contributes no hash bytes.
+
+Historical S1 census with the original capability labels. Each entry gives the
+full 75 share and the number of missing sideboard cards. The S1b row counted 82
+lists before the documented Partial cards were excluded.
+
+| Wave | Cards | Pauper | Legacy | Vintage |
+| --- | ---: | --- | --- | --- |
+| Baseline | | 45.5%, 32 | 5.9%, 69 | 0.7%, 36 |
+| S1d (Pauper) | 31 | 94.9%, 1 | 5.9%, 69 | 0.7%, 36 |
+| S1c (Vintage) | 17 | 94.9%, 1 | 5.9%, 69 | 5.9%, 19 |
+| S1a (Legacy) | 24 | 95.2%, 0 | 46.0%, 46 | 25.7%, 14 |
+| S1b (Legacy) | 26 | 95.2%, 0 | 52.7%, 20 | 44.3%, 10 |
+
+The corrected census classifies 13 S1 definitions as Partial and counts 49
+full-75 lists across Pauper, Legacy, and Vintage. Their mainboards and sideboards
+were measured against the original snapshots with only these capability labels
+changed. This is registry coverage. The combined candidate still needs its affected
+native checks before these match paths are qualified.
+
+| Format | Playable mainboard share | Full 75 share | Non-Full sideboard cards in mainboard-playable decks |
+| --- | ---: | ---: | ---: |
+| Pauper | 95.2% | 64.8% | 6 |
+| Legacy | 90.0% | 33.8% | 25 |
+| Vintage | 98.1% | 41.9% | 12 |
+| Premodern | 86.0% | 0.0% | 43 |
+
+The Legacy Bant Control mainboard leaves the playable inventory because it
+contains Lavinia. Across the three MTGGoldfish formats, 41 distinct
+sideboard cards remain outside Full.
 
 ## Execution
 

@@ -12,6 +12,7 @@ pub(super) struct OptionsV1 {
     pub(super) lambda: f32,
     pub(super) coefficient: f32,
     pub(super) tape_cap: usize,
+    #[cfg(test)]
     pub(super) short_first_gradient: bool,
     pub(super) training_math: TrainingMathV1,
 }
@@ -21,9 +22,6 @@ pub(super) struct GradientV1 {
     pub(super) gradient: Vec<f32>,
     pub(super) gae: GaeTargetsV1,
     pub(super) policy_substeps: usize,
-    /// Maximum retained tape-slot capacity before forward. This excludes
-    /// input, gradient, scratch, transient allocations and allocator overhead.
-    pub(super) peak_retained_tape_bytes: usize,
 }
 
 /// The caller has validated the stored trajectories and their sampler draws.
@@ -34,6 +32,7 @@ pub(super) fn gradient_v1(
     learner: &ExpandedSeatBehaviorV1,
     model: &SModelV1,
     options: OptionsV1,
+    attempt: &mut VerifiedReplayAttemptV1,
 ) -> Result<GradientV1, ReplayErrorV1> {
     // A capacity fallback restarts legacy replay. If the first S forward
     // would change this thread's arithmetic controls, choose legacy before
@@ -66,8 +65,12 @@ pub(super) fn gradient_v1(
         options.tape_cap,
         values.len(),
         options.coefficient,
-        options.short_first_gradient,
     )?;
+    #[cfg(test)]
+    if options.short_first_gradient {
+        work.shorten_first_gradient_for_test_v1();
+    }
+    attempt.peak_retained_tape_bytes = work.peak_retained_tape_bytes_v1();
     let mut opponents = OpponentCacheV1::default().with_training_math_v1(options.training_math);
     let mut gae = None;
     let mut group = 0;
@@ -91,14 +94,15 @@ pub(super) fn gradient_v1(
             |generation, acting, row| {
                 let input = row.tensor.tensor();
                 if row.actor != episode.episode.learner_seat {
-                    return authenticate_serial_replay_row_v1(
+                    authenticate_serial_replay_row_v1(
                         generation,
                         acting,
                         row,
                         input,
                         S_UPDATE_REPLAY_OTHER_ROW_V1,
-                    )
-                    .map_err(ReplayErrorV1::from);
+                    )?;
+                    attempt.other_replay_forwards += 1;
+                    return Ok(());
                 }
                 if generation != FreshLineageGenerationV1::V4
                     || !row.tensor.pairing_node_indices.is_empty()
@@ -112,11 +116,12 @@ pub(super) fn gradient_v1(
                         input,
                         S_UPDATE_REPLAY_LEARNER_ROW_V1,
                     )?;
+                    attempt.learner_replay_forwards += 1;
                     return Err(ReplayErrorV1::UnsupportedGeneration);
                 }
                 let sub = row.substep_index as usize;
                 let last = row.substep_index + 1 == row.substep_count;
-                work.authenticate_v1(
+                let backward = work.authenticate_v1(
                     SSubstepV1 {
                         input: SInputV1::of_tensor_v1(&input),
                         selected: row.selected as usize,
@@ -141,7 +146,10 @@ pub(super) fn gradient_v1(
                         .ok()
                         .map(|gae| (gae.advantages[group], gae.value_targets[group]))
                     },
-                )?;
+                );
+                attempt.peak_retained_tape_bytes = work.peak_retained_tape_bytes_v1();
+                attempt.learner_backwards += u64::from(backward?);
+                attempt.learner_replay_forwards += 1;
                 policy_substeps += 1;
                 group += usize::from(last);
                 Ok(())
@@ -150,12 +158,11 @@ pub(super) fn gradient_v1(
     }
     // No provisional GAE or learner error outranks a later replay error.
     let gae = gae.ok_or_else(|| "no learner decisions".to_owned())??;
-    let (loss, gradient, peak_retained_tape_bytes) = work.finish_v1()?;
+    let (loss, gradient) = work.finish_v1()?;
     Ok(GradientV1 {
         loss,
         gradient,
         gae,
         policy_substeps,
-        peak_retained_tape_bytes,
     })
 }

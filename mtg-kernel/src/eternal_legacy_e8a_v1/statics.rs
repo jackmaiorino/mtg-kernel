@@ -106,7 +106,10 @@ fn land_type_setter(state: &GameState, object: ObjectId) -> Option<(u64, Subtype
         .map(|timestamp| (timestamp, Subtype::Mountain, ManaColor::R));
     // Vision Charm's chosen basic land type (wave P1a).
     let charmed = crate::eternal_premodern_p1a_v1::statics::land_type_setter(state, object);
-    [islands, mountains, charmed]
+    // Spreading Seas (wave S1d): "Enchanted land is an Island."
+    let seas = crate::eternal_sideboard_s1d_v1::statics::island_aura_timestamp(state, object)
+        .map(|timestamp| (timestamp, Subtype::Island, ManaColor::U));
+    [islands, mountains, charmed, seas]
         .into_iter()
         .flatten()
         .max_by_key(|(timestamp, _, _)| *timestamp)

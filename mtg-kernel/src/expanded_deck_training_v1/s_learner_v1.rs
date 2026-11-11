@@ -76,7 +76,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-#[cfg(test)]
 mod verified_replay_v1;
 
 /// `SLearnerSourceV1::schema`.
@@ -361,10 +360,36 @@ pub(super) struct SUnsupportedOptionsV1 {
     pub(super) search_targets: bool,
 }
 
-#[cfg(test)]
-pub(super) struct VerifiedReplayTestV1 {
-    pub(super) tape_cap: usize,
+pub(super) struct VerifiedReplayOptionsV1 {
+    tape_cap: usize,
+    #[cfg(test)]
     pub(super) short_first_gradient: bool,
+}
+
+impl VerifiedReplayOptionsV1 {
+    pub(super) fn new(tape_cap: usize) -> Result<Self, String> {
+        const MAX_TAPE_CAP_BYTES: usize = 64 << 20;
+        ensure(
+            (1..=MAX_TAPE_CAP_BYTES).contains(&tape_cap),
+            "verified replay tape cap must be in 1..=67108864 bytes",
+        )?;
+        Ok(Self {
+            tape_cap,
+            #[cfg(test)]
+            short_first_gradient: false,
+        })
+    }
+}
+
+/// Work done by the bounded candidate, including work discarded on fallback.
+#[derive(Default, Serialize, Deserialize)]
+pub(super) struct VerifiedReplayAttemptV1 {
+    /// Retained capacity before forward, excluding inputs, gradient,
+    /// scratch, transient allocations and allocator overhead.
+    pub(super) peak_retained_tape_bytes: usize,
+    pub(super) learner_replay_forwards: u64,
+    pub(super) other_replay_forwards: u64,
+    pub(super) learner_backwards: u64,
 }
 
 /// The update command's inputs.
@@ -379,8 +404,7 @@ pub(super) struct SUpdateInputsV1 {
     pub(super) output_directory: PathBuf,
     pub(super) preparation_workers: Option<usize>,
     pub(super) max_prepared_tensor_mebibytes: usize,
-    #[cfg(test)]
-    pub(super) verified_replay: Option<VerifiedReplayTestV1>,
+    pub(super) verified_replay: Option<VerifiedReplayOptionsV1>,
     pub(super) unsupported: SUnsupportedOptionsV1,
     /// EX1 or W5 (`Ex1Update`); the caller validated the options and their
     /// combination.
@@ -405,6 +429,12 @@ struct LearnedSV1 {
 
 /// The refusals of an S update, before any input is read.
 fn refuse_unsupported_v1(inputs: &SUpdateInputsV1) -> Result<(f32, f32), String> {
+    if inputs.verified_replay.is_some() {
+        ensure(
+            inputs.preparation_workers.is_none() && inputs.ex1.is_none(),
+            "verified replay requires ordinary serial S",
+        )?;
+    }
     let u = &inputs.unsupported;
     ensure(
         !u.line_b,
@@ -459,7 +489,6 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         output_directory,
         preparation_workers,
         max_prepared_tensor_mebibytes,
-        #[cfg(test)]
         verified_replay,
         ex1,
         training_math,
@@ -530,19 +559,16 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         )?;
     }
     let input_read_seconds = started.elapsed().as_secs_f64();
-    #[cfg(test)]
     let (candidate, verified_replay) = match verified_replay {
-        Some(VerifiedReplayTestV1 {
+        Some(VerifiedReplayOptionsV1 {
             tape_cap,
+            #[cfg(test)]
             short_first_gradient,
         }) => {
             use crate::s_transformer_v1::verified_row_v1::ReplayErrorV1;
 
-            ensure(
-                preparation_workers.is_none() && ex1.is_none(),
-                "verified replay requires ordinary serial S",
-            )?;
             let started = std::time::Instant::now();
+            let mut attempt = VerifiedReplayAttemptV1::default();
             let candidate = verified_replay_v1::gradient_v1(
                 &episodes,
                 &policy,
@@ -553,12 +579,14 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
                     lambda,
                     coefficient: value_coefficient,
                     tape_cap,
+                    #[cfg(test)]
                     short_first_gradient,
                     training_math,
                 },
+                &mut attempt,
             );
             let replay_and_gradient_seconds = started.elapsed().as_secs_f64();
-            match candidate {
+            let (learned, fallback) = match candidate {
                 Ok(candidate) => {
                     let learner_started = std::time::Instant::now();
                     state.adam_step_with_gradient_v1(&candidate.gradient, learning_rate)?;
@@ -580,9 +608,7 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
                             behavior_replay_seconds: replay_and_gradient_seconds,
                             learner_update_seconds: learner_started.elapsed().as_secs_f64(),
                         }),
-                        Some(json!({"used":true, "tape_cap_bytes":tape_cap,
-                            "peak_retained_tape_bytes":candidate.peak_retained_tape_bytes,
-                            "replay_and_gradient_seconds":replay_and_gradient_seconds})),
+                        None,
                     )
                 }
                 Err(ReplayErrorV1::Replay(error)) => return Err(error),
@@ -593,20 +619,16 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
                         ReplayErrorV1::UnsupportedGeneration => "unsupported_generation",
                         ReplayErrorV1::Replay(_) => unreachable!(),
                     };
-                    (
-                        None,
-                        Some(
-                            json!({"used":false, "fallback":reason, "tape_cap_bytes":tape_cap,
-                            "replay_and_gradient_seconds":replay_and_gradient_seconds}),
-                        ),
-                    )
+                    (None, Some(reason))
                 }
-            }
+            };
+            (
+                learned,
+                Some((tape_cap, attempt, fallback, replay_and_gradient_seconds)),
+            )
         }
         None => (None, None),
     };
-    #[cfg(not(test))]
-    let candidate = None;
     let run_reference = |state: &mut STrainStateV1| -> Result<LearnedSV1, String> {
         let replay_started = std::time::Instant::now();
         // The replay recomputes every actor-visible row: the learner's with S,
@@ -888,9 +910,21 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
     if learner_workers > 1 {
         record_parallel_update_execution_v1(&mut result, learner_workers);
     }
-    #[cfg(test)]
-    if let Some(verified) = verified_replay {
-        result["verified_replay"] = verified;
+    if let Some((cap, attempt, fallback, attempt_seconds)) = verified_replay {
+        let discarded_seconds = if fallback.is_some() {
+            attempt_seconds
+        } else {
+            0.0
+        };
+        result["verified_replay"] = json!({
+            "used":fallback.is_none(),
+            "fallback":fallback,
+            "tape_cap_bytes":cap,
+            "attempt":attempt,
+            "replay_and_gradient_seconds":attempt_seconds,
+            "combined_replay_learner_seconds":
+                behavior_replay_seconds + learner_update_seconds + discarded_seconds,
+        });
     }
     result["checkpoint_io_seconds"] = json!(checkpoint_started.elapsed().as_secs_f64());
     result["update_elapsed_seconds"] = json!(started.elapsed().as_secs_f64());

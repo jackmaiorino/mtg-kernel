@@ -31,7 +31,7 @@ pub mod phasing;
 pub(crate) mod statics;
 mod triggers;
 
-pub(crate) use execute::execute;
+pub(crate) use execute::{execute, put_draw_source_on_top};
 #[cfg_attr(not(feature = "eternal-fixtures"), allow(unused_imports))]
 pub(crate) use triggers::{
     begin_turn, delayed_effect_matches, delayed_triggers, note_land_played, note_tapped_for_mana,
@@ -46,6 +46,7 @@ use crate::mana::ManaColor;
 use crate::standard_cards_v1::{StandardOpV1, StandardTargetV1};
 use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Zone};
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 
 pub use choices::E5aChoiceV1;
 
@@ -59,9 +60,8 @@ pub struct E5aStateV1 {
     /// The Endstone's land plays), waiting for the next trigger collection.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queued_triggers: Vec<QueuedTriggerV1>,
-    /// Library incarnations announced as spells through Mystic Forge or
-    /// Bolas's Citadel, so the cast keeps its permission if the permanent
-    /// leaves while the spell is on the stack.
+    /// Library incarnations announced through an exact top-card permission,
+    /// retained if the permanent leaves while the spell is on the stack.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub library_casts: Vec<LibraryCastV1>,
     /// Yawgmoth's Will effects, each for the turn it resolved.
@@ -118,7 +118,7 @@ impl TurnEffectV1 {
 }
 
 /// One spell announced from the top of its owner's library.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LibraryCastV1 {
     /// The library incarnation the spell was cast from.
@@ -127,6 +127,29 @@ pub struct LibraryCastV1 {
     /// Bolas's Citadel: life equal to its mana value rather than its mana
     /// cost.
     pub pay_life: bool,
+    /// A separately available paid route for the two printed overload
+    /// forms. Citadel's ordinary route may coexist with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) future_sight_overload: Option<FutureSightOverloadV1>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FutureSightOverloadV1 {
+    pub source: AbilitySourceContractV4,
+    pub announced_at: usize,
+}
+
+impl Hash for LibraryCastV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.card.hash(state);
+        self.holder.hash(state);
+        self.pay_life.hash(state);
+        if let Some(source) = self.future_sight_overload {
+            "future-sight-overload/v1".hash(state);
+            source.hash(state);
+        }
+    }
 }
 
 /// A triggered ability queued by an engine hook.

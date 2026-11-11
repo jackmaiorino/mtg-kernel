@@ -42,6 +42,8 @@ use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, StackItem, 
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod curie;
+
 // ---- State ------------------------------------------------------------------------
 
 /// Per-game state for this module's cards, kept inside
@@ -287,6 +289,8 @@ pub enum E7aOpV1 {
     /// Arena of Glory's and Gaea's Will's printed slots: the engine performs
     /// them as actions without the stack and never resolves these.
     SpecialActionV1,
+    /// Curie's actual positive combat damage to a player.
+    CurieDrawBoundV1 { combat_at: usize },
 }
 
 impl E7aOpV1 {
@@ -987,10 +991,17 @@ fn create_drone() -> EffectOp {
 
 /// Phyrexian Dragon Engine: "you may discard your hand. If you do, draw
 /// three cards."
-fn dragon_engine_rummage() -> EffectOp {
+pub(crate) fn dragon_engine_rummage() -> EffectOp {
     EffectOp::Choice {
         controller: PlayerRef::Controller,
         options: vec![e7a(E7aOpV1::DiscardHandThenDrawV1 { count: 3 }), nothing()],
+    }
+}
+
+pub(crate) fn discard_controller_hand(state: &mut GameState, player: PlayerId) {
+    let hand = state.players[player.index()].hand.clone();
+    for card in hand {
+        crate::engine::commit_discarded_card(state, card);
     }
 }
 
@@ -1133,7 +1144,9 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         return false;
     };
     match op {
-        E7aOpV1::TabernacleV1 | E7aOpV1::CurieDrawV1 { .. } => true,
+        E7aOpV1::TabernacleV1 | E7aOpV1::CurieDrawV1 { .. } | E7aOpV1::CurieDrawBoundV1 { .. } => {
+            true
+        }
         E7aOpV1::DarkDepthsV1 { .. } => name == DARK_DEPTHS,
         E7aOpV1::ShallowGraveExileV1 { .. } => name == SHALLOW_GRAVE,
         E7aOpV1::SuspendTickV1 { .. } => name == GAEAS_WILL,
@@ -1147,7 +1160,7 @@ pub(crate) fn granted_trigger_effect(effect: &EffectOp) -> bool {
     matches!(
         effect,
         EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E7aV1(
-            E7aOpV1::TabernacleV1 | E7aOpV1::CurieDrawV1 { .. }
+            E7aOpV1::TabernacleV1 | E7aOpV1::CurieDrawV1 { .. } | E7aOpV1::CurieDrawBoundV1 { .. }
         )))
     )
 }
@@ -1396,6 +1409,14 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             let life = i32::from(crate::engine::object_mana_value(state, card));
+            match crate::linked_aura_operation_v1::prepare_reanimated_metamorph(state, ctx, card) {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(_) => {
+                    halt(state, ctx.source);
+                    return;
+                }
+            }
             put_onto_battlefield(state, card, ctx.controller);
             if life > 0 {
                 crate::effect::execute(
@@ -1452,24 +1473,17 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
         E7aOpV1::GalvanicRelayV1 => galvanic_relay_effect(ctx, state),
         E7aOpV1::BurningWishV1 => mark_self_exile(ctx, state),
         E7aOpV1::DiscardHandV1 => {
-            let hand = state.players[ctx.controller.index()].hand.clone();
-            for card in hand {
-                crate::engine::commit_discarded_card(state, card);
-            }
+            discard_controller_hand(state, ctx.controller);
         }
         E7aOpV1::DiscardHandThenDrawV1 { count } => {
-            let hand = state.players[ctx.controller.index()].hand.clone();
-            for card in hand {
-                crate::engine::commit_discarded_card(state, card);
+            discard_controller_hand(state, ctx.controller);
+            if state.engine.halted.is_none() {
+                crate::eternal_cards_v1::owned_draws_v1::draw_uninterrupted(
+                    state,
+                    ctx.controller,
+                    u32::from(*count),
+                );
             }
-            crate::effect::execute(
-                &EffectOp::DrawCards {
-                    player: PlayerRef::Controller,
-                    count: u32::from(*count),
-                },
-                ctx,
-                state,
-            );
         }
         E7aOpV1::EngineerReturnV1 => {
             let spec = TargetSpec::StandardV1(
@@ -1533,6 +1547,20 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                     ctx,
                     state,
                 );
+            }
+        }
+        E7aOpV1::CurieDrawBoundV1 { combat_at } => {
+            if let Some(count) = curie::draw_count(state, ctx, *combat_at) {
+                crate::eternal_cards_v1::owned_draws_v1::draw_uninterrupted(
+                    state,
+                    ctx.controller,
+                    count,
+                );
+            } else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
             }
         }
         E7aOpV1::ShadowspearStripV1 => {
@@ -1620,8 +1648,21 @@ fn therapy(ctx: &ExecCtx, state: &mut GameState, named: u16) {
 /// Echo of Eons: each player, in turn order, shuffles their hand and
 /// graveyard into their library; then each draws seven.
 fn echo_of_eons_effect(ctx: &ExecCtx, state: &mut GameState) {
-    let first = state.active_player;
-    for player in [first, first.opponent()] {
+    if shuffle_echo_libraries(state).is_err() {
+        halt(state, ctx.source);
+        return;
+    }
+    draw_echo_cards(state);
+}
+
+pub(crate) fn shuffle_echo_libraries(
+    state: &mut GameState,
+) -> Result<[crate::eternal_cards_v1::owned_draws_v1::echo::ShuffleCommitV1; 2], String> {
+    fn one(
+        state: &mut GameState,
+        player: PlayerId,
+    ) -> Result<crate::eternal_cards_v1::owned_draws_v1::echo::ShuffleCommitV1, String> {
+        let moves_start = state.engine.event_history.len();
         let cards = state.players[player.index()]
             .hand
             .iter()
@@ -1637,18 +1678,21 @@ fn echo_of_eons_effect(ctx: &ExecCtx, state: &mut GameState) {
                     .collect(),
             );
         }
-        if shuffle(state, player).is_err() {
-            halt(state, ctx.source);
-            return;
+        if state.engine.halted.is_some() || crate::linked_aura_operation_v1::has_pending(state) {
+            return Err("Echo of Eons could not complete its return batch".into());
         }
+        crate::eternal_cards_v1::owned_draws_v1::echo::commit_shuffle(state, player, moves_start)
     }
-    let (first_ref, second_ref) = if first == ctx.controller {
-        (PlayerRef::Controller, PlayerRef::Opponent)
-    } else {
-        (PlayerRef::Opponent, PlayerRef::Controller)
-    };
-    for player in [first_ref, second_ref] {
-        crate::effect::execute(&EffectOp::DrawCards { player, count: 7 }, ctx, state);
+    let first = state.active_player;
+    Ok([one(state, first)?, one(state, first.opponent())?])
+}
+
+pub(crate) fn draw_echo_cards(state: &mut GameState) {
+    let first = state.active_player;
+    for player in [first, first.opponent()] {
+        if !crate::eternal_cards_v1::owned_draws_v1::draw_uninterrupted(state, player, 7) {
+            break;
+        }
     }
 }
 
@@ -1908,6 +1952,10 @@ pub(crate) fn drive(
 ) -> Result<bool, String> {
     let controller = continuation.ctx.controller;
     match op {
+        E7aOpV1::EchoOfEonsV1 => {
+            crate::eternal_cards_v1::owned_draws_v1::echo::begin(state, continuation, &path)?;
+            Ok(false)
+        }
         E7aOpV1::GhostQuarterV1 => {
             let Some(land) = legal_object_target(&continuation.ctx, state, 0, TargetSpec::Land)
             else {
@@ -2224,18 +2272,16 @@ pub(crate) fn finish_selection(
 /// Puts `card` onto the battlefield face down as a 2/2 creature under
 /// `player`'s control; only `player` may look at it.
 fn manifest(state: &mut GameState, player: PlayerId, card: ObjectId) {
-    put_onto_battlefield(state, card, player);
+    let ProposedEvent::ZoneChange(mut entry) =
+        ProposedEvent::zone_change_to_battlefield_under_controller(card, player)
+    else {
+        unreachable!("manifest uses a native zone change");
+    };
+    entry.battlefield_manifested_v1 = true;
+    event::propose_and_commit(state, ProposedEvent::ZoneChange(entry));
     if state.objects.get(card).zone != Zone::Battlefield {
         return;
     }
-    let live = state.objects.get_mut(card);
-    live.v4.face_down_v1 = Some(crate::state::FaceDownV1 {
-        disguised: true,
-        lookers: 1 << player.index(),
-        hidden_by: None,
-        hidden_by_source: None,
-    });
-    live.v4.ward_generic = 0;
     let link = live_link(state, card);
     e7a_state(state).manifested.push(link);
 }
@@ -2254,7 +2300,7 @@ pub(crate) fn delayed_triggers(
     note_entries(state, events);
     upkeep_triggers(state, events);
     end_step_triggers(state, events);
-    curie_triggers(state, events);
+    curie::collect(state, events);
     dark_depths_triggers(state);
     prune(state);
     let Some(eternal) = state.eternal_v1.as_mut() else {
@@ -2416,47 +2462,6 @@ fn spell_delayed_source(
     let mut contract = AbilitySourceContractV4::capture(state, recorded.source);
     contract.controller = controller;
     Some(contract)
-}
-
-/// Curie's trigger, which a Curie keeps as a copy: "Whenever this creature
-/// deals combat damage to a player, draw cards equal to its base power."
-fn curie_triggers(state: &mut GameState, events: &[CommittedEvent]) {
-    for event in events {
-        let CommittedEvent::CombatDamageToPlayer {
-            source,
-            source_zone_change_count,
-            amount,
-            ..
-        } = *event
-        else {
-            continue;
-        };
-        if amount <= 0 {
-            continue;
-        }
-        let Some(live) = state.objects.try_get(source) else {
-            continue;
-        };
-        if live.zone != Zone::Battlefield
-            || live.zone_change_count != source_zone_change_count
-            || own_definition(state, source)
-                .and_then(|def| CARD_DEFS.get(usize::from(def)))
-                .is_none_or(|def| def.name != CURIE)
-            || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
-        {
-            continue;
-        }
-        let fallback = crate::engine::effective_base_power(state, source)
-            .map_or(0, |power| u32::try_from(power.max(0)).unwrap_or(0));
-        let controller = live.controller;
-        let contract = AbilitySourceContractV4::capture(state, source);
-        queue_trigger(
-            state,
-            contract,
-            controller,
-            E7aOpV1::CurieDrawV1 { fallback },
-        );
-    }
 }
 
 /// Dark Depths: "When Dark Depths has no ice counters on it, sacrifice it.
@@ -2680,6 +2685,10 @@ pub(crate) fn extra_land_candidates(state: &GameState, player: PlayerId) -> Vec<
 /// paying one: from exile (suspend) or from a hand under a free-cast
 /// permission.
 pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId, card: ObjectId) -> bool {
+    // Deafening Silence and Gaddock Teeg (wave S1b).
+    if crate::eternal_sideboard_s1b_v1::cast_prohibited(state, player, card) {
+        return true;
+    }
     let Some(live) = state.objects.try_get(card) else {
         return false;
     };
@@ -2764,10 +2773,6 @@ pub(crate) fn keyword_lost(state: &GameState, object: ObjectId, keyword: Keyword
 /// Dress Down: "Creatures lose all abilities." The timestamp of the latest
 /// Dress Down whose ability applies, for a creature.
 pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
-    let e7a = read_state(state)?;
-    if e7a.dress_downs.is_empty() {
-        return None;
-    }
     let live = state.objects.try_get(object)?;
     if live.zone != Zone::Battlefield
         || !CARD_DEFS.get(live.card_def as usize).is_some_and(|def| {
@@ -2777,10 +2782,20 @@ pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u
     {
         return None;
     }
-    e7a.dress_downs
+    active_dress_down_timestamp(state, Some(object))
+}
+
+/// Existing Dress Down effects also apply to a prospective creature entry
+/// when determining which as-enters abilities it has (614.12).
+pub(crate) fn active_dress_down_timestamp(
+    state: &GameState,
+    except: Option<ObjectId>,
+) -> Option<u64> {
+    read_state(state)?
+        .dress_downs
         .iter()
         .filter(|(link, _)| {
-            link.object != object
+            Some(link.object) != except
                 && state.objects.try_get(link.object).is_some_and(|dress| {
                     dress.zone == Zone::Battlefield
                         && dress.zone_change_count == link.zone_change_count
@@ -2942,7 +2957,8 @@ pub(crate) fn improvises(state: &GameState, spell: ObjectId) -> bool {
 
 /// Whether the card named `name` has improvise.
 pub(crate) fn improvise_definition(name: &str) -> bool {
-    name == KAPPA_CANNONEER
+    // Metallic Rebuke (wave S1b) improvises the same way.
+    name == KAPPA_CANNONEER || name == "Metallic Rebuke"
 }
 
 /// Whether `id` is a face-down permanent manifest dread put onto the

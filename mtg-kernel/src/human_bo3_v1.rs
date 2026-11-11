@@ -497,3 +497,6 @@ mod sphinx_lore_consumer_v1;
 mod thousand_year_storm_consumer_v1;
 mod tutelage_consumer_v1;
 mod zimone_consumer_v1;
+
+#[cfg(all(test, feature = "eternal-fixtures"))]
+mod owned_draws_tests;

@@ -582,6 +582,21 @@ pub fn twinned_vision() -> EffectOp {
     e8b(E8bOpV1::TwinnedVisionV1)
 }
 
+pub(crate) fn twinned_vision_draw_count(state: &GameState, source: ObjectId) -> u32 {
+    let from_hand = state.objects.try_get(source).is_some_and(|live| {
+        live.spell_copy_origin.is_none()
+            && live
+                .v4
+                .spell_cast_origin
+                .is_some_and(|origin| origin.origin_zone == Zone::Hand)
+    });
+    if from_hand {
+        1
+    } else {
+        2
+    }
+}
+
 /// Crypt Rats' ability for each X.
 fn crypt_rats(amount: i32) -> EffectOp {
     e8b(E8bOpV1::DamageEachCreatureAndPlayerV1 { amount })
@@ -819,7 +834,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         WITCHS_COTTAGE => &WITCHS_COTTAGE_TRIGGERS,
         OROKU_SAKI => &OROKU_SAKI_TRIGGERS,
         SEA_GATE_ORACLE => &SEA_GATE_ORACLE_TRIGGERS,
-        _ => crate::eternal_e9b_v1::triggers_for(name),
+        _ => crate::eternal_sideboard_s1c_v1::triggers_for(name),
     }
 }
 
@@ -833,7 +848,7 @@ fn own_trigger_effect(name: &str, effect: &EffectOp) -> bool {
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
     // `triggers_for` falls through to E9b's cards, so they answer first.
-    if let Some(spec) = crate::eternal_e9b_v1::trigger_target_spec(name, effect) {
+    if let Some(spec) = crate::eternal_sideboard_s1c_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }
     if !own_trigger_effect(name, effect) {
@@ -1062,17 +1077,10 @@ pub(crate) fn execute(op: &E8bOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         E8bOpV1::TwinnedVisionV1 => {
-            let from_hand = state.objects.try_get(ctx.source).is_some_and(|live| {
-                live.spell_copy_origin.is_none()
-                    && live
-                        .v4
-                        .spell_cast_origin
-                        .is_some_and(|origin| origin.origin_zone == Zone::Hand)
-            });
             crate::effect::execute(
                 &EffectOp::DrawCards {
                     player: PlayerRef::Controller,
-                    count: if from_hand { 1 } else { 2 },
+                    count: twinned_vision_draw_count(state, ctx.source),
                 },
                 ctx,
                 state,

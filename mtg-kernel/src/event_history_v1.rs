@@ -360,6 +360,10 @@ pub enum EventKindV1 {
     FullTextBatchEntryV1,
     FullTextRestrictedUseV1,
     OrderedGraveyardControlGainedV1,
+    MartyrRevealPaidV1,
+    MeddlingMageEntryV1,
+    EternalOpeningV1,
+    EternalOwnedDrawV1,
     NivMizzetVisionaryDrawEndedV1,
     LathrilReceiptV1,
     BlasphemousEdictReceiptV1,
@@ -371,7 +375,7 @@ pub enum EventKindV1 {
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 327;
+pub const EVENT_KIND_COUNT_V1: usize = 331;
 const _: () = assert!(EventKindV1::EtaliPrimalStormReceiptV1 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
@@ -793,6 +797,10 @@ impl CommittedEvent {
             Self::OrderedGraveyardControlGainedV1 { .. } => {
                 EventKindV1::OrderedGraveyardControlGainedV1
             }
+            Self::MartyrRevealPaidV1 { .. } => EventKindV1::MartyrRevealPaidV1,
+            Self::MeddlingMageEntryV1 { .. } => EventKindV1::MeddlingMageEntryV1,
+            Self::EternalOpeningV1 { .. } => EventKindV1::EternalOpeningV1,
+            Self::EternalOwnedDrawV1 { .. } => EventKindV1::EternalOwnedDrawV1,
             Self::NivMizzetVisionaryDrawEndedV1 { .. } => {
                 EventKindV1::NivMizzetVisionaryDrawEndedV1
             }
