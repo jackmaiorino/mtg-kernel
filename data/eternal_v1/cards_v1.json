@@ -28424,6 +28424,126 @@
     "untap_prohibition"
    ],
    "java_file": "Mage.Sets/src/mage/cards/w/WinterOrb.java"
+  },
+  {
+   "name": "Contagion",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}{B}",
+   "mana_value": 5,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "alt_cost",
+    "pay_life_cost",
+    "exile_from_hand_cost",
+    "minus_counters",
+    "divided_counters"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/Contagion.java"
+  },
+  {
+   "name": "Lurking Skirge",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "dies_trigger",
+    "intervening_if",
+    "animate",
+    "type_change",
+    "flying"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LurkingSkirge.java"
+  },
+  {
+   "name": "Phyrexian Processor",
+   "engine_capability": "full",
+   "mana_cost": "{4}",
+   "mana_value": 4,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-mono-black-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "as_enters_choice",
+    "pay_life",
+    "activated_ability",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PhyrexianProcessor.java"
+  },
+  {
+   "name": "Phyrexian Minion Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Phyrexian",
+    "Minion"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "token_creation",
+    "characteristic_defining"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/PhyrexianMinionToken.java",
+   "is_token": true
   }
  ]
 }

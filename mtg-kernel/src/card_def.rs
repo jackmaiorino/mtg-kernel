@@ -463,6 +463,9 @@ pub enum Subtype {
     /// Appended for the eternal catalog's Premodern wave P3c (Spike
     /// Feeder), with stable ids from 380 reserved for that wave.
     Spike = 380,
+    /// Appended for the eternal catalog's Premodern wave P3f (Phyrexian
+    /// Processor's Minion tokens).
+    Minion = 381,
 }
 
 impl Subtype {
@@ -855,6 +858,8 @@ impl Subtype {
         Subtype::Flagbearer,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Spike,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Minion,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1103,6 +1108,7 @@ impl Subtype {
             361 => Subtype::Rhino,
             362 => Subtype::Flagbearer,
             380 => Subtype::Spike,
+            381 => Subtype::Minion,
             _ => return None,
         })
     }
@@ -1330,6 +1336,7 @@ impl Subtype {
             Subtype::Rhino => true,
             Subtype::Flagbearer => true,
             Subtype::Spike => true,
+            Subtype::Minion => true,
         }
     }
 
@@ -1442,6 +1449,7 @@ impl Subtype {
                     | Subtype::Rhino
                     | Subtype::Flagbearer
                     | Subtype::Spike
+                    | Subtype::Minion
             )
         {
             return true;
@@ -3979,7 +3987,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x06ca_9de9_1689_6bb0;
+        const EXPECTED_ETERNAL: u64 = 0xe211_12d7_ce6e_b9b2;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

@@ -432,6 +432,9 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
     // Engineered Plague's chosen type (wave P3b).
     let plague = crate::eternal_premodern_p3b_v1::statics::plague_boost(state, object);
     boost = (boost.0 + plague.0, boost.1 + plague.1);
+    // Contagion's -2/-1 counters (wave P3f).
+    let counters = crate::eternal_premodern_p3f_v1::counter_boost(state, object);
+    boost = (boost.0 + counters.0, boost.1 + counters.1);
     if active_named(state, object, KNIGHT_OF_THE_RELIQUARY) {
         let lands = graveyard_lands(state, controller);
         boost.0 += lands;

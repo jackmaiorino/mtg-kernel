@@ -1588,8 +1588,8 @@ card's current Oracle text and rulings, checked against its XMage source:
   and toughness are the recorded X, as for Skyclave Apparition's Illusions. Minion is a new
   creature type, appended with stable id 381 in Eternal builds only.
 
-The records are pruned as each turn begins, when the stack is empty: counters and changes of
-permanents that left the battlefield, and payments of Processors that left it.
+The records are pruned as each turn begins, when the stack is empty: the counters, changes and
+Minion sizes of permanents that left the battlefield, and the payments of Processors that left it.
 
 Known gaps (P3f): a Lurking Skirge that leaves the battlefield with the creature (603.10a) has
 no trigger; it would resolve with no effect. Cards outside the eternal decks that count every

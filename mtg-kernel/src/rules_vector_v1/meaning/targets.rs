@@ -788,6 +788,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::DividedFourDamageCreaturesV1 => creature(),
         S::ControlledCreatureOrVehicleV1 => ObjF::Permanent,
         S::NonblackCreatureManaValueV1(_) => creature(),
+        S::DividedTwoCountersCreaturesV1 => creature(),
     }
 }
 
@@ -862,6 +863,7 @@ pub(super) fn standard_target_origin(
         | S::DividedTwoDamageAnyTargetsV1
         | S::CreatureManaValueAtMostV1(_)
         | S::NonblackCreatureManaValueV1(_)
+        | S::DividedTwoCountersCreaturesV1
         | S::S1dV1(_)
         | S::CreatureOrPlaneswalkerManaValueAtMostV1(_)
         | S::CreatureLandOrPlaneswalkerV1
@@ -916,8 +918,10 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         S::DividedFourDamageCreaturesOrPlaneswalkersV1
         | S::DividedFourDamageCreaturesV1
         | S::DividedXDamageUpToTwoV1
-        | S::DividedTwoDamageAnyTargetsV1 => {
-            // Vocabulary gap: divided damage and repeated picks have no facet.
+        | S::DividedTwoDamageAnyTargetsV1
+        | S::DividedTwoCountersCreaturesV1 => {
+            // Vocabulary gap: divided damage and counters and repeated picks
+            // have no facet.
             out.atoms.push(Atom::Opaque);
         }
         S::CreatureManaValueAtMostV1(maximum) => {

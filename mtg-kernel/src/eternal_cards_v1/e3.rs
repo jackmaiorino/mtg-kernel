@@ -1805,6 +1805,10 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     if let Some(decision) = crate::eternal_premodern_p3e_v1::entry_choice_decision(state) {
         return Some(decision);
     }
+    // Phyrexian Processor's life payment (Premodern sideboard wave P3f).
+    if let Some(decision) = crate::eternal_premodern_p3f_v1::entry_choice_decision(state) {
+        return Some(decision);
+    }
     let cavern = cavern_needing_type(state)?;
     let player = state.objects.get(cavern).controller;
     Some(crate::engine::Decision::ChooseEffectOption {
@@ -1902,6 +1906,9 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
         return Ok(());
     }
     if crate::eternal_premodern_p3e_v1::answer_entry_choice(state, option)? {
+        return Ok(());
+    }
+    if crate::eternal_premodern_p3f_v1::answer_entry_choice(state, option)? {
         return Ok(());
     }
     let cavern = cavern_needing_type(state).ok_or("no as-enters choice is pending")?;
