@@ -24,7 +24,9 @@
 //! The document keeps every field of [`ExpandedCheckpointV1`] with its name,
 //! type and meaning (`schema`, `state_sha256` included), so probes read it as
 //! they read a v1 checkpoint. A state has exactly one encoding: [`decode_v1`]
-//! re-encodes what it decoded and refuses unless the bytes are equal.
+//! refuses any bytes that are not [`encode_v1`]'s encoding of what they
+//! decode to. Its structure check ([`check_structure_v1`]) binds every byte
+//! the encoder writes, so it needs no re-encoding to compare with.
 //! [`export_v1`] reproduces the v1 JSON bytes `publish_json` writes for the
 //! same checkpoint.
 //!
@@ -36,9 +38,7 @@
 //! tensors (`TrainTensorsV1`) instead of copying every value's bits. Either
 //! way each format
 //! writes the same bytes: the v1 JSON through the same derived serialization,
-//! the container through one encoder. The encoder writes into a sink
-//! ([`SinkV1`]): a buffer, or a comparison with existing bytes, which is how
-//! [`decode_v1`] checks its re-encoding without holding a copy of it.
+//! the container through one encoder.
 //!
 //! # Default, identity and config bytes (the default switch)
 //!
@@ -477,70 +477,21 @@ pub(crate) fn with_tensors_v1<T, U>(
     }
 }
 
-/// Where an encoding goes as it is produced: appended to a buffer, or
-/// compared with bytes that claim to be that encoding ([`CompareSinkV1`]).
-trait SinkV1 {
-    fn put_v1(&mut self, bytes: &[u8]);
-    fn zeros_v1(&mut self, count: usize);
-    /// Bytes produced so far.
-    fn len_v1(&self) -> usize;
-}
-
-impl SinkV1 for Vec<u8> {
-    fn put_v1(&mut self, bytes: &[u8]) {
-        self.extend_from_slice(bytes);
-    }
-
-    fn zeros_v1(&mut self, count: usize) {
-        self.resize(self.len() + count, 0);
-    }
-
-    fn len_v1(&self) -> usize {
-        self.len()
-    }
-}
-
-/// Compares an encoding with `expected` as it is produced: `same` stays true
-/// exactly while every byte so far equals `expected`'s byte at its offset.
-struct CompareSinkV1<'a> {
-    expected: &'a [u8],
-    at: usize,
-    same: bool,
-}
-
-impl SinkV1 for CompareSinkV1<'_> {
-    fn put_v1(&mut self, bytes: &[u8]) {
-        let end = self.at.saturating_add(bytes.len());
-        self.same = self.same && self.expected.get(self.at..end) == Some(bytes);
-        self.at = end;
-    }
-
-    fn zeros_v1(&mut self, count: usize) {
-        let end = self.at.saturating_add(count);
-        self.same = self.same && self.expected.get(self.at..end).is_some_and(all_zero_v1);
-        self.at = end;
-    }
-
-    fn len_v1(&self) -> usize {
-        self.at
-    }
-}
-
 /// Writes each value's little-endian bit pattern, a few thousand at a time.
-fn put_values_v1(sink: &mut impl SinkV1, values: TensorValuesV1<'_>) {
-    fn put<V: Copy>(sink: &mut impl SinkV1, values: &[V], bits: impl Fn(V) -> u32) {
+fn put_values_v1(bytes: &mut Vec<u8>, values: TensorValuesV1<'_>) {
+    fn put<V: Copy>(bytes: &mut Vec<u8>, values: &[V], bits: impl Fn(V) -> u32) {
         const CHUNK_VALUES: usize = 4096;
         let mut buffer = [0u8; CHUNK_VALUES * 4];
         for chunk in values.chunks(CHUNK_VALUES) {
             for (slot, &value) in buffer.chunks_exact_mut(4).zip(chunk) {
                 slot.copy_from_slice(&bits(value).to_le_bytes());
             }
-            sink.put_v1(&buffer[..chunk.len() * 4]);
+            bytes.extend_from_slice(&buffer[..chunk.len() * 4]);
         }
     }
     match values {
-        TensorValuesV1::Bits(bits) => put(sink, bits, |bits| bits),
-        TensorValuesV1::Floats(floats) => put(sink, floats, f32::to_bits),
+        TensorValuesV1::Bits(bits) => put(bytes, bits, |bits| bits),
+        TensorValuesV1::Floats(floats) => put(bytes, floats, f32::to_bits),
     }
 }
 
@@ -609,27 +560,27 @@ fn frame_v1<T: TensorBitsV1>(saved: &ExpandedCheckpointV1<T>) -> Result<FrameV1,
 }
 
 /// Writes `saved`'s container, framed by `frame` (its own [`frame_v1`]),
-/// into `sink`: the header, the document, the table, zero padding to the
+/// into `bytes`: the header, the document, the table, zero padding to the
 /// data start, then each tensor at its offset with zero padding between.
 fn write_v1<T: TensorBitsV1>(
     saved: &ExpandedCheckpointV1<T>,
     frame: &FrameV1,
-    sink: &mut impl SinkV1,
+    bytes: &mut Vec<u8>,
 ) {
-    sink.put_v1(MAGIC_V1);
-    sink.put_v1(&CONTAINER_VERSION_V1.to_le_bytes());
-    sink.put_v1(&0u32.to_le_bytes());
-    sink.put_v1(&(frame.document.len() as u64).to_le_bytes());
-    sink.put_v1(&(frame.table.len() as u64).to_le_bytes());
-    sink.put_v1(&frame.document);
-    sink.put_v1(&frame.table);
+    bytes.extend_from_slice(MAGIC_V1);
+    bytes.extend_from_slice(&CONTAINER_VERSION_V1.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&(frame.document.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&(frame.table.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&frame.document);
+    bytes.extend_from_slice(&frame.table);
     let tensors = sections_of_v1(saved).into_iter().flatten();
     for (tensor, offset) in tensors.zip(&frame.offsets) {
-        sink.zeros_v1(frame.data_start + offset - sink.len_v1());
-        put_values_v1(sink, tensor.values_v1());
+        bytes.resize(frame.data_start + offset, 0);
+        put_values_v1(bytes, tensor.values_v1());
     }
     if frame.offsets.is_empty() {
-        sink.zeros_v1(frame.data_start - sink.len_v1());
+        bytes.resize(frame.data_start, 0);
     }
 }
 
@@ -643,26 +594,6 @@ pub(crate) fn encode_v1<T: TensorBitsV1>(
     write_v1(saved, &frame, &mut bytes);
     debug_assert_eq!(bytes.len(), frame.total);
     Ok(bytes)
-}
-
-/// Whether `bytes` are exactly [`encode_v1`]'s encoding of `saved`: the
-/// encoding is compared with them as it is produced, never held. Refuses
-/// what [`encode_v1`] refuses.
-fn encodes_to_v1<T: TensorBitsV1>(
-    saved: &ExpandedCheckpointV1<T>,
-    bytes: &[u8],
-) -> Result<bool, String> {
-    let frame = frame_v1(saved)?;
-    if frame.total != bytes.len() {
-        return Ok(false);
-    }
-    let mut sink = CompareSinkV1 {
-        expected: bytes,
-        at: 0,
-        same: true,
-    };
-    write_v1(saved, &frame, &mut sink);
-    Ok(sink.same && sink.at == bytes.len())
 }
 
 struct HeaderV1 {
@@ -723,7 +654,21 @@ fn all_zero_v1(bytes: &[u8]) -> bool {
 /// canonical document (a checkpoint with empty tensor lists) and table,
 /// sections in order, aligned, contiguous and inside the file, every padding
 /// byte zero, and the file ending after the last tensor. Together with the
-/// values this is exactly the canonical encoding [`encode_v1`] writes.
+/// values this is exactly the canonical encoding [`encode_v1`] writes, byte
+/// for byte, of the checkpoint [`decode_v1`] makes of them:
+///
+/// - the header's magic, version, zero reserved word and two lengths, and the
+///   data start the lengths put at the first multiple of 256 after the table;
+/// - the document: the canonical serialization of the checkpoint it parses
+///   to, which is the decoded checkpoint with its tensor lists emptied;
+/// - the table: the canonical serialization of what it parses to, which
+///   names the state format and gives each tensor, in section order and
+///   ordinal order within its section, the decoded tensor's name and shape,
+///   the offset the encoder places it at and the byte length of its values;
+/// - every byte between the table, the data start and the tensors is zero,
+///   and the file ends where the last tensor does;
+/// - the values are the decoded values, which the encoder writes back as the
+///   same little-endian bits.
 fn check_structure_v1(bytes: &[u8]) -> Result<CheckedV1, String> {
     let header = header_v1(bytes)?;
     let document = &bytes[header.document.clone()];
@@ -828,21 +773,12 @@ fn open_record_v1(bytes: &[u8]) -> Result<Cow<'_, [u8]>, String> {
 }
 
 /// Decodes a container into the checkpoint it encodes. Refuses anything that
-/// is not the canonical encoding of what it decodes to (see
-/// [`check_structure_v1`]); as a second guard the decoded checkpoint is
-/// re-encoded and compared byte for byte, as the re-encoding is produced
-/// ([`encodes_to_v1`]), without holding a copy of it.
+/// is not the canonical encoding of what it decodes to: the structure check
+/// ([`check_structure_v1`]) binds every byte [`encode_v1`] writes for the
+/// decoded checkpoint, so re-encoding it to compare could refuse nothing
+/// more. The tests decode every single-byte change, truncation and trailing
+/// tail of a container both ways and get the same outcome.
 pub(crate) fn decode_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
-    let saved = decode_sections_v1(bytes)?;
-    if !encodes_to_v1(&saved, bytes)? {
-        return Err("checkpoint container is not in canonical form".into());
-    }
-    Ok(saved)
-}
-
-/// The checkpoint a container's checked structure and tensor values make,
-/// before [`decode_v1`]'s second guard.
-fn decode_sections_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
     let CheckedV1 {
         mut saved,
         sections,
