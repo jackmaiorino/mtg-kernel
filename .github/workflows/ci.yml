@@ -15,6 +15,14 @@ name: CI
         description: Windows runs-on override as JSON, for example '"windows-2025"'
         required: false
         default: ''
+      full_matrix:
+        # A dispatch on a branch whose open pull request is at the same commit
+        # runs only the Windows groups that the pull request's own run skips.
+        # Set this to run every group again anyway.
+        description: Run every group even when the branch's pull request run covers some of them
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -44,10 +52,48 @@ jobs:
     # self-hosted runners hold every job while their host is reserved for
     # other work, and the Python shards wait on this job.
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       python_relevant: ${{ steps.classify.outputs.python_relevant }}
       rust_relevant: ${{ steps.classify.outputs.rust_relevant }}
+      # full: every group on both systems. pr: the pull request set (Windows
+      # only for the workspace, native Store and Python suites).
+      # windows-complement: only the Windows groups the pr set leaves out.
+      scope: ${{ steps.scope.outputs.scope }}
     steps:
+      # Agents dispatch CI on pull request branches to get the Windows groups
+      # that pull request runs skip. Running every group there repeated the
+      # pull request run's Linux and Windows work at the same commit (about a
+      # third of all hosted runner time on 2026-11-11). Such a dispatch now
+      # runs only the complement; together the two runs cover every group.
+      - name: Choose the group set
+        id: scope
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          WINDOWS_RUNNER: ${{ inputs.windows_runner }}
+          FULL_MATRIX: ${{ inputs.full_matrix }}
+        run: |
+          scope=full
+          if [ "$EVENT" = pull_request ]; then
+            scope=pr
+          elif [ "$EVENT" = workflow_dispatch ] && [ -z "$WINDOWS_RUNNER" ] && [ "$FULL_MATRIX" != true ]; then
+            # Only an open same-repository pull request whose head is this
+            # exact commit has a pull request run covering the rest. Any
+            # lookup failure keeps the full set.
+            pr_head=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" \
+              --jq '[.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY)][0].head.sha // ""') || pr_head=
+            echo "open pull request head: ${pr_head:-none}; dispatched commit: $GITHUB_SHA"
+            if [ -n "$pr_head" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
+              scope=windows-complement
+            fi
+          fi
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+          echo "group set: $scope" | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Check out merge ref with parents
         if: github.event_name == 'pull_request'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -108,8 +154,9 @@ jobs:
     # Same path rule as the Rust test groups: a change that touches only
     # docs, markdown, Python tests, non-embedded Python tools or top-level
     # tools/** cannot change what rustfmt or Clippy see. Pushes to main
-    # always run it.
-    if: needs.detect-changes.outputs.rust_relevant == 'true'
+    # always run it. A Windows complement dispatch leaves it to the pull
+    # request run at the same commit.
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -236,9 +283,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-24.04
-          - windows-2025
+        # A Windows complement dispatch runs no Linux group.
+        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'windows-complement' && '["windows-2025"]' || '["ubuntu-24.04", "windows-2025"]') }}
         # Slowest groups first: runners take matrix jobs in this order.
         group:
           - workspace-lib
@@ -254,22 +300,17 @@ jobs:
         # native Store group, whose production writer is Windows-only code.
         # The other Windows groups never failed without Linux failing too
         # (2026-10-10 to 10-14), so they run on main, tags and manual
-        # dispatches, which still cover every group on both systems.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
-        include:
-          # Linux groups use GitHub's hosted runners, which are free for
-          # this public repository: the WSL runners can't be pinned to
-          # cores, so they pause for any host reservation.
-          - os: ubuntu-24.04
-            runner: '"ubuntu-24.04"'
-          # Windows groups default to GitHub's hosted runners: on the local
-          # pool they queued for over an hour behind research claims. The
-          # repository variable routes them elsewhere, for example
-          # '["self-hosted", "mtg-ci-windows"]' for the local pool.
-          - os: windows-2025
-            runner: ${{ inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"' }}
-    # Pull requests from forks never run on the self-hosted runners.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
+        # dispatches, which still cover every group on both systems. A Windows
+        # complement dispatch runs exactly the Windows groups excluded here.
+        exclude: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-lib"},{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"}]' || '[]') }}
+    # Linux groups use GitHub's hosted runners, which are free for this
+    # public repository: the WSL runners can't be pinned to cores, so they
+    # pause for any host reservation. Windows groups default to GitHub's
+    # hosted runners: on the local pool they queued for over an hour behind
+    # research claims. The repository variable routes them elsewhere, for
+    # example '["self-hosted", "mtg-ci-windows"]' for the local pool. Pull
+    # requests from forks never run on the self-hosted runners.
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     steps:
       - name: Limit affected hosted builds to one Cargo job
         if: runner.environment == 'github-hosted' && runner.os == 'Linux' && (matrix.group == 'trace' || matrix.group == 'limited-store')
@@ -527,8 +568,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pull requests run the Limited groups on Linux only.
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["ubuntu-24.04", "windows-2025"]') }}
+        # Pull requests run the Limited groups on Linux only; a Windows
+        # complement dispatch runs them on Windows only.
+        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '["ubuntu-24.04"]' || needs.detect-changes.outputs.scope == 'windows-complement' && '["windows-2025"]' || '["ubuntu-24.04", "windows-2025"]') }}
         part:
           - tests
           - binaries
@@ -614,8 +656,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pull requests run the Limited groups on Linux only.
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["ubuntu-24.04", "windows-2025"]') }}
+        # Pull requests run the Limited groups on Linux only; a Windows
+        # complement dispatch runs them on Windows only.
+        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '["ubuntu-24.04"]' || needs.detect-changes.outputs.scope == 'windows-complement' && '["windows-2025"]' || '["ubuntu-24.04", "windows-2025"]') }}
         # Slowest groups first: runners take matrix jobs in this order.
         group:
           - limited
@@ -948,9 +991,8 @@ jobs:
     timeout-minutes: 10
     strategy:
       matrix:
-        os:
-          - ubuntu-24.04
-          - windows-2025
+        # A Windows complement dispatch reports only the system it tested.
+        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'windows-complement' && '["windows-2025"]' || '["ubuntu-24.04", "windows-2025"]') }}
     runs-on: ubuntu-24.04
     steps:
       - name: Require every Rust test group
@@ -962,7 +1004,9 @@ jobs:
   python-tests:
     name: Python tests (${{ matrix.os }}, shard ${{ matrix.shard }})
     needs: detect-changes
-    if: needs.detect-changes.outputs.python_relevant == 'true'
+    # A Windows complement dispatch leaves both Python systems to the pull
+    # request run at the same commit.
+    if: needs.detect-changes.outputs.python_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement'
     # Includes waiting for the same low-priority CPU admission as Rust jobs.
     timeout-minutes: 120
     # Windows' default pwsh fails a step only on its last command's exit code, so an earlier failing command in a
