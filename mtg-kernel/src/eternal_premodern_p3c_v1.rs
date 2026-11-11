@@ -106,7 +106,8 @@ const UKTABI_ORANGUTAN_TRIGGERS: [TriggeredAbilityDef; 1] =
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         UKTABI_ORANGUTAN => &UKTABI_ORANGUTAN_TRIGGERS,
-        _ => &[],
+        // Vintage sideboard wave S1e's printed triggers.
+        _ => crate::eternal_sideboard_s1e_v1::triggers_for(name),
     }
 }
 

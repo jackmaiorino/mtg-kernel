@@ -65,6 +65,13 @@ pub(crate) fn removal_timestamp(state: &GameState, host: ObjectId) -> Option<u64
         } else {
             None
         })
+        .chain(if cfg!(feature = "eternal-fixtures") {
+            // Azure Beastbinder's target and Unable to Scream's host (wave
+            // S1e).
+            crate::eternal_sideboard_s1e_v1::removal_timestamp(state, host)
+        } else {
+            None
+        })
         .max()
 }
 
@@ -314,6 +321,10 @@ pub(crate) fn base_power_toughness(state: &GameState, id: ObjectId) -> Option<(i
         settings.extend(crate::eternal_premodern_p2c_v1::statics::base_power_toughness(state, id));
         // Lurking Skirge's 3/2 (Premodern wave P3f).
         settings.extend(crate::eternal_premodern_p3f_v1::base_power_toughness(
+            state, id,
+        ));
+        // Azure Beastbinder's 2/2 and Unable to Scream's 0/2 (wave S1e).
+        settings.extend(crate::eternal_sideboard_s1e_v1::base_power_toughness(
             state, id,
         ));
     }

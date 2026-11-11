@@ -789,6 +789,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::ControlledCreatureOrVehicleV1 => ObjF::Permanent,
         S::NonblackCreatureManaValueV1(_) => creature(),
         S::DividedTwoCountersCreaturesV1 => creature(),
+        S::UpToOneOpponentArtifactCreatureOrPlaneswalkerV1 => ObjF::Permanent,
     }
 }
 
@@ -831,7 +832,10 @@ pub(super) fn standard_target_origin(
         | S::UpToOneOpponentCreatureOrPlaneswalkerV1
         | S::UpToOneOpponentNoncreatureNonlandPermanentManaValueAtMostV1(_)
         | S::OpponentArtifactV1
-        | S::OpponentCreatureOrEnchantmentV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        | S::OpponentCreatureOrEnchantmentV1
+        | S::UpToOneOpponentArtifactCreatureOrPlaneswalkerV1 => {
+            (Some(ZoneF::Battlefield), Some(RelF::Opponent))
+        }
         S::LandCardInAGraveyardV1
         | S::InstantOrSorceryCardInAGraveyardV1
         | S::NonbasicLandCardInAGraveyardV1 => (Some(ZoneF::Graveyard), None),
@@ -1329,6 +1333,12 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             out.atoms.push(Atom::Opaque);
         }
         S::UpToOneOpponentCreatureOrPlaneswalkerV1 => {
+            object(out, creature(), relation, zone);
+            object(out, typed(CardType::Planeswalker), relation, zone);
+            out.target(TargetAtom::UpTo);
+        }
+        S::UpToOneOpponentArtifactCreatureOrPlaneswalkerV1 => {
+            object(out, typed(CardType::Artifact), relation, zone);
             object(out, creature(), relation, zone);
             object(out, typed(CardType::Planeswalker), relation, zone);
             out.target(TargetAtom::UpTo);

@@ -988,7 +988,10 @@ card's current Oracle text and rulings, checked against its XMage source:
   is the black-card exile of Contagion's without the life. Choosing the exiled card announces X
   as its mana value (601.2b), so the cast asks for no X, and the spell's mana value on the stack
   is X plus 2 (202.3e). Paid normally, X is announced and paid as usual. The -X/-X is the
-  engine's until-end-of-turn pump of the target. It is an Arcane instant.
+  engine's until-end-of-turn pump of the target. It is an Arcane instant, the first with X:
+  splice onto Arcane announces the number of spliced cards where X is announced (wave E8b), so
+  Desperate Ritual, the catalog's only splice card, can't be spliced onto it. No snapshot deck
+  plays both; Vintage Dredge is the only one with the Shoal.
 - Unable to Scream: "Enchant creature. Enchanted creature loses all abilities and is a Toy
   artifact creature with base power and toughness 0/2 in addition to its other types. As long
   as enchanted creature is face down, it can't be turned face up." An ordinary creature Aura

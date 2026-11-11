@@ -8653,8 +8653,18 @@ fn x_graveyard_exile_candidates(
 }
 
 /// An "exile X cards from your graveyard" cast announces X as the number of
-/// cards it exiled.
-pub(crate) fn forced_cast_x(pending: &PendingCast, def: &card_def::CardDef) -> Option<u16> {
+/// cards it exiled, and Sickening Shoal's alternative cost as the mana value
+/// of the card it exiles.
+pub(crate) fn forced_cast_x(
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+    state: &GameState,
+) -> Option<u16> {
+    // Sickening Shoal's alternative cost: the exiled black card's mana value
+    // is X (eternal wave S1e).
+    if let Some(x) = crate::eternal_sideboard_s1e_v1::shoal_forced_x(pending, def, state) {
+        return Some(x);
+    }
     pending_x_graveyard_exile(pending, def)?;
     u16::try_from(pending.sacrifice_chosen.len()).ok()
 }
@@ -10340,7 +10350,7 @@ fn maximum_payable_x(
 ) -> Option<u16> {
     let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
     // "Exile X cards from your graveyard": X is the number exiled.
-    if let Some(x) = forced_cast_x(pending, def) {
+    if let Some(x) = forced_cast_x(pending, def, state) {
         return pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
             .map(|_| x);
     }
@@ -12261,6 +12271,13 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
 /// creates an activated ability, never uses the stack, and retains priority.
 fn can_turn_face_up(state: &GameState, player: PlayerId, id: ObjectId) -> bool {
     let object = state.objects.get(id);
+    // Unable to Scream: "As long as enchanted creature is face down, it
+    // can't be turned face up." (eternal wave S1e)
+    if cfg!(feature = "eternal-fixtures")
+        && crate::eternal_sideboard_s1e_v1::cant_turn_face_up(state, id)
+    {
+        return false;
+    }
     // A manifested creature card turns face up for its mana cost.
     if cfg!(feature = "eternal-fixtures") {
         if let Some(cost) = crate::eternal_legacy_e7a_v1::turn_face_up_cost(state, id) {
@@ -22786,6 +22803,14 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
                 },
             );
     }
+    // Unable to Scream: "is a Toy artifact creature ... in addition to its
+    // other types", a face-down host included (wave S1e).
+    #[cfg(feature = "eternal-fixtures")]
+    if matches!(card_type, CardType::Artifact | CardType::Creature)
+        && crate::eternal_sideboard_s1e_v1::adds_artifact_creature(state, id)
+    {
+        return true;
+    }
     if let Some(face) = state.objects.get(id).v4.face_down_v1 {
         return face.disguised && card_type == CardType::Creature;
     }
@@ -24465,6 +24490,11 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_sideboard_s1c_v1::statics::is_extra_swamp(state, id) {
         subtype_ids.push(card_def::Subtype::Swamp.stable_id());
+    }
+    // Unable to Scream: "is a Toy artifact creature" (eternal wave S1e).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1e_v1::is_toy(state, id) {
+        subtype_ids.push(card_def::Subtype::Toy.stable_id());
     }
     subtype_ids.sort_unstable();
     if crate::continuous_characteristics_v1::land_type_timestamp(state, id).is_some()
