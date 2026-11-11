@@ -1097,9 +1097,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: python-env-${{ matrix.os }}-${{ github.run_attempt }}
+          # The generated build-script sources go too: the card database
+          # repin tool reads KERNEL_CARDDB_HASH from them.
           path: |
             target/release/kernel_rl_env${{ matrix.suffix }}
             target/release/agent_bridge_v1${{ matrix.suffix }}
+            target/release/build/mtg-kernel-*/out/*.rs
           if-no-files-found: error
           retention-days: 1
           compression-level: 1
@@ -1249,7 +1252,8 @@ jobs:
           fi
           attempt=$(ls -d "$staging"/python-env-* | sort -V | tail -n 1)
           mkdir -p target/release
-          cp "$attempt"/* target/release/
+          cp -R "$attempt"/. target/release/
+          ls target/release/build/mtg-kernel-*/out
           chmod +x target/release/kernel_rl_env* target/release/agent_bridge_v1*
           ls -l target/release
 
