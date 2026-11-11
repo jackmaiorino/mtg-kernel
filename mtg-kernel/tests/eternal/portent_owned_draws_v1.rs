@@ -351,6 +351,115 @@ fn paid_portent_both_seats_shuffle_branches_restore_and_original_caster_next_upk
         }
     }
 }
+/// Misdirection: "Change the target of target spell with a single target."
+/// A paid Portent it retargets still resolves: it looks at and orders the
+/// new target's library, may shuffle it, and schedules its caster's draw.
+/// A restored retarget binding still resumes; a forged one fails closed.
+#[test]
+fn paid_portent_retargeted_by_misdirection_looks_at_the_new_target() {
+    for actor in [P0, P1] {
+        for shuffle in [false, true] {
+            let mut state = plains();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let mut own_top: Vec<ObjectId> = state.players[actor.index()]
+                .library
+                .iter()
+                .copied()
+                .take(3)
+                .collect();
+            own_top.sort();
+            let opponent_library = state.players[actor.opponent().index()].library.clone();
+            let source = portent(&mut state, actor);
+            let misdirection = put(&mut state, actor, "Misdirection", Zone::Hand);
+            let pitched = put(&mut state, actor, "Brainstorm", Zone::Hand);
+            assert!(
+                matches!(next(&mut state), Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&misdirection))
+            );
+            act(&mut state, Action::CastSpell(misdirection));
+            for _ in 0..8 {
+                match next(&mut state) {
+                    Decision::ChooseTargets { legal_targets, .. } => {
+                        assert!(legal_targets.contains(&Target::Object(source)));
+                        act(&mut state, Action::ChooseTarget(Target::Object(source)));
+                    }
+                    Decision::ChooseCostTargets { candidates, .. } => {
+                        assert!(candidates.contains(&pitched));
+                        act(&mut state, Action::ChooseCostTarget(pitched));
+                    }
+                    Decision::CastSpellOrPass { .. } => break,
+                    other => panic!("Misdirection cast: {other:?}"),
+                }
+            }
+            assert_eq!(zone(&state, pitched), Zone::Exile);
+            match settle(&mut state) {
+                Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+                    assert_eq!(legal_targets, vec![Target::Player(actor)]);
+                    act(
+                        &mut state,
+                        Action::ChooseEffectTarget(Target::Player(actor)),
+                    );
+                }
+                other => panic!("Misdirection's new target: {other:?}"),
+            }
+            assert_eq!(receipt_count(&state, "Retargeted"), 1);
+            let row = state.stack.iter().find(|row| row.source == source).unwrap();
+            assert_eq!(row.targets, vec![Target::Player(actor)]);
+            let mut replay = restored(&state);
+            let mut json = serde_json::to_value(&state).unwrap();
+            assert!(alter(
+                &mut json["engine"]["event_history"],
+                "Retargeted",
+                "paid_at",
+                999999.into()
+            ));
+            let mut forged: GameState = serde_json::from_value(json).unwrap();
+            let mut halted = false;
+            for _ in 0..8 {
+                match engine::advance_until_decision(&mut forged) {
+                    Decision::Halted { .. } => {
+                        halted = true;
+                        break;
+                    }
+                    Decision::CastSpellOrPass { .. } => {
+                        let _ = engine::step(&mut forged, Action::Pass);
+                    }
+                    other => panic!("forged retarget binding resolved: {other:?}"),
+                }
+            }
+            assert!(halted, "a forged retarget binding fails closed");
+            for branch in [&mut state, &mut replay] {
+                match settle(branch) {
+                    Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+                        let mut looked: Vec<ObjectId> = legal_targets
+                            .iter()
+                            .map(|target| match *target {
+                                Target::Object(card) => card,
+                                other => panic!("Portent looked at {other:?}"),
+                            })
+                            .collect();
+                        looked.sort();
+                        assert_eq!(looked, own_top);
+                    }
+                    other => panic!("Portent's look: {other:?}"),
+                }
+                finish_parent(branch, shuffle);
+                assert_eq!(zone(branch, source), Zone::Graveyard);
+                assert_eq!(receipt_count(branch, "Scheduled"), 1);
+                assert_eq!(
+                    branch.players[actor.opponent().index()].library,
+                    opponent_library
+                );
+                next_upkeep(branch, actor);
+                settled(branch);
+                assert_eq!(branch.players[actor.index()].hand.len(), 1);
+                assert!(branch.players[actor.opponent().index()].hand.is_empty());
+                assert_eq!(receipt_count(branch, "Completed"), 1);
+            }
+            assert_eq!(state.state_hash(), replay.state_hash());
+        }
+    }
+}
 #[test]
 fn paid_portent_jace_hull_without_dredge_departed_source_and_terminal_stop() {
     for actor in [P0, P1] {
