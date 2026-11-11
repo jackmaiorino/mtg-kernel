@@ -227,16 +227,20 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         DYSTOPIA => &DYSTOPIA_TRIGGERS,
         XANTID_SWARM => &XANTID_SWARM_TRIGGERS,
-        _ => &[],
+        // Premodern sideboard wave P3c's printed triggers.
+        _ => crate::eternal_premodern_p3c_v1::triggers_for(name),
     }
 }
 
 /// Target specs of this module's triggered abilities: none of them targets.
+/// Wave P3c's cards, which `triggers_for` falls through to, answer for
+/// themselves.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
-    triggers_for(name)
-        .iter()
-        .any(|trigger| (trigger.effect)() == *effect)
-        .then_some(TargetSpec::None)
+    (matches!(name, DYSTOPIA | XANTID_SWARM)
+        && triggers_for(name)
+            .iter()
+            .any(|trigger| (trigger.effect)() == *effect))
+    .then_some(TargetSpec::None)
 }
 
 // ---- Effect leaves ------------------------------------------------------------------

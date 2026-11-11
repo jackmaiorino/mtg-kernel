@@ -626,6 +626,7 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         Subtype::Advisor => Some(CreatureTypeV60::Advisor),
         Subtype::Rhino => Some(CreatureTypeV60::Rhino),
         Subtype::Flagbearer => Some(CreatureTypeV60::Flagbearer),
+        Subtype::Spike => Some(CreatureTypeV60::Spike),
     }
 }
 

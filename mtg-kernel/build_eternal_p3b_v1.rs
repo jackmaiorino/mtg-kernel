@@ -1,9 +1,9 @@
 //! Card-database recipes for the eternal catalog's Premodern sideboard wave
-//! P3b. This module is the tail of the recipe chains: wave P3a's activated
-//! ability, spell, trigger, kicker and attachment tables fall through to
-//! these, as do wave P2b's flashback, alternative cost and keyword tables,
-//! and its own defaults are the chains' base values. Runtime programs live
-//! in `src/eternal_premodern_p3b_v1.rs`. Every row is keyed by a name that
+//! P3b. Wave P3a's activated ability, spell, trigger, kicker and attachment
+//! tables fall through to these, as do wave P2b's flashback, alternative
+//! cost and keyword tables, and these fall through to wave P3c's
+//! (`build_eternal_p3c_v1.rs`). Runtime programs live in
+//! `src/eternal_premodern_p3b_v1.rs`. Every row is keyed by a name that
 //! occurs only in the eternal registry.
 
 use super::{
@@ -82,7 +82,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Goblin Tinkerer" => &GOBLIN_TINKERER,
         "Plaguebearer" => &PLAGUEBEARER,
         "Zuran Orb" => &ZURAN_ORB,
-        _ => &[],
+        _ => super::build_eternal_p3c_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -111,18 +111,19 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::EnchantmentPermanent",
             "crate::eternal_e9b_v1::destroy_target",
         ),
-        _ => return None,
+        _ => return super::build_eternal_p3c_v1::special_for(name),
     })
 }
 
-/// No P3b card has kicker.
-pub(super) fn kicker_cost_for(_name: &str) -> Option<&'static str> {
-    None
+/// No P3b card has kicker; wave P3c's table answers for the rest.
+pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
+    super::build_eternal_p3c_v1::kicker_cost_for(name)
 }
 
-/// No P3b card is an Aura or Equipment.
-pub(super) fn attachment_for(_name: &str) -> &'static str {
-    "None"
+/// No P3b card is an Aura or Equipment; wave P3c's table answers for the
+/// rest.
+pub(super) fn attachment_for(name: &str) -> &'static str {
+    super::build_eternal_p3c_v1::attachment_for(name)
 }
 
 /// Ray of Revelation: "Flashback {G}".
@@ -135,7 +136,7 @@ pub(super) fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => "None".to_string(),
+        _ => super::build_eternal_p3c_v1::flashback_for(name),
     }
 }
 
@@ -144,7 +145,7 @@ pub(super) fn flashback_for(name: &str) -> String {
 pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Mogg Salvage" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[], generic: 0, x_count: 0 })], condition: AltCostCondition::OpponentIslandYouMountainV1 })",
-        _ => "None",
+        _ => super::build_eternal_p3c_v1::alt_cost_for(name),
     }
 }
 
@@ -152,7 +153,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "Xantid Swarm" => &["Keywords::FLYING"],
-        _ => &[],
+        _ => super::build_eternal_p3c_v1::keywords_for(name),
     }
 }
 
@@ -180,6 +181,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Ray of Revelation" => "spell:destroy_target_enchantment;flashback:g",
         "Xantid Swarm" => "attacks:defending_player_cant_cast_spells_this_turn",
         "Zuran Orb" => "activated:sacrifice_land:gain_2",
-        _ => "none",
+        _ => super::build_eternal_p3c_v1::trigger_recipe_for(name),
     }
 }

@@ -21,7 +21,7 @@ mod leyline;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 61] = [
+const PLAYABLE_75: [(&str, &str); 64] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -101,6 +101,9 @@ const PLAYABLE_75: [(&str, &str); 61] = [
     ("premodern", "premodern-survival"),
     ("premodern", "premodern-the-rock"),
     ("premodern", "premodern-mono-red-control"),
+    ("premodern", "premodern-psychatog"),
+    ("premodern", "premodern-elves"),
+    ("premodern", "premodern-reanimator"),
 ];
 
 fn id(name: &str) -> u16 {

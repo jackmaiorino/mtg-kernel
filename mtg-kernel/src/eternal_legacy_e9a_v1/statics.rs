@@ -447,7 +447,8 @@ pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
         | crate::eternal_premodern_p2d_v1::statics::protection_mask(state, host)
         | crate::eternal_premodern_p2c_v1::statics::protection_mask(state, host)
         | crate::eternal_sideboard_s1c_v1::statics::protection_mask(state, host)
-        | crate::eternal_premodern_p3a_v1::statics::protection_mask(state, host);
+        | crate::eternal_premodern_p3a_v1::statics::protection_mask(state, host)
+        | crate::eternal_premodern_p3c_v1::statics::protection_mask(state, host);
     printed | granted_protection_mask(state, host)
 }
 

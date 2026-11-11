@@ -3347,9 +3347,17 @@ pub fn blue_suns_twilight() -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::GainControlOfTargetCreatureCopyAtXFive)
 }
 
+/// "Target creature with mana value X or less": Blue Sun's Twilight, and
+/// Dominate in eternal builds (wave P3c).
+fn x_bounded_creature_target(def: &CardDef) -> bool {
+    (def.cost.x_count != 0 && def.name == BLUE_SUNS_TWILIGHT)
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_premodern_p3c_v1::statics::x_bounded_creature_target(def))
+}
+
 /// Whether this card's spell targets depend on more than its target spec.
 pub(crate) fn filters_cast_targets(def: &CardDef) -> bool {
-    def.cost.x_count != 0 && def.name == BLUE_SUNS_TWILIGHT
+    x_bounded_creature_target(def)
 }
 
 /// "Target creature with mana value X or less": the kernel announces X after
@@ -3363,7 +3371,7 @@ pub(crate) fn cast_target_allowed(
     state: &GameState,
 ) -> bool {
     match target {
-        Target::Object(object) if def.name == BLUE_SUNS_TWILIGHT => {
+        Target::Object(object) if x_bounded_creature_target(def) => {
             crate::engine::x_target_is_payable(
                 def,
                 source,
@@ -3400,8 +3408,8 @@ pub(crate) fn minimum_x(def: &CardDef, targets: &[Target], state: &GameState) ->
             }
         }
     }
-    match (def.name, targets.first()) {
-        (BLUE_SUNS_TWILIGHT, Some(Target::Object(object))) if def.cost.x_count != 0 => {
+    match targets.first() {
+        Some(Target::Object(object)) if x_bounded_creature_target(def) => {
             u8::try_from(mana_value(state, *object)).unwrap_or(u8::MAX)
         }
         _ => 0,

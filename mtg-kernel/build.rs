@@ -40,6 +40,7 @@ mod build_eternal_p2c_v1;
 mod build_eternal_p2d_v1;
 mod build_eternal_p3a_v1;
 mod build_eternal_p3b_v1;
+mod build_eternal_p3c_v1;
 mod build_eternal_s1a_v1;
 mod build_eternal_s1b_v1;
 mod build_eternal_s1c_v1;
@@ -11576,6 +11577,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Advisor" => "Subtype::Advisor",
         "Rhino" => "Subtype::Rhino",
         "Flagbearer" => "Subtype::Flagbearer",
+        "Spike" => "Subtype::Spike",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",

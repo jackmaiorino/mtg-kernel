@@ -27995,6 +27995,258 @@
     "gain_life"
    ],
    "java_file": "Mage.Sets/src/mage/cards/z/ZuranOrb.java"
+  },
+  {
+   "name": "Crumble",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-reanimator"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "destroy_target",
+    "destroy_artifact",
+    "cant_be_regenerated",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/Crumble.java"
+  },
+  {
+   "name": "Dominate",
+   "engine_capability": "full",
+   "mana_cost": "{X}{1}{U}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-psychatog"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "x_cost",
+    "gain_control",
+    "mana_value_check"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/Dominate.java"
+  },
+  {
+   "name": "Druid Lyrist",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Druid"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "activated_ability",
+    "tap_ability",
+    "sacrifice_cost",
+    "destroy_target",
+    "enchantment_removal"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DruidLyrist.java"
+  },
+  {
+   "name": "Ihsan's Shade",
+   "engine_capability": "full",
+   "mana_cost": "{3}{B}{B}{B}",
+   "mana_value": 6,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Shade",
+    "Knight"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 5,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-reanimator"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "protection_from_color"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/IhsansShade.java"
+  },
+  {
+   "name": "Iridescent Angel",
+   "engine_capability": "full",
+   "mana_cost": "{5}{W}{U}",
+   "mana_value": 7,
+   "colors": [
+    "W",
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Angel"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-reanimator"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "flying",
+    "protection_from_color"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/IridescentAngel.java"
+  },
+  {
+   "name": "Multani, Maro-Sorcerer",
+   "engine_capability": "full",
+   "mana_cost": "{4}{G}{G}",
+   "mana_value": 6,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elemental"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-reanimator"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "shroud",
+    "characteristic_defining"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MultaniMaroSorcerer.java"
+  },
+  {
+   "name": "Spike Feeder",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Spike"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "enters_with_counters",
+    "remove_counter_cost",
+    "plus_one_counters",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SpikeFeeder.java"
+  },
+  {
+   "name": "Uktabi Orangutan",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Ape"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-elves",
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "etb_trigger",
+    "destroy_target",
+    "destroy_artifact"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UktabiOrangutan.java"
   }
  ]
 }

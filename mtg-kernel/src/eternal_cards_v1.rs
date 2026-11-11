@@ -460,6 +460,9 @@ pub enum EternalOpV1 {
     /// A leaf owned by Premodern sideboard wave P3b's module. Appended to
     /// preserve existing stack and continuation hash discriminants.
     P3bV1(crate::eternal_premodern_p3b_v1::P3bOpV1),
+    /// A leaf owned by Premodern sideboard wave P3c's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    P3cV1(crate::eternal_premodern_p3c_v1::P3cOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -526,6 +529,7 @@ impl EternalOpV1 {
             EternalOpV1::S1aV1(op) => op.contains_player_choice(),
             EternalOpV1::P3aV1(op) => op.contains_player_choice(),
             EternalOpV1::P3bV1(op) => op.contains_player_choice(),
+            EternalOpV1::P3cV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -859,8 +863,12 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     if let Some(spec) = crate::eternal_premodern_p3a_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }
-    // Premodern sideboard wave P3b's printed and queued triggers.
+    // Premodern sideboard wave P3b's printed triggers.
     if let Some(spec) = crate::eternal_premodern_p3b_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Premodern sideboard wave P3c's printed triggers.
+    if let Some(spec) = crate::eternal_premodern_p3c_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }
     // Premodern wave P2c.
@@ -1079,6 +1087,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::S1aV1(op) => crate::eternal_sideboard_s1a_v1::execute(op, ctx, state),
         EternalOpV1::P3aV1(op) => crate::eternal_premodern_p3a_v1::execute(op, ctx, state),
         EternalOpV1::P3bV1(op) => crate::eternal_premodern_p3b_v1::execute(op, ctx, state),
+        EternalOpV1::P3cV1(op) => crate::eternal_premodern_p3c_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1584,6 +1593,12 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
     {
         return Some(value);
     }
+    // Multani, Maro-Sorcerer sets both stats (wave P3c).
+    if let Some(value) =
+        crate::eternal_premodern_p3c_v1::statics::characteristic_defining_power(state, id)
+    {
+        return Some(value);
+    }
     if let Some(value) = crate::eternal_e9b_v1::characteristic_defining_power(state, id) {
         return Some(value);
     }
@@ -1607,6 +1622,11 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
 pub(crate) fn characteristic_defining_toughness(state: &GameState, id: ObjectId) -> Option<i32> {
     if let Some(value) =
         crate::eternal_premodern_p1a_v1::statics::characteristic_defining_power(state, id)
+    {
+        return Some(value);
+    }
+    if let Some(value) =
+        crate::eternal_premodern_p3c_v1::statics::characteristic_defining_power(state, id)
     {
         return Some(value);
     }
