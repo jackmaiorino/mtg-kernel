@@ -808,7 +808,8 @@ jobs:
       # Black Mage's Rod ends some Affinity games with an observation halt.
       - name: Check the bridge lockstep copy in the Limited build
         if: ${{ !cancelled() && matrix.group == 'limited' }}
-        run: python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures agent_bridge_flat_v4::
+        run: |
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures agent_bridge_flat_v4::
 
       - name: Validate new FDN family cores and owned consumers
         if: ${{ !cancelled() && matrix.group == 'limited' }}
