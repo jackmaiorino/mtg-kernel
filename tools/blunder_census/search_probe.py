@@ -9,6 +9,8 @@ CLI:
   run      --mode search|price --states F --jobs F --sources F --exe EXE --out DIR --tag T --workers W
            [--choosers F] [--n N] [--n-true N] [--chunk C]
   cases    --search DIR --tag T --out F --singles F     (price cases from a search pass)
+  attest   --mode search|price --out DIR --tag T --exe EXE --jobs F --sources F [--choosers F] [--n N] [--n-true N]
+           --note TEXT     (provenance for a pass that predates fingerprints)
   report   --root DIR --out DIR
 """
 from __future__ import annotations
@@ -153,8 +155,66 @@ def run_chunks(exe: str, states: Path, jobs: Path, out: Path, tag: str, workers:
     return record
 
 
-def pass_rows(out: Path, tag: str) -> list[dict]:
+def pass_provenance(out: Path, tag: str, record: dict) -> dict:
+    """The pass's fingerprint, validated. Every chunk must carry the run record's fingerprint and the hash of its
+    states file, and its done marker must equal its chunk record. A pass written before fingerprints existed (no
+    fingerprint in its run record) is accepted only with an attested `provenance-<tag>.json` in the pass directory:
+    its fingerprint must agree with the executable hash and settings the run record itself recorded, and it must list
+    the states hash of every chunk."""
+    fp = record.get("fingerprint")
+    legacy = fp is None
+    attested = {}
+    if legacy:
+        prov_path = out / f"provenance-{tag}.json"
+        if not prov_path.exists():
+            raise SystemExit(f"{out} {tag}: no fingerprint and no attested provenance; refusing the pass")
+        prov = json.loads(prov_path.read_text(encoding="utf-8"))
+        fp = prov["fingerprint"]
+        plain = {k: (v["path"] if isinstance(v, dict) else v) for k, v in fp["env"].items()}
+        if fp["exe_sha256"] != record["exe_sha256"] or plain != record["env"] or prov["tag"] != tag:
+            raise SystemExit(f"{out} {tag}: attested provenance disagrees with the run record")
+        attested = prov["states_sha256"]
+    for c in record["chunks"]:
+        states_sha = file_sha(out / c["states_file"])
+        expected = attested.get(c["states_file"]) if legacy else c.get("states_sha256")
+        if (not legacy and c.get("fingerprint") != fp) or expected != states_sha:
+            raise SystemExit(f"{out} {tag}: chunk {c['chunk']} provenance does not match the pass")
+        done = out / f"done-{tag}-{c['chunk']:04d}.json"
+        if not done.exists() or json.loads(done.read_text(encoding="utf-8")) != c:
+            raise SystemExit(f"{out} {tag}: chunk {c['chunk']} has no matching done marker")
+    if legacy and set(attested) != {c["states_file"] for c in record["chunks"]}:
+        raise SystemExit(f"{out} {tag}: attested provenance does not list exactly the pass's chunks")
+    return fp
+
+
+def attest(out: Path, tag: str, exe: str, jobs: Path, env_extra: dict, note: str) -> dict:
+    """Writes `provenance-<tag>.json` for a pass started before fingerprints existed: the fingerprint of the inputs
+    as they are now, the states hash of every chunk file, and the evidence that the inputs did not change since the
+    pass began (modification times of every input and chunk file, the earliest and latest chunk outputs), with the
+    operator's note. `pass_provenance` then checks it against the pass's own run record."""
+    def mtime(p):
+        return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(Path(p).stat().st_mtime))
+    fp = fingerprint(exe, jobs, env_extra)
+    states = sorted(out.glob(f"states-{tag}-*.jsonl"))
+    outputs = sorted(out.glob(f"rows-{tag}-*.jsonl"), key=lambda p: p.stat().st_mtime)
+    prov = {"tag": tag, "fingerprint": fp, "states_sha256": {p.name: file_sha(p) for p in states},
+            "evidence": {"input_mtimes": {"exe": mtime(exe), "jobs": mtime(jobs),
+                                          **{k: mtime(v) for k, v in env_extra.items()
+                                             if k in ("PRICE_SOURCES", "PROBE_CHOOSERS")}},
+                         "states_mtime_range": [min(mtime(p) for p in states), max(mtime(p) for p in states)],
+                         "first_rows_mtime": mtime(outputs[0]) if outputs else None,
+                         "last_rows_mtime": mtime(outputs[-1]) if outputs else None, "note": note}}
+    (out / f"provenance-{tag}.json").write_text(json.dumps(prov, indent=1), encoding="utf-8")
+    return prov
+
+
+def pass_rows(out: Path, tag: str, provenance: dict | None = None) -> list[dict]:
+    """The rows of a complete pass whose provenance validates (`pass_provenance`); `provenance`, when given, collects
+    each pass's fingerprint by tag."""
     record = json.loads((out / f"run-{tag}.json").read_text(encoding="utf-8"))
+    fp = pass_provenance(out, tag, record)
+    if provenance is not None:
+        provenance[tag] = fp
     found = []
     for c in record["chunks"]:
         got = [json.loads(x) for x in (out / c["file"]).read_text(encoding="utf-8").splitlines() if x.strip()]
@@ -258,28 +318,40 @@ def paired(sa: list, sb: list) -> float | None:
 
 def report(root: Path, out: Path) -> dict:
     out.mkdir(parents=True, exist_ok=True)
-    result = {"banks": {}}
+    result = {"banks": {}, "notes": [
+        "Per-chooser means are over each chooser's valid states (its `states` count; `invalid` counts the states "
+        "excluded by the validity rule). Contrasts use the states valid for both choosers.",
+        "A state is valid for a chooser only when every rollout of the argmax action, and of the chooser's pick when "
+        "it differs, has a natural outcome (the base pricing mode's rule); an agreement counts as zero only then."]}
     per_state = []
+    provenance: dict = {}
     for bank in ("ordinary", "flagged"):
         sdir = root / f"search-{bank}"
         if not (sdir / f"run-search-{bank}.json").exists():
             continue
-        srows = pass_rows(sdir, f"search-{bank}")
+        srows = pass_rows(sdir, f"search-{bank}", provenance)
         prices = {}
-        for mode in ("worlds", "true"):
+        rollouts = {}
+        # Resampled worlds come from the price and single passes; the true state from the price pass and the
+        # single-true pass (the single pass has no true-state rollouts).
+        for mode, tags in (("worlds", (f"price-{bank}", f"single-{bank}")),
+                           ("true", (f"price-{bank}", f"single-true-{bank}"))):
             scored, repeats = {}, 0
-            for tag in (f"price-{bank}", f"single-{bank}"):
+            for tag in tags:
                 pdir = root / tag
                 if (pdir / f"run-{tag}.json").exists():
-                    s, r = action_scores(pass_rows(pdir, tag), mode)
-                    scored.update(s)
+                    s, r = action_scores(pass_rows(pdir, tag, provenance), mode)
+                    for key, acts in s.items():
+                        scored.setdefault(key, {}).update(acts)
                     repeats += r
+                    env = provenance[tag]["env"]
+                    rollouts[f"{tag}/{mode}"] = int(env["PRICE_N" if mode == "worlds" else "PRICE_N_TRUE"])
             prices[mode] = (scored, repeats)
         names = list(srows[0]["choosers"].keys())
         choosers = ["sampled"] + names
         nonclean = {m: sum(1 for st in prices[m][0].values() for sc in st.values() if not clean(sc)) for m in prices}
         bank_out = {"states": len(srows), "repeat_checks": {m: prices[m][1] for m in prices},
-                    "actions_with_nonnatural_rollouts": nonclean, "choosers": {}}
+                    "actions_with_nonnatural_rollouts": nonclean, "rollouts_per_action": rollouts, "choosers": {}}
         for mode in ("worlds", "true"):
             scored = prices[mode][0]
             for name in choosers:
@@ -294,6 +366,9 @@ def report(root: Path, out: Path) -> dict:
                     decided = value is not None and (value < 0.05 or value > 0.95)
                     decided_n += decided
                     if pick == r["argmax"]:
+                        if not clean(base):
+                            invalid += 1
+                            continue
                         g = 0.0
                     else:
                         differ += 1
@@ -346,6 +421,13 @@ def report(root: Path, out: Path) -> dict:
                 contrasts[f"{a} - {b}"] = {"states": len(d), "mean": sum(d) / len(d) if d else None, "ci": bootstrap(d)}
         bank_out["contrasts"] = contrasts
         result["banks"][bank] = bank_out
+    # Every pass of the report must share one executable, one set of label jobs and one model source file.
+    for key in ("exe_sha256", "jobs_sha256"):
+        if len({fp[key] for fp in provenance.values()}) > 1:
+            raise SystemExit(f"passes disagree on {key}: {sorted({fp[key] for fp in provenance.values()})}")
+    if len({fp["env"]["PRICE_SOURCES"]["sha256"] for fp in provenance.values()}) > 1:
+        raise SystemExit("passes disagree on the model sources")
+    result["provenance"] = provenance
     chart(result, out / "gap-chart.png")
     (out / "summary.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
     (out / "per-state.jsonl").write_text("".join(json.dumps(x) + "\n" for x in per_state), encoding="utf-8")
@@ -376,14 +458,17 @@ def chart(result: dict, path: Path) -> None:
             ax.plot([m], [y], "o", color=color, ms=6)
         ax.axvline(0, color="#444", lw=0.8)
         ax.set_yticks(ys)
-        ax.set_yticklabels(names, fontsize=9)
-        ax.set_title(f"{bank} states (n = {result['banks'][bank]['states']})", fontsize=11)
+        ax.set_yticklabels([f"{n} (n={ch[n]['worlds']['states']})" for n in names], fontsize=9)
+        ax.set_title(f"{bank} bank ({result['banks'][bank]['states']} states)", fontsize=11)
         ax.set_xlabel("win-probability gap over the policy's top action (95% CI)", fontsize=9)
         ax.grid(axis="x", color="#ddd", lw=0.6)
         for s in ("top", "right"):
             ax.spines[s].set_visible(False)
-    fig.text(0.01, 0.01, "blue: rollout leaf; orange: value leaf; grey: sampled action. Resampled worlds, N = 64, CRN.",
-             fontsize=8, color="#555")
+    ns = sorted({v for b in banks for k, v in result["banks"][b]["rollouts_per_action"].items()
+                 if k.startswith("price-") and k.endswith("/worlds")})
+    fig.text(0.01, 0.01, "blue: rollout leaf; orange: value leaf; grey: sampled action. Resampled worlds, "
+             f"N = {', '.join(map(str, ns)) or '?'} rollouts per action, common random numbers. "
+             "n = the chooser's valid states.", fontsize=8, color="#555")
     fig.tight_layout(rect=(0, 0.04, 1, 1))
     fig.savefig(path, dpi=140)
     plt.close(fig)
@@ -418,13 +503,24 @@ def main(argv=None) -> int:
     c.add_argument("--tag", required=True)
     c.add_argument("--out", type=Path, required=True)
     c.add_argument("--singles", type=Path, required=True)
+    t = sub.add_parser("attest")
+    t.add_argument("--mode", choices=("search", "price"), required=True)
+    t.add_argument("--out", type=Path, required=True)
+    t.add_argument("--tag", required=True)
+    t.add_argument("--exe", required=True)
+    t.add_argument("--jobs", type=Path, required=True)
+    t.add_argument("--sources", type=Path, required=True)
+    t.add_argument("--choosers", type=Path)
+    t.add_argument("--n", type=int, default=48)
+    t.add_argument("--n-true", type=int, default=16)
+    t.add_argument("--note", required=True)
     p = sub.add_parser("report")
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
     if a.op == "bank":
         print(json.dumps(build_bank(a.census, a.panel, a.pricing_cases, a.pricing_jobs, a.out, a.ordinary, a.flagged)))
-    elif a.op == "run":
+    elif a.op in ("run", "attest"):
         env = {"PRICE_MODE": a.mode, "PRICE_SOURCES": str(a.sources)}
         if a.mode == "search":
             if not a.choosers:
@@ -432,6 +528,9 @@ def main(argv=None) -> int:
             env["PROBE_CHOOSERS"] = str(a.choosers)
         else:
             env.update({"PRICE_N": str(a.n), "PRICE_N_TRUE": str(a.n_true)})
+        if a.op == "attest":
+            print(json.dumps(attest(a.out, a.tag, a.exe, a.jobs, env, a.note), indent=1))
+            return 0
         rec = run_chunks(a.exe, a.states, a.jobs, a.out, a.tag, a.workers, env, a.chunk)
         print(json.dumps({"seconds": rec["seconds"], "expected": rec["expected"]}))
     elif a.op == "cases":

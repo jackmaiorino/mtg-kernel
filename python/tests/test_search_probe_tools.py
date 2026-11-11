@@ -88,5 +88,110 @@ class Resume(unittest.TestCase):
                     sp.run_chunks(str(exe), states, jobs, out, "t", 1, change.get("env", env), 1)
 
 
+def write_pass(d: Path, tag: str, rows: list[dict], fp: dict | None):
+    """A complete one-chunk pass as run_chunks writes it; fp None writes it as the pre-fingerprint driver did."""
+    d.mkdir(parents=True, exist_ok=True)
+    states = d / f"states-{tag}-0000.jsonl"
+    states.write_text("".join(json.dumps({"id": r["id"], "class": r["class"], "index": r["index"]}) + "\n"
+                              for r in rows))
+    (d / f"rows-{tag}-0000.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    chunk = {"chunk": 0, "file": f"rows-{tag}-0000.jsonl", "states_file": states.name, "exit": 0,
+             "states": len(rows), "rows": len(rows), "errors": 0, "seconds": 1.0, "complete": True}
+    if fp is not None:
+        chunk.update({"fingerprint": fp, "states_sha256": sp.file_sha(states)})
+    (d / f"done-{tag}-0000.json").write_text(json.dumps(chunk))
+    plain = {k: (v["path"] if isinstance(v, dict) else v) for k, v in (fp or {"env": {}})["env"].items()}
+    record = {"tag": tag, "expected": len(rows), "chunks": [chunk], "complete": True,
+              "exe_sha256": (fp or {}).get("exe_sha256"), "env": plain}
+    if fp is not None:
+        record["fingerprint"] = fp
+    (d / f"run-{tag}.json").write_text(json.dumps(record))
+
+
+class Fixture:
+    def __init__(self, d: Path):
+        self.d = d
+        self.exe = d / "exe.bin"
+        self.exe.write_bytes(b"exe")
+        self.jobs = d / "jobs.jsonl"
+        self.jobs.write_text("{}\n")
+        self.sources = d / "sources.json"
+        self.sources.write_text("{}")
+        self.choosers = d / "choosers.json"
+        self.choosers.write_text("[]")
+
+    def env(self, mode):
+        e = {"PRICE_MODE": mode, "PRICE_SOURCES": str(self.sources)}
+        if mode == "search":
+            e["PROBE_CHOOSERS"] = str(self.choosers)
+        else:
+            e.update({"PRICE_N": "2", "PRICE_N_TRUE": "2"})
+        return e
+
+    def fp(self, mode):
+        return sp.fingerprint(str(self.exe), self.jobs, self.env(mode))
+
+
+def search_row(id_, argmax, picks):
+    return {"kind": "search", "id": id_, "class": "ordinary", "index": 1, "argmax": argmax, "sampled": argmax,
+            "choosers": {n: {"pick": p, "fallback": False, "cpu": 1.0, "completed": 9, "incomplete": False,
+                             "faults": [], "extra": None} for n, p in picks.items()}}
+
+
+class Provenance(unittest.TestCase):
+    def test_consumers_refuse_unattested_or_mismatched_passes(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Fixture(Path(d))
+            rows = [search_row("g", 0, {"a": 0})]
+            ok = f.d / "ok"
+            write_pass(ok, "s", rows, f.fp("search"))
+            self.assertEqual(len(sp.pass_rows(ok, "s")), 1)
+            # A pre-fingerprint pass is refused by the report and case paths until attested.
+            legacy = f.d / "legacy"
+            write_pass(legacy, "s", rows, None)
+            rec = json.loads((legacy / "run-s.json").read_text())
+            rec.update({"exe_sha256": sp.file_sha(f.exe), "env": f.env("search")})
+            (legacy / "run-s.json").write_text(json.dumps(rec))
+            with self.assertRaises(SystemExit):
+                sp.pass_rows(legacy, "s")
+            with self.assertRaises(SystemExit):
+                sp.build_price_cases(sp.pass_rows(legacy, "s"), f.d / "p.jsonl", f.d / "q.jsonl")
+            sp.attest(legacy, "s", str(f.exe), f.jobs, f.env("search"), "test")
+            self.assertEqual(len(sp.pass_rows(legacy, "s")), 1)
+            # An attestation made under other inputs disagrees with the run record.
+            sp.attest(legacy, "s", str(f.exe), f.jobs, {**f.env("search"), "PROBE_CHOOSERS": str(f.sources)}, "x")
+            with self.assertRaises(SystemExit):
+                sp.pass_rows(legacy, "s")
+            # A chunk whose states file changed after the pass, or whose marker is gone, is refused.
+            (ok / "states-s-0000.jsonl").write_text("{}\n")
+            with self.assertRaises(SystemExit):
+                sp.pass_rows(ok, "s")
+            other = f.d / "other"
+            write_pass(other, "s", rows, f.fp("search"))
+            (other / "done-s-0000.json").unlink()
+            with self.assertRaises(SystemExit):
+                sp.pass_rows(other, "s")
+
+
+class Agreement(unittest.TestCase):
+    def test_agreement_counts_zero_only_with_a_clean_baseline(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Fixture(Path(d))
+            root = f.d / "run"
+            srows = [search_row("g", 0, {"a": 0, "b": 1}), search_row("h", 0, {"a": 0, "b": 1})]
+            write_pass(root / "search-ordinary", "search-ordinary", srows, f.fp("search"))
+            prices = [{**price_row("g", 1, 0, 1, [0, 1], [1, 1]), "class": "ordinary|0|1"},
+                      {**price_row("h", 1, 0, 1, [None, 1], [1, 1], unnatural=(1, 0)), "class": "ordinary|0|1"}]
+            write_pass(root / "price-ordinary", "price-ordinary", prices, f.fp("price"))
+            out = sp.report(root, f.d / "report")
+            ch = out["banks"]["ordinary"]["choosers"]
+            # h's baseline has a non-natural rollout: invalid for every chooser, agreeing or not.
+            self.assertEqual((ch["a"]["worlds"]["states"], ch["a"]["worlds"]["invalid"]), (1, 1))
+            self.assertEqual((ch["b"]["worlds"]["states"], ch["b"]["worlds"]["invalid"]), (1, 1))
+            self.assertEqual(ch["b"]["worlds"]["mean_gap"], 0.5)
+            self.assertEqual(out["banks"]["ordinary"]["contrasts"], {})
+            self.assertEqual(out["banks"]["ordinary"]["rollouts_per_action"]["price-ordinary/worlds"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()
