@@ -2198,7 +2198,8 @@ pub(crate) fn player_targetable(
     source: Option<ObjectId>,
 ) -> bool {
     !player_protected(state, player)
-        // Solitary Confinement: "You have shroud." (Premodern wave P1b)
+        // Solitary Confinement and True Believer: "You have shroud."
+        // (Premodern waves P1b and P3a)
         && !crate::eternal_premodern_p1b_v1::statics::player_has_shroud(state, player)
         // Leyline of Sanctity: "You have hexproof." (wave S1b)
         && (controller == player || !crate::eternal_sideboard_s1b_v1::player_hexproof(state, player))

@@ -51,6 +51,12 @@ pub enum JournalV1 {
         item: StackItemId,
         stack_sha256: [u8; 32],
     },
+    /// A native retarget (Misdirection) changed the paid row's target while
+    /// it was on the stack; the row now binds this digest.
+    Retargeted {
+        paid_at: usize,
+        stack_sha256: [u8; 32],
+    },
 }
 
 fn journal(state: &GameState, at: usize) -> Option<JournalV1> {
@@ -172,8 +178,79 @@ fn paid(state: &GameState, pending: &EffectContinuation) -> Option<(usize, Stack
         _ => None,
     });
     let (at, original, stack_sha256) = matches.next()?;
-    (matches.next().is_none() && original == source && digest(row) == Some(stack_sha256))
-        .then_some((at, source))
+    (matches.next().is_none()
+        && original == source
+        && digest(row) == Some(bound_digest(state, at, stack_sha256)))
+    .then_some((at, source))
+}
+/// The digest the paid row at `paid_at` binds: its latest native retarget's,
+/// or else the cast's own.
+fn bound_digest(state: &GameState, paid_at: usize, paid: [u8; 32]) -> [u8; 32] {
+    rows(state)
+        .filter_map(|(_, row)| match row {
+            JournalV1::Retargeted {
+                paid_at: original,
+                stack_sha256,
+            } if original == paid_at => Some(stack_sha256),
+            _ => None,
+        })
+        .last()
+        .unwrap_or(paid)
+}
+/// The paid cast a live stack row still binds before a native retarget
+/// changes it. `None` for every other row, including a paid row that no
+/// longer binds, which then fails closed as it resolves.
+pub(crate) fn retarget_binding(state: &GameState, item: StackItemId) -> Option<usize> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return None;
+    }
+    let row = state
+        .stack
+        .iter()
+        .find(|row| row.v4.stack_item_id == item)?;
+    let source = cast_source(row).filter(|_| !row.is_copy)?;
+    let mut matches = rows(state).filter_map(|(at, entry)| match entry {
+        JournalV1::Paid {
+            item: paid,
+            source: original,
+            stack_sha256,
+        } if paid == item => Some((at, original, stack_sha256)),
+        _ => None,
+    });
+    let (at, original, stack_sha256) = matches.next()?;
+    (matches.next().is_none()
+        && original == source
+        && StackSourceContractV4::capture(state, row.source, source.cast_method) == source
+        && look(state, at).is_none()
+        && digest(row) == Some(bound_digest(state, at, stack_sha256)))
+    .then_some(at)
+}
+/// Rebinds the paid row `retarget_binding` found to its retargeted digest.
+/// Only the engine's native retarget routines call this, after their
+/// targeting events.
+pub(crate) fn record_retarget(
+    state: &mut GameState,
+    item: StackItemId,
+    paid_at: Option<usize>,
+) -> Result<(), String> {
+    let Some(paid_at) = paid_at else {
+        return Ok(());
+    };
+    let Some(row) = state.stack.iter().find(|row| row.v4.stack_item_id == item) else {
+        return Err("retargeted Portent left the stack".into());
+    };
+    if row.is_copy || cast_source(row).is_none() {
+        return Err("retargeted Portent lost its paid cast".into());
+    }
+    let stack_sha256 = digest(row).ok_or("Portent could not bind its retargeted row")?;
+    note(
+        state,
+        JournalV1::Retargeted {
+            paid_at,
+            stack_sha256,
+        },
+    );
+    Ok(())
 }
 fn remainder(index: usize) -> Vec<EffectFrame> {
     let EffectOp::Sequence(parts) = p1a::portent() else {
