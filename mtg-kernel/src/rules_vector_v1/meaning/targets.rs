@@ -787,6 +787,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::NonbasicLandCardInAGraveyardV1 => ObjF::AnyCard,
         S::DividedFourDamageCreaturesV1 => creature(),
         S::ControlledCreatureOrVehicleV1 => ObjF::Permanent,
+        S::NonblackCreatureManaValueV1(_) => creature(),
     }
 }
 
@@ -860,6 +861,7 @@ pub(super) fn standard_target_origin(
         | S::UpToTwoArtifactsOrEnchantmentsV1
         | S::DividedTwoDamageAnyTargetsV1
         | S::CreatureManaValueAtMostV1(_)
+        | S::NonblackCreatureManaValueV1(_)
         | S::S1dV1(_)
         | S::CreatureOrPlaneswalkerManaValueAtMostV1(_)
         | S::CreatureLandOrPlaneswalkerV1
@@ -1241,6 +1243,11 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         S::ControlledCreatureOrVehicleV1 => {
             object(out, creature(), relation, zone);
             object(out, typed(CardType::Artifact), relation, zone);
+        }
+        // The nonblack and exact mana value refinements have no facet, as
+        // for `TargetSpec::NonblackCreature`.
+        S::NonblackCreatureManaValueV1(_) => {
+            object(out, creature(), relation, zone);
         }
         S::OpponentPermanentV1 | S::LandCardInAGraveyardV1 | S::LandCardInOwnGraveyardV1 => {
             object(out, standard_target_obj(filter), relation, zone);

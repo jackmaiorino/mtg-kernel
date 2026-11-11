@@ -6173,10 +6173,13 @@ fn activation_mana_payment(
         crate::standard_cards_v1::spend_as_any_color(state, player, source, reduced)
     });
     // Anointed Peacekeeper: abilities of sources with the chosen name cost
-    // {2} more to activate.
+    // {2} more to activate. Gloom: abilities of white enchantments cost {3}
+    // more (eternal wave P3b).
     #[cfg(feature = "eternal-fixtures")]
     {
-        let tax = crate::eternal_vintage_v1::activation_tax(state, source);
+        let tax = crate::eternal_vintage_v1::activation_tax(state, source).saturating_add(
+            crate::eternal_premodern_p3b_v1::statics::gloom_activation_tax(state, source),
+        );
         if tax > 0 {
             let mut cost = printed.unwrap_or(Cost::zero());
             cost.generic = cost.generic.saturating_add(tax);
@@ -8184,6 +8187,12 @@ fn alt_cost_condition_met(
         card_def::AltCostCondition::OpponentPlainsYouSwampV1 => {
             cfg!(feature = "eternal-fixtures")
                 && crate::eternal_sideboard_s1a_v1::statics::massacre_free(state, player)
+        }
+        // Mogg Salvage: "If an opponent controls an Island and you control a
+        // Mountain" (eternal wave P3b).
+        card_def::AltCostCondition::OpponentIslandYouMountainV1 => {
+            cfg!(feature = "eternal-fixtures")
+                && crate::eternal_premodern_p3b_v1::statics::mogg_salvage_free(state, player)
         }
         card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
             let subtype_id = subtype.stable_id();

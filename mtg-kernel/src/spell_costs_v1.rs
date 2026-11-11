@@ -911,7 +911,8 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         );
         // Anointed Peacekeeper: spells with the chosen name cost {2} more.
         // Disruptor Flute: spells with the chosen name cost {3} more. Chill:
-        // red spells, by the cast form's color, cost {2} more.
+        // red spells, by the cast form's color, cost {2} more. Gloom: white
+        // spells cost {3} more.
         selected.own_generic_increase =
             crate::eternal_vintage_v1::spell_tax(state, definition.object_name, player)
                 .saturating_add(crate::eternal_sideboard_s1a_v1::statics::flute_spell_tax(
@@ -919,6 +920,9 @@ fn selected_spell_mana_costs_for_source_grant_v1(
                     definition.object_name,
                 ))
                 .saturating_add(crate::eternal_premodern_p3a_v1::statics::chill_tax(
+                    state, definition, method,
+                ))
+                .saturating_add(crate::eternal_premodern_p3b_v1::statics::gloom_spell_tax(
                     state, definition, method,
                 ));
         // Retrace (Wrenn and Six's emblem): discard a land card in addition

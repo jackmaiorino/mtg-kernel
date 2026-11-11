@@ -427,6 +427,10 @@ pub enum StandardTargetV1 {
     DividedFourDamageCreaturesV1,
     /// "Target creature or Vehicle you control" (Perilous Snare).
     ControlledCreatureOrVehicleV1,
+    /// "Target nonblack creature with mana value X" for a fixed X
+    /// (Plaguebearer): Premodern wave P3b's filter
+    /// (`eternal_premodern_p3b_v1::targets`).
+    NonblackCreatureManaValueV1(u8),
 }
 
 impl StandardTargetV1 {
@@ -457,6 +461,9 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p1a_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_premodern_p3b_v1::targets::counts(self) {
             return counts;
         }
         match self {
@@ -909,6 +916,11 @@ pub(crate) fn legal_targets(
         return targets;
     }
     if let Some(targets) =
+        crate::eternal_premodern_p3b_v1::targets::legal_targets(target, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
         crate::eternal_sideboard_s1c_v1::targets::legal_targets(target, controller, prefix, state)
     {
         return targets;
@@ -1164,6 +1176,11 @@ pub(crate) fn target_matches(
         return matches;
     }
     if let Some(matches) =
+        crate::eternal_premodern_p3b_v1::targets::target_matches(target, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
         crate::eternal_sideboard_s1c_v1::targets::target_matches(target, controller, object, state)
     {
         return matches;
@@ -1384,6 +1401,8 @@ pub(crate) fn target_matches(
         // Answered by `eternal_sideboard_s1b_v1::targets` above.
         StandardTargetV1::DividedFourDamageCreaturesV1
         | StandardTargetV1::ControlledCreatureOrVehicleV1 => false,
+        // Answered by `eternal_premodern_p3b_v1::targets` above.
+        StandardTargetV1::NonblackCreatureManaValueV1(_) => false,
     }
 }
 

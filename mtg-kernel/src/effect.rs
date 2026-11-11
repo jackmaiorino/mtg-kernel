@@ -1057,6 +1057,9 @@ pub enum CreatureSacrificeFilter {
     Token,
     Nontoken,
     PermanentType(CardType),
+    /// A permanent with any of these colors, as a mask (Dystopia: "a green
+    /// or white permanent"). Appended for the eternal catalog's wave P3b.
+    PermanentColorsV1(u8),
 }
 
 /// Typed predicate for a private library search. The first consumer is
@@ -18991,6 +18994,9 @@ fn creature_sacrifice_bindings(
         let matches = match filter {
             CreatureSacrificeFilter::PermanentType(card_type) => {
                 crate::engine::object_has_type(state, object_id, card_type)
+            }
+            CreatureSacrificeFilter::PermanentColorsV1(mask) => {
+                crate::engine::object_color_mask(state, object_id) & mask != 0
             }
             _ => {
                 crate::engine::object_has_type(state, object_id, CardType::Creature)

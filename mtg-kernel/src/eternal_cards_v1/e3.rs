@@ -1220,6 +1220,9 @@ pub(crate) fn drive(
         EternalOpV1::P2bV1(op) => {
             crate::eternal_premodern_p2b_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::P3bV1(op) => {
+            crate::eternal_premodern_p3b_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::OutsideGameV1(op) => {
             crate::eternal_outside_game_v1::drive(state, continuation, op, path)
         }
@@ -1794,6 +1797,10 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     if let Some(decision) = crate::eternal_premodern_p2d_v1::statics::entry_choice_decision(state) {
         return Some(decision);
     }
+    // Engineered Plague's creature type (Premodern sideboard wave P3b).
+    if let Some(decision) = crate::eternal_premodern_p3b_v1::statics::entry_choice_decision(state) {
+        return Some(decision);
+    }
     let cavern = cavern_needing_type(state)?;
     let player = state.objects.get(cavern).controller;
     Some(crate::engine::Decision::ChooseEffectOption {
@@ -1885,6 +1892,9 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
         return Ok(());
     }
     if crate::eternal_premodern_p2d_v1::statics::answer_entry_choice(state, option)? {
+        return Ok(());
+    }
+    if crate::eternal_premodern_p3b_v1::statics::answer_entry_choice(state, option)? {
         return Ok(());
     }
     let cavern = cavern_needing_type(state).ok_or("no as-enters choice is pending")?;

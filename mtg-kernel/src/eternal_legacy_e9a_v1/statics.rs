@@ -422,6 +422,9 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
     // Putrid Imp's threshold (wave P2c).
     let imp = crate::eternal_premodern_p2c_v1::statics::controlled_boost(state, object);
     boost = (boost.0 + imp.0, boost.1 + imp.1);
+    // Engineered Plague's chosen type (wave P3b).
+    let plague = crate::eternal_premodern_p3b_v1::statics::plague_boost(state, object);
+    boost = (boost.0 + plague.0, boost.1 + plague.1);
     if active_named(state, object, KNIGHT_OF_THE_RELIQUARY) {
         let lands = graveyard_lands(state, controller);
         boost.0 += lands;

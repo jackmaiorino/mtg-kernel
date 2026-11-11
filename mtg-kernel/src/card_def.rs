@@ -2428,6 +2428,10 @@ pub enum AltCostCondition {
     /// graveyard from anywhere this turn". Appended for the eternal catalog's
     /// wave S1c.
     OpponentThreeCardsToGraveyardThisTurnV1,
+    /// "If an opponent controls an Island and you control a Mountain" (Mogg
+    /// Salvage, `eternal_premodern_p3b_v1`). Appended for the eternal
+    /// catalog's wave P3b.
+    OpponentIslandYouMountainV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
