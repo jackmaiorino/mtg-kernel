@@ -4747,11 +4747,12 @@ fn execute_update_inner_v1(
         // again with its tape forward and refuses a bit that differs from
         // the stored row, so those rows may replay through the row cache.
         // The CUDA steps compare within a tolerance and keep the reference.
-        let row_cache = if update_backend.is_cpu() {
-            ordered_update_preparation::ReplayRowCacheV1::LearnerRows
-        } else {
-            ordered_update_preparation::ReplayRowCacheV1::Off
-        };
+        // The other seat's rows keep it too, unless this process was asked
+        // to replay them through the row cache as well.
+        let row_cache = ordered_update_preparation::ReplayRowCacheV1::for_update_v1(
+            update_backend.is_cpu(),
+            ordered_update_preparation::replay_other_seat_rows_cached_v1(),
+        );
         let prepared = ordered_update_preparation::prepare_with_row_cache_v1(
             &episodes,
             &policy,
