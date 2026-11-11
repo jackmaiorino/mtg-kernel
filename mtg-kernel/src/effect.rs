@@ -11198,17 +11198,18 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     }
                 }
                 EffectTargetSelectionPurpose::CopyTarget { choice } => {
-                    standard_copy::validate(state, pending, choice)?;
+                    let view = standard_copy::staging_view(state, pending)?;
+                    standard_copy::validate(&view, pending, choice)?;
                     let mut all = selected.clone();
                     all.extend(legal.iter().cloned());
-                    let expected = standard_copy::candidates(state, pending, choice)?;
+                    let expected = standard_copy::candidates(&view, pending, choice)?;
                     if all.len() != expected.len()
                         || !all.iter().all(|x| expected.contains(x))
                         || *chooser != pending.ctx.controller
                         || *path != choice.path
                         || *ordered
                         || *min_targets
-                            != u16::from(!standard_copy::can_keep(state, pending, choice)?)
+                            != u16::from(!standard_copy::can_keep(&view, pending, choice)?)
                         || *max_targets != 1
                     {
                         return Err("copy target candidates changed".into());

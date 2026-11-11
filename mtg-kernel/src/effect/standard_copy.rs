@@ -9,6 +9,27 @@ pub struct CopyTargetChoice {
     pub path: Vec<u16>,
     pub remaining: Vec<EffectFrame>,
 }
+/// The state in which the interpreter stages and finishes a copy's target
+/// choice: the resolving ability is off the stack (pop-before-effects) and
+/// its continuation is taken. A public boundary shows both again, so the
+/// pending choice is checked in this view. Otherwise a copy that may target
+/// a triggered ability (Consign to Memory's replicate copy) would see the
+/// resolving copy trigger as a new candidate.
+pub(super) fn staging_view(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<GameState, String> {
+    let index = crate::engine::resolution_cast_v1::resolving_index(
+        state,
+        pending.resolving_item.v4.stack_item_id,
+    )
+    .filter(|&index| state.stack.get(index) == Some(&pending.resolving_item))
+    .ok_or("copy target choice lost its resolving row")?;
+    let mut view = state.clone();
+    view.stack.remove(index);
+    view.engine.pending_effect = None;
+    Ok(view)
+}
 pub(super) fn validate(
     state: &GameState,
     pending: &EffectContinuation,

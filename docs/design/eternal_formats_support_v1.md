@@ -1403,6 +1403,12 @@ Behavior follows each card's current Oracle text, checked against its XMage sour
   every card in that player's library with the name of a card exiled this way, then that player
   shuffles.
 
+The best-of-three run with the new decks found a fault from wave E5b: a replicated Consign to
+Memory halted at its copy's target choice. The interpreter offers that choice with the resolving
+replicate trigger off the stack, and the public boundary shows the trigger again, so the check of
+the pending choice saw the trigger as a new candidate. The check now recomputes the choice in the
+interpreter's view, so the copy is offered and checked against the same targets.
+
 Known gaps:
 - Haunting Echoes exiles every matching library card; the searching player can't choose to
   find fewer (701.19b). Finding fewer never helps its caster in the snapshot decks.
