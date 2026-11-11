@@ -980,6 +980,7 @@ reporting as E1 to E9:
 | P3b | Sideboards of Terrageddon, Mono-Black Aggro, Survival, The Rock and Mono-Red Control (Dystopia, Engineered Plague, Gloom, Goblin Tinkerer, Haunting Echoes, Mogg Salvage, Plaguebearer, Ray of Revelation, Xantid Swarm, Zuran Orb) | 10 | Premodern full 75 34% to 53% |
 | P3c | Sideboards of Psychatog, Elves and Reanimator (Crumble, Dominate, Druid Lyrist, Ihsan's Shade, Iridescent Angel, Multani, Maro-Sorcerer, Spike Feeder, Uktabi Orangutan) | 8 | Premodern full 75 53% to 58% |
 | P3d | Sideboard of Enchantress (Abeyance, Karmic Justice, Sacred Ground) | 3 | Premodern full 75 58% to 66% |
+| P3e | Sideboard of Madness Threshold (Absolute Law, Kor Haven, Winter Orb) | 3 | Premodern full 75 66% to 68% |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -1508,3 +1509,32 @@ Known gaps (P3d): an effect that puts a permanent into a graveyard without destr
 sacrificing it counts as a destruction for Karmic Justice. Effect mana paid during a resolution
 (Treasures) is inside the scope, but those are sacrifices of nonland tokens, which neither card
 counts.
+
+### P3e: Premodern sideboards
+
+After P3d the census lists 14 missing sideboard cards among the playable lists. P3e adds the
+three that complete Madness Threshold (2% of the field): Absolute Law, Kor Haven and Winter Orb.
+The full 75 share goes from 66% to 68%, and Madness Threshold joins `PLAYABLE_75`.
+
+P3e is built in `src/eternal_premodern_p3e_v1.rs` and `build_eternal_p3e_v1.rs`, the new tail
+of the recipe chains after P3d's. Behavior follows each card's current Oracle text and rulings:
+
+- Absolute Law: "All creatures have protection from red." Every creature on the battlefield,
+  whoever controls it, has protection from red while an Absolute Law's abilities apply (its
+  2004-10-04 ruling), and a permanent has it only while it is a creature. The color joins the
+  protection mask that wave E6b's checks apply to targeting, blocking, damage and attachments.
+- Kor Haven is a legendary land with "{T}: Add {C}." and "{1}{W}, {T}: Prevent all combat
+  damage that would be dealt by target attacking creature this turn." The ability records the
+  creature's battlefield incarnation for the turn, and wave E6a's fog check prevents that
+  creature's combat damage. Unlike Maze of Ith's, the prevention is one way: damage dealt to
+  the creature is not prevented.
+- Winter Orb: "As long as Winter Orb is untapped, players can't untap more than one land
+  during their untap steps." The untap step reads whether an untapped Winter Orb applies before
+  anything untaps, so an Orb that is tapped as the step begins lets every land untap (its
+  2016-06-08 ruling). While one applies, the lands that would untap are held back and the
+  active player chooses one of them to untap, through the as-enters choice chain that the
+  engine answers before it leaves a step without priority (the draw-step dredge choice uses it
+  too). A single held land untaps without a choice. Untapping isn't optional, so there is no
+  option to untap none. Lands that wouldn't untap anyway (Stasis, a skip marker, an attachment)
+  are not options, a chosen land with a stun counter loses the counter instead, and other
+  permanents untap as usual.
