@@ -21,7 +21,7 @@ mod leyline;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 80] = [
+const PLAYABLE_75: [(&str, &str); 100] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -61,6 +61,27 @@ const PLAYABLE_75: [(&str, &str); 80] = [
     ("pauper", "pauper-dimir-terror"),
     ("pauper", "pauper-azorius-gates"),
     ("pauper", "pauper-esper-faeries"),
+    ("pauper", "pauper-grixis-affinity"),
+    ("pauper", "pauper-spy-combo"),
+    (
+        "pauper",
+        "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    ),
+    ("pauper", "pauper-jund-wildfire"),
+    ("pauper", "pauper-jeskai-ephemerate"),
+    ("pauper", "pauper-boros-moxite"),
+    ("pauper", "pauper-gruul-ramp"),
+    ("pauper", "pauper-4c-affinity"),
+    ("pauper", "pauper-izzet-terror"),
+    ("pauper", "pauper-boros-synthesizer"),
+    ("pauper", "pauper-grixis-faeries"),
+    ("pauper", "pauper-4c-pestilence"),
+    (
+        "pauper",
+        "pauper-4c-synthesizer-f5246896-123e-417c-9560-63c3c542a0da",
+    ),
+    ("pauper", "pauper-izzet-faeries"),
+    ("pauper", "pauper-4c-ephemerate"),
     ("legacy", "legacy-dimir-tempo"),
     ("legacy", "legacy-izzet-delver"),
     ("legacy", "legacy-doomsday"),
@@ -80,6 +101,11 @@ const PLAYABLE_75: [(&str, &str); 80] = [
     ("legacy", "legacy-sewer-cam-combo"),
     ("legacy", "legacy-painter"),
     ("legacy", "legacy-mono-black-midrange"),
+    ("legacy", "legacy-boros-energy"),
+    ("legacy", "legacy-omni-tell"),
+    ("legacy", "legacy-beseech-storm"),
+    ("legacy", "legacy-death-and-taxes-60-card"),
+    ("legacy", "legacy-temur-delver"),
     ("vintage", "vintage-esper-lurrus-control"),
     ("vintage", "vintage-dimir-lurrus-control"),
     ("vintage", "vintage-lurrus-po"),
@@ -842,6 +868,10 @@ struct MatchRecord {
     sideboarded_games: usize,
     sided_in_casts: usize,
     companion_games: usize,
+    /// Casts of an overload card with its overload form chosen.
+    overloaded_casts: usize,
+    /// Replies carrying a Surgical Extraction or Extirpate search look.
+    search_looks: [usize; 2],
     winner: Option<PlayerId>,
 }
 
@@ -860,6 +890,8 @@ fn play_match(decks: [EternalRegisteredDeckV1; 2], seed: u64) -> MatchRecord {
         sideboarded_games: 0,
         sided_in_casts: 0,
         companion_games: 0,
+        overloaded_casts: 0,
+        search_looks: [0; 2],
         winner: None,
     };
     loop {
@@ -894,6 +926,14 @@ fn play_match(decks: [EternalRegisteredDeckV1; 2], seed: u64) -> MatchRecord {
         );
         record.games += 1;
         record.transcripts.push(played.transcript_sha256);
+        // An overload card's second spell mode is its overload form.
+        record.overloaded_casts += ["Vandalblast", "Electrickery"]
+            .into_iter()
+            .filter_map(|name| played.spell_modes.get(&(id(name), 1)))
+            .sum::<usize>();
+        for (total, looks) in record.search_looks.iter_mut().zip(played.search_looks) {
+            *total += looks;
+        }
         let mut exchanges = 0;
         for seat in 0..2 {
             let player = game.player_in_seat(seat);
@@ -930,6 +970,8 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
     }
     let mut failures = Vec::new();
     let (mut games, mut sideboarded, mut sided_in_casts, mut companion_games) = (0, 0, 0, 0);
+    let mut overloaded_casts = 0;
+    let mut search_looks = [0; 2];
     let mut index = 0u64;
     for (format, decks) in &by_format {
         // Each deck plays the next deck of its format, or a mirror when the
@@ -968,6 +1010,10 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
             sideboarded += record.sideboarded_games;
             sided_in_casts += record.sided_in_casts;
             companion_games += record.companion_games;
+            overloaded_casts += record.overloaded_casts;
+            for (total, looks) in search_looks.iter_mut().zip(record.search_looks) {
+                *total += looks;
+            }
         }
     }
     assert!(
@@ -978,6 +1024,12 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
     assert!(games >= 2 * decks.len(), "{games} games");
     assert!(sideboarded > 0, "no game was sideboarded");
     assert!(sided_in_casts > 0, "no sideboard card was cast");
+    println!("overloaded casts: {overloaded_casts}, search looks: {search_looks:?}");
+    assert!(overloaded_casts > 0, "no overload card was cast overloaded");
+    assert!(
+        search_looks[0] > 0,
+        "no Surgical Extraction search was reached"
+    );
     let companions = decks.iter().any(|(_, deck)| deck.companion().is_some());
     assert!(
         !companions || companion_games > 0,

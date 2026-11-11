@@ -1175,6 +1175,92 @@ fn overload_cannot_use_bolas_citadel_life_payment_both_seats() {
     }
 }
 
+/// Casts `name` overloaded with Chandra, Hope's Beacon on P0's battlefield and
+/// resolves her trigger, which leaves the spell and its copy on the stack.
+fn overload_under_chandra(state: &mut GameState, name: &str, colorless: u8) -> ObjectId {
+    use mtg_kernel::event::{self, ProposedEvent};
+    // A real entry, so Chandra has her loyalty.
+    let chandra = put(state, P0, "Chandra, Hope's Beacon", Zone::Hand);
+    event::propose_and_commit(
+        state,
+        ProposedEvent::zone_change(chandra, Zone::Battlefield),
+    );
+    let spell = put(state, P0, name, Zone::Hand);
+    pool(state, P0, &[ManaColor::R], colorless);
+    cast_mode(state, spell, 1, &[]);
+    for _ in 0..8 {
+        if state.stack.len() == 2
+            && state
+                .stack
+                .iter()
+                .all(|item| item.kind == StackItemKind::Spell)
+        {
+            break;
+        }
+        match next(state) {
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    let (original, copy) = (&state.stack[0], &state.stack[1]);
+    assert_eq!(original.source, spell);
+    assert!(state.objects.get(copy.source).spell_copy_origin.is_some());
+    assert!(original.targets.is_empty());
+    assert!(copy.targets.is_empty(), "the copy is overloaded too");
+    spell
+}
+
+/// Passes priority until the top of the stack has resolved.
+fn resolve_top(state: &mut GameState) {
+    let depth = state.stack.len();
+    while state.stack.len() >= depth {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn chandra_copies_an_overloaded_vandalblast_as_overloaded() {
+    let mut state = plains();
+    let mine = put(&mut state, P0, "Sol Ring", Zone::Battlefield);
+    let first = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
+    let second = put(&mut state, P1, "Prophetic Prism", Zone::Battlefield);
+    let blast = overload_under_chandra(&mut state, "Vandalblast", 4);
+    // The copy alone destroys each artifact P0 doesn't control.
+    resolve_top(&mut state);
+    assert_eq!(state.stack.len(), 1);
+    assert_eq!(zone(&state, first), Zone::Graveyard);
+    assert_eq!(zone(&state, second), Zone::Graveyard);
+    assert_eq!(zone(&state, mine), Zone::Battlefield);
+    settled(&mut state);
+    assert_eq!(zone(&state, blast), Zone::Graveyard);
+    assert_eq!(zone(&state, mine), Zone::Battlefield);
+}
+
+#[test]
+fn chandra_copies_an_overloaded_electrickery_as_overloaded() {
+    let mut state = plains();
+    let mine = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let first = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let second = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let big = put(&mut state, P1, "Kor Skyfisher", Zone::Battlefield);
+    let spell = overload_under_chandra(&mut state, "Electrickery", 1);
+    // The copy alone deals 1 damage to each creature P0 doesn't control.
+    resolve_top(&mut state);
+    assert_eq!(state.stack.len(), 1);
+    assert_eq!(zone(&state, first), Zone::Graveyard);
+    assert_eq!(zone(&state, second), Zone::Graveyard);
+    assert_eq!(state.objects.get(big).damage, 1);
+    assert_eq!(state.objects.get(mine).damage, 0);
+    settled(&mut state);
+    assert_eq!(zone(&state, spell), Zone::Graveyard);
+    assert_eq!(state.objects.get(big).damage, 2);
+    assert_eq!(zone(&state, mine), Zone::Battlefield);
+    assert_eq!(state.objects.get(mine).damage, 0);
+}
+
 // ---- Graveyard and library cards --------------------------------------------------
 
 #[test]

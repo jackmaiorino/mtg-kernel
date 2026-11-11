@@ -24189,7 +24189,7 @@
   },
   {
    "name": "Vandalblast",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{R}",
    "mana_value": 1,
    "colors": [
@@ -24810,7 +24810,7 @@
   },
     {
    "name": "Electrickery",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{R}",
    "mana_value": 1,
    "colors": [
@@ -26453,7 +26453,7 @@
   },
     {
    "name": "Surgical Extraction",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{B/P}",
    "mana_value": 1,
    "colors": [
@@ -27168,7 +27168,7 @@
   },
     {
    "name": "Extirpate",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{B}",
    "mana_value": 1,
    "colors": [

@@ -243,11 +243,9 @@ const SNAPSHOTS: [&str; 2] = [
 ];
 
 /// Executable S1 implementations with known missing reachable branches.
-const PARTIAL_S1: [&str; 13] = [
+const PARTIAL_S1: [&str; 9] = [
     "Circle of Protection: Blue",
     "Coalition Honor Guard",
-    "Electrickery",
-    "Extirpate",
     "Hullbreacher",
     "Lavinia, Azorius Renegade",
     "Leyline of Sanctity",
@@ -255,8 +253,6 @@ const PARTIAL_S1: [&str; 13] = [
     "Martyr of Sands",
     "Meddling Mage",
     "Standard Bearer",
-    "Surgical Extraction",
-    "Vandalblast",
 ];
 
 /// Volrath's Shapeshifter and the S1 cards above are the registry's only
@@ -575,6 +571,11 @@ pub(crate) struct Game {
     pub(crate) winner: Option<usize>,
     /// Spells cast per seat, by card definition id.
     pub(crate) cast_cards: [BTreeMap<u16, usize>; 2],
+    /// Spell mode choices, by card definition id and chosen mode index.
+    pub(crate) spell_modes: BTreeMap<(u16, u64), usize>,
+    /// Replies carrying the chooser's Surgical Extraction and Extirpate
+    /// search looks.
+    pub(crate) search_looks: [usize; 2],
 }
 
 /// Plays one game to a natural terminal and returns its transcript hash,
@@ -603,6 +604,8 @@ pub(crate) fn play_with_outside(
     let mut action_counts = BTreeMap::new();
     let mut casts_by_seat = [0; 2];
     let mut cast_cards: [BTreeMap<u16, usize>; 2] = Default::default();
+    let mut spell_modes = BTreeMap::new();
+    let mut search_looks = [0; 2];
     let mut companion_actions = 0;
     // The last chosen actions, reported if a game fails closed.
     let mut recent: Vec<String> = Vec::new();
@@ -630,6 +633,12 @@ pub(crate) fn play_with_outside(
             reply["response_type"], "error",
             "seed={seed} step={index}: {reply}"
         );
+        for (count, look) in search_looks
+            .iter_mut()
+            .zip(["surgical_search_look_v1", "extirpate_search_look_v1"])
+        {
+            *count += usize::from(!reply[look].is_null());
+        }
         if reply["response_type"] == "terminal" {
             assert_eq!(
                 reply["terminal"]["terminal_code"],
@@ -655,6 +664,8 @@ last actions:
                 companion_actions,
                 winner,
                 cast_cards,
+                spell_modes,
+                search_looks,
             };
         }
         let decision = &reply["decision"];
@@ -740,6 +751,14 @@ last actions:
             casts_by_seat[seat] += 1;
             if let Some(id) = action["semantic"]["source"]["card_db_id"].as_u64() {
                 *cast_cards[seat].entry(id as u16).or_default() += 1;
+            }
+        }
+        if action["semantic"]["action_kind"] == "choose_spell_mode" {
+            if let (Some(source), Some(mode)) = (
+                action["semantic"]["source"]["card_db_id"].as_u64(),
+                action["semantic"]["mode_index"].as_u64(),
+            ) {
+                *spell_modes.entry((source as u16, mode)).or_default() += 1;
             }
         }
         *action_counts
