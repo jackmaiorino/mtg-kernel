@@ -4866,6 +4866,11 @@ pub(crate) fn invalid_sba_aura(
     if aura.zone != Zone::Battlefield {
         return false;
     }
+    // Overencumbered enchants a player (eternal wave S1f).
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(invalid) = crate::eternal_sideboard_s1f_v1::invalid_player_aura(state, id) {
+        return invalid;
+    }
     let definition = &crate::card_def::CARD_DEFS[aura.card_def as usize];
     if aura.v4.attached_to.is_some_and(|link| {
         crate::progenitus_v1::attachment_forbidden(state, id, link.object)

@@ -49,6 +49,7 @@ mod build_eternal_s1b_v1;
 mod build_eternal_s1c_v1;
 mod build_eternal_s1d_v1;
 mod build_eternal_s1e_v1;
+mod build_eternal_s1f_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
 mod build_standard_v1;
@@ -11583,6 +11584,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Flagbearer" => "Subtype::Flagbearer",
         "Spike" => "Subtype::Spike",
         "Minion" => "Subtype::Minion",
+        "Junk" => "Subtype::Junk",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",
