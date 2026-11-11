@@ -981,6 +981,7 @@ reporting as E1 to E9:
 | P3c | Sideboards of Psychatog, Elves and Reanimator (Crumble, Dominate, Druid Lyrist, Ihsan's Shade, Iridescent Angel, Multani, Maro-Sorcerer, Spike Feeder, Uktabi Orangutan) | 8 | Premodern full 75 53% to 58% |
 | P3d | Sideboard of Enchantress (Abeyance, Karmic Justice, Sacred Ground) | 3 | Premodern full 75 58% to 66% |
 | P3e | Sideboard of Madness Threshold (Absolute Law, Kor Haven, Winter Orb) | 3 | Premodern full 75 66% to 68% |
+| P3f | Sideboard of Mono-Black Control (Contagion, Lurking Skirge, Phyrexian Processor) | 3 | Premodern full 75 68% to 70% |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -1538,3 +1539,59 @@ of the recipe chains after P3d's. Behavior follows each card's current Oracle te
   option to untap none. Lands that wouldn't untap anyway (Stasis, a skip marker, an attachment)
   are not options, a chosen land with a stun counter loses the counter instead, and other
   permanents untap as usual.
+
+### P3f: Premodern sideboards
+
+After P3e the census lists 11 missing sideboard cards among the playable lists. P3f adds the
+three that complete Mono-Black Control (2% of the field): Contagion, Lurking Skirge and
+Phyrexian Processor. The full 75 share goes from 68% to 70%, and Mono-Black Control joins
+`PLAYABLE_75`. The remaining sideboards wait on the Full contracts of S1's Partial siblings,
+Circle of Protection: Red for Landstill and BW Control and Meddling Mage for Grow, Replenish
+and Other Control, and Replenish also on Alter Reality's text change.
+
+P3f is built in `src/eternal_premodern_p3f_v1.rs` (with a `targets` submodule) and
+`build_eternal_p3f_v1.rs`, the new tail of the recipe chains after P3e's. Behavior follows each
+card's current Oracle text and rulings, checked against its XMage source:
+
+- Contagion: "You may pay 1 life and exile a black card from your hand rather than pay this
+  spell's mana cost. Distribute two -2/-1 counters among one or two target creatures." The
+  alternative cost is Force of Will's, with black for blue. The counters are divided as the
+  spell is announced (601.2d), like Pyrokinesis's damage: a new target filter takes two picks
+  among creatures, and a creature picked twice is one target with both counters. On resolution
+  each target that is still legal gets its counters. -2/-1 counters are their own kind, so they
+  neither annihilate with +1/+1 counters (704.5q) nor count as -1/-1 counters for persist. They
+  live in module state per battlefield incarnation, as Dystopia's age counters do, and change
+  power and toughness in layer 7c through the controlled boost hook.
+- Lurking Skirge: "When a creature is put into an opponent's graveyard from the battlefield, if
+  this permanent is an enchantment, it becomes a 3/2 Phyrexian Imp creature with flying." The
+  trigger reads each battlefield-to-graveyard move of a permanent that left as a creature,
+  tokens included, as Goblin Sharpshooter's does. For each such move it queues one trigger in
+  wave P1a's queue for every Lurking Skirge whose abilities apply, that is an enchantment, and
+  whose controller is an opponent of the creature's owner (whose graveyard it went to). On
+  resolution the Skirge must be the same battlefield incarnation and still an enchantment
+  (603.4). The change has no duration. The Skirge becomes a creature and stops being an
+  enchantment (205.1a; XMage retains no type), a Phyrexian Imp with base power and toughness
+  3/2 in layer 7b at the effect's timestamp, with flying, and stays black. The type change
+  joins the Oko's Elk overrides, so Opalescence stops animating it, and an ability removal with
+  a later timestamp (an Elk, Dress Down) takes the flying away. A Skirge that becomes a
+  creature can attack only if its controller has controlled it continuously since their most
+  recent turn began (its 2008-08-01 ruling), which the engine's summoning sickness already
+  tracks for every permanent.
+- Phyrexian Processor: "As this artifact enters, pay any amount of life. {4}, {T}: Create an
+  X/X black Phyrexian Minion creature token, where X is the life paid as this artifact
+  entered." The payment is an as-enters choice in Engineered Plague's shape. The controller of
+  a Processor that has just entered, by any route, chooses an amount from 0 to their life total
+  (119.4; paying 0 is allowed, its 2004-10-04 ruling) and pays it as life loss. The amount is
+  recorded for that battlefield incarnation. The ability reads the record of the incarnation
+  that activated it, so it still knows X if the Processor leaves in response. The token is a
+  new registry token, Phyrexian Minion Token (a black Phyrexian Minion creature), whose power
+  and toughness are the recorded X, as for Skyclave Apparition's Illusions. Minion is a new
+  creature type, appended with stable id 381 in Eternal builds only.
+
+The records are pruned as each turn begins, when the stack is empty: counters and changes of
+permanents that left the battlefield, and payments of Processors that left it.
+
+Known gaps (P3f): a Lurking Skirge that leaves the battlefield with the creature (603.10a) has
+no trigger; it would resolve with no effect. Cards outside the eternal decks that count every
+counter kind (Innkeeper's Talent, Warden of the Inner Sky) read only the core counters, as for
+Dystopia's age counters.
