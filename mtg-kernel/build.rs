@@ -42,6 +42,7 @@ mod build_eternal_p3a_v1;
 mod build_eternal_p3b_v1;
 mod build_eternal_p3c_v1;
 mod build_eternal_p3d_v1;
+mod build_eternal_p3e_v1;
 mod build_eternal_s1a_v1;
 mod build_eternal_s1b_v1;
 mod build_eternal_s1c_v1;

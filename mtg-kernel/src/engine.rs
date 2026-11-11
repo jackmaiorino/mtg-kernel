@@ -22025,6 +22025,15 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     (object.zone == Zone::Battlefield && object.controller == p).then_some(id)
                 })
                 .collect::<Vec<_>>();
+            // Winter Orb (Premodern sideboard wave P3e): an untapped Orb, read
+            // before anything untaps, holds back the lands that would untap
+            // so that only one of them does, the active player choosing.
+            let orb = if cfg!(feature = "eternal-fixtures") {
+                crate::eternal_premodern_p3e_v1::untap_limited(state)
+            } else {
+                None
+            };
+            let mut held_lands = Vec::new();
             for id in permanents {
                 // Undiscovered Paradise returns instead (Premodern wave P2c).
                 #[cfg(feature = "eternal-fixtures")]
@@ -22039,9 +22048,16 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     && (!cfg!(feature = "eternal-fixtures")
                         || !crate::eternal_vintage_v1::prevents_untap_step(state, id))
                 {
-                    attempt_untap(state, id);
+                    if orb.is_some() && crate::eternal_premodern_p3e_v1::holds_untap(state, id) {
+                        held_lands.push(id);
+                    } else {
+                        attempt_untap(state, id);
+                    }
                 }
                 state.objects.get_mut(id).summoning_sick = false;
+            }
+            if let Some(orb) = orb {
+                crate::eternal_premodern_p3e_v1::untap_one_land(state, p, orb, held_lands);
             }
             // Bender's Waterskin: "Untap this artifact during each other
             // player's untap step."

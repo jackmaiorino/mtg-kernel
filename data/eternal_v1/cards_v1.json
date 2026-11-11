@@ -28336,6 +28336,94 @@
     "put_onto_battlefield"
    ],
    "java_file": "Mage.Sets/src/mage/cards/s/SacredGround.java"
+  },
+  {
+   "name": "Absolute Law",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-madness-threshold"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "static_ability",
+    "protection_grant",
+    "protection_from_color"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AbsoluteLaw.java"
+  },
+  {
+   "name": "Kor Haven",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [
+    "premodern-madness-threshold"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "colorless_mana",
+    "activated_ability",
+    "damage_prevention"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KorHaven.java"
+  },
+  {
+   "name": "Winter Orb",
+   "engine_capability": "full",
+   "mana_cost": "{2}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-madness-threshold"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "static_ability",
+    "untap_step",
+    "untap_prohibition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WinterOrb.java"
   }
  ]
 }

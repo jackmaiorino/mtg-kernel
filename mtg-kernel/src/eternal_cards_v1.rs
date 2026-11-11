@@ -220,6 +220,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_premodern_p3d_v1::P3dStateV1::is_empty"
     )]
     pub p3d: crate::eternal_premodern_p3d_v1::P3dStateV1,
+    /// Premodern sideboard wave P3e's state (`eternal_premodern_p3e_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_premodern_p3e_v1::P3eStateV1::is_empty"
+    )]
+    pub p3e: crate::eternal_premodern_p3e_v1::P3eStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -472,6 +478,9 @@ pub enum EternalOpV1 {
     /// A leaf owned by Premodern sideboard wave P3d's module. Appended to
     /// preserve existing stack and continuation hash discriminants.
     P3dV1(crate::eternal_premodern_p3d_v1::P3dOpV1),
+    /// A leaf owned by Premodern sideboard wave P3e's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    P3eV1(crate::eternal_premodern_p3e_v1::P3eOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -540,6 +549,7 @@ impl EternalOpV1 {
             EternalOpV1::P3bV1(op) => op.contains_player_choice(),
             EternalOpV1::P3cV1(op) => op.contains_player_choice(),
             EternalOpV1::P3dV1(op) => op.contains_player_choice(),
+            EternalOpV1::P3eV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -1103,6 +1113,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::P3bV1(op) => crate::eternal_premodern_p3b_v1::execute(op, ctx, state),
         EternalOpV1::P3cV1(op) => crate::eternal_premodern_p3c_v1::execute(op, ctx, state),
         EternalOpV1::P3dV1(op) => crate::eternal_premodern_p3d_v1::execute(op, ctx, state),
+        EternalOpV1::P3eV1(op) => crate::eternal_premodern_p3e_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -2004,6 +2015,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_premodern_p2b_v1::begin_turn(state, player);
     crate::eternal_premodern_p3b_v1::begin_turn(state, player);
     crate::eternal_premodern_p3d_v1::begin_turn(state, player);
+    crate::eternal_premodern_p3e_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks
