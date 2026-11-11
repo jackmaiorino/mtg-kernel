@@ -89,7 +89,9 @@ struct Case {
     index: usize,
     chosen: Plan,
     alt: Plan,
-    divergence: Divergence,
+    /// Absent when the two arms first differ somewhere the record cannot
+    /// place (an (a) case whose recorded action was the line's first).
+    divergence: Option<Divergence>,
 }
 
 #[derive(Deserialize)]
@@ -387,7 +389,10 @@ fn score_case(
     case: &Case,
     scorers: &mut [(String, Play)],
 ) -> Result<Value, String> {
-    let div = &case.divergence;
+    let div = case
+        .divergence
+        .as_ref()
+        .ok_or("the case has no divergence decision")?;
     let s = restore(job, div.index)?;
     let m = menu(&s);
     let good = match div.good {
@@ -625,6 +630,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(c.alt, Plan::ExcludeScans);
+        assert!(c.divergence.is_some());
+        let c: Case = serde_json::from_str(
+            r#"{"id":"p/x","class":"a","index":3,
+            "chosen":{"kind":"rows","rows":[1]},"alt":{"kind":"oracle_turn"},"divergence":null}"#,
+        )
+        .unwrap();
+        assert!(c.divergence.is_none());
         let p: Plan = serde_json::from_str(r#"{"kind":"scan_path","path":[true]}"#).unwrap();
         assert_eq!(p, Plan::ScanPath { path: vec![true] });
         assert_eq!(
