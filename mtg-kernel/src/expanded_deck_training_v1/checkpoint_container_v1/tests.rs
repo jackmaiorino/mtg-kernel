@@ -375,9 +375,11 @@ fn decode_with_copy_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
     Ok(saved)
 }
 
-#[test]
-fn the_streamed_canonical_check_refuses_exactly_what_a_reencoded_copy_refuses() {
-    let container = encode_v1(&python_fixture_v1()).unwrap();
+/// Decodes `container` and every single-byte change (three per byte: header,
+/// document, table, padding and values alike), truncation and trailing tail
+/// of it with both `decode_v1` and the copying reference, asserting the same
+/// outcome for each. Returns how many were accepted and how many refused.
+fn same_refusals_v1(container: &[u8]) -> (usize, usize) {
     let outcome = |bytes: &[u8]| decode_v1(bytes).map(|saved| json_v1(&saved));
     let reference = |bytes: &[u8]| decode_with_copy_v1(bytes).map(|saved| json_v1(&saved));
     let mut accepted = 0usize;
@@ -390,30 +392,194 @@ fn the_streamed_canonical_check_refuses_exactly_what_a_reencoded_copy_refuses() 
             Err(_) => refused += 1,
         }
     };
-    check(&container, "the container itself");
-    // Every byte changed three ways: header, document, table, padding and
-    // values alike.
+    check(container, "the container itself");
     let changes: [fn(u8) -> u8; 3] = [|b| b ^ 0x01, |b| b ^ 0x80, |_| 0x20];
     for at in 0..container.len() {
         for change in changes {
-            let mut bytes = container.clone();
+            let mut bytes = container.to_vec();
             bytes[at] = change(bytes[at]);
             if bytes[at] != container[at] {
                 check(&bytes, &format!("byte {at} changed"));
             }
         }
     }
-    // Every truncation, and trailing bytes.
     for length in 0..container.len() {
         check(&container[..length], &format!("truncated to {length}"));
     }
     let tails: [&[u8]; 4] = [&[0], &[1], &[0; 4], &[0; 256]];
     for tail in tails {
-        check(&[container.as_slice(), tail].concat(), "trailing bytes");
+        check(&[container, tail].concat(), "trailing bytes");
     }
+    (accepted, refused)
+}
+
+/// The container encoder as it was before it wrote through a sink: one
+/// buffer, extended in place.
+fn encode_with_buffer_v1(saved: &ExpandedCheckpointV1) -> Result<Vec<u8>, String> {
+    let document = serde_json::to_vec(&document_of_v1(saved)).map_err(|e| e.to_string())?;
+    let mut entries = Vec::new();
+    let mut offset = 0usize;
+    for (section, tensors) in SECTION_NAMES_V1.iter().zip(sections_of_v1(saved)) {
+        for (ordinal, tensor) in tensors.iter().enumerate() {
+            let count = element_count_v1(&tensor.shape)?;
+            if count != tensor.values.len() {
+                return Err("checkpoint container tensor length differs from its shape".into());
+            }
+            let byte_length = count
+                .checked_mul(4)
+                .ok_or("checkpoint container tensor size overflows")?;
+            entries.push(SectionEntryV1 {
+                section: (*section).to_owned(),
+                ordinal,
+                name: tensor.name.clone(),
+                shape: tensor.shape.clone(),
+                offset: offset as u64,
+                byte_length: byte_length as u64,
+            });
+            offset = align_up_v1(
+                offset
+                    .checked_add(byte_length)
+                    .ok_or("checkpoint container size overflows")?,
+            )?;
+        }
+    }
+    let data_length = entries
+        .last()
+        .map_or(0, |last| (last.offset + last.byte_length) as usize);
+    let table = SectionTableV1 {
+        state_format: STATE_FORMAT_V1.to_owned(),
+        sections: entries,
+    };
+    let table = serde_json::to_vec(&table).map_err(|e| e.to_string())?;
+    let data_start = align_up_v1(HEADER_BYTES_V1 + document.len() + table.len())?;
+    let total = data_start
+        .checked_add(data_length)
+        .ok_or("checkpoint container size overflows")?;
+    let mut bytes = Vec::with_capacity(total);
+    bytes.extend_from_slice(MAGIC_V1);
+    bytes.extend_from_slice(&CONTAINER_VERSION_V1.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&(document.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&(table.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&document);
+    bytes.extend_from_slice(&table);
+    bytes.resize(data_start, 0);
+    for tensors in sections_of_v1(saved) {
+        for tensor in tensors {
+            let start = align_up_v1(bytes.len() - data_start)? + data_start;
+            bytes.resize(start, 0);
+            for value in &tensor.values {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+    }
+    assert_eq!(bytes.len(), total);
+    Ok(bytes)
+}
+
+/// A change to one tensor.
+type TensorChangeV1 = fn(&mut ParameterBitsV1);
+
+/// Layout edge cases on the Python fixture's document: no tensors at all, a
+/// section with none, and scalar, odd-length, exactly aligned, just past
+/// aligned and zero-length tensors.
+fn layout_cases_v1() -> Vec<(&'static str, ExpandedCheckpointV1)> {
+    let base = python_fixture_v1();
+    let tensor = |name: &str, shape: Vec<usize>| {
+        let count: usize = shape.iter().product();
+        ParameterBitsV1 {
+            name: name.into(),
+            shape,
+            values: (0..count)
+                .map(|i| (i as f32 * 0.5 - 3.0).to_bits())
+                .collect(),
+        }
+    };
+    let mut no_first_moments = base.clone();
+    no_first_moments.first_moments.clear();
+    let mut odd = base.clone();
+    odd.parameters = vec![
+        tensor("scalar", vec![]),
+        tensor("three", vec![3]),
+        tensor("aligned", vec![64]),
+        tensor("past", vec![65]),
+        tensor("none", vec![2, 0]),
+    ];
+    vec![
+        (
+            "no tensors",
+            with_tensors_v1(&base, [Vec::new(), Vec::new(), Vec::new()]),
+        ),
+        ("a section without tensors", no_first_moments),
+        ("odd lengths", odd),
+    ]
+}
+
+#[test]
+fn the_encoder_writes_and_refuses_what_the_buffered_encoder_did() {
+    let mut cases = layout_cases_v1();
+    cases.extend([
+        ("the unit fixture", fixture_v1()),
+        ("the Python fixture", python_fixture_v1()),
+        ("optional members", optional_members_fixture_v1()),
+    ]);
+    for (what, owned) in &cases {
+        let expected = encode_with_buffer_v1(owned).unwrap();
+        let native = native_sections_v1(owned);
+        assert_eq!(encode_v1(owned).unwrap(), expected, "{what}");
+        assert_eq!(
+            encode_v1(&borrowed_v1(owned, &native)).unwrap(),
+            expected,
+            "{what}"
+        );
+        assert!(encodes_to_v1(owned, &expected).unwrap(), "{what}");
+    }
+    // A value count that is not the shape's product, and a shape whose
+    // product overflows, in each section, owned and borrowed alike.
+    let refusals: [(&str, TensorChangeV1); 3] = [
+        ("a value short", |tensor| {
+            tensor.values.pop();
+        }),
+        ("a value over", |tensor| tensor.values.push(0)),
+        ("an overflowing shape", |tensor| {
+            tensor.shape = vec![usize::MAX, 2];
+        }),
+    ];
+    for (what, change) in refusals {
+        for section in 0..3 {
+            let mut owned = python_fixture_v1();
+            let tensors = match section {
+                0 => &mut owned.parameters,
+                1 => &mut owned.first_moments,
+                _ => &mut owned.second_moments,
+            };
+            change(&mut tensors[1]);
+            let expected = encode_with_buffer_v1(&owned).unwrap_err();
+            let native = native_sections_v1(&owned);
+            assert_eq!(encode_v1(&owned).unwrap_err(), expected, "{what}");
+            assert_eq!(
+                encode_v1(&borrowed_v1(&owned, &native)).unwrap_err(),
+                expected,
+                "{what}"
+            );
+            assert_eq!(encodes_to_v1(&owned, &[]).unwrap_err(), expected, "{what}");
+        }
+    }
+}
+
+#[test]
+fn the_streamed_canonical_check_refuses_exactly_what_a_reencoded_copy_refuses() {
+    let container = encode_v1(&python_fixture_v1()).unwrap();
+    let (accepted, refused) = same_refusals_v1(&container);
     // Value bytes are data, so some changes decode; everything else is
     // refused.
     assert!(accepted > 1 && refused > container.len());
+    // The layout edge cases, including a container with no tensors.
+    for (what, saved) in layout_cases_v1() {
+        let container = encode_v1(&saved).unwrap();
+        let (accepted, refused) = same_refusals_v1(&container);
+        assert!(accepted >= 1 && refused > container.len(), "{what}");
+    }
 }
 
 #[test]
