@@ -175,7 +175,7 @@ pub(crate) fn validate_root(
     Ok(())
 }
 pub(crate) fn selected(state: &GameState, item: &StackItem) -> bool {
-    state.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::SphinxLoreV1{journal:JournalV1::Published{item:r,..}}if r.v4.stack_item_id==item.v4.stack_item_id))
+    state.engine.event_history.of_kinds_v2(&[crate::event_history_v1::EventKindV1::SphinxLoreV1]).any(|(_, e)|matches!(e,event::CommittedEvent::SphinxLoreV1{journal:JournalV1::Published{item:r,..}}if r.v4.stack_item_id==item.v4.stack_item_id))
         || item.inline_effect.as_ref().is_some_and(recipe)
 }
 pub(crate) fn waiting(state: &GameState, ctx: &ExecCtx) -> bool {

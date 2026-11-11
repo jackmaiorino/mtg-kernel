@@ -10662,11 +10662,15 @@ pub(crate) fn lathril_item_selected_v1(state: &GameState, item: &crate::state::S
     matches!(
         item.inline_effect,
         Some(crate::effect::EffectOp::LathrilCombatTokensV1 { .. })
-    ) || state.engine.event_history.iter().any(|entry| {
-        matches!(entry,
+    ) || state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::LathrilCombatPublishedV1])
+        .any(|(_, entry)| {
+            matches!(entry,
             CommittedEvent::LathrilCombatPublishedV1 { item: original, .. }
             if original.v4.stack_item_id == item.v4.stack_item_id)
-    })
+        })
 }
 
 /// Only the engine's already-committed combat batch calls this handoff. Equal
@@ -11041,7 +11045,7 @@ pub(crate) fn copied_token_item_selected_v1(
     item: &crate::state::StackItem,
 ) -> bool {
     matches!(item.inline_effect,Some(crate::effect::EffectOp::CopiedTokenEndStepSacrificeV1{..}))
-        || state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenSacrificePublishedV1{item:row,..} if row.v4.stack_item_id==item.v4.stack_item_id))
+        || state.engine.event_history.of_kinds_v2(&[crate::event_history_v1::EventKindV1::CopiedTokenSacrificePublishedV1]).any(|(_, e)|matches!(e,CommittedEvent::CopiedTokenSacrificePublishedV1{item:row,..} if row.v4.stack_item_id==item.v4.stack_item_id))
 }
 pub(crate) fn validate_published_copied_token_v1(
     state: &GameState,

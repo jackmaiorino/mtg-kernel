@@ -7,6 +7,7 @@ use crate::state::{
 };
 use crate::trigger::PendingTrigger;
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -79,14 +80,119 @@ pub(crate) fn recipe(attack: bool) -> EffectOp {
         crate::high_society_hunter_v1::death_program()
     }
 }
+thread_local! {
+    /// What one `validate_inner` has already found about the state it borrows:
+    /// each capture's source, each attacking source's check of all its attacks
+    /// and each death-capture source's historical contract. A validation looks
+    /// a capture up directly, from its root and from its operation, and each
+    /// attack checks every attack of its source, so without this a validation
+    /// repeats that work for every capture.
+    static SOURCES_V45: RefCell<Option<SourcesV45>> = const { RefCell::new(None) };
+}
+
+struct SourcesV45 {
+    state: *const GameState,
+    captures: HashMap<u64, Result<(AbilitySourceContractV4, bool), String>>,
+    attackers: HashMap<AbilitySourceContractV4, Result<(), String>>,
+    historical: HashMap<AbilitySourceContractV4, Result<(), String>>,
+}
+
+/// Keeps [`SOURCES_V45`] for `state` while a validation borrows it. The state
+/// cannot change during that borrow, so a remembered answer is the answer a
+/// repeated lookup would give. An enclosing validation of the same state keeps
+/// its own memo; any other memo is restored afterwards.
+struct SourcesScopeV45(Option<Option<SourcesV45>>);
+
+impl SourcesScopeV45 {
+    fn enter(state: &GameState) -> Self {
+        SOURCES_V45.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo
+                .as_ref()
+                .is_some_and(|memo| std::ptr::eq(memo.state, state))
+            {
+                return Self(None);
+            }
+            Self(Some(memo.replace(SourcesV45 {
+                state,
+                captures: HashMap::new(),
+                attackers: HashMap::new(),
+                historical: HashMap::new(),
+            })))
+        })
+    }
+}
+
+impl Drop for SourcesScopeV45 {
+    fn drop(&mut self) {
+        if let Some(outer) = self.0.take() {
+            SOURCES_V45.with(|memo| *memo.borrow_mut() = outer);
+        }
+    }
+}
+
+fn remembered<T>(state: &GameState, read: impl FnOnce(&SourcesV45) -> Option<T>) -> Option<T> {
+    SOURCES_V45.with(|memo| {
+        memo.borrow()
+            .as_ref()
+            .filter(|memo| std::ptr::eq(memo.state, state))
+            .and_then(read)
+    })
+}
+
+fn remember(state: &GameState, write: impl FnOnce(&mut SourcesV45)) {
+    SOURCES_V45.with(|memo| {
+        if let Some(memo) = memo
+            .borrow_mut()
+            .as_mut()
+            .filter(|memo| std::ptr::eq(memo.state, state))
+        {
+            write(memo);
+        }
+    });
+}
+
 pub(crate) fn source_at(
     state: &GameState,
     capture: u64,
 ) -> Result<(AbilitySourceContractV4, bool), String> {
+    if let Some(found) = remembered(state, |memo| memo.captures.get(&capture).cloned()) {
+        return found;
+    }
+    let found = find_source(state, capture);
+    remember(state, |memo| {
+        memo.captures.insert(capture, found.clone());
+    });
+    found
+}
+
+fn attacker(state: &GameState, source: AbilitySourceContractV4) -> Result<(), String> {
+    if let Some(found) = remembered(state, |memo| memo.attackers.get(&source).cloned()) {
+        return found;
+    }
+    let found = crate::high_society_hunter_v1::validate_source(state, source);
+    remember(state, |memo| {
+        memo.attackers.insert(source, found.clone());
+    });
+    found
+}
+
+fn historical_source(state: &GameState, source: AbilitySourceContractV4) -> Result<(), String> {
+    if let Some(found) = remembered(state, |memo| memo.historical.get(&source).cloned()) {
+        return found;
+    }
+    let found = crate::engine::validate_historical_ability_source_contract(state, source);
+    remember(state, |memo| {
+        memo.historical.insert(source, found.clone());
+    });
+    found
+}
+
+fn find_source(state: &GameState, capture: u64) -> Result<(AbilitySourceContractV4, bool), String> {
     let at = usize::try_from(capture).map_err(|_| "Hunter capture exceeds usize")?;
     let (source, attack) = match state.engine.event_history.get(at) {
         Some(CommittedEvent::HighSocietyHunterAttackCaptureV1 { source, .. }) => {
-            crate::high_society_hunter_v1::validate_source(state, *source)?;
+            attacker(state, *source)?;
             (*source, true)
         }
         Some(CommittedEvent::ControlledCreatureDeathCaptureV1 {
@@ -108,7 +214,7 @@ pub(crate) fn source_at(
             {
                 return Err("Hunter original other-nontoken death occurrence changed".into());
             }
-            crate::engine::validate_historical_ability_source_contract(state, *source)?;
+            historical_source(state, *source)?;
             (*source, false)
         }
         _ => return Err("Hunter original capture absent".into()),
@@ -613,6 +719,7 @@ pub(crate) fn linked_paid_incarnation(
     Ok(None)
 }
 fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), String> {
+    let _sources = SourcesScopeV45::enter(state);
     if state
         .engine
         .event_log
