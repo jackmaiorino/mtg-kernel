@@ -634,7 +634,10 @@ New, each built once in the first wave that needs it:
   the failures were confined to Portent and the copied Show and Tell fixture.
   The physical paid Portent successor binds
   its original cast, targeted-library look/order and optional shuffle before
-  scheduling the caster's draw at the next turn's upkeep. The delayed trigger
+  scheduling the caster's draw at the next turn's upkeep. A native retarget
+  while it is on the stack (Misdirection) journals an authenticated rebinding
+  of the paid row, so the look follows the new target; a control change of the
+  paid spell (Commandeer) still fails closed. The delayed trigger
   retains the original spell contract after source departure and the native
   APNAP publication path. Each draw attempt uses the common Started/Completed
   owner for Jace, Hullbreacher, Dredge and one Riddler adjustment, with terminal

@@ -27090,7 +27090,7 @@ pub(crate) fn retarget_spell_targets_v1(
         .collect::<Vec<_>>();
     let item = state
         .stack
-        .iter_mut()
+        .iter()
         .find(|item| item.v4.stack_item_id == stack_item)
         .ok_or("the retargeted spell left the stack")?;
     if item.targets.as_slice() == targets {
@@ -27099,9 +27099,21 @@ pub(crate) fn retarget_spell_targets_v1(
     if item.targets.len() != targets.len() {
         return Err("a retargeted spell keeps its number of targets".to_string());
     }
+    let paid_portent =
+        crate::eternal_cards_v1::owned_draws_v1::portent::retarget_binding(state, stack_item);
+    let item = state
+        .stack
+        .iter_mut()
+        .find(|item| item.v4.stack_item_id == stack_item)
+        .ok_or("the retargeted spell left the stack")?;
     item.targets = targets.to_vec();
     item.v4.target_contracts = contracts;
-    log_final_targeting_events(state, stack_item)
+    log_final_targeting_events(state, stack_item)?;
+    crate::eternal_cards_v1::owned_draws_v1::portent::record_retarget(
+        state,
+        stack_item,
+        paid_portent,
+    )
 }
 
 /// The legal targets `player` could choose for `spec`, with `source` as the
@@ -27222,6 +27234,8 @@ pub(crate) fn retarget_spell_v1(
         return Err(format!("{target:?} is not a legal new target"));
     }
     let contract = StackTargetContractV4::capture(state, target);
+    let paid_portent =
+        crate::eternal_cards_v1::owned_draws_v1::portent::retarget_binding(state, stack_item);
     let item = state
         .stack
         .iter_mut()
@@ -27229,7 +27243,12 @@ pub(crate) fn retarget_spell_v1(
         .ok_or("the retargeted spell left the stack")?;
     item.targets = vec![target];
     item.v4.target_contracts = vec![contract];
-    log_final_targeting_events(state, stack_item)
+    log_final_targeting_events(state, stack_item)?;
+    crate::eternal_cards_v1::owned_draws_v1::portent::record_retarget(
+        state,
+        stack_item,
+        paid_portent,
+    )
 }
 
 /// The spell copy's current targets.

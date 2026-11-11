@@ -279,11 +279,24 @@ fn pass_until(state: &mut GameState, stop: impl Fn(&GameState) -> bool) {
     panic!("condition never held");
 }
 
-/// Plays to `player`'s next turn's first main phase.
+/// Plays to `player`'s next first main phase after this turn's. The
+/// engine's `turn` counts rounds: both players' turns share a number.
 fn to_main_phase_of(state: &mut GameState, player: PlayerId) {
-    let turn = state.turn;
+    let now = (state.turn, state.active_player);
     pass_until(state, |state| {
-        state.turn > turn && state.active_player == player && state.step == Step::Main1
+        (state.turn, state.active_player) != now
+            && state.active_player == player
+            && state.step == Step::Main1
+    });
+}
+
+/// Passes to the next turn's upkeep with a trigger on the stack.
+fn to_next_upkeep_trigger(state: &mut GameState) {
+    let now = (state.turn, state.active_player);
+    pass_until(state, |state| {
+        (state.turn, state.active_player) != now
+            && state.step == Step::Upkeep
+            && !state.stack.is_empty()
     });
 }
 
@@ -406,7 +419,7 @@ fn tranquil_domain_destroys_every_non_aura_enchantment() {
 fn overload_destroys_by_mana_value_two_or_five_if_kicked() {
     for (name, kicked, destroyed) in [
         ("Sol Ring", false, true),
-        ("Phyrexian Revoker", false, true),
+        ("Grim Monolith", false, true),
         ("Masticore", false, false),
         ("Masticore", true, true),
         ("Wurmcoil Engine", true, false),
@@ -722,7 +735,7 @@ fn sphere_of_law_prevents_two_of_each_red_sources_damage_to_its_controller() {
 
     // Damage that can't be prevented is dealt in full.
     let pain = put(&mut state, P0, "Flaring Pain", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::R], 0);
+    pool(&mut state, P0, &[ManaColor::R], 1);
     cast(&mut state, pain, &[]);
     settled(&mut state);
     hit(&mut state, fanatic, Target::Player(P1), 3);
@@ -760,10 +773,7 @@ fn essence_flare_on_an_opponents_creature_is_its_controllers_trigger() {
     cast(&mut state, flare, &[Target::Object(specter)]);
     settled(&mut state);
     assert_eq!(power_toughness(&state, specter), (4, 2));
-    let turn = state.turn;
-    pass_until(&mut state, |state| {
-        state.turn > turn && state.step == Step::Upkeep && !state.stack.is_empty()
-    });
+    to_next_upkeep_trigger(&mut state);
     assert_eq!(state.active_player, P1);
     let trigger = state.stack.last().unwrap();
     assert_eq!(trigger.source, flare);
@@ -783,10 +793,7 @@ fn essence_flare_on_an_opponents_creature_is_its_controllers_trigger() {
     pool(&mut state, P0, &[ManaColor::U], 0);
     cast(&mut state, flare, &[Target::Object(specter)]);
     settled(&mut state);
-    let turn = state.turn;
-    pass_until(&mut state, |state| {
-        state.turn > turn && state.step == Step::Upkeep && !state.stack.is_empty()
-    });
+    to_next_upkeep_trigger(&mut state);
     bury(&mut state, flare);
     pass_until(&mut state, |state| state.step == Step::Main1);
     assert_eq!(state.objects.get(specter).counters.minus0_minus1, 1);
