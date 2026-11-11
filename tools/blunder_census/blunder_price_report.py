@@ -46,7 +46,11 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     a.out.mkdir(parents=True, exist_ok=True)
     price = {p: bp.summarize_price(a.root / f"price-{p}", "price") for p in PANELS}
-    score_rows = [r for r in bp.rows(a.root / "score", "rows-score") if r["kind"] == "score"]
+    score_rows = [r for p in PANELS for r in bp.rows(a.root / "score", f"score-{p}") if r["kind"] == "score"]
+    with (a.out / "cases.jsonl").open("w", encoding="utf-8") as f:
+        for p in PANELS:
+            for rec in bp.per_case(a.root / f"price-{p}", "price"):
+                f.write(json.dumps({"panel": p, **rec}) + "\n")
     bank_panel = lambda r: "c1-u0524288" if r["id"].startswith("c1-u0524288") else "b512"
     same = {}
     for cls in bp.CLASSES:
@@ -57,6 +61,15 @@ def main(argv=None) -> int:
                                        "p_good_q": quart([x["p_good"] for x in rs]),
                                        "share_p_good_below_0.01": sum(x["p_good"] < 0.01 for x in rs) / len(rs),
                                        "mean_p_good": sum(x["p_good"] for x in rs) / len(rs)}
+    by_bank = {}
+    for p in PANELS:
+        for cls in bp.CLASSES:
+            for ck in CHECKPOINTS:
+                rs = [r["scores"][ck] for r in score_rows if r["class"] == cls and bank_panel(r) == p]
+                if rs:
+                    by_bank[f"{p}/{cls}/{ck}"] = {"states": len(rs), "p_good_q": quart([x["p_good"] for x in rs]),
+                                                  "margin_q": quart([x["margin"] for x in rs]),
+                                                  "share_p_good_below_0.01": sum(x["p_good"] < 0.01 for x in rs) / len(rs)}
     own = {}
     for p in PANELS:
         for cls in bp.CLASSES:
@@ -86,10 +99,10 @@ def main(argv=None) -> int:
             if e and e["ci"]:
                 readings[f"{p}/{cls}"] = reading(e, own[f"{p}/{cls}"]["median"])
     summary = {"price": {p: {k: {x: v for x, v in e.items() if x != "gaps"} for k, e in price[p].items()} for p in PANELS},
-               "same_state": same, "own_p_good": own, "exposure": exposure, "readings": readings}
+               "same_state": same, "same_state_by_bank": by_bank, "own_p_good": own, "exposure": exposure, "readings": readings}
     (a.out / "summary.json").write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
 
-    lines = ["| Panel | Class | Mode | Cases | Mean gap (95% CI) | Median | Clearly + | Near 0 | Negative | Unresolved | "
+    lines = ["| Panel | Class | Mode | Cases (invalid) | Mean gap (95% CI) | Median | Clearly + | Near 0 | Negative | Unresolved | "
              "Decided share | Live mean gap | Mean value (chosen) | Reading |", "|" + "---|" * 14]
     for p in PANELS:
         for cls in bp.CLASSES:
@@ -99,7 +112,7 @@ def main(argv=None) -> int:
                     continue
                 lab = e["labels"]
                 live = "n/a" if e["live_mean_gap"] is None else f"{e['live_mean_gap']:+.3f}"
-                lines.append(f"| {p} | {NAMES[cls]} | {'resampled' if mode == 'worlds' else 'true state'} | {e['cases']} | "
+                lines.append(f"| {p} | {NAMES[cls]} | {'resampled' if mode == 'worlds' else 'true state'} | {e['cases']} ({e['invalid_cases']}) | "
                              f"{e['mean_gap']:+.3f} ({e['ci'][0]:+.3f}, {e['ci'][1]:+.3f}) | {e['median_gap']:+.3f} | "
                              f"{lab['clearly_positive']:.2f} | {lab['near_zero']:.2f} | {lab['negative']:.2f} | "
                              f"{lab['unresolved']:.2f} | {e['decided_share']:.2f} | {live} | {e['mean_value_chosen']:.3f} | "
@@ -114,6 +127,13 @@ def main(argv=None) -> int:
                 m, g = e["margin_q"], e["p_good_q"]
                 lines.append(f"| {NAMES[cls]} | {ck} | {e['states']} | {m[0]:+.2f} / {m[1]:+.2f} / {m[2]:+.2f} | "
                              f"{g[0]:.4f} / {g[1]:.4f} / {g[2]:.4f} | {e['share_p_good_below_0.01']:.2f} |")
+    lines += ["", "By bank (the panel whose flags the states come from):", "",
+              "| Bank | Class | Checkpoint | States | p(good) quartiles | Share p(good) < 0.01 |", "|---|---|---|---:|---|---:|"]
+    for k, e in by_bank.items():
+        p, cls, ck = k.split("/")
+        g = e["p_good_q"]
+        lines.append(f"| {p} | {NAMES[cls]} | {ck} | {e['states']} | {g[0]:.4f} / {g[1]:.4f} / {g[2]:.4f} | "
+                     f"{e['share_p_good_below_0.01']:.2f} |")
     (a.out / "same-state-table.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     import matplotlib

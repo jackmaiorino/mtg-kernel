@@ -328,9 +328,17 @@ fn restore(job: &LabelJob, index: usize) -> Result<Session, String> {
     Ok(s)
 }
 
+/// Per-rollout scores, null for a rollout that is not a natural game end
+/// (an invalid forced row, a truncation, a halt or the step bound): such a
+/// rollout carries no outcome and the summary drops its case.
 fn arms_json(rows: &[(Rollout, Rollout)]) -> Value {
-    let scores = |f: fn(&(Rollout, Rollout)) -> Rollout| -> Vec<f64> {
-        rows.iter().map(|r| f(r).score).collect()
+    let scores = |f: fn(&(Rollout, Rollout)) -> Rollout| -> Vec<Option<f64>> {
+        rows.iter()
+            .map(|r| {
+                let x = f(r);
+                (x.natural && !x.invalid).then_some(x.score)
+            })
+            .collect()
     };
     let count = |f: fn(&(Rollout, Rollout)) -> Rollout, g: fn(&Rollout) -> bool| {
         rows.iter().filter(|r| g(&f(r))).count()
@@ -408,6 +416,9 @@ fn score_case(
     }
     let mut out = serde_json::Map::new();
     for (name, play) in scorers.iter_mut() {
+        // A fresh inference state per case: a tensorization failure latches
+        // in the scorer until reset and must not reach the next case.
+        play.reset_for_game_v1([0, 0]).map_err(|e| e.to_string())?;
         let p = play
             .legacy_policy_mut()
             .ok_or("scorers must be Legacy sources")?;

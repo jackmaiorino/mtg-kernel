@@ -137,9 +137,9 @@ def run_shards(exe: str, cases: Path, jobs: Path, out: Path, shards: int, env_ex
             code = subprocess.run([exe, "mode=s4a-blunder-price", f"out={rows_path}"], stdout=log,
                                   stderr=subprocess.STDOUT, env=env, creationflags=BELOW_NORMAL).returncode
         rows = rows_path.read_text(encoding="utf-8").splitlines() if rows_path.exists() else []
-        return {"shard": k, "exit": code, "cases": count, "rows": len(rows),
-                "errors": sum(1 for r in rows if json.loads(r)["kind"] == "error"),
-                "complete": code == 0 and len(rows) == count}
+        errors = sum(1 for r in rows if json.loads(r)["kind"] == "error")
+        return {"shard": k, "file": rows_path.name, "exit": code, "cases": count, "rows": len(rows),
+                "errors": errors, "complete": code == 0 and len(rows) == count and errors == 0}
 
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=shards) as pool:
@@ -155,12 +155,33 @@ def run_shards(exe: str, cases: Path, jobs: Path, out: Path, shards: int, env_ex
 
 # ---------------------------------------------------------------- summary
 
-def rows(out: Path, prefix: str) -> list[dict]:
-    return [json.loads(x) for p in sorted(out.glob(f"{prefix}-*.jsonl")) for x in p.read_text(encoding="utf-8").splitlines()]
+def rows(out: Path, tag: str) -> list[dict]:
+    """The rows of a successful pass: only the shard files its manifest lists (run-<tag>.json), every requested
+    case exactly once, no error row."""
+    record = json.loads((out / f"run-{tag}.json").read_text(encoding="utf-8"))
+    if not record["complete"]:
+        raise SystemExit(f"{out}/run-{tag}.json is not a complete pass")
+    found = []
+    for s in record["shards"]:
+        name = s.get("file", f"rows-{tag}-{s['shard']:02d}.jsonl")
+        found += [json.loads(x) for x in (out / name).read_text(encoding="utf-8").splitlines() if x.strip()]
+    keys = [(r["id"], r["index"]) for r in found]
+    if len(keys) != len(set(keys)):
+        raise SystemExit(f"{out} {tag}: duplicate case rows")
+    if len(found) != record["expected"] or any(r["kind"] == "error" for r in found):
+        raise SystemExit(f"{out} {tag}: rows do not cover the requested cases without error")
+    return found
 
 
 def case_gap(arms: dict) -> dict | None:
+    """Paired gap of one case in one world mode; None (an invalid case) when any rollout of either arm has no
+    natural outcome: an invalid forced row, a truncation, a halt or the step bound (null scores, or the older
+    rows' nonzero invalid or unnatural counts)."""
+    if any(arms.get("invalid", [0, 0])) or any(arms.get("unnatural", [0, 0])):
+        return None
     pairs = [(a, c) for a, c in zip(arms["alt"], arms["chosen"])]
+    if any(a is None or c is None for a, c in pairs):
+        return None
     n = len(pairs)
     if n < 2:
         return None
@@ -185,16 +206,27 @@ def bootstrap(values: list[float], seed: int = 20261111, reps: int = 2000) -> li
     return [means[int(0.025 * reps)], means[int(0.975 * reps) - 1]]
 
 
-def summarize_price(out: Path, tag: str) -> dict:
-    result = {}
-    for r in rows(out, f"rows-{tag}"):
-        if r["kind"] != "price":
-            continue
+def per_case(out: Path, tag: str) -> list[dict]:
+    """One record per case and world mode: the gap, its interval, label, values and decided flag, or invalid."""
+    recs = []
+    for r in rows(out, tag):
         for mode in ("worlds", "true"):
             g = case_gap(r[mode])
-            if g:
-                result.setdefault((r["class"], mode), []).append({**g, "id": r["id"], "index": r["index"],
-                                                                    "invalid": r[mode]["invalid"]})
+            recs.append({"id": r["id"], "index": r["index"], "class": r["class"], "mode": mode,
+                         "valid": g is not None, "invalid_rollouts": r[mode].get("invalid"),
+                         "unnatural_rollouts": r[mode].get("unnatural"), **(g or {})})
+    return recs
+
+
+def summarize_price(out: Path, tag: str) -> dict:
+    result = {}
+    invalid = {}
+    for rec in per_case(out, tag):
+        key = (rec["class"], rec["mode"])
+        if rec["valid"]:
+            result.setdefault(key, []).append(rec)
+        else:
+            invalid[key] = invalid.get(key, 0) + 1
     table = {}
     for (cls, mode), cases in sorted(result.items()):
         gaps = [c["gap"] for c in cases]
@@ -210,7 +242,7 @@ def summarize_price(out: Path, tag: str) -> dict:
             "live_labels": ({k: sum(1 for c in live if c["label"] == k) / len(live)
                              for k in ("clearly_positive", "near_zero", "negative", "unresolved")} if live else None),
             "mean_value_chosen": sum(c["value_chosen"] for c in cases) / len(cases),
-            "invalid_rollouts": [sum(c["invalid"][0] for c in cases), sum(c["invalid"][1] for c in cases)],
+            "invalid_cases": invalid.get((cls, mode), 0),
             "gaps": gaps}
     return table
 
