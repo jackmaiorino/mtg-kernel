@@ -1149,7 +1149,9 @@ once its trigger left the stack.
 
 Known gaps (S1g): no effect removes counters from the Spirits, so their flying counter is not
 a counter other effects can count or remove. A land entering under Alpine Moon keeps an
-enters-tapped ability, as under Blood Moon.
+enters-tapped ability, as under Blood Moon. Drop of Honey's state trigger is checked as
+triggers are collected, so creatures that all leave and return within one event batch, such
+as a flicker of every creature, don't trigger it (its ruling says they do).
 
 ## Execution
 
