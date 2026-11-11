@@ -1845,10 +1845,6 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_premodern_p3a_v1::delayed_triggers(
         state, events,
     ));
-    // Queues into wave P1a's queue, which is drained below.
-    triggers.extend(crate::eternal_premodern_p3b_v1::delayed_triggers(
-        state, events,
-    ));
     triggers.extend(crate::eternal_premodern_p1a_v1::delayed_triggers(
         state, events,
     ));
@@ -1913,7 +1909,6 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         || crate::eternal_sideboard_s1a_v1::delayed_effect_matches(name, effect)
         || crate::eternal_sideboard_s1b_v1::delayed_effect_matches(name, effect)
         || crate::eternal_premodern_p3a_v1::delayed_effect_matches(name, effect)
-        || crate::eternal_premodern_p3b_v1::delayed_effect_matches(name, effect)
     {
         return true;
     }

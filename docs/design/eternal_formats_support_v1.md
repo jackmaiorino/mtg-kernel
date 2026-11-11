@@ -1382,6 +1382,8 @@ Behavior follows each card's current Oracle text, checked against its XMage sour
 - Gloom's "White spells cost {3} more to cast" is Chill's tax with white and {3}. "Activated
   abilities of white enchantments cost {3} more to activate" joins Anointed Peacekeeper's
   activation tax, for battlefield enchantments that are white now (Painter's Servant counts).
+  An ability without a mana cost now pays the tax too (Seal of Cleansing's sacrifice); before,
+  the payment checked the tax but did not pay it, for Anointed Peacekeeper's tax as well.
 - Engineered Plague's as-enters choice offers every creature type of the closed subtype pool,
   with case twins once, in a fixed order, so the choice reveals nothing hidden and can name the
   opponent's types. All creatures of the chosen type get -1/-1, beside Shared Triumph's boost
@@ -1392,9 +1394,11 @@ Behavior follows each card's current Oracle text, checked against its XMage sour
 - Dystopia's cumulative upkeep is an upkeep trigger of its controller: an age counter (kept in
   module state by battlefield incarnation, like fade counters), then pay 1 life for each age
   counter or sacrifice it. The choice is offered only when the life can be paid (119.4). Its
-  other trigger is queued as each player's upkeep begins and is controlled by Dystopia's
-  controller; that player sacrifices a permanent that is green or white now, through the
-  engine's sacrifice choice with a new color filter.
+  other trigger is a printed trigger at the beginning of each upkeep, controlled by Dystopia's
+  controller. "That player" is a branch on a new condition, whether it is the trigger
+  controller's turn: its controller on their own turn and the opponent otherwise. That player
+  sacrifices a permanent that is green or white now, through the engine's sacrifice choice with
+  a new color filter, which authenticates the choice against the trigger's printed program.
 - Haunting Echoes exiles target player's graveyard except basic land cards as one batch, then
   every card in that player's library with the name of a card exiled this way, then that player
   shuffles.

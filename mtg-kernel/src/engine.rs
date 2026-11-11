@@ -7580,6 +7580,20 @@ fn commit_cost_components_from_plan_v1(
     mana_plan: Option<&mana::PaymentPlan>,
 ) -> Option<u16> {
     let mut mana_spent = 0;
+    // An ability without a mana cost can still owe a cost increase (Gloom on
+    // a white enchantment's sacrifice ability, Anointed Peacekeeper on a
+    // named source's tap ability). Its plan was derived with the other
+    // components unpaid, so pay it first.
+    if !components.iter().any(|component| {
+        matches!(
+            component,
+            CostComponent::Mana(_) | CostComponent::ConvokeMana(_)
+        )
+    }) {
+        if let Some(plan) = mana_plan {
+            mana_spent = pay_plan(state, player, plan);
+        }
+    }
     for c in components {
         match c {
             CostComponent::Tap => event::propose_and_commit(state, ProposedEvent::tap(source)),

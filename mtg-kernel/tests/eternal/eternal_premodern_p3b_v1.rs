@@ -229,6 +229,14 @@ fn activate(state: &mut GameState, source: ObjectId, index: u8, targets: &[Targe
     }
 }
 
+/// Finishes an activation whose targets are chosen: its costs are paid and
+/// the ability waits on the stack.
+fn on_the_stack(state: &mut GameState) {
+    let before = state.stack.len();
+    assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(state.stack.len(), before + 1);
+}
+
 fn choose_target(state: &mut GameState, target: Target) {
     match next(state) {
         Decision::ChooseTargets { legal_targets, .. } => {
@@ -420,6 +428,7 @@ fn goblin_tinkerer_destroys_an_artifact_that_deals_its_mana_value_back() {
     let ring = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
     pool(&mut state, P0, &[ManaColor::R], 0);
     activate(&mut state, tinkerer, 0, &[Target::Object(ring)]);
+    on_the_stack(&mut state);
     bury(&mut state, tinkerer);
     settled(&mut state);
     assert_eq!(zone(&state, ring), Zone::Graveyard);
@@ -469,6 +478,7 @@ fn plaguebearer_destroys_a_nonblack_creature_with_mana_value_x() {
     let mongrel = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
     pool(&mut state, P0, &[ManaColor::B], 4);
     activate(&mut state, plaguebearer, 2, &[Target::Object(mongrel)]);
+    on_the_stack(&mut state);
     let painter = put(&mut state, P1, "Painter's Servant", Zone::Battlefield);
     state.objects.get_mut(painter).v4.chosen_color = Some(ManaColor::B);
     settled(&mut state);

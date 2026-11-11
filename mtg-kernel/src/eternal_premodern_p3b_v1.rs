@@ -2,8 +2,8 @@
 //! (`docs/design/eternal_formats_support_v1.md`): the sideboard cards of
 //! Terrageddon, Mono-Black Aggro, Survival, The Rock and Mono-Red Control.
 //!
-//! `eternal_cards_v1` forwards its effect leaves and queued triggers here,
-//! wave P2b's triggered ability table falls through to `triggers_for` below,
+//! `eternal_cards_v1` forwards its effect leaves here, wave P2b's triggered
+//! ability table falls through to `triggers_for` below,
 //! the recipe tables of waves P3a and P2b fall through to
 //! `build_eternal_p3b_v1.rs`, and the engine calls the hooks in `statics`
 //! and `targets` only in `eternal-fixtures` builds. Every table is keyed by
@@ -16,7 +16,8 @@
 //! - an attack trigger that bans the defending player's spells for the turn
 //!   (Xantid Swarm), as Orim's Chant's record of wave E9a;
 //! - cumulative upkeep with age counters and a life payment (Dystopia),
-//!   and an upkeep edict on each player's upkeep with a color filter;
+//!   and an edict at each upkeep on the player whose upkeep it is, with a
+//!   color filter;
 //! - exile a graveyard but its basic land cards, then every library card
 //!   with an exiled card's name (Haunting Echoes);
 //! - in `statics`: Gloom's taxes on white spells and on activated
@@ -31,19 +32,18 @@ pub mod targets;
 
 use crate::card_def::{Subtype, Supertype, TargetSpec, CARD_DEFS};
 use crate::effect::{
-    CreatureSacrificeFilter, EffectContinuation, EffectFrame, EffectOp, ExecCtx, PlayerRef,
+    CreatureSacrificeFilter, EffectCond, EffectContinuation, EffectFrame, EffectOp, ExecCtx,
+    PlayerRef,
 };
 use crate::eternal_cards_v1::EternalOpV1;
-use crate::eternal_legacy_e9a_v1::{active_permanents, link_live_in, live_link, TurnV1};
-use crate::eternal_premodern_p1a_v1::{
-    destroy, halt, legal_object_target, live_ability_source, queue_trigger,
-};
-use crate::event::{self, CommittedEvent, ProposedEvent};
+use crate::eternal_legacy_e9a_v1::{link_live_in, live_link, TurnV1};
+use crate::eternal_premodern_p1a_v1::{destroy, halt, legal_object_target, live_ability_source};
+use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
 use crate::standard_cards_v1::StandardOpV1;
-use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Target, Zone};
-use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
+use crate::state::{GameState, ObjectLinkV4, Target, Zone};
+use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
 pub(crate) const DYSTOPIA: &str = "Dystopia";
@@ -181,29 +181,20 @@ fn dystopia_upkeep() -> EffectOp {
     ])
 }
 
-const XANTID_SWARM_TRIGGERS: [TriggeredAbilityDef; 1] =
-    [trigger(TriggerCondition::Attacks, xantid_attacks)];
-const DYSTOPIA_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
-    TriggerCondition::BeginningOfUpkeep {
-        controller_only: true,
-    },
-    dystopia_upkeep,
-)];
-
-/// Triggered abilities of this module's cards that use the engine's own
-/// trigger conditions. Dystopia's sacrifice on each player's upkeep is
-/// queued by the hook below.
-pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
-    match name {
-        DYSTOPIA => &DYSTOPIA_TRIGGERS,
-        XANTID_SWARM => &XANTID_SWARM_TRIGGERS,
-        _ => &[],
+/// Dystopia: "At the beginning of each player's upkeep, that player
+/// sacrifices a green or white permanent." The trigger is controlled by
+/// Dystopia's controller, so that player is the controller on their own turn
+/// and the opponent otherwise. The sacrifice choice is a branch of the
+/// trigger's own program, as the engine's sacrifice choice requires.
+fn dystopia_edict() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::ControllersTurnV1,
+        then: Box::new(dystopia_sacrifice(PlayerRef::Controller)),
+        else_: Box::new(dystopia_sacrifice(PlayerRef::Opponent)),
     }
 }
 
-/// Dystopia: "At the beginning of each player's upkeep, that player
-/// sacrifices a green or white permanent." `player` is the trigger
-/// controller's `PlayerRef` for the player whose upkeep it is.
+/// `player` sacrifices a permanent that is green or white now.
 fn dystopia_sacrifice(player: PlayerRef) -> EffectOp {
     EffectOp::SacrificeCreature {
         player,
@@ -214,20 +205,38 @@ fn dystopia_sacrifice(player: PlayerRef) -> EffectOp {
     }
 }
 
-/// Target specs of this module's triggered abilities: none of them targets.
-pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
-    (triggers_for(name)
-        .iter()
-        .any(|trigger| (trigger.effect)() == *effect)
-        || delayed_effect_matches(name, effect))
-    .then_some(TargetSpec::None)
+const XANTID_SWARM_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [trigger(TriggerCondition::Attacks, xantid_attacks)];
+const DYSTOPIA_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    trigger(
+        TriggerCondition::BeginningOfUpkeep {
+            controller_only: true,
+        },
+        dystopia_upkeep,
+    ),
+    trigger(
+        TriggerCondition::BeginningOfUpkeep {
+            controller_only: false,
+        },
+        dystopia_edict,
+    ),
+];
+
+/// Triggered abilities of this module's cards.
+pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
+    match name {
+        DYSTOPIA => &DYSTOPIA_TRIGGERS,
+        XANTID_SWARM => &XANTID_SWARM_TRIGGERS,
+        _ => &[],
+    }
 }
 
-/// Queued triggers owned by this module's cards.
-pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
-    name == DYSTOPIA
-        && (*effect == dystopia_sacrifice(PlayerRef::Controller)
-            || *effect == dystopia_sacrifice(PlayerRef::Opponent))
+/// Target specs of this module's triggered abilities: none of them targets.
+pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    triggers_for(name)
+        .iter()
+        .any(|trigger| (trigger.effect)() == *effect)
+        .then_some(TargetSpec::None)
 }
 
 // ---- Effect leaves ------------------------------------------------------------------
@@ -400,46 +409,6 @@ pub(crate) fn drive(
 }
 
 // ---- Hooks ----------------------------------------------------------------------------
-
-/// The triggers this module's cards set off in this collection, queued into
-/// wave P1a's queue.
-pub(crate) fn delayed_triggers(
-    state: &mut GameState,
-    events: &[CommittedEvent],
-) -> Vec<PendingTrigger> {
-    if !cfg!(feature = "eternal-fixtures") {
-        return Vec::new();
-    }
-    for event in events {
-        if let CommittedEvent::UpkeepBegan { player } = *event {
-            note_upkeep(state, player);
-        }
-    }
-    Vec::new()
-}
-
-/// Dystopia: "At the beginning of each player's upkeep, that player
-/// sacrifices a green or white permanent." Each Dystopia's controller
-/// controls its trigger.
-fn note_upkeep(state: &mut GameState, player: PlayerId) {
-    let dystopias = active_permanents(state, DYSTOPIA, None).collect::<Vec<_>>();
-    for dystopia in dystopias {
-        let controller = state.objects.get(dystopia).controller;
-        let that_player = if player == controller {
-            PlayerRef::Controller
-        } else {
-            PlayerRef::Opponent
-        };
-        let source = AbilitySourceContractV4::capture(state, dystopia);
-        queue_trigger(
-            state,
-            source,
-            controller,
-            dystopia_sacrifice(that_player),
-            None,
-        );
-    }
-}
 
 /// Drops the records of permanents that left the battlefield.
 fn prune(state: &mut GameState) {

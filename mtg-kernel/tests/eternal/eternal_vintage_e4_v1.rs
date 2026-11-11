@@ -2646,6 +2646,36 @@ fn anointed_peacekeeper_sees_the_hand_and_taxes_the_named_card() {
     assert!(activatable(&mut state, mine, 0));
     act(&mut state, Action::ActivateManaAbility(mine));
     assert_eq!(mana(&state, P1, ManaColor::C), 3);
+
+    // The tax is paid by an ability without a mana cost as well: Strip Mine's
+    // tap and sacrifice spend the {2}.
+    let mut state = islands();
+    peacekeeper_naming(&mut state, "Strip Mine");
+    opponents_main_phase(&mut state);
+    let mine = put(&mut state, P1, "Strip Mine", Zone::Battlefield);
+    let island = put(&mut state, P0, "Island", Zone::Battlefield);
+    pool(&mut state, P1, &[], 2);
+    activate(&mut state, mine, 0, &[Target::Object(island)]);
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(mana(&state, P1, ManaColor::C), 0, "paid {{2}}");
+    settled(&mut state);
+    assert_eq!(state.objects.get(island).zone, Zone::Graveyard);
+
+    // Fanatical Firebrand's tap and sacrifice pay it once.
+    let mut state = islands();
+    peacekeeper_naming(&mut state, "Fanatical Firebrand");
+    opponents_main_phase(&mut state);
+    let firebrand = put(&mut state, P1, "Fanatical Firebrand", Zone::Battlefield);
+    pool(&mut state, P1, &[], 1);
+    assert!(!activatable(&mut state, firebrand, 0));
+    pool(&mut state, P1, &[], 1);
+    let life = state.players[0].life;
+    activate(&mut state, firebrand, 0, &[Target::Player(P0)]);
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(mana(&state, P1, ManaColor::C), 0, "paid {{2}} once");
+    assert_eq!(state.objects.get(firebrand).zone, Zone::Graveyard);
+    settled(&mut state);
+    assert_eq!(state.players[0].life, life - 1);
 }
 
 /// A game at its very beginning: turn 1's untap step, P0 active.

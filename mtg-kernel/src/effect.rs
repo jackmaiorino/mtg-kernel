@@ -1367,6 +1367,10 @@ pub enum EffectCond {
     ControllerAttackedThisTurn,
     /// Intervening recheck using the captured original controller.
     OpponentLostLifeThisTurn,
+    /// It is the resolving ability's controller's turn: "that player" of a
+    /// trigger at the beginning of each upkeep is its controller on their
+    /// own turn and the opponent otherwise (Dystopia).
+    ControllersTurnV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -25078,6 +25082,7 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             .hand
             .is_empty(),
         EffectCond::CreatureDiedThisTurn => state.creature_died_this_turn_v1(),
+        EffectCond::ControllersTurnV1 => state.active_player == ctx.controller,
         EffectCond::OpponentLostLifeThisTurn => {
             crate::life_loss_turn_v1::opponent_lost_life(state, ctx.controller).unwrap_or(false)
         }
