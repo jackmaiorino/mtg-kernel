@@ -666,3 +666,338 @@ fn non_finite_final_block_values_keep_the_full_backward() {
         }
     }
 }
+
+/// The analytic term bound (`TermBoundV1`) is what a full backward records,
+/// apart from the compact final block's extra QKV term and its excess
+/// values, when every card is non-padding; a compact final block, and
+/// padding cards, record no more. Shapes include few objects with many
+/// actions, where the compact QKV records more values than the full one.
+#[test]
+fn term_bound_covers_every_backward_record() {
+    let one_block = SConfigV1 {
+        layers: 1,
+        ..TINY_V1
+    };
+    let shapes = [
+        super::tools::PARITY_SHAPE_V1,
+        TINY_SHAPE_V1,
+        ShapeV1 {
+            objects: (1, 2),
+            edges: (0, 1),
+            actions: (6, 12),
+            refs: (0, 6),
+        },
+    ];
+    let mut rng = SplitMixV1::new(51);
+    let mut excess_cases = 0;
+    for (config, seed) in [(SConfigV1::s_v1(), 7), (TINY_V1, 8), (one_block, 9)] {
+        let model = SModelV1::init_parity_v1(config, seed).unwrap();
+        let layout = model.layout_v1();
+        let mut tape = STapeV1::default();
+        for case in 0..12 {
+            let mut t = synthetic_decision_v1(&mut rng, shapes[case % shapes.len()]);
+            let padded = case % 4 == 3;
+            if !padded {
+                for card in t
+                    .object_card_ids
+                    .iter_mut()
+                    .chain(&mut t.action_ref_card_ids)
+                {
+                    *card = 1 + card.rem_euclid(150);
+                }
+            }
+            let input = SInputV1::of_tensor_v1(&t);
+            let counts = input.validate_v1(&config).unwrap();
+            let bound = parallel::TermBoundV1::of_counts_v1(layout, counts);
+            assert_eq!(parallel::TermBoundV1::of_input_v1(layout, input), bound);
+            // The forward refuses a decision whose shapes differ before it
+            // records, so its bound reserves nothing.
+            let mut malformed = t.clone();
+            malformed.object_groups.truncate(t.object_groups.len() - 1);
+            let malformed = SInputV1::of_tensor_v1(&malformed);
+            assert!(model.forward_v1(malformed, &mut tape).is_err());
+            assert_eq!(
+                parallel::TermBoundV1::of_input_v1(layout, malformed),
+                parallel::TermBoundV1::default()
+            );
+            model.forward_v1(input, &mut tape).unwrap();
+            let (dlogits, dvalue) = adjoints_v1(&mut rng, tape.logits.len());
+            let recorded = |choice| {
+                let mut terms = parallel::SGradientTermsV1::default();
+                model
+                    .backward_rows_v1(
+                        input,
+                        &tape,
+                        &dlogits,
+                        dvalue,
+                        &mut parallel::SGradientSinkV1::Record(&mut terms),
+                        &mut SBackScratchV1::default(),
+                        choice,
+                    )
+                    .unwrap();
+                terms.recorded_v1()
+            };
+            let full = recorded(FinalRowsV1::All);
+            let live = recorded(FinalRowsV1::Live);
+            let d = config.d_model;
+            let (m, l) = (1 + counts.actions, 1 + counts.objects + counts.actions);
+            let excess = d * (2 * m).saturating_sub(l);
+            excess_cases += usize::from(excess > 0);
+            for (name, recorded) in [("full", full), ("live", live)] {
+                assert!(
+                    recorded.values <= bound.values
+                        && recorded.linears <= bound.linears
+                        && recorded.additions <= bound.additions,
+                    "{name} case {case}: {recorded:?} against {bound:?}"
+                );
+            }
+            if !padded {
+                assert_eq!(
+                    parallel::TermBoundV1 {
+                        values: full.values + excess,
+                        linears: full.linears + 1,
+                        additions: full.additions,
+                    },
+                    bound,
+                    "case {case}"
+                );
+                assert_eq!(live.linears, bound.linears, "case {case}");
+                assert_eq!(live.additions + 2 * counts.objects, bound.additions);
+            }
+        }
+    }
+    assert!(excess_cases > 0, "some compact QKV records exceed the full");
+}
+
+/// Ragged groups: one to four substeps, long and short decisions, shared
+/// cards and signed-zero advantages, so groups cross block boundaries.
+fn ragged_groups_v1(seed: u64) -> Vec<(Vec<(NativeFlatDecisionTensorV2, usize)>, f32, f32)> {
+    let long = ShapeV1 {
+        objects: (8, 14),
+        edges: (2, 8),
+        actions: (3, 7),
+        refs: (1, 6),
+    };
+    let mut rng = SplitMixV1::new(seed);
+    [3, 1, 2, 4, 1, 1, 2, 3, 1, 2]
+        .iter()
+        .enumerate()
+        .map(|(group, &substeps)| {
+            let records = (0..substeps)
+                .map(|sub| {
+                    let shape = if (group + sub) % 3 == 0 {
+                        long
+                    } else {
+                        TINY_SHAPE_V1
+                    };
+                    let mut t = synthetic_decision_v1(&mut rng, shape);
+                    if group % 4 == 1 {
+                        t.object_card_ids.fill(3);
+                        t.action_ref_card_ids.fill(3);
+                    }
+                    let a = t.action_features.len() / ACTION_FEATURE_DIM_V1;
+                    let selected = rng.below(a as u64) as usize;
+                    (t, selected)
+                })
+                .collect();
+            let advantage = match group {
+                0 => 0.0,
+                5 => -0.0,
+                _ => rng.uniform(-2.0, 2.0),
+            };
+            (records, advantage, rng.uniform(-1.0, 1.0))
+        })
+        .collect()
+}
+
+fn loss_bits_v1(loss: SLossV1) -> [u32; 5] {
+    [
+        loss.policy_sum,
+        loss.value_sum,
+        loss.policy_term,
+        loss.value_term,
+        loss.loss,
+    ]
+    .map(f32::to_bits)
+}
+
+/// Every term plan gives the serial gradient and loss bit for bit: two sets
+/// that record one block while the previous replays, one set of several
+/// slots, and one slot. Its slots never hold more than the plan reserves,
+/// which never exceeds the budget or one slot's bound.
+#[test]
+fn pipelined_gae_matches_serial_bits_for_every_term_plan() {
+    let model = SModelV1::init_parity_v1(TINY_V1, 74).unwrap();
+    let data = ragged_groups_v1(84);
+    let groups = as_groups_v1(&data);
+    let substeps: usize = groups.iter().map(|g| g.substeps.len()).sum();
+    assert_eq!(substeps, 20);
+    let mut work = SWorkV1::default();
+    let mut serial = vec![0.0; model.layout_v1().total];
+    let expected = model
+        .gae_loss_gradient_v1(&groups, 0.5, &mut serial, &mut work)
+        .unwrap();
+    let bound = groups
+        .iter()
+        .flat_map(|g| &g.substeps)
+        .map(|s| {
+            let counts = s.input.validate_v1(&TINY_V1).unwrap();
+            parallel::TermBoundV1::of_counts_v1(model.layout_v1(), counts)
+        })
+        .reduce(|a, b| parallel::TermBoundV1 {
+            values: a.values.max(b.values),
+            linears: a.linears.max(b.linears),
+            additions: a.additions.max(b.additions),
+        })
+        .unwrap();
+    let slot = bound.bytes_v1();
+    for workers in [2, 3, 5] {
+        for (budget, sets, slots) in [
+            (parallel::TERM_BUDGET_BYTES_V1, 2, workers),
+            (2 * workers * slot, 2, workers),
+            (2 * workers * slot - 1, 1, 2 * workers - 1),
+            (3 * slot, 1, 3),
+            (slot, 1, 1),
+            (1, 1, 1),
+        ] {
+            let mut gradient = vec![0.0; serial.len()];
+            let (loss, used) = model
+                .gae_loss_gradient_planned_v1(
+                    &groups,
+                    0.5,
+                    &mut gradient,
+                    workers,
+                    &mut work,
+                    parallel::PipelineOptionsV1 {
+                        budget_bytes: budget,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let label = format!("workers {workers}, budget {budget}");
+            assert_eq!((used.plan.sets, used.plan.slots), (sets, slots), "{label}");
+            assert_eq!(used.plan.bound, bound, "{label}");
+            assert_eq!(bits_v1(&gradient), bits_v1(&serial), "{label}");
+            assert_eq!(loss_bits_v1(loss), loss_bits_v1(expected), "{label}");
+            assert_eq!(loss.group_count, expected.group_count);
+            // Every slot is used (20 substeps) and none outgrows its bound.
+            assert_eq!(
+                used.capacity_bytes,
+                used.plan.reserved_bytes_v1(),
+                "{label}"
+            );
+            assert!(used.capacity_bytes <= budget.max(slot), "{label}");
+        }
+    }
+}
+
+/// The first failure in substep order is reported, whatever the plan and
+/// worker count: a policy-row refusal, a forward refusal (an index outside
+/// its table, or shapes that differ) and an invalid group, early, late and
+/// where a block ends while the previous replays.
+#[test]
+fn pipelined_gae_reports_the_first_failure_in_substep_order() {
+    let model = SModelV1::init_parity_v1(TINY_V1, 75).unwrap();
+    let data = ragged_groups_v1(85);
+    // Group 3 has four substeps; group 9 is last.
+    for (group, sub, kind) in [
+        (0, 0, 0),
+        (0, 2, 1),
+        (3, 1, 0),
+        (3, 3, 1),
+        (4, 0, 2),
+        (5, 0, 3),
+        (6, 1, 1),
+        (7, 2, 3),
+        (9, 1, 0),
+        (9, 0, 2),
+    ] {
+        let mut data = data.clone();
+        match kind {
+            1 => data[group].0[sub].0.object_card_ids[0] = 1_000_000,
+            3 => {
+                let object_groups = &mut data[group].0[sub].0.object_groups;
+                object_groups.truncate(object_groups.len() - 1);
+            }
+            _ => {}
+        }
+        let mut groups = as_groups_v1(&data);
+        match kind {
+            0 => groups[group].substeps[sub].selected = usize::MAX,
+            2 => groups[group].value_target = f32::NAN,
+            _ => {}
+        }
+        // A later failure must not win.
+        groups[9].substeps[1].selected = usize::MAX - 1;
+        let mut work = SWorkV1::default();
+        let mut gradient = vec![0.0; model.layout_v1().total];
+        let expected = model
+            .gae_loss_gradient_v1(&groups, 0.5, &mut gradient, &mut work)
+            .unwrap_err();
+        for workers in [2, 3, 5] {
+            for budget in [parallel::TERM_BUDGET_BYTES_V1, 1] {
+                let error = model
+                    .gae_loss_gradient_planned_v1(
+                        &groups,
+                        0.5,
+                        &mut gradient,
+                        workers,
+                        &mut work,
+                        parallel::PipelineOptionsV1 {
+                            budget_bytes: budget,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap_err();
+                assert_eq!(
+                    error, expected,
+                    "group {group} substep {sub}, workers {workers}, budget {budget}"
+                );
+            }
+        }
+    }
+}
+
+/// A worker that panics in any phase, a helper or the caller, ends the
+/// update with that panic once every helper has joined, and leaves nothing
+/// behind: the next update gives the serial bits.
+#[test]
+fn pipelined_gae_reraises_a_worker_panic_after_joining_its_helpers() {
+    let model = SModelV1::init_parity_v1(TINY_V1, 76).unwrap();
+    let data = ragged_groups_v1(86);
+    let groups = as_groups_v1(&data);
+    let mut work = SWorkV1::default();
+    let mut serial = vec![0.0; model.layout_v1().total];
+    model
+        .gae_loss_gradient_v1(&groups, 0.5, &mut serial, &mut work)
+        .unwrap();
+    for (worker, generation) in [(1, 1), (2, 4), (0, 1), (0, 6), (1, 8)] {
+        let mut gradient = vec![0.0; serial.len()];
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            model.gae_loss_gradient_planned_v1(
+                &groups,
+                0.5,
+                &mut gradient,
+                3,
+                &mut work,
+                parallel::PipelineOptionsV1 {
+                    panic_at: Some((worker, generation)),
+                    ..Default::default()
+                },
+            )
+        }))
+        .expect_err("the injected panic reaches the caller");
+        let message = panic
+            .downcast_ref::<String>()
+            .expect("a formatted panic message");
+        assert_eq!(
+            message,
+            &format!("S learner worker {worker} panicked (test)")
+        );
+    }
+    let mut gradient = vec![0.0; serial.len()];
+    model
+        .gae_loss_gradient_parallel_v1(&groups, 0.5, &mut gradient, 3, &mut work)
+        .unwrap();
+    assert_eq!(bits_v1(&gradient), bits_v1(&serial));
+}

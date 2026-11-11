@@ -402,7 +402,9 @@ impl<'a> SInputV1<'a> {
         }
     }
 
-    pub(crate) fn validate_v1(&self, config: &SConfigV1) -> Result<CountsV1, String> {
+    /// The counts of a decision whose tensor shapes agree, before any value
+    /// is checked: `validate_v1`'s first checks.
+    pub(crate) fn shape_counts_v1(&self) -> Result<CountsV1, String> {
         if self.state.len() != STATE_DIM_V1 {
             return Err(format!("S input state has {} values", self.state.len()));
         }
@@ -437,6 +439,17 @@ impl<'a> SInputV1<'a> {
         {
             return Err("S input reference shapes differ".into());
         }
+        Ok(CountsV1 {
+            objects,
+            edges,
+            actions,
+            refs,
+        })
+    }
+
+    pub(crate) fn validate_v1(&self, config: &SConfigV1) -> Result<CountsV1, String> {
+        let counts = self.shape_counts_v1()?;
+        let (objects, actions) = (counts.objects, counts.actions);
         check_finite_v1("state", self.state)?;
         check_finite_v1("object_features", self.object_features)?;
         check_finite_v1("edge_features", self.edge_features)?;
@@ -449,12 +462,7 @@ impl<'a> SInputV1<'a> {
         check_indices_v1("action_ref_card_ids", self.ref_card_ids, config.card_vocab)?;
         check_indices_v1("action_ref_action_indices", self.ref_action, actions)?;
         check_indices_v1("action_ref_node_indices", self.ref_node, objects)?;
-        Ok(CountsV1 {
-            objects,
-            edges,
-            actions,
-            refs,
-        })
+        Ok(counts)
     }
 }
 
