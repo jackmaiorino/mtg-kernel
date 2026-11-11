@@ -87,6 +87,8 @@ mod serve;
 pub(crate) use serve::worker_answer_v4 as qualify_worker_request_v4;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod blunder_census;
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+mod blunder_price;
 mod serve_ac2;
 mod sharing;
 mod tensor_dump;
@@ -156,6 +158,18 @@ pub(super) fn run_blunder_census(cfg: &super::CensusConfigV1) -> Result<(), Stri
     }
 }
 
+/// `s4a-blunder-price` loads its own policies, so `run_v1` calls it before
+/// loading a policy (needs the evaluator's loader).
+pub(super) fn run_blunder_price(cfg: &super::CensusConfigV1) -> Result<(), String> {
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    return blunder_price::run(cfg);
+    #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+    {
+        let _ = cfg;
+        Err("s4a-blunder-price requires the experimental-burn-net8-packed-cuda-v1 feature".into())
+    }
+}
+
 pub(super) fn is_mode(mode: &str) -> bool {
     matches!(
         mode,
@@ -171,6 +185,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-win-check"
             | "s4a-w4"
             | "s4a-blunder-census"
+            | "s4a-blunder-price"
             | "s4a-bank-trace"
             | "s4a-refresh"
             | "s4a-branch"
