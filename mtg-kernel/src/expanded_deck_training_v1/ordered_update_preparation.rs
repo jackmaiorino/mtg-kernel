@@ -7,7 +7,7 @@ use crate::s_transformer_v1::update_profile_v1 as s_update_profile;
 use crate::sideboard_play_policy_v1::ReplayForwardRowsV1;
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Instant;
@@ -69,6 +69,10 @@ pub(super) struct PreparationTelemetryV1 {
     parallel_replay_seconds: f64,
     preparation_elapsed_seconds: f64,
     worker_timings: Vec<WorkerTimingV1>,
+    /// The learner rows decoded but not replayed: a deferring preparation's
+    /// (`prepare_deferring_learner_rows_v1`), absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deferred_learner_rows: Option<usize>,
     timing_scope: &'static str,
     memory_scope: &'static str,
 }
@@ -569,14 +573,70 @@ pub(super) fn prepare_with_row_cache_v1<'a>(
     training_math: TrainingMathV1,
     row_cache: ReplayRowCacheV1,
 ) -> Result<PreparedGroupsV1<'a>, String> {
-    let mut hits = 0;
-    let mut prepared = prepare_with_loader_v1(
+    prepare_loading_v1(
         episodes,
         policy,
         learner,
         workers,
         max_prepared_tensor_mebibytes,
-        row_cache,
+        training_math,
+        LearnerRowsV1::Replay(row_cache),
+    )
+}
+
+/// [`prepare_v1`] whose learner rows are decoded but not replayed, for the
+/// bounded verified update (`s_learner_v1::verified_replay_v1`): its
+/// learner checks each learner row's forward against the stored row before
+/// learning on it. Every other row is replayed and checked as before, and
+/// `other_forwards` counts their forwards, also when preparation fails. Its
+/// errors are not the reference's: a learner row's failure surfaces only in
+/// the learner, so a caller reports the reference's error instead.
+pub(super) fn prepare_deferring_learner_rows_v1<'a>(
+    episodes: &'a [ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    workers: usize,
+    max_prepared_tensor_mebibytes: usize,
+    training_math: TrainingMathV1,
+    other_forwards: &AtomicU64,
+) -> Result<PreparedGroupsV1<'a>, String> {
+    prepare_loading_v1(
+        episodes,
+        policy,
+        learner,
+        workers,
+        max_prepared_tensor_mebibytes,
+        training_math,
+        LearnerRowsV1::Defer { other_forwards },
+    )
+}
+
+/// How a preparation treats the learner's rows.
+#[derive(Clone, Copy)]
+enum LearnerRowsV1<'c> {
+    /// Replayed and checked, through the forward `ReplayRowCacheV1` picks.
+    Replay(ReplayRowCacheV1),
+    /// Decoded only; `other_forwards` counts the other rows' forwards.
+    Defer { other_forwards: &'c AtomicU64 },
+}
+
+fn prepare_loading_v1<'a>(
+    episodes: &'a [ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    workers: usize,
+    max_prepared_tensor_mebibytes: usize,
+    training_math: TrainingMathV1,
+    learner_rows: LearnerRowsV1<'_>,
+) -> Result<PreparedGroupsV1<'a>, String> {
+    let mut hits = 0;
+    let mut prepared = prepare_counting_v1(
+        episodes,
+        policy,
+        learner,
+        workers,
+        max_prepared_tensor_mebibytes,
+        learner_rows,
         |source| {
             let (mut loaded, hit) = load_opponent_cached_v1(source, true)?;
             hits += usize::from(hit);
@@ -588,6 +648,7 @@ pub(super) fn prepare_with_row_cache_v1<'a>(
     Ok(prepared)
 }
 
+#[cfg(test)]
 fn prepare_with_loader_v1<'a, F>(
     episodes: &'a [ExpandedTrajectoryV1],
     policy: &FrozenPlayPolicyV1,
@@ -595,6 +656,29 @@ fn prepare_with_loader_v1<'a, F>(
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
     row_cache: ReplayRowCacheV1,
+    load: F,
+) -> Result<PreparedGroupsV1<'a>, String>
+where
+    F: FnMut(&ExpandedModelSourceV1) -> Result<LoadedOpponentV1, String>,
+{
+    prepare_counting_v1(
+        episodes,
+        policy,
+        learner,
+        workers,
+        max_prepared_tensor_mebibytes,
+        LearnerRowsV1::Replay(row_cache),
+        load,
+    )
+}
+
+fn prepare_counting_v1<'a, F>(
+    episodes: &'a [ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    workers: usize,
+    max_prepared_tensor_mebibytes: usize,
+    learner_replay: LearnerRowsV1<'_>,
     mut load: F,
 ) -> Result<PreparedGroupsV1<'a>, String>
 where
@@ -680,10 +764,22 @@ where
         } else {
             s_update_profile::StageV1::ReplayOtherRow
         };
-        let cached = learner_rows && row_cache == ReplayRowCacheV1::LearnerRows;
+        let cached = learner_rows
+            && matches!(
+                learner_replay,
+                LearnerRowsV1::Replay(ReplayRowCacheV1::LearnerRows)
+            );
+        let other_forwards = match learner_replay {
+            LearnerRowsV1::Defer { other_forwards } => Some(other_forwards),
+            LearnerRowsV1::Replay(_) => None,
+        };
         let mut rows = Vec::new();
         for row in &trajectory.decisions[job.start..job.end] {
             let common = row.tensor.tensor();
+            if learner_rows && other_forwards.is_some() {
+                rows.push((row, common));
+                continue;
+            }
             let span = s_update_profile::span_v1(stage);
             let output = acting.score_replay_tensor_ref_v1(
                 generation,
@@ -692,6 +788,9 @@ where
                 cached.then_some(&mut *cache),
             )?;
             span.finish_v1(&output.logits, output.value);
+            if let Some(other_forwards) = other_forwards {
+                other_forwards.fetch_add(1, Ordering::Relaxed);
+            }
             ensure(
                 bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
                 "stored tensor does not reproduce rollout outputs",
@@ -718,7 +817,10 @@ where
     )?;
     let replay = replay_started.elapsed().as_secs_f64();
     drop(opponents);
-    let groups = ordered.into_iter().flatten().collect();
+    let groups: Vec<LearnerTensorGroupV1<'a>> = ordered.into_iter().flatten().collect();
+    let deferred = matches!(learner_replay, LearnerRowsV1::Defer { .. });
+    let deferred_learner_rows =
+        deferred.then(|| groups.iter().map(|(_, _, rows)| rows.len()).sum());
     Ok(PreparedGroupsV1 {
         groups,
         telemetry: PreparationTelemetryV1 {
@@ -739,7 +841,12 @@ where
             parallel_replay_seconds: replay,
             preparation_elapsed_seconds: started.elapsed().as_secs_f64(),
             worker_timings,
-            timing_scope: "wall time, not CPU time or utilization; immutable model loads and replay only; backward/Adam unchanged",
+            deferred_learner_rows,
+            timing_scope: if deferred {
+                "wall time, not CPU time or utilization; immutable model loads and the other rows' replay only; the learner's rows replay in the verified learner"
+            } else {
+                "wall time, not CPU time or utilization; immutable model loads and replay only; backward/Adam unchanged"
+            },
             memory_scope: "decoded numeric tensor payload bound; excludes parsed input, model storage, vector headers, forward scratch and later learner tapes; at most 32 retained opponent policies and 32 worker stacks",
         },
     })

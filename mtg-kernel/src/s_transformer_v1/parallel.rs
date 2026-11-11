@@ -13,8 +13,14 @@
 //! slot reserves an analytic bound ([`TermBoundV1`]) once per update, and
 //! all slots together reserve at most [`TERM_BUDGET_BYTES_V1`]
 //! ([`TermPlanV1`]).
+//!
+//! The bounded verified update (`verified_row_v1::VerifiedJobsV1`) records
+//! the same tasks in the same order; each first reserves its worker's tape
+//! within that worker's cap, outside the term budget, and checks its forward
+//! against the substep's stored row.
 
 use super::profile::{self, DrainV1, StageV1};
+use super::verified_row_v1::VerifiedJobsV1;
 use super::*;
 use std::mem::size_of;
 use std::ops::Range;
@@ -664,6 +670,9 @@ struct PipelineV1<'u, 'a, 'g> {
     model: &'u SModelV1,
     group_count: f32,
     value_coefficient: f32,
+    /// The bounded verified update: every recorded substep's forward is
+    /// checked against its stored row, on a tape within the cap.
+    verified: Option<&'u VerifiedJobsV1<'u>>,
     slots: Vec<RwLock<PreparedGaeV1<'a>>>,
     parts: GradientPartsV1<'g>,
     phase: Mutex<PhaseV1>,
@@ -743,6 +752,7 @@ impl<'a> PipelineV1<'_, 'a, '_> {
                         job,
                         self.group_count,
                         self.value_coefficient,
+                        self.verified,
                         work,
                         &mut slot.terms,
                     );
@@ -968,6 +978,57 @@ impl SModelV1 {
         caller_work: &mut SWorkV1,
         options: PipelineOptionsV1,
     ) -> Result<(SLossV1, TermUseV1), String> {
+        self.gae_loss_gradient_pipelined_v1(
+            groups,
+            value_coefficient,
+            gradient,
+            workers,
+            caller_work,
+            options,
+            None,
+        )
+    }
+
+    /// [`Self::gae_loss_gradient_planned_v1`] whose every substep's forward
+    /// is first checked against its stored row (`verified`). The first
+    /// failure in substep order is reported, a tape over the cap as
+    /// `verified_row_v1::VERIFIED_TAPE_CAPACITY_V1`; `verified` records the
+    /// work done and the tapes retained, also on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn gae_loss_gradient_verified_v1(
+        &self,
+        groups: &[SGroupV1<'_>],
+        value_coefficient: f32,
+        gradient: &mut [f32],
+        workers: usize,
+        caller_work: &mut SWorkV1,
+        verified: &VerifiedJobsV1<'_>,
+        options: PipelineOptionsV1,
+    ) -> Result<(SLossV1, TermUseV1), String> {
+        // Each slot's peak is this update's, whatever the caller's tape held.
+        caller_work.verified_tape_peak = 0;
+        self.gae_loss_gradient_pipelined_v1(
+            groups,
+            value_coefficient,
+            gradient,
+            workers,
+            caller_work,
+            options,
+            Some(verified),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn gae_loss_gradient_pipelined_v1(
+        &self,
+        groups: &[SGroupV1<'_>],
+        value_coefficient: f32,
+        gradient: &mut [f32],
+        workers: usize,
+        caller_work: &mut SWorkV1,
+        options: PipelineOptionsV1,
+        verified: Option<&VerifiedJobsV1<'_>>,
+    ) -> Result<(SLossV1, TermUseV1), String> {
         ensure_mxcsr_v1()?;
         if groups.is_empty() {
             return Err("S update has no groups".into());
@@ -992,6 +1053,7 @@ impl SModelV1 {
                 model: self,
                 group_count: groups.len() as f32,
                 value_coefficient,
+                verified,
                 slots: (0..plan.sets * plan.slots)
                     .map(|_| RwLock::default())
                     .collect(),
@@ -1051,6 +1113,14 @@ impl SModelV1 {
                 .iter()
                 .map(|slot| read_v1(slot).terms.bytes_v1().2)
                 .sum();
+            if let Some(verified) = verified {
+                verified.slots_done_v1(
+                    helper_work
+                        .iter()
+                        .chain([&*caller_work])
+                        .map(|work| work.verified_tape_peak),
+                );
+            }
             (sums, capacity_bytes)
         };
         let (policy_sum, value_sum) = sums?;
@@ -1084,15 +1154,30 @@ impl SModelV1 {
         job: GaeJobV1<'_>,
         group_count: f32,
         value_coefficient: f32,
+        verified: Option<&VerifiedJobsV1<'_>>,
         work: &mut SWorkV1,
         terms: &mut SGradientTermsV1,
     ) -> Result<(f32, f32), String> {
-        let update_forward =
-            super::update_profile_v1::span_v1(super::update_profile_v1::StageV1::LearnerForward);
-        let forward = profile::span_v1(StageV1::Forward);
-        self.forward_into_v1(job.substep.input, &mut work.tape)?;
-        drop(forward);
-        update_forward.finish_v1(&work.tape.logits, work.tape.value);
+        if let Some(verified) = verified {
+            // The replay's forward of a learner row, which this update does
+            // not repeat: its outputs must be the stored row's.
+            let _forward = profile::span_v1(StageV1::Forward);
+            verified.forward_v1(
+                self,
+                (job.index, job.sub),
+                job.substep.input,
+                &mut work.tape,
+                &mut work.verified_tape_peak,
+            )?;
+        } else {
+            let update_forward = super::update_profile_v1::span_v1(
+                super::update_profile_v1::StageV1::LearnerForward,
+            );
+            let forward = profile::span_v1(StageV1::Forward);
+            self.forward_into_v1(job.substep.input, &mut work.tape)?;
+            drop(forward);
+            update_forward.finish_v1(&work.tape.logits, work.tape.value);
+        }
         let policy_row = profile::span_v1(StageV1::PolicyRow);
         let (selected, dlogits) = gae_policy_row_v1(
             &work.tape.logits,
@@ -1121,6 +1206,9 @@ impl SModelV1 {
         )?;
         drop(backward);
         update_backward.finish_plain_v1();
+        if let Some(verified) = verified {
+            verified.backward_done_v1();
+        }
         Ok((selected, value_error))
     }
 }

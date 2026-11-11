@@ -2745,6 +2745,19 @@ impl FrozenPlayPolicyV1 {
         self.s_model.as_deref()
     }
 
+    /// Native S's model when this policy's replay of a V4 row without a
+    /// pairing relation (`score_replay_tensor_ref_v1`) is exactly S's forward
+    /// of the stored tensor: S on a V4 policy that is not FlatV8, without the
+    /// no-state-digest contract.
+    pub(crate) fn s_plain_v4_replay_v1(&self) -> Option<&crate::s_transformer_v1::SModelV1> {
+        let plain = self
+            .fresh_successor
+            .as_ref()
+            .is_some_and(|fresh| !fresh.flat_v8)
+            && self.input_contract.is_none();
+        self.s_model.as_deref().filter(|_| plain)
+    }
+
     /// Shares a worker's prediction cache with this policy (and its later
     /// collection forks), keyed by the installed parameters' digest.
     pub(crate) fn attach_inference_cache_v1(

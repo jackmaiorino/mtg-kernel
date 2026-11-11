@@ -2069,6 +2069,9 @@ fn gae_policy_row_v1(
 pub struct SWorkV1 {
     tape: STapeV1,
     back: SBackScratchV1,
+    /// The most `tape` retained before a verified forward of the current
+    /// verified update (`verified_row_v1::VerifiedJobsV1`), within its cap.
+    verified_tape_peak: usize,
 }
 
 impl SModelV1 {
