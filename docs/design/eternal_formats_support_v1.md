@@ -974,6 +974,7 @@ reporting as E1 to E9:
 | P2c | Reanimator, Full English Breakfast (20 Full cards and Partial Volrath's Shapeshifter) | 20 Full | Reanimator playable; Full English Breakfast needs owning gameplay qualification |
 | Elves follow-up | Birchlore Rangers and Thornscape Battlemage | 2 | Elves mainboard integrated in #613 with both-seat public-session terminal and replay qualification |
 | P3a | Sideboards of Stiflenought, Sligh, Goblins, Oath of Druids, RG Aggro, Stasis and White Weenie (Anarchy, Chill, Crimson Acolyte, Cursed Totem, Essence Flare, Overload, Pyrostatic Pillar, Sphere of Law, Tranquil Domain, True Believer, Warmth) | 11 | Premodern full 75 0% to 34% |
+| P3b | Sideboards of Terrageddon, Mono-Black Aggro, Survival, The Rock and Mono-Red Control (Dystopia, Engineered Plague, Gloom, Goblin Tinkerer, Haunting Echoes, Mogg Salvage, Plaguebearer, Ray of Revelation, Xantid Swarm, Zuran Orb) | 10 | Premodern full 75 34% to 53% |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -1339,3 +1340,68 @@ Known gaps:
   (616.1). Sphere first is the best order except against Ojer Axonil's increase of damage above 2.
 - Sphere of Law reads an ordinary departed source's color in its current zone, as every
   color-based prevention here does: a dead Wild Mongrel's chosen color is gone.
+
+### P3b: Premodern sideboards
+
+After P3a the census lists 35 missing sideboard cards among the playable lists. P3b adds ten
+that complete five more 75s:
+
+| Deck | Share | Missing sideboard cards |
+| --- | ---: | --- |
+| Terrageddon | 8% | Ray of Revelation, Zuran Orb |
+| Mono-Black Aggro | 6% | Dystopia, Engineered Plague, Gloom, Plaguebearer |
+| Survival | 2% | Goblin Tinkerer, Xantid Swarm, Zuran Orb |
+| The Rock | 2% | Engineered Plague, Haunting Echoes, Plaguebearer |
+| Mono-Red Control | 1% | Mogg Salvage, Zuran Orb |
+
+The full 75 share goes from 34% to 53% of the field, and the five decks join `PLAYABLE_75`.
+The other sideboards wait on harder cards: Enchantress and Landstill on Sacred Ground's and
+Karmic Justice's cause tracking, Circle of Protection: Red and Meddling Mage on the Full contract
+of their S1 siblings, Psychatog on Dominate's target bounded by the announced X.
+
+P3b is built in `src/eternal_premodern_p3b_v1.rs` (with `statics` and `targets` submodules)
+and `build_eternal_p3b_v1.rs`, the new tail of the recipe chains: P3a's tables fall through to
+it, and so do wave P2b's flashback, alternative cost, keyword and triggered ability tables.
+Behavior follows each card's current Oracle text, checked against its XMage source:
+
+- Zuran Orb's "Sacrifice a land: You gain 2 life." is an ordinary activated ability with the
+  controlled-permanent sacrifice cost (Ravenous Baloth's, with a land filter).
+- Ray of Revelation destroys target enchantment, with flashback {G}.
+- Mogg Salvage destroys target artifact. Its free cast is an alternative cost with a new
+  condition, an opponent controlling an Island and its caster a Mountain, by current subtypes as
+  for Massacre. Cost increases still apply to the free cast.
+- Goblin Tinkerer's "{R}, {T}: Destroy target artifact. That artifact deals damage equal to its
+  mana value to this creature." reads the mana value before the destruction. The artifact deals
+  the damage whether or not it was destroyed (indestructible, regenerated), from its last known
+  object, and only while the Tinkerer is still on the battlefield.
+- Xantid Swarm has flying. Its attack trigger bans the defending player's spells for the turn
+  through Orim's Chant's record (wave E9a).
+- Gloom's "White spells cost {3} more to cast" is Chill's tax with white and {3}. "Activated
+  abilities of white enchantments cost {3} more to activate" joins Anointed Peacekeeper's
+  activation tax, for battlefield enchantments that are white now (Painter's Servant counts).
+- Engineered Plague's as-enters choice offers every creature type of the closed subtype pool,
+  with case twins once, in a fixed order, so the choice reveals nothing hidden and can name the
+  opponent's types. All creatures of the chosen type get -1/-1, beside Shared Triumph's boost
+  (layer 7c).
+- Plaguebearer's "{X}{X}{B}" is one ability for each X from 0 to 8, as Pernicious Deed's X is,
+  each targeting a nonblack creature with mana value exactly X. The target is checked again on
+  resolution, so a morph turned face up in response makes the ability fizzle.
+- Dystopia's cumulative upkeep is an upkeep trigger of its controller: an age counter (kept in
+  module state by battlefield incarnation, like fade counters), then pay 1 life for each age
+  counter or sacrifice it. The choice is offered only when the life can be paid (119.4). Its
+  other trigger is queued as each player's upkeep begins and is controlled by Dystopia's
+  controller; that player sacrifices a permanent that is green or white now, through the
+  engine's sacrifice choice with a new color filter.
+- Haunting Echoes exiles target player's graveyard except basic land cards as one batch, then
+  every card in that player's library with the name of a card exiled this way, then that player
+  shuffles.
+
+Known gaps:
+- Haunting Echoes exiles every matching library card; the searching player can't choose to
+  find fewer (701.19b). Finding fewer never helps its caster in the snapshot decks.
+- Gloom does not tax mana abilities of white enchantments: no white enchantment in the catalog
+  has one.
+- Plaguebearer's X stops at 8, Pernicious Deed's bound (the largest mana value in the Premodern
+  pool).
+- Xantid Swarm's ban, like Orim's Chant's, is checked where casts are offered from hand and by
+  madness, not for casts granted while a spell resolves.
