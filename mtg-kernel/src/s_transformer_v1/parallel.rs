@@ -231,22 +231,33 @@ fn replay_v1(
             shard.rows,
             shard.values.len(),
         );
+        // A term covers whole rows of one weight, possibly only some of
+        // them (`LinearIdxV1::rows_v1`); it adds to the rows it shares with
+        // the shard. Weights are disjoint, so other weights' terms share
+        // nothing.
+        let width = shard.values.len() / shard.rows;
+        let shard_start = shard.offset + shard.start_row * width;
+        let shard_end = shard_start + shard.values.len();
         for substep in block {
             let terms = &substep.terms;
             for term in &terms.linears {
                 census.scanned_v1();
-                if term.index.w == shard.offset {
-                    census.matched_v1(term.rows, term.index.in_dim);
+                let index = term.index;
+                let start = shard_start.max(index.w);
+                let end = shard_end.min(index.w + index.out_dim * index.in_dim);
+                if start < end {
+                    let rows = (end - start) / index.in_dim;
+                    census.matched_v1(rows, term.rows, index.in_dim);
                     gemm_v1(
-                        shard.rows,
-                        term.index.in_dim,
+                        rows,
+                        index.in_dim,
                         term.rows,
-                        &terms.data[term.dy.start + shard.start_row..term.dy.end],
+                        &terms.data[term.dy.start + (start - index.w) / index.in_dim..term.dy.end],
                         1,
-                        term.index.out_dim,
+                        index.out_dim,
                         &terms.data[term.x.clone()],
                         InitV1::Existing,
-                        shard.values,
+                        &mut shard.values[start - shard_start..end - shard_start],
                     );
                 }
             }

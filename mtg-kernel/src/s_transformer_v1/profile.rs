@@ -23,8 +23,9 @@
 //!   it replays, its time and its workers;
 //! - the peak live and reserved term bytes of one block and, with the
 //!   allocator, the process's peak live heap bytes;
-//! - an analytic multiply-add census of the backward by layer and section,
-//!   with the final block's object query rows (which no output reads) apart.
+//! - an analytic multiply-add census of the work the backward runs, by layer
+//!   and section, with the final block's object query rows (which no output
+//!   reads) apart: their analytic work and the part the backward skipped.
 //!
 //! Spans nest: `gradient` encloses the substep and replay spans, `backward`
 //! its sections, and those `sink_linear`. Every time is inclusive. Helper
@@ -345,6 +346,8 @@ mod imp {
         inputs: MacsV1,
         macs: Vec<[MacsV1; SECTIONS_V1]>,
         dead: [MacsV1; SECTIONS_V1],
+        removed: [MacsV1; SECTIONS_V1],
+        live_final_substeps: u64,
         terms: TermsV1,
         drains: [DrainStatV1; 2],
         shards: BTreeMap<(usize, usize), ShardStatV1>,
@@ -388,6 +391,10 @@ mod imp {
             for (slot, other) in self.dead.iter_mut().zip(&other.dead) {
                 slot.add(other);
             }
+            for (slot, other) in self.removed.iter_mut().zip(&other.removed) {
+                slot.add(other);
+            }
+            self.live_final_substeps += other.live_final_substeps;
             let (t, o) = (&mut self.terms, &other.terms);
             t.linear_terms += o.linear_terms;
             t.linear_input_bytes += o.linear_input_bytes;
@@ -567,8 +574,11 @@ mod imp {
         });
     }
 
-    /// The backward's multiply-adds for one substep, from its counts alone.
-    pub(crate) fn backward_census_v1(config: &SConfigV1, counts: CountsV1) {
+    /// The backward's multiply-adds for one substep, from its counts and the
+    /// number of query rows its final block visits (`final_rows`: every
+    /// token, or the state and action tokens when it skips the object query
+    /// rows).
+    pub(crate) fn backward_census_v1(config: &SConfigV1, counts: CountsV1, final_rows: usize) {
         let d = config.d_model;
         let h = config.heads;
         let dh = config.head_dim_v1();
@@ -601,22 +611,37 @@ mod imp {
         ] {
             inputs.add(&term);
         }
-        // Every layer's backward runs all `l` rows. Attention per head:
-        // dP = dO V^T, dV = P^T dO, dQ = dS K and dK = dS^T Q.
-        let mut block = [MacsV1::default(); SECTIONS_V1];
-        block[SectionV1::Ffn as usize] = linear(l, ffn, d, true);
-        block[SectionV1::Ffn as usize].add(&linear(l, d, ffn, true));
-        block[SectionV1::Ln2 as usize].rows = l as u64;
-        block[SectionV1::Proj as usize] = linear(l, d, d, true);
-        block[SectionV1::Attention as usize].attention = (4 * l * l * dh * h) as u64;
-        block[SectionV1::Attention as usize].rows = (h * l) as u64;
-        block[SectionV1::Qkv as usize] = linear(l, d, 3 * d, true);
-        block[SectionV1::Ln1 as usize].rows = l as u64;
+        // A block's backward over `m` query rows and all `l` keys. Attention
+        // per head: dP = dO V^T, dV = P^T dO, dQ = dS K and dK = dS^T Q,
+        // each `m * l * dh`. With fewer query rows than tokens, QKV splits
+        // into its query rows (the live rows) and its key and value rows
+        // (every token).
+        let block = |m: usize| {
+            let mut block = [MacsV1::default(); SECTIONS_V1];
+            block[SectionV1::Ffn as usize] = linear(m, ffn, d, true);
+            block[SectionV1::Ffn as usize].add(&linear(m, d, ffn, true));
+            block[SectionV1::Ln2 as usize].rows = m as u64;
+            block[SectionV1::Proj as usize] = linear(m, d, d, true);
+            block[SectionV1::Attention as usize].attention = (4 * m * l * dh * h) as u64;
+            block[SectionV1::Attention as usize].rows = (h * m) as u64;
+            block[SectionV1::Qkv as usize] = if m < l {
+                let mut qkv = linear(m, d, d, true);
+                qkv.add(&linear(l, d, 2 * d, true));
+                qkv
+            } else {
+                linear(l, d, 3 * d, true)
+            };
+            block[SectionV1::Ln1 as usize].rows = l as u64;
+            block
+        };
+        let full = block(l);
+        let last = block(final_rows);
         // The final block's forward skips its object query rows, so their
         // adjoints are zero: the FFN, LN2 and projection rows, the dP and dQ
         // rows and their zero terms in dV and dK, and the zero Q columns of
         // the QKV input and weight gradients. Their object keys and values
-        // stay live (milestone 3 must prove what can go, with signed zeros).
+        // stay live. The backward skips this work when every final-block
+        // Q, K and V value is finite (`final_block_compacts_v1`).
         let mut dead = [MacsV1::default(); SECTIONS_V1];
         dead[SectionV1::Ffn as usize] = linear(n, ffn, d, true);
         dead[SectionV1::Ffn as usize].add(&linear(n, d, ffn, true));
@@ -625,21 +650,33 @@ mod imp {
         dead[SectionV1::Attention as usize].attention = (4 * n * l * dh * h) as u64;
         dead[SectionV1::Attention as usize].rows = (h * n) as u64;
         dead[SectionV1::Qkv as usize] = linear(n, d, d, true);
+        let live = final_rows < l;
         with_acc_v1(|acc| {
             acc.substeps += 1;
+            acc.live_final_substeps += u64::from(live);
             acc.layers = acc.layers.max(config.layers);
             acc.heads.add(&heads);
             acc.inputs.add(&inputs);
             if acc.macs.len() < config.layers {
                 acc.macs.resize(config.layers, Default::default());
             }
-            for layer in &mut acc.macs[..config.layers] {
-                for (slot, macs) in layer.iter_mut().zip(&block) {
+            for (layer, slots) in acc.macs[..config.layers].iter_mut().enumerate() {
+                let macs = if layer + 1 == config.layers {
+                    &last
+                } else {
+                    &full
+                };
+                for (slot, macs) in slots.iter_mut().zip(macs) {
                     slot.add(macs);
                 }
             }
             for (slot, macs) in acc.dead.iter_mut().zip(&dead) {
                 slot.add(macs);
+            }
+            if live {
+                for (slot, macs) in acc.removed.iter_mut().zip(&dead) {
+                    slot.add(macs);
+                }
             }
         });
     }
@@ -827,11 +864,12 @@ mod imp {
             self.scanned += 1;
         }
 
-        /// A matching term of `term_rows` rows and `in_dim` inputs.
-        pub(crate) fn matched_v1(&mut self, term_rows: usize, in_dim: usize) {
+        /// A matching term of `term_rows` rows and `in_dim` inputs that adds
+        /// to `weight_rows` of the shard's rows.
+        pub(crate) fn matched_v1(&mut self, weight_rows: usize, term_rows: usize, in_dim: usize) {
             self.matched += 1;
             self.term_rows += term_rows as u64;
-            self.macs += (self.rows * in_dim * term_rows) as u64;
+            self.macs += (weight_rows * in_dim * term_rows) as u64;
         }
     }
 
@@ -915,6 +953,10 @@ mod imp {
         for m in &acc.dead {
             dead_total.add(m);
         }
+        let mut removed_total = MacsV1::default();
+        for m in &acc.removed {
+            removed_total.add(m);
+        }
         let terms = &acc.terms;
         let drains: serde_json::Map<String, Value> = ["record", "replay"]
             .iter()
@@ -974,6 +1016,9 @@ mod imp {
                 "total": total.json(),
                 "final_block_object_query_rows": Value::Object(sections_macs(&acc.dead)),
                 "final_block_object_query_rows_total": dead_total.json(),
+                "final_block_removed": Value::Object(sections_macs(&acc.removed)),
+                "final_block_removed_total": removed_total.json(),
+                "final_block_live_substeps": acc.live_final_substeps,
             },
             "terms": {
                 "linear_terms": terms.linear_terms,
@@ -1059,7 +1104,7 @@ mod imp {
     pub(crate) fn block_v1(_: usize, _: usize, _: impl FnOnce() -> super::BlockBytesV1) {}
 
     #[inline(always)]
-    pub(crate) fn backward_census_v1(_: &SConfigV1, _: CountsV1) {}
+    pub(crate) fn backward_census_v1(_: &SConfigV1, _: CountsV1, _: usize) {}
 
     pub(crate) struct DrainCensusV1;
     pub(crate) struct MarkV1;
@@ -1114,7 +1159,7 @@ mod imp {
         pub(crate) fn scanned_v1(&mut self) {}
 
         #[inline(always)]
-        pub(crate) fn matched_v1(&mut self, _: usize, _: usize) {}
+        pub(crate) fn matched_v1(&mut self, _: usize, _: usize, _: usize) {}
     }
 
     /// `None`: this build has no profile.

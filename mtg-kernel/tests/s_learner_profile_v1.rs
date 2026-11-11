@@ -84,6 +84,25 @@ fn profile_counts_match_the_recorded_work_and_change_no_result() {
     let sections = profile["backward_sections"].as_array().unwrap();
     assert_eq!(sections.len(), 3);
     assert_eq!(sections[2]["final_block"], true);
+    // Every synthetic substep's final block skips its object query rows:
+    // the census removes exactly their analytic work from the final layer.
+    let macs = &profile["macs"];
+    assert_eq!(number(macs, &["final_block_live_substeps"]), substeps);
+    assert_eq!(
+        macs["final_block_removed_total"],
+        macs["final_block_object_query_rows_total"]
+    );
+    for field in ["dx", "dw", "attention", "rows"] {
+        let layer = |index: usize| -> u64 {
+            ["ffn", "ln2", "proj", "attention", "qkv", "ln1"]
+                .iter()
+                .map(|section| number(&macs["layers"][index], &[section, field]))
+                .sum()
+        };
+        let removed = number(macs, &["final_block_removed_total", field]);
+        assert!(removed > 0, "{field}");
+        assert_eq!(layer(2) + removed, layer(1), "{field}");
+    }
     for layer in sections {
         for section in ["ffn", "ln2", "proj", "attention", "qkv", "ln1"] {
             assert_eq!(number(layer, &[section, "spans"]), substeps, "{section}");

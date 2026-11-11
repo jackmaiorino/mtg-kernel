@@ -487,6 +487,31 @@ def summarize(manifest):
     return "\n".join(lines)
 
 
+def gemm_macs(macs):
+    return macs["dx"] + macs["dw"] + macs["attention"]
+
+
+def backward_macs_summary(macs, substeps):
+    """The backward's GEMM multiply-adds. `total` counts the work that ran.
+    Reports before the compact final block (no `final_block_removed_total`)
+    ran every final-block object query row."""
+    total = macs["total"]
+    ran = gemm_macs(total)
+    unused = gemm_macs(macs["final_block_object_query_rows_total"])
+    removed_total = macs.get("final_block_removed_total")
+    removed = gemm_macs(removed_total) if removed_total else 0
+    full = ran + removed
+    line = (
+        f"Backward GEMM MACs per update: dx {total['dx']:,}, dw {total['dw']:,}, attention "
+        f"{total['attention']:,} ({ran:,} run); final-block object query rows {unused:,} "
+        f"({100 * unused / full:.1f}% of the full backward's {full:,})"
+    )
+    if removed_total is None:
+        return line + "."
+    live = macs["final_block_live_substeps"]
+    return line + f", {removed:,} of them skipped ({live} of {substeps} substeps compact)."
+
+
 def mean_of(reports, getter):
     return statistics.fmean(getter(r) for r in reports)
 
@@ -532,16 +557,8 @@ def profile_summary(profile_rows):
             label = f"{layer['layer']}{' (final)' if layer['final_block'] else ''}"
             lines.append(f"| {label} | " + " | ".join(cells) + " |")
         macs = reports[0]["macs"]
-        total = macs["total"]
-        dead = macs["final_block_object_query_rows_total"]
-        all_macs = total["dx"] + total["dw"] + total["attention"]
-        dead_macs = dead["dx"] + dead["dw"] + dead["attention"]
         lines.append("")
-        lines.append(
-            f"Backward GEMM MACs per update: dx {total['dx']:,}, dw {total['dw']:,}, attention "
-            f"{total['attention']:,}; final-block object query rows {dead_macs:,} "
-            f"({100 * dead_macs / all_macs:.1f}% of {all_macs:,})."
-        )
+        lines.append(backward_macs_summary(macs, substeps))
         terms = reports[0]["terms"]
         if terms["linear_terms"]:
             copied = (

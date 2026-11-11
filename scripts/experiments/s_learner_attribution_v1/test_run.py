@@ -134,6 +134,32 @@ class AttributionRunnerTests(unittest.TestCase):
         ):
             run.profile(self.args, Path(folder), {"1": {"receipt_common": expected}})
 
+    def test_backward_macs_summary_separates_run_unused_and_skipped_work(self):
+        def macs(dx, dw, attention):
+            return {"dx": dx, "dw": dw, "attention": attention, "rows": 0}
+
+        before = {
+            "total": macs(60, 30, 10),
+            "final_block_object_query_rows_total": macs(10, 8, 2),
+        }
+        self.assertEqual(
+            run.backward_macs_summary(before, 4),
+            "Backward GEMM MACs per update: dx 60, dw 30, attention 10 (100 run); "
+            "final-block object query rows 20 (20.0% of the full backward's 100).",
+        )
+        after = {
+            "total": macs(50, 22, 8),
+            "final_block_object_query_rows_total": macs(10, 8, 2),
+            "final_block_removed_total": macs(10, 8, 2),
+            "final_block_live_substeps": 4,
+        }
+        self.assertEqual(
+            run.backward_macs_summary(after, 4),
+            "Backward GEMM MACs per update: dx 50, dw 22, attention 8 (80 run); "
+            "final-block object query rows 20 (20.0% of the full backward's 100), "
+            "20 of them skipped (4 of 4 substeps compact).",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

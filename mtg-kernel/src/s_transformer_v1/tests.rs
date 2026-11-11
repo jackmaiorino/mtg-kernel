@@ -479,3 +479,190 @@ fn tape_bytes_bound_matches_the_buffers_a_forward_sizes() {
         }
     }
 }
+
+fn bits_v1(values: &[f32]) -> Vec<u32> {
+    values.iter().map(|v| v.to_bits()).collect()
+}
+
+/// One decision's backward with the final block's rows chosen by `choice`:
+/// the gradient through the direct sink and through recorded terms and
+/// their replay.
+fn backward_bits_v1(
+    model: &SModelV1,
+    input: SInputV1<'_>,
+    tape: &STapeV1,
+    dlogits: &[f32],
+    dvalue: f32,
+    choice: FinalRowsV1,
+) -> (Vec<u32>, Vec<u32>) {
+    let total = model.layout_v1().total;
+    let mut direct = vec![0.0f32; total];
+    model
+        .backward_rows_v1(
+            input,
+            tape,
+            dlogits,
+            dvalue,
+            &mut parallel::SGradientSinkV1::Direct(&mut direct),
+            &mut SBackScratchV1::default(),
+            choice,
+        )
+        .unwrap();
+    let mut terms = parallel::SGradientTermsV1::default();
+    model
+        .backward_rows_v1(
+            input,
+            tape,
+            dlogits,
+            dvalue,
+            &mut parallel::SGradientSinkV1::Record(&mut terms),
+            &mut SBackScratchV1::default(),
+            choice,
+        )
+        .unwrap();
+    let mut replayed = vec![0.0f32; total];
+    parallel::replay_verified_test_terms_v1(model.layout_v1(), &mut replayed, vec![terms]).unwrap();
+    (bits_v1(&direct), bits_v1(&replayed))
+}
+
+/// Logit and value adjoints with exact zeros of both signs among them.
+fn adjoints_v1(rng: &mut SplitMixV1, actions: usize) -> (Vec<f32>, f32) {
+    let dlogits = (0..actions)
+        .map(|_| match rng.below(6) {
+            0 => 0.0,
+            1 => -0.0,
+            _ => rng.uniform(-1.0, 1.0),
+        })
+        .collect();
+    let dvalue = match rng.below(4) {
+        0 => 0.0,
+        1 => -0.0,
+        _ => rng.uniform(-1.0, 1.0),
+    };
+    (dlogits, dvalue)
+}
+
+/// Every bit of the live final block's gradient equals the full backward's,
+/// through both sinks, for ragged decisions (one object or one action up to
+/// 60 objects and 16 actions), repeated cards, subnormal and signed-zero
+/// inputs and adjoints, a one-block model, and warm reused scratch.
+#[test]
+fn live_final_block_matches_the_full_backward_bit_for_bit() {
+    let one_block = SConfigV1 {
+        layers: 1,
+        ..TINY_V1
+    };
+    let shapes = [
+        super::tools::PARITY_SHAPE_V1,
+        ShapeV1 {
+            objects: (1, 1),
+            edges: (0, 0),
+            actions: (1, 3),
+            refs: (0, 2),
+        },
+        ShapeV1 {
+            objects: (2, 9),
+            edges: (0, 6),
+            actions: (1, 1),
+            refs: (0, 3),
+        },
+    ];
+    let mut rng = SplitMixV1::new(41);
+    let mut checked = 0;
+    for (config, seed) in [(SConfigV1::s_v1(), 3), (TINY_V1, 4), (one_block, 5)] {
+        let model = SModelV1::init_parity_v1(config, seed).unwrap();
+        let mut tape = STapeV1::default();
+        let mut warm = SBackScratchV1::default();
+        for case in 0..18 {
+            let mut t = synthetic_decision_v1(&mut rng, shapes[case % shapes.len()]);
+            match case % 6 {
+                1 => {
+                    t.object_card_ids.fill(7);
+                    t.action_ref_card_ids.fill(7);
+                }
+                2 => {
+                    for (index, value) in t.object_features.iter_mut().enumerate() {
+                        if index % 5 == 0 {
+                            *value = if index % 2 == 0 { 1.0e-40 } else { -0.0 };
+                        }
+                    }
+                    for value in t.action_features.iter_mut().step_by(3) {
+                        *value = -1.0e-41;
+                    }
+                }
+                _ => {}
+            }
+            let input = SInputV1::of_tensor_v1(&t);
+            model.forward_v1(input, &mut tape).unwrap();
+            let last = &tape.layers[config.layers - 1];
+            assert!(final_block_compacts_v1(last), "case {case}");
+            let (dlogits, dvalue) = adjoints_v1(&mut rng, tape.logits.len());
+            let full = backward_bits_v1(&model, input, &tape, &dlogits, dvalue, FinalRowsV1::All);
+            let live = backward_bits_v1(&model, input, &tape, &dlogits, dvalue, FinalRowsV1::Live);
+            let auto = backward_bits_v1(&model, input, &tape, &dlogits, dvalue, FinalRowsV1::Auto);
+            assert_eq!(full.0, full.1, "full: direct against replay, case {case}");
+            assert_eq!(live, full, "live rows, case {case}");
+            assert_eq!(auto, full, "chosen rows, case {case}");
+            // Reused scratch, as a learner thread's: the same bits after
+            // larger and smaller decisions.
+            let mut reused = vec![0.0f32; model.layout_v1().total];
+            model
+                .backward_v1(input, &tape, &dlogits, dvalue, &mut reused, &mut warm)
+                .unwrap();
+            assert_eq!(bits_v1(&reused), full.0, "warm scratch, case {case}");
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 54);
+}
+
+/// A non-finite final-block Q, K or V value makes the backward take every
+/// row, so its gradient (non-finite) keeps every bit of the full backward's.
+/// Skipping the rows there would drop the NaN an unused object query
+/// contributes to the key gradient (`dK = dS^T Q`, with `dS` +0 on that row),
+/// which is why the check exists.
+#[test]
+fn non_finite_final_block_values_keep_the_full_backward() {
+    let model = SModelV1::init_parity_v1(TINY_V1, 6).unwrap();
+    let d = TINY_V1.d_model;
+    let mut rng = SplitMixV1::new(43);
+    let t = synthetic_decision_v1(
+        &mut rng,
+        ShapeV1 {
+            objects: (5, 5),
+            edges: (2, 2),
+            actions: (3, 3),
+            refs: (2, 2),
+        },
+    );
+    let input = SInputV1::of_tensor_v1(&t);
+    let mut clean = STapeV1::default();
+    model.forward_v1(input, &mut clean).unwrap();
+    let (dlogits, dvalue) = (vec![0.25, -0.5, 0.125], 0.75);
+    let last = TINY_V1.layers - 1;
+    // Object token 2's query, an object key and the state token's value.
+    for (row, column, poison) in [
+        (2, 1, f32::INFINITY),
+        (2, 0, f32::NAN),
+        (3, d + 2, f32::NEG_INFINITY),
+        (0, 2 * d + 5, f32::NAN),
+    ] {
+        let mut tape = clean.clone();
+        tape.layers[last].qkv[row * 3 * d + column] = poison;
+        assert!(!final_block_compacts_v1(&tape.layers[last]));
+        let full = backward_bits_v1(&model, input, &tape, &dlogits, dvalue, FinalRowsV1::All);
+        let auto = backward_bits_v1(&model, input, &tape, &dlogits, dvalue, FinalRowsV1::Auto);
+        assert_eq!(auto, full, "row {row} column {column}");
+        assert!(
+            full.0.iter().any(|bits| !f32::from_bits(*bits).is_finite()),
+            "the poisoned value reaches the full gradient"
+        );
+        if row != 0 && column < d {
+            let live = backward_bits_v1(&model, input, &tape, &dlogits, dvalue, FinalRowsV1::Live);
+            assert!(
+                live.0.iter().all(|bits| f32::from_bits(*bits).is_finite()),
+                "the live rows never read an object query"
+            );
+        }
+    }
+}
