@@ -23,6 +23,93 @@ fn events_of<'a>(
         .map(|(_, event)| event)
 }
 
+/// The positions of Cerberus journal rows by what the checks below look them
+/// up by. While a `borrow_memo_v1` scope holds the state, one pass builds this
+/// and the lookups read it; without a scope each lookup scans its kind.
+#[derive(Default)]
+struct RowsV1 {
+    /// Captures by observer authority row and source object.
+    captures: HashMap<(u64, ObjectId), Vec<usize>>,
+    /// Collections, publications and completions by capture.
+    collected: HashMap<u64, Vec<usize>>,
+    published: HashMap<u64, Vec<usize>>,
+    completed: HashMap<u64, Vec<usize>>,
+}
+struct RowsKeyV1;
+fn rows(state: &GameState) -> Option<std::rc::Rc<RowsV1>> {
+    if !crate::borrow_memo_v1::active(state) {
+        return None;
+    }
+    Some(crate::borrow_memo_v1::cached::<RowsKeyV1, (), _>(
+        state,
+        (),
+        || {
+            let mut rows = RowsV1::default();
+            for (at, event) in state.engine.event_history.of_kinds_v2(&[
+                EventKindV1::CerberusCaptureV1,
+                EventKindV1::CerberusCollectedV1,
+                EventKindV1::CerberusPublishedV1,
+                EventKindV1::CerberusCompletedV1,
+            ]) {
+                match event {
+                    CommittedEvent::CerberusCaptureV1 { capture } => rows
+                        .captures
+                        .entry((capture.observer_authority_index, capture.source.source))
+                        .or_default()
+                        .push(at),
+                    CommittedEvent::CerberusCollectedV1 {
+                        capture_history_index,
+                    } => rows
+                        .collected
+                        .entry(*capture_history_index)
+                        .or_default()
+                        .push(at),
+                    CommittedEvent::CerberusPublishedV1 {
+                        capture_history_index,
+                        ..
+                    } => rows
+                        .published
+                        .entry(*capture_history_index)
+                        .or_default()
+                        .push(at),
+                    CommittedEvent::CerberusCompletedV1 {
+                        capture_history_index,
+                        ..
+                    } => rows
+                        .completed
+                        .entry(*capture_history_index)
+                        .or_default()
+                        .push(at),
+                    _ => {}
+                }
+            }
+            std::rc::Rc::new(rows)
+        },
+    ))
+}
+/// The rows of `kind` that `pick` accepts, with their positions: from the
+/// index entry `indexed` when a scope is active, else from a kind scan.
+fn rows_of<'a, T>(
+    state: &'a GameState,
+    indexed: impl FnOnce(&RowsV1) -> Option<&Vec<usize>>,
+    kind: EventKindV1,
+    pick: impl FnMut(usize, &'a CommittedEvent) -> Option<T>,
+) -> Vec<T> {
+    crate::borrow_memo_v1::rows_v1(state, rows(state), indexed, &[kind], pick)
+}
+/// The positions of the collections of capture `index`.
+fn collections_of(state: &GameState, index: u64) -> Vec<usize> {
+    rows_of(
+        state,
+        |rows| rows.collected.get(&index),
+        EventKindV1::CerberusCollectedV1,
+        |at, event| {
+            matches!(event, CommittedEvent::CerberusCollectedV1 { capture_history_index } if *capture_history_index == index)
+                .then_some(at)
+        },
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CerberusCaptureV1 {
@@ -215,8 +302,11 @@ fn validate_observed_end_steps(state: &GameState) -> Result<(), ObjectId> {
             return Err(sources.first().map_or(ObjectId(0), |source| source.source));
         }
         for (ordinal, source) in sources.iter().enumerate() {
-            let captures: Vec<_> = events_of(state, &[EventKindV1::CerberusCaptureV1])
-                .filter_map(|event| match event {
+            let captures: Vec<_> = rows_of(
+                state,
+                |rows| rows.captures.get(&(index as u64, source.source)),
+                EventKindV1::CerberusCaptureV1,
+                |_, event| match event {
                     CommittedEvent::CerberusCaptureV1 { capture }
                         if capture.observer_authority_index as usize == index
                             && capture.source.source == source.source =>
@@ -224,8 +314,8 @@ fn validate_observed_end_steps(state: &GameState) -> Result<(), ObjectId> {
                         Some(capture)
                     }
                     _ => None,
-                })
-                .collect();
+                },
+            );
             if !owns_definition(source.card_def)
                 || source.zone != Zone::Battlefield
                 || sources[..ordinal]
@@ -338,11 +428,15 @@ pub(crate) fn validate_source(
         _ => return Ok(()),
     };
     let capture = capture_at(state, index)?;
-    if source != Some(capture.source) || events_of(state, &[EventKindV1::CerberusCollectedV1]).filter(|event| {
-        matches!(event, CommittedEvent::CerberusCollectedV1 { capture_history_index } if *capture_history_index == index)
-    }).count() != 1 { return Err("Cerberus end-step trigger changed its captured source or collection".into()); }
-    if events_of(state, &[EventKindV1::CerberusCompletedV1]).any(|event| matches!(event,
-        CommittedEvent::CerberusCompletedV1 { capture_history_index, .. } if *capture_history_index == index)) {
+    if source != Some(capture.source) || collections_of(state, index).len() != 1 {
+        return Err("Cerberus end-step trigger changed its captured source or collection".into());
+    }
+    let completed = match rows(state) {
+        Some(rows) => rows.completed.contains_key(&index),
+        None => events_of(state, &[EventKindV1::CerberusCompletedV1]).any(|event| matches!(event,
+        CommittedEvent::CerberusCompletedV1 { capture_history_index, .. } if *capture_history_index == index)),
+    };
+    if completed {
         return Err("completed Cerberus end-step trigger was replayed".into());
     }
     Ok(())
@@ -352,18 +446,18 @@ fn publication(
     state: &GameState,
     capture_index: u64,
 ) -> Result<(usize, &crate::state::StackItem), String> {
-    let publications: Vec<_> = state
-        .engine
-        .event_history
-        .of_kinds_v2(&[EventKindV1::CerberusPublishedV1])
-        .filter_map(|(index, event)| match event {
+    let publications: Vec<_> = rows_of(
+        state,
+        |rows| rows.published.get(&capture_index),
+        EventKindV1::CerberusPublishedV1,
+        |index, event| match event {
             CommittedEvent::CerberusPublishedV1 {
                 capture_history_index,
                 item,
             } if *capture_history_index == capture_index => Some((index, item.as_ref())),
             _ => None,
-        })
-        .collect();
+        },
+    );
     let [published] = publications.as_slice() else {
         return Err("Cerberus end-step trigger lost its exact publication".into());
     };
@@ -582,16 +676,7 @@ fn validate_operation(state: &GameState, index: usize) -> Result<(), String> {
     };
     let capture = capture_at(state, *capture_history_index)?;
     let (published_index, published) = publication(state, *capture_history_index)?;
-    let collections: Vec<_> = state
-        .engine
-        .event_history
-        .of_kinds_v2(&[EventKindV1::CerberusCollectedV1])
-        .filter_map(|(index, event)| {
-            matches!(event, CommittedEvent::CerberusCollectedV1 { capture_history_index: capture }
-            if capture == capture_history_index)
-            .then_some(index)
-        })
-        .collect();
+    let collections = collections_of(state, *capture_history_index);
     let [collection] = collections.as_slice() else {
         return Err("operation lost its exact collection".into());
     };
@@ -716,6 +801,7 @@ fn validate_selected_catalog(state: &GameState, selected: bool) -> Result<(), St
 }
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
     validate_selected_catalog(state, enabled())?;
     if !enabled() {
         return Ok(());
@@ -856,9 +942,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         } = event
         {
             let (index, _) = publication(state, *capture_history_index)?;
-            if index != completion_index || state.engine.event_history.of_kinds_v2(&[EventKindV1::CerberusCollectedV1]).take_while(|(at, _)| *at < index).filter(|(_, event)|
-                matches!(event, CommittedEvent::CerberusCollectedV1 { capture_history_index: capture }
-                    if capture == capture_history_index)).count() != 1 {
+            if index != completion_index
+                || collections_of(state, *capture_history_index)
+                    .iter()
+                    .filter(|at| **at < index)
+                    .count()
+                    != 1
+            {
                 return Err("Cerberus end-step publication lost its prior collection".into());
             }
         }

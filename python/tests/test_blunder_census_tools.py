@@ -18,7 +18,7 @@ KEYS = [(o, t, k) for o in range(9) for t in range(9) for k in range(12)]
 class CensusNamespaces(unittest.TestCase):
     def test_admitted_and_fresh(self):
         self.assertEqual(CENSUS, ("census-20261110/a", "census-20261110/smoke"))
-        self.assertEqual(pilot.PANEL_NAMESPACES[-2:], CENSUS)
+        self.assertEqual(pilot.PANEL_NAMESPACES[18:20], CENSUS)
         train = {row["seed"] for row in pilot.all_seeds()["train"]}
         for ns in CENSUS:
             fresh = {pilot.panel_seed(*key, ns) for key in KEYS}
@@ -27,6 +27,18 @@ class CensusNamespaces(unittest.TestCase):
             for other in pilot.PANEL_NAMESPACES:
                 if other != ns:
                     self.assertFalse(fresh & {pilot.panel_seed(*key, other) for key in KEYS}, (ns, other))
+
+
+class OpponentsNamespace(unittest.TestCase):
+    def test_admitted_and_fresh(self):
+        ns = pilot.OPPONENTS_PANEL_NS
+        self.assertEqual(ns, "opponents-20261111/a")
+        self.assertEqual(pilot.PANEL_NAMESPACES[-1], ns)
+        fresh = {pilot.panel_seed(*key, ns) for key in KEYS}
+        self.assertEqual(len(fresh), len(KEYS))
+        self.assertFalse(fresh & {row["seed"] for row in pilot.all_seeds()["train"]})
+        for other in pilot.PANEL_NAMESPACES[:-1]:
+            self.assertFalse(fresh & {pilot.panel_seed(*key, other) for key in KEYS}, other)
 
 
 class Summary(unittest.TestCase):

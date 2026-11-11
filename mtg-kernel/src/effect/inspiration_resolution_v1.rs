@@ -661,6 +661,10 @@ pub(super) fn tracked(state: &GameState) -> Result<bool, String> {
 
 fn history(state: &GameState) -> Result<Vec<&InspirationResolutionReceiptV1>, String> {
     let mut receipts: Vec<&InspirationResolutionReceiptV1> = Vec::new();
+    // Each stack item's first and latest receipt, as positions in `receipts`:
+    // the lookups below, without rescanning the receipts for every one.
+    let mut first_of = std::collections::HashMap::<StackItemId, usize>::new();
+    let mut last_of = std::collections::HashMap::<StackItemId, usize>::new();
     for (index, event) in state
         .engine
         .event_history
@@ -672,10 +676,7 @@ fn history(state: &GameState) -> Result<Vec<&InspirationResolutionReceiptV1>, St
         if usize::try_from(receipt.history_index).ok() != Some(index) {
             return Err("mandatory return resolution receipt moved in committed history".into());
         }
-        let previous = receipts
-            .iter()
-            .rev()
-            .find(|r| r.stack_item_id == receipt.stack_item_id);
+        let previous = last_of.get(&receipt.stack_item_id).map(|at| receipts[*at]);
         match previous {
             None => {
                 if receipt.ordinal != 0 || receipt.previous_history_index.is_some() {
@@ -717,9 +718,7 @@ fn history(state: &GameState) -> Result<Vec<&InspirationResolutionReceiptV1>, St
             }
         }
         if let Some(pending) = receipt.pending.as_ref() {
-            let first = receipts
-                .iter()
-                .find(|r| r.stack_item_id == receipt.stack_item_id);
+            let first = first_of.get(&receipt.stack_item_id).map(|at| receipts[*at]);
             if first.is_some_and(|first| {
                 first
                     .pending
@@ -740,6 +739,10 @@ fn history(state: &GameState) -> Result<Vec<&InspirationResolutionReceiptV1>, St
                 return Err("mandatory return receipt source or stack identity changed".into());
             }
         }
+        first_of
+            .entry(receipt.stack_item_id)
+            .or_insert(receipts.len());
+        last_of.insert(receipt.stack_item_id, receipts.len());
         receipts.push(receipt);
     }
     Ok(receipts)
@@ -777,6 +780,17 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             }
         }
     }
+    // The operations using each input, counted once instead of per input.
+    let mut uses_of = std::collections::HashMap::new();
+    for (_, e) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[EventKindV1::InspirationResolutionOperationV1])
+    {
+        if let CommittedEvent::InspirationResolutionOperationV1 { operation } = e {
+            *uses_of.entry(operation.input).or_insert(0usize) += 1;
+        }
+    }
     for (at, event) in state.engine.event_history.of_kinds_v2(&[
         EventKindV1::InspirationEngineDepartureV1,
         EventKindV1::InspirationResolutionInputV1,
@@ -784,8 +798,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     ]) {
         match event {
             CommittedEvent::InspirationResolutionInputV1 { input } => {
-                let uses = state.engine.event_history.of_kinds_v2(&[EventKindV1::InspirationResolutionOperationV1]).filter(|(_, e)| matches!(e,
-                    CommittedEvent::InspirationResolutionOperationV1 { operation } if operation.input == input.index)).count();
+                let uses = uses_of.get(&input.index).copied().unwrap_or(0);
                 if input.index as usize != at || uses != 1 {
                     return Err("Inspiration actual input erased, duplicated or orphaned".into());
                 }

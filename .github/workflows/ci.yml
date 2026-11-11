@@ -226,8 +226,10 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.rust_relevant == 'true'
     # The limit includes any wait in the self-hosted job-started hook; a
-    # cold Windows build has taken about 45 minutes.
-    timeout-minutes: 120
+    # cold Windows build has taken about 45 minutes. The Eternal group
+    # builds three feature sets and replays every playable deck: its hosted
+    # Windows job at 27b28ba2 (2026-11-11) needed more than 120 minutes.
+    timeout-minutes: ${{ matrix.group == 'eternal' && 180 || 120 }}
     defaults:
       run:
         shell: bash
@@ -492,7 +494,9 @@ jobs:
             expanded_deck_training_v1::public_features:: \
             expanded_deck_training_v1::stack_features:: \
             expanded_deck_training_v1::tests::ordinary_trainer_v4_update_rejects_fixed_partition_backward_on_cuda \
-            learned_bo3_v1::public_evaluation::             regret_census_v1::stage4a::blunder_census:: \
+            learned_bo3_v1::public_evaluation:: \
+            regret_census_v1::stage4a::blunder_census:: \
+            regret_census_v1::stage4a::blunder_price:: \
             paired_bo1_harness_v1::continuation_capture_tests:: \
             phase1_bo3_collection_v1::combat_audit:: \
             phase1_bo3_collection_v1::continuation:: \

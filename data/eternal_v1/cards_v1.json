@@ -27338,6 +27338,343 @@
     "type_change"
    ],
    "java_file": "Mage.Sets/src/mage/cards/l/LiquimetalCoating.java"
+  },
+  {
+   "name": "Anarchy",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}{R}",
+   "mana_value": 4,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-sligh-rdw",
+    "premodern-goblins",
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "destroy_all",
+    "color_filter"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/Anarchy.java"
+  },
+  {
+   "name": "Chill",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-stasis"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "cost_increase",
+    "color_filter"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/Chill.java"
+  },
+  {
+   "name": "Crimson Acolyte",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-white-weenie"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "protection",
+    "activated_ability",
+    "protection_grant"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CrimsonAcolyte.java"
+  },
+  {
+   "name": "Cursed Totem",
+   "engine_capability": "full",
+   "mana_cost": "{2}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-terrageddon",
+    "premodern-mono-black-control",
+    "premodern-stasis"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "activation_prohibition",
+    "mana_ability_prohibition"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CursedTotem.java"
+  },
+  {
+   "name": "Essence Flare",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-stiflenought",
+    "premodern-replenish"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "aura",
+    "enchant_creature",
+    "upkeep_trigger",
+    "minus_counters"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EssenceFlare.java"
+  },
+  {
+   "name": "Overload",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-sligh-rdw",
+    "premodern-goblins",
+    "premodern-rg-aggro",
+    "premodern-mono-red-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "kicker",
+    "destroy_target",
+    "mana_value_check"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/Overload.java"
+  },
+  {
+   "name": "Pyrostatic Pillar",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-sligh-rdw"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "spell_cast_trigger",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PyrostaticPillar.java"
+  },
+  {
+   "name": "Sphere of Law",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-terrageddon",
+    "premodern-oath-of-druids",
+    "premodern-other-control",
+    "premodern-enchantress",
+    "premodern-replenish"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "damage_prevention",
+    "color_filter"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SphereOfLaw.java"
+  },
+  {
+   "name": "Tranquil Domain",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-rg-aggro",
+    "premodern-elves",
+    "premodern-oath-of-druids",
+    "premodern-survival",
+    "premodern-the-rock",
+    "premodern-grow"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "destroy_all",
+    "enchantment_removal"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TranquilDomain.java"
+  },
+  {
+   "name": "True Believer",
+   "engine_capability": "full",
+   "mana_cost": "{W}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-white-weenie"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "player_shroud"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TrueBeliever.java"
+  },
+  {
+   "name": "Warmth",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-oath-of-druids",
+    "premodern-grow",
+    "premodern-bw-control",
+    "premodern-enchantress"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "spell_cast_trigger",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/Warmth.java"
   }
  ]
 }

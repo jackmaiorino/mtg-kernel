@@ -323,7 +323,7 @@ pub(crate) fn collect(
 }
 pub(crate) fn selected(state: &GameState, item: &StackItem) -> bool {
     matches!(item.inline_effect,Some(EffectOp::CuratorDestiniesV1{..}|EffectOp::BindCuratorDestiniesV1))
-        || state.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::CuratorPublishedV1{item:original,..} if original.v4.stack_item_id==item.v4.stack_item_id))
+        || state.engine.event_history.of_kinds_v2(&[crate::event_history_v1::EventKindV1::CuratorPublishedV1]).any(|(_, e)|matches!(e,event::CommittedEvent::CuratorPublishedV1{item:original,..} if original.v4.stack_item_id==item.v4.stack_item_id))
 }
 pub(crate) fn waiting(state: &GameState, ctx: &ExecCtx) -> bool {
     state.stack.iter().any(|row| {

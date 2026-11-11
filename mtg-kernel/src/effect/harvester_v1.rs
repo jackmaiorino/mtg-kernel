@@ -297,24 +297,68 @@ pub(crate) fn record_cast(state: &mut GameState, source: crate::state::StackSour
         .push(event::CommittedEvent::HarvesterCastAnnouncedV1 { cast });
 }
 
-fn generation_after(state: &GameState, object: ObjectId, index: usize) -> Result<u32, String> {
-    let later = state
-        .engine
-        .event_history
-        .iter()
-        .skip(index + 1)
-        .filter(|event| match event {
-            event::CommittedEvent::ZoneChange { object: id, .. }
-            | event::CommittedEvent::Draw {
-                object: Some(id), ..
-            } => *id == object,
-            event::CommittedEvent::HarvesterCastAnnouncedV1 { cast } => cast.source == object,
-            event::CommittedEvent::HarvesterCastReversedV1 { restored, .. } => {
-                restored.object == object
+/// The positions of the rows that `generation_after` counts, by the card each
+/// one moves. While a `borrow_memo_v1` scope holds the state, one pass builds
+/// this; without a scope `generation_after` scans the later history.
+struct MovesV1(std::collections::HashMap<ObjectId, Vec<usize>>);
+struct MovesKeyV1;
+fn moves(state: &GameState) -> Option<std::rc::Rc<MovesV1>> {
+    if !crate::borrow_memo_v1::active(state) {
+        return None;
+    }
+    Some(crate::borrow_memo_v1::cached::<MovesKeyV1, (), _>(
+        state,
+        (),
+        || {
+            let mut moves = std::collections::HashMap::<ObjectId, Vec<usize>>::new();
+            for (at, event) in state.engine.event_history.of_kinds_v2(&[
+                crate::event_history_v1::EventKindV1::ZoneChange,
+                crate::event_history_v1::EventKindV1::Draw,
+                crate::event_history_v1::EventKindV1::HarvesterCastAnnouncedV1,
+                crate::event_history_v1::EventKindV1::HarvesterCastReversedV1,
+            ]) {
+                let object = match event {
+                    event::CommittedEvent::ZoneChange { object, .. }
+                    | event::CommittedEvent::Draw {
+                        object: Some(object),
+                        ..
+                    } => *object,
+                    event::CommittedEvent::HarvesterCastAnnouncedV1 { cast } => cast.source,
+                    event::CommittedEvent::HarvesterCastReversedV1 { restored, .. } => {
+                        restored.object
+                    }
+                    _ => continue,
+                };
+                moves.entry(object).or_default().push(at);
             }
-            _ => false,
-        })
-        .count();
+            std::rc::Rc::new(MovesV1(moves))
+        },
+    ))
+}
+fn generation_after(state: &GameState, object: ObjectId, index: usize) -> Result<u32, String> {
+    let later = match moves(state) {
+        Some(moves) => moves
+            .0
+            .get(&object)
+            .map_or(0, |at| at.len() - at.partition_point(|at| *at <= index)),
+        None => state
+            .engine
+            .event_history
+            .iter()
+            .skip(index + 1)
+            .filter(|event| match event {
+                event::CommittedEvent::ZoneChange { object: id, .. }
+                | event::CommittedEvent::Draw {
+                    object: Some(id), ..
+                } => *id == object,
+                event::CommittedEvent::HarvesterCastAnnouncedV1 { cast } => cast.source == object,
+                event::CommittedEvent::HarvesterCastReversedV1 { restored, .. } => {
+                    restored.object == object
+                }
+                _ => false,
+            })
+            .count(),
+    };
     state
         .objects
         .try_get(object)
@@ -584,8 +628,7 @@ pub(crate) fn eligible(state: &GameState, object: ObjectId) -> bool {
     let mut matches = state
         .engine
         .event_history
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::HarvesterGraveyardEntryV1])
         .filter_map(|(at, event)| match event {
             event::CommittedEvent::HarvesterGraveyardEntryV1 { entry }
                 if entry.card.object == object
@@ -605,6 +648,7 @@ pub(crate) fn eligible(state: &GameState, object: ObjectId) -> bool {
 }
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
     let mut copied = std::collections::BTreeSet::new();
     let mut entries = std::collections::BTreeSet::new();
     let mut casts = std::collections::BTreeSet::new();

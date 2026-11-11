@@ -1091,6 +1091,9 @@ pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
     if cfg.mode == "s4a-blunder-census" {
         return stage4a::run_blunder_census(&cfg);
     }
+    if cfg.mode == "s4a-blunder-price" {
+        return stage4a::run_blunder_price(&cfg);
+    }
     let policy = load_policy_v1(&cfg.source)?;
     if stage4a::is_mode(&cfg.mode) {
         return stage4a::run(&cfg, &policy);

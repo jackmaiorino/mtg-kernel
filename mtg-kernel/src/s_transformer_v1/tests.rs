@@ -479,3 +479,525 @@ fn tape_bytes_bound_matches_the_buffers_a_forward_sizes() {
         }
     }
 }
+
+fn bits_v1(values: &[f32]) -> Vec<u32> {
+    values.iter().map(|v| v.to_bits()).collect()
+}
+
+/// One decision's backward with the final block's rows chosen by `choice`:
+/// the gradient through the direct sink and through recorded terms and
+/// their replay.
+fn backward_bits_v1(
+    model: &SModelV1,
+    input: SInputV1<'_>,
+    tape: &STapeV1,
+    dlogits: &[f32],
+    dvalue: f32,
+    choice: FinalRowsV1,
+) -> (Vec<u32>, Vec<u32>) {
+    let total = model.layout_v1().total;
+    let mut direct = vec![0.0f32; total];
+    model
+        .backward_rows_v1(
+            input,
+            tape,
+            dlogits,
+            dvalue,
+            &mut parallel::SGradientSinkV1::Direct(&mut direct),
+            &mut SBackScratchV1::default(),
+            choice,
+        )
+        .unwrap();
+    let mut terms = parallel::SGradientTermsV1::default();
+    model
+        .backward_rows_v1(
+            input,
+            tape,
+            dlogits,
+            dvalue,
+            &mut parallel::SGradientSinkV1::Record(&mut terms),
+            &mut SBackScratchV1::default(),
+            choice,
+        )
+        .unwrap();
+    let mut replayed = vec![0.0f32; total];
+    parallel::replay_verified_test_terms_v1(model.layout_v1(), &mut replayed, vec![terms]).unwrap();
+    (bits_v1(&direct), bits_v1(&replayed))
+}
+
+/// Logit and value adjoints with exact zeros of both signs among them.
+fn adjoints_v1(rng: &mut SplitMixV1, actions: usize) -> (Vec<f32>, f32) {
+    let dlogits = (0..actions)
+        .map(|_| match rng.below(6) {
+            0 => 0.0,
+            1 => -0.0,
+            _ => rng.uniform(-1.0, 1.0),
+        })
+        .collect();
+    let dvalue = match rng.below(4) {
+        0 => 0.0,
+        1 => -0.0,
+        _ => rng.uniform(-1.0, 1.0),
+    };
+    (dlogits, dvalue)
+}
+
+/// Every bit of the live final block's gradient equals the full backward's,
+/// through both sinks, for ragged decisions (one object or one action up to
+/// 60 objects and 16 actions), repeated cards, subnormal and signed-zero
+/// inputs and adjoints, a one-block model, and warm reused scratch.
+#[test]
+fn live_final_block_matches_the_full_backward_bit_for_bit() {
+    let one_block = SConfigV1 {
+        layers: 1,
+        ..TINY_V1
+    };
+    let shapes = [
+        super::tools::PARITY_SHAPE_V1,
+        ShapeV1 {
+            objects: (1, 1),
+            edges: (0, 0),
+            actions: (1, 3),
+            refs: (0, 2),
+        },
+        ShapeV1 {
+            objects: (2, 9),
+            edges: (0, 6),
+            actions: (1, 1),
+            refs: (0, 3),
+        },
+    ];
+    let mut rng = SplitMixV1::new(41);
+    let mut checked = 0;
+    for (config, seed) in [(SConfigV1::s_v1(), 3), (TINY_V1, 4), (one_block, 5)] {
+        let model = SModelV1::init_parity_v1(config, seed).unwrap();
+        let mut tape = STapeV1::default();
+        let mut warm = SBackScratchV1::default();
+        for case in 0..18 {
+            let mut t = synthetic_decision_v1(&mut rng, shapes[case % shapes.len()]);
+            match case % 6 {
+                1 => {
+                    t.object_card_ids.fill(7);
+                    t.action_ref_card_ids.fill(7);
+                }
+                2 => {
+                    for (index, value) in t.object_features.iter_mut().enumerate() {
+                        if index % 5 == 0 {
+                            *value = if index % 2 == 0 { 1.0e-40 } else { -0.0 };
+                        }
+                    }
+                    for value in t.action_features.iter_mut().step_by(3) {
+                        *value = -1.0e-41;
+                    }
+                }
+                _ => {}
+            }
+            let input = SInputV1::of_tensor_v1(&t);
+            model.forward_v1(input, &mut tape).unwrap();
+            let last = &tape.layers[config.layers - 1];
+            assert!(final_block_compacts_v1(last), "case {case}");
+            let (dlogits, dvalue) = adjoints_v1(&mut rng, tape.logits.len());
+            let full = backward_bits_v1(&model, input, &tape, &dlogits, dvalue, FinalRowsV1::All);
+            let live = backward_bits_v1(&model, input, &tape, &dlogits, dvalue, FinalRowsV1::Live);
+            let auto = backward_bits_v1(&model, input, &tape, &dlogits, dvalue, FinalRowsV1::Auto);
+            assert_eq!(full.0, full.1, "full: direct against replay, case {case}");
+            assert_eq!(live, full, "live rows, case {case}");
+            assert_eq!(auto, full, "chosen rows, case {case}");
+            // Reused scratch, as a learner thread's: the same bits after
+            // larger and smaller decisions.
+            let mut reused = vec![0.0f32; model.layout_v1().total];
+            model
+                .backward_v1(input, &tape, &dlogits, dvalue, &mut reused, &mut warm)
+                .unwrap();
+            assert_eq!(bits_v1(&reused), full.0, "warm scratch, case {case}");
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 54);
+}
+
+/// A non-finite final-block Q, K or V value makes the backward take every
+/// row, so its gradient (non-finite) keeps every bit of the full backward's.
+/// Skipping the rows there would drop the NaN an unused object query
+/// contributes to the key gradient (`dK = dS^T Q`, with `dS` +0 on that row),
+/// which is why the check exists.
+#[test]
+fn non_finite_final_block_values_keep_the_full_backward() {
+    let model = SModelV1::init_parity_v1(TINY_V1, 6).unwrap();
+    let d = TINY_V1.d_model;
+    let mut rng = SplitMixV1::new(43);
+    let t = synthetic_decision_v1(
+        &mut rng,
+        ShapeV1 {
+            objects: (5, 5),
+            edges: (2, 2),
+            actions: (3, 3),
+            refs: (2, 2),
+        },
+    );
+    let input = SInputV1::of_tensor_v1(&t);
+    let mut clean = STapeV1::default();
+    model.forward_v1(input, &mut clean).unwrap();
+    let (dlogits, dvalue) = (vec![0.25, -0.5, 0.125], 0.75);
+    let last = TINY_V1.layers - 1;
+    // Object token 2's query, an object key and the state token's value.
+    for (row, column, poison) in [
+        (2, 1, f32::INFINITY),
+        (2, 0, f32::NAN),
+        (3, d + 2, f32::NEG_INFINITY),
+        (0, 2 * d + 5, f32::NAN),
+    ] {
+        let mut tape = clean.clone();
+        tape.layers[last].qkv[row * 3 * d + column] = poison;
+        assert!(!final_block_compacts_v1(&tape.layers[last]));
+        let full = backward_bits_v1(&model, input, &tape, &dlogits, dvalue, FinalRowsV1::All);
+        let auto = backward_bits_v1(&model, input, &tape, &dlogits, dvalue, FinalRowsV1::Auto);
+        assert_eq!(auto, full, "row {row} column {column}");
+        assert!(
+            full.0.iter().any(|bits| !f32::from_bits(*bits).is_finite()),
+            "the poisoned value reaches the full gradient"
+        );
+        if row != 0 && column < d {
+            let live = backward_bits_v1(&model, input, &tape, &dlogits, dvalue, FinalRowsV1::Live);
+            assert!(
+                live.0.iter().all(|bits| f32::from_bits(*bits).is_finite()),
+                "the live rows never read an object query"
+            );
+        }
+    }
+}
+
+/// The analytic term bound (`TermBoundV1`) is what a full backward records,
+/// apart from the compact final block's extra QKV term and its excess
+/// values, when every card is non-padding; a compact final block, and
+/// padding cards, record no more. Shapes include few objects with many
+/// actions, where the compact QKV records more values than the full one.
+#[test]
+fn term_bound_covers_every_backward_record() {
+    let one_block = SConfigV1 {
+        layers: 1,
+        ..TINY_V1
+    };
+    let shapes = [
+        super::tools::PARITY_SHAPE_V1,
+        TINY_SHAPE_V1,
+        ShapeV1 {
+            objects: (1, 2),
+            edges: (0, 1),
+            actions: (6, 12),
+            refs: (0, 6),
+        },
+    ];
+    let mut rng = SplitMixV1::new(51);
+    let mut excess_cases = 0;
+    for (config, seed) in [(SConfigV1::s_v1(), 7), (TINY_V1, 8), (one_block, 9)] {
+        let model = SModelV1::init_parity_v1(config, seed).unwrap();
+        let layout = model.layout_v1();
+        let mut tape = STapeV1::default();
+        for case in 0..12 {
+            let mut t = synthetic_decision_v1(&mut rng, shapes[case % shapes.len()]);
+            let padded = case % 4 == 3;
+            if !padded {
+                for card in t
+                    .object_card_ids
+                    .iter_mut()
+                    .chain(&mut t.action_ref_card_ids)
+                {
+                    *card = 1 + card.rem_euclid(150);
+                }
+            }
+            let input = SInputV1::of_tensor_v1(&t);
+            let counts = input.validate_v1(&config).unwrap();
+            let bound = parallel::TermBoundV1::of_counts_v1(layout, counts);
+            assert_eq!(parallel::TermBoundV1::of_input_v1(layout, input), bound);
+            // The forward refuses a decision whose shapes differ before it
+            // records, so its bound reserves nothing.
+            let mut malformed = t.clone();
+            malformed.object_groups.truncate(t.object_groups.len() - 1);
+            let malformed = SInputV1::of_tensor_v1(&malformed);
+            assert!(model.forward_v1(malformed, &mut tape).is_err());
+            assert_eq!(
+                parallel::TermBoundV1::of_input_v1(layout, malformed),
+                parallel::TermBoundV1::default()
+            );
+            model.forward_v1(input, &mut tape).unwrap();
+            let (dlogits, dvalue) = adjoints_v1(&mut rng, tape.logits.len());
+            let recorded = |choice| {
+                let mut terms = parallel::SGradientTermsV1::default();
+                model
+                    .backward_rows_v1(
+                        input,
+                        &tape,
+                        &dlogits,
+                        dvalue,
+                        &mut parallel::SGradientSinkV1::Record(&mut terms),
+                        &mut SBackScratchV1::default(),
+                        choice,
+                    )
+                    .unwrap();
+                terms.recorded_v1()
+            };
+            let full = recorded(FinalRowsV1::All);
+            let live = recorded(FinalRowsV1::Live);
+            let d = config.d_model;
+            let (m, l) = (1 + counts.actions, 1 + counts.objects + counts.actions);
+            let excess = d * (2 * m).saturating_sub(l);
+            excess_cases += usize::from(excess > 0);
+            for (name, recorded) in [("full", full), ("live", live)] {
+                assert!(
+                    recorded.values <= bound.values
+                        && recorded.linears <= bound.linears
+                        && recorded.additions <= bound.additions,
+                    "{name} case {case}: {recorded:?} against {bound:?}"
+                );
+            }
+            if !padded {
+                assert_eq!(
+                    parallel::TermBoundV1 {
+                        values: full.values + excess,
+                        linears: full.linears + 1,
+                        additions: full.additions,
+                    },
+                    bound,
+                    "case {case}"
+                );
+                assert_eq!(live.linears, bound.linears, "case {case}");
+                assert_eq!(live.additions + 2 * counts.objects, bound.additions);
+            }
+        }
+    }
+    assert!(excess_cases > 0, "some compact QKV records exceed the full");
+}
+
+/// Ragged groups: one to four substeps, long and short decisions, shared
+/// cards and signed-zero advantages, so groups cross block boundaries.
+fn ragged_groups_v1(seed: u64) -> Vec<(Vec<(NativeFlatDecisionTensorV2, usize)>, f32, f32)> {
+    let long = ShapeV1 {
+        objects: (8, 14),
+        edges: (2, 8),
+        actions: (3, 7),
+        refs: (1, 6),
+    };
+    let mut rng = SplitMixV1::new(seed);
+    [3, 1, 2, 4, 1, 1, 2, 3, 1, 2]
+        .iter()
+        .enumerate()
+        .map(|(group, &substeps)| {
+            let records = (0..substeps)
+                .map(|sub| {
+                    let shape = if (group + sub) % 3 == 0 {
+                        long
+                    } else {
+                        TINY_SHAPE_V1
+                    };
+                    let mut t = synthetic_decision_v1(&mut rng, shape);
+                    if group % 4 == 1 {
+                        t.object_card_ids.fill(3);
+                        t.action_ref_card_ids.fill(3);
+                    }
+                    let a = t.action_features.len() / ACTION_FEATURE_DIM_V1;
+                    let selected = rng.below(a as u64) as usize;
+                    (t, selected)
+                })
+                .collect();
+            let advantage = match group {
+                0 => 0.0,
+                5 => -0.0,
+                _ => rng.uniform(-2.0, 2.0),
+            };
+            (records, advantage, rng.uniform(-1.0, 1.0))
+        })
+        .collect()
+}
+
+fn loss_bits_v1(loss: SLossV1) -> [u32; 5] {
+    [
+        loss.policy_sum,
+        loss.value_sum,
+        loss.policy_term,
+        loss.value_term,
+        loss.loss,
+    ]
+    .map(f32::to_bits)
+}
+
+/// Every term plan gives the serial gradient and loss bit for bit: two sets
+/// that record one block while the previous replays, one set of several
+/// slots, and one slot. Its slots never hold more than the plan reserves,
+/// which never exceeds the budget or one slot's bound.
+#[test]
+fn pipelined_gae_matches_serial_bits_for_every_term_plan() {
+    let model = SModelV1::init_parity_v1(TINY_V1, 74).unwrap();
+    let data = ragged_groups_v1(84);
+    let groups = as_groups_v1(&data);
+    let substeps: usize = groups.iter().map(|g| g.substeps.len()).sum();
+    assert_eq!(substeps, 20);
+    let mut work = SWorkV1::default();
+    let mut serial = vec![0.0; model.layout_v1().total];
+    let expected = model
+        .gae_loss_gradient_v1(&groups, 0.5, &mut serial, &mut work)
+        .unwrap();
+    let bound = groups
+        .iter()
+        .flat_map(|g| &g.substeps)
+        .map(|s| {
+            let counts = s.input.validate_v1(&TINY_V1).unwrap();
+            parallel::TermBoundV1::of_counts_v1(model.layout_v1(), counts)
+        })
+        .reduce(|a, b| parallel::TermBoundV1 {
+            values: a.values.max(b.values),
+            linears: a.linears.max(b.linears),
+            additions: a.additions.max(b.additions),
+        })
+        .unwrap();
+    let slot = bound.bytes_v1();
+    for workers in [2, 3, 5] {
+        for (budget, sets, slots) in [
+            (parallel::TERM_BUDGET_BYTES_V1, 2, workers),
+            (2 * workers * slot, 2, workers),
+            (2 * workers * slot - 1, 1, 2 * workers - 1),
+            (3 * slot, 1, 3),
+            (slot, 1, 1),
+            (1, 1, 1),
+        ] {
+            let mut gradient = vec![0.0; serial.len()];
+            let (loss, used) = model
+                .gae_loss_gradient_planned_v1(
+                    &groups,
+                    0.5,
+                    &mut gradient,
+                    workers,
+                    &mut work,
+                    parallel::PipelineOptionsV1 {
+                        budget_bytes: budget,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let label = format!("workers {workers}, budget {budget}");
+            assert_eq!((used.plan.sets, used.plan.slots), (sets, slots), "{label}");
+            assert_eq!(used.plan.bound, bound, "{label}");
+            assert_eq!(bits_v1(&gradient), bits_v1(&serial), "{label}");
+            assert_eq!(loss_bits_v1(loss), loss_bits_v1(expected), "{label}");
+            assert_eq!(loss.group_count, expected.group_count);
+            // Every slot is used (20 substeps) and none outgrows its bound.
+            assert_eq!(
+                used.capacity_bytes,
+                used.plan.reserved_bytes_v1(),
+                "{label}"
+            );
+            assert!(used.capacity_bytes <= budget.max(slot), "{label}");
+        }
+    }
+}
+
+/// The first failure in substep order is reported, whatever the plan and
+/// worker count: a policy-row refusal, a forward refusal (an index outside
+/// its table, or shapes that differ) and an invalid group, early, late and
+/// where a block ends while the previous replays.
+#[test]
+fn pipelined_gae_reports_the_first_failure_in_substep_order() {
+    let model = SModelV1::init_parity_v1(TINY_V1, 75).unwrap();
+    let data = ragged_groups_v1(85);
+    // Group 3 has four substeps; group 9 is last.
+    for (group, sub, kind) in [
+        (0, 0, 0),
+        (0, 2, 1),
+        (3, 1, 0),
+        (3, 3, 1),
+        (4, 0, 2),
+        (5, 0, 3),
+        (6, 1, 1),
+        (7, 2, 3),
+        (9, 1, 0),
+        (9, 0, 2),
+    ] {
+        let mut data = data.clone();
+        match kind {
+            1 => data[group].0[sub].0.object_card_ids[0] = 1_000_000,
+            3 => {
+                let object_groups = &mut data[group].0[sub].0.object_groups;
+                object_groups.truncate(object_groups.len() - 1);
+            }
+            _ => {}
+        }
+        let mut groups = as_groups_v1(&data);
+        match kind {
+            0 => groups[group].substeps[sub].selected = usize::MAX,
+            2 => groups[group].value_target = f32::NAN,
+            _ => {}
+        }
+        // A later failure must not win.
+        groups[9].substeps[1].selected = usize::MAX - 1;
+        let mut work = SWorkV1::default();
+        let mut gradient = vec![0.0; model.layout_v1().total];
+        let expected = model
+            .gae_loss_gradient_v1(&groups, 0.5, &mut gradient, &mut work)
+            .unwrap_err();
+        for workers in [2, 3, 5] {
+            for budget in [parallel::TERM_BUDGET_BYTES_V1, 1] {
+                let error = model
+                    .gae_loss_gradient_planned_v1(
+                        &groups,
+                        0.5,
+                        &mut gradient,
+                        workers,
+                        &mut work,
+                        parallel::PipelineOptionsV1 {
+                            budget_bytes: budget,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap_err();
+                assert_eq!(
+                    error, expected,
+                    "group {group} substep {sub}, workers {workers}, budget {budget}"
+                );
+            }
+        }
+    }
+}
+
+/// A worker that panics in any phase, a helper or the caller, ends the
+/// update with that panic once every helper has joined, and leaves nothing
+/// behind: the next update gives the serial bits.
+#[test]
+fn pipelined_gae_reraises_a_worker_panic_after_joining_its_helpers() {
+    let model = SModelV1::init_parity_v1(TINY_V1, 76).unwrap();
+    let data = ragged_groups_v1(86);
+    let groups = as_groups_v1(&data);
+    let mut work = SWorkV1::default();
+    let mut serial = vec![0.0; model.layout_v1().total];
+    model
+        .gae_loss_gradient_v1(&groups, 0.5, &mut serial, &mut work)
+        .unwrap();
+    for (worker, generation) in [(1, 1), (2, 4), (0, 1), (0, 6), (1, 8)] {
+        let mut gradient = vec![0.0; serial.len()];
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            model.gae_loss_gradient_planned_v1(
+                &groups,
+                0.5,
+                &mut gradient,
+                3,
+                &mut work,
+                parallel::PipelineOptionsV1 {
+                    panic_at: Some((worker, generation)),
+                    ..Default::default()
+                },
+            )
+        }))
+        .expect_err("the injected panic reaches the caller");
+        let message = panic
+            .downcast_ref::<String>()
+            .expect("a formatted panic message");
+        assert_eq!(
+            message,
+            &format!("S learner worker {worker} panicked (test)")
+        );
+    }
+    let mut gradient = vec![0.0; serial.len()];
+    model
+        .gae_loss_gradient_parallel_v1(&groups, 0.5, &mut gradient, 3, &mut work)
+        .unwrap();
+    assert_eq!(bits_v1(&gradient), bits_v1(&serial));
+}
