@@ -4,11 +4,13 @@
 //! among the policy surface's legal actions, the menu the JSONL session
 //! offers, and a random seat starts no new spell or ability while it
 //! controls two stack items. Each kept-hand choice takes a random legal
-//! opening card or finishes, and a trigger order too large for the action
-//! list takes the listed order. The session games' Ward filters exist for
-//! policy observation v5, which these games don't build.
+//! opening card (a Leyline enters, a Chancellor of the Annex is revealed) or
+//! finishes, and a trigger order too large for the action list takes the
+//! listed order. The session games' Ward filters exist for policy
+//! observation v5, which these games don't build.
 
 use crate::eternal_catalog_v1::splitmix64;
+use mtg_kernel::card_def::CARD_DEFS;
 use mtg_kernel::engine::{Action, Decision};
 use mtg_kernel::policy_surface_v5::{PolicyActionV5, PolicyDecisionV5, PolicySurfaceV5};
 use mtg_kernel::rl::{policy_legal_action_candidates_v5, ActionSemanticV1, PlayerSeatV1};
@@ -69,15 +71,15 @@ pub(super) fn play(mut state: GameState, seed: u64) -> NativeGame {
             !decision.is_terminal(),
             "seed={seed} step={step}: {decision:?}"
         );
-        let mut entering = None;
+        let mut opened = None;
         let action = match &decision {
             PolicyDecisionV5::Surface(SurfaceDecision::Decision(
                 Decision::ChooseEternalOpeningV1 { legal_cards, .. },
             )) => {
                 let pick = splitmix64(&mut random) % (legal_cards.len() as u64 + 1);
-                entering = legal_cards.get(pick as usize).copied();
+                opened = legal_cards.get(pick as usize).copied();
                 PolicyActionV5::Surface(SurfaceAction::Action(
-                    entering.map_or(Action::FinishEffectSelection, |card| {
+                    opened.map_or(Action::FinishEffectSelection, |card| {
                         Action::ChooseEffectTarget(Target::Object(card))
                     }),
                 ))
@@ -133,10 +135,19 @@ pub(super) fn play(mut state: GameState, seed: u64) -> NativeGame {
         surface
             .apply(&mut state, action)
             .unwrap_or_else(|error| panic!("seed={seed} step={step}: {error}"));
-        if let Some(card) = entering {
+        if let Some(card) = opened {
             let card = state.objects.get(card);
-            assert_eq!(card.zone, Zone::Battlefield, "seed={seed} step={step}");
-            *opening_entries.entry(card.card_def).or_default() += 1;
+            if card.zone == Zone::Battlefield {
+                *opening_entries.entry(card.card_def).or_default() += 1;
+            } else {
+                // Chancellor of the Annex is revealed and stays in its
+                // owner's hand; every other opening card enters.
+                assert_eq!(
+                    (card.zone, CARD_DEFS[usize::from(card.card_def)].name),
+                    (Zone::Hand, "Chancellor of the Annex"),
+                    "seed={seed} step={step}"
+                );
+            }
         }
     }
     panic!("seed={seed}: no natural terminal in {MAX_STEPS} steps");
