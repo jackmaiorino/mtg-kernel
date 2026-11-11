@@ -129,6 +129,7 @@ pub mod v8_inclusion_conversion_v1;
 pub(crate) mod verified_bytes_cache_v1;
 pub mod weights_snapshot_v1;
 pub use checkpoint_container_v1::CheckpointRecordFormatV1;
+use checkpoint_container_v1::ParameterBitsRefV1;
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 pub use record_envelope_v1::RecordEnvelopeV1;
 pub(crate) use trajectory_parse_ahead_v1::{
@@ -1514,9 +1515,13 @@ struct SearchPlayedRowV1 {
     policy_selected: u32,
 }
 
+/// One checkpoint tensor's name, shape and values' `f32` bit patterns, owned:
+/// what a checkpoint decodes to. A published checkpoint borrows its tensors
+/// from the snapshot instead (`checkpoint_container_v1::ParameterBitsRefV1`),
+/// with the same serialization.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ParameterBitsV1 {
+pub(crate) struct ParameterBitsV1 {
     name: String,
     shape: Vec<usize>,
     values: Vec<u32>,
@@ -1557,9 +1562,13 @@ fn restore_parameters(
         .collect()
 }
 
+/// A checkpoint record. `T` is how it holds its tensors
+/// (`checkpoint_container_v1::TensorBitsV1`): owned bits for every checkpoint
+/// read back, and borrowed snapshot tensors for the one an update publishes.
+/// Both serialize, and encode, to the same bytes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ExpandedCheckpointV1 {
+pub(crate) struct ExpandedCheckpointV1<T = ParameterBitsV1> {
     schema: String,
     feature_contract_digest: String,
     feature_encoding_digest: String,
@@ -1579,9 +1588,9 @@ pub(crate) struct ExpandedCheckpointV1 {
     ex1: Option<Value>,
     adam_step: u64,
     scorer_bias_anchor_bits: u32,
-    parameters: Vec<ParameterBitsV1>,
-    first_moments: Vec<ParameterBitsV1>,
-    second_moments: Vec<ParameterBitsV1>,
+    parameters: Vec<T>,
+    first_moments: Vec<T>,
+    second_moments: Vec<T>,
     trajectories: Vec<PinnedFileV1>,
     loss_identity: String,
     /// `Some` exactly when `loss_identity == "gae_advantage_value/v1"`,
@@ -4794,11 +4803,12 @@ fn execute_update_inner_v1(
         // again with its tape forward and refuses a bit that differs from
         // the stored row, so those rows may replay through the row cache.
         // The CUDA steps compare within a tolerance and keep the reference.
-        let row_cache = if update_backend.is_cpu() {
-            ordered_update_preparation::ReplayRowCacheV1::LearnerRows
-        } else {
-            ordered_update_preparation::ReplayRowCacheV1::Off
-        };
+        // The other seat's rows keep it too, unless this process was asked
+        // to replay them through the row cache as well.
+        let row_cache = ordered_update_preparation::ReplayRowCacheV1::for_update_v1(
+            update_backend.is_cpu(),
+            ordered_update_preparation::replay_other_seat_rows_cached_v1(),
+        );
         let prepared = ordered_update_preparation::prepare_with_row_cache_v1(
             &episodes,
             &policy,
@@ -5543,8 +5553,10 @@ fn execute_update_inner_v1(
         None => None,
     };
     let checkpoint_started = std::time::Instant::now();
-    let snapshot = state.snapshot_v1().map_err(err)?;
-    let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
+    // The checkpoint records the live state's tensors where the state holds
+    // them, after the snapshot's validation, under the state's own digest.
+    let tensors = state.tensors_v1().map_err(err)?;
+    let after = hex(&state.state_sha256_v1().map_err(err)?);
     fs::create_dir(&output_directory).map_err(err)?;
     let e_packet_pin = e_teacher
         .as_ref()
@@ -5608,22 +5620,25 @@ fn execute_update_inner_v1(
             }
             saved
         }),
-        adam_step: snapshot.adam_step,
-        scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
-        parameters: snapshot
+        adam_step: tensors.adam_step,
+        scorer_bias_anchor_bits: tensors.scorer_bias_anchor_bits,
+        // Borrowed from the state: both formats write each value's bits
+        // straight from it, the bytes an owned copy (`ParameterBitsV1`) would
+        // write.
+        parameters: tensors
             .parameters
             .iter()
-            .map(ParameterBitsV1::from_native)
+            .map(ParameterBitsRefV1::from)
             .collect(),
-        first_moments: snapshot
+        first_moments: tensors
             .first_moments
             .iter()
-            .map(ParameterBitsV1::from_native)
+            .map(ParameterBitsRefV1::from)
             .collect(),
-        second_moments: snapshot
+        second_moments: tensors
             .second_moments
             .iter()
-            .map(ParameterBitsV1::from_native)
+            .map(ParameterBitsRefV1::from)
             .collect(),
         trajectories: trajectories.clone(),
         loss_identity: loss_selection.loss_identity_v1().into(),
@@ -5661,7 +5676,7 @@ fn execute_update_inner_v1(
         value_coefficient_bits: value_coefficient.to_bits(),
         registry_transfer: transfer
             .as_ref()
-            .map(|context| context.after_update(snapshot.adam_step))
+            .map(|context| context.after_update(tensors.adam_step))
             .transpose()?,
         archive_distillation: None,
         training_math,
@@ -5698,15 +5713,9 @@ fn execute_update_inner_v1(
     if record_format == CheckpointRecordFormatV1::V2 {
         // Design section 3: the restored state equals the published one item
         // for item (Adam step, anchor, every tensor's name, shape and bits),
-        // beyond the state digest.
-        let back = restored.snapshot_v1().map_err(err)?;
-        let same = |got: &[NativeNamedParameterV1], saved: &[ParameterBitsV1]| {
-            got.len() == saved.len()
-                && got
-                    .iter()
-                    .zip(saved)
-                    .all(|(g, s)| ParameterBitsV1::from_native(g) == *s)
-        };
+        // beyond the state digest. Compared in place, without copies.
+        let back = restored.tensors_v1().map_err(err)?;
+        let same = checkpoint_container_v1::same_tensors_v1;
         ensure(
             back.adam_step == checkpoint.adam_step
                 && back.scorer_bias_anchor_bits == checkpoint.scorer_bias_anchor_bits
@@ -6070,16 +6079,20 @@ pub fn convert_checkpoint_v1_to_v2(
     let (_, after) = initialize_any_math_v1(&converted)?;
     let before_snapshot = before.snapshot_v1().map_err(err)?;
     let after_snapshot = after.snapshot_v1().map_err(err)?;
-    let bits = |rows: &[NativeNamedParameterV1]| -> Vec<ParameterBitsV1> {
-        rows.iter().map(ParameterBitsV1::from_native).collect()
-    };
+    let same = checkpoint_container_v1::same_tensors_v1;
     let state_sha256 = hex(&before_snapshot.state_sha256_v1().map_err(err)?);
     ensure(
         before_snapshot.adam_step == after_snapshot.adam_step
             && before_snapshot.scorer_bias_anchor_bits == after_snapshot.scorer_bias_anchor_bits
-            && bits(&before_snapshot.parameters) == bits(&after_snapshot.parameters)
-            && bits(&before_snapshot.first_moments) == bits(&after_snapshot.first_moments)
-            && bits(&before_snapshot.second_moments) == bits(&after_snapshot.second_moments)
+            && same(&before_snapshot.parameters, &after_snapshot.parameters)
+            && same(
+                &before_snapshot.first_moments,
+                &after_snapshot.first_moments,
+            )
+            && same(
+                &before_snapshot.second_moments,
+                &after_snapshot.second_moments,
+            )
             && hex(&after_snapshot.state_sha256_v1().map_err(err)?) == state_sha256
             && before.training_math_v1() == after.training_math_v1(),
         "converted checkpoint restores a different state",

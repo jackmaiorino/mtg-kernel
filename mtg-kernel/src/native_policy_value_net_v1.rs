@@ -446,6 +446,19 @@ pub(crate) struct NativeNamedParameterV1 {
     pub(crate) values: Vec<f32>,
 }
 
+/// One named tensor borrowed where it is held: what a
+/// [`NativeNamedParameterV1`] copies, with the values left in place. The
+/// shape is a small owned copy, because the visitors pass some shapes as
+/// temporaries. Compare tensors by their bits (`same_tensors_v1` in the
+/// checkpoint codec), not with `==` on floats, which is why this has no
+/// `PartialEq`.
+#[derive(Clone, Debug)]
+pub(crate) struct NativeNamedTensorRefV1<'a> {
+    pub(crate) name: &'static str,
+    pub(crate) shape: Vec<usize>,
+    pub(crate) values: &'a [f32],
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum NativePolicyValueErrorV1 {
     ModelConfigMismatch(&'static str),
@@ -1320,9 +1333,12 @@ impl NativePolicyValueNetV1 {
         Ok(())
     }
 
-    pub(crate) fn visit_parameters_v1(
-        &self,
-        mut visitor: impl FnMut(&'static str, &[usize], &[f32]),
+    /// Visits every named parameter in `named_parameters()` order. The
+    /// values are the model's own stored tensors, borrowed for as long as the
+    /// model is.
+    pub(crate) fn visit_parameters_v1<'a>(
+        &'a self,
+        mut visitor: impl FnMut(&'static str, &[usize], &'a [f32]),
     ) {
         visitor(
             "card_embedding.weight",
@@ -1504,10 +1520,10 @@ impl NativePolicyValueNetV1 {
     }
 }
 
-fn visit_linear_v1(
-    visitor: &mut impl FnMut(&'static str, &[usize], &[f32]),
+fn visit_linear_v1<'a>(
+    visitor: &mut impl FnMut(&'static str, &[usize], &'a [f32]),
     prefix: &'static str,
-    linear: &LinearV1,
+    linear: &'a LinearV1,
 ) {
     let (weight_name, bias_name) = match prefix {
         "object_encoder.0" => ("object_encoder.0.weight", "object_encoder.0.bias"),
@@ -2513,9 +2529,9 @@ impl NativePolicyValueNetWideV1 {
         Ok(())
     }
 
-    pub(crate) fn visit_parameters_wide_v1(
-        &self,
-        mut visitor: impl FnMut(&'static str, &[usize], &[f32]),
+    pub(crate) fn visit_parameters_wide_v1<'a>(
+        &'a self,
+        mut visitor: impl FnMut(&'static str, &[usize], &'a [f32]),
     ) {
         visitor(
             "card_embedding.weight",

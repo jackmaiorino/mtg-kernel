@@ -540,6 +540,68 @@ pub(super) enum ReplayRowCacheV1 {
     /// `validate_forward_output_bits_v1`). The other seat's rows have no
     /// second check and keep the reference forward.
     LearnerRows,
+    /// Every row: the learner's as in `LearnerRows`, and the other seat's
+    /// too. The other seat's rows are still compared with the stored rollout
+    /// bits, but only by the forward that produced them, so an error that
+    /// the row cache makes in collection and again in replay would pass.
+    /// Those rows never enter the learner step. Only for a run whose
+    /// operator asked for it (`replay_other_seat_rows_cached_v1`).
+    AllRows,
+}
+
+impl ReplayRowCacheV1 {
+    /// The rows an update's prepared replay takes through the row cache.
+    /// `cpu_learner`: the update runs a CPU learner step, which checks every
+    /// learner row again bit for bit; without one no row is cached, whatever
+    /// was asked. `other_seat`: the operator asked for the other seat's rows
+    /// as well.
+    pub(super) fn for_update_v1(cpu_learner: bool, other_seat: bool) -> Self {
+        match (cpu_learner, other_seat) {
+            (false, _) => Self::Off,
+            (true, false) => Self::LearnerRows,
+            (true, true) => Self::AllRows,
+        }
+    }
+
+    /// Whether a group of the learner's rows (`learner_rows`) or of the
+    /// other seat's takes the row cache.
+    fn caches_v1(self, learner_rows: bool) -> bool {
+        match self {
+            Self::Off => false,
+            Self::LearnerRows => learner_rows,
+            Self::AllRows => true,
+        }
+    }
+}
+
+/// The setting that asks for `ReplayRowCacheV1::AllRows`.
+const REPLAY_OTHER_SEAT_SETTING_V1: &str = "MTG_KERNEL_ROW_CACHE_REPLAY_OTHER_SEAT";
+
+/// Whether this process was asked to replay the other seat's rows through
+/// the row cache as well: `MTG_KERNEL_ROW_CACHE_REPLAY_OTHER_SEAT=1`. Off by
+/// default, and read once.
+pub(super) fn replay_other_seat_rows_cached_v1() -> bool {
+    static ASKED: OnceLock<bool> = OnceLock::new();
+    *ASKED.get_or_init(|| {
+        replay_other_seat_setting_v1(std::env::var(REPLAY_OTHER_SEAT_SETTING_V1).ok().as_deref())
+    })
+}
+
+/// Only the exact value `1` asks. Anything else, or no value, keeps the
+/// reference forward for the other seat's rows.
+fn replay_other_seat_setting_v1(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+/// A replay worker's row caches, one for each seat's rows. A group is one
+/// seat's rows, the seats are scored by different models whenever the
+/// opponent is not the current learner, and a `ReplayForwardRowsV1` keeps
+/// one model's rows at a time: with one storage, alternating seats would
+/// empty it at every group. Storage that is never used holds nothing.
+#[derive(Default)]
+struct SeatRowCachesV1 {
+    learner: ReplayForwardRowsV1,
+    other: ReplayForwardRowsV1,
 }
 
 /// The prepared replay with every row through the reference forward.
@@ -739,9 +801,10 @@ where
         .collect();
     let binding = binding_started.elapsed().as_secs_f64();
     let replay_started = Instant::now();
-    // A worker replays the rows `row_cache` names through its own exact row
-    // cache: the same outputs, bit for bit, for a fraction of the work.
-    let replay_group = |cache: &mut ReplayForwardRowsV1, ordinal: usize| -> Result<_, String> {
+    // A worker replays the rows `learner_replay`'s row cache names through
+    // its own exact row caches, one for each seat's rows: the same outputs,
+    // bit for bit, for a fraction of the work.
+    let replay_group = |caches: &mut SeatRowCachesV1, ordinal: usize| -> Result<_, String> {
         let job = jobs[ordinal];
         bindings[job.episode].as_ref().map_err(Clone::clone)?;
         let trajectory = &episodes[job.episode];
@@ -764,15 +827,22 @@ where
         } else {
             s_update_profile::StageV1::ReplayOtherRow
         };
-        let cached = learner_rows
-            && matches!(
-                learner_replay,
-                LearnerRowsV1::Replay(ReplayRowCacheV1::LearnerRows)
-            );
-        let other_forwards = match learner_replay {
-            LearnerRowsV1::Defer { other_forwards } => Some(other_forwards),
-            LearnerRowsV1::Replay(_) => None,
+        // A deferring preparation replays only the other seat's rows, each
+        // through the reference forward; the learner's are left to the
+        // verified learner.
+        let (row_cache, other_forwards) = match learner_replay {
+            LearnerRowsV1::Replay(row_cache) => (row_cache, None),
+            LearnerRowsV1::Defer { other_forwards } => {
+                (ReplayRowCacheV1::Off, Some(other_forwards))
+            }
         };
+        let mut cache = row_cache
+            .caches_v1(learner_rows)
+            .then_some(if learner_rows {
+                &mut caches.learner
+            } else {
+                &mut caches.other
+            });
         let mut rows = Vec::new();
         for row in &trajectory.decisions[job.start..job.end] {
             let common = row.tensor.tensor();
@@ -785,7 +855,7 @@ where
                 generation,
                 &common,
                 &row.tensor.pairing_node_indices,
-                cached.then_some(&mut *cache),
+                cache.as_deref_mut(),
             )?;
             span.finish_v1(&output.logits, output.value);
             if let Some(other_forwards) = other_forwards {
@@ -809,12 +879,8 @@ where
             ))
         })
     };
-    let (ordered, worker_timings) = ordered_jobs_with_state_v1(
-        workers,
-        jobs.len(),
-        ReplayForwardRowsV1::default,
-        replay_group,
-    )?;
+    let (ordered, worker_timings) =
+        ordered_jobs_with_state_v1(workers, jobs.len(), SeatRowCachesV1::default, replay_group)?;
     let replay = replay_started.elapsed().as_secs_f64();
     drop(opponents);
     let groups: Vec<LearnerTensorGroupV1<'a>> = ordered.into_iter().flatten().collect();

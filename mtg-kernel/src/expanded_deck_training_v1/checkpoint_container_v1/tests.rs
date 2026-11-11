@@ -260,3 +260,409 @@ fn a_tensor_whose_values_do_not_fill_its_shape_is_not_encoded() {
         .unwrap_err()
         .contains("differs from its shape"));
 }
+
+/// `tensors` as a snapshot holds them: the `f32` values whose bits they are,
+/// under the same names and shapes.
+fn native_v1(tensors: &[ParameterBitsV1]) -> Vec<NativeNamedParameterV1> {
+    tensors
+        .iter()
+        .map(|tensor| NativeNamedParameterV1 {
+            name: Box::leak(tensor.name.clone().into_boxed_str()),
+            shape: tensor.shape.clone(),
+            values: tensor
+                .values
+                .iter()
+                .map(|&bits| f32::from_bits(bits))
+                .collect(),
+        })
+        .collect()
+}
+
+/// `saved`'s three sections as snapshot tensors.
+fn native_sections_v1(saved: &ExpandedCheckpointV1) -> [Vec<NativeNamedParameterV1>; 3] {
+    sections_of_v1(saved).map(native_v1)
+}
+
+/// `saved` with its tensors borrowed from `native`, as an update publishes it.
+fn borrowed_v1<'a>(
+    saved: &ExpandedCheckpointV1,
+    native: &'a [Vec<NativeNamedParameterV1>; 3],
+) -> ExpandedCheckpointV1<ParameterBitsRefV1<'a>> {
+    with_tensors_v1(
+        saved,
+        native
+            .each_ref()
+            .map(|tensors| tensors.iter().map(ParameterBitsRefV1::from).collect()),
+    )
+}
+
+/// The net-8 fixture with every optional member a checkpoint document can
+/// carry as JSON, so the derived serialization's member presence is shared.
+fn optional_members_fixture_v1() -> ExpandedCheckpointV1 {
+    let mut saved = fixture_v1();
+    saved.e_supported = Some(serde_json::json!({"continuation": "e", "packet": null}));
+    saved.soft_q = Some(serde_json::json!({"continuation": "sq", "packet": {"path": "/p"}}));
+    saved.search_targets = Some(serde_json::json!({"continuation": "st", "census": [1, 2]}));
+    saved.ex1 = Some(serde_json::json!({"continuation": "ex1", "w5_next_update": 3}));
+    saved
+}
+
+#[test]
+fn a_checkpoint_of_borrowed_tensors_publishes_the_owned_bytes_in_both_formats() {
+    for owned in [
+        fixture_v1(),
+        python_fixture_v1(),
+        optional_members_fixture_v1(),
+    ] {
+        let native = native_sections_v1(&owned);
+        let borrowed = borrowed_v1(&owned, &native);
+        let v1 = json_v1(&owned);
+        assert_eq!(serde_json::to_vec(&borrowed).unwrap(), v1);
+        let container = encode_v1(&owned).unwrap();
+        assert_eq!(encode_v1(&borrowed).unwrap(), container);
+        assert_eq!(json_v1(&decode_v1(&container).unwrap()), v1);
+        assert!(encodes_to_v1(&borrowed, &container).unwrap());
+        // The writer's gate and the default's resolution read the document,
+        // however the tensors are held.
+        assert_eq!(
+            admit_writer_v1(&borrowed).is_ok(),
+            admit_writer_v1(&owned).is_ok()
+        );
+        assert_eq!(
+            CheckpointRecordFormatV1::Auto.resolve_v1(&borrowed),
+            CheckpointRecordFormatV1::Auto.resolve_v1(&owned)
+        );
+        for (native, owned) in native.iter().zip(sections_of_v1(&owned)) {
+            assert!(same_tensors_v1(native, owned));
+        }
+    }
+    // The checked-in V1/V2 pair, written from borrowed tensors.
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../python/tools/tests/fixtures/checkpoint_container_v1");
+    let owned = python_fixture_v1();
+    let native = native_sections_v1(&owned);
+    let borrowed = borrowed_v1(&owned, &native);
+    assert_eq!(
+        serde_json::to_vec(&borrowed).unwrap(),
+        std::fs::read(dir.join("checkpoint-v1.json")).unwrap()
+    );
+    assert_eq!(
+        encode_v1(&borrowed).unwrap(),
+        std::fs::read(dir.join("checkpoint.ckpt")).unwrap()
+    );
+}
+
+#[test]
+fn a_checkpoint_of_a_live_states_tensors_writes_its_snapshots_bytes() {
+    use crate::native_policy_train_step_v1::NativePolicyValueTrainStateV1;
+    let (_, model, _) = checkpoint_fixture_v1();
+    let state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+    let snapshot = state.snapshot_v1().unwrap();
+    let tensors = state.tensors_v1().unwrap();
+    let metadata = fixture_v1();
+    let owned = with_tensors_v1(
+        &metadata,
+        [
+            &snapshot.parameters,
+            &snapshot.first_moments,
+            &snapshot.second_moments,
+        ]
+        .map(|section| section.iter().map(ParameterBitsV1::from_native).collect()),
+    );
+    let live = with_tensors_v1(
+        &metadata,
+        [
+            &tensors.parameters,
+            &tensors.first_moments,
+            &tensors.second_moments,
+        ]
+        .map(|section| section.iter().map(ParameterBitsRefV1::from).collect()),
+    );
+    assert_eq!(serde_json::to_vec(&live).unwrap(), json_v1(&owned));
+    let container = encode_v1(&owned).unwrap();
+    assert_eq!(encode_v1(&live).unwrap(), container);
+    assert!(encodes_to_v1(&live, &container).unwrap());
+    for (live, owned) in [
+        (&tensors.parameters, &owned.parameters),
+        (&tensors.first_moments, &owned.first_moments),
+        (&tensors.second_moments, &owned.second_moments),
+    ] {
+        assert!(same_tensors_v1(live, owned) && same_tensors_v1(owned, live));
+    }
+}
+
+#[test]
+fn a_borrowed_tensor_that_does_not_fill_its_shape_is_not_encoded() {
+    let owned = python_fixture_v1();
+    let mut native = native_sections_v1(&owned);
+    native[1][0].values.pop();
+    assert!(encode_v1(&borrowed_v1(&owned, &native))
+        .unwrap_err()
+        .contains("differs from its shape"));
+}
+
+/// The decode with the second guard as it was before it was streamed: a
+/// re-encoded copy compared with the bytes.
+fn decode_with_copy_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
+    let saved = decode_sections_v1(bytes)?;
+    if encode_v1(&saved)? != bytes {
+        return Err("checkpoint container is not in canonical form".into());
+    }
+    Ok(saved)
+}
+
+/// Decodes `container` and every single-byte change (three per byte: header,
+/// document, table, padding and values alike), truncation and trailing tail
+/// of it with both `decode_v1` and the copying reference, asserting the same
+/// outcome for each. Returns how many were accepted and how many refused.
+fn same_refusals_v1(container: &[u8]) -> (usize, usize) {
+    let outcome = |bytes: &[u8]| decode_v1(bytes).map(|saved| json_v1(&saved));
+    let reference = |bytes: &[u8]| decode_with_copy_v1(bytes).map(|saved| json_v1(&saved));
+    let mut accepted = 0usize;
+    let mut refused = 0usize;
+    let mut check = |bytes: &[u8], what: &str| {
+        let got = outcome(bytes);
+        assert_eq!(got, reference(bytes), "{what}");
+        match got {
+            Ok(_) => accepted += 1,
+            Err(_) => refused += 1,
+        }
+    };
+    check(container, "the container itself");
+    let changes: [fn(u8) -> u8; 3] = [|b| b ^ 0x01, |b| b ^ 0x80, |_| 0x20];
+    for at in 0..container.len() {
+        for change in changes {
+            let mut bytes = container.to_vec();
+            bytes[at] = change(bytes[at]);
+            if bytes[at] != container[at] {
+                check(&bytes, &format!("byte {at} changed"));
+            }
+        }
+    }
+    for length in 0..container.len() {
+        check(&container[..length], &format!("truncated to {length}"));
+    }
+    let tails: [&[u8]; 4] = [&[0], &[1], &[0; 4], &[0; 256]];
+    for tail in tails {
+        check(&[container, tail].concat(), "trailing bytes");
+    }
+    (accepted, refused)
+}
+
+/// The container encoder as it was before it wrote through a sink: one
+/// buffer, extended in place.
+fn encode_with_buffer_v1(saved: &ExpandedCheckpointV1) -> Result<Vec<u8>, String> {
+    let document = serde_json::to_vec(&document_of_v1(saved)).map_err(|e| e.to_string())?;
+    let mut entries = Vec::new();
+    let mut offset = 0usize;
+    for (section, tensors) in SECTION_NAMES_V1.iter().zip(sections_of_v1(saved)) {
+        for (ordinal, tensor) in tensors.iter().enumerate() {
+            let count = element_count_v1(&tensor.shape)?;
+            if count != tensor.values.len() {
+                return Err("checkpoint container tensor length differs from its shape".into());
+            }
+            let byte_length = count
+                .checked_mul(4)
+                .ok_or("checkpoint container tensor size overflows")?;
+            entries.push(SectionEntryV1 {
+                section: (*section).to_owned(),
+                ordinal,
+                name: tensor.name.clone(),
+                shape: tensor.shape.clone(),
+                offset: offset as u64,
+                byte_length: byte_length as u64,
+            });
+            offset = align_up_v1(
+                offset
+                    .checked_add(byte_length)
+                    .ok_or("checkpoint container size overflows")?,
+            )?;
+        }
+    }
+    let data_length = entries
+        .last()
+        .map_or(0, |last| (last.offset + last.byte_length) as usize);
+    let table = SectionTableV1 {
+        state_format: STATE_FORMAT_V1.to_owned(),
+        sections: entries,
+    };
+    let table = serde_json::to_vec(&table).map_err(|e| e.to_string())?;
+    let data_start = align_up_v1(HEADER_BYTES_V1 + document.len() + table.len())?;
+    let total = data_start
+        .checked_add(data_length)
+        .ok_or("checkpoint container size overflows")?;
+    let mut bytes = Vec::with_capacity(total);
+    bytes.extend_from_slice(MAGIC_V1);
+    bytes.extend_from_slice(&CONTAINER_VERSION_V1.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&(document.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&(table.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&document);
+    bytes.extend_from_slice(&table);
+    bytes.resize(data_start, 0);
+    for tensors in sections_of_v1(saved) {
+        for tensor in tensors {
+            let start = align_up_v1(bytes.len() - data_start)? + data_start;
+            bytes.resize(start, 0);
+            for value in &tensor.values {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+    }
+    assert_eq!(bytes.len(), total);
+    Ok(bytes)
+}
+
+/// A change to one tensor.
+type TensorChangeV1 = fn(&mut ParameterBitsV1);
+
+/// Layout edge cases on the Python fixture's document: no tensors at all, a
+/// section with none, and scalar, odd-length, exactly aligned, just past
+/// aligned and zero-length tensors.
+fn layout_cases_v1() -> Vec<(&'static str, ExpandedCheckpointV1)> {
+    let base = python_fixture_v1();
+    let tensor = |name: &str, shape: Vec<usize>| {
+        let count: usize = shape.iter().product();
+        ParameterBitsV1 {
+            name: name.into(),
+            shape,
+            values: (0..count)
+                .map(|i| (i as f32 * 0.5 - 3.0).to_bits())
+                .collect(),
+        }
+    };
+    let mut no_first_moments = base.clone();
+    no_first_moments.first_moments.clear();
+    let mut odd = base.clone();
+    odd.parameters = vec![
+        tensor("scalar", vec![]),
+        tensor("three", vec![3]),
+        tensor("aligned", vec![64]),
+        tensor("past", vec![65]),
+        tensor("none", vec![2, 0]),
+    ];
+    vec![
+        (
+            "no tensors",
+            with_tensors_v1(&base, [Vec::new(), Vec::new(), Vec::new()]),
+        ),
+        ("a section without tensors", no_first_moments),
+        ("odd lengths", odd),
+    ]
+}
+
+#[test]
+fn the_encoder_writes_and_refuses_what_the_buffered_encoder_did() {
+    let mut cases = layout_cases_v1();
+    cases.extend([
+        ("the unit fixture", fixture_v1()),
+        ("the Python fixture", python_fixture_v1()),
+        ("optional members", optional_members_fixture_v1()),
+    ]);
+    for (what, owned) in &cases {
+        let expected = encode_with_buffer_v1(owned).unwrap();
+        let native = native_sections_v1(owned);
+        assert_eq!(encode_v1(owned).unwrap(), expected, "{what}");
+        assert_eq!(
+            encode_v1(&borrowed_v1(owned, &native)).unwrap(),
+            expected,
+            "{what}"
+        );
+        assert!(encodes_to_v1(owned, &expected).unwrap(), "{what}");
+    }
+    // A value count that is not the shape's product, and a shape whose
+    // product overflows, in each section, owned and borrowed alike.
+    let refusals: [(&str, TensorChangeV1); 3] = [
+        ("a value short", |tensor| {
+            tensor.values.pop();
+        }),
+        ("a value over", |tensor| tensor.values.push(0)),
+        ("an overflowing shape", |tensor| {
+            tensor.shape = vec![usize::MAX, 2];
+        }),
+    ];
+    for (what, change) in refusals {
+        for section in 0..3 {
+            let mut owned = python_fixture_v1();
+            let tensors = match section {
+                0 => &mut owned.parameters,
+                1 => &mut owned.first_moments,
+                _ => &mut owned.second_moments,
+            };
+            change(&mut tensors[1]);
+            let expected = encode_with_buffer_v1(&owned).unwrap_err();
+            let native = native_sections_v1(&owned);
+            assert_eq!(encode_v1(&owned).unwrap_err(), expected, "{what}");
+            assert_eq!(
+                encode_v1(&borrowed_v1(&owned, &native)).unwrap_err(),
+                expected,
+                "{what}"
+            );
+            assert_eq!(encodes_to_v1(&owned, &[]).unwrap_err(), expected, "{what}");
+        }
+    }
+}
+
+#[test]
+fn the_streamed_canonical_check_refuses_exactly_what_a_reencoded_copy_refuses() {
+    let container = encode_v1(&python_fixture_v1()).unwrap();
+    let (accepted, refused) = same_refusals_v1(&container);
+    // Value bytes are data, so some changes decode; everything else is
+    // refused.
+    assert!(accepted > 1 && refused > container.len());
+    // The layout edge cases, including a container with no tensors.
+    for (what, saved) in layout_cases_v1() {
+        let container = encode_v1(&saved).unwrap();
+        let (accepted, refused) = same_refusals_v1(&container);
+        assert!(accepted >= 1 && refused > container.len(), "{what}");
+    }
+}
+
+#[test]
+fn tensors_compare_by_name_shape_and_bits_in_place() {
+    let owned = python_fixture_v1().parameters;
+    let native = native_v1(&owned);
+    assert!(same_tensors_v1(&native, &owned) && same_tensors_v1(&owned, &native));
+    assert!(same_tensors_v1(&native, &native) && same_tensors_v1(&owned, &owned));
+    // A change of each kind is seen from either side and against either form.
+    let differs = |change: &dyn Fn(&mut Vec<NativeNamedParameterV1>)| {
+        let mut changed = native_v1(&owned);
+        change(&mut changed);
+        !same_tensors_v1(&changed, &owned)
+            && !same_tensors_v1(&owned, &changed)
+            && !same_tensors_v1(&changed, &native)
+            && !same_tensors_v1(&native, &changed)
+    };
+    assert!(differs(&|t| t[0].name = "renamed"));
+    assert!(differs(&|t| t[0].shape = vec![3, 2]));
+    assert!(differs(
+        &|t| t[1].values[4] = f32::from_bits(t[1].values[4].to_bits() ^ 1)
+    ));
+    assert!(differs(&|t| t[0].values.push(0.0)));
+    assert!(differs(&|t| {
+        t.pop();
+    }));
+    // Bits, not float equality: a signed zero or a NaN payload counts, and a
+    // NaN equals itself.
+    let one = |value: f32| {
+        vec![NativeNamedParameterV1 {
+            name: "x",
+            shape: vec![1],
+            values: vec![value],
+        }]
+    };
+    assert!(!same_tensors_v1(&one(0.0), &one(-0.0)));
+    let nan = |payload: u32| one(f32::from_bits(0x7fc0_0000 | payload));
+    assert!(same_tensors_v1(&nan(1), &nan(1)) && !same_tensors_v1(&nan(1), &nan(2)));
+    // Past the first block of the comparison: one bit deep in a large tensor.
+    let large = fixture_v1().parameters;
+    let mut changed = native_v1(&large);
+    let tensor = changed
+        .iter_mut()
+        .max_by_key(|t| t.values.len())
+        .expect("a tensor");
+    assert!(tensor.values.len() > 5000);
+    tensor.values[5000] = f32::from_bits(tensor.values[5000].to_bits() ^ 0x8000_0000);
+    assert!(same_tensors_v1(&native_v1(&large), &large));
+    assert!(!same_tensors_v1(&changed, &large));
+}
