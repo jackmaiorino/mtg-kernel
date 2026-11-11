@@ -495,6 +495,7 @@ jobs:
             learned_bo3_v1::public_evaluation:: \
             regret_census_v1::stage4a::blunder_census:: \
             regret_census_v1::stage4a::blunder_price:: \
+            regret_census_v1::stage4a::search_probe:: \
             paired_bo1_harness_v1::continuation_capture_tests:: \
             phase1_bo3_collection_v1::combat_audit:: \
             phase1_bo3_collection_v1::continuation:: \
