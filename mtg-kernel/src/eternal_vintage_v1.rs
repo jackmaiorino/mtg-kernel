@@ -1918,6 +1918,7 @@ pub(crate) fn enters_tapped(state: &GameState, object: ObjectId, controller: Pla
 /// Clarion Conqueror: "Activated abilities of artifacts, creatures, and
 /// planeswalkers can't be activated." Karn, the Great Creator: "Activated
 /// abilities of artifacts your opponents control can't be activated."
+/// Cursed Totem: "Activated abilities of creatures can't be activated."
 pub(crate) fn activations_prohibited(state: &GameState, object: ObjectId) -> bool {
     // Collector Ouphe and Phyrexian Revoker (wave E7b).
     if crate::eternal_vintage_e7b_v1::statics::activations_prohibited(state, object) {
@@ -1936,6 +1937,10 @@ pub(crate) fn activations_prohibited(state: &GameState, object: ObjectId) -> boo
             .next()
             .is_some()
     {
+        return true;
+    }
+    // Cursed Totem (Premodern sideboard wave P3a).
+    if crate::eternal_premodern_p3a_v1::statics::activations_prohibited(state, object) {
         return true;
     }
     (artifact

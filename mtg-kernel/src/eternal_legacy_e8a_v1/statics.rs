@@ -383,10 +383,13 @@ pub(crate) fn granted_rain_ability(
 
 /// The index the granted ability takes on `land`: one past its printed
 /// abilities. A land that keeps another granted ability there (a Thespian's
-/// Stage copy) is not offered this one.
+/// Stage copy) is not offered this one, nor is a land whose activated
+/// abilities can't be activated (an animated land under Cursed Totem).
 pub(crate) fn rain_ability_index(state: &GameState, land: ObjectId) -> Option<u8> {
     granted_rain_ability(state, land)?;
-    if crate::eternal_legacy_e7a_v1::retained_stage_ability(state, land).is_some() {
+    if crate::eternal_legacy_e7a_v1::retained_stage_ability(state, land).is_some()
+        || crate::standard_cards_v1::activations_locked(state, land)
+    {
         return None;
     }
     let def = definition(state, land)?;

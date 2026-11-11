@@ -226,8 +226,10 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.rust_relevant == 'true'
     # The limit includes any wait in the self-hosted job-started hook; a
-    # cold Windows build has taken about 45 minutes.
-    timeout-minutes: 120
+    # cold Windows build has taken about 45 minutes. The Eternal group
+    # builds three feature sets and replays every playable deck: its hosted
+    # Windows job at 27b28ba2 (2026-11-11) needed more than 120 minutes.
+    timeout-minutes: ${{ matrix.group == 'eternal' && 180 || 120 }}
     defaults:
       run:
         shell: bash
