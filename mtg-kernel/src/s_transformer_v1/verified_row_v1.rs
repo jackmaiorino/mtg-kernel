@@ -1,5 +1,4 @@
-//! Isolated ordinary-S GAE tape reuse prototype. Production preparation and
-//! update entry points do not use this module.
+//! Bounded ordinary S GAE tape reuse for the opt-in serial update.
 
 use super::{
     ensure_mxcsr_v1, gae_policy_row_v1, update_profile_v1, CountsV1, LayerTapeV1, SBackScratchV1,
@@ -22,10 +21,12 @@ impl From<String> for ReplayErrorV1 {
     }
 }
 
+#[cfg(test)]
 thread_local! {
     static TEST_FORWARDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+#[cfg(test)]
 pub(super) fn note_forward_v1() {
     TEST_FORWARDS.with(|n| n.set(n.get() + 1));
 }
@@ -153,6 +154,7 @@ impl TapeSlotV1 {
         Ok(bytes)
     }
 
+    #[cfg(test)]
     pub(super) fn authenticate_v1<'model, 'input, 'slot>(
         &'slot mut self,
         generation: &ModelScopeV1<'model>,
@@ -294,6 +296,7 @@ pub(crate) struct SerialVerifiedGaeV1<'model> {
     value_sum: f32,
     first_error: Option<String>,
     peak_retained_tape_bytes: usize,
+    #[cfg(test)]
     short_first_gradient: bool,
 }
 
@@ -304,7 +307,6 @@ impl<'model> SerialVerifiedGaeV1<'model> {
         cap: usize,
         group_count: usize,
         coefficient: f32,
-        short_first_gradient: bool,
     ) -> Result<Self, ReplayErrorV1> {
         let generation = ModelScopeV1::bind_v1(model, expected_generation)?;
         if cap < size_of::<TapeSlotV1>() {
@@ -323,8 +325,18 @@ impl<'model> SerialVerifiedGaeV1<'model> {
             value_sum: 0.0,
             first_error: None,
             peak_retained_tape_bytes: size_of::<TapeSlotV1>(),
-            short_first_gradient,
+            #[cfg(test)]
+            short_first_gradient: false,
         })
+    }
+
+    pub(crate) fn peak_retained_tape_bytes_v1(&self) -> usize {
+        self.peak_retained_tape_bytes
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shorten_first_gradient_for_test_v1(&mut self) {
+        self.short_first_gradient = true;
     }
 
     pub(crate) fn authenticate_v1(
@@ -335,7 +347,7 @@ impl<'model> SerialVerifiedGaeV1<'model> {
         expected_logits: &[u32],
         expected_value: u32,
         target: impl FnOnce() -> Option<(f32, f32)>,
-    ) -> Result<(), ReplayErrorV1> {
+    ) -> Result<bool, ReplayErrorV1> {
         let row = self.tape.authenticate_recycling_v1(
             &self.generation,
             step,
@@ -346,22 +358,24 @@ impl<'model> SerialVerifiedGaeV1<'model> {
         )?;
         self.peak_retained_tape_bytes = self.peak_retained_tape_bytes.max(row.bytes);
         if self.first_error.is_some() {
-            return Ok(());
+            return Ok(false);
         }
         let Some((advantage, value_target)) = target() else {
-            return Ok(());
+            return Ok(false);
         };
         let (group, sub) = index;
         if !advantage.is_finite() || !value_target.is_finite() {
             self.first_error = Some(format!("S group {group} has a non-finite target"));
-            return Ok(());
+            return Ok(false);
         }
         // A short sink exercises the real backward rejection without changing
         // replayed inputs or provisional targets.
+        let gradient = self.gradient.as_mut_slice();
+        #[cfg(test)]
         let gradient = if self.short_first_gradient && index == (0, 0) {
-            &mut self.gradient[..0]
+            &mut gradient[..0]
         } else {
-            self.gradient.as_mut_slice()
+            gradient
         };
         let result = row.backward_v1(
             GaeTargetV1 {
@@ -385,13 +399,16 @@ impl<'model> SerialVerifiedGaeV1<'model> {
                     self.policy_sum += -self.joint * advantage;
                     self.value_sum += self.value_error * self.value_error;
                 }
+                Ok(true)
             }
-            Err(error) => self.first_error = Some(error),
+            Err(error) => {
+                self.first_error = Some(error);
+                Ok(false)
+            }
         }
-        Ok(())
     }
 
-    pub(crate) fn finish_v1(mut self) -> Result<(SLossV1, Vec<f32>, usize), String> {
+    pub(crate) fn finish_v1(mut self) -> Result<(SLossV1, Vec<f32>), String> {
         if let Some(error) = self.first_error {
             return Err(error);
         }
@@ -413,9 +430,9 @@ impl<'model> SerialVerifiedGaeV1<'model> {
                 loss,
             },
             self.gradient,
-            self.peak_retained_tape_bytes,
         ))
     }
 }
 
+#[cfg(test)]
 mod tests;

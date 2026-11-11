@@ -302,6 +302,12 @@ pub struct LimitedReplyV1 {
     /// The current chooser's outside-game choices in effect-option order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outside_game_options: Option<Vec<crate::eternal_outside_game_v1::OutsideGameOptionV1>>,
+    /// Present only in the caster's actual Surgical Extraction search decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surgical_search_look_v1: Option<crate::eternal_sideboard_s1a_v1::SurgicalSearchLookV1>,
+    /// Present only in the caster's actual Extirpate search decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extirpate_search_look_v1: Option<crate::eternal_sideboard_s1b_v1::ExtirpateSearchLookV1>,
     pub request_id: Option<String>,
     pub kernel_version: String,
     pub card_db_hash: u64,
@@ -320,6 +326,8 @@ impl LimitedReplyV1 {
             observation_rules: None,
             outside_game_rules: None,
             outside_game_options: None,
+            surgical_search_look_v1: None,
+            extirpate_search_look_v1: None,
             request_id,
             kernel_version: KERNEL_VERSION.to_string(),
             card_db_hash: KERNEL_CARDDB_HASH,
@@ -333,9 +341,41 @@ impl LimitedReplyV1 {
         session: &RlEpisodeSessionV1,
     ) -> Self {
         let mut outside_game_options = None;
+        let mut surgical_search_look_v1 = None;
+        let mut extirpate_search_look_v1 = None;
         let body = match response {
             RlSessionResponseV1::Decision(decision) => {
                 outside_game_options = session.outside_game_options(decision.acting_player);
+                let viewer = match decision.acting_player {
+                    crate::rl::PlayerSeatV1::P0 => crate::ids::PlayerId::P0,
+                    crate::rl::PlayerSeatV1::P1 => crate::ids::PlayerId::P1,
+                };
+                match crate::eternal_sideboard_s1a_v1::surgical_search_look_v1(
+                    session.game_state(),
+                    viewer,
+                ) {
+                    Ok(look) => surgical_search_look_v1 = look,
+                    Err(_) => {
+                        return Self::error(
+                            Some(request_id),
+                            "invalid_surgical_search",
+                            "The active Surgical Extraction search is invalid.",
+                        )
+                    }
+                }
+                match crate::eternal_sideboard_s1b_v1::extirpate_search_look_v1(
+                    session.game_state(),
+                    viewer,
+                ) {
+                    Ok(look) => extirpate_search_look_v1 = look,
+                    Err(_) => {
+                        return Self::error(
+                            Some(request_id),
+                            "invalid_extirpate_search",
+                            "The active Extirpate search is invalid.",
+                        )
+                    }
+                }
                 LimitedReplyBodyV1::Decision {
                     decision: Box::new(decision),
                 }
@@ -344,6 +384,8 @@ impl LimitedReplyV1 {
         };
         let mut reply = Self::new(Some(request_id), body);
         reply.outside_game_options = outside_game_options;
+        reply.surgical_search_look_v1 = surgical_search_look_v1;
+        reply.extirpate_search_look_v1 = extirpate_search_look_v1;
         reply.outside_game_rules =
             crate::eternal_outside_game_v1::outside_game_profile(session.game_state())
                 .map(str::to_string);

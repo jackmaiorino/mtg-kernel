@@ -310,6 +310,18 @@ pub(crate) fn katilda_mana_colors(
                 colors.push(color);
             }
         }
+        // Navigator's Compass (wave S1d).
+        for color in crate::eternal_sideboard_s1d_v1::statics::granted_mana_colors(state, object) {
+            if !colors.contains(&color) {
+                colors.push(color);
+            }
+        }
+        // Urborg, Tomb of Yawgmoth's Swamps (wave S1c).
+        for color in crate::eternal_sideboard_s1c_v1::statics::granted_mana_colors(state, object) {
+            if !colors.contains(&color) {
+                colors.push(color);
+            }
+        }
         // Harbinger of the Seas' Islands; Valgavoth's Lair's chosen color.
         for color in crate::eternal_legacy_e8a_v1::statics::granted_mana_colors(state, object) {
             if !colors.contains(&color) {
@@ -476,6 +488,17 @@ pub(crate) fn hexproof_from_color(
         );
     characteristics.hexproof_color_mask & source_colors != 0
 }
+pub(crate) fn hexproof_from_color_mask(
+    state: &GameState,
+    target: ObjectId,
+    targeter: crate::ids::PlayerId,
+    source_colors: u8,
+) -> bool {
+    state.objects.get(target).controller != targeter
+        && characteristics(state, target)
+            .is_some_and(|current| current.hexproof_color_mask & source_colors != 0)
+}
+
 pub(crate) fn skrelv_blocks(state: &GameState, attacker: ObjectId, blocker: ObjectId) -> bool {
     characteristics(state, attacker).is_some_and(|c| {
         c.cant_be_blocked_by_color_mask & crate::engine::object_color_mask(state, blocker) != 0

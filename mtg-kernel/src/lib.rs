@@ -295,6 +295,7 @@ pub mod eternal_legacy_e9a_v1;
 /// Vintage Lurrus card programs and companions of the eternal catalog (wave
 /// E4b).
 pub mod eternal_lurrus_v1;
+pub mod eternal_opening_v1;
 /// The eternal catalog's outside-the-game zone: each player's sideboard cards,
 /// private to their owner, and the wish and learn effects that read them.
 pub mod eternal_outside_game_v1;
@@ -324,6 +325,14 @@ pub mod eternal_premodern_p2c_v1;
 /// Premodern White Weenie and Mono-Red Control card programs of the eternal
 /// catalog (wave P2d).
 pub mod eternal_premodern_p2d_v1;
+/// Legacy sideboard card programs of the eternal catalog (wave S1a).
+pub mod eternal_sideboard_s1a_v1;
+/// Legacy sideboard card programs of the eternal catalog, part 2 (wave S1b).
+pub mod eternal_sideboard_s1b_v1;
+/// Vintage-only sideboard card programs of the eternal catalog (wave S1c).
+pub mod eternal_sideboard_s1c_v1;
+/// Pauper sideboard card programs of the eternal catalog (wave S1d).
+pub mod eternal_sideboard_s1d_v1;
 /// Vintage graveyard and tempo card programs of the eternal catalog (wave
 /// E7b).
 pub mod eternal_vintage_e7b_v1;

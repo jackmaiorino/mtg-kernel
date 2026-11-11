@@ -102,6 +102,9 @@ fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
         (Subtype::Specter, 206, CreatureTypeV60::Specter),
         (Subtype::Shade, 207, CreatureTypeV60::Shade),
         (Subtype::Mystic, 208, CreatureTypeV60::Mystic),
+        (Subtype::Centaur, 281, CreatureTypeV60::Centaur),
+        (Subtype::Rhino, 361, CreatureTypeV60::Rhino),
+        (Subtype::Flagbearer, 362, CreatureTypeV60::Flagbearer),
     ] {
         assert_eq!(subtype.stable_id(), id);
         assert_eq!(canonical_native_type(subtype), Some(kind));
@@ -118,6 +121,11 @@ fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
     assert!(Subtype::from_stable_id(209).is_none());
     assert!(native_subtype(241).is_none());
     assert!(Subtype::from_stable_id(241).is_none());
+    assert!(Subtype::from_stable_id(363).is_none());
+    for kind in [Subtype::Centaur, Subtype::Rhino, Subtype::Flagbearer] {
+        assert_eq!(native_subtype(kind.stable_id()), Some(kind));
+        assert!(canonical_native_type(kind).is_some());
+    }
     assert!(Subtype::from_stable_id(u16::MAX).is_none());
     // Premodern wave P2b's ids start at 260.
     assert_eq!(Subtype::Masticore.stable_id(), 260);
