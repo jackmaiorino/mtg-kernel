@@ -126,6 +126,8 @@ fn phase1_preparation_real_updates_preserve_all_state_bits_and_group_order() {
         (1, ReplayRowCacheV1::LearnerRows),
         (4, ReplayRowCacheV1::LearnerRows),
         (10, ReplayRowCacheV1::LearnerRows),
+        (1, ReplayRowCacheV1::AllRows),
+        (4, ReplayRowCacheV1::AllRows),
     ] {
         let mut serial_policy = FrozenPlayPolicyV1::training_fixture_v3();
         let mut parallel_policy = serial_policy.fork_for_collection_v3().unwrap();
@@ -314,11 +316,14 @@ fn phase1_preparation_rejects_stale_and_corrupted_opponent_before_learning() {
         (4, ReplayRowCacheV1::Off),
         (1, ReplayRowCacheV1::LearnerRows),
         (4, ReplayRowCacheV1::LearnerRows),
+        (1, ReplayRowCacheV1::AllRows),
+        (4, ReplayRowCacheV1::AllRows),
     ] {
         for kind in [
             "stale_learner",
             "opponent_identity",
             "opponent_value",
+            "opponent_logit",
             "learner_logit",
             "missing_opponent",
         ] {
@@ -335,6 +340,9 @@ fn phase1_preparation_rejects_stale_and_corrupted_opponent_before_learning() {
             } else if kind == "opponent_value" {
                 changed.decisions[1].value =
                     (f32::from_bits(changed.decisions[1].value) + 0.125).to_bits();
+            } else if kind == "opponent_logit" {
+                // The lowest bit of one stored logit of the other seat.
+                changed.decisions[1].logits[0] ^= 1;
             } else if kind == "learner_logit" {
                 // The lowest bit of one stored learner logit.
                 changed.decisions[0].logits[0] ^= 1;
@@ -360,7 +368,9 @@ fn phase1_preparation_rejects_stale_and_corrupted_opponent_before_learning() {
             let expected = match kind {
                 "stale_learner" => "stale trajectory",
                 "opponent_identity" => "actual opponent behavior identity",
-                "opponent_value" | "learner_logit" => "stored tensor does not reproduce",
+                "opponent_value" | "opponent_logit" | "learner_logit" => {
+                    "stored tensor does not reproduce"
+                }
                 _ => "deliberate missing frozen source",
             };
             assert!(error.contains(expected), "{kind}: {error}");
@@ -584,6 +594,46 @@ fn phase1_preparation_row_cached_replay_matches_the_reference_replay() {
     assert!(!same(&cached, &before));
     // The storage started over for the new parameters.
     assert_eq!(served(&rows), 0);
+}
+
+/// Which rows take the row cache: none without a CPU learner step, the
+/// learner's with one, and the other seat's only when the setting asks.
+#[test]
+fn phase1_preparation_row_cached_rows_follow_the_learner_step_and_the_setting() {
+    use ReplayRowCacheV1::{AllRows, LearnerRows, Off};
+    assert_eq!(ReplayRowCacheV1::for_update_v1(false, false), Off);
+    assert_eq!(ReplayRowCacheV1::for_update_v1(false, true), Off);
+    assert_eq!(ReplayRowCacheV1::for_update_v1(true, false), LearnerRows);
+    assert_eq!(ReplayRowCacheV1::for_update_v1(true, true), AllRows);
+    // Per mode: whether the learner's rows and the other seat's are cached.
+    for (mode, learner, other) in [
+        (Off, false, false),
+        (LearnerRows, true, false),
+        (AllRows, true, true),
+    ] {
+        assert_eq!(mode.caches_v1(true), learner, "{mode:?}");
+        assert_eq!(mode.caches_v1(false), other, "{mode:?}");
+    }
+    // Only the exact value 1 asks for the other seat's rows.
+    assert!(replay_other_seat_setting_v1(Some("1")));
+    for value in [
+        None,
+        Some(""),
+        Some("0"),
+        Some("2"),
+        Some("01"),
+        Some(" 1"),
+        Some("1 "),
+        Some("true"),
+        Some("yes"),
+        Some("on"),
+    ] {
+        assert!(!replay_other_seat_setting_v1(value), "{value:?}");
+    }
+    assert_eq!(
+        REPLAY_OTHER_SEAT_SETTING_V1,
+        "MTG_KERNEL_ROW_CACHE_REPLAY_OTHER_SEAT"
+    );
 }
 
 #[test]
