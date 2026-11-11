@@ -3544,6 +3544,17 @@ pub enum ExpandedTrainingCommandV1 {
         record_format: CheckpointRecordFormatV1,
         output_directory: PathBuf,
     },
+    /// Opt-in execution of ordinary one-worker CPU S GAE with a bounded
+    /// authenticated replay tape. The run driver does not select this mode.
+    UpdateSVerifiedSerial {
+        source: ExpandedModelSourceV1,
+        trajectories: Vec<PinnedFileV1>,
+        learning_rate: f32,
+        value_coefficient: f32,
+        loss_selection: ExpandedLossSelectionV1,
+        tape_cap_bytes: usize,
+        output_directory: PathBuf,
+    },
     /// Explicit execution-only preparation. The old Update wire shape and
     /// sequential reference remain unchanged; backward and Adam are identical.
     UpdatePrepared {
@@ -3825,6 +3836,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::Ex1Update {
             source,
@@ -3853,6 +3865,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::SoftQDiagnostic {
             parent,
@@ -4187,6 +4200,35 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 record_envelope,
             )
         }
+        ExpandedTrainingCommandV1::UpdateSVerifiedSerial {
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            loss_selection,
+            tape_cap_bytes,
+            output_directory,
+        } => execute_update_inner_v1(
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            ExpandedUpdateBackendV1::Cpu,
+            UpdateBackwardExecutionV1::Sequential,
+            loss_selection,
+            output_directory,
+            None,
+            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            None,
+            None,
+            None,
+            None,
+            None,
+            TrainingMathV1::PlatformLibm,
+            CheckpointRecordFormatV1::default(),
+            RecordEnvelopeV1::None,
+            Some(s_learner_v1::VerifiedReplayOptionsV1::new(tape_cap_bytes)?),
+        ),
     }
 }
 
@@ -4374,12 +4416,13 @@ fn execute_update_v1(
         training_math,
         record_format,
         record_envelope,
+        None,
     )
 }
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the versioned update contract plus TP1 Stage B's search targets"
+    reason = "keeps the existing explicit update input contract"
 )]
 fn execute_update_inner_v1(
     source: ExpandedModelSourceV1,
@@ -4400,8 +4443,13 @@ fn execute_update_inner_v1(
     training_math: TrainingMathV1,
     record_format: CheckpointRecordFormatV1,
     record_envelope: RecordEnvelopeV1,
+    verified_replay: Option<s_learner_v1::VerifiedReplayOptionsV1>,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
+    ensure(
+        verified_replay.is_none() || source.s_learner.is_some(),
+        "verified replay requires an S learner source",
+    )?;
     update_backend.require_compiled_v1()?;
     loss_selection.validate_v1()?;
     validate_update_training_math_v1(
@@ -4488,8 +4536,7 @@ fn execute_update_inner_v1(
             output_directory,
             preparation_workers,
             max_prepared_tensor_mebibytes,
-            #[cfg(test)]
-            verified_replay: None,
+            verified_replay,
             unsupported: s_learner_v1::SUnsupportedOptionsV1 {
                 line_b: line_b.is_some(),
                 e_supported: e_supported.is_some(),
@@ -4687,13 +4734,23 @@ fn execute_update_inner_v1(
     // Recompute all actor-visible rows, including opponent decisions,
     // before constructing learner groups. No private state is decoded.
     let (tensor_groups, preparation_telemetry) = if let Some(workers) = preparation_workers {
-        let prepared = ordered_update_preparation::prepare_v1(
+        // Every CPU learner step below derives each learner row's outputs
+        // again with its tape forward and refuses a bit that differs from
+        // the stored row, so those rows may replay through the row cache.
+        // The CUDA steps compare within a tolerance and keep the reference.
+        let row_cache = if update_backend.is_cpu() {
+            ordered_update_preparation::ReplayRowCacheV1::LearnerRows
+        } else {
+            ordered_update_preparation::ReplayRowCacheV1::Off
+        };
+        let prepared = ordered_update_preparation::prepare_with_row_cache_v1(
             &episodes,
             &policy,
             &learner,
             workers,
             max_prepared_tensor_mebibytes,
             training_math,
+            row_cache,
         )?;
         (prepared.groups, Some(prepared.telemetry))
     } else {

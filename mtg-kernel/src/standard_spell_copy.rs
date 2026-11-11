@@ -170,6 +170,7 @@ pub(crate) fn copy_snapshot_legal_targets(
         prefix,
         controller,
         Some(TargetingSource {
+            dungeon_colors: None,
             types_override: None,
             object: spell.source,
             card_def: source.card_def,

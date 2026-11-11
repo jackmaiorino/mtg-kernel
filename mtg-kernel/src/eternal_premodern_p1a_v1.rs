@@ -260,6 +260,8 @@ pub enum P1aOpV1 {
     SylvanDrawV1,
     /// A declined "you may" option.
     NoEffectV1,
+    /// Original paid Portent and exact native upkeep occurrence.
+    PortentUpkeepBoundV1 { queued_at: usize },
 }
 
 impl P1aOpV1 {
@@ -276,6 +278,10 @@ impl P1aOpV1 {
                 | Self::GroveV1
                 | Self::SylvanLibraryV1
                 | Self::SylvanDrawV1
+                | Self::PortentDrawV1
+                | Self::ShuffleTargetV1
+                | Self::NoEffectV1
+                | Self::PortentUpkeepBoundV1 { .. }
         )
     }
 
@@ -289,6 +295,7 @@ impl P1aOpV1 {
                 | Self::SkeletalScryingV1
                 | Self::GravebornMuseV1
                 | Self::PortentUpkeepDrawV1
+                | Self::PortentUpkeepBoundV1 { .. }
         )
     }
 }
@@ -983,7 +990,10 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     if name == SYLVAN_LIBRARY && *effect == sylvan_trigger() {
         return true;
     }
-    if name == PORTENT && *effect == portent_upkeep_draw() {
+    if name == PORTENT
+        && (*effect == portent_upkeep_draw()
+            || crate::eternal_cards_v1::owned_draws_v1::portent::bound(effect).is_some())
+    {
         return true;
     }
     let EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::P1aV1(op))) = effect else {
@@ -1088,13 +1098,9 @@ pub(crate) fn execute(op: &P1aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 }
             }
         }
-        P1aOpV1::PortentDrawV1 => {
-            let record = PortentDrawV1 {
-                card: ctx.source,
-                controller: ctx.controller,
-                turn: TurnV1::now(state),
-            };
-            p1a_state(state).portent_draws.push(record);
+        P1aOpV1::PortentDrawV1 | P1aOpV1::PortentUpkeepBoundV1 { .. } => {
+            // These successors require the authenticated native continuation.
+            halt(state, ctx.source);
         }
         P1aOpV1::PriceOfProgressV1 => {
             let damage = [PlayerId::P0, PlayerId::P1]
@@ -1586,6 +1592,38 @@ pub(crate) fn drive(
 ) -> Result<bool, String> {
     let controller = continuation.ctx.controller;
     match op {
+        P1aOpV1::PortentDrawV1 => {
+            if crate::eternal_cards_v1::owned_draws_v1::portent::legacy_copy(state, continuation) {
+                if path != [2] || !continuation.frames.is_empty() {
+                    return Err("copied Portent changed its scheduling tail".into());
+                }
+                let record = PortentDrawV1 {
+                    card: continuation.ctx.source,
+                    controller: continuation.ctx.controller,
+                    turn: TurnV1::now(state),
+                };
+                p1a_state(state).portent_draws.push(record);
+            } else {
+                crate::eternal_cards_v1::owned_draws_v1::portent::schedule(
+                    state,
+                    continuation,
+                    &path,
+                )?;
+            }
+            Ok(false)
+        }
+        P1aOpV1::ShuffleTargetV1 | P1aOpV1::NoEffectV1
+            if crate::eternal_cards_v1::owned_draws_v1::portent::physical(continuation) =>
+        {
+            crate::eternal_cards_v1::owned_draws_v1::portent::finish_shuffle(
+                state,
+                continuation,
+                op,
+                &path,
+            )?;
+            Ok(false)
+        }
+
         P1aOpV1::FlashOfInsightV1 => {
             let count = u8::try_from(continuation.ctx.x_value).unwrap_or(u8::MAX);
             if count == 0 || state.players[controller.index()].library.is_empty() {
@@ -1605,6 +1643,13 @@ pub(crate) fn drive(
             Ok(false)
         }
         P1aOpV1::PortentV1 => {
+            if crate::eternal_cards_v1::owned_draws_v1::portent::physical(continuation) {
+                crate::eternal_cards_v1::owned_draws_v1::portent::begin_look(
+                    state,
+                    continuation,
+                    &path,
+                )?;
+            }
             let ctx = continuation.ctx.clone();
             let Some(player) = legal_player_target(&ctx, state, 0, TargetSpec::AnyPlayer) else {
                 return Ok(false);
@@ -1622,6 +1667,14 @@ pub(crate) fn drive(
                 if let Some(card) = top.first() {
                     let ordered = [card.object];
                     state.reorder_library_top(player, &ordered, &[controller])?;
+                }
+                if crate::eternal_cards_v1::owned_draws_v1::portent::physical(continuation) {
+                    crate::eternal_cards_v1::owned_draws_v1::portent::finish_look(
+                        state,
+                        continuation,
+                        &top,
+                        &path,
+                    )?;
                 }
                 return Ok(false);
             }
@@ -1910,6 +1963,14 @@ pub(crate) fn finish_selection(
                 return Err("Portent's cards left the top of the library".to_string());
             }
             state.reorder_library_top(*owner, &ordered, &[player])?;
+            if crate::eternal_cards_v1::owned_draws_v1::portent::physical(continuation) {
+                crate::eternal_cards_v1::owned_draws_v1::portent::finish_look(
+                    state,
+                    continuation,
+                    &bindings,
+                    &choice.path,
+                )?;
+            }
             Ok(false)
         }
         P1aChoiceV1::LackeyPutV1 => {
@@ -2041,6 +2102,9 @@ pub(crate) fn delayed_triggers(
                 queued.controller,
                 queued.effect,
             );
+            if crate::eternal_cards_v1::owned_draws_v1::portent::bound(&pending.effect).is_some() {
+                pending.source_contract = None;
+            }
             if let Some(spec) = queued.target_spec {
                 pending.target_spec = spec;
             }
@@ -2269,7 +2333,13 @@ fn note_upkeep(state: &mut GameState, events: &[CommittedEvent]) {
         let CommittedEvent::UpkeepBegan { player } = *event else {
             continue;
         };
-        // Portent's draws from an earlier turn, from the card's current
+        if let Err(source) =
+            crate::eternal_cards_v1::owned_draws_v1::portent::queue_due(state, player)
+        {
+            halt(state, source);
+            return;
+        }
+        // Legacy Portent's draws from an earlier turn, from the card's current
         // incarnation (as wave E9b's Arcane Denial does).
         let now = TurnV1::now(state);
         let records = read_state(state).map_or_else(Vec::new, |p1a| p1a.portent_draws.clone());

@@ -741,6 +741,11 @@ pub(super) fn selected_spell_mana_costs_v1(
         selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
             crate::eternal_pauper_e8b_v1::spell_cost_reduction(state, definition, player),
         );
+        // Sailors' Bane costs {1} less per instant, sorcery and Adventure
+        // card in its owner's graveyard and exile (wave S1b).
+        selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
+            crate::eternal_sideboard_s1b_v1::spell_cost_reduction(state, definition, player),
+        );
         // Goblin Warchief: Goblin spells cost {1} less (wave P1a).
         selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
             crate::eternal_premodern_p1a_v1::statics::spell_cost_reduction(
@@ -861,6 +866,12 @@ fn selected_spell_mana_costs_for_source_grant_v1(
     grant: Option<u64>,
 ) -> Option<SelectedSpellManaCostsV1> {
     let (method, kicked, mode) = form;
+    if method == CastMethodV4::Omen
+        && crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name)
+        && !super::resolution_cast_v1::form_allowed_for(state, source, method, player)
+    {
+        return None;
+    }
     let granted = method == CastMethodV4::Flashback && grant.is_some();
     if let Some(index) = grant {
         if state
@@ -899,11 +910,18 @@ fn selected_spell_mana_costs_for_source_grant_v1(
             crate::eternal_cards_v1::outside_hand_cast_reduction(state, source, player),
         );
         // Anointed Peacekeeper: spells with the chosen name cost {2} more.
+        // Disruptor Flute: spells with the chosen name cost {3} more.
         selected.own_generic_increase =
-            crate::eternal_vintage_v1::spell_tax(state, definition.object_name, player);
+            crate::eternal_vintage_v1::spell_tax(state, definition.object_name, player)
+                .saturating_add(crate::eternal_sideboard_s1a_v1::statics::flute_spell_tax(
+                    state,
+                    definition.object_name,
+                ));
         // Retrace (Wrenn and Six's emblem): discard a land card in addition
         // to the other costs.
-        if matches!(method, CastMethodV4::Normal | CastMethodV4::Alternative)
+        if (matches!(method, CastMethodV4::Normal | CastMethodV4::Alternative)
+            || (method == CastMethodV4::Omen
+                && crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name)))
             && crate::eternal_vintage_e7b_v1::retrace_quote(state, source, player)
         {
             selected.components(RETRACE_COST);
@@ -1160,6 +1178,18 @@ fn selected_spell_quote_branch_grant_v1(
     forced_branch: Option<bool>,
     grant: Option<u64>,
 ) -> Option<SpellManaPaymentV1> {
+    // Every route, including resolution-time permissions and X menus, uses
+    // this quote. Evaluate cast restrictions with the selected form and X.
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1a_v1::statics::cast_prohibited(state, player, source, method, x) {
+        return None;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if definition.target_spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC
+        && x < u16::from(crate::eternal_legacy_e9a_v1::targets::shatterskull_minimum_x(targets))
+    {
+        return None;
+    }
     // A free cast's X is zero, except Sickening Dreams' X, which counts an
     // additional cost's discards (Premodern wave P1b).
     if x != 0
@@ -1633,6 +1663,16 @@ pub(super) fn prepare_final_spell_payment_v1(
     let definition = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     let player = pending.controller;
     let source = pending.spell;
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1a_v1::statics::cast_prohibited(
+        state,
+        player,
+        source,
+        method,
+        pending.selected_x_v59().unwrap_or(0),
+    ) {
+        return None;
+    }
     let selected = selected_spell_mana_costs_for_source_v1(
         source,
         definition,

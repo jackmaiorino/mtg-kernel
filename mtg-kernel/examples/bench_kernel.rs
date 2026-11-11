@@ -230,6 +230,9 @@ fn random_action_for_decision(
         | Decision::ChooseFullRangeCastXValueV59 { .. } => {
             panic!("raw benchmark requires a separate successor for creature-type entry and full-range cast-X decisions")
         }
+        Decision::ChooseEternalOpeningV1 { .. } | Decision::ChooseMeddlingMageNameV1 { .. } => {
+            panic!("raw benchmark requires a separate successor for Eternal opening and Meddling Mage naming decisions")
+        }
         Decision::ChooseEntryColorV36 { colors, .. } => {
             Action::ChooseEffectOption(rng_below(rng, colors.len()) as u16)
         }

@@ -70,7 +70,7 @@ pub(super) fn stage(
 }
 pub(super) fn finish(
     state: &mut GameState,
-    pending: &EffectContinuation,
+    pending: &mut EffectContinuation,
     choice: &DiscardDrawChoice,
     selected: &[EffectObjectBinding],
 ) -> Result<(), String> {
@@ -88,8 +88,14 @@ pub(super) fn finish(
     for card in selected {
         crate::engine::commit_discarded_card(state, card.object);
     }
-    for _ in selected {
-        event::propose_and_commit(state, event::ProposedEvent::draw(choice.player));
+    if !selected.is_empty() {
+        pending.frames.push(EffectFrame::Program {
+            op: EffectOp::DrawCards {
+                player: choice.player_ref,
+                count: selected.len() as u32,
+            },
+            path: choice.path.clone(),
+        });
     }
     Ok(())
 }

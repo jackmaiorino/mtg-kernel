@@ -408,7 +408,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
         "Unmask" => "Some(AltCostDef { components: &[CostComponent::ExileCardFromHandWithColorV1(ManaColor::B)], condition: AltCostCondition::Always })",
         "Pinnacle Emissary" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Hybrid(ManaColor::U, ManaColor::R)], generic: 0, x_count: 0 })], condition: AltCostCondition::WarpFromHand })",
         "Kappa Cannoneer" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Colored(ManaColor::U)], generic: 5, x_count: 0 })], condition: AltCostCondition::Always })",
-        _ => super::build_eternal_e7b_v1::alt_cost_for(name),
+        _ => super::build_eternal_s1b_v1::alt_cost_for(name),
     }
 }
 
@@ -461,7 +461,7 @@ pub(super) fn ward_cost_for(name: &str) -> &'static str {
     match name {
         "Kappa Cannoneer" => "Some(WardCostDef::Generic(4))",
         "Patchwork Automaton" => "Some(WardCostDef::Generic(2))",
-        _ => "None",
+        _ => super::build_eternal_s1b_v1::ward_cost_for(name),
     }
 }
 

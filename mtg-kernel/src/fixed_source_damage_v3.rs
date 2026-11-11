@@ -1,19 +1,36 @@
-//! Captured fixed damage for exact Firebrand and donated Fanatic payments.
+//! Captured fixed damage for actual Firebrand, Fanatic and Bombardment
+//! payments, including exact donated Fanatic payments.
+//! Each catalog owns its exact printed activation.
 use crate::card_def::{CardDef, CostComponent, TargetSpec, CARD_DEFS};
-use crate::effect::{EffectOp, TargetRef};
+use crate::effect::{EffectOp, ExecCtx, TargetRef};
 use crate::event::{CommittedEvent, HistoricalDamageSourceV1};
 use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, StackItemId};
+use crate::source_power_activation_v1::bombardment;
 use crate::state::{
     AbilitySourceContractV4, GameObject, GameState, StackItem, StackItemKind, Target, Zone,
 };
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DepartureV3 {
     pub history_index: u32,
     pub snapshot: GameObject,
     pub facts: HistoricalDamageSourceV1,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metamorph_physical_def: Option<u16>,
+}
+impl Hash for DepartureV3 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.history_index.hash(state);
+        self.snapshot.hash(state);
+        self.facts.hash(state);
+        if let Some(definition) = self.metamorph_physical_def {
+            b"bombardment-metamorph/v1".hash(state);
+            definition.hash(state);
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PaidV3 {
@@ -38,18 +55,16 @@ pub struct RemovedV3 {
 pub(crate) struct PaymentOwnerV3 {
     source: AbilitySourceContractV4,
     tap: bool,
-}
-impl PaymentOwnerV3 {
-    pub(crate) fn requires_tap(&self) -> bool {
-        self.tap
-    }
+    donated: bool,
+    bombardment_self: bool,
+    metamorph_physical_def: Option<u16>,
 }
 pub(crate) struct RemovalOwnerV3 {
     item: StackItem,
     payment: u32,
 }
 
-fn enabled() -> bool {
+fn firebrand_enabled() -> bool {
     cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
@@ -63,21 +78,76 @@ pub(crate) fn printed_root() -> EffectOp {
         amount: 1,
     }
 }
-fn printed_definition(def: u16, index: u8) -> bool {
-    CARD_DEFS.get(usize::from(def)).is_some_and(|d| {
-        d.name == "Fanatical Firebrand"
-            && d.is_executable()
-            && index == 0
-            && d.activated_abilities
-                .get(usize::from(index))
-                .is_some_and(|a| {
-                    a.cost == [CostComponent::Tap, CostComponent::SacrificeSelf]
-                        && a.activation_zone == Zone::Battlefield
-                        && a.target_spec == TargetSpec::AnyTarget
-                        && (a.effect)() == printed_root()
-                })
-    })
+fn printed_definition(def: u16, index: u8, name: &str, cost: &[CostComponent]) -> bool {
+    let Some(d) = CARD_DEFS.get(usize::from(def)) else {
+        return false;
+    };
+    d.name == name
+        && d.is_executable()
+        && index == 0
+        && d.activated_abilities.first().is_some_and(|a| {
+            a.cost == cost
+                && a.activation_zone == Zone::Battlefield
+                && a.target_spec == TargetSpec::AnyTarget
+                && (a.effect)() == printed_root()
+        })
 }
+fn fanatic(def: u16, index: u8) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && printed_definition(def, index, "Mogg Fanatic", &[CostComponent::SacrificeSelf])
+}
+fn firebrand(def: u16, index: u8) -> bool {
+    firebrand_enabled()
+        && printed_definition(
+            def,
+            index,
+            "Fanatical Firebrand",
+            &[CostComponent::Tap, CostComponent::SacrificeSelf],
+        )
+}
+fn paid_fanatic(item: &StackItem) -> bool {
+    item.v4.fixed_damage_paid_v3.0.is_some()
+        && item
+            .v4
+            .ability_source_contract
+            .zip(item.v4.activated_ability_index)
+            .is_some_and(|(s, i)| fanatic(s.card_def, i))
+}
+pub(crate) fn paid_bombardment_self(item: &StackItem) -> bool {
+    item.v4.fixed_damage_paid_v3.0.is_some()
+        && item
+            .v4
+            .ability_source_contract
+            .zip(item.v4.activated_ability_index)
+            .is_some_and(|(s, i)| bombardment::printed(s.card_def, i))
+}
+
+pub(crate) fn waiting_bombardment_source(state: &GameState, source: ObjectId) -> bool {
+    if !cfg!(feature = "eternal-fixtures") {
+        return false;
+    }
+    state
+        .stack
+        .iter()
+        .chain(
+            state
+                .engine
+                .pending_effect
+                .iter()
+                .map(|p| &p.resolving_item),
+        )
+        .any(|item| {
+            item.source == source
+                && (paid_bombardment_self(item)
+                    || (bombardment::selected(state, item)
+                        && has_payment(state, item.v4.stack_item_id)))
+        })
+}
+
+fn native_ordinary_damage(item: &StackItem) -> bool {
+    paid_fanatic(item) || paid_bombardment_self(item)
+}
+
 pub(crate) fn fanatic_recipe(definition: &CardDef) -> bool {
     definition.name == "Mogg Fanatic"
         && definition.capability.is_fully_supported()
@@ -95,34 +165,45 @@ pub(crate) fn donated_fanatic(item: &StackItem) -> bool {
     item.kind == StackItemKind::ActivatedAbility
         && item.v4.full_text_activation_v1.is_donated_fanatic()
 }
+
 pub(crate) fn selected(item: &StackItem) -> bool {
     donated_fanatic(item)
-        || (enabled()
-            && item.kind == StackItemKind::ActivatedAbility
-            && item
-                .v4
-                .ability_source_contract
-                .zip(item.v4.activated_ability_index)
-                .is_some_and(|(s, i)| printed_definition(s.card_def, i)))
+        || (item.kind == StackItemKind::ActivatedAbility
+            && (native_ordinary_damage(item)
+                || item
+                    .v4
+                    .ability_source_contract
+                    .zip(item.v4.activated_ability_index)
+                    .is_some_and(|(s, i)| firebrand(s.card_def, i))))
 }
 pub(crate) fn tracked(state: &GameState, item: &StackItem) -> bool {
     selected(item) || item.v4.fixed_damage_paid_v3.0.is_some()
         || state.engine.event_history.scan_for_v1(&[EventKindV1::FixedDamagePaidV3]).iter().any(|e| matches!(e,
             CommittedEvent::FixedDamagePaidV3 { payment } if payment.item.v4.stack_item_id==item.v4.stack_item_id))
 }
+pub(crate) fn requires_crystal_execution(state: &GameState, item: &StackItem) -> bool {
+    !native_ordinary_damage(item) && tracked(state, item)
+}
+/// A paid physical Fanatic is an ordinary activated ability whose damage
+/// uses its departed source's last-known characteristics. Current
+/// observations represent it unchanged; every other fixed payment still
+/// requires its successor.
 pub(crate) fn requires_successor(state: &GameState) -> bool {
-    state.stack.iter().any(|i| tracked(state, i))
-        || state.engine.event_history.iter().any(is_record)
+    requires_successor_except(state, paid_fanatic)
 }
 
 /// FEB already exposes the exact donated producer. All other fixed damage
-/// remains outside its observation contract.
+/// except a paid physical Fanatic remains outside its observation contract.
 pub(crate) fn requires_other_successor(state: &GameState) -> bool {
+    requires_successor_except(state, |item| paid_fanatic(item) || donated_fanatic(item))
+}
+
+fn requires_successor_except(state: &GameState, represented: fn(&StackItem) -> bool) -> bool {
     let history = &state.engine.event_history;
     state
         .stack
         .iter()
-        .any(|item| !donated_fanatic(item) && tracked(state, item))
+        .any(|item| !represented(item) && tracked(state, item))
         || history
             .scan_for_v1(&[
                 EventKindV1::FixedDamageDepartureV3,
@@ -132,19 +213,18 @@ pub(crate) fn requires_other_successor(state: &GameState) -> bool {
             .iter()
             .enumerate()
             .any(|(index, event)| match event {
-                CommittedEvent::FixedDamagePaidV3 { payment } => !donated_fanatic(&payment.item),
-                CommittedEvent::FixedDamageRemovedV3 { removal } => !donated_fanatic(&removal.item),
+                CommittedEvent::FixedDamagePaidV3 { payment } => !represented(&payment.item),
+                CommittedEvent::FixedDamageRemovedV3 { removal } => !represented(&removal.item),
                 CommittedEvent::FixedDamageDepartureV3 { .. } => !history
                     .scan_for_v1(&[EventKindV1::FixedDamagePaidV3])
                     .iter()
                     .any(|event| {
                         matches!(event, CommittedEvent::FixedDamagePaidV3 { payment }
-                    if payment.departure as usize == index && donated_fanatic(&payment.item))
+                            if payment.departure as usize == index && represented(&payment.item))
                     }),
                 _ => false,
             })
 }
-
 fn is_record(e: &CommittedEvent) -> bool {
     matches!(
         e,
@@ -154,7 +234,7 @@ fn is_record(e: &CommittedEvent) -> bool {
     )
 }
 pub(crate) fn acquire_payment(state: &GameState) -> Result<Option<PaymentOwnerV3>, String> {
-    if !enabled() && !cfg!(feature = "eternal-fixtures") {
+    if !cfg!(feature = "eternal-fixtures") && !firebrand_enabled() {
         return Ok(None);
     }
     let p = state
@@ -163,11 +243,24 @@ pub(crate) fn acquire_payment(state: &GameState) -> Result<Option<PaymentOwnerV3
         .as_ref()
         .ok_or("fixed damage payment has no actual pending activation")?;
     let source = AbilitySourceContractV4::capture(state, p.source);
+    let live = state.objects.get(p.source);
+    let fanatic_recipe = fanatic(source.card_def, p.ability_index);
+    let bombardment_recipe = bombardment::printed(source.card_def, p.ability_index)
+        && matches!(p.object_cost_chosen.as_slice(), [cost] if cost.object == p.source);
+    let eligible_card = !live.v4.is_token && live.spell_copy_origin.is_none();
+    let physical_fanatic =
+        fanatic_recipe && eligible_card && !crate::eternal_vintage_v1::active_copy(state, p.source);
+    let bombardment_self = bombardment_recipe && eligible_card;
+    let metamorph_physical_def = if bombardment_self {
+        capture_metamorph_definition(state, source)?
+    } else {
+        None
+    };
+    let tap = firebrand(source.card_def, p.ability_index);
     let donated = p.full_text_activation_v1.is_donated_fanatic();
-    let tap = enabled() && printed_definition(source.card_def, p.ability_index);
-    if !donated && !tap {
+    if !donated && !physical_fanatic && !tap && !bombardment_self {
         // A borrowed Firebrand recipe needs its own departing-source capture.
-        if enabled()
+        if firebrand_enabled()
             && crate::engine::resolved_activated_ability(
                 source.card_def,
                 p.ability_index,
@@ -192,7 +285,65 @@ pub(crate) fn acquire_payment(state: &GameState) -> Result<Option<PaymentOwnerV3
     {
         return Err("fixed damage payment lost actual original source".into());
     }
-    Ok(Some(PaymentOwnerV3 { source, tap }))
+    Ok(Some(PaymentOwnerV3 {
+        source,
+        tap,
+        donated,
+        bombardment_self,
+        metamorph_physical_def,
+    }))
+}
+
+fn recorded_metamorph_definition(
+    state: &GameState,
+    source: AbilitySourceContractV4,
+) -> Option<u16> {
+    crate::card_def::card_id_by_name("Phyrexian Metamorph").filter(|&physical| {
+        [physical, source.card_def].into_iter().all(|definition| {
+            crate::standard_cards_v1::had_card_def(
+                state,
+                source.source,
+                source.zone_change_count,
+                definition,
+            )
+        })
+    })
+}
+
+fn capture_metamorph_definition(
+    state: &GameState,
+    source: AbilitySourceContractV4,
+) -> Result<Option<u16>, String> {
+    let mut copies = state.eternal_v1.iter().flat_map(|eternal| {
+        eternal.vintage.copies.iter().filter(|copy| {
+            copy.host.object == source.source
+                && copy.host.zone_change_count == source.zone_change_count
+        })
+    });
+    let active = copies.next().map(|copy| copy.card_def);
+    if copies.next().is_some() || active != recorded_metamorph_definition(state, source) {
+        return Err("Bombardment has no unique original Metamorph copy form".into());
+    }
+    Ok(active)
+}
+impl PaymentOwnerV3 {
+    pub(crate) fn requires_tap(&self) -> bool {
+        self.tap
+    }
+
+    /// A donated Fanatic pays its resolved full-text cost in one native
+    /// transaction with its departure.
+    pub(crate) fn donated(&self) -> bool {
+        self.donated
+    }
+
+    pub(crate) fn sacrifice_cost(&self) -> CostComponent {
+        if self.bombardment_self {
+            bombardment::COST
+        } else {
+            CostComponent::SacrificeSelf
+        }
+    }
 }
 pub(crate) fn capture_departure(
     state: &mut GameState,
@@ -211,6 +362,7 @@ pub(crate) fn capture_departure(
         history_index,
         snapshot: state.objects.get(owner.source.source).clone(),
         facts,
+        metamorph_physical_def: owner.metamorph_physical_def,
     };
     state
         .engine
@@ -285,13 +437,22 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
         .ability_source_contract
         .ok_or("fixed damage has no captured source")?;
     let snapshot = &departure.snapshot;
+    let metamorph_physical_def = if paid_bombardment_self(&p.item) {
+        recorded_metamorph_definition(state, s)
+    } else {
+        None
+    };
+    if departure.metamorph_physical_def != metamorph_physical_def {
+        return Err("Bombardment has no retained original Metamorph copy form".into());
+    }
+    let paid_definition = metamorph_physical_def.unwrap_or(s.card_def);
     let mut normalized = departure.facts.source;
     normalized.attached_to = None;
     if departure.history_index != p.departure
         || p.departure >= p.history_index
         || normalized != s
         || snapshot.zone != Zone::Battlefield
-        || (!donated_fanatic(&p.item) && !snapshot.tapped)
+        || (!native_ordinary_damage(&p.item) && !donated_fanatic(&p.item) && !snapshot.tapped)
         || snapshot.card_def != s.card_def
         || snapshot.owner != s.owner
         || snapshot.controller != s.controller
@@ -356,6 +517,35 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
             return Err("donated Fanatic lost its exact sacrificed incarnation".into());
         }
     }
+    if paid_bombardment_self(&p.item) {
+        let first_source_move = between.iter().enumerate().find(|(_, event)| {
+            matches!(event, CommittedEvent::ZoneChange { object, .. } if *object == s.source)
+        });
+        if sacrifice != 0
+            || !matches!(first_source_move,
+            Some((at, CommittedEvent::ZoneChange { from: Zone::Battlefield, to, controller_before, .. }))
+                if at > sacrifice && *to != Zone::Battlefield && *to == destination && *controller_before == s.controller)
+            || p.item.v4.paid_cost_refs.len() != 1
+            || p.item.v4.target_contracts.len() != 1
+            || !p.item.v4.bombardment_lki_v1.is_empty()
+            || p.item.is_copy
+        {
+            return Err("Bombardment self-sacrifice lost its exact native payment".into());
+        }
+    }
+    if native_ordinary_damage(&p.item)
+        && (snapshot.v4.is_token
+            || snapshot.spell_copy_origin.is_some()
+            || !p.item.v4.paid_cost_refs.iter().any(|r| {
+                r.object == s.source
+                    && r.card_def == paid_definition
+                    && r.owner == s.owner
+                    && r.zone == destination
+                    && s.zone_change_count.checked_add(1) == Some(r.zone_change_count)
+            }))
+    {
+        return Err("fixed damage payment differs from its actual physical departure".into());
+    }
     if state
         .engine
         .event_history
@@ -378,12 +568,29 @@ pub(crate) fn damage_source(
     id: StackItemId,
 ) -> Result<HistoricalDamageSourceV1, String> {
     let p = payment(state, id)?;
+    if paid_bombardment_self(&p.item) {
+        return Err("Bombardment self-sacrifice requires its native execution owner".into());
+    }
     if p.item.source != source {
         return Err("fixed historical source differs from paid activation".into());
     }
     match &state.engine.event_history[p.departure as usize] {
         CommittedEvent::FixedDamageDepartureV3 { departure } => Ok(departure.facts),
         _ => Err("fixed historical departure disappeared".into()),
+    }
+}
+
+pub(crate) fn bombardment_source(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<HistoricalDamageSourceV1, String> {
+    let paid = payment(state, item.v4.stack_item_id)?;
+    if !paid_bombardment_self(&paid.item) || paid.item.as_ref() != item {
+        return Err("Bombardment source differs from its actual self-sacrifice".into());
+    }
+    match &state.engine.event_history[paid.departure as usize] {
+        CommittedEvent::FixedDamageDepartureV3 { departure } => Ok(departure.facts),
+        _ => Err("Bombardment self-sacrifice departure disappeared".into()),
     }
 }
 pub(crate) fn has_payment(state: &GameState, id: StackItemId) -> bool {
@@ -408,6 +615,30 @@ pub(crate) fn has_donated_payment(state: &GameState, id: StackItemId) -> bool {
                 matches!(event, CommittedEvent::FixedDamagePaidV3 { payment }
             if payment.item.v4.stack_item_id == id && donated_fanatic(&payment.item))
             })
+}
+pub(crate) fn native_fanatic_damage(
+    state: &GameState,
+    ctx: &ExecCtx,
+    op: &EffectOp,
+) -> Result<Option<StackItemId>, String> {
+    let Some((source, id)) = ctx.ability_source_contract.zip(ctx.stack_item_id) else {
+        return Ok(None);
+    };
+    if !fanatic(source.card_def, 0) || !has_payment(state, id) {
+        return Ok(None);
+    }
+    let p = payment(state, id)?;
+    if !paid_fanatic(&p.item)
+        || p.item.v4.ability_source_contract != Some(source)
+        || p.item.source != ctx.source
+        || p.item.controller != ctx.controller
+        || p.item.targets != ctx.targets
+        || p.item.v4.target_contracts != ctx.target_contracts
+        || *op != printed_root()
+    {
+        return Err("Fanatic damage differs from its exact paid activation".into());
+    }
+    Ok(Some(id))
 }
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
     if !tracked(state, item) {
@@ -466,9 +697,12 @@ fn completed_item(state: &GameState, payment: &PaidV3) -> Result<StackItem, Stri
             _ => None,
         })
         .collect::<Vec<_>>();
-    let last = rows
-        .last()
-        .ok_or("fixed damage resolution has no owned execution")?;
+    let Some(last) = rows.last() else {
+        if native_ordinary_damage(&payment.item) {
+            return Ok(*payment.item.clone());
+        }
+        return Err("fixed damage resolution has no owned execution".into());
+    };
     if last.pending.is_some()
         || last.answer.is_some()
         || !crate::effect::crystal_prevention_v1::source_power_payment_matches(
@@ -604,40 +838,43 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 pub(crate) fn legal_targets(state: &GameState, facts: HistoricalDamageSourceV1) -> Vec<Target> {
-    crate::engine::legal_targets_for_controller(
-        TargetSpec::AnyTarget,
-        &[],
-        facts.source.controller,
-        state,
-    )
-    .into_iter()
-    .filter(|target| match *target {
-        Target::Player(_) => true,
-        Target::StackItem(_) => false,
-        Target::Object(id) => {
-            !(crate::source_power_activation_v1::protected(state, facts, id)
-                || (cfg!(feature = "eternal-fixtures")
-                    && crate::eternal_pauper_e6b_v1::protected_from_colors(
+    legal_targets_with_controller(state, facts, facts.source.controller)
+}
+
+pub(crate) fn legal_targets_with_controller(
+    state: &GameState,
+    facts: HistoricalDamageSourceV1,
+    controller: crate::ids::PlayerId,
+) -> Vec<Target> {
+    crate::engine::legal_targets_for_controller(TargetSpec::AnyTarget, &[], controller, state)
+        .into_iter()
+        .filter(|target| match *target {
+            Target::Player(_) => true,
+            Target::StackItem(_) => false,
+            Target::Object(id) => {
+                !(crate::source_power_activation_v1::protected(state, facts, id)
+                    || (cfg!(feature = "eternal-fixtures")
+                        && crate::eternal_pauper_e6b_v1::protected_from_colors(
+                            state,
+                            id,
+                            facts.color_mask,
+                        ))
+                    || crate::source_type_hexproof_v1::protects_from_source(
+                        state,
+                        id,
+                        controller,
+                        facts.source,
+                    )
+                    .unwrap_or(true)
+                    || crate::standard_legends_v1::hexproof_from_historical_color(
                         state,
                         id,
                         facts.color_mask,
+                        controller,
                     ))
-                || crate::source_type_hexproof_v1::protects_from_source(
-                    state,
-                    id,
-                    facts.source.controller,
-                    facts.source,
-                )
-                .unwrap_or(true)
-                || crate::standard_legends_v1::hexproof_from_historical_color(
-                    state,
-                    id,
-                    facts.color_mask,
-                    facts.source.controller,
-                ))
-        }
-    })
-    .collect()
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

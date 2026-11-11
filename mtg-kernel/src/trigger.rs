@@ -4455,7 +4455,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
         return true;
     }
     if crate::eternal_vintage_v1::initiative_granter(card.name)
-        && matches!(effect, EffectOp::ResolveInitiativeTrigger { .. })
+        && (matches!(effect, EffectOp::ResolveInitiativeTrigger { .. })
+            || (cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cards_v1::e3::dungeons::occurrences::is_bound(effect)))
     {
         return true;
     }
@@ -4690,6 +4692,12 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
             TargetSpec::TargetOpponent
         } else if card.name == "Journey to Nowhere" && *effect == journey_to_nowhere_etb_effect() {
             TargetSpec::CreatureOtherThanSource
+        } else if cfg!(feature = "eternal-fixtures")
+            && (crate::eternal_vintage_v1::initiative_granter(card.name)
+                || card.name == crate::eternal_cards_v1::e3::dungeons::ACERERAK)
+            && crate::eternal_cards_v1::e3::dungeons::occurrences::is_bound(effect)
+        {
+            crate::eternal_cards_v1::e3::dungeons::trigger_target_spec(effect)
         } else if let Some(spec) = crate::standard_cards_v1::trigger_target_spec(card.name, effect)
         {
             spec
@@ -4705,6 +4713,7 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
                     }
                     _ => TargetSpec::None,
                 },
+
                 _ => trigger_target_spec(card_def),
             }
         } else {
@@ -4942,6 +4951,10 @@ fn sba_fixed_point_with_protected_triggers(
             crate::standard_keywords_v1::sync_day_night(state);
         }
         let mut changed = protected_draws_consumed;
+        changed |= crate::eternal_cards_v1::e3::dungeons::occurrences::complete_ready(
+            state,
+            protected_triggers,
+        );
 
         // 704.5g: a creature with toughness 0 or less is put into its
         // owner's graveyard. 704.5h: a creature with lethal damage marked
@@ -5618,6 +5631,14 @@ fn triggers_from_events(
         new_triggers.extend(crate::eternal_premodern_p2a_v1::delayed_triggers(
             state, events,
         ));
+        // A resolving Acererak trigger can venture after its source left the
+        // battlefield, without returning anything to hand in this batch.
+        #[cfg(feature = "eternal-fixtures")]
+        new_triggers.extend(crate::eternal_cards_v1::e3::dungeons::room_triggers(state));
+        // Coveted Jewel also queues its unblocked-attack trigger when
+        // blockers are declared, without adding a committed event.
+        #[cfg(feature = "eternal-fixtures")]
+        new_triggers.extend(crate::eternal_vintage_v1::delayed_triggers(state, events));
         uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
         state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
         return new_triggers;

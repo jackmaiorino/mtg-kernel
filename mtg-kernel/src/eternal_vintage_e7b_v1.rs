@@ -36,6 +36,7 @@
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 pub(crate) mod dredge;
+pub(crate) mod minsc;
 pub mod statics;
 pub(crate) mod targets;
 
@@ -311,6 +312,8 @@ pub enum E7bOpV1 {
     /// "You may [the leaf]" for a hook-queued trigger (Vengevine). A
     /// choice.
     MayV1(Box<E7bOpV1>),
+    /// Hamster damage and draws owned by an exact native sacrifice.
+    MinscDamageBoundV1 { sacrifice: usize },
 }
 
 impl E7bOpV1 {
@@ -325,6 +328,7 @@ impl E7bOpV1 {
                 | Self::SubtletyV1
                 | Self::UroPutLandV1
                 | Self::MinscSacrificeV1
+                | Self::MinscDamageBoundV1 { .. }
                 | Self::EmpowerJaceV1 { .. }
                 | Self::MayV1(_)
         )
@@ -355,6 +359,8 @@ pub enum E7bChoiceV1 {
     MinscSacrificeV1,
     /// Empower Jace: the Jace token that gets the counters.
     JaceTokenV1 { amount: u8 },
+    /// Select Jace's empty-library replacement, or finish to use Hullbreacher.
+    JaceOrHullbreacherV1,
 }
 
 impl E7bChoiceV1 {
@@ -1183,7 +1189,7 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
             if matches!(
                 effect,
                 EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E7bV1(
-                    E7bOpV1::MinscDamageV1 { .. }
+                    E7bOpV1::MinscDamageV1 { .. } | E7bOpV1::MinscDamageBoundV1 { .. }
                 )))
             ) =>
         {
@@ -1207,7 +1213,10 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         VENGEVINE => matches!(op, E7bOpV1::MayV1(_)),
         KISHLA_SKIMMER => matches!(op, E7bOpV1::DrawOneV1),
         STINKWEED_IMP => matches!(op, E7bOpV1::DestroyDamagedCreatureV1 { .. }),
-        MINSC_AND_BOO => matches!(op, E7bOpV1::MinscDamageV1 { .. }),
+        MINSC_AND_BOO => matches!(
+            op,
+            E7bOpV1::MinscDamageV1 { .. } | E7bOpV1::MinscDamageBoundV1 { .. }
+        ),
         DACK_FAYDEN => matches!(op, E7bOpV1::GainControlOfPermanentsV1 { .. }),
         _ => false,
     }
@@ -1546,6 +1555,7 @@ pub(crate) fn execute(op: &E7bOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | E7bOpV1::SubtletyV1
         | E7bOpV1::UroPutLandV1
         | E7bOpV1::MinscSacrificeV1
+        | E7bOpV1::MinscDamageBoundV1 { .. }
         | E7bOpV1::EmpowerJaceV1 { .. }
         | E7bOpV1::MayV1(_) => halt(state, ctx.source),
     }
@@ -2093,7 +2103,11 @@ pub(crate) fn finish_selection(
     }
     match kind {
         E7bChoiceV1::DredgeV1 => {
-            dredge::finish(state, player, chosen);
+            dredge::finish(state, continuation, choice, chosen);
+            Ok(false)
+        }
+        E7bChoiceV1::JaceOrHullbreacherV1 => {
+            dredge::finish_jace_or_hullbreacher(state, continuation, choice, chosen)?;
             Ok(false)
         }
         E7bChoiceV1::ChainSacrificeV1 => {
@@ -2207,27 +2221,47 @@ pub(crate) fn finish_selection(
             let Some(creature) = chosen else {
                 return Err("Minsc & Boo sacrifices a creature".to_string());
             };
-            if !link_live_in(state, binding_link(&creature), Zone::Battlefield) {
-                return Err("Minsc & Boo's sacrifice left the battlefield".to_string());
+            if !link_live_in(state, binding_link(&creature), Zone::Battlefield)
+                || player != continuation.ctx.controller
+                || state.objects.get(creature.object).controller != player
+                || !is_creature(state, creature.object)
+            {
+                return Err("Minsc & Boo lost its controlled sacrifice".to_string());
             }
-            // The power and Hamster type are read as it is sacrificed.
+            // Freeze power and type before the actual sacrifice and zone move.
             let power = crate::engine::effective_power(state, creature.object);
             let hamster =
                 crate::engine::has_effective_subtype(state, creature.object, Subtype::Hamster);
+            let captured = AbilitySourceContractV4::capture(state, creature.object);
+            let sacrifice_at = state.engine.event_history.len();
             event::log_sacrifice(state, creature.object);
             event::propose_and_commit(
                 state,
                 ProposedEvent::zone_change(creature.object, Zone::Graveyard),
             );
+            if state.engine.halted.is_some()
+                || link_live_in(state, binding_link(&creature), Zone::Battlefield)
+            {
+                return Ok(false);
+            }
             // "When you do": a reflexive trigger, which targets.
             if let Some(source) = continuation.ctx.ability_source_contract {
-                queue_trigger(
-                    state,
-                    source,
-                    player,
-                    E7bOpV1::MinscDamageV1 { power, hamster },
-                    Some(TargetSpec::AnyTarget),
-                );
+                let op = if hamster && power > 0 {
+                    let Some(sacrifice) = minsc::record_sacrifice(
+                        state,
+                        continuation,
+                        captured,
+                        sacrifice_at,
+                        power as u32,
+                    )?
+                    else {
+                        return Ok(false);
+                    };
+                    E7bOpV1::MinscDamageBoundV1 { sacrifice }
+                } else {
+                    E7bOpV1::MinscDamageV1 { power, hamster }
+                };
+                queue_trigger(state, source, player, op, Some(TargetSpec::AnyTarget));
             }
             Ok(false)
         }

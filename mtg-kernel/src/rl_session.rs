@@ -3434,6 +3434,8 @@ fn flat_validate_origin_decision_common_scoped_v42(
         | Decision::ChooseVariableCastKicker { .. }
         | Decision::ChooseEntryColorV36 { .. }
         | Decision::ChooseEntryCreatureTypeV1 { .. }
+        | Decision::ChooseMeddlingMageNameV1 { .. }
+        | Decision::ChooseEternalOpeningV1 { .. }
         | Decision::ChooseCombatDamageRange { .. }
         | Decision::ChooseLegendPermanent { .. }
         | Decision::ChooseLondonMulligan { .. }

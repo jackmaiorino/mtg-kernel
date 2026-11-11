@@ -713,6 +713,19 @@ pub enum InitiativeTriggerKindV1 {
     VentureAfterTaking,
     VentureAtUpkeep,
     UndercityRoom(UndercityRoomV1),
+    UndercityRoomBoundV1 {
+        room: UndercityRoomV1,
+        entered_at: usize,
+    },
+}
+
+impl InitiativeTriggerKindV1 {
+    pub(crate) fn undercity_room(self) -> Option<UndercityRoomV1> {
+        match self {
+            Self::UndercityRoom(room) | Self::UndercityRoomBoundV1 { room, .. } => Some(room),
+            _ => None,
+        }
+    }
 }
 
 /// Self-indexed provenance for one global Initiative or Undercity trigger.
@@ -1720,7 +1733,59 @@ pub struct StackStateV4 {
     pub inspiration_started_v1: InspirationStartedV1,
     #[serde(default, skip_serializing_if = "HighSocietyHunterStartedV45::is_empty")]
     pub high_society_hunter_started_v45: HighSocietyHunterStartedV45,
+    #[serde(default, skip_serializing_if = "BombardmentLkiV1::is_empty")]
+    pub bombardment_lki_v1: BombardmentLkiV1,
+    #[serde(default, skip_serializing_if = "VialMetamorphPaidV1::is_empty")]
+    pub vial_metamorph_paid_v1: VialMetamorphPaidV1,
 }
+
+/// Native paid Vial index. Absence preserves the historical bytes and Hash.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct VialMetamorphPaidV1(pub(crate) Option<usize>);
+
+impl VialMetamorphPaidV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+impl Hash for VialMetamorphPaidV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(at) = self.0 {
+            b"vial-metamorph-paid/v1".hash(state);
+            at.hash(state);
+        }
+    }
+}
+
+/// Native paid Bombardment activations after the departure-LKI contract.
+/// Older stack rows write neither serialized bytes nor a hash domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BombardmentPaidV1 {
+    pub sacrifice_at: u32,
+    pub move_at: u32,
+    pub cost: PaidCostRefV4,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BombardmentLkiV1(pub Option<BombardmentPaidV1>);
+impl BombardmentLkiV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for BombardmentLkiV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(paid) = self.0 {
+            b"bombardment-lki/v1".hash(state);
+            paid.hash(state);
+        }
+    }
+}
+
 /// Empty writes no historical bytes or Hash domain. The pointer owns one
 /// original Hunter publication after its real engine removal has started.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -2568,6 +2633,17 @@ pub struct GameState {
     /// Historical games and hands without this printing retain absence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub leyline_opening_v1: Option<crate::leyline_axe_v1::OpeningV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) eternal_opening_v1: Option<crate::eternal_opening_v1::OpeningV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) coveted_jewel_draw_progress_v1:
+        Option<crate::eternal_vintage_v1::JewelDrawProgressV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) paradoxical_outcome_draw_progress_v1:
+        Option<crate::eternal_vintage_v1::paradoxical_outcome_v1::DrawProgressV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) eternal_owned_draw_progress_v1:
+        Option<crate::eternal_cards_v1::owned_draws_v1::ProgressV1>,
     /// Native opening answers retired before the disposable belief rewrite.
     #[serde(skip)]
     pub(crate) leyline_sampled_history_v1:
@@ -2881,6 +2957,22 @@ impl Hash for GameState {
             "leyline-opening/v1".hash(state);
             opening.hash(state);
         }
+        if let Some(opening) = &self.eternal_opening_v1 {
+            "eternal-opening/v1".hash(state);
+            opening.hash(state);
+        }
+        if let Some(progress) = &self.coveted_jewel_draw_progress_v1 {
+            "coveted-jewel-draw-progress/v1".hash(state);
+            progress.hash(state);
+        }
+        if let Some(progress) = &self.paradoxical_outcome_draw_progress_v1 {
+            "paradoxical-outcome-draw-progress/v1".hash(state);
+            progress.hash(state);
+        }
+        if let Some(progress) = &self.eternal_owned_draw_progress_v1 {
+            "eternal-owned-draw-progress/v1".hash(state);
+            progress.hash(state);
+        }
         if let Some(history) = &self.leyline_sampled_history_v1 {
             "leyline-sampled-opening/v1".hash(state);
             history.hash(state);
@@ -3151,6 +3243,10 @@ impl GameState {
             eternal_v1: None,
             nine_lives_delayed_v1: None,
             leyline_opening_v1: None,
+            eternal_opening_v1: None,
+            coveted_jewel_draw_progress_v1: None,
+            paradoxical_outcome_draw_progress_v1: None,
+            eternal_owned_draw_progress_v1: None,
             leyline_sampled_history_v1: None,
             hand_departures_by_name_v1: false,
             hand_knowledge_by_name_v2: false,

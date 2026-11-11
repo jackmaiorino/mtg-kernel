@@ -186,6 +186,75 @@ provenance for the serialization corpus.
 | `FullTextRestrictedUseV1` | `full_text_v1::tests::registered::volrath_native_wall_mana_records_the_exact_restricted_use_both_seats` | `0bd55de5fe06b428512681fe48b103250bfa4c1f166e4490d983130440f45844` |
 | `OrderedGraveyardControlGainedV1` | `full_text_v1::tests::registered::volrath_native_paid_control_transfer_records_the_new_controller_both_seats` | `3abcb5e812c0516f90ccdee856e29df8db7067a738d8f7d7147754286ddcce4f` |
 
+## Appended Martyr event sample (November 9, 2026)
+
+Row 320, `MartyrRevealPaidV1`, is the first actual event harvested from
+`eternal_sideboard_s1d_v1::martyr_of_sands_pays_zero_exact_subset_and_more_than_ten_both_seats`
+at source `90bda0c0fee4136f2e30a25182b8068720553e63`. The complete paid producer
+passed under the guarded Rust 1.94.1/MSVC native integration run. Its selected
+scope has two revealed white cards; no sample payload was synthesized. The
+preceding 319 JSON values and their order remain unchanged.
+
+The original 161-byte payload has SHA-256
+`59b5702344a2157c9fcc3de0e08566c58ae9b3c43e732e434fdd32bb0652bbd0` and remains at
+`D:/codex-mixed21-52f25-20261108/verify-limited-fullpool-s1-90bd-retry2/event-samples/martyr/MartyrRevealPaidV1.json`.
+The run manifest SHA-256 is
+`7c44a409954c5fec97536e4356a3f0ed1532eba487808273c18dd1029b1381c0`;
+the integration binary SHA-256 is
+`b2db3475a3de74058c6a7a70fe4fe021125f5f7b298b8e5f6e996a6f0fb079cd`.
+The full 28-case run had 24 passes and four fixture failures; its evidence is
+retained. This passing producer does not imply that the whole batch or the
+event-history consumers passed. Consumer checks remain pending.
+
+## Appended Mage and opening samples (November 10, 2026)
+
+Rows 321 and 322 append the first native `MeddlingMageEntryV1` and
+`EternalOpeningV1` events from source
+`db7764a1caf15b63083ad2ef25d6384024ffd524`. Their producers were
+`eternal_sideboard_s1b_v1::meddling_mage_names_a_card_that_then_cannot_be_cast`
+and `eternal_opening_v1::native_leyline_and_chancellor_order_restore_and_first_spell_both_seats`.
+Both passed in the guarded Rust 1.94.1/MSVC integration batch. The preceding
+320-event prefix is unchanged; these rows are the actual emitted payloads.
+
+The original payload SHA-256 values are
+`0f3c4d3d80341b2836e9e43f0bc2fe70288fedd873adfbd8796f72fc00578d77`
+and `3b25b7a9f3e9f02dbbd3c2a662944c355c2d5f766e3bc935b6f05d8269154e7e`.
+They remain under
+`D:/codex-mixed21-52f25-20261108/verify-limited-fullpool-s1-db77/event-samples/`
+in `mage-producer/MeddlingMageEntryV1.json` and
+`opening-producer/EternalOpeningV1.json`. The manifest SHA-256 is
+`2443309bc6f5430868ffccc7fc1dc8528d215d8ec0aef812709e7b580781c11e`.
+The batch had 49 passes and four failures. Passing producers do not establish
+the still-pending every-kind consumer checks or complete card admission.
+
+## Appended owned-draw sample (November 10, 2026)
+
+Row 323, `EternalOwnedDrawV1`, is the first actual event emitted by
+`eternal_vintage_e4_v1::paid_tamiyo_ultimate_keeps_its_starting_draw_count_and_tail_both_seats`
+at source `f90a56fd929b457a87dc9be1ac5102085b4844a4`. The complete paid producer
+passed in 2.317818 seconds; the guarded Rust 1.94.1/MSVC integration batch
+passed all 86 cases with no timeout. The previous 322-event prefix is unchanged.
+
+The original 248-byte payload has SHA-256
+`44b4152a57a971fe2da5a6a7f11fab882fc5e923f2e84a5b082d4fe916c712d5`
+and remains at
+`D:/codex-mixed21-52f25-20261108/verify-limited-fullpool-s1-f90a/event-samples/owned-draw-producer/EternalOwnedDrawV1.json`.
+The run manifest SHA-256 is
+`32ccef354fbd383671b1cf1cb1e742646032ab24c360e3420f6606724d46b8c2`;
+the archived integration binary SHA-256 is
+`1f561d384ee34e399f681a5d9ce9f13e86a2d78ab832f7c1bd2cd188933e68f6`.
+Only this passing producer supplied the appended sample. The earlier failed
+Tamiyo attempt is retained separately and was not imported. Every-kind
+consumer checks and complete card admission remain pending.
+
+## Merged S1 order (November 10, 2026)
+
+The four S1 rows above merged after the ordered-graveyard rows, so they moved
+from rows 316-319 to rows 320-323. Volrath's Shapeshifter's registry entry also
+precedes the S1 cards and moves each S1 card id up by one. The Martyr row's
+source `card_def` is therefore 1216 rather than the harvested 1215; no other
+payload changed.
+
 ## Appended FullPool event samples (November 9, 2026)
 
 The final seven rows were emitted by the passing native producers below at source
@@ -195,8 +264,10 @@ b315034c3589cbd6854a2d7e59703996d26eab3230a91ef98f8d0bc242c9eca4.
 It used pinned Rust 1.94.1, LTO disabled and 16 codegen units for correctness.
 
 Merging main on November 11, 2026 placed main's four ordered-graveyard rows
-(rows 316 to 319, above) before this branch's `NivMizzetVisionaryDrawEndedV1`
-row and these seven rows, which are now rows 320 to 327. No payload changed.
+(rows 316 to 319) and its four S1 rows (rows 320 to 323, above) before this
+branch's `NivMizzetVisionaryDrawEndedV1` row and these seven rows, which are
+now rows 324 to 331. No payload changed: main changed only the eternal card
+registry, so these rows' Limited card ids are the same.
 
 The original 47-case run had 36 passes, ten failures and one timed-out case.
 Its receipt SHA-256 is 4832239d0f8630f786a4731394ab14d7379dc25e51daf44bab902c7718514df8.

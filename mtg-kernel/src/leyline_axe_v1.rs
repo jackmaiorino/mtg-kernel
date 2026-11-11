@@ -99,6 +99,12 @@ fn kept_hands(state: &GameState) -> Result<Option<[Vec<ObjectLinkV4>; 2]>, Strin
     if let Some(hands) = crate::london_mulligan_v1::kept_hands_for_opening_v1(state)? {
         return Ok(Some(hands));
     }
+    verified_initial_deal(state)
+}
+
+pub(crate) fn verified_initial_deal(
+    state: &GameState,
+) -> Result<Option<[Vec<ObjectLinkV4>; 2]>, String> {
     if state.players.iter().any(|p| p.hand.len() != 7) {
         return Ok(None);
     }
@@ -184,6 +190,17 @@ pub(crate) fn requires_initial_advance(state: &GameState) -> Result<bool, String
 // This is only the original native opening draw/bottom trace, not game replay.
 // It authenticates kept-card order and generations independently of the new input.
 fn validate_kept_input(state: &GameState, at: usize, original: &InputV1) -> Result<(), String> {
+    if history_kept_hands(state, at, false)? != original.hands {
+        return Err("opening input differs from actual native draw/bottom order".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn history_kept_hands(
+    state: &GameState,
+    at: usize,
+    allow_powder_exile: bool,
+) -> Result<[Vec<ObjectLinkV4>; 2], String> {
     let mut hands: [Vec<ObjectLinkV4>; 2] = std::array::from_fn(|_| Vec::new());
     let mut generations = std::collections::BTreeMap::<ObjectId, u32>::new();
     for event in state.engine.event_history.iter().take(at) {
@@ -213,9 +230,9 @@ fn validate_kept_input(state: &GameState, at: usize, original: &InputV1) -> Resu
             CommittedEvent::ZoneChange {
                 object,
                 from: Zone::Hand,
-                to: Zone::Library,
+                to,
                 ..
-            } => {
+            } if *to == Zone::Library || (allow_powder_exile && *to == Zone::Exile) => {
                 let owner = state
                     .objects
                     .try_get(*object)
@@ -240,10 +257,7 @@ fn validate_kept_input(state: &GameState, at: usize, original: &InputV1) -> Resu
             _ => {}
         }
     }
-    if hands != original.hands {
-        return Err("opening input differs from actual native draw/bottom order".into());
-    }
-    Ok(())
+    Ok(hands)
 }
 
 /// Read-only structural validation under the existing mutable native-world contract.

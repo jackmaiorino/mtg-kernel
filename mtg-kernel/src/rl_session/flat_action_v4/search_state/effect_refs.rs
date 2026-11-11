@@ -513,7 +513,9 @@ impl Scan<'_> {
                 self.bs(&choice.hand) || self.bs(selected) || self.fs(&choice.remaining)
             }
             EternalSelectionV1 { choice, .. } => {
-                self.bs(&choice.referenced_bindings()) || self.fs(&choice.remaining)
+                choice.is_extraction_search()
+                    || self.bs(&choice.referenced_bindings())
+                    || self.fs(&choice.remaining)
             }
             ExileBatchSelect { choice, .. } | ExileBatchResume { choice } => {
                 self.fs(&choice.remaining)
@@ -795,7 +797,9 @@ impl Scan<'_> {
             DiscardPaymentV1 { choice } => self.bs(&choice.hand) || self.op(&choice.unpaid),
             DiscardDraw { choice } => self.bs(&choice.hand) || self.fs(&choice.remaining),
             EternalV1 { choice } => {
-                self.bs(&choice.referenced_bindings()) || self.fs(&choice.remaining)
+                choice.is_extraction_search()
+                    || self.bs(&choice.referenced_bindings())
+                    || self.fs(&choice.remaining)
             }
             ExileBatch { choice } => {
                 self.fs(&choice.remaining)
@@ -1388,7 +1392,8 @@ fn conflicts_in_scope(
     scope: ReferenceScopeV68,
 ) -> bool {
     let s = Scan { state, pool, scope };
-    if crate::controlled_creature_grants_v1::validate_color_history(state).is_err()
+    if crate::engine::pending_martyr_reveal_v1(state)
+        || crate::controlled_creature_grants_v1::validate_color_history(state).is_err()
         || state
             .engine
             .event_history
@@ -1674,10 +1679,12 @@ fn conflicts_in_scope(
             EventKindV1::FullTextBatchEntryV1,
             EventKindV1::FullTextRestrictedUseV1,
             EventKindV1::OrderedGraveyardControlGainedV1,
+            EventKindV1::MartyrRevealPaidV1,
         ])
         .iter()
         .any(|event| match event {
-            crate::event::CommittedEvent::NishobaDamageSourceV1 { source, .. } => {
+            crate::event::CommittedEvent::NishobaDamageSourceV1 { source, .. }
+            | crate::event::CommittedEvent::MartyrRevealPaidV1 { source, .. } => {
                 s.historical_ability(source)
             }
             crate::event::CommittedEvent::TimeStopJournalV1 { .. } => !matches!(
@@ -1870,7 +1877,9 @@ fn conflicts_in_scope(
     state.engine.event_log.iter().any(|event| {
         use crate::event::CommittedEvent::*;
         let conflict = match event {
-            NishobaDamageSourceV1 { source, .. } => s.historical_ability(source),
+            NishobaDamageSourceV1 { source, .. } | MartyrRevealPaidV1 { source, .. } => {
+                s.historical_ability(source)
+            }
             // Future native owning histories are not sampler permissions.
             // Refuse them until their complete retained-reference walk exists.
             LathrilCombatDamageV1 { .. }
@@ -1957,6 +1966,9 @@ fn conflicts_in_scope(
             | SphinxsTutelageMillStartedV1 { .. }
             | SphinxsTutelageMillBatchV1 { .. }
             | KinshipEntryV1 { .. }
+            | MeddlingMageEntryV1 { .. }
+            | EternalOpeningV1 { .. }
+            | EternalOwnedDrawV1 { .. }
             | BannerEntryOperationStartedV1 { .. }
             | BannerEntryColorCapturedV1 { .. }
             | BannerEntryColorChosenV1 { .. }
