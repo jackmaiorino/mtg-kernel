@@ -95,6 +95,35 @@ fn kind_scans_read_their_kinds_and_every_event_when_forced() {
     assert_eq!(guard_tests_v1::with_scans_forced(|| taps(&history)), 140);
 }
 
+/// A kind scan of a history that counts none of its kinds yields nothing
+/// without reading the events. Stale counts cannot say so: the scan then
+/// reads the events themselves.
+#[test]
+fn kind_scans_of_absent_kinds_yield_nothing_unless_the_counts_are_stale() {
+    let mut history = EventHistoryV1::from((0..200).map(tap).collect::<Vec<_>>());
+    let upkeeps = |history: &EventHistoryV1| {
+        history
+            .of_kinds_v2(&[EventKindV1::UpkeepBegan])
+            .map(|(at, _)| at)
+            .collect::<Vec<_>>()
+    };
+    assert!(upkeeps(&history).is_empty());
+    assert_eq!(
+        guard_tests_v1::with_scans_forced(|| upkeeps(&history)),
+        (0..200).collect::<Vec<_>>()
+    );
+    // A change through `DerefMut` leaves the counts stale.
+    history[130] = upkeep();
+    assert!(history.stale && !history.counts.contains(&1));
+    assert_eq!(upkeeps(&history), [130]);
+    history.push(upkeep());
+    assert!(counted(&history));
+    assert_eq!(upkeeps(&history), [130, 200]);
+    history.retain(|event| *event != upkeep());
+    assert!(counted(&history));
+    assert!(upkeeps(&history).is_empty());
+}
+
 #[test]
 fn records_and_digests_equal_the_plain_vec() {
     use std::collections::hash_map::DefaultHasher;
