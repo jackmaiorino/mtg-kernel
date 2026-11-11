@@ -328,11 +328,7 @@ pub(crate) fn require_legacy_visible(
     actor: Option<PlayerId>,
 ) -> Result<(), RlContractError> {
     if super::death_custody::has_unowned_roots(state)
-        || state
-            .engine
-            .event_history
-            .scan_for_v1(&[crate::event_history_v1::EventKindV1::FakeJournalV50])
-            .iter()
+        || spell_custody::row_events(state)
             .any(|event| matches!(event, CommittedEvent::FakeJournalV50 { .. }))
     {
         return Err(RlContractError(
@@ -386,11 +382,7 @@ pub fn capture(state: &GameState) -> Result<FactsV50, RlContractError> {
     spell_custody::validate_retained_grant_history(state).map_err(RlContractError)?;
     crate::linked_aura_operation_v1::validate(state).map_err(RlContractError)?;
     let indices = |select: fn(&JournalV50) -> bool| {
-        state
-            .engine
-            .event_history
-            .iter()
-            .enumerate()
+        spell_custody::rows(state)
             .filter_map(|(index, event)| {
                 journal(event)
                     .filter(|entry| select(entry))
@@ -424,11 +416,7 @@ pub fn capture(state: &GameState) -> Result<FactsV50, RlContractError> {
                 ordinal(&copy_creations, creation)
             })
             .transpose()?;
-        let removals = state
-            .engine
-            .event_history
-            .iter()
-            .enumerate()
+        let removals = spell_custody::rows(state)
             .filter_map(|(index, event)| match journal(event) {
                 Some(JournalV50::RemovalInput {
                     publication: original,
@@ -556,7 +544,7 @@ pub fn capture(state: &GameState) -> Result<FactsV50, RlContractError> {
             treasure_controller: None,
             treasures: Vec::new(),
         };
-        for event in &state.engine.event_history {
+        for event in spell_custody::row_events(state) {
             match journal(event) {
                 Some(JournalV50::DeathCollected {
                     capture: original, ..
@@ -567,7 +555,7 @@ pub fn capture(state: &GameState) -> Result<FactsV50, RlContractError> {
                 _ => {}
             }
         }
-        for (input_index, event) in state.engine.event_history.iter().enumerate() {
+        for (input_index, event) in spell_custody::rows(state) {
             match journal(event) {
                 Some(JournalV50::DeathCounterInput { publication, .. }) => {
                     if matches!(at(state, *publication)?, JournalV50::DeathPublished { capture: original, .. } if *original == capture)
@@ -581,7 +569,7 @@ pub fn capture(state: &GameState) -> Result<FactsV50, RlContractError> {
                         continue;
                     }
                     row.phase = DeathPhaseV50::ResolvingEntry;
-                    for event in &state.engine.event_history {
+                    for event in spell_custody::row_events(state) {
                         if let Some(JournalV50::DeathResolutionClosed {
                             input,
                             returned,

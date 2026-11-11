@@ -1670,6 +1670,10 @@ fn conflicts_in_scope(
             EventKindV1::PlusCounterInputV48,
             EventKindV1::DrakusethDamageSourceV76,
             EventKindV1::NishobaDamageSourceV1,
+            EventKindV1::FullTextTriggerCapturedV1,
+            EventKindV1::FullTextBatchEntryV1,
+            EventKindV1::FullTextRestrictedUseV1,
+            EventKindV1::OrderedGraveyardControlGainedV1,
         ])
         .iter()
         .any(|event| match event {
@@ -1727,6 +1731,10 @@ fn conflicts_in_scope(
             | crate::event::CommittedEvent::RaidEntryStartedV1 { .. }
             | crate::event::CommittedEvent::GorehornDepartureV1 { .. }
             | crate::event::CommittedEvent::DrakusethDamageSourceV76 { .. }
+            | crate::event::CommittedEvent::FullTextTriggerCapturedV1 { .. }
+            | crate::event::CommittedEvent::FullTextBatchEntryV1 { .. }
+            | crate::event::CommittedEvent::FullTextRestrictedUseV1 { .. }
+            | crate::event::CommittedEvent::OrderedGraveyardControlGainedV1 { .. }
             | crate::event::CommittedEvent::GorehornPublishedV1 { .. }
             | crate::event::CommittedEvent::GorehornPreparedV1 { .. }
             | crate::event::CommittedEvent::GorehornDamageOperationV1 { .. }
@@ -1936,6 +1944,10 @@ fn conflicts_in_scope(
             | LilianaDreadhordeV1 { .. }
             | ChandraFlameshaperV74{..}
             | DrakusethDamageSourceV76{..}
+            | FullTextTriggerCapturedV1 { .. }
+            | FullTextBatchEntryV1 { .. }
+            | FullTextRestrictedUseV1 { .. }
+            | OrderedGraveyardControlGainedV1 { .. }
             | VivienReidV1 { .. }
             | OrdinaryCleanupStageV1 { .. }
             | TimeStopJournalV1 { .. }

@@ -1602,9 +1602,17 @@ fn therapy(ctx: &ExecCtx, state: &mut GameState, named: u16) {
             return;
         }
     }
-    for card in hand {
-        if definition(state, card).is_some_and(|def| def.object_name == name) {
-            crate::engine::commit_discarded_card(state, card);
+    if crate::graveyard_order_v1::enabled(state) {
+        let discarded = hand
+            .into_iter()
+            .filter(|&card| definition(state, card).is_some_and(|def| def.object_name == name))
+            .collect::<Vec<_>>();
+        crate::engine::commit_discarded_cards(state, &discarded);
+    } else {
+        for card in hand {
+            if definition(state, card).is_some_and(|def| def.object_name == name) {
+                crate::engine::commit_discarded_card(state, card);
+            }
         }
     }
 }

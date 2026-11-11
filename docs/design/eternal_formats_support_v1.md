@@ -536,8 +536,8 @@ reporting as E1 to E9:
 | P2a | The Rock, Mono-Black Control, BW Control, Stasis, Other Control | 31 | Premodern 70% to 79% by the census |
 | P2d | White Weenie, Mono-Red Control (Beloved Chaplain, Devoted Caretaker, Glowrider, Mother of Runes, Nova Cleric, Shared Triumph, Soltari Monk, Soltari Priest, Avalanche Riders, Earthquake, Firebolt, Ghitu Encampment, Pillage, Stone Rain, Veteran Brawlers) | 15 | two decks, 2% of the field |
 | P2b | Survival, Madness Threshold, and the cards Elves shares with them (17 of 19; Birchlore Rangers and Thornscape Battlemage stay out) | 17 | Survival and Madness Threshold playable (4%); Elves needs Birchlore Rangers, Thornscape Battlemage and wave P2a's Genesis and Wall of Blossoms |
-| P2c | Reanimator, Full English Breakfast (20 of 21 cards; Volrath's Shapeshifter stays out) | 20 | Reanimator playable; Full English Breakfast needs Volrath's Shapeshifter (see below) |
-| Elves follow-up | Birchlore Rangers and Thornscape Battlemage | 2 | Completes the Elves mainboard source inventory; public-session qualification pending |
+| P2c | Reanimator, Full English Breakfast (20 Full cards and Partial Volrath's Shapeshifter) | 20 Full | Reanimator playable; Full English Breakfast needs owning gameplay qualification |
+| Elves follow-up | Birchlore Rangers and Thornscape Battlemage | 2 | Elves mainboard integrated in #613 with both-seat public-session terminal and replay qualification |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -635,12 +635,11 @@ tables head the `eternal_cards_v1` chains (subtype ids from 280: Saproling, Cent
   P2a's shuffle; flashback {1}{G}. Karmic Guide: echo generalizes wave P2d's (`echo_cost`),
   flying, protection from black and the reanimation trigger.
 
-Known gaps (P2c): Volrath's Shapeshifter stays out. It has the full text of the top creature
-card of its controller's graveyard, which needs a permanent whose definition, abilities, triggers
-and activated abilities follow another card while the top card changes; the engine reads all of
-these from the object's own card definition and has no copiable-values layer for permanents
-(only token copies at creation), so Full English Breakfast is not playable. Reanimator is
-playable. Phantom Nishoba's life gain reads the creature when its trigger is collected, so a
+Known gaps (P2c): Volrath's Shapeshifter is Partial. Its native ordered-graveyard
+profile binds selected donated abilities to the original host and donor while
+leaving the physical printing in the copy layer. Full English Breakfast needs
+full consumer and gameplay qualification. Reanimator is playable. Phantom
+Nishoba's life gain reads the creature when its trigger is collected, so a
 Nishoba that has lost its abilities (Dress Down) and dies from the same damage it deals still
 gains that life.
 

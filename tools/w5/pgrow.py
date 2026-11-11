@@ -26,6 +26,11 @@ marginally, by the uniform subset, once it does not), and the roster and every d
 root, the segment index and the ladder (its boundaries and hashes). The draw keys hold no training outcome, so the
 draw stream is fixed before any update runs.
 
+Fresh start (`start_member: false`, for a parent without a checkpoint, e.g. a fresh-initialization lineage): the
+parent is not a ladder member, so the ladder to date is the states at k stride for k >= 1. While it is empty (the
+chain's first `stride` updates), a replaced episode plays the `initial` kind (the segment's start state), which the
+arm must admit (chains.py `initial_opponent`); this is G(i)'s empty-pool rule. Such a chain cannot be forked.
+
 Verification (fail closed). A ladder state b > 0 is the output checkpoint of the segment that ends at b: the segment
 must be complete with all L iterations, and its checkpoint must hash to its receipt's pin (`next_source`, as every
 segment's start). The chain's `LADDER.json` records each state's checkpoint and after-state hashes at its first
@@ -41,7 +46,7 @@ import os
 import re
 from pathlib import Path
 
-ARM_KEYS = ('stride', 'roster_max', 'replaces', 'test_stride', 'history')
+ARM_KEYS = ('stride', 'roster_max', 'replaces', 'test_stride', 'history', 'start_member')
 DRAW_TAG = 'chains-pgrow-draw/v1'
 SUBSET_TAG = 'chains-pgrow-subset/v1'
 LADDER_SCHEMA = 'w5-ladder/v1'
@@ -127,6 +132,13 @@ def check_spec(spec, base, segment_updates, long_stride, parent_source=None, pin
     roster_max = spec.get('roster_max', ROSTER_MAX)
     replaces = spec.get('replaces', REPLACES)
     test = spec.get('test_stride', False)
+    start_member = spec.get('start_member', True)
+    if type(start_member) is not bool:
+        raise ValueError('start_member is true or false')
+    if start_member and parent_source is not None and not parent_source.get('checkpoint'):
+        raise ValueError('a parent without a checkpoint cannot be a ladder member (set start_member false)')
+    if not start_member and spec.get('history') is not None:
+        raise ValueError('a fresh-start ladder (start_member false) takes no fork history')
     if type(stride) is not int or stride < 1 or stride % segment_updates:
         raise ValueError(f'the ladder stride must be a positive multiple of the segment length ({segment_updates}), '
                          'so every ladder state is a segment end')
@@ -146,6 +158,8 @@ def check_spec(spec, base, segment_updates, long_stride, parent_source=None, pin
         raise ValueError(f'roster_max must be 1 to {TRAINER_OPPONENTS_MAX - len(others)} (the trainer\'s '
                          f'{TRAINER_OPPONENTS_MAX} named opponents less the base\'s other {len(others)})')
     out = {'stride': stride, 'roster_max': roster_max, 'replaces': replaces, 'test_stride': test}
+    if not start_member:
+        out['start_member'] = False  # absent otherwise: existing CG arm files are unchanged
     if spec.get('history') is not None:
         check_history(json.loads(Path(spec['history']).read_text(encoding='utf-8')), stride, parent_source or {})
         out['history'] = pin(spec['history'])  # absent otherwise: a fresh CG arm's file is unchanged
@@ -194,9 +208,10 @@ def check_recorded(record, i, sha256, after):
                           f'({have.get("after_state_sha256")})')
 
 
-def boundaries(offset, stride):
-    """The ladder boundaries to date for a segment starting at global update `offset`."""
-    return list(range(0, offset + 1, stride))
+def boundaries(offset, stride, start_member=True):
+    """The ladder boundaries to date for a segment starting at global update `offset` (boundary 0, the parent, only
+    when it is a member)."""
+    return list(range(0 if start_member else stride, offset + 1, stride))
 
 
 def roster(seed_root, segment, ids, roster_max):
@@ -231,11 +246,11 @@ def ladder(parent_source, segments, offset, spec, record_path, next_source, chai
     # Every state to date at the manifest's last segment was recorded (and fsynced) before that segment was appended,
     # so one missing now means the record was lost or edited: refuse rather than pin it again from current files.
     if segments:
-        reached = boundaries(max(seg['offset'] for seg in segments), stride)
+        reached = boundaries(max(seg['offset'] for seg in segments), stride, spec.get('start_member', True))
         lost = [i for i in list(history) + [member_id(b) for b in reached] if i not in record['states']]
         if lost:
             raise LadderError(f'{record_path} lacks established ladder states {lost[:8]}')
-    own = {member_id(b): b for b in boundaries(offset, stride)}
+    own = {member_id(b): b for b in boundaries(offset, stride, spec.get('start_member', True))}
     ids = list(history) + list(own)
     members = set(ids if select is None else select(ids))
     out, added = [], False
@@ -299,11 +314,18 @@ def apply(cfg, spec, states, seed_root, segment, offset):
     counts) for logging."""
     by_id = dict(states)
     members = roster(seed_root, segment, [i for i, _ in states], spec['roster_max'])
+    if not members and spec.get('start_member', True):
+        raise LadderError('the ladder to date is empty')
     counts = {i: 0 for i in members}
+    fallback = 0
     for k, item in enumerate(cfg['iterations']):
         update = offset + k
         for j, entry in enumerate(item['episodes']):
             if replaced(entry, spec['replaces']):
+                if not members:  # a fresh start before its first ladder state: the empty-pool rule
+                    entry['opponent'] = {'kind': 'initial'}
+                    fallback += 1
+                    continue
                 i = members[draw(seed_root, update, j, len(members))]
                 entry['opponent'] = {'id': i, 'kind': 'fixed'}
                 counts[i] += 1
@@ -312,9 +334,12 @@ def apply(cfg, spec, states, seed_root, segment, offset):
         [{'id': i, 'source': copy.deepcopy(by_id[i])} for i in used]
     if len(cfg['opponents']) > TRAINER_OPPONENTS_MAX:
         raise LadderError(f'{len(cfg["opponents"])} named opponents pass the trainer\'s {TRAINER_OPPONENTS_MAX}')
-    return {'segment': segment, 'offset': offset, 'roster': members,
-            'hashes': {i: by_id[i]['checkpoint']['sha256'] for i in members},
-            'draws': {i: counts[i] for i in members}}
+    out = {'segment': segment, 'offset': offset, 'roster': members,
+           'hashes': {i: by_id[i]['checkpoint']['sha256'] for i in members},
+           'draws': {i: counts[i] for i in members}}
+    if fallback:
+        out['initial_fallback'] = fallback
+    return out
 
 
 def write_history(chain_manifest, until, stride, out, copy_to=None):
@@ -358,6 +383,8 @@ def write_history(chain_manifest, until, stride, out, copy_to=None):
     arm = json.loads(Path(man['arm_file']['path']).read_text(encoding='utf-8'))
     if sha_file(man['arm_file']['path']) != man['arm_file']['sha256']:
         raise LadderError('the chain\'s arm file differs from its manifest pin')
+    if (arm.get('ladder') or {}).get('start_member') is False:
+        raise LadderError('a fresh-start ladder (start_member false) cannot be forked')
     parent_source = json.loads(Path(arm['parent']['path']).read_text(encoding='utf-8'))['source']
     # A CG source's first-use record pins every state it has used: the export must agree with it, and a CG chain
     # past its first segment without one (lost) refuses, as its own next segment would.

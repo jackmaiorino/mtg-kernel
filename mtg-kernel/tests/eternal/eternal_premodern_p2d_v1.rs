@@ -765,6 +765,99 @@ fn avalanche_riders_has_haste_destroys_a_land_and_owes_echo() {
 }
 
 #[test]
+fn avalanche_riders_echo_charges_its_printed_cost_after_bounce() {
+    let mut state = islands();
+    let riders = put(&mut state, P0, "Avalanche Riders", Zone::Hand);
+    let snap = put(&mut state, P0, "Snap", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 3);
+    cast(&mut state, riders, &[]);
+    settled(&mut state);
+    pass_until(&mut state, |state| {
+        state.step == Step::Upkeep
+            && state.priority_player == P0
+            && state.stack.last().is_some_and(|item| item.source == riders)
+    });
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, snap, &[Target::Object(riders)]);
+    pass_until(&mut state, |state| {
+        state.engine.pending_effect.as_ref().is_some_and(|pending| {
+            pending.resolving_item.source == riders && pending.choice.is_some()
+        })
+    });
+    assert_eq!(zone(&state, riders), Zone::Hand);
+    assert_eq!(state.players[P0.index()].mana_pool, [0; 6]);
+    pool(&mut state, P0, &[ManaColor::R], 3);
+    act(&mut state, Action::ChooseEffectOption(0));
+    settled(&mut state);
+    assert_eq!(zone(&state, riders), Zone::Hand);
+    assert_eq!(state.players[P0.index()].mana_pool, [0; 6]);
+}
+
+#[test]
+fn guide_echo_finishes_when_its_permanent_changes_controllers() {
+    for player in [P0, P1] {
+        let opponent = player.opponent();
+        let mut state = islands();
+        state.active_player = player;
+        state.priority_player = player;
+        let guide = put(&mut state, player, "Karmic Guide", Zone::Hand);
+        let allure = put(&mut state, opponent, "Legacy's Allure", Zone::Battlefield);
+        state
+            .eternal_v1
+            .get_or_insert_with(Default::default)
+            .p1b
+            .treasure_counters
+            .push((
+                mtg_kernel::state::ObjectLinkV4 {
+                    object: allure,
+                    zone_change_count: 0,
+                },
+                2,
+            ));
+        pool(&mut state, player, &[ManaColor::W, ManaColor::W], 3);
+        cast(&mut state, guide, &[]);
+        settled(&mut state);
+        let generation = state.objects.get(guide).zone_change_count;
+        pass_until(&mut state, |state| {
+            state.step == Step::Upkeep
+                && state.active_player == player
+                && state.priority_player == opponent
+                && state.stack.last().is_some_and(|item| item.source == guide)
+        });
+        activate(&mut state, allure, 0, &[Target::Object(guide)]);
+        pass_until(&mut state, |state| {
+            state.engine.pending_effect.as_ref().is_some_and(|pending| {
+                pending.resolving_item.source == guide && pending.choice.is_some()
+            })
+        });
+        assert_eq!(zone(&state, allure), Zone::Graveyard);
+        assert_eq!(state.objects.get(guide).controller, opponent);
+        assert_eq!(state.objects.get(guide).zone_change_count, generation);
+        assert!(matches!(next(&mut state),
+            Decision::ChooseEffectOption { player: chooser, source, .. }
+                if chooser == player && source == guide));
+        assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
+
+        // Both an unpayable payment and a direct decline reach the sacrifice instruction.
+        for option in [0, 1] {
+            let mut branch = state.clone();
+            act(&mut branch, Action::ChooseEffectOption(option));
+            settled(&mut branch);
+            assert!(branch.engine.halted.is_none());
+            assert!(branch.stack.is_empty());
+            let permanent = branch.objects.get(guide);
+            assert_eq!(permanent.zone, Zone::Battlefield);
+            assert_eq!(permanent.controller, opponent);
+            assert_eq!(permanent.zone_change_count, generation);
+            assert!(!branch.engine.event_history.iter().any(|event| matches!(
+                event,
+                event::CommittedEvent::Sacrificed { object, .. } if *object == guide
+            )));
+        }
+    }
+}
+
+#[test]
 fn earthquake_hits_each_creature_without_flying_and_each_player() {
     let mut state = islands();
     let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);

@@ -1,37 +1,108 @@
 //! The event-history index changes no game. A history guard skips a scan
-//! only when no event of the kinds its scan acts on occurred, so every
+//! only when no event of the kinds its scan acts on occurred, and a kind scan
+//! (`of_kinds_v2`) reads only the events of the kinds it acts on, so every
 //! computation must give the same result with its guards and with every
-//! guard forced open. These tests compare the two on fixture games, and on
-//! mid-game states with one event of each kind added: a kind no fixture game
-//! produces is exactly where a guard that left it out would hide.
+//! guard forced open, where a kind scan is given every event. These tests
+//! compare the two on fixture games, and on mid-game states with one event of
+//! each kind added: a kind no fixture game produces is exactly where a guard
+//! or kind scan that left it out would hide.
 
-use super::tests::{fixture, test_cfg};
-use super::*;
+use super::tests::test_cfg;
+use super::{game_setup, new_session};
+use crate::event::CommittedEvent;
 use crate::event_history_v1::guard_tests_v1::{
     every_kind_v1, recording_sites, with_scans_forced, SitesV1,
 };
-use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+use crate::rl::{ActionSemanticV1, TerminalClassificationV1};
+use crate::rl_session::{FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1};
 use crate::state::GameState;
+use sha2::{Digest, Sha256};
 
 fn state_digest(state: &GameState) -> String {
     let bytes = serde_json::to_vec(state).expect("state serializes");
     format!("{:x}", Sha256::digest(&bytes))
 }
 
-/// Each decision of a fixture game (both seats), the action taken and the
-/// state it was taken in, then how the game ended.
-fn game_record(game: u64) -> Vec<String> {
+/// Exercise the same native session on the pinned fixture deal. The frozen
+/// scorer has a narrower observation contract than this engine guard test.
+fn drive_native(
+    game: u64,
+    mut visit: impl FnMut(&FastActorSessionV1, FastActorDecisionV1, &[ActionSemanticV1], u32) -> bool,
+) -> FastActorSessionV1 {
     let setup = game_setup(&test_cfg(), 1, game);
-    let (mut focal, mut opponent) = (fixture(), fixture());
+    let mut session = new_session(&setup).expect("fixture game resets");
+    while let FastActorResponseV1::Decision(decision) = session.current_response() {
+        let actions = session
+            .diagnostic_current_action_semantics()
+            .expect("native fixture decision has a menu");
+        assert_eq!(actions.len(), decision.legal_action_count as usize);
+        // Play lands and spells, commit attackers and blockers, then take
+        // the first native ordinal within each priority. Avoid repeatedly
+        // activating optional abilities while a pass is available.
+        let (index, _) = actions
+            .iter()
+            .enumerate()
+            .min_by_key(|&(index, action)| {
+                let rank = match action {
+                    ActionSemanticV1::PlayLand { .. }
+                    | ActionSemanticV1::ChooseAttackerInclusion { include: true, .. }
+                    | ActionSemanticV1::ChooseBlockerInclusion { include: true, .. } => 0,
+                    ActionSemanticV1::CastSpell { .. } => 1,
+                    ActionSemanticV1::Pass { .. } => 3,
+                    ActionSemanticV1::ActivateManaAbility { .. }
+                    | ActionSemanticV1::ActivateAbility { .. } => 4,
+                    _ => 2,
+                };
+                (rank, index)
+            })
+            .expect("native fixture decision has a legal action");
+        let action = index as u32;
+        if visit(&session, decision, &actions, action) {
+            return session;
+        }
+        session
+            .step(decision.episode_id, decision.step, action)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "fixture game {game} step {} action {action}: {error:?}",
+                    decision.step
+                )
+            });
+    }
+    session
+}
+
+/// Each decision, its full native menu, selected ordinal and state digest,
+/// followed by the terminal result.
+fn game_record(game: u64) -> Vec<String> {
     let mut record = Vec::new();
-    let (session, finished) = drive(&setup, &mut focal, &mut opponent, |s, d, action| {
-        record.push(format!("{d:?} {action} {}", state_digest(s.game_state())));
-        Ok(false)
-    })
-    .expect("fixture game plays");
+    let session = drive_native(game, |s, decision, actions, action| {
+        record.push(format!(
+            "{decision:?} {actions:?} {action} {}",
+            state_digest(s.game_state()),
+        ));
+        false
+    });
+    let response = session.current_response();
+    assert!(
+        matches!(&response, FastActorResponseV1::Terminal(terminal)
+            if terminal.terminal_classification == TerminalClassificationV1::Natural),
+        "game {game} did not finish naturally: {response:?}",
+    );
+    // The original scorer refusal was after combat in game 0.
+    if game == 0 {
+        assert!(
+            session
+                .game_state()
+                .engine
+                .event_history
+                .iter()
+                .any(|event| matches!(event, CommittedEvent::CombatDamageToPlayer { .. })),
+            "game {game} produced no combat damage history",
+        );
+    }
     record.push(format!(
-        "{finished} {:?} {}",
-        session.current_response(),
+        "{response:?} {}",
         state_digest(session.game_state())
     ));
     record
@@ -67,8 +138,9 @@ fn fixture_games_are_identical_with_guards_and_with_every_guard_open() {
 /// A named check of a state, rendered as text.
 type StateCheck = (&'static str, fn(&GameState) -> String);
 
-/// Every check that takes only a state and has its own history guard; each
-/// is compared directly, so an early failure of one cannot hide another.
+/// Every check that takes only a state and has its own history guard or
+/// kind scan; each is compared directly, so an early failure of one cannot
+/// hide another.
 fn state_checks() -> Vec<StateCheck> {
     macro_rules! checks {
         ($($check:path),* $(,)?) => {
@@ -79,6 +151,7 @@ fn state_checks() -> Vec<StateCheck> {
         crate::akroma_public_v1::facts,
         crate::arahbo_public_v1::facts,
         crate::arahbo_v1::validate_state,
+        crate::arahbo_v1::requires_successor,
         crate::ashroot_animist_v1::validate_state,
         crate::ashroot_dispatch_v2::validate_state,
         crate::authority_of_the_consuls_v1::validate_state,
@@ -95,21 +168,38 @@ fn state_checks() -> Vec<StateCheck> {
         crate::controlled_creature_grants_v1::require_legacy_consumer_supported,
         crate::controlled_creature_grants_v1::validate_color_history,
         crate::doubling_season_public_v48::capture,
+        crate::doubling_season_v48::require_legacy_supported,
         crate::doubling_season_v48::requires_successor,
         crate::doubling_season_v48::validate_token_journals,
         crate::eaten_public_v46::validate_state,
         crate::effect::crystal_prevention_v1::requires_successor,
+        crate::effect::crystal_prevention_v1::validate,
         crate::effect::exile_top_choose_v1::require_legacy_consumer_supported,
         crate::effect::frenzied_goblin_resolution_v1::active,
+        crate::effect::harvester_v1::require_legacy_absence,
+        crate::effect::harvester_v1::validate_state,
         crate::effect::inspiration_resolution_v1::validate,
         crate::effect::strongbox_permission_v1::validate,
+        crate::effect::thousand_year_storm_v1::refuse_legacy,
+        crate::effect::thousand_year_storm_v1::validate_state,
         crate::engine::mandatory_cast_cost_v1::linked_payment_input,
         crate::engine::mandatory_cast_cost_v1::validate_state,
         crate::equipment_damage_source_v4::validate_state,
         crate::equipment_damage_source_v4::requires_successor,
         crate::equipment_damage_source_v4::public_sources,
         crate::event::validate_exile_if_dies_replacements,
+        crate::event::validate_copied_token_abilities_v1,
         crate::extra_turn_v1::validate,
+        crate::faebloom_trick_v43::validate_state,
+        crate::fake_your_own_death_v50::death_custody::has_unowned_roots,
+        crate::fake_your_own_death_v50::death_custody::validate_collection,
+        crate::fake_your_own_death_v50::death_custody::validate_retained_owners,
+        crate::fake_your_own_death_v50::public_v50::capture,
+        crate::fake_your_own_death_v50::return_aura::validate_history,
+        crate::fake_your_own_death_v50::spell_custody::installed_grants,
+        crate::fake_your_own_death_v50::spell_custody::validate_death_captures,
+        crate::fake_your_own_death_v50::spell_custody::validate_grant_lifetime,
+        crate::fake_your_own_death_v50::spell_custody::validate_retained_grant_history,
         crate::fiendish_panda_v1::validate_state,
         crate::fiendish_panda_v1::custody::validate,
         crate::fiery_annihilation_v1::requires_successor,
@@ -125,6 +215,7 @@ fn state_checks() -> Vec<StateCheck> {
         crate::heraldic_banner_v1::requires_successor,
         crate::heraldic_banner_v1::validate_state,
         crate::high_society_hunter_custody_v45::captures,
+        crate::high_society_hunter_custody_v45::validate,
         crate::high_society_hunter_public_v45::capture,
         crate::inspiration_observation_v1::validate_projection_authority,
         crate::krenko_public_v1::facts_v1,
@@ -132,9 +223,15 @@ fn state_checks() -> Vec<StateCheck> {
         crate::krenko_v1::requires_successor,
         crate::librarian_activation_v1::validate_state,
         crate::panda_public_v47::capture,
+        crate::progenitus_v1::refuse_legacy,
+        crate::progenitus_v1::validate,
         crate::raid_entry_custody_v1::validate,
         crate::ravenous_public_v51::capture,
         crate::season_token_attachment_v48::validate_journals,
+        crate::snack_wide_life_v59::custody::validate,
+        crate::snack_wide_life_v59::has_wide_history,
+        crate::snack_wide_life_v59::require_legacy,
+        crate::snack_wide_life_v59::validate,
         crate::soul_counters_v1::has_history,
         crate::source_power_activation_v1::validate_state,
         crate::sower_restriction_capture_v1::active,
@@ -170,7 +267,7 @@ fn caught(f: impl FnOnce() -> String) -> String {
 }
 
 /// What a state's checks return, and where one step from it leads.
-fn outcomes(session: &FastActorSessionV1, checks: &[StateCheck]) -> Vec<String> {
+fn outcomes(session: &FastActorSessionV1, action: u32, checks: &[StateCheck]) -> Vec<String> {
     let state = session.game_state();
     let mut outcomes: Vec<String> = checks
         .iter()
@@ -179,28 +276,47 @@ fn outcomes(session: &FastActorSessionV1, checks: &[StateCheck]) -> Vec<String> 
     if let FastActorResponseV1::Decision(d) = session.current_response() {
         outcomes.push(caught(|| {
             let mut next = session.clone();
-            let response = next.step(d.episode_id, d.step, 0);
-            format!("step: {response:?} {}", state_digest(next.game_state()))
+            let response = next.step(d.episode_id, d.step, action);
+            let menu = next.diagnostic_current_action_semantics();
+            format!(
+                "step: {response:?} {menu:?} {}",
+                state_digest(next.game_state())
+            )
         }));
     }
     outcomes
 }
 
-/// Mid-game sessions of fixture games, at spread decisions.
-fn base_sessions() -> Vec<FastActorSessionV1> {
+/// Independently sample early, combat and later decisions from each deal.
+fn base_sessions() -> Vec<(FastActorSessionV1, u32)> {
     let mut bases = Vec::new();
     for game in [0, 40] {
-        let setup = game_setup(&test_cfg(), 1, game);
-        let (mut focal, mut opponent) = (fixture(), fixture());
-        let mut seen = 0;
-        drive(&setup, &mut focal, &mut opponent, |s, _, _| {
-            if seen % 25 == 10 {
-                bases.push(s.clone());
+        let mut game_bases = Vec::new();
+        let mut last_step = 0;
+        drive_native(game, |session, decision, _, action| {
+            let state = session.game_state();
+            let take = match game_bases.len() {
+                0 => decision.step >= 10,
+                // Only Standard-catalog builds record which creatures
+                // attacked this turn; declared attackers stay in combat
+                // until the end of combat in every build.
+                1 => {
+                    state.creatures_attacked_this_turn_v1() > 0
+                        || !state.engine.combat.attackers.is_empty()
+                }
+                _ => decision.step >= last_step + 25,
+            };
+            if take {
+                game_bases.push((session.clone(), action));
+                last_step = decision.step;
             }
-            seen += 1;
-            Ok(bases.len() >= 6)
-        })
-        .expect("fixture game plays");
+            game_bases.len() == 3
+        });
+        assert!(
+            game_bases.len() >= 2,
+            "game {game} did not supply a combat base"
+        );
+        bases.extend(game_bases);
     }
     bases
 }
@@ -210,9 +326,8 @@ fn one_event_of_each_kind_changes_no_guarded_result() {
     let samples = every_kind_v1();
     let checks = state_checks();
     let bases = base_sessions();
-    assert!(bases.len() >= 4, "too few base states: {}", bases.len());
     let ((), sites) = recording_sites(|| {
-        for (base_index, base) in bases.iter().enumerate() {
+        for (base_index, (base, action)) in bases.iter().enumerate() {
             for sample in &samples {
                 let mut session = base.clone();
                 session
@@ -220,8 +335,8 @@ fn one_event_of_each_kind_changes_no_guarded_result() {
                     .engine
                     .event_history
                     .push(sample.clone());
-                let guarded = outcomes(&session, &checks);
-                let forced = with_scans_forced(|| outcomes(&session, &checks));
+                let guarded = outcomes(&session, *action, &checks);
+                let forced = with_scans_forced(|| outcomes(&session, *action, &checks));
                 for (guarded, forced) in guarded.iter().zip(&forced) {
                     assert_eq!(
                         guarded,

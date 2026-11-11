@@ -4448,6 +4448,9 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if crate::full_text_v1::is_donated_trigger(&resolving_item) {
+        return Err("full-text trigger requires its genuine native row".into());
+    }
     if matches!(op, EffectOp::TinybonesStashV72 { .. })
         || crate::engine::tinybones_v72::waiting(state, ctx)
         || resolving_item
@@ -7906,6 +7909,11 @@ fn validated_definition_owned_root_effect(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Result<Box<EffectOp>, String> {
+    if let Some((program, _)) =
+        crate::full_text_v1::trigger_program(state, &pending.resolving_item)?
+    {
+        return Ok(Box::new(program));
+    }
     if thousand_year_storm_v1::selected(state, &pending.resolving_item) {
         thousand_year_storm_v1::validate_published(state, &pending.resolving_item)?;
         return Ok(Box::new(
@@ -20108,6 +20116,16 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
     if state.engine.halted.is_some() {
         return;
     }
+    if ctx
+        .stack_item_id
+        .is_some_and(|id| crate::fixed_source_damage_v3::has_donated_payment(state, id))
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     if crate::linked_aura_operation_v1::needs_event_owner(state)
         && crate::linked_aura_operation_v1::event(
             state,
@@ -20536,6 +20554,9 @@ fn execute_with_native_row_v1(
         EffectOp::DealDamage { target, amount } => {
             if crate::gorehorn_damage_v1::owns_context(state, ctx)
                 || crate::equipment_damage_source_v4::owns_context(state, ctx)
+                || ctx
+                    .stack_item_id
+                    .is_some_and(|id| crate::fixed_source_damage_v3::has_donated_payment(state, id))
             {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -20938,7 +20959,10 @@ fn execute_with_native_row_v1(
                 state,
                 event::ProposedEvent::life_loss(opponent, i32::from(ctx.x_value)),
             );
-            let lost = state.engine.event_history[start..]
+            let lost = state
+                .engine
+                .event_history
+                .range_v2(start..)
                 .iter()
                 .filter_map(|event| match event {
                     event::CommittedEvent::LifeLoss { player, amount } if *player == opponent => {
@@ -22719,7 +22743,10 @@ fn execute_with_native_row_v1(
                 if !source_live {
                     return;
                 }
-                let creations = state.engine.event_history[start..]
+                let creations = state
+                    .engine
+                    .event_history
+                    .range_v2(start..)
                     .iter()
                     .enumerate()
                     .filter_map(|(offset, event)| match event {
@@ -22827,7 +22854,7 @@ fn execute_with_native_row_v1(
                     ));
                     return;
                 }
-                let attachment=state.engine.event_history[attachment_start..].iter().enumerate().find_map(|(offset,event)| match event {
+                let attachment=state.engine.event_history.range_v2(attachment_start..).iter().enumerate().find_map(|(offset,event)| match event {
                     event::CommittedEvent::TokenAttachmentJournalV48 {journal} if matches!(journal.as_ref(),crate::season_token_attachment_v48::JournalV48::AttachmentCommitted {source:actual,host} if actual.object==source.source && actual.zone_change_count==source.zone_change_count && host.object==selected.object && host.zone_change_count==selected.expected_zone_change_count) => Some((attachment_start+offset) as u64), _=>None,
                 }).expect("actual attachment helper emits independent occurrence");
                 crate::season_token_attachment_v48::record(
@@ -25079,7 +25106,10 @@ mod tests {
                 assert_eq!(branch.objects.get(opponent_card).zone, Zone::Graveyard);
                 assert_eq!(branch.objects.get(retained_hand.unwrap()).zone, Zone::Hand);
                 assert_eq!(
-                    branch.engine.event_history[start..]
+                    branch
+                        .engine
+                        .event_history
+                        .range_v2(start..)
                         .iter()
                         .filter(|event| matches!(
                             event,
@@ -25214,7 +25244,10 @@ mod tests {
                     assert_eq!(branch.objects.get(id).zone, Zone::Graveyard);
                 }
                 assert_eq!(
-                    branch.engine.event_history[start..]
+                    branch
+                        .engine
+                        .event_history
+                        .range_v2(start..)
                         .iter()
                         .filter(|event| matches!(
                             event,
@@ -25363,7 +25396,10 @@ mod tests {
                 assert_eq!(branch.objects.get(second).damage, 4);
                 assert!(branch.objects.get(first).v4.deathtouch_damage);
                 assert_eq!(branch.players[player.index()].life, 24);
-                let damage = branch.engine.event_history[start..]
+                let damage = branch
+                    .engine
+                    .event_history
+                    .range_v2(start..)
                     .iter()
                     .filter_map(|event| match event {
                         CommittedEvent::Damage {
@@ -25552,7 +25588,10 @@ mod tests {
                             &mut state,
                         );
                         assert!(state.engine.halted.is_none());
-                        let created = state.engine.event_history[start..]
+                        let created = state
+                            .engine
+                            .event_history
+                            .range_v2(start..)
                             .iter()
                             .enumerate()
                             .filter_map(|(i, event)| match event {
@@ -25568,7 +25607,10 @@ mod tests {
                             })
                             .collect::<Vec<_>>();
                         assert_eq!(created.len(), count as usize);
-                        let observed = state.engine.event_history[start..]
+                        let observed = state
+                            .engine
+                            .event_history
+                            .range_v2(start..)
                             .iter()
                             .enumerate()
                             .filter_map(|(i, event)| match event {
@@ -27037,7 +27079,10 @@ fn tutelage_remaining_v1(
     let mut linked = None;
     let mut cursor = start_index + 1;
     while cursor < state.engine.event_history.len() {
-        let batch_index = state.engine.event_history[cursor..]
+        let batch_index = state
+            .engine
+            .event_history
+            .range_v2(cursor..)
             .iter()
             .position(|entry| {
                 matches!(
@@ -27333,7 +27378,7 @@ fn run_tutelage_batch_v1(
         (live.v4.face_down_v1.is_none()
             && binding.expected_zone_change_count.checked_add(1)==Some(live.zone_change_count)
             && matches!(live.zone,Zone::Graveyard|Zone::Exile|Zone::Battlefield|Zone::Stack)
-            && state.engine.event_history[move_start as usize..].iter().any(|e|matches!(e,event::CommittedEvent::ZoneChange{object,from:Zone::Library,to,..}if *object==binding.object && *to==live.zone)))
+            && state.engine.event_history.range_v2(move_start as usize..).iter().any(|e|matches!(e,event::CommittedEvent::ZoneChange{object,from:Zone::Library,to,..}if *object==binding.object && *to==live.zone)))
             .then_some(event::TutelagePublicMillMemberV1 {
                 object: binding.object,
                 generation: live.zone_change_count,
@@ -27586,6 +27631,13 @@ pub(crate) mod kaito_cunning_v75;
 pub(crate) mod liliana_dreadhorde_v1;
 pub(crate) mod vivien_reid_v1;
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if ctx.stack_item_id.is_some_and(|id| {
+        state.stack.iter().any(|item| {
+            item.v4.stack_item_id == id && crate::full_text_v1::is_donated_trigger(item)
+        })
+    }) {
+        return true;
+    }
     if kaito_cunning_v75::waiting(state, ctx)
         || crate::engine::tinybones_v72::waiting(state, ctx)
         || liliana_dreadhorde_v1::waiting(state, ctx)
@@ -27683,6 +27735,11 @@ fn validated_native_execution_root_v1(
     // Native stack validation includes genuine Ward and granted abilities,
     // whose roots need not occur in the source's printed trigger table.
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)?;
+    if let Some((program, _)) =
+        crate::full_text_v1::trigger_program(state, &pending.resolving_item)?
+    {
+        return Ok(Box::new(program));
+    }
     if let Some(root) = &pending.resolving_item.inline_effect {
         Ok(Box::new(root.clone()))
     } else {
@@ -29671,7 +29728,10 @@ pub(crate) mod fiend_artisan_v1 {
             return Err("Fiend original selected activation changed".into());
         }
         let sacrificed = p.object_cost_chosen[0];
-        let segment = &state.engine.event_history[input_index as usize + 1..at];
+        let segment = state
+            .engine
+            .event_history
+            .range_v2(input_index as usize + 1..at);
         if sacrificed.object == item.source
             || sacrificed.expected_zone != Zone::Battlefield
             || !segment

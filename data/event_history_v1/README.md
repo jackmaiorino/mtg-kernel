@@ -169,13 +169,34 @@ kind order. This standalone event fragment tests serialization; it does not
 make the artificial mixed fixture a valid native replay or qualify a gameplay
 profile or Drakuseth consumers.
 
+## Appended ordered-graveyard event samples (November 10, 2026)
+
+The four samples below came from successful native producers at `442e15adcad577f40ead2f35e5abef1746d9a429`.
+The original payloads and producer results are recorded in
+`E:/codex-eternal-feb-442e-evidence/manifest.json`,
+SHA-256 `09f6b145c9ce2436bf63b218dd48cc145b0a57ade360985aac3a2cc3ee287360`.
+The trigger payload came from the dedicated trigger producer. The preceding
+315 event payloads retain their bytes and order. This append records sample
+provenance for the serialization corpus.
+
+| Event kind | Native producer | Original payload SHA-256 |
+| --- | --- | --- |
+| `FullTextTriggerCapturedV1` | `full_text_v1::tests::registered::volrath_native_cast_captures_and_pays_for_palinchron_text_both_seats` | `65a43e5302575fafe8031f927a6eb3222e4cc2a3c3ec01f6283e46e0f9d3e9d9` |
+| `FullTextBatchEntryV1` | `full_text_v1::tests::registered::volrath_native_mixed_batch_records_real_entry_and_order_both_seats` | `394a93b7526863ac5701a2d2ff0ec2b5b6214e4c9baf7066a78f6fc1cbf9b37b` |
+| `FullTextRestrictedUseV1` | `full_text_v1::tests::registered::volrath_native_wall_mana_records_the_exact_restricted_use_both_seats` | `0bd55de5fe06b428512681fe48b103250bfa4c1f166e4490d983130440f45844` |
+| `OrderedGraveyardControlGainedV1` | `full_text_v1::tests::registered::volrath_native_paid_control_transfer_records_the_new_controller_both_seats` | `3abcb5e812c0516f90ccdee856e29df8db7067a738d8f7d7147754286ddcce4f` |
+
 ## Appended FullPool event samples (November 9, 2026)
 
 The final seven rows were emitted by the passing native producers below at source
-1eee5416d3d3f9c395bcdb6cc5ec2da1e2b4e8b1. The preceding 316 payloads retain
+1eee5416d3d3f9c395bcdb6cc5ec2da1e2b4e8b1. The payloads before them retain
 their bytes and order. The archived Windows MSVC test binary has SHA-256
 b315034c3589cbd6854a2d7e59703996d26eab3230a91ef98f8d0bc242c9eca4.
 It used pinned Rust 1.94.1, LTO disabled and 16 codegen units for correctness.
+
+Merging main on November 11, 2026 placed main's four ordered-graveyard rows
+(rows 316 to 319, above) before this branch's `NivMizzetVisionaryDrawEndedV1`
+row and these seven rows, which are now rows 320 to 327. No payload changed.
 
 The original 47-case run had 36 passes, ten failures and one timed-out case.
 Its receipt SHA-256 is 4832239d0f8630f786a4731394ab14d7379dc25e51daf44bab902c7718514df8.

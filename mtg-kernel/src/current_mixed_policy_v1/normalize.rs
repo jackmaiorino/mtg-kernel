@@ -386,6 +386,35 @@ fn rewrite(value: &Value, refs: &mut References, key: &str) -> Result<Value> {
     })
 }
 
+/// Encode only an already authenticated visible decision, using local aliases
+/// across its observation and action rows. This has no learner model identity.
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) fn visible_numeric_parts_v1(
+    mut state: Value,
+    actions: &[Value],
+) -> Result<(NumericTree, Vec<NumericTree>)> {
+    super::public_projection_operands::prepare_premodern(&mut state)?;
+    let mut times = BTreeSet::new();
+    timestamps(&state, "", &mut times);
+    for action in actions {
+        timestamps(action, "", &mut times);
+    }
+    let mut refs = References {
+        timestamps: times
+            .into_iter()
+            .enumerate()
+            .map(|(i, time)| (time, i as u64))
+            .collect(),
+        ..Default::default()
+    };
+    let state = NumericTree::encode(&rewrite(&state, &mut refs, "")?)?;
+    let actions = actions
+        .iter()
+        .map(|action| NumericTree::encode(&rewrite(action, &mut refs, "")?))
+        .collect::<Result<Vec<_>>>()?;
+    Ok((state, actions))
+}
+
 pub(super) fn encode(source: Source, state: Value, actions: Vec<Value>) -> Result<Packet> {
     encode_with_action_rows(source, state, |_| Ok((actions, ()))).map(|(packet, ())| packet)
 }

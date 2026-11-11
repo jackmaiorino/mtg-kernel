@@ -77,6 +77,7 @@ pub(crate) fn active(state: &GameState, source: ObjectId) -> bool {
 
 /// Transient ownership for one genuine simultaneous event batch. Static
 /// replacement observers exist before entry; ETB observers exist after it.
+#[derive(Clone)]
 pub(crate) struct EntryBatchV1 {
     pub(crate) observers: Vec<AbilitySourceContractV4>,
     entries: Vec<usize>,
@@ -226,7 +227,7 @@ fn capture_at(state: &GameState, index: u64) -> Result<&AuthorityEntryCaptureV1,
             crate::trigger::battlefield_entry_object(event) != Some(capture.entrant.object)
         })
         || state.objects.try_get(capture.entrant.object).is_none_or(|live| {
-            let moves = state.engine.event_history[entry_index + 1..].iter().filter(|event| {
+            let moves = state.engine.event_history.range_v2(entry_index + 1..).iter().filter(|event| {
                 matches!(event, CommittedEvent::ZoneChange { object, .. } if *object == capture.entrant.object)
             }).count();
             u32::try_from(moves).ok().and_then(|moves| capture.entrant.zone_change_count.checked_add(moves))
@@ -538,7 +539,10 @@ pub(crate) fn resolve(state: &mut GameState, ctx: &ExecCtx, capture_history_inde
     let source = capture.source;
     let start = state.engine.event_history.len();
     event::propose_and_commit(state, ProposedEvent::life_gain(ctx.controller, 1));
-    let gain_index = state.engine.event_history[start..]
+    let gain_index = state
+        .engine
+        .event_history
+        .range_v2(start..)
         .iter()
         .position(|event| {
             matches!(event,
@@ -794,7 +798,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         } = event
         {
             let (index, _) = publication(state, *capture_history_index)?;
-            if index != completion_index || state.engine.event_history[..index].iter().filter(|event|
+            if index != completion_index || state.engine.event_history.range_v2(..index).iter().filter(|event|
                 matches!(event, CommittedEvent::AuthorityEntryCollectedV1 { capture_history_index: capture }
                     if capture == capture_history_index)).count() != 1 {
                 return Err("opponent entry publication lost its prior collection".into());
