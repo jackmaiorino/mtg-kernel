@@ -1590,7 +1590,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let JournalV75::TokenInput { item, .. } = at(state, *input)? else {
                     return Err("Kaito token input kind changed".into());
                 };
-                let created = state.engine.event_history[*input as usize + 1..i]
+                let created = state
+                    .engine
+                    .event_history
+                    .range_v2(*input as usize + 1..i)
                     .iter()
                     .filter_map(|e| match e {
                         E::CreateToken {
@@ -2059,7 +2062,10 @@ pub(crate) fn public_facts_v75(
             }
         }
         let draw = if let Some(start) = evasion_at {
-            let draws = state.engine.event_history[start + 1..end]
+            let draws = state
+                .engine
+                .event_history
+                .range_v2(start + 1..end)
                 .iter()
                 .filter_map(|e| match e {
                     E::Draw { player, object } if *player == item.controller => {
@@ -2238,7 +2244,11 @@ pub(crate) fn public_facts_v75(
             return Err("V75 Ninja input absent".into());
         };
         let mut created = vec![];
-        for e in &state.engine.event_history[*input as usize + 1..*history_end as usize] {
+        for e in state
+            .engine
+            .event_history
+            .range_v2(*input as usize + 1..*history_end as usize)
+        {
             if let E::CreateToken {
                 object,
                 token_def,

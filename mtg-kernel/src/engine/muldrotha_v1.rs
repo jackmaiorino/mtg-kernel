@@ -833,7 +833,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         CommittedEvent::MuldrothaPlayedV1 { played }
                         if played.options_history_index == pending.options_history_index)
                     });
-                    let completed = state.engine.event_history[at + 1..]
+                    let completed = state
+                        .engine
+                        .event_history
+                        .range_v2(at + 1..)
                         .iter()
                         .any(|e| match e {
                             CommittedEvent::PublishedCastIdentityV1 { receipt } => {
@@ -868,7 +871,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
             CommittedEvent::MuldrothaPlayedV1 { played } => {
                 let o = options(state, played.options_history_index)?;
-                let choice = state.engine.event_history[..at]
+                let choice = state
+                    .engine
+                    .event_history
+                    .range_v2(..at)
                     .iter()
                     .find_map(|e| match e {
                         CommittedEvent::MuldrothaSelectedV1 { pending }
@@ -882,7 +888,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 if selected(state, choice)? != Some(played.permission)
                     || o.card != played.card || o.turn != played.turn || o.controller != played.controller
                     || o.land != played.spell.is_none()
-                    || state.engine.event_history[..at].iter().any(|e| matches!(e,
+                    || state.engine.event_history.range_v2(..at).iter().any(|e| matches!(e,
                         CommittedEvent::MuldrothaPlayedV1 { played: old }
                             if old.options_history_index == played.options_history_index
                             || old.turn == played.turn

@@ -2350,6 +2350,7 @@ pub(crate) fn gain_control(state: &mut GameState, object: ObjectId, player: Play
     live.controller = player;
     live.summoning_sick = true;
     state.engine.combat.remove_from_combat(object);
+    crate::full_text_v1::record_control_gained(state, object);
     // Echo is owed by whoever controls the creature since their last upkeep.
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_premodern_p2d_v1::control_changed(state, object, player);
@@ -2386,7 +2387,10 @@ pub(crate) fn create_token_copy(
                 crate::linked_aura_operation_v1::OperationV1::CopyTokenV36 { source, controller }
             },
         );
-        return state.engine.event_history[history_start..]
+        return state
+            .engine
+            .event_history
+            .range_v2(history_start..)
             .iter()
             .find_map(|event| match event {
                 CommittedEvent::CreateToken { object, .. } => Some(*object),
@@ -2431,7 +2435,10 @@ pub(crate) fn create_token_copy_without_banner_owner(
         }
         let start = state.engine.event_history.len();
         event::propose_and_commit_batch(state, vec![proposal]);
-        return state.engine.event_history[start..]
+        return state
+            .engine
+            .event_history
+            .range_v2(start..)
             .iter()
             .find_map(|event| match event {
                 CommittedEvent::CreateToken { object, .. } => Some(*object),

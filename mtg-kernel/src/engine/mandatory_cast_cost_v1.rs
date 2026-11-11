@@ -363,7 +363,7 @@ pub(super) fn validate_finalized(
     match (choice.pay_mana, choice.original_creature, choice.paid_creature) {
         (true, None, None) if item.v4.paid_cost_refs.is_empty() => Ok(()),
         (false, Some(original), Some(paid)) if original.expected_zone == Zone::Battlefield && paid.object == original.object && item.v4.paid_cost_refs == [paid] && paid.zone_change_count == original.expected_zone_change_count.checked_add(1).ok_or("mandatory sacrifice generation overflow")? => {
-            if state.engine.event_history[choice.input_index+1..publication_index].iter().any(|event| matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, controller_before, .. } if *object == original.object && *controller_before == item.controller)) { Ok(()) } else { Err("mandatory sacrifice original departure erased".into()) }
+            if state.engine.event_history.range_v2(choice.input_index+1..publication_index).iter().any(|event| matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, controller_before, .. } if *object == original.object && *controller_before == item.controller)) { Ok(()) } else { Err("mandatory sacrifice original departure erased".into()) }
         }
         _ => Err("mandatory paid branch and cost references disagree".into()),
     }
@@ -567,7 +567,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     .get(usize::from(source.card_def))
                     .ok_or("mandatory historical publication definition missing")?;
                 validate_finalized(state, publication, definition, false)?;
-                let departure = state.engine.event_history[index + 1..].iter().any(|event| matches!(event,
+                let departure = state.engine.event_history.range_v2(index + 1..).iter().any(|event| matches!(event,
                     CommittedEvent::ZoneChange { object, from: Zone::Stack, .. } if *object == source.source));
                 let live = state
                     .stack

@@ -399,19 +399,23 @@ pub(crate) fn source_types(
         return current_types(state, object);
     }
     crate::controlled_creature_grants_v1::validate_color_history(state)?;
-    let mut found = state.engine.event_history.iter().filter_map(|e| {
-        let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = e
-        else {
-            return None;
-        };
-        (snapshot.source.source == object
-            && snapshot.source.zone == zone
-            && snapshot.source.zone_change_count == generation
-            && (snapshot.source.card_def == card_def
-                || crate::standard_cards_v1::had_card_def(state, object, generation, card_def)))
-        .then_some(snapshot.source_types_v1.0)
-        .flatten()
-    });
+    let mut found = state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::ProtectionSourceColorDepartureV1])
+        .filter_map(|(_, e)| {
+            let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = e
+            else {
+                return None;
+            };
+            (snapshot.source.source == object
+                && snapshot.source.zone == zone
+                && snapshot.source.zone_change_count == generation
+                && (snapshot.source.card_def == card_def
+                    || crate::standard_cards_v1::had_card_def(state, object, generation, card_def)))
+            .then_some(snapshot.source_types_v1.0)
+            .flatten()
+        });
     let types = found
         .next()
         .ok_or("historical targeting source lost exact effective types")?;

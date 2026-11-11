@@ -268,7 +268,7 @@ pub(crate) fn before_departure(state: &mut GameState, id: ObjectId) {
             matches!(event,
         CommittedEvent::GorehornDepartureV1 { departure } if departure.facts.source.source==id
         && departure.facts.source.zone_change_count==live.zone_change_count
-        && !state.engine.event_history[index+1..].iter().any(|later| matches!(later,
+        && !state.engine.event_history.range_v2(index+1..).iter().any(|later| matches!(later,
             CommittedEvent::ZoneChange { object, .. } if *object==id)))
         })
     {
@@ -449,7 +449,10 @@ fn departure(state: &GameState, index: u32) -> Result<&DepartureV1, String> {
         || d.snapshot.owner != d.facts.source.owner
         || d.snapshot.controller != d.facts.source.controller
         || d.snapshot.zone_change_count != d.facts.source.zone_change_count
-        || !state.engine.event_history[index as usize + 1..]
+        || !state
+            .engine
+            .event_history
+            .range_v2(index as usize + 1..)
             .iter()
             .any(|e| {
                 matches!(e,
@@ -582,7 +585,10 @@ fn prepared(state: &GameState, id: StackItemId) -> Result<&PreparedV1, String> {
             let d = departure(state, index)?;
             if d.facts != r.facts
                 || index >= r.index
-                || !state.engine.event_history[index as usize + 1..i]
+                || !state
+                    .engine
+                    .event_history
+                    .range_v2(index as usize + 1..i)
                     .iter()
                     .any(|e| {
                         matches!(e,

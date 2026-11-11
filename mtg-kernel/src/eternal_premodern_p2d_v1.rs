@@ -28,7 +28,7 @@
 pub mod statics;
 pub(crate) mod targets;
 
-use crate::card_def::{CardType, Keywords, Subtype, TargetSpec};
+use crate::card_def::{CardType, Keywords, Subtype, TargetSpec, CARD_DEFS};
 use crate::effect::{EffectOp, ExecCtx, PlayerRef};
 use crate::eternal_cards_v1::EternalOpV1;
 use crate::eternal_legacy_e9a_v1::{battlefield, definition_name, live_link, TurnV1};
@@ -118,6 +118,8 @@ pub enum P2dOpV1 {
     EchoPayV1,
     /// Echo: sacrifice the source (the unpaid option).
     EchoSacrificeV1,
+    /// The borrowed Karmic Guide trigger retains the cost after text changes.
+    DonatedGuideEchoPayV1,
 }
 
 impl P2dOpV1 {
@@ -181,9 +183,17 @@ fn riders_enters() -> EffectOp {
 /// Echo {3}{R}: "sacrifice it unless you pay its echo cost." Paying is the
 /// first option; an unpayable cost sacrifices the creature.
 fn echo_trigger() -> EffectOp {
+    echo_choice(P2dOpV1::EchoPayV1)
+}
+
+pub(crate) fn donated_guide_echo_trigger() -> EffectOp {
+    echo_choice(P2dOpV1::DonatedGuideEchoPayV1)
+}
+
+fn echo_choice(payment: P2dOpV1) -> EffectOp {
     EffectOp::Choice {
         controller: PlayerRef::Controller,
-        options: vec![p2d(P2dOpV1::EchoPayV1), p2d(P2dOpV1::EchoSacrificeV1)],
+        options: vec![p2d(payment), p2d(P2dOpV1::EchoSacrificeV1)],
     }
 }
 
@@ -291,28 +301,50 @@ pub(crate) fn execute(op: &P2dOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         P2dOpV1::EchoPayV1 => {
-            let cost = live_ability_source(ctx, state)
-                .and_then(|source| definition_name(state, source))
-                .and_then(echo_cost);
-            let paid = cost.is_some_and(|(colors, generic)| {
-                crate::engine::pay_effect_mana(ctx.controller, colors, generic, state)
-            });
-            if !paid {
-                echo_sacrifice(ctx, state);
-            }
+            // The ability retains its printed payment after its source leaves.
+            let cost = ctx
+                .ability_source_contract
+                .filter(|source| {
+                    source.source == ctx.source
+                        && source.controller == ctx.controller
+                        && source.zone == Zone::Battlefield
+                        && crate::engine::validate_historical_ability_source_contract(
+                            state, *source,
+                        )
+                        .is_ok()
+                })
+                .and_then(|source| CARD_DEFS.get(usize::from(source.card_def)))
+                .and_then(|definition| echo_cost(definition.name));
+            pay_or_sacrifice(ctx, state, cost);
         }
         P2dOpV1::EchoSacrificeV1 => echo_sacrifice(ctx, state),
+        P2dOpV1::DonatedGuideEchoPayV1 => {
+            pay_or_sacrifice(
+                ctx,
+                state,
+                echo_cost(crate::eternal_premodern_p2c_v1::KARMIC_GUIDE),
+            );
+        }
+    }
+}
+
+fn pay_or_sacrifice(ctx: &ExecCtx, state: &mut GameState, cost: Option<(&[ManaColor], u8)>) {
+    let Some((colors, generic)) = cost else {
+        halt(state, ctx.source);
+        return;
+    };
+    if !crate::engine::pay_effect_mana(ctx.controller, colors, generic, state) {
+        echo_sacrifice(ctx, state);
     }
 }
 
 fn echo_sacrifice(ctx: &ExecCtx, state: &mut GameState) {
-    let Some(source) = live_ability_source(ctx, state) else {
+    // The trigger's controller can only sacrifice the original permanent they still control.
+    let Some(source) = live_ability_source(ctx, state)
+        .filter(|&source| state.objects.get(source).controller == ctx.controller)
+    else {
         return;
     };
-    if state.objects.get(source).controller != ctx.controller {
-        halt(state, ctx.source);
-        return;
-    }
     event::log_sacrifice(state, source);
     event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Graveyard));
 }

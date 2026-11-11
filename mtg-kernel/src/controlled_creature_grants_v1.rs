@@ -156,10 +156,10 @@ pub(crate) fn require_legacy_consumer_supported(state: &GameState) -> Result<(),
         return Ok(());
     }
     let mut retained_grant_source = false;
-    for event in state
+    for (_, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::ProtectionSourceColorDepartureV1])
+        .of_kinds_v2(&[EventKindV1::ProtectionSourceColorDepartureV1])
     {
         let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = event
         else {
@@ -318,15 +318,18 @@ pub(crate) fn validate_color_history(state: &GameState) -> Result<(), String> {
         if state
             .engine
             .event_history
-            .scan_for_v1(&[EventKindV1::ProtectionSourceColorDepartureV1])
-            .iter()
-            .any(|e| matches!(e, CommittedEvent::ProtectionSourceColorDepartureV1 { .. }))
+            .of_kinds_v2(&[EventKindV1::ProtectionSourceColorDepartureV1])
+            .any(|(_, e)| matches!(e, CommittedEvent::ProtectionSourceColorDepartureV1 { .. }))
         {
             return Err("color departure history requires its selected source catalog".into());
         }
         return Ok(());
     }
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    // Departures and their snapshots: the only events this loop checks.
+    for (at, event) in state.engine.event_history.of_kinds_v2(&[
+        EventKindV1::ProtectionSourceColorDepartureV1,
+        EventKindV1::ZoneChange,
+    ]) {
         if let CommittedEvent::ProtectionSourceColorDepartureV1 {
             snapshot,
             departure_history_index,
@@ -474,9 +477,8 @@ pub(crate) fn targeting_source_colors(
     let mut snapshots = state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::ProtectionSourceColorDepartureV1])
-        .iter()
-        .filter_map(|event| {
+        .of_kinds_v2(&[EventKindV1::ProtectionSourceColorDepartureV1])
+        .filter_map(|(_, event)| {
             let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } =
                 event
             else {

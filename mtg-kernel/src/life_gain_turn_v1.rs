@@ -66,7 +66,9 @@ pub(crate) fn reset_at_untap(state: &mut GameState) {
     }
 }
 
-fn turn_history(state: &GameState) -> Result<&[CommittedEvent], String> {
+fn turn_history(
+    state: &GameState,
+) -> Result<crate::event_history_v1::EventHistoryRangeV2<'_>, String> {
     let ledger = state
         .life_gain_turn_v1
         .as_ref()
@@ -81,7 +83,10 @@ fn turn_history(state: &GameState) -> Result<&[CommittedEvent], String> {
     if state.engine.event_history.get(ledger.history_index) != Some(&expected) {
         return Err("first-life-gain cursor has no matching turn-boundary anchor".into());
     }
-    let history = &state.engine.event_history[ledger.history_index + 1..];
+    let history = state
+        .engine
+        .event_history
+        .range_v2(ledger.history_index + 1..);
     if history
         .iter()
         .any(|event| matches!(event, CommittedEvent::LifeGainTurnBeganV1 { .. }))
@@ -248,7 +253,10 @@ fn validate_capture(state: &GameState, capture: &FirstLifeGainCaptureV1) -> Resu
     else {
         return Err("captured first life gain has no committed event".into());
     };
-    if state.engine.event_history[ledger.history_index + 1..capture.gain_history_index]
+    if state
+        .engine
+        .event_history
+        .range_v2(ledger.history_index + 1..capture.gain_history_index)
         .iter()
         .filter_map(crate::snack_wide_life_v59::positive_gain)
         .any(|(previous, _)| previous == player)

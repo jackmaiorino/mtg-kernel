@@ -100,9 +100,7 @@ fn capture_indices(state: &GameState) -> Vec<u64> {
     state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::StromkirkTriggerCaptureV2])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::StromkirkTriggerCaptureV2])
         .filter_map(|(at, e)| {
             matches!(e, CommittedEvent::StromkirkTriggerCaptureV2 { .. }).then_some(at as u64)
         })
@@ -115,9 +113,7 @@ fn collected_indices(state: &GameState, capture: u64) -> Vec<usize> {
     state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::StromkirkCollectedV2])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::StromkirkCollectedV2])
         .filter_map(|(at, e)| match e {
             CommittedEvent::StromkirkCollectedV2 {
                 capture_history_index,
@@ -127,10 +123,13 @@ fn collected_indices(state: &GameState, capture: u64) -> Vec<usize> {
         .collect()
 }
 fn validate_journals(state: &GameState) -> Result<(), String> {
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state.engine.event_history.of_kinds_v2(&[
+        EventKindV1::StromkirkEndStepObserversV1,
+        EventKindV1::StromkirkTriggerCaptureV2,
+    ]) {
         if let CommittedEvent::StromkirkEndStepObserversV1 { observers, .. } = event {
             for ordinal in 0..observers.len() {
-                let count = state.engine.event_history.iter().filter(|e| matches!(e,
+                let count = state.engine.event_history.of_kinds_v2(&[EventKindV1::StromkirkTriggerCaptureV2]).filter(|(_, e)| matches!(e,
                     CommittedEvent::StromkirkTriggerCaptureV2 { observers_history_index, observer_index }
                         if *observers_history_index == at as u64 && *observer_index == ordinal as u32)).count();
                 if count != 1 {
@@ -212,9 +211,7 @@ fn publication(state: &GameState, capture: u64) -> Result<Option<(usize, &StackI
     let rows: Vec<_> = state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::StromkirkPublishedV2])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::StromkirkPublishedV2])
         .filter_map(|(at, e)| match e {
             CommittedEvent::StromkirkPublishedV2 {
                 capture_history_index,
@@ -259,7 +256,7 @@ fn validate_item(state: &GameState, capture: u64, item: &StackItem) -> Result<()
     else {
         return Err("Stromkirk publication lost its targeted permanent".into());
     };
-    if item.targets[0] != Target::Object(object) || !state.engine.event_history.scan_for_v1(&[EventKindV1::Targeted]).iter().any(|e| matches!(e,
+    if item.targets[0] != Target::Object(object) || !state.engine.event_history.of_kinds_v2(&[EventKindV1::Targeted]).any(|(_, e)| matches!(e,
         CommittedEvent::Targeted { target, target_zone_change_count, targeting_stack_item, targeting_controller }
             if *target == object && *target_zone_change_count == zone_change_count
                 && *targeting_stack_item == item.v4.stack_item_id && *targeting_controller == item.controller)) {
@@ -287,12 +284,15 @@ fn validate_open_turn(state: &GameState, capture: u64) -> Result<(), String> {
     Ok(())
 }
 fn historical_loss_flags(state: &GameState, before: usize) -> Result<[bool; 2], String> {
-    let anchor = state.engine.event_history[..before]
+    let anchor = state
+        .engine
+        .event_history
+        .range_v2(..before)
         .iter()
         .rposition(|e| matches!(e, CommittedEvent::LifeLossTurnBeganV1 { .. }))
         .ok_or("Stromkirk resolution lost actual life-loss anchor")?;
     let mut flags = [false; 2];
-    for event in &state.engine.event_history[anchor + 1..before] {
+    for event in state.engine.event_history.range_v2(anchor + 1..before) {
         if let Some(player) = crate::life_loss_turn_v1::committed_loss_player(event) {
             flags[player.index()] = true;
         }
@@ -517,7 +517,15 @@ pub(crate) fn counter_removed(
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     validate_journals(state)?;
     let captures = capture_indices(state);
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state.engine.event_history.of_kinds_v2(&[
+        EventKindV1::StromkirkCollectedV2,
+        EventKindV1::StromkirkPublishedV2,
+        EventKindV1::StromkirkPlacementRemovedV2,
+        EventKindV1::StromkirkResolutionRemovedV2,
+        EventKindV1::StromkirkCounterRemovedV2,
+        EventKindV1::StromkirkOperationV2,
+        EventKindV1::StromkirkCompletedV2,
+    ]) {
         let referenced = match event {
             CommittedEvent::StromkirkCollectedV2 {
                 capture_history_index,
@@ -619,9 +627,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let completions: Vec<_> = state
             .engine
             .event_history
-            .scan_for_v1(&[EventKindV1::StromkirkCompletedV2])
-            .iter()
-            .enumerate()
+            .of_kinds_v2(&[EventKindV1::StromkirkCompletedV2])
             .filter_map(|(at, e)| match e {
                 CommittedEvent::StromkirkCompletedV2 {
                     capture_history_index,
@@ -633,9 +639,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let operations: Vec<_> = state
             .engine
             .event_history
-            .scan_for_v1(&[EventKindV1::StromkirkOperationV2])
-            .iter()
-            .enumerate()
+            .of_kinds_v2(&[EventKindV1::StromkirkOperationV2])
             .filter_map(|(at, e)| match e {
                 CommittedEvent::StromkirkOperationV2 {
                     capture_history_index,
@@ -647,7 +651,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 _ => None,
             })
             .collect();
-        let removals: Vec<_> = state.engine.event_history.scan_for_v1(&[EventKindV1::StromkirkCounterRemovedV2, EventKindV1::StromkirkPlacementRemovedV2, EventKindV1::StromkirkResolutionRemovedV2]).iter().enumerate().filter(|(_,e)| matches!(e,
+        let removals: Vec<_> = state.engine.event_history.of_kinds_v2(&[EventKindV1::StromkirkCounterRemovedV2, EventKindV1::StromkirkPlacementRemovedV2, EventKindV1::StromkirkResolutionRemovedV2]).filter(|(_,e)| matches!(e,
             CommittedEvent::StromkirkPlacementRemovedV2 { capture_history_index, .. }
             | CommittedEvent::StromkirkResolutionRemovedV2 { capture_history_index, .. }
             | CommittedEvent::StromkirkCounterRemovedV2 { capture_history_index, .. } if *capture_history_index == capture)).collect();
