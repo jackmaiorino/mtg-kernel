@@ -290,12 +290,9 @@ fn borrowed_v1<'a>(
 ) -> ExpandedCheckpointV1<ParameterBitsRefV1<'a>> {
     with_tensors_v1(
         saved,
-        native.each_ref().map(|tensors| {
-            tensors
-                .iter()
-                .map(ParameterBitsRefV1::of_native_v1)
-                .collect()
-        }),
+        native
+            .each_ref()
+            .map(|tensors| tensors.iter().map(ParameterBitsRefV1::from).collect()),
     )
 }
 
@@ -353,6 +350,45 @@ fn a_checkpoint_of_borrowed_tensors_publishes_the_owned_bytes_in_both_formats() 
         encode_v1(&borrowed).unwrap(),
         std::fs::read(dir.join("checkpoint.ckpt")).unwrap()
     );
+}
+
+#[test]
+fn a_checkpoint_of_a_live_states_tensors_writes_its_snapshots_bytes() {
+    use crate::native_policy_train_step_v1::NativePolicyValueTrainStateV1;
+    let (_, model, _) = checkpoint_fixture_v1();
+    let state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+    let snapshot = state.snapshot_v1().unwrap();
+    let tensors = state.tensors_v1().unwrap();
+    let metadata = fixture_v1();
+    let owned = with_tensors_v1(
+        &metadata,
+        [
+            &snapshot.parameters,
+            &snapshot.first_moments,
+            &snapshot.second_moments,
+        ]
+        .map(|section| section.iter().map(ParameterBitsV1::from_native).collect()),
+    );
+    let live = with_tensors_v1(
+        &metadata,
+        [
+            &tensors.parameters,
+            &tensors.first_moments,
+            &tensors.second_moments,
+        ]
+        .map(|section| section.iter().map(ParameterBitsRefV1::from).collect()),
+    );
+    assert_eq!(serde_json::to_vec(&live).unwrap(), json_v1(&owned));
+    let container = encode_v1(&owned).unwrap();
+    assert_eq!(encode_v1(&live).unwrap(), container);
+    assert!(encodes_to_v1(&live, &container).unwrap());
+    for (live, owned) in [
+        (&tensors.parameters, &owned.parameters),
+        (&tensors.first_moments, &owned.first_moments),
+        (&tensors.second_moments, &owned.second_moments),
+    ] {
+        assert!(same_tensors_v1(live, owned) && same_tensors_v1(owned, live));
+    }
 }
 
 #[test]

@@ -5439,8 +5439,10 @@ fn execute_update_inner_v1(
         None => None,
     };
     let checkpoint_started = std::time::Instant::now();
-    let snapshot = state.snapshot_v1().map_err(err)?;
-    let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
+    // The checkpoint records the live state's tensors where the state holds
+    // them, after the snapshot's validation, under the state's own digest.
+    let tensors = state.tensors_v1().map_err(err)?;
+    let after = hex(&state.state_sha256_v1().map_err(err)?);
     fs::create_dir(&output_directory).map_err(err)?;
     let e_packet_pin = e_teacher
         .as_ref()
@@ -5504,25 +5506,25 @@ fn execute_update_inner_v1(
             }
             saved
         }),
-        adam_step: snapshot.adam_step,
-        scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
-        // Borrowed from the snapshot: both formats write each value's bits
+        adam_step: tensors.adam_step,
+        scorer_bias_anchor_bits: tensors.scorer_bias_anchor_bits,
+        // Borrowed from the state: both formats write each value's bits
         // straight from it, the bytes an owned copy (`ParameterBitsV1`) would
         // write.
-        parameters: snapshot
+        parameters: tensors
             .parameters
             .iter()
-            .map(ParameterBitsRefV1::of_native_v1)
+            .map(ParameterBitsRefV1::from)
             .collect(),
-        first_moments: snapshot
+        first_moments: tensors
             .first_moments
             .iter()
-            .map(ParameterBitsRefV1::of_native_v1)
+            .map(ParameterBitsRefV1::from)
             .collect(),
-        second_moments: snapshot
+        second_moments: tensors
             .second_moments
             .iter()
-            .map(ParameterBitsRefV1::of_native_v1)
+            .map(ParameterBitsRefV1::from)
             .collect(),
         trajectories: trajectories.clone(),
         loss_identity: loss_selection.loss_identity_v1().into(),
@@ -5560,7 +5562,7 @@ fn execute_update_inner_v1(
         value_coefficient_bits: value_coefficient.to_bits(),
         registry_transfer: transfer
             .as_ref()
-            .map(|context| context.after_update(snapshot.adam_step))
+            .map(|context| context.after_update(tensors.adam_step))
             .transpose()?,
         archive_distillation: None,
         training_math,
@@ -5598,7 +5600,7 @@ fn execute_update_inner_v1(
         // Design section 3: the restored state equals the published one item
         // for item (Adam step, anchor, every tensor's name, shape and bits),
         // beyond the state digest. Compared in place, without copies.
-        let back = restored.snapshot_v1().map_err(err)?;
+        let back = restored.tensors_v1().map_err(err)?;
         let same = checkpoint_container_v1::same_tensors_v1;
         ensure(
             back.adam_step == checkpoint.adam_step

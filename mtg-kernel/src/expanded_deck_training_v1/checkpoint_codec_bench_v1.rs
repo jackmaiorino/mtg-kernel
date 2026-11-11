@@ -29,10 +29,11 @@
 //!
 //! One repetition replays `execute_update_inner_v1` from `checkpoint_started`
 //! through its v2 item-for-item comparison, with the same calls in the same
-//! order: snapshot, state digest, the checkpoint's tensors (borrowed from the
-//! snapshot, `ParameterBitsRefV1`) and format resolution, encode, seal,
-//! durable publication, the continuation loader's readback, the readback
-//! digest and (v2) the restored snapshot comparison.
+//! order: the live state's tensors (`tensors_v1`, borrowed), the state digest,
+//! the checkpoint of those tensors (`ParameterBitsRefV1`) and format
+//! resolution, encode, seal, durable publication, the continuation loader's
+//! readback, the readback digest and (v2) the restored state's item-for-item
+//! comparison.
 //! The process digest memo is emptied before each repetition, so the first
 //! digest misses as it does after a real update; the readback then runs with
 //! whatever the publication left in the process caches, as in production.
@@ -63,7 +64,7 @@ use super::{
     DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, MAX_FILE_BYTES,
 };
 use crate::native_policy_train_step_v1::{
-    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
+    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1, TrainTensorsV1,
 };
 use crate::native_policy_value_net_v1::NativeNamedParameterV1;
 use crate::s_transformer_v1::tools::{groups_of_v1, synthetic_batch_v1, MEAN_SHAPE_V1};
@@ -1218,31 +1219,26 @@ const UPDATE_CELLS_V1: [CellV1; 5] = [
     },
 ];
 
-/// The checkpoint an update writes for `snapshot`: `metadata`'s members
-/// (everything but the state) with the snapshot's step, anchor, digest and
+/// The checkpoint an update writes for `tensors`: `metadata`'s members
+/// (everything but the state) with the state's step, anchor, digest and
 /// tensors, borrowed, exactly as `execute_update_inner_v1` assembles it.
-fn checkpoint_of_snapshot_v1<'a>(
+fn checkpoint_of_tensors_v1<'a>(
     metadata: &ExpandedCheckpointV1,
-    snapshot: &'a NativePolicyValueTrainSnapshotV1,
+    tensors: &'a TrainTensorsV1<'_>,
     state_sha256: String,
 ) -> ExpandedCheckpointV1<ParameterBitsRefV1<'a>> {
-    let borrowed = |tensors: &'a [NativeNamedParameterV1]| {
-        tensors
-            .iter()
-            .map(ParameterBitsRefV1::of_native_v1)
-            .collect()
-    };
     let mut checkpoint = checkpoint_container_v1::with_tensors_v1(
         metadata,
         [
-            borrowed(&snapshot.parameters),
-            borrowed(&snapshot.first_moments),
-            borrowed(&snapshot.second_moments),
-        ],
+            &tensors.parameters,
+            &tensors.first_moments,
+            &tensors.second_moments,
+        ]
+        .map(|section| section.iter().map(ParameterBitsRefV1::from).collect()),
     );
     checkpoint.state_sha256 = state_sha256;
-    checkpoint.adam_step = snapshot.adam_step;
-    checkpoint.scorer_bias_anchor_bits = snapshot.scorer_bias_anchor_bits;
+    checkpoint.adam_step = tensors.adam_step;
+    checkpoint.scorer_bias_anchor_bits = tensors.scorer_bias_anchor_bits;
     checkpoint
 }
 
@@ -1389,9 +1385,11 @@ fn load_ordinary_state_v1(
     metadata.parameters = Vec::new();
     metadata.first_moments = Vec::new();
     metadata.second_moments = Vec::new();
+    // Reassembled as the update assembles it, from the live state's tensors.
     let snapshot = state.snapshot_v1().map_err(err)?;
-    let digest = hex(&snapshot.state_sha256_v1().map_err(err)?);
-    let rebuilt = checkpoint_of_snapshot_v1(&metadata, &snapshot, digest);
+    let tensors = state.tensors_v1().map_err(err)?;
+    let digest = hex(&state.state_sha256_v1().map_err(err)?);
+    let rebuilt = checkpoint_of_tensors_v1(&metadata, &tensors, digest);
     ensure_v1(
         serde_json::to_vec(&rebuilt).map_err(err)? == expected_v1,
         format!("state {label}: the reassembled checkpoint differs from the fixture's"),
@@ -1444,12 +1442,12 @@ fn ordinary_sequence_v1(
     let state = &measured.state;
     let training_math = measured.metadata.training_math;
     let mut sequence = SequenceV1::start_v1(meter);
-    let snapshot = sequence.step_v1("snapshot", || state.snapshot_v1().map_err(err))?;
+    let tensors = sequence.step_v1("snapshot", || state.tensors_v1().map_err(err))?;
     let after = sequence.step_v1("digest", || {
-        Ok(hex(&snapshot.state_sha256_v1().map_err(err)?))
+        Ok(hex(&state.state_sha256_v1().map_err(err)?))
     })?;
     let (checkpoint, format) = sequence.step_v1("bits", || {
-        let checkpoint = checkpoint_of_snapshot_v1(&measured.metadata, &snapshot, after.clone());
+        let checkpoint = checkpoint_of_tensors_v1(&measured.metadata, &tensors, after.clone());
         let format = cell.format.resolve_v1(&checkpoint)?;
         Ok((checkpoint, format))
     })?;
@@ -1484,7 +1482,7 @@ fn ordinary_sequence_v1(
     })?;
     if format == CheckpointRecordFormatV1::V2 {
         sequence.step_v1("readback_v2_equality", || {
-            let back = restored.snapshot_v1().map_err(err)?;
+            let back = restored.tensors_v1().map_err(err)?;
             ensure_v1(
                 back.adam_step == checkpoint.adam_step
                     && back.scorer_bias_anchor_bits == checkpoint.scorer_bias_anchor_bits
@@ -1496,9 +1494,9 @@ fn ordinary_sequence_v1(
         })?;
     }
     let (steps, total) = sequence.finish_v1();
-    // The checkpoint borrows the snapshot, so it goes first.
+    // The checkpoint borrows the state's tensors, so it goes first.
     drop(checkpoint);
-    drop((snapshot, sealed, restored));
+    drop((tensors, sealed, restored));
     Ok(PublishedV1 {
         steps,
         total,
