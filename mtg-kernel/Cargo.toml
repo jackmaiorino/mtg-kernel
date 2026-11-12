@@ -299,6 +299,149 @@ path = "src/bin/kernel_limited_kaito_env_v16.rs"
 required-features = ["limited-fdn-fixtures"]
 
 [[bin]]
+name = "kernel_limited_return_env_v1"
+path = "src/bin/kernel_limited_return_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_v68_v75_env_v1"
+path = "src/bin/kernel_limited_v68_v75_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_artist_env_v1"
+path = "src/bin/kernel_limited_artist_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_chosen_type_env_v1"
+path = "src/bin/kernel_limited_chosen_type_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_niv_env_v1"
+path = "src/bin/kernel_limited_niv_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_embercleave_env_v1"
+path = "src/bin/kernel_limited_embercleave_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_zimone_env_v1"
+path = "src/bin/kernel_limited_zimone_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_omniscience_env_v1"
+path = "src/bin/kernel_limited_omniscience_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_tutelage_env_v1"
+path = "src/bin/kernel_limited_tutelage_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_mixed_env_v1"
+path = "src/bin/kernel_limited_mixed_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_moon_env_v1"
+path = "src/bin/kernel_limited_moon_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_leyline_axe_env_v1"
+path = "src/bin/kernel_limited_leyline_axe_env_v1.rs"
+
+[[bin]]
+name = "kernel_limited_lathril_env_v1"
+path = "src/bin/kernel_limited_lathril_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_progenitus_env_v1"
+path = "src/bin/kernel_limited_progenitus_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_aberration_env_v1"
+path = "src/bin/kernel_limited_aberration_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+[[bin]]
+name = "kernel_limited_electroduplicate_env_v1"
+path = "src/bin/kernel_limited_electroduplicate_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_edict_env_v1"
+path = "src/bin/kernel_limited_edict_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
 name = "kernel_limited_match_v1"
 path = "src/bin/kernel_limited_match_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_curator_env_v1"
+path = "src/bin/kernel_limited_curator_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_greatwurm_env_v1"
+path = "src/bin/kernel_limited_greatwurm_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_training_v1"
+path = "src/bin/kernel_limited_training_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_drakuseth_env_v1"
+path = "src/bin/kernel_limited_drakuseth_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_loot_env_v1"
+path = "src/bin/kernel_limited_loot_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_kykar_env_v1"
+path = "src/bin/kernel_limited_kykar_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_sphinx_lore_env_v1"
+path = "src/bin/kernel_limited_sphinx_lore_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_harvester_env_v1"
+path = "src/bin/kernel_limited_harvester_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_fiend_artisan_env_v1"
+path = "src/bin/kernel_limited_fiend_artisan_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_etali_primal_storm_env_v1"
+path = "src/bin/kernel_limited_etali_primal_storm_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_thousand_year_storm_env_v1"
+path = "src/bin/kernel_limited_thousand_year_storm_env_v1.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
+name = "kernel_limited_full_pool_env_v1"
+path = "src/bin/kernel_limited_full_pool_env_v1.rs"
 required-features = ["limited-fdn-fixtures"]

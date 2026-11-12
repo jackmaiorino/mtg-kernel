@@ -66,6 +66,9 @@ enum Snapshot {
 impl Owner {
     fn from_raw(source: Source, raw: FastActorSessionV1) -> Self {
         match source {
+            Source::EternalActorV1 => {
+                unreachable!("Eternal uses its separate typed actor owner fixtures")
+            }
             Source::FakeV50 => Self::Fake(FakeSession::from_session(raw).unwrap()),
             Source::RavenousV51 => Self::Ravenous(RavenousSession::from_session(raw).unwrap()),
             Source::ElendaV52 => Self::Elenda(ElendaSession::from_session(raw).unwrap()),
@@ -170,6 +173,9 @@ struct Saved {
 impl Harness {
     fn new(source: Source, state: GameState) -> Self {
         let native = match source {
+            Source::EternalActorV1 => {
+                unreachable!("Eternal uses its separate typed actor owner fixtures")
+            }
             Source::FakeV50 => FastActorSessionV1::from_fake_v50_fixture_state(state),
             Source::RavenousV51 => FastActorSessionV1::from_ravenous_v51_fixture_state(state),
             Source::ElendaV52 => FastActorSessionV1::from_elenda_v52_fixture_state(state),
@@ -216,6 +222,9 @@ impl Harness {
             }};
         }
         match self.source {
+            Source::EternalActorV1 => {
+                unreachable!("Eternal uses its separate typed actor owner fixtures")
+            }
             Source::FakeV50 => input!(fake_current_decision_input_v50),
             Source::RavenousV51 => input!(ravenous_current_decision_input_v51),
             Source::ElendaV52 => input!(elenda_current_decision_input_v52),
@@ -309,6 +318,9 @@ impl Harness {
     }
     fn native_gameplay(&self) -> (Vec<u8>, u64, u64) {
         let state = match self.source {
+            Source::EternalActorV1 => {
+                unreachable!("Eternal uses its separate typed actor owner fixtures")
+            }
             Source::FakeV50 => self.native.fake_fixture_state(),
             Source::RavenousV51 => self.native.ravenous_fixture_state(),
             Source::ElendaV52 => self.native.elenda_fixture_state(),

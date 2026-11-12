@@ -1010,6 +1010,74 @@ card's current Oracle text and rulings, checked against its XMage source:
 The records are pruned as each turn begins: Beastbinder's records of the player whose turn
 begins and of permanents that left the battlefield, and suspend casts whose permanents left.
 
+### S1f: Mycosynth Lattice and Overencumbered
+
+After S1e, two Vintage sideboard cards are the only gap of three lists (12.5% of the field):
+Mycosynth Lattice (Raker Shops 6.6%, Sphere Shops 1.6%) and Overencumbered (Lurrus Breach,
+4.3%). S1f adds both, with the Junk token Overencumbered creates. The Vintage full 75 share
+goes from 66.6% to 79.1%, and the three lists join `PLAYABLE_75`. Mycosynth Lattice also sits
+in five Legacy sideboards that have other gaps. The other Vintage gaps are Leyline of the Void,
+Archon of Absolution, Hullbreacher, Darksteel Angel and Apostle's Blessing.
+
+S1f is built in `src/eternal_sideboard_s1f_v1.rs` and `build_eternal_s1f_v1.rs`, the new tail
+of the recipe chains after S1e's. Behavior follows each card's current Oracle text and
+rulings, checked against its XMage source:
+
+- Mycosynth Lattice: "All permanents are artifacts in addition to their other types. All cards
+  that aren't on the battlefield, spells, and permanents are colorless. Players may spend mana
+  as though it were mana of any color." While a Lattice's abilities apply:
+  - Every battlefield object is an artifact in addition to its other types (layer 4), tokens
+    and face-down permanents included, through `engine::object_has_type`. Spells and cards in
+    other zones are not permanents, so they don't become artifacts (its 2004-12-01 ruling).
+    A type-setting effect with a later timestamp than the Lattice's removes the type again
+    (613.7): an Elk of Oko, Thief of Crowns, and a creature or land Aura's override (Witness
+    Protection, Imprisoned in the Moon). The check of whether a Lattice applies reads only
+    printed characteristics and ability removals, never an artifact type or a color. What reads
+    a permanent's types through the engine follows: Karn, the Great Creator's lock then covers
+    every permanent its controller's opponents control, mana abilities included; Null Rod,
+    Stony Silence and Collector Ouphe cover every permanent; affinity counts every permanent
+    its caster controls; artifact removal can target any permanent; Beseech the Mirror's
+    bargain can sacrifice any of its caster's permanents. A sacrifice's provenance keeps no
+    record of the types it left with, so in eternal builds the bargain check of a cast's
+    provenance accepts any permanent card.
+  - Every object in every zone is colorless (layer 5), through `engine::object_color_mask`, as
+    a color-setting effect at the Lattice's timestamp. Painter's Servant's color, added with a
+    later timestamp, still applies, and a later setting overwrites the Lattice's (613.7): Wild
+    Mongrel's chosen color, an Elk's green and a creature Aura's colors. Color-reading costs
+    follow: no card in hand is blue for Force of Will's alternative cost or black for
+    Sickening Shoal's and Contagion's.
+  - Each player may spend mana as though it were mana of any color, colorless mana included
+    (its ruling): the mana solver lets any mana pay a colored, hybrid or Phyrexian symbol, and
+    a Phyrexian symbol keeps its two-life alternative, while a printed colorless symbol still
+    requires colorless mana. The permission covers every payment the solver plans: spells,
+    activated abilities and mana paid while an effect resolves. It changes which mana may pay
+    a symbol, not the cost, so convoke and delve keep their rules: a creature tapped for
+    convoke pays for {1} or one mana of its color, and a Lattice leaves it none, and delve
+    pays only generic mana. Restrictions on the mana stay (its ruling): Mishra's Workshop's
+    mana still pays only for artifact spells.
+- Overencumbered: "Enchant opponent. When this Aura enters, enchanted opponent creates a Clue
+  token, a Food token, and a Junk token. At the beginning of combat on enchanted opponent's
+  turn, that player may pay {1} for each artifact they control. If they don't, creatures can't
+  attack this combat." The engine's attachments link permanents, so the enchanted player is a
+  module record of the Aura's battlefield incarnation. Cast, it targets an opponent; on
+  resolution, if that player is still a legal target, the Aura enters and is recorded with
+  them, and otherwise it doesn't resolve. Entering any other way, it enchants its
+  controller's opponent (303.4f), so Show and Tell and Replenish may put it onto the
+  battlefield although they leave other Auras. A state-based action puts it into its owner's graveyard when
+  the player it enchants is no longer an opponent of its controller (704.5m). The entry
+  trigger's tokens are created under the control of the player it entered enchanting. The
+  combat trigger is controlled by the Aura's controller and triggers as the beginning of
+  combat step of the enchanted player's turn begins. On resolution that player chooses
+  whether to pay {N}, N being the artifacts they then control, and is offered the payment only
+  when they can make it; {0} is paid. If they don't pay, creatures can't attack this turn (the
+  engine has one combat phase per turn). The ban is the module's own record, cleared as the
+  next turn begins, when the records of Auras that left the battlefield are dropped too.
+- Junk Token: "{T}, Sacrifice this artifact: Exile the top card of your library. You may play
+  that card this turn. Activate only as a sorcery." A new artifact token with the new Junk
+  subtype. Its ability is the engine's impulse draw (Questing Druid's adventure), whose
+  exiled card gets an until-end-of-turn play permission, so costs and timing still apply (its
+  ruling). Clue and Food tokens are the Standard registry's.
+
 ## Execution
 
 Family workers implement bounded card groups in their own worktrees; one integrator owns

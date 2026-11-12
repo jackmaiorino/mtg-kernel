@@ -226,6 +226,30 @@ def smoke(binary: Path) -> dict:
             "decisions_per_s": decisions / full.summary["wall_s"] if full.summary["wall_s"] else 0,
             "speedup": full.summary["wall_s"] / report["random"]["wall_s"] if report["random"]["wall_s"] else 0}
         del report["random_rows"]
+        # Bounded v2 process check on original DraftZero registrations,
+        # with the belief corpus disjoint from the evaluation split.
+        v2 = MtgKernel(binary, DRAFTZERO_SAMPLE / "decks", DRAFTZERO_SAMPLE / "pool.tsv",
+                       session="rules-only-all", max_decisions=24)
+        policy = "pimc:sims=2:depth=1:closedlist-v2"
+        first = v2.play(policy, "random", pairs=1, seed=11, split="eval", out_dir=Path(tmp) / "v2", workers=2)
+        again = v2.play(policy, "random", pairs=1, seed=11, split="eval", out_dir=Path(tmp) / "v2-again", workers=1)
+        check_rows(first.games, 2, 1)
+        if strip(first.games) != strip(again.games):
+            raise MtgKernelError("closedlist-v2: replay with another worker count differs")
+        for key in ("world_contract", "game_deck_contents_sha256", "belief_deck_contents_sha256"):
+            if not first.summary.get(key) or first.summary[key] != again.summary.get(key):
+                raise MtgKernelError(f"closedlist-v2: invalid replay identity {key}")
+        if first.summary["belief_overlap"] != 0:
+            raise MtgKernelError("closedlist-v2: eval shares an actual deck with the belief corpus")
+        for game in first.games:
+            if (game["result"] == "error" or not game["searched_decisions"]
+                    or game["search_fallbacks"] or game["rollout_errors"]):
+                raise MtgKernelError(f"closedlist-v2: opening search incomplete: {game}")
+        report["fair_v2_opening_replay"] = {
+            "games": len(first.games),
+            "searched_decisions": sum(g["searched_decisions"] for g in first.games),
+            "belief_overlap": first.summary["belief_overlap"],
+        }
         return report
 
 

@@ -353,7 +353,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         if !valid_move || !definition(source.card_def)
             || !matches!(state.engine.event_history.get(input_at),Some(CommittedEvent::ProgenitusInputV1{input})if input.source==*source && input.original.object==source.source && input.original.to_zone==Zone::Graveyard)
             || shuffles().filter(|e|matches!(e,CommittedEvent::ProgenitusShuffledV1{input_history_index:i,..}if i==input_history_index)).count()!=1 { return Err("Progenitus replacement lost original input/move".into()); }
-        crate::engine::validate_historical_ability_source_contract(state, *source)?;
+        crate::sampled_history_v1::validate_source(state, at, *source)?;
     }
     Ok(())
 }

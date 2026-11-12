@@ -1535,6 +1535,7 @@ pub(super) struct PreparedSpellPaymentV1 {
     optional_objects: Vec<ObjectId>,
     pub(super) ordered_objects: Vec<ObjectId>,
     pub(super) chosen_power_lki: Option<i32>,
+    pub(super) storm_targets: Option<crate::effect::thousand_year_storm_v1::targets::CastTargetsV1>,
 }
 
 impl SpellManaPaymentV1 {
@@ -1559,6 +1560,10 @@ impl SpellManaPaymentV1 {
 }
 
 impl PreparedSpellPaymentV1 {
+    pub(super) fn planned_mana_count_v1(&self, state: &GameState, player: PlayerId) -> Option<u32> {
+        super::checked_spell_mana_plan_v59(state, player, &self.mana.mana)
+    }
+
     /// The graveyard cards Delve will exile, in exile order.
     #[cfg(feature = "eternal-fixtures")]
     pub(super) fn delve_exiled(&self) -> &[ObjectId] {
@@ -1645,7 +1650,7 @@ impl PreparedSpellPaymentV1 {
         self.additional.apply(state, player, source);
         self.commit_optional(state);
         if let Some(plan) = self.greatwurm {
-            plan.apply(state);
+            plan.apply_committed(state);
         }
         spent
     }
@@ -1797,6 +1802,10 @@ pub(super) fn prepare_final_spell_payment_v1(
         optional_objects,
         ordered_objects: choices.ordered_objects,
         chosen_power_lki: None,
+        storm_targets: crate::effect::thousand_year_storm_v1::freeze_cast_targets(
+            state, pending, method,
+        )
+        .ok()?,
     };
     if selected.convoke || selected.teamwork.is_some() {
         if !pending.convoke_finished {

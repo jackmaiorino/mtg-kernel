@@ -1086,9 +1086,11 @@ fn count_u16(count: usize) -> u16 {
     u16::try_from(count).unwrap_or(u16::MAX)
 }
 
-/// Whether `def` is an Aura card.
+/// Whether `def` is an Aura card that enchants an object. One that
+/// enchants a player returns with the other cards: Overencumbered enters
+/// enchanting its controller's opponent (wave S1f).
 fn is_aura(def: &CardDef) -> bool {
-    def.subtypes.contains(&Subtype::Aura)
+    def.subtypes.contains(&Subtype::Aura) && !crate::eternal_sideboard_s1f_v1::enchants_player(def)
 }
 
 /// The battlefield permanents the Aura card `aura` (in its owner's

@@ -51,7 +51,64 @@ pub(crate) fn project_limited_kaito_v16(
         .transpose()?;
     Ok((
         LimitedKaitoDecisionV16 {
-            schema: "mtg-kernel-limited-kaito-decision/v16".into(),
+            schema: if observation.schema
+                == crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA
+            {
+                crate::limited_full_pool_consumer_v1::WIRE_DECISION_SCHEMA
+            } else if observation.schema == crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA {
+                "mtg-kernel-limited-mixed-fdn-decision/v1"
+            } else if observation.chosen_type.is_some() {
+                "mtg-kernel-limited-chosen-type-decision/v1"
+            } else if observation.drakuseth.is_some() {
+                "mtg-kernel-limited-drakuseth-decision/v1"
+            } else if observation.artist.is_some() {
+                "mtg-kernel-limited-artist-decision/v1"
+            } else if observation.niv.is_some() {
+                "mtg-kernel-limited-niv-decision/v1"
+            } else if observation.embercleave.is_some() {
+                "mtg-kernel-limited-embercleave-decision/v1"
+            } else if observation.zimone.is_some() {
+                "mtg-kernel-limited-zimone-decision/v1"
+            } else if observation.omniscience.is_some() {
+                "mtg-kernel-limited-omniscience-decision/v1"
+            } else if observation.tutelage.is_some() {
+                "mtg-kernel-limited-tutelage-decision/v1"
+            } else if observation.moon.is_some() {
+                "mtg-kernel-limited-moon-decision/v1"
+            } else if observation.leyline_axe.is_some() {
+                "mtg-kernel-limited-leyline-axe-decision/v1"
+            } else if observation.progenitus.is_some() {
+                "mtg-kernel-limited-progenitus-decision/v1"
+            } else if observation.aberration.is_some() {
+                "mtg-kernel-limited-aberration-decision/v1"
+            } else if observation.lathril.is_some() {
+                "mtg-kernel-limited-lathril-decision/v1"
+            } else if observation.electroduplicate.is_some() {
+                "mtg-kernel-limited-electroduplicate-decision/v1"
+            } else if observation.sphinx_lore.is_some() {
+                "mtg-kernel-limited-sphinx-lore-decision/v1"
+            } else if observation.kykar.is_some() {
+                "mtg-kernel-limited-kykar-decision/v1"
+            } else if observation.thousand_year_storm.is_some() {
+                "mtg-kernel-limited-thousand-year-storm-decision/v1"
+            } else if observation.harvester.is_some() {
+                "mtg-kernel-limited-harvester-decision/v1"
+            } else if observation.etali.is_some() {
+                "mtg-kernel-limited-etali-primal-storm-decision/v1"
+            } else if observation.loot.is_some() {
+                "mtg-kernel-limited-loot-decision/v1"
+            } else if observation.edict.is_some() {
+                "mtg-kernel-limited-edict-decision/v1"
+            } else if observation.curator.is_some() {
+                "mtg-kernel-limited-curator-decision/v1"
+            } else if observation.greatwurm.is_some() {
+                "mtg-kernel-limited-greatwurm-decision/v1"
+            } else if observation.fiend_artisan.is_some() {
+                "mtg-kernel-limited-fiend-artisan-decision/v1"
+            } else {
+                "mtg-kernel-limited-kaito-decision/v16"
+            }
+            .into(),
             actor,
             prompt_seq,
             state: projected.state,

@@ -263,6 +263,7 @@ pub(crate) mod tests {
             Zone::Library => state.players[owner.index()].library.push(id),
             Zone::Battlefield => state.players[owner.index()].battlefield.push(id),
             Zone::Graveyard => state.players[owner.index()].graveyard.push(id),
+            Zone::Exile => state.exile.push(id),
             _ => panic!("unsupported fixture zone"),
         }
         id

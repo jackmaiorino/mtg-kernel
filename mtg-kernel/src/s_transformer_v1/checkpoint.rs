@@ -18,8 +18,12 @@
 //! S's own (`s-transformer-train-state-v1`): architecture, config, Adam step
 //! and the state hash. Until #468 lands this module is the interim writer; a
 //! #468 reader would admit this document schema as a new kind. A state has
-//! one encoding: the decoder re-encodes and refuses unless the bytes match,
-//! and refuses unless the recomputed state hash equals the document's.
+//! one encoding: the decoder refuses unless the recomputed state hash equals
+//! the document's, and unless the bytes are exactly what the encoder writes
+//! for the decoded state. It checks that in place ([`is_frame_of_v1`]): the
+//! values it decoded are the bytes they came from, so only the header,
+//! document, table and padding the encoder would write are compared, and the
+//! state is neither re-encoded nor hashed again.
 //!
 //! **Weights snapshot** (W5 design section 2.2, ruling 2): the same framing
 //! with the parameters section alone and the document schema
@@ -130,17 +134,23 @@ fn table_of_sections_v1(layout: &LayoutV1, names: &[&str]) -> SectionTableV1 {
     }
 }
 
+/// The document [`encode_checkpoint_v1`] writes for `state`, whose
+/// `state_sha256_v1()` is `state_sha256`.
+fn document_bytes_v1(state: &STrainStateV1, state_sha256: String) -> Vec<u8> {
+    serde_json::to_vec(&DocumentV1 {
+        schema: S_TRAIN_STATE_SCHEMA_V1.to_owned(),
+        architecture: S_ARCHITECTURE_V1.to_owned(),
+        config: state.model.layout_v1().config,
+        adam_step: state.adam_step,
+        state_sha256,
+    })
+    .expect("document serializes")
+}
+
 /// Encodes a train state as a container.
 pub fn encode_checkpoint_v1(state: &STrainStateV1) -> Vec<u8> {
     let layout = state.model.layout_v1();
-    let document = serde_json::to_vec(&DocumentV1 {
-        schema: S_TRAIN_STATE_SCHEMA_V1.to_owned(),
-        architecture: S_ARCHITECTURE_V1.to_owned(),
-        config: layout.config,
-        adam_step: state.adam_step,
-        state_sha256: state.state_sha256_v1(),
-    })
-    .expect("document serializes");
+    let document = document_bytes_v1(state, state.state_sha256_v1());
     let table = table_of_v1(layout);
     let table_bytes = serde_json::to_vec(&table).expect("table serializes");
     let data_start = align_up_v1(HEADER_BYTES_V1 + document.len() + table_bytes.len());
@@ -207,6 +217,47 @@ fn frame_v1(
         }
     }
     out
+}
+
+/// Whether `bytes` are exactly what [`encode_checkpoint_v1`] and
+/// [`frame_v1`] write with `document` and `table` around the tensor values
+/// `bytes` holds where `table` places them: the same header, document and
+/// table, zero bytes up to the data start and between the tensors, and
+/// nothing after the last. The writers put each value's bits exactly where a
+/// decoder read it from, so for a decoder that read its values from these
+/// places this is the whole comparison with a re-encoding, made without one.
+fn is_frame_of_v1(bytes: &[u8], document: &[u8], table: &SectionTableV1) -> bool {
+    let table_bytes = serde_json::to_vec(table).expect("table serializes");
+    let document_end = HEADER_BYTES_V1 + document.len();
+    let table_end = document_end + table_bytes.len();
+    let data_start = align_up_v1(table_end);
+    let mut header = Vec::with_capacity(HEADER_BYTES_V1);
+    header.extend_from_slice(MAGIC_V1);
+    header.extend_from_slice(&CONTAINER_VERSION_V1.to_le_bytes());
+    header.extend_from_slice(&0u32.to_le_bytes());
+    header.extend_from_slice(&(document.len() as u64).to_le_bytes());
+    header.extend_from_slice(&(table_bytes.len() as u64).to_le_bytes());
+    let zero = |range: std::ops::Range<usize>| {
+        bytes
+            .get(range)
+            .is_some_and(|padding| padding.iter().all(|&byte| byte == 0))
+    };
+    if bytes.get(..HEADER_BYTES_V1) != Some(header.as_slice())
+        || bytes.get(HEADER_BYTES_V1..document_end) != Some(document)
+        || bytes.get(document_end..table_end) != Some(table_bytes.as_slice())
+        || !zero(table_end..data_start)
+    {
+        return false;
+    }
+    let mut end = data_start;
+    for entry in &table.sections {
+        let start = data_start + entry.offset as usize;
+        if !zero(end..start) {
+            return false;
+        }
+        end = start + entry.byte_length as usize;
+    }
+    end == bytes.len()
 }
 
 fn snapshot_document_v1(
@@ -281,6 +332,32 @@ fn split_v1(bytes: &[u8]) -> Result<(&[u8], &[u8], usize), String> {
 /// Decodes a weights snapshot written by [`encode_weights_snapshot_v1`],
 /// refusing any other encoding and any parameters whose hash differs.
 pub fn decode_weights_snapshot_v1(bytes: &[u8]) -> Result<SWeightsSnapshotV1, String> {
+    let (document, table, model) = decode_snapshot_parts_v1(bytes)?;
+    // One encoding per snapshot: what `frame_v1` writes for this document,
+    // table and these values, checked in place.
+    let canonical_document = snapshot_document_v1(
+        document.config,
+        document.adam_step,
+        &document.cut_from_state_sha256,
+        &document.parameters_sha256,
+        &document.record,
+    );
+    if !is_frame_of_v1(bytes, &canonical_document, &table) {
+        return Err("S weights snapshot is not the canonical encoding of its parameters".into());
+    }
+    Ok(SWeightsSnapshotV1 {
+        model,
+        adam_step: document.adam_step,
+        cut_from_state_sha256: document.cut_from_state_sha256,
+        record: document.record,
+    })
+}
+
+/// A weights snapshot's document, section table and model: every check of
+/// [`decode_weights_snapshot_v1`] but the canonical encoding's.
+fn decode_snapshot_parts_v1(
+    bytes: &[u8],
+) -> Result<(SnapshotDocumentV1, SectionTableV1, SModelV1), String> {
     let (document_bytes, table_bytes, data_start) = split_v1(bytes)?;
     let document: SnapshotDocumentV1 = serde_json::from_slice(document_bytes)
         .map_err(|e| format!("not an S weights snapshot: {e}"))?;
@@ -322,29 +399,7 @@ pub fn decode_weights_snapshot_v1(bytes: &[u8]) -> Result<SWeightsSnapshotV1, St
     if model.parameter_sha256_v1() != document.parameters_sha256 {
         return Err("S weights snapshot parameter hash differs from its document".into());
     }
-    // One encoding per snapshot.
-    let canonical = frame_v1(
-        &layout,
-        &snapshot_document_v1(
-            document.config,
-            document.adam_step,
-            &document.cut_from_state_sha256,
-            &document.parameters_sha256,
-            &document.record,
-        ),
-        &table,
-        &SNAPSHOT_SECTIONS_V1,
-        &[model.values_v1()],
-    );
-    if canonical != bytes {
-        return Err("S weights snapshot is not the canonical encoding of its parameters".into());
-    }
-    Ok(SWeightsSnapshotV1 {
-        model,
-        adam_step: document.adam_step,
-        cut_from_state_sha256: document.cut_from_state_sha256,
-        record: document.record,
-    })
+    Ok((document, table, model))
 }
 
 fn read_u64_v1(bytes: &[u8], at: usize) -> Result<u64, String> {
@@ -357,6 +412,20 @@ fn read_u64_v1(bytes: &[u8], at: usize) -> Result<u64, String> {
 /// Decodes a container written by [`encode_checkpoint_v1`], refusing any
 /// other encoding of the state and any state whose hash differs.
 pub fn decode_checkpoint_v1(bytes: &[u8]) -> Result<STrainStateV1, String> {
+    let (state, state_sha256) = decode_state_v1(bytes)?;
+    // One encoding per state: what `encode_checkpoint_v1` writes for it,
+    // checked in place, with the hash just computed.
+    let document = document_bytes_v1(&state, state_sha256);
+    if !is_frame_of_v1(bytes, &document, &table_of_v1(state.model.layout_v1())) {
+        return Err("S checkpoint is not the canonical encoding of its state".into());
+    }
+    Ok(state)
+}
+
+/// The train state a container holds and its hash, which its document
+/// carries: every check of [`decode_checkpoint_v1`] but the canonical
+/// encoding's.
+fn decode_state_v1(bytes: &[u8]) -> Result<(STrainStateV1, String), String> {
     if bytes.len() < HEADER_BYTES_V1 || &bytes[..8] != MAGIC_V1 {
         return Err("not an S checkpoint container".into());
     }
@@ -427,11 +496,12 @@ pub fn decode_checkpoint_v1(bytes: &[u8]) -> Result<STrainStateV1, String> {
     let [values, first, second] = data;
     let model = SModelV1::from_values_v1(document.config, values)?;
     let state = STrainStateV1::from_parts_v1(model, first, second, document.adam_step)?;
-    if state.state_sha256_v1() != document.state_sha256 {
+    let state_sha256 = state.state_sha256_v1();
+    if state_sha256 != document.state_sha256 {
         return Err("S checkpoint state hash differs from its document".into());
     }
-    if encode_checkpoint_v1(&state) != bytes {
-        return Err("S checkpoint is not the canonical encoding of its state".into());
-    }
-    Ok(state)
+    Ok((state, state_sha256))
 }
+
+#[cfg(test)]
+mod tests;

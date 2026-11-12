@@ -21,7 +21,7 @@ mod leyline;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 72] = [
+const PLAYABLE_75: [(&str, &str); 75] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -94,6 +94,12 @@ const PLAYABLE_75: [(&str, &str); 72] = [
     ("vintage", "vintage-dredge"),
     ("vintage", "vintage-doomsday"),
     ("vintage", "vintage-underworld-breach"),
+    ("vintage", "vintage-raker-shops"),
+    (
+        "vintage",
+        "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    ),
+    ("vintage", "vintage-sphere-shops"),
     ("premodern", "premodern-sligh-rdw"),
     ("premodern", "premodern-goblins"),
     ("premodern", "premodern-rg-aggro"),

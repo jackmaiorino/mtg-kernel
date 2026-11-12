@@ -776,7 +776,7 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "kykar_v1_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 pub(crate) struct TokenPermitV1<'a, 'b> {
     proof: &'a NativeExecutionProofV1<'b>,

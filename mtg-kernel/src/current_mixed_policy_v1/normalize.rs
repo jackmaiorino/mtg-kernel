@@ -415,7 +415,17 @@ pub(crate) fn visible_numeric_parts_v1(
     Ok((state, actions))
 }
 
-pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) -> Result<Packet> {
+pub(super) fn encode(source: Source, state: Value, actions: Vec<Value>) -> Result<Packet> {
+    encode_with_action_rows(source, state, |_| Ok((actions, ()))).map(|(packet, ())| packet)
+}
+
+/// The owning encoder may project the exact action rows after the common
+/// wire projection has passed its typed round trip, before identity rewrite.
+pub(super) fn encode_with_action_rows<T>(
+    source: Source,
+    mut state: Value,
+    action_rows: impl FnOnce(&mut Value) -> Result<(Vec<Value>, T)>,
+) -> Result<(Packet, T)> {
     #[cfg(test)]
     let _timing = crate::rl_session::test_timing_v1::span(
         crate::rl_session::test_timing_v1::Phase::NumericNormalizeInclusive,
@@ -440,6 +450,7 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     } else {
         super::public_projection_operands::prepare(&mut state)?;
     }
+    let (mut actions, binding) = action_rows(&mut state)?;
     super::kellan_public_operands::prepare(&mut state)?;
     super::fiery_public_operands::prepare(&mut state)?;
     super::fishing_public_operands::prepare(&mut state)?;
@@ -479,7 +490,342 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
             super::prepared::references(action)?;
         }
     }
+    let full_pool = source == Source::KaitoV75
+        && state["schema"] == crate::limited_full_pool_consumer_v1::CANDIDATES_SCHEMA;
     let mut covered = BTreeSet::new();
+    if source == Source::KaitoV75
+        && (full_pool
+            || state["schema"] == crate::thousand_year_storm_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::thousand_year_storm_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["thousand_year_storm"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        if meaning
+            != crate::thousand_year_storm_public_v1::printed_meaning().map_err(Error::Projection)?
+        {
+            return Err(Error::Projection("Storm exact meaning changed".into()));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (full_pool
+            || state["schema"] == crate::etali_primal_storm_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::etali_primal_storm_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["etali"]["meaning"].clone())
+                .map_err(|error| Error::Projection(error.to_string()))?;
+        if meaning
+            != crate::etali_primal_storm_public_v1::printed_meaning().map_err(Error::Projection)?
+        {
+            return Err(Error::Projection(
+                "Etali meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (full_pool || state["schema"] == crate::harvester_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::harvester_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["harvester"]["meaning"].clone())
+                .map_err(|error| Error::Projection(error.to_string()))?;
+        if meaning != crate::harvester_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Harvester meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (full_pool || state["schema"] == crate::greatwurm_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::greatwurm_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["greatwurm"]["meaning"].clone())
+                .map_err(|error| Error::Projection(error.to_string()))?;
+        if meaning != crate::greatwurm_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Greatwurm meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (full_pool || state["schema"] == crate::fiend_artisan_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::fiend_artisan_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["fiend_artisan"]["meaning"].clone())
+                .map_err(|error| Error::Projection(error.to_string()))?;
+        if meaning
+            != crate::fiend_artisan_public_v1::printed_meaning().map_err(Error::Projection)?
+        {
+            return Err(Error::Projection(
+                "Fiend Artisan meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (full_pool || state["schema"] == crate::curator_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::curator_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["curator"]["meaning"].clone())
+                .map_err(|error| Error::Projection(error.to_string()))?;
+        if meaning != crate::curator_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Curator meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (full_pool || state["schema"] == crate::edict_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::edict_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["edict"]["meaning"].clone())
+                .map_err(|error| Error::Projection(error.to_string()))?;
+        if meaning != crate::edict_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Edict meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (full_pool || state["schema"] == crate::lathril_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::lathril_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["lathril"]["meaning"].clone())
+                .map_err(|error| Error::Projection(error.to_string()))?;
+        if meaning != crate::lathril_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Lathril meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+        covered.insert(meaning.token_id);
+        // This exact typed operand is a public token printing, not an arena
+        // identity. Keep the public wire spelling and classify only the sealed
+        // numeric input after validating the complete printed meaning above.
+        let fields = state["observation"]["lathril"]["meaning"]
+            .as_object_mut()
+            .ok_or_else(|| Error::Projection("Lathril meaning is not an object".into()))?;
+        let token = fields
+            .remove("token_id")
+            .ok_or_else(|| Error::Projection("Lathril token printing is absent".into()))?;
+        fields.insert("token_card_id".into(), token);
+    }
+    if source == Source::KaitoV75
+        && (full_pool || state["schema"] == crate::leyline_axe_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::leyline_axe_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["leyline_axe"]["meaning"].clone())
+                .map_err(|error| Error::Projection(error.to_string()))?;
+        if meaning != crate::leyline_axe_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Leyline Axe meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (full_pool || state["schema"] == crate::moon_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::moon_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["moon"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        if meaning != crate::moon_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Moon meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (state["schema"] == crate::tutelage_consumer_v1::CANDIDATES_SCHEMA
+            || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA
+            || full_pool)
+    {
+        let meaning: crate::tutelage_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["tutelage"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        if meaning != crate::tutelage_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Tutelage meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (state["schema"] == crate::omniscience_consumer_v1::CANDIDATES_SCHEMA
+            || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA
+            || full_pool)
+    {
+        let meaning: crate::omniscience_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["omniscience"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        if meaning != crate::omniscience_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Omniscience meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (full_pool || state["schema"] == crate::kykar_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::kykar_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["kykar"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        if meaning != crate::kykar_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Kykar meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+        covered.insert(meaning.spirit_card_id);
+    }
+    if source == Source::KaitoV75
+        && (full_pool || state["schema"] == crate::sphinx_lore_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::sphinx_lore_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["sphinx_lore"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        if meaning != crate::sphinx_lore_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "SphinxLore meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (full_pool || state["schema"] == crate::loot_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::loot_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["loot"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        if meaning != crate::loot_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Loot meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (full_pool || state["schema"] == crate::progenitus_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::progenitus_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["progenitus"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        if meaning != crate::progenitus_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Progenitus meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (full_pool || state["schema"] == crate::aberration_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::aberration_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["aberration"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        if meaning != crate::aberration_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Aberration meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (full_pool || state["schema"] == crate::electroduplicate_consumer_v1::CANDIDATES_SCHEMA)
+    {
+        let meaning: crate::electroduplicate_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["electroduplicate"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        if meaning
+            != crate::electroduplicate_public_v1::printed_meaning().map_err(Error::Projection)?
+        {
+            return Err(Error::Projection(
+                "Electroduplicate meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (state["schema"] == crate::zimone_consumer_v1::CANDIDATES_SCHEMA
+            || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA
+            || full_pool)
+    {
+        let meaning: crate::zimone_public_v1::MeaningV1 =
+            serde_json::from_value(state["observation"]["zimone"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        if meaning != crate::zimone_public_v1::printed_meaning().map_err(Error::Projection)? {
+            return Err(Error::Projection(
+                "Zimone meaning differs from exact printing".into(),
+            ));
+        }
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (state["schema"] == crate::embercleave_consumer_v1::CANDIDATES_SCHEMA
+            || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA
+            || full_pool)
+    {
+        let meaning: crate::rules_meaning_embercleave_v65::MeaningV65 =
+            serde_json::from_value(state["observation"]["embercleave"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        crate::rules_meaning_embercleave_v65::validate(&meaning).map_err(Error::Projection)?;
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (state["schema"] == crate::chosen_type_consumer_v1::CANDIDATES_SCHEMA
+            || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA
+            || full_pool)
+    {
+        let meanings: Vec<crate::rules_meaning_chosen_type_v66::MeaningV66> =
+            serde_json::from_value(
+                state["observation"]["chosen_type"]["native"]["meanings"].clone(),
+            )
+            .map_err(|e| Error::Projection(e.to_string()))?;
+        for meaning in &meanings {
+            crate::rules_meaning_chosen_type_v66::validate(meaning).map_err(Error::Projection)?;
+            covered.insert(meaning.card_id);
+        }
+    }
+    if source == Source::KaitoV75
+        && (state["schema"] == crate::artist_consumer_v1::CANDIDATES_SCHEMA
+            || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA
+            || full_pool)
+    {
+        // Only the distinct sealed actor schema supplies this printed root.
+        let meaning: crate::rules_meaning_artist_v64::MeaningV64 =
+            serde_json::from_value(state["observation"]["artist"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        crate::rules_meaning_artist_v64::validate(&meaning).map_err(Error::Projection)?;
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (state["schema"] == crate::niv_consumer_v1::CANDIDATES_SCHEMA
+            || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA
+            || full_pool)
+    {
+        let meaning: crate::rules_meaning_niv_mizzet_v63::MeaningV63 =
+            serde_json::from_value(state["observation"]["niv"]["appendix"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        crate::rules_meaning_niv_mizzet_v63::validate(&meaning).map_err(Error::Projection)?;
+        covered.insert(meaning.card_id);
+    }
+    if source == Source::KaitoV75
+        && (state["schema"] == crate::drakuseth_consumer_v1::CANDIDATES_SCHEMA
+            || state["schema"] == crate::limited_mixed_consumer_v1::CANDIDATES_SCHEMA
+            || full_pool)
+    {
+        let meaning: crate::rules_meaning_drakuseth_v67::MeaningV67 =
+            serde_json::from_value(state["observation"]["drakuseth"]["meaning"].clone())
+                .map_err(|e| Error::Projection(e.to_string()))?;
+        crate::rules_meaning_drakuseth_v67::validate(&meaning).map_err(Error::Projection)?;
+        covered.insert(meaning.card_id);
+    }
     expand(&mut state, &mut covered, source)?;
     let mut cards = BTreeSet::new();
     collect_cards(&state, &mut cards)?;
@@ -487,6 +833,22 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
         collect_cards(action, &mut cards)?;
     }
     let mut meanings = Vec::new();
+    if full_pool {
+        for &id in &cards {
+            if let Some(printing) = roots::full_pool_burn_draw_printing(id)? {
+                covered.insert(id);
+                meanings.push(printing);
+            }
+            let printing = match roots::full_pool_life_printing(id)? {
+                Some(printing) => Some(printing),
+                None => roots::full_pool_modal_printing(id)?,
+            };
+            if let Some(printing) = printing {
+                covered.insert(id);
+                meanings.push(printing);
+            }
+        }
+    }
     for id in cards.difference(&covered) {
         if source == Source::KaitoV75 && super::kaito::printing(*id)?.is_some() {
             continue;
@@ -864,8 +1226,119 @@ pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) 
     if actions.is_empty() {
         return Err(Error::NoDecision);
     }
+    Ok((
+        Packet {
+            source,
+            state: NumericTree::encode(&state)?,
+            actions,
+        },
+        binding,
+    ))
+}
+
+/// This distinct source accepts only the sealed owner's typed public parts.
+/// Every visible or publicly named printing receives its full finite meaning;
+/// the Limited meaning allowlist remains unchanged.
+pub(super) fn encode_eternal(
+    public: &super::eternal::EternalPublicV1,
+    actions: &[(
+        crate::rl::ActionSemanticV1,
+        Option<crate::eternal_actor_public_v1::EntryOptionV1>,
+    )],
+) -> Result<Packet> {
+    let conversion = |error: serde_json::Error| Error::Projection(error.to_string());
+    let mut observation = serde_json::to_value(&public.observation).map_err(conversion)?;
+    super::public_projection_operands::prepare(&mut observation)?;
+    let public = serde_json::to_value(public).map_err(conversion)?;
+    let actions = actions
+        .iter()
+        .map(|(action, option)| {
+            Ok(
+                json!({"action": serde_json::to_value(action).map_err(conversion)?,
+            "entry_option": serde_json::to_value(option).map_err(conversion)?}),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut state = public;
+    state["observation"] = observation;
+    let mut cards = BTreeSet::new();
+    collect_cards(&state, &mut cards)?;
+    fn named(value: &Value, cards: &mut BTreeSet<u16>) -> Result<()> {
+        match value {
+            Value::Object(fields) => {
+                for (key, value) in fields {
+                    if matches!(key.as_str(), "named_card_id" | "printing") {
+                        cards.insert(u16::try_from(uint(value)?).map_err(|_| Error::Range)?);
+                    } else {
+                        named(value, cards)?;
+                    }
+                }
+            }
+            Value::Array(values) => {
+                for value in values {
+                    named(value, cards)?;
+                }
+            }
+            _ => (),
+        }
+        Ok(())
+    }
+    named(&state, &mut cards)?;
+    for action in &actions {
+        collect_cards(action, &mut cards)?;
+        named(action, &mut cards)?;
+    }
+    let meanings = cards
+        .into_iter()
+        .map(|printing| {
+            crate::eternal_actor_printed_v1::printing_v1(printing)
+                .map(|meaning| json!({"printing":printing,"meaning":meaning}))
+                .map_err(|error| Error::Projection(error.to_string()))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut refs = References::default();
+    let mut times = BTreeSet::new();
+    timestamps(&state, "", &mut times);
+    for action in &actions {
+        timestamps(action, "", &mut times);
+    }
+    refs.timestamps = times
+        .into_iter()
+        .enumerate()
+        .map(|(i, t)| (t, i as u64))
+        .collect();
+    // Establish object correspondence from the ordinary public observation
+    // before visiting supplemental ledger rows or action operands.
+    rewrite(&state["observation"], &mut refs, "")?;
+    state["printing_meanings"] = Value::Array(meanings);
+    let mut state = rewrite(&state, &mut refs, "")?;
+    // These are sets of public facts, unlike stack/pending order or per-seat
+    // arrays. Native ledger insertion order must not become an actor feature.
+    for key in [
+        "cavern_types",
+        "needle_names",
+        "uncounterable_spells",
+        "cast_mana",
+        "saga_abilities",
+        "prepare_copies",
+        "animate_dead_waiting",
+        "animate_dead_attached",
+        "granted_opponent_draw_on_leave",
+    ] {
+        let rows = state["dynamic"][key]
+            .as_array_mut()
+            .ok_or_else(|| Error::UnsupportedOperand(key.into()))?;
+        rows.sort_by_cached_key(Value::to_string);
+    }
+    let actions = actions
+        .iter()
+        .map(|action| NumericTree::encode(&rewrite(action, &mut refs, "")?))
+        .collect::<Result<Vec<_>>>()?;
+    if actions.is_empty() {
+        return Err(Error::NoDecision);
+    }
     Ok(Packet {
-        source,
+        source: Source::EternalActorV1,
         state: NumericTree::encode(&state)?,
         actions,
     })
@@ -893,5 +1366,13 @@ mod tests {
         );
         let tree = NumericTree::encode(&json!(u64::MAX)).unwrap();
         assert!(tree.tensors().iter().flatten().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn unclassified_token_identity_is_still_refused() {
+        assert!(matches!(
+            rewrite(&json!({"token_id": 44}), &mut References::default(), ""),
+            Err(Error::UnsupportedOperand(field)) if field == "token_id"
+        ));
     }
 }
