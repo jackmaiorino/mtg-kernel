@@ -325,7 +325,12 @@ jobs:
     # research claims. The repository variable routes them elsewhere, for
     # example '["self-hosted", "mtg-ci-windows"]' for the local pool. Pull
     # requests from forks never run on the self-hosted runners.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
+    # On pull requests, the groups named in MTG_CI_PR_WINDOWS_GROUPS (a JSON
+    # list, for example '["workspace-targets", "workspace-lib"]') run on
+    # MTG_CI_PR_WINDOWS_RUNNER instead: a few desktop runners can carry the
+    # slowest pull request groups, not every Windows job (2026-11-12: at 6
+    # CPUs and BelowNormal, workspace-targets took 54 min there, 113 hosted).
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON(vars.MTG_CI_PR_WINDOWS_GROUPS || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     steps:
       # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
       # heavy feature builds finished at two and four Cargo jobs (probe of
@@ -1297,12 +1302,12 @@ jobs:
   # once one accepted it, so this hosted job dispatches the workflow again on
   # the same branch with Windows on hosted runners, limited to the Windows
   # part of this run's group set. Real failures are not
-  # rerun, and a dispatched run never dispatches again. It runs only while the
+  # rerun, and a dispatched run never dispatches again. It runs only while a
   # routing variable sends Windows jobs to the self-hosted pool.
   hosted-fallback:
     name: Hosted fallback for self-hosted admission timeouts
     needs: [detect-changes, rust-test-groups, rust-limited-groups, python-tests]
-    if: always() && contains(needs.*.result, 'failure') && contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always() && contains(needs.*.result, 'failure') && (contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') || contains(vars.MTG_CI_PR_WINDOWS_RUNNER || '', 'self-hosted')) && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
