@@ -21,10 +21,11 @@ if os.name == "nt":
     import line_b_receipts_v1 as driver  # noqa: E402
 
 
-def first_allowed_cpu_mask():
-    """The lowest CPU this process may run on, as an affinity mask. A CI job
+def allowed_cpu_mask():
+    """The CPUs this process may run on, as an affinity mask. A CI job
     confined to some CPUs (a self-hosted runner's job object) cannot place a
-    child outside them, so CPU 0 is not always available."""
+    child outside them, and its children read back the job's whole mask
+    when asked for a single CPU, so the test places the child on all of them."""
     import ctypes
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.GetCurrentProcess.restype = ctypes.c_void_p
@@ -34,7 +35,7 @@ def first_allowed_cpu_mask():
     if not kernel.GetProcessAffinityMask(kernel.GetCurrentProcess(), ctypes.byref(process_mask),
                                          ctypes.byref(system_mask)):
         raise ctypes.WinError(ctypes.get_last_error())
-    return process_mask.value & -process_mask.value
+    return process_mask.value
 
 
 def marker_child(marker):
@@ -53,7 +54,7 @@ class SpawnPlacedTest(unittest.TestCase):
 
     def test_the_child_runs_only_after_the_readback(self):
         resumed = []
-        mask = first_allowed_cpu_mask()
+        mask = allowed_cpu_mask()
         original = driver.placement_api
 
         def observed_api():
