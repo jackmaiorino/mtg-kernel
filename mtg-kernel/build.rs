@@ -53,6 +53,7 @@ mod build_eternal_s1e_v1;
 mod build_eternal_s1f_v1;
 mod build_eternal_s1g_v1;
 mod build_eternal_s1j_v1;
+mod build_eternal_s1l_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
 mod build_standard_v1;

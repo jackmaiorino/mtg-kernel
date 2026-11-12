@@ -1,8 +1,8 @@
 //! Card-database recipes for the eternal catalog's Premodern sideboard wave
-//! P3g. This module is the tail of the recipe chains: wave S1j's tables
-//! fall through to these, and its own defaults are the chains' base values.
-//! Runtime programs live in `src/eternal_premodern_p3g_v1.rs`. Every row is
-//! keyed by a name that occurs only in the eternal registry.
+//! P3g. Wave S1j's tables fall through to these, and these to wave S1l's
+//! (`build_eternal_s1l_v1.rs`), the tail of the recipe chains. Runtime
+//! programs live in `src/eternal_premodern_p3g_v1.rs`. Every row is keyed by
+//! a name that occurs only in the eternal registry.
 
 use super::{AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, Special};
 use AbilityCostRecipe::{DiscardSelf, ManaCost};
@@ -37,7 +37,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
     match name {
         "Circle of Protection: Red" => &CIRCLE_OF_PROTECTION_RED,
         "Akroma's Vengeance" => &AKROMAS_VENGEANCE,
-        _ => &[],
+        _ => super::build_eternal_s1l_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -55,33 +55,33 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
     match name {
         "Infest" => Some(spell("crate::eternal_premodern_p3g_v1::infest")),
         "Akroma's Vengeance" => Some(spell("crate::eternal_premodern_p3g_v1::akromas_vengeance")),
-        _ => None,
+        _ => super::build_eternal_s1l_v1::special_for(name),
     }
 }
 
 /// No P3g card has kicker.
-pub(super) fn kicker_cost_for(_name: &str) -> Option<&'static str> {
-    None
+pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
+    super::build_eternal_s1l_v1::kicker_cost_for(name)
 }
 
 /// No P3g card is an Aura or an Equipment.
-pub(super) fn attachment_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn attachment_for(name: &str) -> &'static str {
+    super::build_eternal_s1l_v1::attachment_for(name)
 }
 
 /// No P3g card has flashback.
-pub(super) fn flashback_for(_name: &str) -> String {
-    "None".to_string()
+pub(super) fn flashback_for(name: &str) -> String {
+    super::build_eternal_s1l_v1::flashback_for(name)
 }
 
 /// No P3g card has an alternative cost.
-pub(super) fn alt_cost_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn alt_cost_for(name: &str) -> &'static str {
+    super::build_eternal_s1l_v1::alt_cost_for(name)
 }
 
 /// No P3g card has a printed evergreen keyword.
-pub(super) fn keywords_for(_name: &str) -> &'static [&'static str] {
-    &[]
+pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
+    super::build_eternal_s1l_v1::keywords_for(name)
 }
 
 /// Card-database tokens for this wave's abilities. Arcane Laboratory's limit
@@ -94,6 +94,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Arcane Laboratory" => "static:each_player_cant_cast_more_than_one_spell_each_turn",
         "Infest" => "spell:all_creatures_get_minus_2_minus_2_until_end_of_turn",
         "Akroma's Vengeance" => "spell:destroy_all_artifacts_creatures_enchantments;cycling:3",
-        _ => "none",
+        _ => super::build_eternal_s1l_v1::trigger_recipe_for(name),
     }
 }

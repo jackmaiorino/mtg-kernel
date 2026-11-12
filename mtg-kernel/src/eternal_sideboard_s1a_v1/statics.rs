@@ -14,7 +14,7 @@ use crate::card_def::{CardType, Subtype, CARD_DEFS};
 use crate::event;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::CastMethodV4;
-use crate::state::{GameState, Zone};
+use crate::state::{GameState, ObjectLinkV4, Zone};
 
 /// The definition ids of the cards whose statics the engine asks about on
 /// hot paths, so those checks compare ids before names.
@@ -312,13 +312,19 @@ pub(crate) fn cast_prohibited(
 
 /// Lavinia, Azorius Renegade: records that `spell` was cast with no mana
 /// spent while an opponent's Lavinia was in play, for her counter trigger.
+/// A cast whose miracle cost was paid as its trigger resolved spent that
+/// mana (601.2f, 702.94a), though its resolution cast commits none.
 pub(crate) fn note_mana_spent(
     state: &mut GameState,
     spell: ObjectId,
     controller: PlayerId,
     spent: u32,
 ) {
-    if spent != 0 || active_controlled_by(state, LAVINIA, controller.opponent()).is_empty() {
+    let paid_miracle = take_miracle_payment(state, spell);
+    if spent != 0
+        || paid_miracle
+        || active_controlled_by(state, LAVINIA, controller.opponent()).is_empty()
+    {
         return;
     }
     let link = live_link(state, spell);
@@ -326,4 +332,45 @@ pub(crate) fn note_mana_spent(
     if !unpaid.contains(&link) {
         unpaid.push(link);
     }
+}
+
+/// Lavinia, Azorius Renegade: records that the miracle cost of the hand
+/// incarnation `card` was paid while an opponent of its controller has a
+/// Lavinia in play, so its resolution cast counts as having spent mana.
+pub(crate) fn note_miracle_paid(state: &mut GameState, card: ObjectLinkV4, controller: PlayerId) {
+    if active_controlled_by(state, LAVINIA, controller.opponent()).is_empty() {
+        return;
+    }
+    let payments = &mut s1a_state(state).miracle_payments;
+    if !payments.contains(&card) {
+        payments.push(card);
+    }
+}
+
+/// Removes the records of paid miracle costs for `spell`, returning whether
+/// one was for the hand incarnation just before its stack incarnation.
+fn take_miracle_payment(state: &mut GameState, spell: ObjectId) -> bool {
+    let Some(recorded) = read_state(state) else {
+        return false;
+    };
+    if !recorded
+        .miracle_payments
+        .iter()
+        .any(|card| card.object == spell)
+    {
+        return false;
+    }
+    let hand = state
+        .objects
+        .get(spell)
+        .zone_change_count
+        .checked_sub(1)
+        .map(|zone_change_count| ObjectLinkV4 {
+            object: spell,
+            zone_change_count,
+        });
+    let payments = &mut s1a_state(state).miracle_payments;
+    let paid = hand.is_some_and(|hand| payments.contains(&hand));
+    payments.retain(|card| card.object != spell);
+    paid
 }

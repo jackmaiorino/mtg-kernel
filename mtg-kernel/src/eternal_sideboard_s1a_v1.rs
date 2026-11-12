@@ -66,6 +66,10 @@ pub struct S1aStateV1 {
     /// The turn each Carpet of Flowers incarnation last added mana.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub carpet_turns: Vec<(ObjectLinkV4, u32)>,
+    /// Hand incarnations whose miracle cost was paid while an opponent's
+    /// Lavinia was in play, until their resolution cast commits (wave S1l).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub miracle_payments: Vec<ObjectLinkV4>,
 }
 
 impl Hash for S1aStateV1 {
@@ -76,6 +80,10 @@ impl Hash for S1aStateV1 {
             self.leylines_offered.hash(state);
             self.unpaid_casts.hash(state);
             self.carpet_turns.hash(state);
+            // Hashed only when present, so earlier states keep their hashes.
+            if !self.miracle_payments.is_empty() {
+                self.miracle_payments.hash(state);
+            }
         }
     }
 }

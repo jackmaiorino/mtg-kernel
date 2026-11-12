@@ -4416,6 +4416,41 @@ impl GameState {
         Ok(())
     }
 
+    /// Randomizes only the top `count` cards (Triumph of Saint Katherine's
+    /// pile), the counterpart of `randomize_library_bottom_v1`: the same
+    /// checked randomness transaction, with every position fact in the
+    /// randomized prefix dropped and deeper positions and their known
+    /// identities intact.
+    pub(crate) fn randomize_library_top_v1(
+        &mut self,
+        owner: PlayerId,
+        count: usize,
+    ) -> Result<(), LibraryShuffleError> {
+        let owner = library_shuffle_owner(owner)?;
+        let len = self.players[owner.index()].library.len();
+        let count = count.min(len);
+        if count < 2 {
+            return Ok(());
+        }
+        // As for the bottom: the journal has no note for a partial
+        // randomization, so refuse rather than drift.
+        if self.engine.spellbench_neutral_v1.choices {
+            return Err(LibraryShuffleError::SpellbenchNeutralPartialRandomization);
+        }
+        let mut staged = self.clone();
+        staged.players[owner.index()].library =
+            self.players[owner.index()].library[..count].to_vec();
+        staged.shuffle_library(owner)?;
+        self.players[owner.index()].library[..count]
+            .copy_from_slice(&staged.players[owner.index()].library);
+        self.randomness = staged.randomness;
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            self.library_knowledge[observer.index()][owner.index()]
+                .retain(|entry| (entry.position as usize) >= count);
+        }
+        Ok(())
+    }
+
     /// Read-only shared view of the legacy RNG; `None` on an environment-v2
     /// state. There is deliberately no mutable RNG accessor: randomness
     /// advances only through the library-shuffle transaction. Same-module

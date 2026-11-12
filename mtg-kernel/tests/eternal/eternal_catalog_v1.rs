@@ -19,7 +19,7 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
 /// deck's companion is part of the deck the session plays.
-const PLAYABLE: [(&str, &str); 136] = [
+const PLAYABLE: [(&str, &str); 137] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -175,6 +175,7 @@ const PLAYABLE: [(&str, &str); 136] = [
     ("legacy", "legacy-naya-initiative"),
     ("legacy", "legacy-mono-black-midrange"),
     ("legacy", "legacy-death-and-taxes-60-card"),
+    ("legacy", "legacy-bant-control"),
     ("premodern", "premodern-replenish"),
     ("premodern", "premodern-sligh-rdw"),
     ("premodern", "premodern-terrageddon"),
@@ -243,10 +244,9 @@ const SNAPSHOTS: [&str; 2] = [
 ];
 
 /// Executable S1 implementations with known missing reachable branches.
-const PARTIAL_S1: [&str; 5] = [
+const PARTIAL_S1: [&str; 4] = [
     "Coalition Honor Guard",
     "Hullbreacher",
-    "Lavinia, Azorius Renegade",
     "Martyr of Sands",
     "Standard Bearer",
 ];
@@ -375,6 +375,61 @@ fn controls_named(decision: &Value, seat: &Value, name: &str) -> bool {
                     .as_u64()
                     .is_some_and(|id| CARD_DEFS[id as usize].name == name)
         })
+}
+
+/// The number of lands `seat` controls in the decision's public
+/// projection.
+fn lands_controlled(decision: &Value, seat: &Value) -> usize {
+    decision["observation"]["projection"]["battlefield"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|cards| cards.as_array().into_iter().flatten())
+        .filter(|card| {
+            &card["stable"]["controller"] == seat
+                && card["stable"]["card_db_id"].as_u64().is_some_and(|id| {
+                    CARD_DEFS[id as usize]
+                        .types
+                        .contains(&mtg_kernel::card_def::CardType::Land)
+                })
+        })
+        .count()
+}
+
+/// Whether `action` casts a noncreature spell whose printed mana value
+/// exceeds the lands its caster controls while an opponent controls
+/// Lavinia, Azorius Renegade (wave S1l). A printed mana value counts X as 0,
+/// so an announced X only raises it. Split, Adventure, Omen and
+/// double-faced cards have other spell forms and are left out.
+fn lavinia_prohibits(decision: &Value, action: &Value) -> bool {
+    let semantic = &action["semantic"];
+    if semantic["action_kind"] != "cast_spell" {
+        return false;
+    }
+    let Some(id) = semantic["source"]["card_db_id"].as_u64() else {
+        return false;
+    };
+    let def = &CARD_DEFS[id as usize];
+    let single_form = def.name == def.object_name
+        && !def.name.contains(" // ")
+        && def.adventure.is_none()
+        && def.omen.is_none()
+        && def.transform_face.is_none();
+    if !single_form
+        || def
+            .types
+            .contains(&mtg_kernel::card_def::CardType::Creature)
+    {
+        return false;
+    }
+    let actor = &semantic["actor"];
+    let opponent = match actor.as_str() {
+        Some("p0") => json!("p1"),
+        Some("p1") => json!("p0"),
+        _ => return false,
+    };
+    controls_named(decision, &opponent, "Lavinia, Azorius Renegade")
+        && usize::from(def.mana_value) > lands_controlled(decision, actor)
 }
 
 /// Whether the opponent of `seat` controls a Hexing Squelcher, whose own
@@ -641,6 +696,39 @@ fn informed_mage_option<'a>(actions: &[&'a Value], decks: &[CustomDeckV1; 2]) ->
         .find(|action| action["semantic"]["option_text"] == text.as_str())
 }
 
+/// A ranked seat's answer to a Triumph of Saint Katherine miracle choice
+/// (wave S1l): it reveals the drawn Triumph, then casts it as the miracle
+/// trigger resolves. Both are two-option choices whose source is the card in
+/// its hand, so the first one for a hand incarnation reveals it (option 1)
+/// and the next one casts it (option 0). `None` for any other decision, so
+/// other miracle cards stay hidden, as `rank` keeps them.
+fn informed_miracle_option<'a>(
+    actions: &[&'a Value],
+    revealed: &mut BTreeSet<(u64, u64)>,
+) -> Option<&'a Value> {
+    let semantic = &actions.first()?["semantic"];
+    let source = &semantic["source"];
+    let triumph = source["card_db_id"]
+        .as_u64()
+        .is_some_and(|id| CARD_DEFS[id as usize].name == "Triumph of Saint Katherine");
+    if semantic["action_kind"] != "choose_effect_option"
+        || semantic["option_count"] != 2
+        || source["zone"] != "Hand"
+        || !triumph
+    {
+        return None;
+    }
+    let incarnation = (
+        source["arena_id"].as_u64()?,
+        source["zone_change_count"].as_u64()?,
+    );
+    let option = u64::from(revealed.insert(incarnation));
+    actions
+        .iter()
+        .copied()
+        .find(|action| action["semantic"]["option_index"] == option)
+}
+
 /// How a test game picks among legal actions. `Ranked` casts and attacks
 /// but never activates an ability; `Random` reaches activations, so lands,
 /// mana rocks and activated abilities run too.
@@ -706,6 +794,18 @@ pub(crate) fn play_with_outside(
     seed: u64,
     policy: Policy,
 ) -> Game {
+    play_observed(decks, outside_the_game, seed, policy, &mut |_, _| {})
+}
+
+/// `play_with_outside` that shows `observe` each decision and the action
+/// chosen for it, so a wave's test can count its own events.
+pub(crate) fn play_observed(
+    decks: [CustomDeckV1; 2],
+    outside_the_game: Option<[Vec<CustomCardCountV1>; 2]>,
+    seed: u64,
+    policy: Policy,
+    observe: &mut dyn FnMut(&Value, &Value),
+) -> Game {
     const MAX_STEPS: usize = 131_072;
     let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
     let mut reset = json!({"schema_version":5,"request_type":"reset","request_id":"reset",
@@ -725,6 +825,7 @@ pub(crate) fn play_with_outside(
     let (mut taxed_inclusions, mut unpaid_exclusions) = (0, 0);
     let mut circle_choices = 0;
     let (mut mage_choices, mut mage_held_names) = ([0; 2], 0);
+    let mut miracle_reveals = BTreeSet::new();
     let mut companion_actions = 0;
     // The last chosen actions, reported if a game fails closed.
     let mut recent: Vec<String> = Vec::new();
@@ -795,6 +896,14 @@ last actions:
         }
         let decision = &reply["decision"];
         collect_overloaded_spells(decision, &mut overloaded_spells);
+        // No noncreature spell over the caster's lands is offered while an
+        // opponent controls Lavinia, Azorius Renegade (wave S1l).
+        for action in decision["legal_actions"].as_array().unwrap() {
+            assert!(
+                !lavinia_prohibits(decision, action),
+                "seed={seed} step={index}: Lavinia prohibits the cast {action}"
+            );
+        }
         // A spell whose only name a Mage chose is never offered (wave S1k).
         let mage_names = observed_mage_names(decision);
         if !mage_names.is_empty() {
@@ -875,6 +984,7 @@ last actions:
             {
                 Some(pass) if controls_stack_item(decision, &pass["semantic"]["actor"]) => *pass,
                 _ => informed_mage_option(&actions, &decks)
+                    .or_else(|| informed_miracle_option(&actions, &mut miracle_reveals))
                     .unwrap_or_else(|| *actions.iter().min_by_key(|a| rank(a)).unwrap()),
             },
             // A random seat starts no new spell or ability while it controls
@@ -895,6 +1005,7 @@ last actions:
                 actions[(splitmix64(&mut random_state) % actions.len() as u64) as usize]
             }
         };
+        observe(decision, action);
         if is_companion_action(action) {
             companion_actions += 1;
         }
@@ -1086,7 +1197,7 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
 }
 
 /// A deck of `lands` and four copies of each of nine spells.
-fn stress_deck(lands: &[(&str, u32)], spells: [&str; 9]) -> CustomDeckV1 {
+pub(crate) fn stress_deck(lands: &[(&str, u32)], spells: [&str; 9]) -> CustomDeckV1 {
     let count = |name: &str, count: u32| CustomCardCountV1 {
         name: name.to_owned(),
         count: count as _,
