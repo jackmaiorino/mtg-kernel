@@ -21,6 +21,22 @@ if os.name == "nt":
     import line_b_receipts_v1 as driver  # noqa: E402
 
 
+def first_allowed_cpu_mask():
+    """The lowest CPU this process may run on, as an affinity mask. A CI job
+    confined to some CPUs (a self-hosted runner's job object) cannot place a
+    child outside them, so CPU 0 is not always available."""
+    import ctypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetCurrentProcess.restype = ctypes.c_void_p
+    kernel.GetProcessAffinityMask.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
+                                              ctypes.POINTER(ctypes.c_size_t)]
+    process_mask, system_mask = ctypes.c_size_t(), ctypes.c_size_t()
+    if not kernel.GetProcessAffinityMask(kernel.GetCurrentProcess(), ctypes.byref(process_mask),
+                                         ctypes.byref(system_mask)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return process_mask.value & -process_mask.value
+
+
 def marker_child(marker):
     """A child whose first statement writes `marker`."""
     return [sys.executable, "-c", f"open({str(marker)!r}, 'w').write('ran')"]
@@ -37,6 +53,7 @@ class SpawnPlacedTest(unittest.TestCase):
 
     def test_the_child_runs_only_after_the_readback(self):
         resumed = []
+        mask = first_allowed_cpu_mask()
         original = driver.placement_api
 
         def observed_api():
@@ -55,7 +72,7 @@ class SpawnPlacedTest(unittest.TestCase):
 
         driver.placement_api = observed_api
         try:
-            process, readback = driver.spawn_placed(marker_child(self.marker), sys.executable, 0x1)
+            process, readback = driver.spawn_placed(marker_child(self.marker), sys.executable, mask)
         finally:
             driver.placement_api = original
         self.assertEqual(process.wait(timeout=60), 0)
@@ -64,7 +81,7 @@ class SpawnPlacedTest(unittest.TestCase):
         after = readback["after"]
         self.assertTrue(readback["verified"])
         self.assertTrue(readback["set_before_resume"])
-        self.assertEqual(after["affinity_mask"], 0x1)
+        self.assertEqual(after["affinity_mask"], mask)
         self.assertEqual(after["priority_class"], subprocess.BELOW_NORMAL_PRIORITY_CLASS)
         self.assertTrue(after["power_control_mask"] & 1)
         self.assertFalse(after["power_state_mask"] & 1)
