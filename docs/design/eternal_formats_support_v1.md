@@ -1498,6 +1498,11 @@ notes for station, 2015-11-04 for Fiery Confluence), checked against the XMage s
   - Dress Down's "Creatures lose all abilities" reads printed creature types, so that types and
     abilities don't depend on each other. A stationed Battleship's creature type doesn't depend
     on its abilities, so Dress Down now applies to it too.
+  - Found in the fixtures: wave S1e's trigger target specs answered "no target" for every
+    trigger in the tables chained after its own (S1g's, S1l's and the Battleship's). S1g's and
+    S1l's triggers have no target, so only the Battleship's was affected. S1e now answers only
+    for its own triggers, as S1a, S1g and S1l do, and the Battleship's trigger gets its target
+    from this wave.
 - Fiery Confluence, {2}{R}{R}, Sorcery: "Choose three. You may choose the same mode more than
   once. - Fiery Confluence deals 1 damage to each creature. - Fiery Confluence deals 2 damage to
   each opponent. - Destroy target artifact."
@@ -1523,12 +1528,20 @@ notes for station, 2015-11-04 for Fiery Confluence), checked against the XMage s
   Robot keeping their base power and toughness; Dress Down removing flying and trample from a
   stationed Battleship; Fiery Confluence's mode offers, the same artifact named twice, damage
   events in printed order and the spell not resolving when every target is illegal.
-- Games: a colorless deck with four Battleships, fast mana and creatures to station with and a
-  red deck with four Fiery Confluences and artifacts play each other through public sessions,
-  in both seats with ranked and seeded random actions, checking natural terminals and replay.
-  The test requires a Battleship entry trigger resolving, a station activation chosen from the
-  action list, a stationed Battleship that is a creature in the observation, and a Fiery
-  Confluence cast with a destroy mode.
+- Games: a colorless deck with twelve Battleships, fast mana and creatures to station with and
+  a red deck of Mountains and twelve Fiery Confluences (custom decks have no copy limit) play
+  each other through public sessions, in both seats, three games of each pairing with ranked
+  actions and six with seeded random actions, checking natural terminals and replay. The test
+  requires a Battleship entry trigger resolving, a station activation chosen from the action
+  list, a stationed Battleship that is a creature in the observation, and a Fiery Confluence
+  cast with a destroy mode.
+  - Found in the first deck games: with four copies of each card in longer lists, no game cast
+    either card. Ranked seats spent their mana on the other spells first, `rank` never
+    activates an ability and takes Fiery Confluence's first mode, which has no destroy, and
+    random seats often tap their mana outside their main phases, so they rarely pay for the
+    Battleship. As S1k's Mage names and S1l's miracle reveals do, the harness gives ranked
+    seats an S1m option: they station a Battleship while it has fewer than five charge
+    counters, and choose Fiery Confluence's first offered mode with a destroy.
 
 ## Execution
 
