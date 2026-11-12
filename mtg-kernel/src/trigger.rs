@@ -6151,13 +6151,7 @@ fn triggers_from_events(
                             };
                         let target_spec = target_spec_for_trigger(obj.card_def, &effect)
                             .unwrap_or(TargetSpec::None);
-                        let limit =
-                            per_turn_trigger_cap(def.condition).or_else(|| match def.condition {
-                                TriggerCondition::StandardV1(condition) => {
-                                    crate::standard_cards_v1::trigger_limit_per_turn(condition)
-                                }
-                                _ => None,
-                            });
+                        let limit = per_turn_trigger_cap(def.condition);
                         if let Some(maximum) = limit {
                             let ability_index =
                                 u16::try_from(ability_index).expect("bounded definition abilities");
@@ -6663,11 +6657,14 @@ fn draws_this_turn_snapshot(events: &[CommittedEvent], state: &GameState) -> Vec
 /// pairing.
 /// How many times per turn a triggered ability may trigger, tracked in
 /// `GameState::trigger_uses_v1`. `None` means unlimited.
-fn per_turn_trigger_cap(condition: TriggerCondition) -> Option<u16> {
+pub(crate) fn per_turn_trigger_cap(condition: TriggerCondition) -> Option<u16> {
     match condition {
         TriggerCondition::ControllerAddedPlusOneCountersToSelf { max_per_turn } => max_per_turn,
         TriggerCondition::BecomesTargetOfControllerSpellOrAbilityFirstTimeEachTurn => Some(1),
         TriggerCondition::OtherControlledCreatureWithPowerAtMostEntersOncePerTurn(_) => Some(1),
+        TriggerCondition::StandardV1(condition) => {
+            crate::standard_cards_v1::trigger_limit_per_turn(condition)
+        }
         _ => None,
     }
 }

@@ -9,7 +9,8 @@ use crate::{
     optional_trigger_public_v1 as public,
     rl::PlayerSeatV1,
     state::{
-        AbilitySourceContractV4, GameState, StackItemKind, StackTargetContractV4, Target, Zone,
+        AbilitySourceContractV4, GameState, StackItem, StackItemKind, StackTargetContractV4,
+        Target, Zone,
     },
     tinybones_public_v72::CountersV72,
 };
@@ -165,9 +166,17 @@ pub fn producer_sha256() -> String {
 fn ord(n: usize) -> Result<u32, String> {
     u32::try_from(n).map_err(|_| "V76 source ordinal overflow".into())
 }
-fn root(s: &GameState, c: AbilitySourceContractV4, v: PlayerId) -> Result<public::RootV1, String> {
-    engine::validate_historical_ability_source_contract(s, c)?;
-    let mut r = public::root(s, c, Some(v))?;
+fn root(
+    s: &GameState,
+    c: AbilitySourceContractV4,
+    v: PlayerId,
+    published_at: Option<usize>,
+) -> Result<public::RootV1, String> {
+    let mut r = if let Some(at) = published_at {
+        public::archived_root(s, at, c, Some(v))?
+    } else {
+        public::root(s, c, Some(v))?
+    };
     // The printed attack was public even if its current form is neutral.
     r.original_source.identity = public::IdentityV1::Known {
         card_id: c.card_def,
@@ -178,6 +187,7 @@ fn slots(
     s: &GameState,
     targets: &[Target],
     contracts: &[StackTargetContractV4],
+    published: Option<&StackItem>,
 ) -> Result<Vec<OriginalSlotV76>, String> {
     if targets.len() != contracts.len() || targets.len() > 3 {
         return Err("V76 positional target cardinality changed".into());
@@ -187,15 +197,15 @@ fn slots(
         .zip(contracts)
         .enumerate()
         .map(|(i, (&t, &c))| {
-            if targets[..i].contains(&t)
-                || !crate::state::stack_target_contract_is_structurally_valid(
-                    s,
-                    crate::rules_meaning_drakuseth_v67::target_spec(),
-                    i,
-                    t,
-                    c,
-                )
-            {
+            let spec = crate::rules_meaning_drakuseth_v67::target_spec();
+            let structurally_valid =
+                crate::state::stack_target_contract_is_structurally_valid(s, spec, i, t, c)
+                    || published.is_some_and(|item| {
+                        crate::state::stack_target_contract_for_sampled_snapshot(
+                            s, item, spec, i, t, c,
+                        )
+                    });
+            if targets[..i].contains(&t) || !structurally_valid {
                 return Err("V76 distinct target contract changed".into());
             }
             let original_target = match c {
@@ -233,6 +243,7 @@ fn trigger(
     location: (StageV76, Option<usize>, Option<u32>),
     targets: &[Target],
     contracts: &[StackTargetContractV4],
+    published: Option<&StackItem>,
 ) -> Result<TriggerV76, String> {
     let (stage, position, publication) = location;
     if c.zone != Zone::Battlefield
@@ -256,7 +267,7 @@ fn trigger(
         c.controller,
         &[],
     )?;
-    let originals = slots(s, targets, contracts)?;
+    let originals = slots(s, targets, contracts, published)?;
     let mut projected = Vec::new();
     for ((original, &t), &contract) in originals.into_iter().zip(targets).zip(contracts) {
         let current_original_target = match contract {
@@ -282,7 +293,14 @@ fn trigger(
         stage,
         native_position: position.map(ord).transpose()?,
         publication,
-        source: root(s, c, v)?,
+        source: root(
+            s,
+            c,
+            v,
+            published
+                .and_then(|item| item.v4.drakuseth_published_v76.0)
+                .map(|at| at as usize),
+        )?,
         current_or_original_departure_characteristics: DamageSourceV76 {
             uses_original_departure_values: !s.objects.try_get(c.source).is_some_and(|o| {
                 o.zone == Zone::Battlefield
@@ -301,6 +319,14 @@ fn trigger(
     })
 }
 pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV76, String> {
+    capture_scoped(s, v, public::ConsumerV1::Legacy)
+}
+
+pub(crate) fn capture_scoped(
+    s: &GameState,
+    v: PlayerId,
+    consumer: public::ConsumerV1,
+) -> Result<FactsV76, String> {
     if !cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
@@ -315,7 +341,7 @@ pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV76, String> {
         id,
         &CARD_DEFS[usize::from(id)],
     )?;
-    public::validate_state_checked(s)?;
+    public::validate_state_for_consumer(s, true, consumer)?;
     native::validate_state(s)?;
     crate::effect::validate_pending_effect_choice(s)?;
     if let Some(p) = &s.engine.pending_cast {
@@ -376,6 +402,7 @@ pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV76, String> {
     {
         return Err("V76 battlefield roster incomplete".into());
     }
+    let sampled_targets = matches!(consumer, public::ConsumerV1::KaitoFullPoolV1);
     let mut publications = BTreeMap::new();
     for (at, e) in s.engine.event_history.iter().enumerate() {
         if let E::DrakusethDamageSourceV76 { journal } = e {
@@ -391,8 +418,13 @@ pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV76, String> {
                 let disposed = crate::engine::time_stop_v1::disposed(s, item)?;
                 out.publications.push(PublicationV76 {
                     occurrence,
-                    source: root(s, source, v)?,
-                    original_target_slots: slots(s, &item.targets, &item.v4.target_contracts)?,
+                    source: root(s, source, v, sampled_targets.then_some(at))?,
+                    original_target_slots: slots(
+                        s,
+                        &item.targets,
+                        &item.v4.target_contracts,
+                        sampled_targets.then_some(item.as_ref()),
+                    )?,
                     state: if disposed {
                         PublicationStateV76::DisposedByTimeStop
                     } else {
@@ -460,6 +492,7 @@ pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV76, String> {
                 ),
                 &p.targets,
                 &p.target_contracts,
+                None,
             )?);
         }
     }
@@ -519,6 +552,7 @@ pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV76, String> {
                 ),
                 &item.targets,
                 &item.v4.target_contracts,
+                sampled_targets.then_some(item),
             )?);
         }
     }
@@ -540,6 +574,7 @@ pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV76, String> {
                 (StageV76::Resolving, None, Some(publication)),
                 &item.targets,
                 &item.v4.target_contracts,
+                sampled_targets.then_some(item),
             )?);
         }
     }

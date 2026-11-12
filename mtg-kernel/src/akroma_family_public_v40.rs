@@ -268,6 +268,168 @@ pub(crate) enum FamilyProjectionV40 {
     Twinflame(Box<crate::twinflame_observation_v1::TwinflameObservationV1>),
 }
 impl FamilyProjectionV40 {
+    /// Compare fresh FullPool bindings after the sampler checks reveal name minima.
+    /// The predecessor observations duplicate physical revealed-hand rows and
+    /// commit to them in their digest. Neither belongs to the sampled binding.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn sampled_families_match(mut before: Vec<Self>, mut after: Vec<Self>) -> bool {
+        for projection in before.iter_mut().chain(&mut after) {
+            projection.clear_sampled_hand_rows();
+        }
+        before == after
+    }
+
+    /// Only an authenticated revealed-discard root may compare its opponent's
+    /// rebound hand answers by printing. Both current native menus have
+    /// already been validated by their owners.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn sampled_revealed_discard_families_match(
+        mut before: Vec<Self>,
+        mut after: Vec<Self>,
+        before_candidates: &[crate::kaito_candidates_v75::CandidateMeaningV75],
+        after_candidates: &[crate::kaito_candidates_v75::CandidateMeaningV75],
+        actor: crate::rl::PlayerSeatV1,
+    ) -> bool {
+        Self::normalize_sampled_discard(&mut before, before_candidates, actor).is_some()
+            && Self::normalize_sampled_discard(&mut after, after_candidates, actor).is_some()
+            && Self::sampled_families_match(before, after)
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn normalize_sampled_discard(
+        parts: &mut [Self],
+        candidates: &[crate::kaito_candidates_v75::CandidateMeaningV75],
+        actor: crate::rl::PlayerSeatV1,
+    ) -> Option<()> {
+        use crate::rl::{ActionSemanticV1, PlayerSeatV1, TargetRefV1};
+        use crate::state::Zone;
+
+        let owner = match actor {
+            PlayerSeatV1::P0 => PlayerSeatV1::P1,
+            PlayerSeatV1::P1 => PlayerSeatV1::P0,
+        };
+        let (source, legal) = revealed_discard_roster(parts.first()?.projection(), actor)?;
+        if legal.is_empty() || legal.len() != candidates.len() {
+            return None;
+        }
+        let source = source.clone();
+        let legal = legal.to_vec();
+        let mut seen = std::collections::HashSet::with_capacity(legal.len());
+        let mut rows = Vec::with_capacity(legal.len());
+        for (index, (candidate, expected)) in candidates.iter().zip(&legal).enumerate() {
+            let ActionSemanticV1::ChooseEffectTarget {
+                actor: chooser,
+                source: spell,
+                target: target @ TargetRefV1::Object { object },
+                selected_count: 0,
+                min_targets: 1,
+                max_targets: 1,
+            } = &candidate.action
+            else {
+                return None;
+            };
+            let def = crate::card_def::CARD_DEFS.get(usize::from(object.card_db_id))?;
+            if usize::try_from(candidate.ordinal).ok() != Some(index)
+                || *chooser != actor
+                || *spell != source
+                || target != expected
+                || object.owner != owner
+                || object.zone != Zone::Hand
+                || def.is_land
+                || def.is_token
+                || !seen.insert(object.arena_id)
+            {
+                return None;
+            }
+            // Only disposable comparator copies lose physical coordinates.
+            // Keep the printing, owner, controller, zone and multiplicity.
+            let mut object = object.clone();
+            object.arena_id = 0;
+            object.zone_change_count = 0;
+            rows.push((object.card_db_id, index, TargetRefV1::Object { object }));
+        }
+        rows.sort_by_key(|(printing, _, _)| *printing);
+        let names: Vec<_> = rows.iter().map(|(_, _, target)| target.clone()).collect();
+        for part in parts {
+            let (family_source, family_legal) = revealed_discard_roster(part.projection(), actor)?;
+            if *family_source != source || family_legal != legal.as_slice() {
+                return None;
+            }
+            let Some(crate::rl::PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) =
+                part.projection_mut()
+                    .surface
+                    .engine_context
+                    .pending_effect
+                    .as_mut()?
+                    .choice
+                    .as_mut()
+            else {
+                return None;
+            };
+            *legal_targets = names.clone();
+            if let Self::Fishing(fishing) = part {
+                if fishing.actions.len() != candidates.len()
+                    || fishing
+                        .actions
+                        .iter()
+                        .zip(candidates)
+                        .any(|(row, candidate)| row.semantic != candidate.action)
+                {
+                    return None;
+                }
+                let mut ordered = Vec::with_capacity(rows.len());
+                for (_, index, named_target) in &rows {
+                    let mut row = fishing.actions[*index].clone();
+                    let ActionSemanticV1::ChooseEffectTarget { target, .. } = &mut row.semantic
+                    else {
+                        return None;
+                    };
+                    *target = named_target.clone();
+                    ordered.push(row);
+                }
+                fishing.actions = ordered;
+            }
+        }
+        Some(())
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn clear_sampled_hand_rows(&mut self) {
+        macro_rules! clear_hand_rows {
+            ($observation:expr) => {{
+                ($observation).known_hand_cards = Default::default();
+                ($observation).projection_sha256.clear();
+            }};
+        }
+        match self {
+            Self::Early(_) | Self::GameOutcome(_) => {}
+            Self::Sower(o) => clear_hand_rows!(o),
+            Self::Frenzied(o) => clear_hand_rows!(o),
+            Self::Wildwood(o) => clear_hand_rows!(o),
+            Self::Authority(o) => clear_hand_rows!(o),
+            Self::Employment(o) => clear_hand_rows!(o),
+            Self::Cerberus(o) => clear_hand_rows!(o),
+            Self::Librarian(o) => clear_hand_rows!(o),
+            Self::ExtraTurn(o) => clear_hand_rows!(o),
+            Self::Juggernaut(o) => clear_hand_rows!(o),
+            Self::Ashroot(o) => clear_hand_rows!(o),
+            Self::Banishing(o) => clear_hand_rows!(o),
+            Self::Stromkirk(o) => clear_hand_rows!(o),
+            Self::Gourmand(o) => clear_hand_rows!(o),
+            Self::Garruk(o) => clear_hand_rows!(o),
+            Self::Crystal(o) => clear_hand_rows!(o),
+            Self::Arahbo(o) => clear_hand_rows!(o),
+            Self::Strongbox(o) => clear_hand_rows!(o),
+            Self::Fiery(o) => clear_hand_rows!(o),
+            Self::Krenko(o) => clear_hand_rows!(o),
+            Self::ZulAshur(o) => clear_hand_rows!(o),
+            Self::Banner(o) => clear_hand_rows!(o),
+            Self::Inspiration(o) => clear_hand_rows!(o),
+            Self::Twinflame(o) => clear_hand_rows!(o),
+            Self::Fishing(o) => clear_hand_rows!(o.parts),
+        }
+    }
+
     pub(crate) fn facts(&self) -> FamilyFactsV40 {
         match self {
             Self::GameOutcome(o) => FamilyFactsV40::GameOutcome(Box::new(o.facts.clone())),
@@ -435,36 +597,73 @@ impl FamilyProjectionV40 {
 }
 impl FamilyProjectionV40 {
     pub(crate) fn set_projection(&mut self, projection: &crate::rl::PublicObservationProjectionV5) {
+        *self.projection_mut() = projection.clone();
+    }
+
+    fn projection_mut(&mut self) -> &mut crate::rl::PublicObservationProjectionV5 {
         match self {
-            Self::GameOutcome(o) => o.projection = projection.clone(),
-            Self::Fishing(o) => o.parts.projection = projection.clone(),
-            Self::Early(o) => o.projection = projection.clone(),
-            Self::Sower(o) => o.projection = projection.clone(),
-            Self::Frenzied(o) => o.projection = projection.clone(),
-            Self::Wildwood(o) => o.projection = projection.clone(),
-            Self::Authority(o) => o.projection = projection.clone(),
-            Self::Employment(o) => o.projection = projection.clone(),
-            Self::Cerberus(o) => o.projection = projection.clone(),
-            Self::Librarian(o) => o.projection = projection.clone(),
-            Self::ExtraTurn(o) => o.projection = projection.clone(),
-            Self::Juggernaut(o) => o.projection = projection.clone(),
-            Self::Ashroot(o) => o.projection = projection.clone(),
-            Self::Banishing(o) => o.projection = projection.clone(),
-            Self::Stromkirk(o) => o.projection = projection.clone(),
-            Self::Gourmand(o) => o.projection = projection.clone(),
-            Self::Garruk(o) => o.projection = projection.clone(),
-            Self::Crystal(o) => o.projection = projection.clone(),
-            Self::Arahbo(o) => o.projection = projection.clone(),
-            Self::Strongbox(o) => o.projection = projection.clone(),
-            Self::Fiery(o) => o.projection = projection.clone(),
-            Self::Krenko(o) => o.projection = projection.clone(),
-            Self::ZulAshur(o) => o.projection = projection.clone(),
-            Self::Banner(o) => o.projection = projection.clone(),
-            Self::Inspiration(o) => o.projection = projection.clone(),
-            Self::Twinflame(o) => o.projection = projection.clone(),
+            Self::GameOutcome(o) => &mut o.projection,
+            Self::Fishing(o) => &mut o.parts.projection,
+            Self::Early(o) => &mut o.projection,
+            Self::Sower(o) => &mut o.projection,
+            Self::Frenzied(o) => &mut o.projection,
+            Self::Wildwood(o) => &mut o.projection,
+            Self::Authority(o) => &mut o.projection,
+            Self::Employment(o) => &mut o.projection,
+            Self::Cerberus(o) => &mut o.projection,
+            Self::Librarian(o) => &mut o.projection,
+            Self::ExtraTurn(o) => &mut o.projection,
+            Self::Juggernaut(o) => &mut o.projection,
+            Self::Ashroot(o) => &mut o.projection,
+            Self::Banishing(o) => &mut o.projection,
+            Self::Stromkirk(o) => &mut o.projection,
+            Self::Gourmand(o) => &mut o.projection,
+            Self::Garruk(o) => &mut o.projection,
+            Self::Crystal(o) => &mut o.projection,
+            Self::Arahbo(o) => &mut o.projection,
+            Self::Strongbox(o) => &mut o.projection,
+            Self::Fiery(o) => &mut o.projection,
+            Self::Krenko(o) => &mut o.projection,
+            Self::ZulAshur(o) => &mut o.projection,
+            Self::Banner(o) => &mut o.projection,
+            Self::Inspiration(o) => &mut o.projection,
+            Self::Twinflame(o) => &mut o.projection,
         }
     }
 }
+
+#[cfg(feature = "limited-fdn-fixtures")]
+fn revealed_discard_roster(
+    projection: &crate::rl::PublicObservationProjectionV5,
+    actor: crate::rl::PlayerSeatV1,
+) -> Option<(&crate::rl::CardStableRefV1, &[crate::rl::TargetRefV1])> {
+    use crate::rl::{PendingEffectChoiceSemanticV4, TargetSelectionPurposeV4};
+
+    let effect = projection.surface.engine_context.pending_effect.as_ref()?;
+    let source = effect.source.as_ref()?;
+    let PendingEffectChoiceSemanticV4::Targets {
+        player,
+        structural_path,
+        selected_targets,
+        legal_targets,
+        min_targets: 1,
+        max_targets: 1,
+        can_finish: false,
+        ordered: false,
+        purpose: TargetSelectionPurposeV4::CardSelection,
+    } = effect.choice.as_ref()?
+    else {
+        return None;
+    };
+    (*player == actor
+        && effect.controller == actor
+        && source.controller == actor
+        && source.zone == crate::state::Zone::Stack
+        && structural_path.is_empty()
+        && selected_targets.is_empty())
+    .then_some((source, legal_targets))
+}
+
 pub(crate) fn build(
     state: &GameState,
     surface: &PolicySurfaceV5,

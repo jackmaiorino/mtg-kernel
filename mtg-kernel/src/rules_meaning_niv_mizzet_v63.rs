@@ -89,6 +89,7 @@ pub fn producer_sha256() -> String {
             include_str!("rules_meaning_niv_mizzet_v63.rs"),
             include_str!("niv_mizzet_public_v63.rs"),
             include_str!("niv_mizzet_visionary_v1.rs"),
+            include_str!("engine/niv_mizzet_resolution_v1.rs"),
             include_str!("optional_trigger_public_v1.rs"),
             include_str!("source_power_activation_v1.rs"),
             include_str!("source_type_hexproof_v1.rs"),
