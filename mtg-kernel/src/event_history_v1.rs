@@ -1819,7 +1819,12 @@ pub(crate) mod proof_tests_v1 {
         f()
     }
 
-    /// Validations on this thread that used a proof.
+    /// Validations on this thread that used a proof. Only the tests built
+    /// with the Limited fixtures count them.
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn uses() -> u64 {
         USES.with(Cell::get)
     }

@@ -153,8 +153,13 @@ pub(crate) fn recordable<R: 'static>(
     }
 }
 
-/// Test-only: the violations a later event can add after a proof.
-#[cfg(test)]
+/// Test-only: the violations a later event can add after a proof, for the
+/// Arahbo and Garruk's Uprising tests, which need the Limited fixtures.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 pub(crate) mod tests_v1 {
     use super::*;
     use crate::event_history_v1::{proof_tests_v1, ProvedV1};
