@@ -1078,6 +1078,145 @@ rulings, checked against its XMage source:
   exiled card gets an until-end-of-turn play permission, so costs and timing still apply (its
   ruling). Clue and Food tokens are the Standard registry's.
 
+### S1g: Legacy sideboards
+
+After S1f the census lists 24 non-Full sideboard cards among Legacy's mainboard-playable lists.
+Six are Partial S1 definitions, and 18 are absent from the registry. Four of the absent
+cards are the only gap of five lists (12.5% of the field): Damping Sphere (Lands 4.5%,
+Sewer-Cam 2.7%, Painter 0.8%, Mono-Black Midrange 0.5%), Drop of Honey (Lands), Alpine Moon and
+Ghost Vacuum (Sneak and Show, 4.0%). S1g adds the four. The Legacy full 75 share goes from 33.8%
+to 46.3%, and the five lists join `PLAYABLE_75`. Damping Sphere also sits in three Legacy
+sideboards that have other gaps.
+
+S1g is built in `src/eternal_sideboard_s1g_v1.rs` and `build_eternal_s1g_v1.rs`, the new tail
+of the recipe chains after S1f's. Behavior follows each card's current Oracle text and
+rulings, checked against its XMage source:
+
+- Damping Sphere: "If a land is tapped for two or more mana, it produces {C} instead of any
+  other type and amount. Each spell a player casts costs {1} more to cast for each other spell
+  that player has cast this turn." While a Sphere's abilities apply:
+  - A land's mana ability with {T} in its cost that would add two or more mana adds one {C}
+    instead. Its costs and other effects stay: Ancient Tomb still deals 2 damage to its
+    controller. The replacement sits where Contamination's does. The payment planner offers
+    such a land as one {C}: an assembled Urza land, and Eldrazi Temple for an Eldrazi spell.
+    A manual activation adds one {C}: Ancient Tomb, City of Traitors, Gaea's Cradle with two or
+    more creatures, Serra's Sanctum with two or more enchantments, and a bundle such as
+    "{T}: Add {W}{U}". A land tapped for one mana is unchanged. Restricted mana keeps its
+    restriction (106.6a).
+  - Each spell costs {1} more for each other spell its caster has cast this turn, counted
+    from the cast history whether or not the Sphere was on the battlefield (its ruling). The
+    increase joins the spell tax hook (Defense Grid's). Mana value is unchanged (its ruling).
+- Drop of Honey: "At the beginning of your upkeep, destroy the creature with the least power.
+  It can't be regenerated. If two or more creatures are tied for least power, you choose one
+  of them. When there are no creatures on the battlefield, sacrifice this enchantment."
+  - The upkeep trigger doesn't target (its ruling). On resolution it finds the creatures with
+    the least power. Those with indestructible are passed over while another of them can be
+    destroyed, and nothing is destroyed when all of them are indestructible (its rulings). One
+    is destroyed and can't be regenerated (wave P1a's record). With two or more, the trigger's
+    controller chooses through the E3 resolution choice, and no player acts in between.
+  - The sacrifice is a state trigger (603.8), as wave P2c's Phyrexian Devourer's is. It
+    triggers while no creature is on the battlefield and not again until it leaves the stack,
+    and the Drop is sacrificed on resolution even if a creature is back by then (its ruling).
+- Alpine Moon: "As this enchantment enters, choose a nonbasic land card name. Lands your
+  opponents control with the chosen name lose all land types and abilities, and they gain
+  '{T}: Add one mana of any color.'"
+  - The name is an entry choice like Pithing Needle's, recorded with the Alpine Moon's
+    battlefield incarnation. The options are every nonbasic land name in the executable
+    registry, front faces and land back faces, one per name in definition order. Unlike
+    Pithing Needle's visible names, a land not yet seen can be named.
+  - Each land an opponent of the Moon's controller controls with that name joins wave E8a's
+    land-type setter at the Moon's timestamp. Its abilities are removed at that timestamp,
+    and its land types are removed unless a later Blood Moon, Harbinger of the Seas or
+    Spreading Seas sets them again (613.7). It has "{T}: Add one mana of any color" whatever
+    the order, since that ability is gained in layer 6. Supertypes and other card types stay
+    (its ruling).
+- Ghost Vacuum: "{T}: Exile target card from a graveyard. {6}, {T}, Sacrifice this artifact:
+  Put each creature card exiled with this artifact onto the battlefield under your control
+  with a flying counter on it. Each of them is a 1/1 Spirit in addition to its other types.
+  Activate only as a sorcery."
+  - Each exile is recorded with the Vacuum's battlefield incarnation and the exiled card's
+    incarnation. The second ability reads the records of the sacrificed incarnation on
+    resolution (607.2a). Each recorded card still in exile that is a creature card enters at
+    once under the ability's controller.
+  - Each one that enters is recorded with a timestamp. It has base power and toughness 1/1
+    in layer 7b, so counters and modifications still apply. It gains the Spirit subtype in
+    layer 4 and has flying from its flying counter. The engine has no flying counter kind, so
+    the counter is a module record of that incarnation, as wave P3f's -2/-1 counters are.
+
+The records are pruned as each turn begins: Alpine Moon's names and Ghost Vacuum's exiles and
+Spirits whose incarnations left the battlefield or exile, and Drop of Honey's triggered state
+once its trigger left the stack.
+
+Known gaps (S1g): no effect removes counters from the Spirits, so their flying counter is not
+a counter other effects can count or remove. A land entering under Alpine Moon keeps an
+enters-tapped ability, as under Blood Moon. Drop of Honey's state trigger is checked as
+triggers are collected, so creatures that all leave and return within one event batch, such
+as a flicker of every creature, don't trigger it (its ruling says they do).
+
+### S1h: Overload and extraction qualification
+
+After S1g the largest Pauper and Legacy gaps are Partial S1 definitions. S1h qualifies four of
+them and marks them Full; their rules are unchanged.
+
+- Overload: Vandalblast is the only gap of 13 Pauper lists (18.6% of the field) and
+  Electrickery of Boros Moxite (1.3%); Boros Synthesizer (0.4%) lists both.
+- Extraction: Surgical Extraction is the only gap of four Legacy lists (Boros Energy 7.5%,
+  Omni-Tell 1.2%, Death and Taxes 60-card 0.3%, Temur Delver 0.2%), and Beseech Storm (0.6%)
+  lists it with Extirpate.
+
+The Pauper full 75 share goes from 64.8% to 85.1% and the Legacy share from 46.3% to 56.1%.
+The 20 lists join `PLAYABLE_75`, and 9 Partial S1 definitions remain.
+
+S1d built overload as the card's paid Adventure form, and the later repair added the paid
+graveyard and Future Sight permissions, Retrace's land discard, the Omniscience and Bolas's
+Citadel routes, and free casts that offer only the ordinary form (see S1d above). That repair
+left "the affected overload fixtures and consumers" to qualify. S1a and S1b built the
+extractions, and their repair added Surgical Extraction's optional subset of the matching cards
+in the owner's graveyard, hand and library, Extirpate's every public graveyard match with any
+subset of the hidden ones, the caster's private look at the searched hand and library in the
+JSONL reply (`surgical_search_look_v1`, `extirpate_search_look_v1`), and the refusal of an
+active search by frozen infoset and search consumers (see S1a and S1b above). Their native
+choice, restore, disclosure and transport checks were pending.
+
+- Fixtures: the overload fixtures in `tests/eternal/eternal_sideboard_s1d_v1.rs` cover each
+  card's overloaded effect, the paid graveyard permission with a restore, Retrace's land
+  discard, a free cascade, Omniscience, Future Sight's paid library permission with a restore
+  and as the only legal form, and Bolas's Citadel. The extraction fixtures in
+  `tests/eternal/eternal_sideboard_s1a_v1.rs` and `tests/eternal/eternal_sideboard_s1b_v1.rs`
+  cover the choice in both seats, finishing with no card or a private subset, restores, the
+  nonchooser's hidden roster and the Phyrexian payment; the extractions passed in the guarded
+  native batch at `90bda0c0f`. All of them run in the Eternal group, which runs every
+  `eternal_integration` module. They passed on Linux in each pull request run and on hosted
+  Windows in the Eternal jobs dispatched at #635's head `88262eb8` and #640's head `bd168234`.
+  For these pull requests the hosted Windows Eternal job replaces the local native packet (the
+  maintainer's decision), so that is their native execution.
+- Copies: Chandra, Hope's Beacon is the one registry card that copies a spell other than
+  itself. Its trigger copies the first instant or sorcery spell its controller casts each
+  turn; Storm, Replicate, Casualty and Chain of Vapor copy only their own spell. A copy of an
+  overloaded spell is overloaded too (702.96c). A new S1h test casts an overloaded Vandalblast
+  and an overloaded Electrickery under Chandra and checks that each copy, with no targets,
+  affects every object the overloaded text names.
+- Consumers: in Eternal builds a Full card reaches the registered best-of-three match, the
+  custom-deck session with its JSONL server and policy observation v5, and the census. The
+  best-of-three harness plays the 20 lists' matches through that server with seeded random
+  actions and random sideboarding, checking natural terminals and replay. There the four cards
+  are sideboard copies, drawn too rarely to reach each branch: its first run with the 20 lists
+  chose no overload form, reached Surgical Extraction's search look 7 times and Extirpate's
+  none. So, as for wave P2a's statics, a red deck with both overload cards and a white-black
+  deck with both extractions play each other through public sessions, in both seats with
+  ranked and with seeded random actions, checking natural terminals and replay. The test
+  requires an overload form chosen from the JSONL action list, an overloaded spell (cast with
+  the Omen method) on the public stack and both search looks in the replies. A cast whose only
+  legal form is the overload takes it with no choice, so the stack count includes those casts.
+  Policy encoders, training and Spellbench entries for eternal formats stay separate work, and
+  frozen encoders keep refusing unsupported state (see the card contract).
+
+As for every cast, the pending cast menu has no interleaved mana activation, so an overload cost
+is paid with the ordinary mana plan. Martyr of Sands' last pending check, the three event-history
+consumers of every event kind, now runs with its sample in the workspace library group on Linux
+and hosted Windows. It stays Partial for now: the one list that needs it, White Aggro, also needs
+Standard Bearer, whose broader targeting coverage is pending.
+
 ## Execution
 
 Family workers implement bounded card groups in their own worktrees; one integrator owns

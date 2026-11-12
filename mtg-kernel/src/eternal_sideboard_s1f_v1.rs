@@ -201,7 +201,7 @@ pub(crate) fn lattice_timestamp(state: &GameState) -> Option<u64> {
 /// The layer 4 type-setting effects on `object` and their timestamps: an
 /// Elk of Oko's (wave E5a), a creature Aura's override, and a land Aura's
 /// ("loses all other card types").
-fn type_settings(state: &GameState, object: ObjectId) -> impl Iterator<Item = u64> {
+pub(crate) fn type_settings(state: &GameState, object: ObjectId) -> impl Iterator<Item = u64> {
     [
         crate::eternal_e5a_v1::statics::elk_timestamp(state, object),
         crate::continuous_characteristics_v1::creature_override(state, object)

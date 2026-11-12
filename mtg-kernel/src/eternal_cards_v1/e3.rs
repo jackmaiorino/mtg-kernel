@@ -306,6 +306,9 @@ pub enum E3ChoiceKindV1 {
     SurgicalExtractionV1,
     /// Extirpate's optional hidden matches. Public graveyard matches are mandatory.
     ExtirpateV1,
+    /// A wave S1g choice (`eternal_sideboard_s1g_v1`). Appended to preserve
+    /// existing hashes.
+    S1gV1(crate::eternal_sideboard_s1g_v1::S1gChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -360,6 +363,9 @@ impl E3ChoiceV1 {
             return kind.chooser_private();
         }
         if let E3ChoiceKindV1::S1cV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
+        if let E3ChoiceKindV1::S1gV1(kind) = &self.kind {
             return kind.chooser_private();
         }
         if let E3ChoiceKindV1::E9aV1(kind) = &self.kind {
@@ -426,6 +432,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E8aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::S1cV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::S1gV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P1bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P2aV1(kind) => kind.public_purpose(),
@@ -485,6 +492,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E8aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::S1cV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::S1gV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P2aV1(kind) => out.extend(kind.referenced_bindings()),
@@ -813,6 +821,13 @@ pub(crate) fn finish_selection(
             crate::eternal_e9b_v1::finish_selection(state, continuation, choice, kind, bindings)
         }
         E3ChoiceKindV1::S1cV1(kind) => crate::eternal_sideboard_s1c_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::S1gV1(kind) => crate::eternal_sideboard_s1g_v1::finish_selection(
             state,
             continuation,
             choice,
@@ -1228,6 +1243,9 @@ pub(crate) fn drive(
         }
         EternalOpV1::S1fV1(op) => {
             crate::eternal_sideboard_s1f_v1::drive(state, continuation, op, path)
+        }
+        EternalOpV1::S1gV1(op) => {
+            crate::eternal_sideboard_s1g_v1::drive(state, continuation, op, path)
         }
         EternalOpV1::OutsideGameV1(op) => {
             crate::eternal_outside_game_v1::drive(state, continuation, op, path)
@@ -1815,6 +1833,10 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     if let Some(decision) = crate::eternal_premodern_p3f_v1::entry_choice_decision(state) {
         return Some(decision);
     }
+    // Alpine Moon's land name (Legacy sideboard wave S1g).
+    if let Some(decision) = crate::eternal_sideboard_s1g_v1::entry_choice_decision(state) {
+        return Some(decision);
+    }
     let cavern = cavern_needing_type(state)?;
     let player = state.objects.get(cavern).controller;
     Some(crate::engine::Decision::ChooseEffectOption {
@@ -1915,6 +1937,9 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
         return Ok(());
     }
     if crate::eternal_premodern_p3f_v1::answer_entry_choice(state, option)? {
+        return Ok(());
+    }
+    if crate::eternal_sideboard_s1g_v1::answer_entry_choice(state, option)? {
         return Ok(());
     }
     let cavern = cavern_needing_type(state).ok_or("no as-enters choice is pending")?;

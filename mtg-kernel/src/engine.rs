@@ -9429,6 +9429,8 @@ fn spell_cost_generic_modifiers_v1(
             .saturating_add(crate::eternal_sideboard_s1a_v1::statics::spell_tax(
                 state, caster,
             ))
+            // Damping Sphere (wave S1g).
+            .saturating_add(crate::eternal_sideboard_s1g_v1::spell_tax(state, caster))
     } else {
         increase
     };
@@ -11624,6 +11626,12 @@ pub(crate) fn available_mana_ability_choices_into(
     out: &mut ManaColorSetV1,
 ) {
     available_mana_ability_choices_unreplaced_into(player, source, state, out);
+    // Damping Sphere: a land tapped for two or more mana produces one {C}
+    // instead (Legacy wave S1g).
+    #[cfg(feature = "eternal-fixtures")]
+    if !out.is_empty() && crate::eternal_sideboard_s1g_v1::damps(state, source) {
+        damp_mana_ability_choices(player, source, state, out);
+    }
     // Contamination: a land tapped for mana produces {B} instead (Premodern
     // wave P2a).
     #[cfg(feature = "eternal-fixtures")]
@@ -11965,6 +11973,14 @@ fn activate_mana_ability_for_with_checkpoint(
             checkpoint,
         );
     }
+    // Damping Sphere: {C} from a land whose abilities would add two or more
+    // mana taps it for the first such ability (Legacy wave S1g).
+    #[cfg(feature = "eternal-fixtures")]
+    let choice = if crate::eternal_sideboard_s1g_v1::damps(state, source) {
+        damped_activation_choice(player, source, choice, state)?
+    } else {
+        choice
+    };
     activate_mana_ability_unreplaced_for_with_checkpoint(
         state,
         player,
@@ -11973,6 +11989,152 @@ fn activate_mana_ability_for_with_checkpoint(
         cost_targets,
         checkpoint,
     )
+}
+
+/// Damping Sphere (Legacy wave S1g): whether the mana ability of `source`, a
+/// land, that adds `choice` has {T} in its cost and would add two or more
+/// mana, so it adds one {C} instead. A granted tap-for-one ability and a
+/// restricted one add one mana.
+#[cfg(feature = "eternal-fixtures")]
+fn damped_mana_choice(
+    player: PlayerId,
+    source: ObjectId,
+    choice: ManaColor,
+    state: &GameState,
+) -> bool {
+    if crate::continuous_characteristics_v1::land_grants_colorless_mana(state, source)
+        || crate::standard_legends_v1::katilda_mana_colors(state, source).contains(&choice)
+    {
+        return false;
+    }
+    let Some(object) = state.objects.try_get(source) else {
+        return false;
+    };
+    let Some(definition) = crate::full_text_v1::mana_definition(state, source) else {
+        return false;
+    };
+    let rich = if definition
+        .primary_mana_ability_choices(object.v4.chosen_color)
+        .contains(&choice)
+    {
+        match definition.mana_ability_def {
+            Some(rich) => rich,
+            // The legacy tap-for-one recipe, or a conditional yield (an
+            // assembled Urza land, Serra's Sanctum, Tolarian Academy).
+            None => {
+                return definition
+                    .conditional_tap_yield
+                    .is_some_and(|value| evaluate_dynamic_value(state, value, player) >= 2)
+            }
+        }
+    } else {
+        match definition
+            .additional_mana_abilities
+            .iter()
+            .find(|ability| ability.colors.contains(&choice))
+        {
+            Some(additional) => additional.ability,
+            None => return false,
+        }
+    };
+    damped_rich_mana_ability(player, rich, state)
+}
+
+/// Whether a rich mana ability has {T} in its cost (106.12) and would add
+/// two or more mana.
+#[cfg(feature = "eternal-fixtures")]
+fn damped_rich_mana_ability(
+    player: PlayerId,
+    rich: card_def::ManaAbilityDef,
+    state: &GameState,
+) -> bool {
+    mana_ability_cost_taps_source(rich.cost)
+        && match rich.amount {
+            ManaAbilityAmountDef::EachControlledPermanentColor => {
+                crate::bloom_tender_mana_v1::colors(state, player).len() >= 2
+            }
+            ManaAbilityAmountDef::FixedColorsV1(colors) => colors.len() >= 2,
+            amount => rich_mana_ability_amount(amount, player, state).is_ok_and(|n| n >= 2),
+        }
+}
+
+/// Whether a mana ability's cost has the tap symbol: the source is "tapped
+/// for mana" (106.12). Tapping two other permanents is not the symbol.
+fn mana_ability_cost_taps_source(cost: ManaAbilityCostDef) -> bool {
+    matches!(
+        cost,
+        ManaAbilityCostDef::TapSelf
+            | ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature
+            | ManaAbilityCostDef::TapAndSacrificeSelf
+            | ManaAbilityCostDef::TapSelfPayLife(_)
+            | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1
+    )
+}
+
+/// Damping Sphere: the choices of a land it applies to. A choice whose
+/// ability would add two or more mana becomes {C}, once; one that needs a
+/// cost object, or whose {C} another ability of the land already adds, is
+/// not offered (the same {C} without the extra cost).
+#[cfg(feature = "eternal-fixtures")]
+fn damp_mana_ability_choices(
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+    out: &mut ManaColorSetV1,
+) {
+    let raw = *out;
+    let room = state.players[player.index()].mana_pool[ManaColor::C.pool_index()] < u8::MAX;
+    let mut damped = ManaColorSetV1::new();
+    for &color in raw.as_slice() {
+        let produced = if damped_mana_choice(player, source, color, state) {
+            if !room
+                || !mana_ability_cost_targets_for_choice(player, source, color, state).is_empty()
+            {
+                continue;
+            }
+            ManaColor::C
+        } else {
+            color
+        };
+        if !damped.contains(produced) {
+            damped.push(produced);
+        }
+    }
+    *out = damped;
+}
+
+/// The printed choice a mana activation of `source`, a land under a Damping
+/// Sphere, taps it for: a {C} with no ability of its own adding {C} is the
+/// first ability that would add two or more mana and needs no cost object.
+/// A color such an ability adds is not offered, since it would add {C}.
+#[cfg(feature = "eternal-fixtures")]
+fn damped_activation_choice(
+    player: PlayerId,
+    source: ObjectId,
+    choice: ManaColor,
+    state: &GameState,
+) -> Result<ManaColor, String> {
+    let mut raw = ManaColorSetV1::new();
+    available_mana_ability_choices_unreplaced_into(player, source, state, &mut raw);
+    if choice != ManaColor::C {
+        if raw.contains(choice) && damped_mana_choice(player, source, choice, state) {
+            return Err(format!(
+                "{source} produces {{C}} instead of {choice:?} under a Damping Sphere"
+            ));
+        }
+        return Ok(choice);
+    }
+    if raw.contains(ManaColor::C) {
+        return Ok(ManaColor::C);
+    }
+    raw.as_slice()
+        .iter()
+        .copied()
+        .find(|&color| {
+            damped_mana_choice(player, source, color, state)
+                && mana_ability_cost_targets_for_choice(player, source, color, state).is_empty()
+        })
+        .ok_or_else(|| format!("{source} cannot currently produce {{C}}"))
 }
 
 /// Taps `source` for the printed mana ability that needs no cost object and
@@ -12053,6 +12215,11 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
     let definition = crate::full_text_v1::mana_definition(state, source)
         .ok_or("mana source definition is missing")?;
     let cost_target = cost_targets.first().copied();
+    // Damping Sphere (Legacy wave S1g), read as the land is tapped.
+    #[cfg(feature = "eternal-fixtures")]
+    let damped = crate::eternal_sideboard_s1g_v1::damps(state, source);
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let damped = false;
     let printed_pair_cost = matches!(
         definition.mana_ability_def.map(|ability| ability.cost),
         Some(ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(
@@ -12360,15 +12527,26 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
                 commit_sacrifice(state, &[cost_target.expect("validated cost target")]);
             }
         }
+        // Damping Sphere: a land tapped for two or more mana produces one {C}
+        // instead; its costs and other effects stay (Legacy wave S1g).
+        let damps_amount =
+            |count: usize| damped && count >= 2 && mana_ability_cost_taps_source(rich.cost);
         if let Some(colors) = bundle {
+            let colors = if damps_amount(colors.len()) {
+                vec![ManaColor::C]
+            } else {
+                colors
+            };
             if !colors.is_empty() {
                 event::propose_and_commit(state, ProposedEvent::mana_add(player, colors));
             }
         } else if amount > 0 {
-            event::propose_and_commit(
-                state,
-                ProposedEvent::mana_add(player, vec![choice; usize::from(amount)]),
-            );
+            let colors = if damps_amount(usize::from(amount)) {
+                vec![ManaColor::C]
+            } else {
+                vec![choice; usize::from(amount)]
+            };
+            event::propose_and_commit(state, ProposedEvent::mana_add(player, colors));
         }
         if rich.controller_damage > 0 {
             event::propose_and_commit(
@@ -12389,6 +12567,25 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
         let program = definition
             .mana_ability_program_for(choice, chosen_color)
             .expect("validated mana choice has a generated program");
+        // Damping Sphere: a conditional yield of two or more adds one {C}
+        // instead (Legacy wave S1g).
+        let program = if damped
+            && definition
+                .conditional_tap_yield
+                .is_some_and(|value| evaluate_dynamic_value(state, value, player) >= 2)
+        {
+            EffectOp::Sequence(vec![
+                EffectOp::TapObject {
+                    object: ObjectRef::ThisSource,
+                },
+                EffectOp::AddMana {
+                    player: effect::PlayerRef::Controller,
+                    colors: vec![ManaColor::C],
+                },
+            ])
+        } else {
+            program
+        };
         let ctx = ExecCtx::no_targets(source, player);
         effect::execute(&program, &ctx, state);
     }
@@ -24797,6 +24994,17 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_sideboard_s1e_v1::is_toy(state, id) {
         subtype_ids.push(card_def::Subtype::Toy.stable_id());
+    }
+    // Ghost Vacuum: "Each of them is a 1/1 Spirit in addition to its other
+    // types" (eternal wave S1g), a creature type while it is a creature
+    // (205.3d) and no later effect set its types.
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(timestamp) = crate::eternal_sideboard_s1g_v1::spirit_type_timestamp(state, id) {
+        if object_has_type(state, id, CardType::Creature)
+            && replacement_timestamp.is_none_or(|replacement| timestamp > replacement)
+        {
+            subtype_ids.push(card_def::Subtype::Spirit.stable_id());
+        }
     }
     subtype_ids.sort_unstable();
     if crate::continuous_characteristics_v1::land_type_timestamp(state, id).is_some()

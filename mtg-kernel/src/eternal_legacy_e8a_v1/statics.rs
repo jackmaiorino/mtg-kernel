@@ -117,18 +117,34 @@ fn land_type_setter(state: &GameState, object: ObjectId) -> Option<(u64, Subtype
 
 /// Harbinger of the Seas and the moons (305.7: such a land loses its land
 /// types and all abilities from its rules text and has "{T}: Add {U}." or
-/// "{T}: Add {R}.") The removal's timestamp for a nonbasic land.
+/// "{T}: Add {R}.") The removal's timestamp for a nonbasic land. Alpine
+/// Moon's (wave S1g) removes all abilities of the lands it names at its own
+/// timestamp; the later removal applies.
 pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
-    land_type_setter(state, object).map(|(timestamp, _, _)| timestamp)
+    land_type_setter(state, object)
+        .map(|(timestamp, _, _)| timestamp)
+        .max(crate::eternal_sideboard_s1g_v1::alpine_timestamp(
+            state, object,
+        ))
 }
 
 /// Harbinger of the Seas and the moons: a nonbasic land's land types become
-/// Island or Mountain. Other subtypes (Dryad Arbor's Dryad) stay.
+/// Island or Mountain. Other subtypes (Dryad Arbor's Dryad) stay. Alpine
+/// Moon (wave S1g) removes the land types of the lands it names, and a
+/// setter with a later timestamp sets one again (613.7).
 pub(crate) fn adjust_subtypes(state: &GameState, object: ObjectId, subtype_ids: &mut Vec<u16>) {
-    let Some((_, land_type, _)) = land_type_setter(state, object) else {
+    let setter = land_type_setter(state, object);
+    let alpine = crate::eternal_sideboard_s1g_v1::alpine_timestamp(state, object);
+    if setter.is_none() && alpine.is_none() {
+        return;
+    }
+    subtype_ids.retain(|&id| LAND_TYPES.iter().all(|land| land.stable_id() != id));
+    let Some((timestamp, land_type, _)) = setter else {
         return;
     };
-    subtype_ids.retain(|&id| LAND_TYPES.iter().all(|land| land.stable_id() != id));
+    if alpine.is_some_and(|moon| moon > timestamp) {
+        return;
+    }
     subtype_ids.push(land_type.stable_id());
     subtype_ids.sort_unstable();
     subtype_ids.dedup();
@@ -136,8 +152,13 @@ pub(crate) fn adjust_subtypes(state: &GameState, object: ObjectId, subtype_ids: 
 
 /// Mana abilities this module grants: a nonbasic land under Harbinger of
 /// the Seas has "{T}: Add {U}." (under a moon, "{T}: Add {R}."); Valgavoth's
-/// Lair has "{T}: Add one mana of the chosen color."
+/// Lair has "{T}: Add one mana of the chosen color." A land Alpine Moon
+/// names (wave S1g) has "{T}: Add one mana of any color.", gained in layer 6
+/// after every land type change, whose mana abilities its removal ends.
 pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<ManaColor> {
+    if crate::eternal_sideboard_s1g_v1::alpine_timestamp(state, object).is_some() {
+        return COLORS.to_vec();
+    }
     if let Some((_, _, color)) = land_type_setter(state, object) {
         return vec![color];
     }

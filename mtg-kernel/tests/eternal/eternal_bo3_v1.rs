@@ -21,7 +21,7 @@ mod leyline;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 75] = [
+const PLAYABLE_75: [(&str, &str); 100] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -61,6 +61,27 @@ const PLAYABLE_75: [(&str, &str); 75] = [
     ("pauper", "pauper-dimir-terror"),
     ("pauper", "pauper-azorius-gates"),
     ("pauper", "pauper-esper-faeries"),
+    ("pauper", "pauper-grixis-affinity"),
+    ("pauper", "pauper-spy-combo"),
+    (
+        "pauper",
+        "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    ),
+    ("pauper", "pauper-jund-wildfire"),
+    ("pauper", "pauper-jeskai-ephemerate"),
+    ("pauper", "pauper-boros-moxite"),
+    ("pauper", "pauper-gruul-ramp"),
+    ("pauper", "pauper-4c-affinity"),
+    ("pauper", "pauper-izzet-terror"),
+    ("pauper", "pauper-boros-synthesizer"),
+    ("pauper", "pauper-grixis-faeries"),
+    ("pauper", "pauper-4c-pestilence"),
+    (
+        "pauper",
+        "pauper-4c-synthesizer-f5246896-123e-417c-9560-63c3c542a0da",
+    ),
+    ("pauper", "pauper-izzet-faeries"),
+    ("pauper", "pauper-4c-ephemerate"),
     ("legacy", "legacy-dimir-tempo"),
     ("legacy", "legacy-izzet-delver"),
     ("legacy", "legacy-doomsday"),
@@ -75,6 +96,16 @@ const PLAYABLE_75: [(&str, &str); 75] = [
     ),
     ("legacy", "legacy-reanimator"),
     ("legacy", "legacy-8-cast"),
+    ("legacy", "legacy-lands"),
+    ("legacy", "legacy-sneak-and-show"),
+    ("legacy", "legacy-sewer-cam-combo"),
+    ("legacy", "legacy-painter"),
+    ("legacy", "legacy-mono-black-midrange"),
+    ("legacy", "legacy-boros-energy"),
+    ("legacy", "legacy-omni-tell"),
+    ("legacy", "legacy-beseech-storm"),
+    ("legacy", "legacy-death-and-taxes-60-card"),
+    ("legacy", "legacy-temur-delver"),
     ("vintage", "vintage-esper-lurrus-control"),
     ("vintage", "vintage-dimir-lurrus-control"),
     ("vintage", "vintage-lurrus-po"),

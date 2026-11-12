@@ -24189,7 +24189,7 @@
   },
   {
    "name": "Vandalblast",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{R}",
    "mana_value": 1,
    "colors": [
@@ -24810,7 +24810,7 @@
   },
     {
    "name": "Electrickery",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{R}",
    "mana_value": 1,
    "colors": [
@@ -26453,7 +26453,7 @@
   },
     {
    "name": "Surgical Extraction",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{B/P}",
    "mana_value": 1,
    "colors": [
@@ -27168,7 +27168,7 @@
   },
     {
    "name": "Extirpate",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{B}",
    "mana_value": 1,
    "colors": [
@@ -28799,6 +28799,127 @@
    ],
    "java_file": "Mage/src/main/java/mage/game/permanent/token/JunkToken.java",
    "is_token": true
+  },
+  {
+   "name": "Damping Sphere",
+   "engine_capability": "full",
+   "mana_cost": "{2}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-lands",
+    "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    "legacy-sewer-cam-combo",
+    "legacy-azorius-tempo-9bd90024-e52f-4284-821d-f037ed910a44",
+    "legacy-painter",
+    "legacy-mono-black-midrange",
+    "legacy-nic-fit",
+    "legacy-azorius-control",
+    "legacy-mono-black-pox"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "mana_replacement",
+    "spell_tax"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DampingSphere.java"
+  },
+  {
+   "name": "Drop of Honey",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-lands"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "upkeep_trigger",
+    "destroy",
+    "state_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DropOfHoney.java"
+  },
+  {
+   "name": "Alpine Moon",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-sneak-and-show"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "name_choice",
+    "type_change",
+    "ability_removal"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AlpineMoon.java"
+  },
+  {
+   "name": "Ghost Vacuum",
+   "engine_capability": "full",
+   "mana_cost": "{1}",
+   "mana_value": 1,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-sneak-and-show",
+    "legacy-loam-pox"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "activated_ability",
+    "graveyard_exile",
+    "reanimation",
+    "type_change"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GhostVacuum.java"
   }
  ]
 }

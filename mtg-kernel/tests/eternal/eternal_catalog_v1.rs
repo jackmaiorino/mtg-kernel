@@ -243,11 +243,9 @@ const SNAPSHOTS: [&str; 2] = [
 ];
 
 /// Executable S1 implementations with known missing reachable branches.
-const PARTIAL_S1: [&str; 13] = [
+const PARTIAL_S1: [&str; 9] = [
     "Circle of Protection: Blue",
     "Coalition Honor Guard",
-    "Electrickery",
-    "Extirpate",
     "Hullbreacher",
     "Lavinia, Azorius Renegade",
     "Leyline of Sanctity",
@@ -255,8 +253,6 @@ const PARTIAL_S1: [&str; 13] = [
     "Martyr of Sands",
     "Meddling Mage",
     "Standard Bearer",
-    "Surgical Extraction",
-    "Vandalblast",
 ];
 
 /// Volrath's Shapeshifter and the S1 cards above are the registry's only
@@ -549,6 +545,27 @@ fn stack_items_controlled(value: &Value, seat: &Value) -> usize {
     }
 }
 
+/// Adds each overloaded spell on the decision's public stack, by its
+/// source's arena id and zone change count. An overload card's overload form
+/// is cast with the Omen method, the paid alternative form of the card.
+fn collect_overloaded_spells(decision: &Value, spells: &mut BTreeSet<(u64, u64)>) {
+    let stack = decision["observation"]["projection"]["stack"].as_array();
+    for item in stack.into_iter().flatten() {
+        let source = &item["source"];
+        let overload = source["card_db_id"].as_u64().is_some_and(|id| {
+            matches!(CARD_DEFS[id as usize].name, "Vandalblast" | "Electrickery")
+        });
+        if let (true, Some("omen"), Some(arena), Some(changes)) = (
+            overload,
+            item["cast_method"].as_str(),
+            source["arena_id"].as_u64(),
+            source["zone_change_count"].as_u64(),
+        ) {
+            spells.insert((arena, changes));
+        }
+    }
+}
+
 /// How a test game picks among legal actions. `Ranked` casts and attacks
 /// but never activates an ability; `Random` reaches activations, so lands,
 /// mana rocks and activated abilities run too.
@@ -575,6 +592,13 @@ pub(crate) struct Game {
     pub(crate) winner: Option<usize>,
     /// Spells cast per seat, by card definition id.
     pub(crate) cast_cards: [BTreeMap<u16, usize>; 2],
+    /// Spell mode choices, by card definition id and chosen mode index.
+    pub(crate) spell_modes: BTreeMap<(u16, u64), usize>,
+    /// Replies carrying the chooser's Surgical Extraction and Extirpate
+    /// search looks.
+    pub(crate) search_looks: [usize; 2],
+    /// Overloaded spells seen on the public stack, each counted once.
+    pub(crate) overloaded_spells: usize,
 }
 
 /// Plays one game to a natural terminal and returns its transcript hash,
@@ -603,6 +627,9 @@ pub(crate) fn play_with_outside(
     let mut action_counts = BTreeMap::new();
     let mut casts_by_seat = [0; 2];
     let mut cast_cards: [BTreeMap<u16, usize>; 2] = Default::default();
+    let mut spell_modes = BTreeMap::new();
+    let mut search_looks = [0; 2];
+    let mut overloaded_spells = BTreeSet::new();
     let mut companion_actions = 0;
     // The last chosen actions, reported if a game fails closed.
     let mut recent: Vec<String> = Vec::new();
@@ -630,6 +657,12 @@ pub(crate) fn play_with_outside(
             reply["response_type"], "error",
             "seed={seed} step={index}: {reply}"
         );
+        for (count, look) in search_looks
+            .iter_mut()
+            .zip(["surgical_search_look_v1", "extirpate_search_look_v1"])
+        {
+            *count += usize::from(!reply[look].is_null());
+        }
         if reply["response_type"] == "terminal" {
             assert_eq!(
                 reply["terminal"]["terminal_code"],
@@ -655,9 +688,13 @@ last actions:
                 companion_actions,
                 winner,
                 cast_cards,
+                spell_modes,
+                search_looks,
+                overloaded_spells: overloaded_spells.len(),
             };
         }
         let decision = &reply["decision"];
+        collect_overloaded_spells(decision, &mut overloaded_spells);
         let actions: Vec<&Value> = decision["legal_actions"]
             .as_array()
             .unwrap()
@@ -740,6 +777,14 @@ last actions:
             casts_by_seat[seat] += 1;
             if let Some(id) = action["semantic"]["source"]["card_db_id"].as_u64() {
                 *cast_cards[seat].entry(id as u16).or_default() += 1;
+            }
+        }
+        if action["semantic"]["action_kind"] == "choose_spell_mode" {
+            if let (Some(source), Some(mode)) = (
+                action["semantic"]["source"]["card_db_id"].as_u64(),
+                action["semantic"]["mode_index"].as_u64(),
+            ) {
+                *spell_modes.entry((source as u16, mode)).or_default() += 1;
             }
         }
         *action_counts
@@ -954,4 +999,81 @@ fn p2a_statics_decks_finish_and_replay_through_public_sessions() {
             assert_eq!(game.transcript_sha256, replay.transcript_sha256);
         }
     }
+}
+
+/// Wave S1h's overload and extraction cards are sideboard cards, which the
+/// best-of-three harness draws too rarely to reach each branch, so a red
+/// deck with both overload cards and a white-black deck with both
+/// extractions play each other through public sessions, both seats with
+/// ranked and with seeded random actions. The games choose an overload form
+/// from the JSONL action list, show overloaded spells on the public stack
+/// and reach both search looks in the replies.
+#[test]
+fn s1h_overload_and_extraction_decks_finish_and_replay_through_public_sessions() {
+    let red = stress_deck(
+        &[("Mountain", 24)],
+        [
+            "Vandalblast",
+            "Electrickery",
+            "Sol Ring",
+            "Skred",
+            "Mogg Fanatic",
+            "Grim Lavamancer",
+            "Galvanic Relay",
+            "Chromatic Star",
+            "Mishra's Bauble",
+        ],
+    );
+    let white_black = stress_deck(
+        &[("Swamp", 12), ("Plains", 12)],
+        [
+            "Surgical Extraction",
+            "Extirpate",
+            "Thraben Inspector",
+            "Kor Skyfisher",
+            "Prophetic Prism",
+            "Tithing Blade",
+            "Swords to Plowshares",
+            "Thoughtseize",
+            "Battle Screech",
+        ],
+    );
+    let overload_cards = ["Vandalblast", "Electrickery"].map(|name| card_id_by_name(name).unwrap());
+    let (mut chosen, mut overloaded, mut looks) = (0, 0, [0; 2]);
+    for (pair, seed) in [
+        ([red.clone(), white_black.clone()], 0x5331_4800_u64),
+        ([white_black, red], 0x5331_4801),
+    ] {
+        for policy in [
+            Policy::Ranked,
+            Policy::Random(seed),
+            Policy::Random(seed + 16),
+            Policy::Random(seed + 32),
+        ] {
+            let game = play(pair.clone(), seed, policy);
+            let replay = play(pair.clone(), seed, policy);
+            assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+            // An overload card's second spell mode is its overload form.
+            chosen += overload_cards
+                .iter()
+                .filter_map(|&card| game.spell_modes.get(&(card, 1)))
+                .sum::<usize>();
+            overloaded += game.overloaded_spells;
+            for (total, count) in looks.iter_mut().zip(game.search_looks) {
+                *total += count;
+            }
+        }
+    }
+    println!(
+        "overload forms chosen: {chosen}, overloaded spells: {overloaded}, search looks: {looks:?}"
+    );
+    assert!(chosen > 0, "no overload form was chosen");
+    assert!(
+        overloaded > 0,
+        "no overloaded spell reached the public stack"
+    );
+    assert!(
+        looks.iter().all(|&count| count > 0),
+        "search looks {looks:?}"
+    );
 }

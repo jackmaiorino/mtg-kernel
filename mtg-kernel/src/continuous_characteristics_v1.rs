@@ -348,6 +348,10 @@ pub(crate) fn base_power_toughness(state: &GameState, id: ObjectId) -> Option<(i
         settings.extend(crate::eternal_sideboard_s1e_v1::base_power_toughness(
             state, id,
         ));
+        // Ghost Vacuum's 1/1 Spirits (wave S1g).
+        settings.extend(crate::eternal_sideboard_s1g_v1::base_power_toughness(
+            state, id,
+        ));
     }
     if object.zone == Zone::Battlefield {
         settings.extend(object.v4.temporary_base_pt_v1);
