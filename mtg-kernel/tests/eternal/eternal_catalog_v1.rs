@@ -243,13 +243,11 @@ const SNAPSHOTS: [&str; 2] = [
 ];
 
 /// Executable S1 implementations with known missing reachable branches.
-const PARTIAL_S1: [&str; 9] = [
+const PARTIAL_S1: [&str; 7] = [
     "Circle of Protection: Blue",
     "Coalition Honor Guard",
     "Hullbreacher",
     "Lavinia, Azorius Renegade",
-    "Leyline of Sanctity",
-    "Leyline of the Void",
     "Martyr of Sands",
     "Meddling Mage",
     "Standard Bearer",
@@ -545,6 +543,29 @@ fn stack_items_controlled(value: &Value, seat: &Value) -> usize {
     }
 }
 
+/// Whether `action` answers an attacker scan step with `include`.
+fn is_attacker_inclusion(action: &Value, include: bool) -> bool {
+    action["semantic"]["action_kind"] == "choose_attacker_inclusion"
+        && action["semantic"]["include"] == include
+}
+
+/// Whether the player `actor` attacks controls an Archon of Absolution on
+/// the public battlefield (wave S1j).
+fn archon_taxes(decision: &Value, actor: &Value) -> bool {
+    let defender = match actor.as_str() {
+        Some("p0") => 1,
+        Some("p1") => 0,
+        _ => return false,
+    };
+    decision["observation"]["projection"]["battlefield"][defender]
+        .as_array()
+        .is_some_and(|cards| {
+            cards
+                .iter()
+                .any(|card| card["card_name"] == "Archon of Absolution")
+        })
+}
+
 /// Adds each overloaded spell on the decision's public stack, by its
 /// source's arena id and zone change count. An overload card's overload form
 /// is cast with the Omen method, the paid alternative form of the card.
@@ -575,7 +596,7 @@ pub(crate) enum Policy {
     Random(u64),
 }
 
-fn splitmix64(state: &mut u64) -> u64 {
+pub(crate) fn splitmix64(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
     let mut z = *state;
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -599,6 +620,13 @@ pub(crate) struct Game {
     pub(crate) search_looks: [usize; 2],
     /// Overloaded spells seen on the public stack, each counted once.
     pub(crate) overloaded_spells: usize,
+    /// Attacker scan answers that include a creature while the defending
+    /// player controls an Archon of Absolution (wave S1j), each part of a
+    /// declaration whose cost is paid.
+    pub(crate) taxed_inclusions: usize,
+    /// Attacker scan steps that offer only to leave the creature out while
+    /// an Archon of Absolution taxes its attack.
+    pub(crate) unpaid_exclusions: usize,
 }
 
 /// Plays one game to a natural terminal and returns its transcript hash,
@@ -630,6 +658,7 @@ pub(crate) fn play_with_outside(
     let mut spell_modes = BTreeMap::new();
     let mut search_looks = [0; 2];
     let mut overloaded_spells = BTreeSet::new();
+    let (mut taxed_inclusions, mut unpaid_exclusions) = (0, 0);
     let mut companion_actions = 0;
     // The last chosen actions, reported if a game fails closed.
     let mut recent: Vec<String> = Vec::new();
@@ -691,6 +720,8 @@ last actions:
                 spell_modes,
                 search_looks,
                 overloaded_spells: overloaded_spells.len(),
+                taxed_inclusions,
+                unpaid_exclusions,
             };
         }
         let decision = &reply["decision"];
@@ -701,6 +732,13 @@ last actions:
             .iter()
             .filter(|action| session_can_follow(action, decision))
             .collect();
+        if let [only] = actions[..] {
+            if is_attacker_inclusion(only, false)
+                && archon_taxes(decision, &only["semantic"]["actor"])
+            {
+                unpaid_exclusions += 1;
+            }
+        }
         // Policy observation v5 fails closed while two stack items target
         // one Ward permanent, so these games avoid targeting a Ward
         // permanent whenever another action is available, and start no new
@@ -765,6 +803,11 @@ last actions:
         };
         if is_companion_action(action) {
             companion_actions += 1;
+        }
+        if is_attacker_inclusion(action, true)
+            && archon_taxes(decision, &action["semantic"]["actor"])
+        {
+            taxed_inclusions += 1;
         }
         recent.push(action["semantic"].to_string());
         if recent.len() > 8 {
@@ -1075,5 +1118,69 @@ fn s1h_overload_and_extraction_decks_finish_and_replay_through_public_sessions()
     assert!(
         looks.iter().all(|&count| count > 0),
         "search looks {looks:?}"
+    );
+}
+
+/// Wave S1j's Archon of Absolution is a sideboard card, which the
+/// best-of-three harness draws too rarely to tax many attacks, so a white
+/// deck and a green-white deck with mana creatures, each with four Archons
+/// in its mainboard, play each other through public sessions, both seats
+/// with ranked and with seeded random actions. Either player's attacks are
+/// taxed once the other has an Archon. The games include attackers whose
+/// cost is paid, and reach attacker scan steps that offer only to leave a
+/// creature out because its attack couldn't be paid for.
+#[test]
+fn s1j_archon_decks_finish_and_replay_through_public_sessions() {
+    let white = stress_deck(
+        &[("Plains", 24)],
+        [
+            "Archon of Absolution",
+            "Thraben Inspector",
+            "Kor Skyfisher",
+            "Thalia, Guardian of Thraben",
+            "Ocelot Pride",
+            "Containment Priest",
+            "Swords to Plowshares",
+            "Battle Screech",
+            "Sol Ring",
+        ],
+    );
+    let green_white = stress_deck(
+        &[("Forest", 14), ("Plains", 10)],
+        [
+            "Archon of Absolution",
+            "Llanowar Elves",
+            "Elvish Mystic",
+            "Quirion Ranger",
+            "Basking Rootwalla",
+            "Wild Mongrel",
+            "Rancor",
+            "Sol Ring",
+            "Mishra's Bauble",
+        ],
+    );
+    let (mut taxed, mut unpaid) = (0, 0);
+    for (pair, seed) in [
+        ([white.clone(), green_white.clone()], 0x5331_4a00_u64),
+        ([green_white, white], 0x5331_4a01),
+    ] {
+        for policy in [
+            Policy::Ranked,
+            Policy::Random(seed),
+            Policy::Random(seed + 16),
+            Policy::Random(seed + 32),
+        ] {
+            let game = play(pair.clone(), seed, policy);
+            let replay = play(pair.clone(), seed, policy);
+            assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+            taxed += game.taxed_inclusions;
+            unpaid += game.unpaid_exclusions;
+        }
+    }
+    println!("taxed inclusions: {taxed}, unpaid exclusions: {unpaid}");
+    assert!(taxed > 0, "no attack was paid for against an Archon");
+    assert!(
+        unpaid > 0,
+        "no attacker scan step left out a creature it couldn't pay for"
     );
 }

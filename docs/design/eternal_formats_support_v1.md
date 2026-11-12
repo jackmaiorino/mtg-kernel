@@ -1217,6 +1217,106 @@ consumers of every event kind, now runs with its sample in the workspace library
 and hosted Windows. It stays Partial for now: the one list that needs it, White Aggro, also needs
 Standard Bearer, whose broader targeting coverage is pending.
 
+### S1i: Leyline qualification
+
+After S1h the largest Legacy gap is Leyline of the Void, the only gap of five Legacy lists
+(Eldrazi 5.0%, Death and Taxes Yorion black-white 4.0%, Hogaak Moonshadow 1.8%, Mardu Energy
+0.9%, Saga Storm 0.6%) and of Vintage Blue Tempo (1.8%). S1i qualifies it and Leyline of
+Sanctity, which shares its native opening path, and marks both Full; their rules are unchanged.
+The Legacy full 75 share goes from 56.1% to 68.4% and the Vintage share from 79.1% to 80.9%.
+The six lists join `PLAYABLE_75`, and seven Partial S1 definitions remain. Leyline of the Void
+also sits in Mystic Forge Combo (with Extinguisher Battleship), Vintage Mono-White Initiative
+(12.2%, with Archon of Absolution), Scam (with Apostle's Blessing) and RUG Control (with
+Hullbreacher), and Leyline of Sanctity in LED Dredge (with Kiora's Dismissal).
+
+What S1a and S1b left pending, and what covers it now:
+
+- Fixtures: the native opening fixtures in `tests/eternal/eternal_opening_v1.rs` and
+  `tests/eternal/eternal_bo3_v1/eternal_bo3_leyline_v1.rs` (the Leyline and Chancellor order
+  with restores and the first spell in both seats, kept cards only and a tampered owner
+  refused, no nonactor menu, the snapshot Void 75 boarded into a native game two and replayed
+  to its terminal, Sanctity's first-spell player targets in both seats) and the best-of-three
+  module's real London keeps run in the Eternal group. They passed on Linux in each pull
+  request run and on hosted Windows in the Eternal jobs dispatched at #635's, #640's and
+  #644's heads, which take the place of the native packet for these pull requests, as in S1h.
+- Event sample: row 322 of `data/event_history_v1/every_kind_samples.json`, `EternalOpeningV1`,
+  is a genuine native sample, and the every-kind event-history checks run with it in the
+  workspace library group on Linux and hosted Windows.
+- Consumers: a Leyline deck registers with the native opening profile, and the JSONL
+  custom-deck session keeps refusing it (the registration rule above), so its consumers are the
+  registered best-of-three match through `start_game_with_native_opening_v1` and the census.
+  The best-of-three harness registers both decks of a match natively when either 75 needs the
+  profile and plays those games in process with the same seeded random policy. London
+  mulligans and every later decision take a random action among the policy surface's legal
+  actions (`PolicySurfaceV5` and `policy_legal_action_candidates_v5`, the menu the JSONL
+  session offers), and a random seat starts no new spell or ability while it controls two
+  stack items. Each kept-hand choice takes a random legal opening card or finishes, and a
+  trigger order too large for the action list takes the listed order. The session games'
+  Ward filters exist for policy observation v5, which these games don't build. Each game is
+  played twice and must reach the same natural terminal with the same action transcript and
+  state hash, and sided-in casts are counted as in the session games.
+- Opening window: sideboard Leylines reach an opening hand too rarely to exercise it, so, as in
+  S1h, two Legacy decks with four of each Leyline in their mainboards play native games in both
+  seats with seeded random actions, and the test requires each Leyline to be put onto the
+  battlefield from an opening hand.
+
+### S1j: Archon of Absolution
+
+After S1i, Archon of Absolution is the only gap of Vintage Mono-White Initiative (12.2% of the
+field), the largest single-card gain left in the three formats. S1j adds it as a Full card. The
+Vintage full 75 share goes from 80.9% to 93.1%, and the list joins `PLAYABLE_75`. Its sideboard
+Leyline of the Void makes its best-of-three matches native (S1i).
+
+S1j is built in `src/eternal_sideboard_s1j_v1.rs` and `build_eternal_s1j_v1.rs`, the new tail of
+the recipe chains after S1g's. Behavior follows the card's current Oracle text and rulings,
+checked against its XMage source (`CantAttackYouUnlessPayAllEffect` with {1} for the player and
+the planeswalkers they control):
+
+- Archon of Absolution, {3}{W}, Creature - Archon 3/2: "Flying. Protection from white.
+  Creatures can't attack you or planeswalkers you control unless their controller pays {1} for
+  each of those creatures."
+  - Flying is the printed keyword. Protection from white joins wave P1a's printed protection
+    table, which wave E6b's checks apply to targeting, blocking, damage and attachments.
+  - The last ability is a cost to attack (508.1g). In a two-player game every attacking
+    creature attacks the defending player or a planeswalker they control, so a declaration
+    costs {1} for each attacking creature and each Archon the defending player controls whose
+    abilities apply. The active player's own Archons cost them nothing. A Phyrexian Metamorph
+    copying an Archon taxes too, since a copy takes the copied definition.
+  - Legality: 508.1f taps the attacking creatures before the cost is paid (508.1h and 508.1i),
+    so a declaration is legal only if its cost can be paid with its attackers without
+    vigilance tapped. An attacking mana creature can't pay its own tax, and a vigilant one can.
+    `validate_declare_attackers` checks this with the effect-mana check (`can_pay_effect_mana`)
+    on a copy of the state with those attackers tapped, so no payment is ever partial.
+  - Every consumer offers only declarations that check accepts. The harness surface's attack
+    menus are the subsets it accepts. The policy surface's attacker scan, which the JSONL
+    session and the native best-of-three games use, offers an inclusion answer only if some
+    completion of the declaration passes it, probing the smallest and the largest completion.
+    A larger declaration costs more and leaves less mana, so under a cost the smallest
+    completion is legal whenever any is, and the probe stays exact. The scan's exactness note
+    names this shape, and a test checks the offered answers against every completion.
+  - Requirements: a player is never required to pay a cost to attack (508.1d), and the card's
+    2019-10-04 ruling lets a creature that attacks "if able" stay home. While the defending
+    player controls an Archon whose abilities apply every attack has a cost, so goad and
+    "attacks each combat if able" require nothing: `required_goaded_attackers` and
+    `required_attackers` name no creature, for the declaration check and the flat action
+    filter alike.
+  - Payment: once the declaration commits and its attackers are tapped, the cost is paid with
+    the effect-mana payment (`pay_effect_mana`, the ordinary mana plan with Treasures, as
+    Overencumbered's {N}), before attack triggers are collected. It is deterministic, like the
+    other automatic payments, and public through its mana events.
+- Consumers: a sideboard Archon rarely reaches the battlefield, so, as in S1h, a white deck
+  and a green-white deck with mana creatures, each with four Archons in its mainboard, play
+  each other through public sessions, in both seats with ranked and seeded random actions,
+  checking natural terminals and replay. The test requires an attack declared and paid for
+  against an Archon, and an attacker scan step that offers only to leave a creature out
+  because its player couldn't pay for it.
+  - Design note after the first run: with Archons only in the white deck, the eight games
+    had no taxed attack and two steps that offered only to leave a creature out. The green
+    deck's creatures were dead by the time an Archon arrived, and a random seat often taps its
+    lands for mana that empties before combat. With Archons in both decks, either player's
+    attacks are taxed once the other has one, and a ranked seat, which taps lands only to cast
+    spells, pays for attackers with the mana it has left.
+
 ## Execution
 
 Family workers implement bounded card groups in their own worktrees; one integrator owns

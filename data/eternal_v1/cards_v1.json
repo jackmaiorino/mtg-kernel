@@ -26149,7 +26149,7 @@
   },
     {
    "name": "Leyline of the Void",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{2}{B}{B}",
    "mana_value": 4,
    "colors": [
@@ -27230,7 +27230,7 @@
   },
     {
    "name": "Leyline of Sanctity",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{2}{W}{W}",
    "mana_value": 4,
    "colors": [
@@ -28920,6 +28920,38 @@
     "type_change"
    ],
    "java_file": "Mage.Sets/src/mage/cards/g/GhostVacuum.java"
+  },
+  {
+   "name": "Archon of Absolution",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Archon"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-mono-white-initiative",
+    "vintage-oops-all-spells"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "flying",
+    "protection",
+    "attack_tax"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/ArchonOfAbsolution.java"
   }
  ]
 }

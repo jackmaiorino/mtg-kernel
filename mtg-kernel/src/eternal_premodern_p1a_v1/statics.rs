@@ -51,6 +51,8 @@ pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
         Some(MYSTIC_ENFORCER) => ManaColor::B,
         // Tourach, Dread Cantor: "Protection from white" (wave S1b).
         Some("Tourach, Dread Cantor") => ManaColor::W,
+        // Archon of Absolution: "Protection from white" (wave S1j).
+        Some(crate::eternal_sideboard_s1j_v1::ARCHON_OF_ABSOLUTION) => ManaColor::W,
         _ => return 0,
     };
     let name = definition_name(state, host).unwrap_or_default();
