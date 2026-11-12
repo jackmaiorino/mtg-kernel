@@ -312,18 +312,27 @@ const HONEY_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
     honey_upkeep,
 )];
 
-/// Triggered abilities of this module's cards.
-pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
+/// The printed triggers of this module's cards.
+fn own_triggers(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         DROP_OF_HONEY => &HONEY_TRIGGERS,
         _ => &[],
     }
 }
 
+/// Triggered abilities of this module's cards, then of wave S1l's, the
+/// tail of the trigger tables.
+pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
+    match own_triggers(name) {
+        [] => crate::eternal_sideboard_s1l_v1::triggers_for(name),
+        own => own,
+    }
+}
+
 /// Target specs of this module's triggered abilities: none of them
 /// targets (its 2021-03-19 ruling).
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
-    let printed = triggers_for(name)
+    let printed = own_triggers(name)
         .iter()
         .any(|trigger| (trigger.effect)() == *effect);
     (printed || delayed_effect_matches(name, effect)).then_some(TargetSpec::None)

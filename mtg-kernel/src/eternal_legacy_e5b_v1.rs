@@ -922,7 +922,9 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         AJANI => *op == E5bOpV1::AjaniDamageV1,
         GUIDE_OF_SOULS => *op == E5bOpV1::GuideAngelV1,
         REALITY_SMASHER => matches!(op, E5bOpV1::SmasherV1 { .. }),
-        TERMINUS => *op == E5bOpV1::MiracleV1,
+        TERMINUS | crate::eternal_sideboard_s1l_v1::TRIUMPH_OF_SAINT_KATHERINE => {
+            *op == E5bOpV1::MiracleV1
+        }
         PHELIA => matches!(op, E5bOpV1::PheliaReturnV1 { .. }),
         VOICE_OF_VICTORY => matches!(op, E5bOpV1::SacrificeMobilizedV1 { .. }),
         SAND_SCOUT => *op == E5bOpV1::CreateSandWarriorV1,
@@ -1367,9 +1369,17 @@ pub(crate) fn begin_turn(state: &mut GameState, _active: PlayerId) {
 
 // ---- Hooks: miracle reveal ----------------------------------------------------------
 
-/// A card's miracle cost (702.94), if it has one: Terminus, Miracle {W}.
-fn miracle_cost(state: &GameState, card: ObjectId) -> Option<&'static [ManaColor]> {
-    (definition_name(state, card)? == TERMINUS).then_some(&[ManaColor::W][..])
+/// A card's miracle cost (702.94), if it has one, as its colored pips and
+/// generic amount: Terminus, Miracle {W}, and wave S1l's Triumph of Saint
+/// Katherine, Miracle {1}{W}.
+fn miracle_cost(state: &GameState, card: ObjectId) -> Option<(&'static [ManaColor], u8)> {
+    match definition_name(state, card)? {
+        TERMINUS => Some((&[ManaColor::W][..], 0)),
+        crate::eternal_sideboard_s1l_v1::TRIUMPH_OF_SAINT_KATHERINE => {
+            Some((&[ManaColor::W][..], 1))
+        }
+        _ => None,
+    }
 }
 
 /// The first live miracle offer, dropping offers whose card left its hand.
@@ -2094,10 +2104,10 @@ pub(crate) fn drive(
             let Some(card) = miracle_card(&continuation.ctx, state) else {
                 return Ok(false);
             };
-            let Some(cost) = miracle_cost(state, card.object) else {
+            let Some((colored, generic)) = miracle_cost(state, card.object) else {
                 return Ok(false);
             };
-            if crate::engine::can_pay_effect_mana(controller, cost, 0, state)
+            if crate::engine::can_pay_effect_mana(controller, colored, generic, state)
                 && crate::engine::resolution_cast_v1::can_cast_exiled_without_mana(
                     state, controller, card, None,
                 )
@@ -2114,13 +2124,26 @@ pub(crate) fn drive(
             let Some(card) = miracle_card(&continuation.ctx, state) else {
                 return Ok(false);
             };
-            let Some(cost) = miracle_cost(state, card.object) else {
+            let Some((colored, generic)) = miracle_cost(state, card.object) else {
                 return Ok(false);
             };
-            if !crate::engine::pay_effect_mana(controller, cost, 0, state) {
+            if !crate::engine::pay_effect_mana(controller, colored, generic, state) {
                 return Ok(false);
             }
-            Ok(offer_paid_cast(state, continuation, card, path))
+            let offered = offer_paid_cast(state, continuation, card, path);
+            if offered {
+                // The miracle cost is the mana spent to cast the card
+                // (601.2f), which Lavinia, Azorius Renegade reads.
+                crate::eternal_sideboard_s1a_v1::statics::note_miracle_paid(
+                    state,
+                    ObjectLinkV4 {
+                        object: card.object,
+                        zone_change_count: card.expected_zone_change_count,
+                    },
+                    controller,
+                );
+            }
+            Ok(offered)
         }
         E5bOpV1::AmpedRaptorV1 => {
             crate::effect::execute(

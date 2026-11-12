@@ -517,6 +517,9 @@ pub enum EternalOpV1 {
     /// A leaf owned by Legacy sideboard wave S1g's module. Appended to
     /// preserve existing stack and continuation hash discriminants.
     S1gV1(crate::eternal_sideboard_s1g_v1::S1gOpV1),
+    /// A leaf owned by Legacy sideboard wave S1l's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    S1lV1(crate::eternal_sideboard_s1l_v1::S1lOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -932,6 +935,10 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     if let Some(spec) = crate::eternal_sideboard_s1g_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }
+    // Legacy sideboard wave S1l's printed trigger.
+    if let Some(spec) = crate::eternal_sideboard_s1l_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     // Premodern sideboard wave P3a's queued triggers.
     if let Some(spec) = crate::eternal_premodern_p3a_v1::trigger_target_spec(name, effect) {
         return Some(spec);
@@ -1175,6 +1182,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::S1eV1(op) => crate::eternal_sideboard_s1e_v1::execute(op, ctx, state),
         EternalOpV1::S1fV1(op) => crate::eternal_sideboard_s1f_v1::execute(op, ctx, state),
         EternalOpV1::S1gV1(op) => crate::eternal_sideboard_s1g_v1::execute(op, ctx, state),
+        EternalOpV1::S1lV1(op) => crate::eternal_sideboard_s1l_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];

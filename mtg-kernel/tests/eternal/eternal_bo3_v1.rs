@@ -23,7 +23,7 @@ mod native;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 111] = [
+const PLAYABLE_75: [(&str, &str); 117] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -120,6 +120,18 @@ const PLAYABLE_75: [(&str, &str); 111] = [
         "legacy",
         "legacy-saga-storm-8f40fd61-e011-4e94-8cd2-4e63013604ce",
     ),
+    ("legacy", "legacy-beanstalk-control-non-yorion"),
+    (
+        "legacy",
+        "legacy-azorius-tempo-9bd90024-e52f-4284-821d-f037ed910a44",
+    ),
+    (
+        "legacy",
+        "legacy-jeskai-tempo-7f301e99-6af3-4ead-a85a-5ebb92d56c0f",
+    ),
+    ("legacy", "legacy-cephalid-breakfast"),
+    ("legacy", "legacy-azorius-tempo"),
+    ("legacy", "legacy-azorius-control"),
     ("vintage", "vintage-esper-lurrus-control"),
     ("vintage", "vintage-dimir-lurrus-control"),
     ("vintage", "vintage-lurrus-po"),

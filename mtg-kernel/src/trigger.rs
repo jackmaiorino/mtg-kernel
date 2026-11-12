@@ -6077,6 +6077,17 @@ fn triggers_from_events(
                         if def.intervening_if_kicked && !kicked {
                             continue;
                         }
+                        // Triumph of Saint Katherine (eternal wave S1l): "put
+                        // into your graveyard" -- a card goes to its owner's
+                        // graveyard, so its owner controlled it as it left.
+                        if event_controller != obj.owner
+                            && crate::eternal_sideboard_s1l_v1::requires_owner_controller(
+                                card.name,
+                                &(def.effect)(),
+                            )
+                        {
+                            continue;
+                        }
                         if crate::eternal_premodern_p2b_v1::is_thornscape(card)
                             && !crate::eternal_premodern_p2b_v1::thornscape_etb_is_enabled(
                                 state.engine.battlemage_entry_v1,
