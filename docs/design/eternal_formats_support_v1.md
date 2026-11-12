@@ -1318,6 +1318,62 @@ the planeswalkers they control):
     attacks are taxed once the other has one, and a ranked seat, which taps lands only to cast
     spells, pays for attackers with the mana it has left.
 
+### S1k: Meddling Mage qualification
+
+After P3g, Meddling Mage is the only gap of Premodern Grow (2% of the field) and sits in the
+sideboards of Replenish (6%, with Alter Reality), Other Control (1%, with Decree of Pain and
+Overgrown Estate) and Legacy Azorius Control (0.3%, with Lavinia, Azorius Renegade). S1k
+qualifies it and marks it Full; its rules are unchanged. The Premodern full 75 share goes from
+78% to 80%, Grow joins `PLAYABLE_75`, and five Partial S1 definitions remain.
+
+What S1b left pending, and what covers it now:
+
+- Fixtures: the Mage fixtures in `tests/eternal/eternal_sideboard_s1b_v1.rs` (names in both
+  seats, cascade's and Bilbo's resolution casts, split halves, Room doors and Adventure names,
+  a Mage put onto the battlefield by Reanimate or Aether Vial, paid, reanimated, Aether Vial
+  and Show and Tell Metamorph copies, Exhume's simultaneous names in APNAP order, a token copy,
+  Dress Down and Containment Priest) run in the Eternal group. They pass on Linux in each pull
+  request run and on hosted Windows in the Eternal jobs dispatched at each wave's head, most
+  recently #660's `b11740d0`, which take the place of the native packet, as in S1h.
+- Event sample: row 321 of `data/event_history_v1/every_kind_samples.json`,
+  `MeddlingMageEntryV1`, is a genuine native sample, and the every-kind event-history checks
+  run with it in the workspace library group on Linux and hosted Windows.
+- Consumers: the custom-deck session stopped the card's games. Policy observation v5 refused
+  every state with a pending Mage entry, a recorded Mage name or a Mage entry in the event
+  history ("Meddling Mage named entry requires its consumer successor"), and the policy
+  surface's legal actions refused the name menu. S1k adds that successor to Limited schema 5,
+  the [public shroud contract](limited_public_shroud_v1.md) the Eternal custom-deck session
+  plays under:
+  - Actions: each option of the name menu, its first-letter groups and then the names in the
+    chosen group, is a `choose_meddling_mage_name_v1` action with its actor, entry ordinal,
+    group, option index and count, and the option's text (the letter or the printed name). It
+    answers the decision with `ChooseEffectOption`. The menu is the engine's: every nonland
+    name in the executable registry, with split halves, Room doors, Adventure and Omen spells
+    and nonland back faces, so it shows no hidden card. The native best-of-three games of S1i
+    take the same actions.
+  - Observation: schema 5's policy observation lists, in `projection.meddling_mage_names`,
+    each battlefield Meddling Mage whose chosen name applies (the names that stop casts), with
+    its public card reference and the name, seat 0's battlefield first in public battlefield
+    order. The list is absent when no name applies, so other observations keep their bytes and
+    hashes. A pending entry's saved world and answers stay private: the observation never
+    reads them, and a name appears once its Mage has entered. So a later chooser in a
+    simultaneous batch (Exhume's two Mages) doesn't see the earlier name, a known gap of the
+    observation rather than of the rules. A pending native Metamorph copy menu (Reanimate's,
+    Aether Vial's or a physical Show and Tell's) shares the Mage's pre-entry checkpoint and is
+    still refused: it is Phyrexian Metamorph's path, and no consumer represents it yet.
+  - Every other consumer of these games still refuses them, as for shroud: schema 4 and the
+    earlier observation versions, the flat policy encoders and action slices, the infoset
+    export and the Spellbench bridge.
+- Games: sideboard Mages are cast too rarely to reach the menu often, so, as in S1h, a
+  white-blue deck with four Mages in its mainboard and a black-red deck of instants and
+  creatures play each other through public sessions, in both seats with ranked and seeded
+  random actions, checking natural terminals and replay. A ranked seat names the first nonland
+  card of its opponent's list that the menu offers (its letter, then its name), and a random
+  seat takes a random option. The test requires names chosen from the action list and a
+  decision whose observation lists a name while the acting player holds that card and is
+  offered no cast of it. Every session game checks that no cast is offered of a card with a
+  single spell name that an observed Mage chose.
+
 ## Execution
 
 Family workers implement bounded card groups in their own worktrees; one integrator owns

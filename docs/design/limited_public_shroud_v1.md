@@ -23,6 +23,13 @@ Schema 4 never represented a player's shroud either. Its refusal now covers a pl
 shroud (Solitary Confinement, True Believer) as well as a permanent's, so a schema 4
 consumer never receives a state it cannot describe.
 
+Meddling Mage (Eternal wave S1k) uses the same contract. Schema 5 offers its as-enters name
+menu as `choose_meddling_mage_name_v1` actions (the first-letter groups, then the names in the
+chosen group), and each policy observation of a game where a Mage's chosen name applies has
+`projection.meddling_mage_names`: each such battlefield Mage (seat 0's battlefield first, in
+public battlefield order) with the name it chose. The field is absent otherwise. Every other
+consumer still refuses a game once a Mage has entered or is choosing its name.
+
 Verification: `tests/eternal/eternal_public_shroud_v1.rs` plays Argothian Enchantress,
 Solitary Confinement and True Believer games through both schemas (schema 5 reports the
 shroud, schema 4 halts at the same step with its historical bytes), and the eternal
