@@ -1891,12 +1891,16 @@ pub(crate) fn trinisphere_increase(state: &GameState, pips: usize, generic: u32)
     3_u32.saturating_sub(total)
 }
 
-/// Archon of Emeria: "Each player can't cast more than one spell each turn."
+/// Archon of Emeria and Arcane Laboratory (Premodern wave P3g): "Each
+/// player can't cast more than one spell each turn."
 pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId) -> bool {
     (state.players[player.index()].spells_cast_this_turn >= 1
-        && active_permanents(state, ARCHON_OF_EMERIA, None)
-            .next()
-            .is_some())
+        && [
+            ARCHON_OF_EMERIA,
+            crate::eternal_premodern_p3g_v1::ARCANE_LABORATORY,
+        ]
+        .into_iter()
+        .any(|name| active_permanents(state, name, None).next().is_some()))
         || crate::eternal_legacy_e5b_v1::cast_prohibited(state, player)
         || crate::eternal_legacy_e9a_v1::statics::cast_prohibited(state, player)
 }

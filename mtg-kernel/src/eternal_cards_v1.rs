@@ -2109,6 +2109,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_sideboard_s1e_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1f_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1g_v1::begin_turn(state, player);
+    crate::eternal_sideboard_s1d_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks

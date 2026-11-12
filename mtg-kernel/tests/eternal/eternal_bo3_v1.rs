@@ -23,7 +23,7 @@ mod native;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 107] = [
+const PLAYABLE_75: [(&str, &str); 110] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -84,6 +84,7 @@ const PLAYABLE_75: [(&str, &str); 107] = [
     ),
     ("pauper", "pauper-izzet-faeries"),
     ("pauper", "pauper-4c-ephemerate"),
+    ("pauper", "tron-c244ab01-c9e3-400d-8db1-6d717616b7e2"),
     ("legacy", "legacy-dimir-tempo"),
     ("legacy", "legacy-izzet-delver"),
     ("legacy", "legacy-doomsday"),
@@ -164,6 +165,8 @@ const PLAYABLE_75: [(&str, &str); 107] = [
     ("premodern", "premodern-enchantress"),
     ("premodern", "premodern-madness-threshold"),
     ("premodern", "premodern-mono-black-control"),
+    ("premodern", "premodern-landstill-uw-control"),
+    ("premodern", "premodern-bw-control"),
 ];
 
 fn id(name: &str) -> u16 {

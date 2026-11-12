@@ -3082,7 +3082,7 @@ fn apply_replacements_inner(
         if !damage_cannot_be_prevented && crate::crystal_barricade_v1::prevents(state, damage) {
             return None;
         }
-        // Circle of Protection: Blue (wave S1d).
+        // Circles of Protection (waves S1d and P3g).
         #[cfg(feature = "eternal-fixtures")]
         if !damage_cannot_be_prevented
             && crate::eternal_sideboard_s1d_v1::statics::consume_circle_shield(state, damage)
@@ -6003,6 +6003,12 @@ fn materialize_event_v1(
                         controller_before,
                     );
                 }
+                // Circles of Protection (wave P3g) read a departing source's
+                // color before it moves.
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_sideboard_s1d_v1::statics::note_departure(
+                    state, z.object, from, z.to_zone,
+                );
                 crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
                 if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
                     crate::engine::record_different_controller_target_departure(state, z.object);

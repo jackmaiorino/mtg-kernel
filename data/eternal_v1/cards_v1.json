@@ -24261,7 +24261,7 @@
   },
     {
    "name": "Circle of Protection: Blue",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{1}{W}",
    "mana_value": 2,
    "colors": [
@@ -28952,6 +28952,117 @@
     "attack_tax"
    ],
    "java_file": "Mage.Sets/src/mage/cards/a/ArchonOfAbsolution.java"
+  },
+  {
+   "name": "Akroma's Vengeance",
+   "engine_capability": "full",
+   "mana_cost": "{4}{W}{W}",
+   "mana_value": 6,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-landstill-uw-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "board_wipe",
+    "cycling"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AkromasVengeance.java"
+  },
+  {
+   "name": "Arcane Laboratory",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-landstill-uw-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "cast_limit"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/ArcaneLaboratory.java"
+  },
+  {
+   "name": "Circle of Protection: Red",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-landstill-uw-control",
+    "premodern-bw-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "damage_prevention",
+    "source_choice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CircleOfProtectionRed.java"
+  },
+  {
+   "name": "Infest",
+   "engine_capability": "full",
+   "mana_cost": "{1}{B}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-bw-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "mass_pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/Infest.java"
   }
  ]
 }

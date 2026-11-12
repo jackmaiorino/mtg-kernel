@@ -732,6 +732,7 @@ New, each built once in the first wave that needs it:
   entry records the exact permanent that a chosen physical cast becomes, bound
   to its published cast identity and first committed departure; later blinks do
   not retarget its shield. Virtual permanent spell copies still need this binding.
+  Wave P3g records departed sources' last-known color and marks the card Full (see P3g).
   The choice menu includes blue permanents, stack spells, face-up command
   objects and supported public references from stack items and waiting effects.
   Flickerwisp and Yorion's unchanged face-up exile links remain eligible
@@ -1357,6 +1358,7 @@ reporting as E1 to E9:
 | P3d | Sideboard of Enchantress (Abeyance, Karmic Justice, Sacred Ground) | 3 | Premodern full 75 58% to 66% |
 | P3e | Sideboard of Madness Threshold (Absolute Law, Kor Haven, Winter Orb) | 3 | Premodern full 75 66% to 68% |
 | P3f | Sideboard of Mono-Black Control (Contagion, Lurking Skirge, Phyrexian Processor) | 3 | Premodern full 75 68% to 70% |
+| P3g | Sideboards of Landstill and BW Control (Akroma's Vengeance, Arcane Laboratory, Circle of Protection: Red, Infest), and Circle of Protection: Blue's Full contract | 4 | Premodern full 75 70% to 78%; Pauper 85.1% to 91.0% |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -1970,3 +1972,80 @@ Known gaps (P3f): a Lurking Skirge that leaves the battlefield with the creature
 no trigger; it would resolve with no effect. Cards outside the eternal decks that count every
 counter kind (Innkeeper's Talent, Warden of the Inner Sky) read only the core counters, as for
 Dystopia's age counters.
+
+### P3g: Circles of Protection
+
+After P3f the census lists 8 missing sideboard cards among the playable Premodern lists. P3g adds
+the four that complete Landstill (6% of the field) and BW Control (2%): Akroma's Vengeance,
+Arcane Laboratory, Circle of Protection: Red and Infest. Circle of Protection: Red is wave S1d's
+Circle of Protection: Blue with red, and Blue's Partial gap is Red's too, so P3g closes it for
+both and marks Circle of Protection: Blue Full. Blue is the only gap of Pauper Tron (5.9% of the
+Pauper field). The Premodern full 75 share goes from 70% to 78% and the Pauper share from 85.1%
+to 91.0%. Landstill, BW Control and Pauper Tron join `PLAYABLE_75`, and four Premodern sideboard
+cards stay missing: Meddling Mage, Alter Reality, Decree of Pain and Overgrown Estate.
+
+P3g is built in `src/eternal_premodern_p3g_v1.rs` and `build_eternal_p3g_v1.rs`, the new tail
+of the recipe chains after S1j's. The Circle changes live in S1d's module. Behavior follows each
+card's current Oracle text, checked against its XMage source, and rules 113.7a, 400.7b, 609.7
+and 616.1:
+
+- Circle of Protection: Red, {1}{W}, Enchantment: "{1}: The next time a red source of your
+  choice would deal damage to you this turn, prevent that damage." S1d's source menu, shield and
+  damage-time color check (609.7b) take the color as a parameter. Blue keeps its serialized
+  leaves and shields. Red's leaves carry their color, and a shield records its color only when
+  it isn't blue, so existing states keep their hashes.
+- Departed sources, for both Circles. A player may choose an object an ability on the stack
+  refers to even after it has left its zone (609.7a), and an ability whose source has left uses
+  the source's last-known information (113.7a). S1d offers such a source only with an
+  authenticated capture (Mogg Fanatic's and Goblin Bombardment's paid sacrifices, a waiting
+  Minsc), and the shield compares damage with the live object. So a Seal of Fire or Siege-Gang
+  Commander sacrificed to its own ability, a channeled Twinshot Sniper, or a Grim Lavamancer
+  killed in response can't be chosen while its ability waits, and its damage, dealt from its new
+  incarnation, escapes a shield chosen while it was on the battlefield. P3g closes this:
+  - Record: while a Circle of Protection is on the battlefield or a shield exists, a permanent
+    that leaves the battlefield, and a card that leaves a hand for a graveyard or exile, records
+    its incarnation and color as they are just before the move, in S1d's state, if it is blue or
+    red, since no Circle can choose a source of neither color. The records are dropped as each
+    turn begins, when no ability can still wait on one and every shield has expired, and an
+    empty list adds nothing to a state's JSON or hash.
+  - Menu: the source of an activated or triggered ability on the stack whose source has left
+    the battlefield or hand its contract names is offered, by that incarnation, when a record
+    gives it the Circle's color and its card is now in a public zone (a graveyard, exile face up,
+    the battlefield, the stack or the command zone).
+  - Prevention: wave P3d's runtime scope of the resolving spell or ability, never serialized or
+    hashed, now also keeps the resolving ability's source contract. While it resolves, damage
+    from that source after the source has left is damage from the contract's incarnation, with
+    the recorded color, so a shield chosen before or after the source left prevents it.
+  - The authenticated captures of Mogg Fanatic, Goblin Bombardment and Minsc take precedence.
+  - Not offered, with no effect on what can be prevented: other objects that stack objects or
+    waiting effects refer to beyond S1d's list, cards in hands and libraries, and a departed
+    source whose card went to a hand or library. Such an object can deal damage this turn only
+    as a new object, after it is cast or enters the battlefield (400.7), which no shield
+    follows, or as the source of its own ability, which the menu offers. A shield chosen while a
+    bounced source was on the battlefield still prevents its waiting ability's damage. No
+    registry card copies a permanent spell (S1h's copy audit), so the 400.7b binding needs only
+    cast spells.
+- Arcane Laboratory, {2}{U}, Enchantment: "Each player can't cast more than one spell each
+  turn." It joins Archon of Emeria's limit (`eternal_vintage_v1::cast_prohibited`): a player who
+  has cast a spell this turn, before the Laboratory entered or not, can't cast another while one
+  applies. Copies aren't cast, so they don't count. The limit gates casts from priority (every
+  cast method, flashback included) and madness offers. No Premodern card casts a spell while
+  another resolves, so that route, which Archon's limit doesn't gate, isn't reachable from a
+  Laboratory.
+- Infest, {1}{B}{B}, Sorcery: "All creatures get -2/-2 until end of turn." Drown in Sorrow's
+  boost without its scry.
+- Akroma's Vengeance, {4}{W}{W}, Sorcery: "Destroy all artifacts, creatures, and enchantments.
+  Cycling {3}". Its destruction is Nevinyrral's Disk's (wave P2a): one simultaneous destruction
+  of every artifact, creature and enchantment on the battlefield, to which regeneration shields
+  apply and which indestructible permanents survive. Cycling is wave E6a's cycling ability.
+- Consumers: a sideboard Circle rarely reaches the battlefield with a red source to choose, so,
+  as in S1j, a white deck with Circles of Protection: Red in its mainboard and a red deck with
+  Seal of Fire play each other through public sessions, in both seats with ranked and seeded
+  random actions, checking natural terminals and replay, and the test requires a Circle shield
+  chosen through the public action list.
+
+Known gaps (P3g): a Circle that arrives while a departed source's ability waits, with no Circle
+or shield present when that source left, can't choose it; only an enchantment put onto the
+battlefield during that window (Academy Rector's dies trigger) could. When two shields would
+prevent the same damage, the protected player doesn't choose which is used up (616.1); that
+matters only if the source's colors change later in the turn.
