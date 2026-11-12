@@ -1,6 +1,32 @@
 # Partial Foundations consumer inventory
 
-## Current candidate, 2026-11-09
+## Current state, 2026-11-12
+
+#586 merged the FullPool owner into main at `ed818ce85`. Under
+`-session full-pool` all 36 original Partial printings have the full consumer
+stack, so they count as Full in that session, and #550's consumer criterion is
+met. The card registry still records 250 Full / 36 Partial / 0 Missing: older
+sessions keep refusing the 36, and the card database hash is unchanged.
+
+At #586's head `6adee6579`, hosted CI passed the two all-286 consumer cases in
+`limited_full_pool_consumer_v1::tests`.
+`frozen_286_declared_reset_all_appendices_and_distinct_sealed_profile_both_seats`
+resets a deck of all 286 printings for both seats and checks the numeric model,
+the Human projection, the JSONL wire and snapshot restore at the first
+decision.
+`every_frozen_printing_reaches_the_full_pool_sealed_learner_for_each_seat`, the
+case that stopped on Dwynen in the `1eee5416` run below, puts every printing in
+the acting player's hand at a main-phase decision and requires the observation
+to keep it and the sealed learner to score the menu. The same CI passed the
+286-root fair-search check and the other FullPool consumer and Return-profile
+cases. The bounded `-session full-pool` training and fixed-opponent evaluation
+passed on cloud Linux with byte-identical results at one and two workers and on
+resume. The PR records the evidence. Drake Hatcher's per-step cost remains
+#550's separate criterion, tracked in #627.
+
+The sections below are the record before the merge.
+
+## Candidate before the merge, 2026-11-09
 
 The separate FullPool owner composes the 36 original Partial printings and the
 ordinary Foundations pool. The prior Mixed profile still admits its original
