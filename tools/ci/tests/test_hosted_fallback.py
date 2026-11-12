@@ -43,7 +43,7 @@ class FallbackTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             summary = Path(directory) / "summary.md"
             env = {"GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "9", "FALLBACK_REF": "feature",
-                   "GITHUB_STEP_SUMMARY": str(summary), "GH_TOKEN": "t"}
+                   "GITHUB_STEP_SUMMARY": str(summary), "GH_TOKEN": "t", "SCOPE": "pr"}
             for jobs, dispatched in (([job(1, "failure", ["self-hosted"])], True),
                                      ([job(2, "failure", ["self-hosted"])], False)):
                 calls.clear()
@@ -52,10 +52,26 @@ class FallbackTests(unittest.TestCase):
                 posts = [c for c in calls if c[0] == "POST"]
                 if dispatched:
                     assert posts == [("POST", "/repos/o/r/actions/workflows/ci.yml/dispatches",
-                                      {"ref": "feature", "inputs": {"windows_runner": '"windows-2025"'}})]
+                                      {"ref": "feature", "inputs": {"windows_runner": '"windows-2025"',
+                                                                     "fallback_scope": "windows-pr"}})]
                 else:
                     assert posts == []
             assert "dispatched ci.yml" in summary.read_text()
+
+    def test_a_rerun_covers_only_the_windows_part_of_the_group_set(self):
+        assert fb.fallback_scope("pr") == "windows-pr"
+        assert fb.fallback_scope("windows-complement") == "windows-complement"
+        assert fb.fallback_scope("full") == "windows-full"
+        assert fb.fallback_scope(None) == "windows-full"
+        assert fb.fallback_scope("something-new") == "windows-full"
+        text = WORKFLOW.read_text(encoding="utf-8")
+        # the workflow accepts every value the script sends, and the fallback job hands it the set
+        step = text[text.index("      - name: Choose the group set"):text.index("      - name: Check out merge ref")]
+        for value in set(fb.FALLBACK_SCOPES.values()):
+            assert value in step
+        block = text[text.index("  hosted-fallback:"):]
+        assert "SCOPE: ${{ needs.detect-changes.outputs.scope }}" in block
+        assert "detect-changes" in block.split("steps:")[0]
 
     def test_the_workflow_routes_by_the_input_and_never_falls_back_twice(self):
         text = WORKFLOW.read_text(encoding="utf-8")

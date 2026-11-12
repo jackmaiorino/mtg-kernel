@@ -23,6 +23,13 @@ name: CI
         type: boolean
         required: false
         default: false
+      fallback_scope:
+        # Set only by the hosted fallback (job `hosted-fallback`): rerun just the
+        # Windows part of the timed-out run's group set on the runner named in
+        # windows_runner. One of windows-pr, windows-complement, windows-full.
+        description: Hosted fallback only, the Windows group set to rerun
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -61,6 +68,8 @@ jobs:
       # full: every group on both systems. pr: the pull request set (Windows
       # only for the workspace, native Store and Python suites).
       # windows-complement: only the Windows groups the pr set leaves out.
+      # windows-pr and windows-full: only the Windows part of pr or full, set
+      # by a hosted fallback rerun. Linux jobs run only for full and pr.
       scope: ${{ steps.scope.outputs.scope }}
     steps:
       # Agents dispatch CI on pull request branches to get the Windows groups
@@ -76,10 +85,16 @@ jobs:
           EVENT: ${{ github.event_name }}
           WINDOWS_RUNNER: ${{ inputs.windows_runner }}
           FULL_MATRIX: ${{ inputs.full_matrix }}
+          FALLBACK_SCOPE: ${{ inputs.fallback_scope }}
         run: |
           scope=full
           if [ "$EVENT" = pull_request ]; then
             scope=pr
+          elif [ "$EVENT" = workflow_dispatch ] && [ -n "$FALLBACK_SCOPE" ]; then
+            case "$FALLBACK_SCOPE" in
+              windows-pr|windows-complement|windows-full) scope=$FALLBACK_SCOPE ;;
+              *) echo "::warning::unknown fallback_scope '$FALLBACK_SCOPE'; running every group" ;;
+            esac
           elif [ "$EVENT" = workflow_dispatch ] && [ -z "$WINDOWS_RUNNER" ] && [ "$FULL_MATRIX" != true ]; then
             # Only an open same-repository pull request whose head is this
             # exact commit has a pull request run covering the rest. Any
@@ -154,9 +169,9 @@ jobs:
     # Same path rule as the Rust test groups: a change that touches only
     # docs, markdown, Python tests, non-embedded Python tools or top-level
     # tools/** cannot change what rustfmt or Clippy see. Pushes to main
-    # always run it. A Windows complement dispatch leaves it to the pull
-    # request run at the same commit.
-    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement'
+    # always run it. Windows-only group sets leave it to the run they
+    # complement or rerun.
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -283,8 +298,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # A Windows complement dispatch runs no Linux group.
-        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'windows-complement' && '["windows-2025"]' || '["ubuntu-24.04", "windows-2025"]') }}
+        # Windows-only group sets run no Linux group.
+        os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
         # Slowest groups first: runners take matrix jobs in this order.
         group:
           - workspace-lib
@@ -302,7 +317,7 @@ jobs:
         # (2026-10-10 to 10-14), so they run on main, tags and manual
         # dispatches, which still cover every group on both systems. A Windows
         # complement dispatch runs exactly the Windows groups excluded here.
-        exclude: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-lib"},{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"}]' || '[]') }}
+        exclude: ${{ fromJSON((needs.detect-changes.outputs.scope == 'pr' || needs.detect-changes.outputs.scope == 'windows-pr') && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-lib"},{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"}]' || '[]') }}
     # Linux groups use GitHub's hosted runners, which are free for this
     # public repository: the WSL runners can't be pinned to cores, so they
     # pause for any host reservation. Windows groups default to GitHub's
@@ -574,7 +589,7 @@ jobs:
   limited-build:
     name: Build shared Limited tests (${{ matrix.os }}, ${{ matrix.part }})
     needs: detect-changes
-    if: needs.detect-changes.outputs.rust_relevant == 'true'
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-pr'
     timeout-minutes: 90
     defaults:
       run:
@@ -582,9 +597,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pull requests run the Limited groups on Linux only; a Windows
-        # complement dispatch runs them on Windows only.
-        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '["ubuntu-24.04"]' || needs.detect-changes.outputs.scope == 'windows-complement' && '["windows-2025"]' || '["ubuntu-24.04", "windows-2025"]') }}
+        # Pull requests run the Limited groups on Linux only; Windows-only
+        # group sets other than windows-pr run them on Windows only.
+        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '["ubuntu-24.04"]' || contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
         part:
           - tests
           - binaries
@@ -674,7 +689,7 @@ jobs:
   rust-limited-groups:
     name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})
     needs: [detect-changes, limited-build]
-    if: needs.detect-changes.outputs.rust_relevant == 'true'
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-pr'
     # The limit includes any wait in the self-hosted job-started hook.
     timeout-minutes: 120
     defaults:
@@ -683,9 +698,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pull requests run the Limited groups on Linux only; a Windows
-        # complement dispatch runs them on Windows only.
-        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '["ubuntu-24.04"]' || needs.detect-changes.outputs.scope == 'windows-complement' && '["windows-2025"]' || '["ubuntu-24.04", "windows-2025"]') }}
+        # Pull requests run the Limited groups on Linux only; Windows-only
+        # group sets other than windows-pr run them on Windows only.
+        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '["ubuntu-24.04"]' || contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
         # Slowest groups first: runners take matrix jobs in this order.
         group:
           - limited
@@ -1025,15 +1040,18 @@ jobs:
     timeout-minutes: 10
     strategy:
       matrix:
-        # A Windows complement dispatch reports only the system it tested.
-        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'windows-complement' && '["windows-2025"]' || '["ubuntu-24.04", "windows-2025"]') }}
+        # Windows-only group sets report only the system they tested.
+        os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
     runs-on: ubuntu-24.04
     steps:
       - name: Require every Rust test group
         run: |
           test "${{ needs.rust-test-groups.result }}" = success
-          test "${{ needs.limited-build.result }}" = success
-          test "${{ needs.rust-limited-groups.result }}" = success
+          # The pr set's Windows part has no Limited groups.
+          if [ "${{ needs.detect-changes.outputs.scope }}" != windows-pr ]; then
+            test "${{ needs.limited-build.result }}" = success
+            test "${{ needs.rust-limited-groups.result }}" = success
+          fi
 
   # The Python shards of one system test the same two default-feature
   # binaries. One hosted job per system builds them once (each shard built
@@ -1049,8 +1067,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Windows is in every set that runs Python, so this include always
+        # matches a combination instead of adding one.
+        os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
         include:
-          - {os: ubuntu-24.04, suffix: ''}
           - {os: windows-2025, suffix: .exe}
     # Hosted runners only: the shards on any runner download the result.
     runs-on: ${{ matrix.os }}
@@ -1132,19 +1152,18 @@ jobs:
       fail-fast: false
       matrix:
         # Windows runs the suite about twice as slowly, so it gets one more
-        # shard to finish alongside the Ubuntu shards.
-        include:
-          - {os: ubuntu-24.04, shard: 0, shard_count: 2, kernel_bin: target/release/kernel_rl_env, agent_bridge_bin: target/release/agent_bridge_v1}
-          - {os: ubuntu-24.04, shard: 1, shard_count: 2, kernel_bin: target/release/kernel_rl_env, agent_bridge_bin: target/release/agent_bridge_v1}
-          - {os: windows-2025, shard: 0, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe, agent_bridge_bin: target/release/agent_bridge_v1.exe}
-          - {os: windows-2025, shard: 1, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe, agent_bridge_bin: target/release/agent_bridge_v1.exe}
-          - {os: windows-2025, shard: 2, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe, agent_bridge_bin: target/release/agent_bridge_v1.exe}
+        # shard to finish alongside the Ubuntu shards. Windows-only group
+        # sets run no Linux shard.
+        os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
+        shard: [0, 1, 2]
+        exclude:
+          - {os: ubuntu-24.04, shard: 2}
     # Fork pull requests stay hosted; trusted Windows jobs follow the same
     # routing variable as the Rust groups, hosted by default.
     runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     env:
-      MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/${{ matrix.kernel_bin }}
-      MTG_KERNEL_AGENT_BRIDGE_V1_BIN: ${{ github.workspace }}/${{ matrix.agent_bridge_bin }}
+      MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/target/release/kernel_rl_env${{ matrix.os == 'windows-2025' && '.exe' || '' }}
+      MTG_KERNEL_AGENT_BRIDGE_V1_BIN: ${{ github.workspace }}/target/release/agent_bridge_v1${{ matrix.os == 'windows-2025' && '.exe' || '' }}
     steps:
       - name: Use Git Bash for bash steps on Windows
         if: runner.os == 'Windows'
@@ -1270,18 +1289,19 @@ jobs:
         run: uv run --no-sync python python/tools/generate_agent_bridge_goldens.py --check --repo-root .
 
       - name: Run Python test shard against the real Rust environment
-        run: uv run --no-sync python python/tools/run_python_test_shard.py --shard-index ${{ matrix.shard }} --shard-count ${{ matrix.shard_count }}
+        run: uv run --no-sync python python/tools/run_python_test_shard.py --shard-index ${{ matrix.shard }} --shard-count ${{ matrix.os == 'windows-2025' && 3 || 2 }}
 
   # A self-hosted runner's job-started hook waits for host_slots CPU admission
   # at most MTG_CI_ADMISSION_TIMEOUT seconds and then fails the job before any
   # step, logging MTG_CI_ADMISSION_TIMEOUT. A job cannot move to another runner
   # once one accepted it, so this hosted job dispatches the workflow again on
-  # the same branch with Windows on hosted runners. Real failures are not
+  # the same branch with Windows on hosted runners, limited to the Windows
+  # part of this run's group set. Real failures are not
   # rerun, and a dispatched run never dispatches again. It runs only while the
   # routing variable sends Windows jobs to the self-hosted pool.
   hosted-fallback:
     name: Hosted fallback for self-hosted admission timeouts
-    needs: [rust-test-groups, rust-limited-groups, python-tests]
+    needs: [detect-changes, rust-test-groups, rust-limited-groups, python-tests]
     if: always() && contains(needs.*.result, 'failure') && contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -1296,4 +1316,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FALLBACK_REF: ${{ github.head_ref || github.ref_name }}
+          SCOPE: ${{ needs.detect-changes.outputs.scope }}
         run: python3 tools/ci/hosted_fallback.py
