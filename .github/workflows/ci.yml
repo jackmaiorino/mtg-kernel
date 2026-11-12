@@ -15,6 +15,14 @@ name: CI
         description: Windows runs-on override as JSON, for example '"windows-2025"'
         required: false
         default: ''
+      full_matrix:
+        # A dispatch on a branch whose open pull request is at the same commit
+        # runs only the Windows groups that the pull request's own run skips.
+        # Set this to run every group again anyway.
+        description: Run every group even when the branch's pull request run covers some of them
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -44,10 +52,48 @@ jobs:
     # self-hosted runners hold every job while their host is reserved for
     # other work, and the Python shards wait on this job.
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       python_relevant: ${{ steps.classify.outputs.python_relevant }}
       rust_relevant: ${{ steps.classify.outputs.rust_relevant }}
+      # full: every group on both systems. pr: the pull request set (Windows
+      # only for the workspace, native Store and Python suites).
+      # windows-complement: only the Windows groups the pr set leaves out.
+      scope: ${{ steps.scope.outputs.scope }}
     steps:
+      # Agents dispatch CI on pull request branches to get the Windows groups
+      # that pull request runs skip. Running every group there repeated the
+      # pull request run's Linux and Windows work at the same commit (about a
+      # third of all hosted runner time on 2026-11-11). Such a dispatch now
+      # runs only the complement; together the two runs cover every group.
+      - name: Choose the group set
+        id: scope
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          WINDOWS_RUNNER: ${{ inputs.windows_runner }}
+          FULL_MATRIX: ${{ inputs.full_matrix }}
+        run: |
+          scope=full
+          if [ "$EVENT" = pull_request ]; then
+            scope=pr
+          elif [ "$EVENT" = workflow_dispatch ] && [ -z "$WINDOWS_RUNNER" ] && [ "$FULL_MATRIX" != true ]; then
+            # Only an open same-repository pull request whose head is this
+            # exact commit has a pull request run covering the rest. Any
+            # lookup failure keeps the full set.
+            pr_head=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" \
+              --jq '[.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY)][0].head.sha // ""') || pr_head=
+            echo "open pull request head: ${pr_head:-none}; dispatched commit: $GITHUB_SHA"
+            if [ -n "$pr_head" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
+              scope=windows-complement
+            fi
+          fi
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+          echo "group set: $scope" | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Check out merge ref with parents
         if: github.event_name == 'pull_request'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -108,8 +154,9 @@ jobs:
     # Same path rule as the Rust test groups: a change that touches only
     # docs, markdown, Python tests, non-embedded Python tools or top-level
     # tools/** cannot change what rustfmt or Clippy see. Pushes to main
-    # always run it.
-    if: needs.detect-changes.outputs.rust_relevant == 'true'
+    # always run it. A Windows complement dispatch leaves it to the pull
+    # request run at the same commit.
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -236,9 +283,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-24.04
-          - windows-2025
+        # A Windows complement dispatch runs no Linux group.
+        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'windows-complement' && '["windows-2025"]' || '["ubuntu-24.04", "windows-2025"]') }}
         # Slowest groups first: runners take matrix jobs in this order.
         group:
           - workspace-lib
@@ -254,26 +300,34 @@ jobs:
         # native Store group, whose production writer is Windows-only code.
         # The other Windows groups never failed without Linux failing too
         # (2026-10-10 to 10-14), so they run on main, tags and manual
-        # dispatches, which still cover every group on both systems.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
-        include:
-          # Linux groups use GitHub's hosted runners, which are free for
-          # this public repository: the WSL runners can't be pinned to
-          # cores, so they pause for any host reservation.
-          - os: ubuntu-24.04
-            runner: '"ubuntu-24.04"'
-          # Windows groups default to GitHub's hosted runners: on the local
-          # pool they queued for over an hour behind research claims. The
-          # repository variable routes them elsewhere, for example
-          # '["self-hosted", "mtg-ci-windows"]' for the local pool.
-          - os: windows-2025
-            runner: ${{ inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"' }}
-    # Pull requests from forks never run on the self-hosted runners.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
+        # dispatches, which still cover every group on both systems. A Windows
+        # complement dispatch runs exactly the Windows groups excluded here.
+        exclude: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-lib"},{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"}]' || '[]') }}
+    # Linux groups use GitHub's hosted runners, which are free for this
+    # public repository: the WSL runners can't be pinned to cores, so they
+    # pause for any host reservation. Windows groups default to GitHub's
+    # hosted runners: on the local pool they queued for over an hour behind
+    # research claims. The repository variable routes them elsewhere, for
+    # example '["self-hosted", "mtg-ci-windows"]' for the local pool. Pull
+    # requests from forks never run on the self-hosted runners.
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     steps:
-      - name: Limit affected hosted builds to one Cargo job
+      # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
+      # heavy feature builds finished at two and four Cargo jobs (probe of
+      # 2026-11-11: Limited library tests 20 min at two jobs, over 42 min
+      # at one), so the builds below use two jobs instead of one.
+      - name: Add swap space for the heavy builds
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: |
+          sudo fallocate -l 12G /mnt/build.swap
+          sudo chmod 600 /mnt/build.swap
+          sudo mkswap /mnt/build.swap
+          sudo swapon /mnt/build.swap
+          free -m
+
+      - name: Limit affected hosted builds to two Cargo jobs
         if: runner.environment == 'github-hosted' && runner.os == 'Linux' && (matrix.group == 'trace' || matrix.group == 'limited-store')
-        run: echo 'CARGO_BUILD_JOBS=1' >> "$GITHUB_ENV"
+        run: echo 'CARGO_BUILD_JOBS=2' >> "$GITHUB_ENV"
 
       # Windows can resolve `bash` to the WSL launcher in System32 first;
       # put Git Bash ahead of it for every later step.
@@ -384,7 +438,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$RUNNER_OS" = Linux ]; then
-            export CARGO_BUILD_JOBS=1
+            export CARGO_BUILD_JOBS=2
           fi
           samples="$PWD/feb-native-event-samples"
           mkdir -p "$samples"
@@ -418,7 +472,7 @@ jobs:
           # Bound concurrent compiler work after repeated hosted Linux
           # shutdowns while compiling the large feature catalogs.
           if [ "$RUNNER_OS" = Linux ]; then
-            export CARGO_BUILD_JOBS=1
+            export CARGO_BUILD_JOBS=2
           fi
           cargo clippy --release --locked -p mtg-kernel --all-targets --features eternal-fixtures -- -D warnings
           python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_ has_a_fixed_seat_human_prompt full_text_v1::tests:: graveyard_order_v1::tests:: premodern_ordered_public_v1::
@@ -433,9 +487,9 @@ jobs:
           # The hosted Ubuntu runner ran out of memory compiling every
           # non-library target with full parallelism (shutdown signal, exit
           # 143, from 2026-10-27), and with the FDN catalog also at two units
-          # at a time, so that half builds one unit at a time.
+          # at a time, so that half builds two units at a time with swap.
           if [ "$MATRIX_GROUP" = workspace-targets ] && [ "$MATRIX_OS" = ubuntu-24.04 ]; then
-            export CARGO_BUILD_JOBS=1
+            export CARGO_BUILD_JOBS=2
           fi
           python python/tools/run_rust_workspace_tests.py --part "${MATRIX_GROUP#workspace-}" --no-fail-fast
         env:
@@ -528,8 +582,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pull requests run the Limited groups on Linux only.
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["ubuntu-24.04", "windows-2025"]') }}
+        # Pull requests run the Limited groups on Linux only; a Windows
+        # complement dispatch runs them on Windows only.
+        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '["ubuntu-24.04"]' || needs.detect-changes.outputs.scope == 'windows-complement' && '["windows-2025"]' || '["ubuntu-24.04", "windows-2025"]') }}
         part:
           - tests
           - binaries
@@ -537,6 +592,19 @@ jobs:
     # the source paths in Cargo's freshness records stay valid.
     runs-on: ${{ matrix.os }}
     steps:
+      # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
+      # heavy feature builds finished at two and four Cargo jobs (probe of
+      # 2026-11-11: Limited library tests 20 min at two jobs, over 42 min
+      # at one), so the builds below use two jobs instead of one.
+      - name: Add swap space for the heavy builds
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: |
+          sudo fallocate -l 12G /mnt/build.swap
+          sudo chmod 600 /mnt/build.swap
+          sudo mkswap /mnt/build.swap
+          sudo swapon /mnt/build.swap
+          free -m
+
       # Windows can resolve `bash` to the WSL launcher in System32 first;
       # put Git Bash ahead of it for every later step.
       - name: Use Git Bash for bash steps on Windows
@@ -573,7 +641,7 @@ jobs:
       - name: Build the shared Limited ${{ matrix.part }}
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
-            export CARGO_BUILD_JOBS=1
+            export CARGO_BUILD_JOBS=2
           fi
           if [ '${{ matrix.part }}' = tests ]; then
             cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib --no-run
@@ -615,8 +683,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pull requests run the Limited groups on Linux only.
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["ubuntu-24.04", "windows-2025"]') }}
+        # Pull requests run the Limited groups on Linux only; a Windows
+        # complement dispatch runs them on Windows only.
+        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '["ubuntu-24.04"]' || needs.detect-changes.outputs.scope == 'windows-complement' && '["windows-2025"]' || '["ubuntu-24.04", "windows-2025"]') }}
         # Slowest groups first: runners take matrix jobs in this order.
         group:
           - limited
@@ -949,9 +1018,8 @@ jobs:
     timeout-minutes: 10
     strategy:
       matrix:
-        os:
-          - ubuntu-24.04
-          - windows-2025
+        # A Windows complement dispatch reports only the system it tested.
+        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'windows-complement' && '["windows-2025"]' || '["ubuntu-24.04", "windows-2025"]') }}
     runs-on: ubuntu-24.04
     steps:
       - name: Require every Rust test group
@@ -960,10 +1028,92 @@ jobs:
           test "${{ needs.limited-build.result }}" = success
           test "${{ needs.rust-limited-groups.result }}" = success
 
+  # The Python shards of one system test the same two default-feature
+  # binaries. One hosted job per system builds them once (each shard built
+  # them again, 10 to 22 minutes apiece) and hands them to the shards.
+  python-env-build:
+    name: Build Python test binaries (${{ matrix.os }})
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement'
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, suffix: ''}
+          - {os: windows-2025, suffix: .exe}
+    # Hosted runners only: the shards on any runner download the result.
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Use Git Bash for bash steps on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: echo C:\Program Files\Git\bin>>"%GITHUB_PATH%"
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Install pinned Rust in a fresh toolchain directory
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
+          fi
+          printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
+          fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          test -n "$fdn_rust_channel"
+          rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-python-${{ matrix.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-registry-python-${{ matrix.os }}-
+
+      - name: Cache compiled Python environment
+        uses: ./.github/actions/cargo-build-cache
+        with:
+          scope: python-env
+
+      - name: Build release JSONL environment
+        run: cargo build --release --locked --bin kernel_rl_env --bin agent_bridge_v1
+
+      - name: Save compiled Python environment
+        if: success()
+        uses: ./.github/actions/cargo-build-cache
+        with:
+          scope: python-env
+          mode: save
+
+      - name: Upload the Python test binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-env-${{ matrix.os }}-${{ github.run_attempt }}
+          # The generated build-script sources go too: the card database
+          # repin tool reads KERNEL_CARDDB_HASH from them.
+          path: |
+            target/release/kernel_rl_env${{ matrix.suffix }}
+            target/release/agent_bridge_v1${{ matrix.suffix }}
+            target/release/build/mtg-kernel-*/out/*.rs
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+
   python-tests:
     name: Python tests (${{ matrix.os }}, shard ${{ matrix.shard }})
-    needs: detect-changes
-    if: needs.detect-changes.outputs.python_relevant == 'true'
+    needs: [detect-changes, python-env-build]
+    # A Windows complement dispatch leaves both Python systems to the pull
+    # request run at the same commit.
+    if: needs.detect-changes.outputs.python_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement'
     # Includes waiting for the same low-priority CPU admission as Rust jobs.
     timeout-minutes: 120
     # Windows' default pwsh fails a step only on its last command's exit code, so an earlier failing command in a
@@ -1042,18 +1192,6 @@ jobs:
           test -n "$fdn_rust_channel"
           rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
 
-      - name: Cache cargo registry
-        if: runner.environment == 'github-hosted'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: cargo-registry-python-${{ matrix.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: |
-            cargo-registry-python-${{ matrix.os }}-
-
       - name: Set up pinned Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -1099,42 +1237,30 @@ jobs:
           uv run --no-sync python -m unittest discover -v -s tools/sd1/tests -p 'test_*.py'
           uv run --no-sync python -m unittest discover -v -s tools/checkpoint_codec_bench/tests -p 'test_*.py'
 
-      - name: Use the runner's persistent Python environment build
-        if: runner.environment == 'self-hosted'
-        shell: bash
-        run: |
-          if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
-            target_dir="$MTG_CI_TARGET_ROOT/python-env"
-            kernel_bin="$target_dir/release/kernel_rl_env"
-            if [ "$RUNNER_OS" = Windows ]; then
-              target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/python-env")"
-              kernel_bin="$target_dir/release/kernel_rl_env.exe"
-            fi
-            printf 'CARGO_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
-            printf 'MTG_KERNEL_RL_ENV_BIN=%s\n' "$kernel_bin" >> "$GITHUB_ENV"
-            echo 'CARGO_PROFILE_RELEASE_INCREMENTAL=true' >> "$GITHUB_ENV"
-          fi
-
-      - name: Cache compiled Python environment
-        if: runner.environment == 'github-hosted'
-        uses: ./.github/actions/cargo-build-cache
+      # A partial retry keeps the build job's artifact from the prior attempt;
+      # take the newest attempt.
+      - name: Download the shared Python test binaries
+        uses: actions/download-artifact@v4
         with:
-          scope: python-env
+          pattern: python-env-${{ matrix.os }}-*
+          path: ${{ runner.temp }}/python-env
 
-      - name: Build release JSONL environment
-        run: cargo build --release --locked --bin kernel_rl_env --bin agent_bridge_v1
+      - name: Place the shared Python test binaries
+        run: |
+          staging="${RUNNER_TEMP:?}/python-env"
+          if [ "$RUNNER_OS" = Windows ]; then
+            staging=$(cygpath -u "$staging")
+          fi
+          attempt=$(ls -d "$staging"/python-env-* | sort -V | tail -n 1)
+          mkdir -p target/release
+          cp -R "$attempt"/. target/release/
+          ls target/release/build/mtg-kernel-*/out
+          chmod +x target/release/kernel_rl_env* target/release/agent_bridge_v1*
+          ls -l target/release
 
       - name: Validate agent bridge v1 golden transcripts
         if: matrix.shard == 0
         run: uv run --no-sync python python/tools/generate_agent_bridge_goldens.py --check --repo-root .
-
-      # Shards of one system build the same output; the first one saves it.
-      - name: Save compiled Python environment
-        if: success() && matrix.shard == 0 && runner.environment == 'github-hosted'
-        uses: ./.github/actions/cargo-build-cache
-        with:
-          scope: python-env
-          mode: save
 
       - name: Run Python test shard against the real Rust environment
         run: uv run --no-sync python python/tools/run_python_test_shard.py --shard-index ${{ matrix.shard }} --shard-count ${{ matrix.shard_count }}
