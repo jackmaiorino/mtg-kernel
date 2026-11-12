@@ -235,10 +235,17 @@ fn niv_source_departure_before_v1(
     Ok(found)
 }
 
+/// Whether the static definition table holds an executable Niv-Mizzet,
+/// Visionary. The table cannot change while the program runs, so the answer
+/// is found once, not at each departure, damage event and death capture
+/// check that asks.
 pub(crate) fn niv_mizzet_catalog_enabled_v1() -> bool {
-    crate::card_def::CARD_DEFS
-        .iter()
-        .any(|definition| definition.is_executable() && definition.name == "Niv-Mizzet, Visionary")
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        crate::card_def::CARD_DEFS.iter().any(|definition| {
+            definition.is_executable() && definition.name == "Niv-Mizzet, Visionary"
+        })
+    })
 }
 
 /// Validate the handoff expected for a native saved resolving row. Callers

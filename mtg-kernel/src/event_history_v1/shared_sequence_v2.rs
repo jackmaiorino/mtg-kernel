@@ -5,6 +5,11 @@
 //! arbitrary mutable Vec access, reads use that Vec until `repack`, `push` or
 //! a shortening `truncate` consumes it back into the tree. Cloning or taking a
 //! prefix of that cold editable representation is necessarily linear.
+//!
+//! Each node counts its elements of each kind, and each leaf keeps the kind
+//! of each of its elements beside it, so a kind filter skips subtrees that
+//! hold none of its kinds and, inside a leaf, reads the kinds instead of the
+//! elements.
 use std::iter::FusedIterator;
 use std::ops::{Bound, RangeBounds};
 use std::sync::{Arc, OnceLock};
@@ -13,7 +18,11 @@ const LEAF: usize = 64;
 const FANOUT: usize = 32;
 
 enum Body<T: Clone, const C: usize> {
-    Leaf(Vec<T>),
+    /// The elements, and the kind of each when the sequence counts kinds
+    /// (none when `C == 0`). A kind is written with its element, by the
+    /// sequence's kind function, so a kind filter reads these instead of
+    /// the elements.
+    Leaf(Vec<T>, Vec<u16>),
     Branch(Vec<Arc<Node<T, C>>>),
 }
 
@@ -29,7 +38,7 @@ impl<T: Clone, const C: usize> Clone for Node<T, C> {
             len: self.len,
             counts: self.counts,
             body: match &self.body {
-                Body::Leaf(values) => Body::Leaf(values.clone()),
+                Body::Leaf(values, kinds) => Body::Leaf(values.clone(), kinds.clone()),
                 Body::Branch(children) => Body::Branch(children.clone()),
             },
         }
@@ -54,17 +63,41 @@ fn add_count<const C: usize>(counts: &mut [u32; C], index: Option<usize>) {
     }
 }
 
+/// Records an element's kind in its leaf, beside the element.
+fn add_kind<const C: usize>(kinds: &mut Vec<u16>, index: Option<usize>) {
+    const { assert!(C <= 1 << 16, "count domain wider than a leaf's kinds") };
+    if let Some(index) = index {
+        kinds.push(index as u16);
+    }
+}
+
 impl<T: Clone, const C: usize> Node<T, C> {
     fn leaf(values: Vec<T>, kind: fn(&T) -> usize) -> Self {
         debug_assert!(!values.is_empty() && values.len() <= LEAF);
         let mut counts = [0; C];
+        let mut kinds = Vec::with_capacity(if C == 0 { 0 } else { values.len() });
         for value in &values {
-            add_count(&mut counts, kind_index::<T, C>(value, kind));
+            let index = kind_index::<T, C>(value, kind);
+            add_count(&mut counts, index);
+            add_kind::<C>(&mut kinds, index);
         }
         Self {
             len: values.len(),
             counts,
-            body: Body::Leaf(values),
+            body: Body::Leaf(values, kinds),
+        }
+    }
+
+    /// A new leaf holding just `value`, of kind `index`.
+    fn single(value: T, index: Option<usize>) -> Self {
+        let mut counts = [0; C];
+        add_count(&mut counts, index);
+        let mut kinds = Vec::new();
+        add_kind::<C>(&mut kinds, index);
+        Self {
+            len: 1,
+            counts,
+            body: Body::Leaf(vec![value], kinds),
         }
     }
 
@@ -92,18 +125,15 @@ impl<T: Clone, const C: usize> Node<T, C> {
     /// A carry is a sibling of the same height containing just the new item.
     /// Full leaves are shared unchanged, rather than cloned before splitting.
     fn append(node: &mut Arc<Self>, value: T, index: Option<usize>) -> Option<Arc<Self>> {
-        if matches!(&node.body, Body::Leaf(values) if values.len() == LEAF) {
-            let mut counts = [0; C];
-            add_count(&mut counts, index);
-            return Some(Arc::new(Self {
-                len: 1,
-                counts,
-                body: Body::Leaf(vec![value]),
-            }));
+        if matches!(&node.body, Body::Leaf(values, _) if values.len() == LEAF) {
+            return Some(Arc::new(Self::single(value, index)));
         }
         let node = Arc::make_mut(node);
         match &mut node.body {
-            Body::Leaf(values) => values.push(value),
+            Body::Leaf(values, kinds) => {
+                values.push(value);
+                add_kind::<C>(kinds, index);
+            }
             Body::Branch(children) => {
                 if let Some(carry) =
                     Self::append(children.last_mut().expect("nonempty branch"), value, index)
@@ -126,7 +156,7 @@ impl<T: Clone, const C: usize> Node<T, C> {
             return node.clone();
         }
         match &node.body {
-            Body::Leaf(values) => Arc::new(Self::leaf(values[..len].to_vec(), kind)),
+            Body::Leaf(values, _) => Arc::new(Self::leaf(values[..len].to_vec(), kind)),
             Body::Branch(children) => {
                 let mut remaining = len;
                 let mut selected = Vec::new();
@@ -253,7 +283,7 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
         let mut rest: &[Arc<Node<T, C>>] = &[];
         loop {
             match &node.body {
-                Body::Leaf(values) => return Some((values.as_slice(), start, rest)),
+                Body::Leaf(values, _) => return Some((values.as_slice(), start, rest)),
                 Body::Branch(children) => {
                     for (at, child) in children.iter().enumerate() {
                         if index < child.len {
@@ -355,7 +385,7 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
                     }
                     continue;
                 }
-                let (Body::Leaf(a_values), Body::Leaf(b_values)) = (&a.body, &b.body) else {
+                let (Body::Leaf(a_values, _), Body::Leaf(b_values, _)) = (&a.body, &b.body) else {
                     unreachable!("height zero is a leaf");
                 };
                 for offset in 0..count {
@@ -417,13 +447,7 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
                 *root = Arc::new(Node::branch(vec![root.clone(), carry]));
             }
         } else {
-            let mut counts = [0; C];
-            add_count(&mut counts, index);
-            self.root = Some(Arc::new(Node {
-                len: 1,
-                counts,
-                body: Body::Leaf(vec![value]),
-            }));
+            self.root = Some(Arc::new(Node::single(value, index)));
         }
     }
 
@@ -549,7 +573,7 @@ fn front_segment<'a, T: Clone, const C: usize>(
     middle: std::ops::Range<usize>,
 ) -> FrontSegment<'a, T, C> {
     let next_leaf = siblings.next().and_then(|node| match &node.body {
-        Body::Leaf(values) => Some(values.as_slice()),
+        Body::Leaf(values, _) => Some(values.as_slice()),
         Body::Branch(_) => None,
     });
     let (leaf, start) = match next_leaf {
@@ -707,9 +731,11 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
     /// The elements whose kind is one of `kinds`, with their positions, in
     /// order: what filtering `iter().enumerate()` by kind yields. A subtree
     /// whose counts hold none of `kinds` is skipped whole, so a scan for rare
-    /// kinds reads only the leaves that hold them. Editable storage is
-    /// filtered element by element. Like `iter`, it never allocates: the
-    /// flat encoders that validate history promise no allocation.
+    /// kinds reads only the leaves that hold them, and within a leaf it reads
+    /// the leaf's kinds, not its elements, so it touches only the elements it
+    /// yields. Editable storage is filtered element by element. Like `iter`,
+    /// it never allocates: the flat encoders that validate history promise no
+    /// allocation.
     pub(crate) fn of_kinds(&self, kinds: impl IntoIterator<Item = usize>) -> KindIter<'_, T, C> {
         self.kind_filter(kinds, true)
     }
@@ -750,10 +776,9 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
             sequence: self,
             skip,
             every: false,
-            leaf: match self.editable {
-                true => self.flat.get().expect("editable Vec"),
-                false => &[],
-            },
+            flat: self.editable,
+            leaf: None,
+            visited: 0,
             position: 0,
             siblings: &[],
             resume: 0,
@@ -768,7 +793,9 @@ impl<T: Clone, const C: usize> SharedSequence<T, C> {
             sequence: self,
             skip: true,
             every: false,
-            leaf: &[],
+            flat: false,
+            leaf: None,
+            visited: 0,
             position: 0,
             siblings: &[],
             resume: usize::MAX,
@@ -815,6 +842,10 @@ impl KindSet {
 /// its parent: each begins where the one before it ends.
 type LeafAt<'a, T, const C: usize> = (&'a [T], usize, &'a [Arc<Node<T, C>>]);
 
+/// A leaf's node, the position of its first element, and the nodes after it
+/// under its parent.
+type WantedLeaf<'a, T, const C: usize> = (&'a Node<T, C>, usize, &'a [Arc<Node<T, C>>]);
+
 /// The first leaf under `children` that counts a wanted kind and begins at or
 /// after `from`. `start` is where the first child begins.
 ///
@@ -830,14 +861,14 @@ fn first_wanted_leaf<'a, T: Clone, const C: usize>(
     from: usize,
     kinds: &KindSet,
     skip: bool,
-) -> Option<LeafAt<'a, T, C>> {
+) -> Option<WantedLeaf<'a, T, C>> {
     for (at, child) in children.iter().enumerate() {
         let end = start + child.len;
         if end > from && (!skip || kinds.any_counted(&child.counts)) {
             match &child.body {
-                Body::Leaf(values) => {
+                Body::Leaf(..) => {
                     if start >= from {
-                        return Some((values, start, &children[at + 1..]));
+                        return Some((child.as_ref(), start, &children[at + 1..]));
                     }
                 }
                 Body::Branch(grandchildren) => {
@@ -856,9 +887,10 @@ fn first_wanted_leaf<'a, T: Clone, const C: usize>(
 /// Cursor over the leaves that count a wanted kind, in order. It steps
 /// through the leaves under one parent, then finds the next wanted leaf from
 /// the root, so it passes over a subtree that counts none of its kinds
-/// without reading it. It holds its kinds inline and nothing per level of the
-/// tree: a scan allocates nothing, and the cursor is cheap to build and to
-/// move even when it yields nothing.
+/// without reading it. Inside a leaf it reads the leaf's kinds and touches
+/// only the elements it yields. It holds its kinds inline and nothing per
+/// level of the tree: a scan allocates nothing, and the cursor is cheap to
+/// build and to move even when it yields nothing.
 pub(crate) struct KindIter<'a, T: Clone, const C: usize> {
     kinds: KindSet,
     sequence: &'a SharedSequence<T, C>,
@@ -866,8 +898,12 @@ pub(crate) struct KindIter<'a, T: Clone, const C: usize> {
     skip: bool,
     /// Whether every element is yielded, whatever its kind (tests).
     every: bool,
-    /// Unvisited elements of the current leaf, and the position of the first.
-    leaf: &'a [T],
+    /// Whether the current leaf is the editable Vec, which keeps no kinds.
+    flat: bool,
+    /// The current tree leaf, how many of its elements were visited, and the
+    /// position of the first unvisited one.
+    leaf: Option<&'a Node<T, C>>,
+    visited: usize,
     position: usize,
     /// The nodes after the current leaf under its parent, and the position
     /// where the first of them begins. Once they are spent, the search for
@@ -876,9 +912,22 @@ pub(crate) struct KindIter<'a, T: Clone, const C: usize> {
     resume: usize,
 }
 
-impl<T: Clone, const C: usize> KindIter<'_, T, C> {
+impl<'a, T: Clone, const C: usize> KindIter<'a, T, C> {
     fn wanted(&self, node: &Node<T, C>) -> bool {
         !self.skip || self.kinds.any_counted(&node.counts)
+    }
+
+    /// The unvisited elements of the current leaf and, in a tree leaf, their
+    /// kinds.
+    fn unvisited(&self) -> (&'a [T], &'a [u16]) {
+        if self.flat {
+            let values = self.sequence.flat.get().expect("editable Vec");
+            return (&values[self.visited..], &[]);
+        }
+        match self.leaf.map(|node| &node.body) {
+            Some(Body::Leaf(values, tags)) => (&values[self.visited..], &tags[self.visited..]),
+            _ => (&[], &[]),
+        }
     }
 
     /// Moves to the first wanted leaf that begins at or after `resume`,
@@ -892,7 +941,7 @@ impl<T: Clone, const C: usize> KindIter<'_, T, C> {
         let found = match tree {
             Some(root) if self.resume < root.len && self.wanted(root) => match &root.body {
                 // A leaf root is read from its start or not at all.
-                Body::Leaf(values) => (self.resume == 0).then_some((values.as_slice(), 0, &[][..])),
+                Body::Leaf(..) => (self.resume == 0).then_some((root, 0, &[][..])),
                 Body::Branch(children) => {
                     first_wanted_leaf(children, 0, self.resume, &self.kinds, self.skip)
                 }
@@ -903,10 +952,12 @@ impl<T: Clone, const C: usize> KindIter<'_, T, C> {
             self.resume = usize::MAX;
             return false;
         };
-        self.leaf = leaf;
+        self.flat = false;
+        self.leaf = Some(leaf);
+        self.visited = 0;
         self.position = start;
         self.siblings = siblings;
-        self.resume = start + leaf.len();
+        self.resume = start + leaf.len;
         true
     }
 }
@@ -916,23 +967,36 @@ impl<'a, T: Clone, const C: usize> Iterator for KindIter<'a, T, C> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            while let Some((value, rest)) = self.leaf.split_first() {
-                let position = self.position;
-                self.leaf = rest;
-                self.position += 1;
-                if self.every || self.kinds.contains((self.sequence.kind)(value)) {
-                    return Some((position, value));
-                }
+            let (values, tags) = self.unvisited();
+            let found = if self.every {
+                (!values.is_empty()).then_some(0)
+            } else if self.flat {
+                let kind = self.sequence.kind;
+                values
+                    .iter()
+                    .position(|value| self.kinds.contains(kind(value)))
+            } else {
+                tags.iter()
+                    .position(|&tag| self.kinds.contains(usize::from(tag)))
+            };
+            if let Some(at) = found {
+                let position = self.position + at;
+                self.visited += at + 1;
+                self.position = position + 1;
+                return Some((position, &values[at]));
             }
+            self.visited += values.len();
+            self.position += values.len();
             match self.siblings.split_first() {
                 Some((node, rest)) => match &node.body {
                     // The next leaf under the same parent begins at `resume`.
-                    Body::Leaf(values) => {
+                    Body::Leaf(values, _) => {
                         self.siblings = rest;
                         let start = self.resume;
                         self.resume += values.len();
                         if self.wanted(node) {
-                            self.leaf = values;
+                            self.leaf = Some(node.as_ref());
+                            self.visited = 0;
                             self.position = start;
                         }
                     }
@@ -984,11 +1048,32 @@ mod tests {
         }
         kinds_oracle(tree, values, kind);
     }
+    /// Every tree leaf keeps exactly its elements' kinds, in order, as the
+    /// sequence's kind function gives them, and none when `C == 0`.
+    fn assert_leaf_kinds<T: Clone, const C: usize>(tree: &SharedSequence<T, C>) {
+        fn walk<T: Clone, const C: usize>(node: &Node<T, C>, kind: fn(&T) -> usize) {
+            match &node.body {
+                Body::Leaf(values, kinds) => {
+                    let expected: Vec<u16> = values
+                        .iter()
+                        .filter_map(|value| kind_index::<T, C>(value, kind))
+                        .map(|index| u16::try_from(index).unwrap())
+                        .collect();
+                    assert_eq!(kinds, &expected, "a leaf keeps its elements' kinds");
+                }
+                Body::Branch(children) => children.iter().for_each(|child| walk(child, kind)),
+            }
+        }
+        if let Some(root) = &tree.root {
+            walk(root, tree.kind);
+        }
+    }
     fn kinds_oracle<const C: usize>(
         tree: &SharedSequence<usize, C>,
         values: &[usize],
         kind: fn(&usize) -> usize,
     ) {
+        assert_leaf_kinds(tree);
         for kinds in [
             vec![],
             vec![0],
@@ -1154,7 +1239,18 @@ mod tests {
                 clones: clones.clone(),
             });
             assert!(clones.load(Ordering::Relaxed) - before < LEAF);
+            // Appending to a fork copies the shared last leaf with its kinds
+            // and leaves the original's alone.
+            assert_leaf_kinds(&fork);
+            assert_leaf_kinds(&prefix);
+            assert_eq!(fork.counts(), {
+                let mut counts = [0; 3];
+                fork.iter()
+                    .for_each(|value| counts[counted_kind(value)] += 1);
+                counts
+            });
         }
+        assert_leaf_kinds(&tree);
         assert_eq!(tree.len(), 65539);
     }
 
@@ -1198,6 +1294,7 @@ mod tests {
         assert_eq!(no_counts.counts(), [0u32; 0]);
         no_counts.repack();
         assert_eq!(no_counts.len(), 66);
+        assert_leaf_kinds(&no_counts);
     }
 
     #[test]
