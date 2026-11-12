@@ -374,6 +374,7 @@ fn build(
             foundations_combat: public_foundations_combat_v1(state)?,
             london_mulligans: public_london_mulligans_v1(state),
             public_shroud: None,
+            meddling_mage_names: None,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,

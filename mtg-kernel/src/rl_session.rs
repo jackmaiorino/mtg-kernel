@@ -1762,7 +1762,8 @@ where
         | ActionSemanticV1::ChooseDivineTargetV44 { .. }
         | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
         | ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 { .. }
-        | ActionSemanticV1::FinishDivineTargetsV44 { .. } => {
+        | ActionSemanticV1::FinishDivineTargetsV44 { .. }
+        | ActionSemanticV1::ChooseMeddlingMageNameV1 { .. } => {
             return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
         }
         #[cfg(feature = "limited-fdn-fixtures")]
@@ -3592,7 +3593,8 @@ fn flat_validate_semantic_policy_pair_v1(
             | ActionSemanticV1::ChooseDivineTargetV44 { .. }
             | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
             | ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 { .. }
-            | ActionSemanticV1::FinishDivineTargetsV44 { .. },
+            | ActionSemanticV1::FinishDivineTargetsV44 { .. }
+            | ActionSemanticV1::ChooseMeddlingMageNameV1 { .. },
             _,
         ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),
         (

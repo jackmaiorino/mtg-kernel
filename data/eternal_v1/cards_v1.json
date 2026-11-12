@@ -27014,7 +27014,7 @@
   },
     {
    "name": "Meddling Mage",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{W}{U}",
    "mana_value": 2,
    "colors": [

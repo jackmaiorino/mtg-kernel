@@ -853,6 +853,23 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         || super::read_state(state).is_some_and(|s1b| !s1b.mage_names.is_empty())
 }
 
+/// Whether the schema 5 policy observation, which represents Meddling
+/// Mage's name menu and names (wave S1k), still refuses `state`: a pending
+/// native Metamorph copy menu (Reanimate's, Aether Vial's or a physical
+/// Show and Tell's), which no consumer represents.
+pub(crate) fn requires_copy_successor(state: &GameState) -> bool {
+    state
+        .engine
+        .linked_aura_operation_v1
+        .pending_meddling_mage_v1
+        .as_ref()
+        .is_some_and(|pending| match &pending.choice {
+            GeneralChoiceV36::MeddlingMageV1 { .. } => false,
+            GeneralChoiceV36::ShowAndTellV1 { choice, .. } => choice.physical.is_some(),
+            _ => true,
+        })
+}
+
 fn entry_matches(
     choice: &ChoiceV1,
     actual: Option<&CommittedEvent>,

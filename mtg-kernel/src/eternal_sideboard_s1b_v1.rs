@@ -650,6 +650,34 @@ pub(crate) fn mage_prohibits(state: &GameState, def: &CardDef, method: CastMetho
     })
 }
 
+/// Each battlefield Meddling Mage whose chosen name applies, with that name,
+/// seat 0's battlefield first in battlefield order: the names
+/// [`mage_prohibits`] reads, for the schema 5 policy observation (wave S1k).
+pub(crate) fn applying_mage_names(state: &GameState) -> Vec<(ObjectId, &'static str)> {
+    let Some(s1b) = read_state(state) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for player in &state.players {
+        for &object in &player.battlefield {
+            if !active_named(state, object, MEDDLING_MAGE) {
+                continue;
+            }
+            let incarnation = state.objects.get(object).zone_change_count;
+            names.extend(
+                s1b.mage_names
+                    .iter()
+                    .filter(|(mage, _)| {
+                        mage.object == object && mage.zone_change_count == incarnation
+                    })
+                    .filter_map(|(_, named)| named.printed_name())
+                    .map(|name| (object, name)),
+            );
+        }
+    }
+    names
+}
+
 fn selected_spell_name(def: &CardDef, method: CastMethodV4) -> Option<&'static str> {
     if method == CastMethodV4::Alternative {
         match def.alt_cost.map(|alt| alt.condition) {

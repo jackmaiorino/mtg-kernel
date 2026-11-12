@@ -981,6 +981,127 @@ fn choose_mage_name(state: &mut GameState, player: PlayerId, name: &str) {
     act(state, Action::ChooseEffectOption(index as u16));
 }
 
+/// Wave S1k: Limited schema 5's consumer successor. The policy surface
+/// offers the name menu as `choose_meddling_mage_name_v1` actions, letter
+/// then name, and schema 5's policy observation lists the entered Mage with
+/// its name for both viewers, while the named spell is offered to neither.
+/// The observation without the public shroud contract still refuses the
+/// pending entry and the named Mage.
+#[test]
+fn meddling_mage_name_reaches_the_schema_5_session_both_seats() {
+    use mtg_kernel::policy_surface_v5::{PolicyDecisionV5, PolicySurfaceV5};
+    use mtg_kernel::rl::{
+        observe_policy_v5, policy_legal_action_candidates_v5, ActionSemanticV1, PlayerSeatV1,
+    };
+    use mtg_kernel::surface::SurfaceDecision;
+
+    fn observed(state: &GameState, viewer: PlayerId) -> Result<Vec<(u16, String)>, String> {
+        let observation = observe_policy_v5(state, &PolicySurfaceV5::new(), viewer, 0, 0, 0, 1)
+            .map_err(|error| error.to_string())?;
+        Ok(observation
+            .projection
+            .meddling_mage_names
+            .unwrap_or_default()
+            .into_iter()
+            .map(|row| (row.source.card_db_id, row.name))
+            .collect())
+    }
+    fn frozen(state: &GameState, viewer: PlayerId) -> String {
+        let mut frozen = state.clone();
+        frozen.public_shroud_v1 = false;
+        observed(&frozen, viewer).expect_err("schema 4 refuses Meddling Mage's entry")
+    }
+
+    for chooser in [P0, P1] {
+        let opponent = chooser.opponent();
+        let mut state = islands();
+        state.active_player = chooser;
+        state.priority_player = chooser;
+        mtg_kernel::rl::enable_public_shroud_v1(&mut state);
+        let mage = put(&mut state, chooser, "Meddling Mage", Zone::Hand);
+        let bolt = put(&mut state, opponent, "Lightning Bolt", Zone::Hand);
+        let dart = put(&mut state, opponent, "Lava Dart", Zone::Hand);
+        pool(&mut state, chooser, &[ManaColor::W, ManaColor::U], 0);
+        cast(&mut state, mage, &[]);
+        assert!(settle(&mut state).is_some());
+        let mut surface = PolicySurfaceV5::new();
+        let mut group = None;
+        for text in ["L", "Lightning Bolt"] {
+            let decision = surface.next_decision(&mut state).unwrap();
+            assert!(
+                matches!(&decision, PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+                    Decision::ChooseMeddlingMageNameV1 { player, group: actual, .. }
+                )) if *player == chooser && *actual == group),
+                "{decision:?}"
+            );
+            // The pending entry is observed without any name; its saved
+            // world stays private.
+            assert_eq!(observed(&state, chooser), Ok(Vec::new()));
+            assert!(frozen(&state, chooser).contains("Meddling Mage named entry"));
+            let candidates =
+                policy_legal_action_candidates_v5(&decision, &surface, &state).unwrap();
+            assert_eq!(
+                serde_json::to_value(&candidates[0].record.semantic).unwrap()["action_kind"],
+                "choose_meddling_mage_name_v1"
+            );
+            let mut chosen = None;
+            for (index, candidate) in candidates.iter().enumerate() {
+                let ActionSemanticV1::ChooseMeddlingMageNameV1 {
+                    actor,
+                    entry_ordinal,
+                    group: actual,
+                    option_index,
+                    option_count,
+                    option_text,
+                } = &candidate.record.semantic
+                else {
+                    panic!("{:?}", candidate.record.semantic)
+                };
+                assert_eq!(
+                    (*actor, *entry_ordinal, *actual),
+                    (PlayerSeatV1::from(chooser), 0, group)
+                );
+                assert_eq!(
+                    (usize::from(*option_index), usize::from(*option_count)),
+                    (index, candidates.len())
+                );
+                if option_text == text {
+                    chosen = Some((*option_index, candidate.policy_action.clone()));
+                }
+            }
+            let (index, action) = chosen.unwrap_or_else(|| panic!("{text} is not offered"));
+            if group.is_none() {
+                group = Some(index);
+            }
+            surface.apply(&mut state, action).unwrap();
+        }
+        settled(&mut state);
+        assert_eq!(zone(&state, mage), Zone::Battlefield);
+        let expected = vec![(id("Meddling Mage"), "Lightning Bolt".to_owned())];
+        for viewer in [chooser, opponent] {
+            assert_eq!(observed(&state, viewer).as_ref(), Ok(&expected));
+            assert!(frozen(&state, viewer).contains("Meddling Mage named entry"));
+        }
+        // The opponent is offered Lava Dart but not the named Bolt.
+        state.priority_player = opponent;
+        pool(&mut state, opponent, &[ManaColor::R, ManaColor::R], 0);
+        let mut surface = PolicySurfaceV5::new();
+        let decision = surface.next_decision(&mut state).unwrap();
+        let casts: Vec<u32> = policy_legal_action_candidates_v5(&decision, &surface, &state)
+            .unwrap()
+            .into_iter()
+            .filter_map(|candidate| match candidate.record.semantic {
+                ActionSemanticV1::CastSpell { source, .. } => Some(source.arena_id),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            casts.contains(&dart.0) && !casts.contains(&bolt.0),
+            "{casts:?}"
+        );
+    }
+}
+
 fn paid_meddling_against(actor: PlayerId, name: &str, library: &[&str]) -> GameState {
     let mut state = game(library);
     let opponent = actor.opponent();
