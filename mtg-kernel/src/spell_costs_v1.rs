@@ -911,7 +911,8 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         );
         // Anointed Peacekeeper: spells with the chosen name cost {2} more.
         // Disruptor Flute: spells with the chosen name cost {3} more. Chill:
-        // red spells, by the cast form's color, cost {2} more.
+        // red spells, by the cast form's color, cost {2} more. Gloom: white
+        // spells cost {3} more.
         selected.own_generic_increase =
             crate::eternal_vintage_v1::spell_tax(state, definition.object_name, player)
                 .saturating_add(crate::eternal_sideboard_s1a_v1::statics::flute_spell_tax(
@@ -919,6 +920,9 @@ fn selected_spell_mana_costs_for_source_grant_v1(
                     definition.object_name,
                 ))
                 .saturating_add(crate::eternal_premodern_p3a_v1::statics::chill_tax(
+                    state, definition, method,
+                ))
+                .saturating_add(crate::eternal_premodern_p3b_v1::statics::gloom_spell_tax(
                     state, definition, method,
                 ));
         // Retrace (Wrenn and Six's emblem): discard a land card in addition
@@ -1531,6 +1535,7 @@ pub(super) struct PreparedSpellPaymentV1 {
     optional_objects: Vec<ObjectId>,
     pub(super) ordered_objects: Vec<ObjectId>,
     pub(super) chosen_power_lki: Option<i32>,
+    pub(super) storm_targets: Option<crate::effect::thousand_year_storm_v1::targets::CastTargetsV1>,
 }
 
 impl SpellManaPaymentV1 {
@@ -1555,6 +1560,10 @@ impl SpellManaPaymentV1 {
 }
 
 impl PreparedSpellPaymentV1 {
+    pub(super) fn planned_mana_count_v1(&self, state: &GameState, player: PlayerId) -> Option<u32> {
+        super::checked_spell_mana_plan_v59(state, player, &self.mana.mana)
+    }
+
     /// The graveyard cards Delve will exile, in exile order.
     #[cfg(feature = "eternal-fixtures")]
     pub(super) fn delve_exiled(&self) -> &[ObjectId] {
@@ -1641,7 +1650,7 @@ impl PreparedSpellPaymentV1 {
         self.additional.apply(state, player, source);
         self.commit_optional(state);
         if let Some(plan) = self.greatwurm {
-            plan.apply(state);
+            plan.apply_committed(state);
         }
         spent
     }
@@ -1793,6 +1802,10 @@ pub(super) fn prepare_final_spell_payment_v1(
         optional_objects,
         ordered_objects: choices.ordered_objects,
         chosen_power_lki: None,
+        storm_targets: crate::effect::thousand_year_storm_v1::freeze_cast_targets(
+            state, pending, method,
+        )
+        .ok()?,
     };
     if selected.convoke || selected.teamwork.is_some() {
         if !pending.convoke_finished {

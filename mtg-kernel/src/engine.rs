@@ -90,9 +90,10 @@ mod standard_spell_copy;
 pub(crate) use standard_spell_copy::copy_snapshot_assignment_is_legal;
 pub(crate) use standard_spell_copy::{
     copy_snapshot_prefix_can_complete, copy_snapshot_replacement_targets,
-    materialize_copy_snapshot, validate_copy_snapshot,
+    materialize_copy_snapshot, materialize_storm_copy_snapshot, validate_copy_snapshot,
 };
 
+pub(crate) mod niv_mizzet_resolution_v1;
 pub mod ordinary_cleanup_v1;
 pub mod time_stop_v1;
 
@@ -328,6 +329,12 @@ pub struct EngineState {
     /// Synchronous typed Inspiration owner; excluded from snapshots and Hash input.
     #[serde(skip)]
     pub(crate) inspiration_runtime_v1: effect::InspirationRuntimeV1,
+    /// Whose spell or ability is resolving, for Premodern wave P3d's
+    /// departure triggers. Set only while effects run; excluded from
+    /// snapshots, Hash input and comparisons.
+    #[serde(skip)]
+    #[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+    pub(crate) departure_cause_v1: crate::eternal_premodern_p3d_v1::DepartureCauseV1,
     #[serde(
         default,
         skip_serializing_if = "crate::twinflame_tyrant_v1::combat::StateV38::is_empty"
@@ -2269,8 +2276,9 @@ fn validate_spell_copy_origin_chain(
         .objects
         .try_get(origin.parent)
         .ok_or("spell copy parent object no longer exists")?;
+    let storm_parent = effect::thousand_year_storm_v1::historical_parent_cast(state, origin)?;
     if child_card_def != origin.parent_card_def
-        || parent.card_def != origin.parent_card_def
+        || (parent.card_def != origin.parent_card_def && storm_parent.is_none())
         || parent.owner != origin.parent_owner
         || origin.parent_was_copy != parent.spell_copy_origin.is_some()
         || if origin.parent_was_copy {
@@ -2293,6 +2301,12 @@ fn validate_spell_copy_origin_chain(
             return Err("spell copy changed its parent's effective source types".into());
         }
         validate_spell_copy_origin_chain(state, origin.parent, parent.card_def, parent_origin)?;
+    } else if let Some(method) = storm_parent {
+        if origin.source_types_v1
+            != crate::source_type_hexproof_v1::copy_projection(origin.parent_card_def, method)
+        {
+            return Err("Storm copy changed original parent source types".into());
+        }
     } else if crate::source_type_hexproof_v1::enabled() {
         let types = crate::source_type_hexproof_v1::source_types(
             state,
@@ -2852,7 +2866,15 @@ fn validated_ability_source_contract(
         .v4
         .ability_source_contract
         .ok_or("ability stack item lost its exact source contract")?;
-    validate_historical_ability_source_contract(state, contract)?;
+    if let Err(error) = validate_historical_ability_source_contract(state, contract) {
+        if state
+            .sampled_history_v1
+            .ability_source_face(state, item, contract)
+            .is_none()
+        {
+            return Err(error);
+        }
+    }
     if contract.source != item.source || contract.controller != item.controller {
         return Err("ability source contract disagrees with its stack item".to_string());
     }
@@ -2911,7 +2933,7 @@ fn copy_entries(state: &GameState) -> Option<std::rc::Rc<CopyEntriesV1>> {
 /// A resolved permanent spell copy is now a token, but keeps its immutable
 /// spell ancestry. Its independent entry snapshot, not a mutable token flag,
 /// distinguishes that ability source from an unentered or ceased Stack copy.
-fn validate_historical_permanent_copy_source(
+pub(crate) fn validate_historical_permanent_copy_source(
     state: &GameState,
     contract: AbilitySourceContractV4,
     live: &crate::state::GameObject,
@@ -3471,8 +3493,34 @@ fn validate_ability_source_contract(
         .objects
         .try_get(item.source)
         .ok_or("ability source object no longer exists")?;
+    let historical_sphinx = item.kind == StackItemKind::TriggeredAbility
+        && source.zone_change_count > contract.zone_change_count
+        && item
+            .inline_effect
+            .as_ref()
+            .is_some_and(crate::effect::sphinx_lore_v1::recipe);
+    if historical_sphinx {
+        crate::effect::sphinx_lore_v1::validate_root(
+            state,
+            item.inline_effect.as_ref().unwrap(),
+            Some(contract),
+        )?;
+    }
+    let historical_storm = state.thousand_year_storm_consumer_v1
+        && item.kind == StackItemKind::TriggeredAbility
+        && source.zone_change_count > contract.zone_change_count
+        && effect::thousand_year_storm_v1::selected(state, item);
+    if historical_storm {
+        effect::thousand_year_storm_v1::validate_item(state, item)?;
+    }
     if contract.source != item.source
-        || !source_card_def_matches(state, contract, source.card_def)
+        || (!historical_sphinx
+            && !historical_storm
+            && !source_card_def_matches(state, contract, source.card_def)
+            && state
+                .sampled_history_v1
+                .ability_source_face(state, item, contract)
+                .is_none())
         || contract.owner != source.owner
         || contract.controller != item.controller
         || (contract.zone == Zone::Stack && !ceased_copy_trigger_source(state, item, contract))
@@ -6235,10 +6283,13 @@ fn activation_mana_payment(
         crate::standard_cards_v1::spend_as_any_color(state, player, source, reduced)
     });
     // Anointed Peacekeeper: abilities of sources with the chosen name cost
-    // {2} more to activate.
+    // {2} more to activate. Gloom: abilities of white enchantments cost {3}
+    // more (eternal wave P3b).
     #[cfg(feature = "eternal-fixtures")]
     {
-        let tax = crate::eternal_vintage_v1::activation_tax(state, source);
+        let tax = crate::eternal_vintage_v1::activation_tax(state, source).saturating_add(
+            crate::eternal_premodern_p3b_v1::statics::gloom_activation_tax(state, source),
+        );
         if tax > 0 {
             let mut cost = printed.unwrap_or(Cost::zero());
             cost.generic = cost.generic.saturating_add(tax);
@@ -7638,10 +7689,32 @@ fn commit_cost_components_from_plan_v1(
     object_cost_chosen: &[ObjectId],
     mana_plan: Option<&mana::PaymentPlan>,
 ) -> Option<u16> {
+    let lathril_payment = crate::lathril_receipts_v1::payment_owner(state, source, components);
+    let fiend_payment = crate::fiend_artisan_receipts_v1::payment_owner(state, source, components);
     let mut mana_spent = 0;
+    // An ability without a mana cost can still owe a cost increase (Gloom on
+    // a white enchantment's sacrifice ability, Anointed Peacekeeper on a
+    // named source's tap ability). Its plan was derived with the other
+    // components unpaid, so pay it first.
+    if !components.iter().any(|component| {
+        matches!(
+            component,
+            CostComponent::Mana(_) | CostComponent::ConvokeMana(_)
+        )
+    }) {
+        if let Some(plan) = mana_plan {
+            mana_spent = pay_plan(state, player, plan);
+        }
+    }
     for c in components {
         match c {
-            CostComponent::Tap => event::propose_and_commit(state, ProposedEvent::tap(source)),
+            CostComponent::Tap => event::propose_and_commit(
+                state,
+                crate::lathril_receipts_v1::owned_proposal(
+                    ProposedEvent::tap(source),
+                    lathril_payment,
+                ),
+            ),
             CostComponent::SacrificeSelf => commit_sacrifice(state, &[source]),
             CostComponent::ExileSelf => {
                 event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Exile))
@@ -7671,12 +7744,18 @@ fn commit_cost_components_from_plan_v1(
             CostComponent::SacrificeControlled { count, .. }
             | CostComponent::SacrificeOtherControlledCreatures(count) => {
                 debug_assert_eq!(object_cost_chosen.len(), usize::from(*count));
-                commit_sacrifice(state, object_cost_chosen);
+                commit_sacrifice_owned(state, object_cost_chosen, fiend_payment);
             }
             CostComponent::TapControlled { count, .. } => {
                 debug_assert_eq!(object_cost_chosen.len(), usize::from(*count));
                 for &object in object_cost_chosen {
-                    event::propose_and_commit(state, ProposedEvent::tap(object));
+                    event::propose_and_commit(
+                        state,
+                        crate::lathril_receipts_v1::owned_proposal(
+                            ProposedEvent::tap(object),
+                            lathril_payment,
+                        ),
+                    );
                 }
             }
             CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
@@ -7885,6 +7964,10 @@ fn commit_cost_components_from_plan_v1(
 /// half of a `SacrificeLands` sub-cost, once `Decision::ChooseCostTargets`
 /// has already decided *which* permanents (`PendingCast::sacrifice_chosen`).
 fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
+    commit_sacrifice_owned(state, chosen, None);
+}
+
+fn commit_sacrifice_owned(state: &mut GameState, chosen: &[ObjectId], fiend_payment: Option<u32>) {
     crate::linked_aura_operation_v1::begin_batch(state);
     if chosen.len() > 1
         && (crate::creature_death_capture_v1::enabled()
@@ -7895,7 +7978,10 @@ fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
         return;
     }
     for &id in chosen {
-        event::log_sacrifice(state, id);
+        event::log_sacrifice_owned(state, id, fiend_payment);
+        if let Some(input) = fiend_payment {
+            crate::fiend_artisan_receipts_v1::record_sacrifice(state, input, id);
+        }
         event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
     }
     crate::linked_aura_operation_v1::end_batch(state);
@@ -8140,12 +8226,19 @@ fn validate_optional_additional_paid_refs(
             let def = card_def::CARD_DEFS
                 .get(paid.card_def as usize)
                 .ok_or("Bargain paid permanent definition is missing")?;
+            // The sacrifice was an artifact, enchantment or token as it left
+            // the battlefield. In the eternal catalog any permanent card may
+            // have been an artifact then: Liquimetal Coating makes one an
+            // artifact (wave S1b) and Mycosynth Lattice every one (wave
+            // S1f), and the provenance keeps no record of its types.
+            let eligible = def.is_token
+                || def.has_type(CardType::Artifact)
+                || def.has_type(CardType::Enchantment)
+                || (cfg!(feature = "eternal-fixtures") && has_permanent_card_type(def));
             if paid.controller != controller
                 || paid.zone != Zone::Graveyard
                 || paid.visible_to_mask != 0b11
-                || !(def.is_token
-                    || def.has_type(CardType::Artifact)
-                    || def.has_type(CardType::Enchantment))
+                || !eligible
             {
                 return Err("Bargain paid provenance is not one eligible sacrifice".to_string());
             }
@@ -8173,6 +8266,19 @@ fn validate_optional_additional_paid_refs(
         }
     }
     Ok(())
+}
+
+/// Whether either face of `def` has a permanent card type.
+fn has_permanent_card_type(def: &card_def::CardDef) -> bool {
+    [
+        CardType::Artifact,
+        CardType::Creature,
+        CardType::Enchantment,
+        CardType::Land,
+        CardType::Planeswalker,
+    ]
+    .iter()
+    .any(|card_type| def.types.contains(card_type) || def.types_for_face(1).contains(card_type))
 }
 
 /// Whether an `AltCostDef::condition` currently holds against `player`'s
@@ -8246,6 +8352,12 @@ fn alt_cost_condition_met(
         card_def::AltCostCondition::OpponentPlainsYouSwampV1 => {
             cfg!(feature = "eternal-fixtures")
                 && crate::eternal_sideboard_s1a_v1::statics::massacre_free(state, player)
+        }
+        // Mogg Salvage: "If an opponent controls an Island and you control a
+        // Mountain" (eternal wave P3b).
+        card_def::AltCostCondition::OpponentIslandYouMountainV1 => {
+            cfg!(feature = "eternal-fixtures")
+                && crate::eternal_premodern_p3b_v1::statics::mogg_salvage_free(state, player)
         }
         card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
             let subtype_id = subtype.stable_id();
@@ -8479,6 +8591,21 @@ fn activation_controlled_cost_candidates(
         .collect()
 }
 
+pub(crate) fn lathril_payment_candidates_v1(
+    state: &GameState,
+    pending: &PendingActivation,
+) -> Vec<EffectObjectBinding> {
+    activation_controlled_cost_candidates(
+        None,
+        pending.controller,
+        crate::lathril_receipts_v1::payer_filter(),
+        true,
+        pending.source,
+        state,
+        &pending.object_cost_chosen,
+    )
+}
+
 /// The card type of a craft cost's material: an artifact, or a creature
 /// for Tithing Blade's "Craft with creature".
 fn craft_material_type(state: &GameState, source: ObjectId) -> CardType {
@@ -8686,8 +8813,18 @@ fn x_graveyard_exile_candidates(
 }
 
 /// An "exile X cards from your graveyard" cast announces X as the number of
-/// cards it exiled.
-pub(crate) fn forced_cast_x(pending: &PendingCast, def: &card_def::CardDef) -> Option<u16> {
+/// cards it exiled, and Sickening Shoal's alternative cost as the mana value
+/// of the card it exiles.
+pub(crate) fn forced_cast_x(
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+    state: &GameState,
+) -> Option<u16> {
+    // Sickening Shoal's alternative cost: the exiled black card's mana value
+    // is X (eternal wave S1e).
+    if let Some(x) = crate::eternal_sideboard_s1e_v1::shoal_forced_x(pending, def, state) {
+        return Some(x);
+    }
     pending_x_graveyard_exile(pending, def)?;
     u16::try_from(pending.sacrifice_chosen.len()).ok()
 }
@@ -9352,14 +9489,22 @@ pub(crate) fn normal_cast_reduction_count(
             [player.index()]
         .battlefield
         .iter()
-        .filter(|&&object| {
-            let object = state.objects.get(object);
+        .filter(|&&id| {
+            let object = state.objects.get(id);
             object.zone == Zone::Battlefield
                 && object.controller == player
-                && card_def::CARD_DEFS[object.card_def as usize]
-                    .types
-                    .iter()
-                    .any(|card_type| types.contains(card_type))
+                && if cfg!(feature = "eternal-fixtures") {
+                    // Each permanent's current types: Mycosynth Lattice's
+                    // artifacts count (wave S1f), and an Elk of Oko's doesn't.
+                    types
+                        .iter()
+                        .any(|&card_type| object_has_type(state, id, card_type))
+                } else {
+                    card_def::CARD_DEFS[object.card_def as usize]
+                        .types
+                        .iter()
+                        .any(|card_type| types.contains(card_type))
+                }
         })
         .count() as u32,
         card_def::DynamicCountDef::TenCreatureCardsInAllGraveyardsV1 => {
@@ -10194,6 +10339,20 @@ fn pending_cast_selected_mana_cost(
     }
 }
 
+pub(crate) fn edict_pending_mana_quote_v1(
+    state: &GameState,
+    pending: &PendingCast,
+    mode: CastMode,
+) -> Option<u32> {
+    let def = &card_def::CARD_DEFS[usize::from(pending.source_contract.card_def)];
+    let method = match mode {
+        CastMode::Normal => CastMethodV4::Normal,
+        CastMode::Alternative => CastMethodV4::Alternative,
+    };
+    let payment = pending_cast_quote_v1(def, pending, method, false, 0, state)?;
+    checked_spell_mana_plan_v59(state, pending.controller, &payment.mana)
+}
+
 fn pending_cast_quote_v1(
     def: &card_def::CardDef,
     pending: &PendingCast,
@@ -10373,7 +10532,7 @@ fn maximum_payable_x(
 ) -> Option<u16> {
     let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
     // "Exile X cards from your graveyard": X is the number exiled.
-    if let Some(x) = forced_cast_x(pending, def) {
+    if let Some(x) = forced_cast_x(pending, def, state) {
         return pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
             .map(|_| x);
     }
@@ -12294,6 +12453,13 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
 /// creates an activated ability, never uses the stack, and retains priority.
 fn can_turn_face_up(state: &GameState, player: PlayerId, id: ObjectId) -> bool {
     let object = state.objects.get(id);
+    // Unable to Scream: "As long as enchanted creature is face down, it
+    // can't be turned face up." (eternal wave S1e)
+    if cfg!(feature = "eternal-fixtures")
+        && crate::eternal_sideboard_s1e_v1::cant_turn_face_up(state, id)
+    {
+        return false;
+    }
     // A manifested creature card turns face up for its mana cost.
     if cfg!(feature = "eternal-fixtures") {
         if let Some(cost) = crate::eternal_legacy_e7a_v1::turn_face_up_cost(state, id) {
@@ -12509,11 +12675,11 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
     if let Some(companion) = crate::eternal_lurrus_v1::companion_action(state, player) {
         out.push((companion, 0));
     }
-    // Split second (Legolas's Quick Reflexes): only mana abilities and
-    // special actions while it is on the stack.
+    // Split second (Legolas's Quick Reflexes) and Abeyance: only mana
+    // abilities and special actions.
     #[cfg(feature = "eternal-fixtures")]
     out.retain(|&(source, index)| {
-        !crate::eternal_legacy_e9a_v1::statics::split_second_blocks(state, source, index)
+        !crate::eternal_legacy_e9a_v1::statics::activation_blocked(state, player, source, index)
     });
     out
 }
@@ -15729,7 +15895,9 @@ pub(crate) fn validate_pending_cast(
 
 fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_cast.clone()?;
-    if validate_pending_cast(state, &pending).is_err() {
+    if let Err(_error) = validate_pending_cast(state, &pending) {
+        #[cfg(test)]
+        eprintln!("native pending cast {:?} rejected: {_error}", pending.spell);
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.spell,
@@ -16589,7 +16757,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    if finalize_cast(state, Vec::new()).is_err() {
+    if let Err(_error) = finalize_cast(state, Vec::new()) {
+        #[cfg(test)]
+        eprintln!(
+            "native finalized cast {:?} rejected: {_error}",
+            pending.spell
+        );
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.spell,
@@ -17914,7 +18087,7 @@ pub(crate) fn spellbench_pending_trigger_announcement(
     Ok(Some(pending_trigger_stack_candidate(state, pending)?))
 }
 
-fn pending_trigger_stack_candidate(
+pub(crate) fn pending_trigger_stack_candidate(
     state: &GameState,
     pending: &PendingTrigger,
 ) -> Result<StackItem, String> {
@@ -18132,6 +18305,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
             ..StackStateV4::default()
         },
     });
+    crate::etali_primal_storm_receipts_v1::record_published(state)?;
     if state
         .stack
         .last()
@@ -19172,6 +19346,7 @@ pub(crate) fn validated_stack_item_target_spec(
     state: &GameState,
 ) -> Result<Option<TargetSpec>, String> {
     validate_spell_stack_source(state, item)?;
+    crate::lathril_receipts_v1::validate_live(state, item)?;
     if crate::event::lathril_item_selected_v1(state, item) {
         crate::event::validate_published_lathril_v1(state, item)?;
     }
@@ -19438,6 +19613,22 @@ fn validated_stack_item_target_metadata(
             contract
         };
         if !stack_target_contract_is_structurally_valid(state, spec, target_index, target, contract)
+            && !crate::state::stack_target_contract_for_storm_snapshot(
+                state,
+                item,
+                spec,
+                target_index,
+                target,
+                contract,
+            )
+            && !crate::state::stack_target_contract_for_sampled_snapshot(
+                state,
+                item,
+                spec,
+                target_index,
+                target,
+                contract,
+            )
             && !crate::fiendish_panda_v1::custody::authenticates_stale_target(
                 state,
                 item,
@@ -19954,6 +20145,7 @@ pub(crate) fn counter_stack_item_by_id(
         crate::effect::greatwurm_v1::validate_published(state, &item)?;
     }
     let lathril_counter_capture = crate::event::lathril_counter_capture_v1(state, &item)?;
+    let niv_counter = niv_mizzet_resolution_v1::acquire(state, &item)?;
     let curator_counter = if effect::curator_v1::selected(state, &item) {
         Some(effect::curator_v1::validate_trigger(state, &item)?)
     } else {
@@ -19975,7 +20167,17 @@ pub(crate) fn counter_stack_item_by_id(
         }
     } else {
         state.stack.remove(position);
+        crate::fiend_artisan_receipts_v1::record_countered(state, &item);
+        crate::etali_primal_storm_receipts_v1::record_countered(state, &item);
     }
+    if let Some(owner) = niv_counter {
+        niv_mizzet_resolution_v1::counter(state, owner)?;
+    }
+    crate::lathril_receipts_v1::record_ended(
+        state,
+        &item,
+        crate::lathril_receipts_v1::EndV1::Countered,
+    )?;
     tinybones_v72::countered(state, &item)?;
     if let Some(entry_history_index) = curator_counter {
         state
@@ -19985,6 +20187,16 @@ pub(crate) fn counter_stack_item_by_id(
                 entry_history_index,
             });
     }
+    crate::harvester_receipts_v1::record_dispatch(
+        state,
+        &item,
+        crate::harvester_receipts_v1::OutcomeV1::Countered,
+    );
+    crate::harvester_receipts_v1::record_finished(
+        state,
+        &item,
+        crate::harvester_receipts_v1::OutcomeV1::Countered,
+    );
     if let Some(stack_item_id) = copied_counter {
         state
             .engine
@@ -19992,6 +20204,16 @@ pub(crate) fn counter_stack_item_by_id(
             .push(CommittedEvent::CopiedTokenSacrificeFinishedV1 { stack_item_id });
     }
     if greatwurm_counter {
+        crate::greatwurm_receipts_v1::record_dispatch(
+            state,
+            item.v4.stack_item_id,
+            crate::greatwurm_receipts_v1::DispatchV1::Countered,
+        );
+        crate::greatwurm_receipts_v1::record_end(
+            state,
+            item.v4.stack_item_id,
+            crate::greatwurm_receipts_v1::EndV1::Countered,
+        );
         state
             .engine
             .event_history
@@ -20948,6 +21170,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let niv_owner = match niv_mizzet_resolution_v1::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                current.source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let native_execution_owner = match effect::acquire_native_execution_owner_v1(state, &current) {
         Ok(owner) => owner,
         Err(_) => {
@@ -21067,6 +21299,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             state.stack.push(item.clone());
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = niv_owner {
+        if niv_mizzet_resolution_v1::resolve(state, owner).is_err() {
+            state
+                .engine
+                .halted
+                .get_or_insert((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
         }
         return ResolutionProgress::Complete;
@@ -21327,6 +21569,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         return ResolutionProgress::Complete;
     }
     if !targets_legal {
+        crate::harvester_receipts_v1::record_dispatch(
+            state,
+            &item,
+            crate::harvester_receipts_v1::OutcomeV1::NoLegalTarget,
+        );
+        crate::harvester_receipts_v1::record_finished(
+            state,
+            &item,
+            crate::harvester_receipts_v1::OutcomeV1::NoLegalTarget,
+        );
         if crate::drakuseth_damage_source_v76::record_removed(
             state,
             drakuseth_owner,
@@ -21452,6 +21704,11 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 return ResolutionProgress::Suspended;
             }
         };
+        if crate::lathril_receipts_v1::record_drain_begin(state, &item).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
         let effect_history_start = state.engine.event_history.len();
         if item
             .v4
@@ -21511,6 +21768,12 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         };
         if progress == ResolutionProgress::Complete {
             if crate::librarian_activation_v1::record_resolved(state, &item, effect_history_start)
+                .is_err()
+                || crate::lathril_receipts_v1::record_ended(
+                    state,
+                    &item,
+                    crate::lathril_receipts_v1::EndV1::Resolved,
+                )
                 .is_err()
                 || crate::fixed_source_damage_v3::record_removed(
                     state,
@@ -22058,6 +22321,15 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     (object.zone == Zone::Battlefield && object.controller == p).then_some(id)
                 })
                 .collect::<Vec<_>>();
+            // Winter Orb (Premodern sideboard wave P3e): an untapped Orb, read
+            // before anything untaps, holds back the lands that would untap
+            // so that only one of them does, the active player choosing.
+            let orb = if cfg!(feature = "eternal-fixtures") {
+                crate::eternal_premodern_p3e_v1::untap_limited(state)
+            } else {
+                None
+            };
+            let mut held_lands = Vec::new();
             for id in permanents {
                 // Undiscovered Paradise returns instead (Premodern wave P2c).
                 #[cfg(feature = "eternal-fixtures")]
@@ -22072,9 +22344,16 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     && (!cfg!(feature = "eternal-fixtures")
                         || !crate::eternal_vintage_v1::prevents_untap_step(state, id))
                 {
-                    attempt_untap(state, id);
+                    if orb.is_some() && crate::eternal_premodern_p3e_v1::holds_untap(state, id) {
+                        held_lands.push(id);
+                    } else {
+                        attempt_untap(state, id);
+                    }
                 }
                 state.objects.get_mut(id).summoning_sick = false;
+            }
+            if let Some(orb) = orb {
+                crate::eternal_premodern_p3e_v1::untap_one_land(state, p, orb, held_lands);
             }
             // Bender's Waterskin: "Untap this artifact during each other
             // player's untap step."
@@ -22801,7 +23080,26 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
                         && (card_type == CardType::Creature
                             || (animation.artifact && card_type == CardType::Artifact))
                 },
-            );
+            )
+            // A Mycosynth Lattice with a later timestamp (wave S1f).
+            || (card_type == CardType::Artifact
+                && crate::eternal_sideboard_s1f_v1::adds_artifact(state, id));
+    }
+    // Mycosynth Lattice: "All permanents are artifacts in addition to their
+    // other types", face-down permanents included, unless a later
+    // type-setting effect applies (wave S1f).
+    #[cfg(feature = "eternal-fixtures")]
+    if card_type == CardType::Artifact && crate::eternal_sideboard_s1f_v1::adds_artifact(state, id)
+    {
+        return true;
+    }
+    // Unable to Scream: "is a Toy artifact creature ... in addition to its
+    // other types", a face-down host included (wave S1e).
+    #[cfg(feature = "eternal-fixtures")]
+    if matches!(card_type, CardType::Artifact | CardType::Creature)
+        && crate::eternal_sideboard_s1e_v1::adds_artifact_creature(state, id)
+    {
+        return true;
     }
     if let Some(face) = state.objects.get(id).v4.face_down_v1 {
         return face.disguised && card_type == CardType::Creature;
@@ -22879,6 +23177,15 @@ pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
         // Painter's addition (613.7).
         let setter = crate::eternal_premodern_p1a_v1::statics::color_override_timed(state, id)
             .and_then(|(_, timestamp)| timestamp);
+        // Mycosynth Lattice: "All cards that aren't on the battlefield,
+        // spells, and permanents are colorless", unless a later setting
+        // overwrites it; a later Painter's Servant still adds its color
+        // (wave S1f).
+        if let Some(lattice) =
+            crate::eternal_sideboard_s1f_v1::colorless_timestamp(state, id, setter)
+        {
+            return crate::eternal_legacy_e9a_v1::statics::painter_mask_after(state, Some(lattice));
+        }
         let painted = crate::eternal_legacy_e9a_v1::statics::painter_mask_after(state, setter);
         if painted != 0 {
             return unpainted_object_color_mask(state, id) | painted;
@@ -23090,7 +23397,10 @@ pub(crate) fn consuming_aberration_card_count_v1(count: usize) -> Result<i32, St
 
 /// Layer 7a, including cards outside the battlefield. Copy effects install the
 /// effective CardDef; in zones without a controller, "you" denotes the owner.
-fn consuming_aberration_base_v1(state: &GameState, id: ObjectId) -> Result<Option<i32>, String> {
+pub(crate) fn consuming_aberration_base_v1(
+    state: &GameState,
+    id: ObjectId,
+) -> Result<Option<i32>, String> {
     let object = state.objects.get(id);
     let definition = &card_def::CARD_DEFS[usize::from(object.card_def)];
     if !definition.is_executable()
@@ -24482,6 +24792,11 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_sideboard_s1c_v1::statics::is_extra_swamp(state, id) {
         subtype_ids.push(card_def::Subtype::Swamp.stable_id());
+    }
+    // Unable to Scream: "is a Toy artifact creature" (eternal wave S1e).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1e_v1::is_toy(state, id) {
+        subtype_ids.push(card_def::Subtype::Toy.stable_id());
     }
     subtype_ids.sort_unstable();
     if crate::continuous_characteristics_v1::land_type_timestamp(state, id).is_some()
@@ -28113,6 +28428,7 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
             state.engine.event_log.push(event.clone());
             state.engine.event_history.push(event);
             let declaration = state.engine.event_history.len() - 1;
+            crate::etali_primal_storm_receipts_v1::record_attack(state, source);
             crate::effect::sphinx_lore_v1::record_attack(state, source);
             crate::ashroot_dispatch_v2::record_attack(state, source);
             crate::vampire_gourmand_dispatch_v2::capture_declaration(state, declaration);
@@ -29268,9 +29584,19 @@ fn finalize_owned_cast(
     pending: PendingCast,
     cast_method: CastMethodV4,
     discarded: Vec<ObjectId>,
-    payment: spell_costs_v1::PreparedSpellPaymentV1,
+    mut payment: spell_costs_v1::PreparedSpellPaymentV1,
 ) -> Result<(), String> {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let edict_input = if crate::edict_receipts_v1::is_printing(pending.source_contract.card_def) {
+        Some((
+            crate::edict_receipts_v1::creature_count(state)?,
+            payment
+                .planned_mana_count_v1(state, pending.controller)
+                .ok_or("Edict prepared mana plan no longer validates")?,
+        ))
+    } else {
+        None
+    };
     let library_overload =
         crate::eternal_e5a_v1::permissions::prepare_library_overload_publication(
             state,
@@ -29312,7 +29638,18 @@ fn finalize_owned_cast(
         pending.spell,
         payment.restricted_pool_used(),
     );
+    let storm_targets = payment.storm_targets.take();
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
+    if let Some((creatures, quoted)) = edict_input {
+        crate::edict_receipts_v1::record_mana_committed(
+            state,
+            &pending,
+            cast_method,
+            creatures,
+            quoted,
+            mana_spent,
+        )?;
+    }
     // Lavinia, Azorius Renegade: a spell cast with no mana spent.
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_sideboard_s1a_v1::statics::note_mana_spent(
@@ -29534,8 +29871,25 @@ fn finalize_owned_cast(
         stack_item_id,
         library_overload,
     );
-    event::log_spell_cast(state, pending.spell, pending.controller);
+    let cast_at = state.engine.event_history.len();
+    event::log_spell_cast_with_targets(state, pending.spell, pending.controller, storm_targets);
     crate::eternal_cards_v1::owned_draws_v1::portent::record_cast(state, stack_item_id)?;
+    crate::etali_primal_storm_receipts_v1::record_cast(
+        state,
+        stack_item_id,
+        finalized_source_contract,
+        cast_at,
+    )?;
+    if let Some((creatures_before, _)) = edict_input {
+        crate::edict_receipts_v1::record_paid(
+            state,
+            stack_item_id,
+            finalized_source_contract,
+            creatures_before,
+            mana_spent,
+            cast_at,
+        )?;
+    }
     crate::extra_turn_v1::record_publication(state, stack_item_id);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::e3::note_cast(state, stack_item_id);
@@ -30176,6 +30530,7 @@ struct FrozenActivationSource {
     granted_by: Option<AbilitySourceContractV4>,
     fixed_departure: Option<u32>,
     fiend_input: Option<u32>,
+    lathril_input: Option<crate::lathril_receipts_v1::PaymentInputV1>,
     payment_history_start: usize,
     fishing_ability_index: u8,
     ajani_payment_owner: Option<crate::ajani_full_v42::lifecycle::PaymentOwner>,
@@ -30235,6 +30590,7 @@ fn freeze_activation_source(
         granted_by,
         fixed_departure: None,
         fiend_input: None,
+        lathril_input: crate::lathril_receipts_v1::freeze_payment(state, pending, source),
         payment_history_start: state.engine.event_history.len(),
         fishing_ability_index: pending.ability_index,
         ajani_payment_owner: None,
@@ -30462,6 +30818,13 @@ fn push_paid_activation(
         ));
         return;
     }
+    if crate::lathril_receipts_v1::record_paid(state, frozen.lathril_input).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
     if effect::chandra_flameshaper_v1::record_paid(state, stack_item_id, frozen.chandra_payment)
         .is_err()
     {
@@ -30579,6 +30942,14 @@ fn push_paid_activation(
         }
     }
     if log_final_targeting_events(state, stack_item_id).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
+    if crate::harvester_receipts_v1::record_published(state, frozen.payment_history_start).is_err()
+    {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.source,
@@ -38689,7 +39060,7 @@ mod checked_pt_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "engine/progenitus_v1_tests.rs"]
-mod progenitus_v1_tests;
+pub(crate) mod progenitus_v1_tests;
 
 #[cfg(all(
     test,
@@ -38697,7 +39068,7 @@ mod progenitus_v1_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "engine/fiend_artisan_v1_tests.rs"]
-mod fiend_artisan_v1_tests;
+pub(crate) mod fiend_artisan_v1_tests;
 
 #[cfg(all(
     test,
@@ -38705,7 +39076,7 @@ mod fiend_artisan_v1_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "engine/imprisoned_moon_v1_tests.rs"]
-mod imprisoned_moon_v1_tests;
+pub(crate) mod imprisoned_moon_v1_tests;
 
 #[cfg(all(
     test,

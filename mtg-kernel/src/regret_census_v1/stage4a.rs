@@ -89,6 +89,8 @@ pub(crate) use serve::worker_answer_v4 as qualify_worker_request_v4;
 mod blunder_census;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod blunder_price;
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+mod search_probe;
 mod serve_ac2;
 mod sharing;
 mod tensor_dump;

@@ -357,6 +357,17 @@ pub struct ZoneChangeProposed {
     /// The native Manifest Dread entry is face down before entry observers.
     #[serde(default, skip_serializing_if = "is_false")]
     pub battlefield_manifested_v1: bool,
+    /// Original Edict batch owning this proposed battlefield departure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) edict_move_owner: Option<crate::ids::StackItemId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) curator_move_owner: Option<crate::curator_receipts_v1::MoveOwnerV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) harvester_owner: Option<crate::ids::StackItemId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) fiend_search_owner: Option<crate::ids::StackItemId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) etali_parent: Option<crate::ids::StackItemId>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -367,6 +378,8 @@ fn is_false(value: &bool) -> bool {
 pub struct LifeLossProposed {
     pub player: PlayerId,
     pub amount: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) lathril_owner: Option<crate::lathril_receipts_v1::OperationOwnerV1>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -382,6 +395,8 @@ pub struct WideLifeProposedV59 {
 pub struct LifeGainProposed {
     pub player: PlayerId,
     pub amount: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) lathril_owner: Option<crate::lathril_receipts_v1::OperationOwnerV1>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -394,6 +409,8 @@ pub struct DrawProposed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TapProposed {
     pub object: ObjectId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) lathril_owner: Option<crate::lathril_receipts_v1::OperationOwnerV1>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -414,6 +431,10 @@ pub struct CreateTokenProposed {
     pub entry_tapped: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initialization_v48: Option<crate::doubling_season_v48::TokenEntryV48>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) harvester_owner: Option<crate::ids::StackItemId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) lathril_owner: Option<crate::lathril_receipts_v1::OperationOwnerV1>,
     pub touched_by: Vec<ReplacementId>,
 }
 fn token_entry_untapped_v48(value: &bool) -> bool {
@@ -478,6 +499,11 @@ impl ProposedEvent {
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
             battlefield_manifested_v1: false,
+            edict_move_owner: None,
+            curator_move_owner: None,
+            harvester_owner: None,
+            fiend_search_owner: None,
+            etali_parent: None,
             touched_by: Vec::new(),
         })
     }
@@ -498,6 +524,11 @@ impl ProposedEvent {
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
             battlefield_manifested_v1: false,
+            edict_move_owner: None,
+            curator_move_owner: None,
+            harvester_owner: None,
+            fiend_search_owner: None,
+            etali_parent: None,
             touched_by: Vec::new(),
         })
     }
@@ -518,6 +549,11 @@ impl ProposedEvent {
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
             battlefield_manifested_v1: false,
+            edict_move_owner: None,
+            curator_move_owner: None,
+            harvester_owner: None,
+            fiend_search_owner: None,
+            etali_parent: None,
             touched_by: Vec::new(),
         })
     }
@@ -541,6 +577,11 @@ impl ProposedEvent {
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
             battlefield_manifested_v1: false,
+            edict_move_owner: None,
+            curator_move_owner: None,
+            harvester_owner: None,
+            fiend_search_owner: None,
+            etali_parent: None,
             touched_by: Vec::new(),
         })
     }
@@ -574,6 +615,11 @@ impl ProposedEvent {
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
             battlefield_manifested_v1: false,
+            edict_move_owner: None,
+            curator_move_owner: None,
+            harvester_owner: None,
+            fiend_search_owner: None,
+            etali_parent: None,
             touched_by: Vec::new(),
         })
     }
@@ -610,6 +656,11 @@ impl ProposedEvent {
             battlefield_revival_v1: None,
             battlefield_grant_flying_v1: false,
             battlefield_manifested_v1: false,
+            edict_move_owner: None,
+            curator_move_owner: None,
+            harvester_owner: None,
+            fiend_search_owner: None,
+            etali_parent: None,
             touched_by: Vec::new(),
         })
     }
@@ -617,6 +668,7 @@ impl ProposedEvent {
         ProposedEvent::LifeLoss(LifeLossProposed {
             player,
             amount,
+            lathril_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -643,6 +695,7 @@ impl ProposedEvent {
         ProposedEvent::LifeGain(LifeGainProposed {
             player,
             amount,
+            lathril_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -655,6 +708,7 @@ impl ProposedEvent {
     pub fn tap(object: ObjectId) -> ProposedEvent {
         ProposedEvent::Tap(TapProposed {
             object,
+            lathril_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -665,6 +719,17 @@ impl ProposedEvent {
             touched_by: Vec::new(),
         })
     }
+    pub(crate) fn curator_pile_move(
+        object: ObjectId,
+        cause: crate::curator_receipts_v1::MoveOwnerV1,
+    ) -> ProposedEvent {
+        let ProposedEvent::ZoneChange(mut change) = Self::zone_change(object, cause.planned) else {
+            unreachable!("zone_change constructs a zone change")
+        };
+        change.curator_move_owner = Some(cause);
+        ProposedEvent::ZoneChange(change)
+    }
+
     pub fn create_token(token_def: u16, controller: PlayerId) -> ProposedEvent {
         ProposedEvent::CreateToken(CreateTokenProposed {
             token_def,
@@ -672,6 +737,8 @@ impl ProposedEvent {
             entry_face_index: None,
             entry_tapped: false,
             initialization_v48: None,
+            harvester_owner: None,
+            lathril_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -682,6 +749,8 @@ impl ProposedEvent {
             entry_face_index: Some(1),
             entry_tapped: false,
             initialization_v48: None,
+            harvester_owner: None,
+            lathril_owner: None,
             touched_by: Vec::new(),
         })
     }
@@ -1873,6 +1942,8 @@ pub enum CommittedEvent {
         previous_batch: Option<u64>,
         ordered: Vec<crate::effect::EffectObjectBinding>,
         move_start: u64,
+        #[serde(default, skip_serializing_if = "TutelageBatchOutcomeV1::is_empty")]
+        outcome: TutelageBatchOutcomeV1,
     },
     /// Only actual positive final combat damage to a player creates this receipt.
     LathrilCombatDamageV1 {
@@ -2165,6 +2236,31 @@ pub enum CommittedEvent {
     EternalOwnedDrawV1 {
         journal: Box<crate::eternal_cards_v1::owned_draws_v1::JournalV1>,
     },
+    NivMizzetVisionaryDrawEndedV1 {
+        stack_item_id: StackItemId,
+        outcome: crate::engine::niv_mizzet_resolution_v1::EndV1,
+    },
+    LathrilReceiptV1 {
+        journal: Box<crate::lathril_receipts_v1::JournalV1>,
+    },
+    BlasphemousEdictReceiptV1 {
+        journal: Box<crate::edict_receipts_v1::JournalV1>,
+    },
+    CuratorReceiptV1 {
+        journal: Box<crate::curator_receipts_v1::JournalV1>,
+    },
+    GreatwurmCommitReceiptV1 {
+        journal: Box<crate::greatwurm_receipts_v1::JournalV1>,
+    },
+    HarvesterCommitReceiptV1 {
+        journal: Box<crate::harvester_receipts_v1::JournalV1>,
+    },
+    FiendArtisanConsumerReceiptV1 {
+        journal: Box<crate::fiend_artisan_receipts_v1::JournalV1>,
+    },
+    EtaliPrimalStormReceiptV1 {
+        journal: Box<crate::etali_primal_storm_receipts_v1::JournalV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2431,10 +2527,16 @@ fn niv_mizzet_visionary_damage_amount_v1(
             definition.is_executable() && definition.name == "Niv-Mizzet, Visionary"
         });
     if !observer_is_niv
-        || observer_object.card_def != observer.card_def
+        || (observer_object.card_def != observer.card_def
+            && !crate::sampled_history_v1::allows_rebound_source(state, marker_index, observer))
         || observer_object.owner != observer.owner
         || observer_object.zone_change_count < observer.zone_change_count
-        || source_object.card_def != damage_source.card_def
+        || (source_object.card_def != damage_source.card_def
+            && !crate::sampled_history_v1::allows_rebound_source(
+                state,
+                marker_index,
+                damage_source,
+            ))
         || source_object.owner != damage_source.owner
         || source_object.zone_change_count < damage_source.zone_change_count
     {
@@ -4746,6 +4848,52 @@ fn commit_with_entry_batch_and_source_color(
         }
         _ => Vec::new(),
     };
+    let lathril_operation = crate::lathril_receipts_v1::capture_operation(state, &event);
+    let harvester_operation = crate::harvester_receipts_v1::capture_operation(state, &event);
+    let edict_departure = match &event {
+        ProposedEvent::ZoneChange(change) => change.edict_move_owner.map(|owner| {
+            let object = state.objects.get(change.object);
+            (
+                owner,
+                crate::effect::EffectObjectBinding {
+                    object: change.object,
+                    expected_zone: object.zone,
+                    expected_zone_change_count: object.zone_change_count,
+                },
+            )
+        }),
+        _ => None,
+    };
+    let fiend_move = match &event {
+        ProposedEvent::ZoneChange(change) => change.fiend_search_owner.map(|id| {
+            (
+                id,
+                crate::state::AbilitySourceContractV4::capture(state, change.object),
+            )
+        }),
+        _ => None,
+    };
+    let etali_move = match &event {
+        ProposedEvent::ZoneChange(change) => change.etali_parent.map(|id| {
+            (
+                id,
+                crate::state::AbilitySourceContractV4::capture(state, change.object),
+            )
+        }),
+        _ => None,
+    };
+    let curator_move = match &event {
+        ProposedEvent::ZoneChange(change) => change.curator_move_owner.map(|cause| {
+            let live = state.objects.get(change.object);
+            let original = crate::effect::EffectObjectBinding {
+                object: change.object,
+                expected_zone: live.zone,
+                expected_zone_change_count: live.zone_change_count,
+            };
+            (cause, original)
+        }),
+        _ => None,
+    };
     let Some(MaterializedEventV1 {
         committed,
         alesha_power_departure,
@@ -4919,6 +5067,58 @@ fn commit_with_entry_batch_and_source_color(
         state.engine.event_log.push(receipt.clone());
         state.engine.event_history.push(receipt);
     }
+    if let Some(operation) = harvester_operation {
+        if operation.record(state, entry_history_index).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    }
+    if let Some((id, original)) = fiend_move {
+        crate::fiend_artisan_receipts_v1::observe_arrival_visibility(
+            state,
+            id,
+            original,
+            entry_history_index,
+        );
+        crate::fiend_artisan_receipts_v1::record_move(state, id, original, entry_history_index);
+    }
+    if let Some((parent, original)) = etali_move {
+        crate::etali_primal_storm_receipts_v1::observe_exile_visibility(
+            state,
+            parent,
+            original.source,
+            entry_history_index,
+        );
+        crate::etali_primal_storm_receipts_v1::record_exiled(
+            state,
+            parent,
+            original,
+            entry_history_index,
+        );
+    }
+    if let Some((cause, original)) = curator_move {
+        if crate::curator_receipts_v1::record_move(state, cause, original, entry_history_index)
+            .is_err()
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                original.object,
+            ));
+            return;
+        }
+    }
+    if let Some(operation) = lathril_operation {
+        if operation.record(state, entry_history_index).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    }
     record_copied_token_entry_v1(state, entry_history_index);
     if let Err(source) =
         crate::full_text_v1::record_entry_trigger(state, entry_history_index, donated_entries)
@@ -4947,14 +5147,8 @@ fn commit_with_entry_batch_and_source_color(
         state.engine.event_history.push(receipt);
     }
     if let Some(source) = niv_source_departure {
-        if let Some(departure_history_index) = state
-            .engine
-            .event_history
-            .len()
-            .checked_sub(1)
-            .and_then(|index| u64::try_from(index).ok())
-        {
-            if matches!(state.engine.event_history.last(),
+        if let Ok(departure_history_index) = u64::try_from(entry_history_index) {
+            if matches!(state.engine.event_history.get(entry_history_index),
                 Some(CommittedEvent::ZoneChange { object, from, to, controller_before })
                     if *object == source.source
                         && *from == source.zone
@@ -4968,6 +5162,17 @@ fn commit_with_entry_batch_and_source_color(
                 };
                 state.engine.event_history.push(receipt);
             }
+        }
+    }
+    if let Some((owner, original)) = edict_departure {
+        if crate::edict_receipts_v1::record_move(state, owner, original, entry_history_index)
+            .is_err()
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                original.object,
+            ));
+            return;
         }
     }
     if !niv_mizzet_damage_captures.is_empty() {
@@ -5788,6 +5993,16 @@ fn materialize_event_v1(
                     crate::card_def::CardType::Creature,
                 );
             if !mode.is_scene() {
+                // Karmic Justice and Sacred Ground (Premodern wave P3d) read
+                // the permanent before it moves.
+                #[cfg(feature = "eternal-fixtures")]
+                if from == Zone::Battlefield && z.to_zone == Zone::Graveyard {
+                    crate::eternal_premodern_p3d_v1::note_departure(
+                        state,
+                        z.object,
+                        controller_before,
+                    );
+                }
                 crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
                 if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
                     crate::engine::record_different_controller_target_departure(state, z.object);
@@ -6761,7 +6976,29 @@ struct EntryBatchCommitContextV1 {
     token_input: Option<crate::doubling_season_v48::TokenInputV48>,
     token_requests: Vec<crate::doubling_season_v48::TokenRequestV48>,
 }
+/// Commits one batch of simultaneous survivors. Karmic Justice and Sacred
+/// Ground (Premodern wave P3d) read the batch before any of its moves.
 fn commit_batch_survivors(
+    state: &mut GameState,
+    survivors: Vec<ProposedEvent>,
+    authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
+    context: EntryBatchCommitContextV1,
+    prepared_zone_plan: Option<FinalZonePtPlanV1>,
+) {
+    #[cfg(feature = "eternal-fixtures")]
+    let enclosing = crate::eternal_premodern_p3d_v1::begin_departure_batch(state, &survivors);
+    commit_batch_survivors_ordered(
+        state,
+        survivors,
+        authority_batch,
+        context,
+        prepared_zone_plan,
+    );
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_premodern_p3d_v1::end_departure_batch(state, enclosing);
+}
+
+fn commit_batch_survivors_ordered(
     state: &mut GameState,
     survivors: Vec<ProposedEvent>,
     authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
@@ -7466,6 +7703,15 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
 /// this increment's scope (countering a spell removes it from the stack
 /// later, it doesn't replace the cast event itself).
 pub fn log_spell_cast(state: &mut GameState, spell: ObjectId, controller: PlayerId) {
+    log_spell_cast_with_targets(state, spell, controller, None);
+}
+
+pub(crate) fn log_spell_cast_with_targets(
+    state: &mut GameState,
+    spell: ObjectId,
+    controller: PlayerId,
+    storm_targets: Option<crate::effect::thousand_year_storm_v1::targets::CastTargetsV1>,
+) {
     let committed = CommittedEvent::SpellCast { spell, controller };
     let mask = state
         .objects
@@ -7479,7 +7725,7 @@ pub fn log_spell_cast(state: &mut GameState, spell: ObjectId, controller: Player
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
     let kaito_cast = state.engine.event_history.len() - 1;
-    if crate::effect::thousand_year_storm_v1::record_cast(state, spell).is_err() {
+    if crate::effect::thousand_year_storm_v1::record_cast(state, spell, storm_targets).is_err() {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             spell,
@@ -7527,6 +7773,14 @@ pub fn log_targeted(
 /// change. Sacrifice triggers consume this marker instead of guessing from
 /// an ordinary battlefield-to-graveyard move.
 pub fn log_sacrifice(state: &mut GameState, object: ObjectId) {
+    log_sacrifice_owned(state, object, None);
+}
+
+pub(crate) fn log_sacrifice_owned(
+    state: &mut GameState,
+    object: ObjectId,
+    fiend_input: Option<u32>,
+) {
     let live = state.objects.get(object);
     let committed = CommittedEvent::Sacrificed {
         object,
@@ -7535,6 +7789,9 @@ pub fn log_sacrifice(state: &mut GameState, object: ObjectId) {
     };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
+    if let Some(input) = fiend_input {
+        crate::fiend_artisan_receipts_v1::observe_sacrifice_face(state, input, object);
+    }
 }
 
 /// Records that one exact permanent incarnation dealt combat damage to a
@@ -10502,6 +10759,131 @@ pub(crate) mod ravenous_amulet_paid_future_tests {
         }
     }
 }
+/// The real post-replacement public destinations at batch commit, in native
+/// move order. An attempted card returned to a concealed zone is absent.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TutelagePublicMillMemberV1 {
+    pub object: ObjectId,
+    pub generation: u32,
+    pub card_def: u16,
+    pub zone: Zone,
+    pub controller: PlayerId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TutelagePublicMillOutcomeV1 {
+    pub members: Vec<TutelagePublicMillMemberV1>,
+    pub repeat: bool,
+}
+
+/// Older native snapshots had no event-time public operand record.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TutelageBatchOutcomeV1(pub Option<TutelagePublicMillOutcomeV1>);
+
+impl TutelageBatchOutcomeV1 {
+    fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+impl std::hash::Hash for TutelageBatchOutcomeV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if let Some(outcome) = &self.0 {
+            std::hash::Hash::hash("tutelage_public_mill_outcome/v1", state);
+            std::hash::Hash::hash(outcome, state);
+        }
+    }
+}
+
+pub(crate) fn tutelage_public_outcome_v1(
+    state: &GameState,
+    index: usize,
+    target: PlayerId,
+) -> Result<Option<&TutelagePublicMillOutcomeV1>, String> {
+    let Some(CommittedEvent::SphinxsTutelageMillBatchV1 {
+        ordered,
+        move_start,
+        outcome,
+        ..
+    }) = state.engine.event_history.get(index)
+    else {
+        return Err("Tutelage outcome has no original batch".into());
+    };
+    let Some(outcome) = &outcome.0 else {
+        return Ok(None);
+    };
+    let start = usize::try_from(*move_start).map_err(|_| "Tutelage move range overflow")?;
+    let moves = state
+        .engine
+        .event_history
+        .get(start..index)
+        .ok_or("Tutelage move range changed")?;
+    let mut prior = None;
+    let mut move_prior = None;
+    for member in &outcome.members {
+        let position = ordered
+            .iter()
+            .position(|binding| {
+                binding.object == member.object
+                    && binding.expected_zone == Zone::Library
+                    && binding.expected_zone_change_count.checked_add(1) == Some(member.generation)
+            })
+            .ok_or("Tutelage outcome member is outside the original pair")?;
+        let mut moved = moves.iter().enumerate().filter_map(|(i, event)| {
+            matches!(event, CommittedEvent::ZoneChange {
+                object, from: Zone::Library, to, controller_before,
+            } if *object == member.object && *to == member.zone && *controller_before == target)
+            .then_some(i)
+        });
+        let movement = moved
+            .next()
+            .ok_or("Tutelage outcome has no exact native move")?;
+        if moved.next().is_some()
+            || prior.is_some_and(|prior| position <= prior)
+            || move_prior.is_some_and(|prior| movement <= prior)
+            || !matches!(
+                member.zone,
+                Zone::Graveyard | Zone::Exile | Zone::Battlefield | Zone::Stack
+            )
+            || crate::card_def::CARD_DEFS
+                .get(usize::from(member.card_def))
+                .is_none()
+        {
+            return Err("Tutelage public move order or visibility changed".into());
+        }
+        prior = Some(position);
+        move_prior = Some(movement);
+    }
+    if outcome.repeat != tutelage_public_pair_repeats_v1(&outcome.members) {
+        return Err("Tutelage original native repeat answer changed".into());
+    }
+    Ok(Some(outcome))
+}
+
+pub(crate) fn tutelage_public_pair_repeats_v1(pair: &[TutelagePublicMillMemberV1]) -> bool {
+    let [a, b] = pair else {
+        return false;
+    };
+    let defs = &crate::card_def::CARD_DEFS;
+    let a = &defs[usize::from(a.card_def)];
+    let b = &defs[usize::from(b.card_def)];
+    tutelage_card_pair_repeats_v1(a, b)
+}
+
+pub(crate) fn tutelage_card_pair_repeats_v1(
+    a: &crate::card_def::CardDef,
+    b: &crate::card_def::CardDef,
+) -> bool {
+    !a.has_type(crate::card_def::CardType::Land)
+        && !b.has_type(crate::card_def::CardType::Land)
+        && a.colors
+            .iter()
+            .any(|color| *color != ManaColor::C && b.colors.contains(color))
+}
+
 pub(crate) fn is_sphinxs_tutelage_v1(card_def: u16) -> bool {
     crate::card_def::CARD_DEFS
         .get(usize::from(card_def))
@@ -10564,7 +10946,8 @@ pub(crate) fn tutelage_observers_v1(
             || source.zone != Zone::Battlefield
             || source.controller != *player
             || source.owner != object.owner
-            || !crate::engine::source_card_def_matches(state, *source, object.card_def)
+            || (!crate::engine::source_card_def_matches(state, *source, object.card_def)
+                && !crate::sampled_history_v1::allows_rebound_source(state, index, *source))
             || object.zone_change_count < source.zone_change_count
             || (object.zone_change_count == source.zone_change_count && object.zone != source.zone)
         {
@@ -10773,7 +11156,8 @@ pub(crate) fn lathril_damage_v1(
         || !is_lathril_v1(source.card_def)
         || state.objects.try_get(source.source).is_none_or(|object| {
             object.owner != source.owner
-                || !crate::engine::source_card_def_matches(state, *source, object.card_def)
+                || (!crate::engine::source_card_def_matches(state, *source, object.card_def)
+                    && !crate::sampled_history_v1::allows_rebound_source(state, index, *source))
                 || object.zone_change_count < source.zone_change_count
                 || (object.zone_change_count == source.zone_change_count
                     && object.zone != source.zone)
@@ -10871,6 +11255,22 @@ pub(crate) fn validate_lathril_trigger_v1(
     state: &GameState,
     item: &crate::state::StackItem,
 ) -> Result<u64, String> {
+    let capture = validate_historical_lathril_trigger_v1(state, item)?;
+    if state.engine.event_history.iter().any(|entry| {
+        matches!(entry,
+            CommittedEvent::LathrilCombatResolvedV1 { capture_history_index }
+                | CommittedEvent::LathrilCombatCounteredV1 { capture_history_index }
+            if *capture_history_index == capture)
+    }) {
+        return Err("Lathril trigger already consumed".into());
+    }
+    Ok(capture)
+}
+
+pub(crate) fn validate_historical_lathril_trigger_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<u64, String> {
     let Some(crate::effect::EffectOp::LathrilCombatTokensV1 {
         capture_history_index,
     }) = item.inline_effect.as_ref()
@@ -10911,14 +11311,8 @@ pub(crate) fn validate_lathril_trigger_v1(
             })
             .count()
             != 1
-        || state.engine.event_history.iter().any(|entry| {
-            matches!(entry,
-            CommittedEvent::LathrilCombatResolvedV1 { capture_history_index: other }
-                | CommittedEvent::LathrilCombatCounteredV1 { capture_history_index: other }
-            if other == capture_history_index)
-        })
     {
-        return Err("Lathril trigger source/controller/recipe changed or consumed".into());
+        return Err("Lathril trigger source/controller/recipe changed".into());
     }
     Ok(*capture_history_index)
 }

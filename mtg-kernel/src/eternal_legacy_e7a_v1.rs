@@ -2135,6 +2135,8 @@ pub(crate) fn drive(
             if !link_live_in(state, *card, Zone::Exile) {
                 return Ok(false);
             }
+            // A creature spell cast this way gains haste (wave S1e).
+            crate::eternal_sideboard_s1e_v1::note_suspend_cast(state, *card, controller);
             let binding = bind(state, card.object);
             Ok(crate::eternal_legacy_e5b_v1::offer_paid_cast(
                 state,
@@ -3098,6 +3100,18 @@ pub(crate) fn note_restricted_spending(
     }
     let record = (live_link(state, spell), TurnV1::now(state));
     e7a_state(state).arena_spells.push(record);
+}
+
+/// Another card's effect suspends the exiled `card` with `counters` time
+/// counters (Suspend, wave S1e): its owner removes them at their upkeeps and
+/// may cast it as the last is removed, as for Gaea's Will.
+pub(crate) fn add_suspended(state: &mut GameState, card: ObjectId, counters: u8) {
+    state.objects.get_mut(card).v4.time_counters_v1 = counters;
+    let link = live_link(state, card);
+    let suspended = &mut e7a_state(state).suspended;
+    if !suspended.contains(&link) {
+        suspended.push(link);
+    }
 }
 
 /// Suspend (702.62a): exiles `source` from `player`'s hand with four time

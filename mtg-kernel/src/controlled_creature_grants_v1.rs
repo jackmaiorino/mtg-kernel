@@ -393,7 +393,7 @@ fn validate_color_history_since(state: &GameState, from: usize) -> Result<(), St
             break;
         }
         if let CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = event {
-            validate_departed_source(state, snapshot)?;
+            validate_departed_source(state, at, snapshot)?;
         }
     }
     for (offset, event) in state
@@ -448,7 +448,7 @@ fn validate_color_event(
             crate::source_type_hexproof_v1::validate_snapshot_types(snapshot, state.objects.len())?;
         }
         validate_snapshot_object(snapshot)?;
-        validate_departed_source(state, snapshot)?;
+        validate_departed_source(state, at, snapshot)?;
     }
     let missing_snapshot = match event {
         CommittedEvent::ZoneChange {
@@ -469,10 +469,15 @@ fn validate_color_event(
     }
     Ok(())
 }
-/// The checks of a departure snapshot that read the live state: its source
-/// still exists with the snapshot's owner, a later incarnation, and the
-/// snapshot's definition or a recorded copy of it.
-fn validate_departed_source(state: &GameState, snapshot: &DepartureColorV1) -> Result<(), String> {
+/// The checks of the departure snapshot at `at` that read the live state:
+/// its source still exists with the snapshot's owner, a later incarnation,
+/// and the snapshot's definition, a recorded copy of it, or a sampled
+/// rebinding of the source.
+fn validate_departed_source(
+    state: &GameState,
+    at: usize,
+    snapshot: &DepartureColorV1,
+) -> Result<(), String> {
     let live = state
         .objects
         .try_get(snapshot.source.source)
@@ -485,7 +490,8 @@ fn validate_departed_source(state: &GameState, snapshot: &DepartureColorV1) -> R
                 snapshot.source.source,
                 snapshot.source.zone_change_count,
                 snapshot.source.card_def,
-            ))
+            )
+            && !crate::sampled_history_v1::allows_rebound_source(state, at, snapshot.source))
     {
         return Err("color departure changed original definition/owner/incarnation".into());
     }

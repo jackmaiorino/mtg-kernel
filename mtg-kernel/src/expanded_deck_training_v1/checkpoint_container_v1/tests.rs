@@ -321,7 +321,6 @@ fn a_checkpoint_of_borrowed_tensors_publishes_the_owned_bytes_in_both_formats() 
         let container = encode_v1(&owned).unwrap();
         assert_eq!(encode_v1(&borrowed).unwrap(), container);
         assert_eq!(json_v1(&decode_v1(&container).unwrap()), v1);
-        assert!(encodes_to_v1(&borrowed, &container).unwrap());
         // The writer's gate and the default's resolution read the document,
         // however the tensors are held.
         assert_eq!(
@@ -381,7 +380,6 @@ fn a_checkpoint_of_a_live_states_tensors_writes_its_snapshots_bytes() {
     assert_eq!(serde_json::to_vec(&live).unwrap(), json_v1(&owned));
     let container = encode_v1(&owned).unwrap();
     assert_eq!(encode_v1(&live).unwrap(), container);
-    assert!(encodes_to_v1(&live, &container).unwrap());
     for (live, owned) in [
         (&tensors.parameters, &owned.parameters),
         (&tensors.first_moments, &owned.first_moments),
@@ -401,31 +399,43 @@ fn a_borrowed_tensor_that_does_not_fill_its_shape_is_not_encoded() {
         .contains("differs from its shape"));
 }
 
-/// The decode with the second guard as it was before it was streamed: a
-/// re-encoded copy compared with the bytes.
+/// The decode as it was before milestone 3 of #596, with its second guard: a
+/// re-encoding of what it decoded, compared with the bytes. It refuses
+/// whatever `decode_v1` refuses, with the same message, and also any bytes
+/// `decode_v1` accepts that are not exactly `encode_v1`'s encoding of what it
+/// decodes them to.
 fn decode_with_copy_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
-    let saved = decode_sections_v1(bytes)?;
+    let saved = decode_v1(bytes)?;
     if encode_v1(&saved)? != bytes {
         return Err("checkpoint container is not in canonical form".into());
     }
     Ok(saved)
 }
 
+/// Asserts that `decode_v1` and the re-encoding reference give `bytes` the
+/// same outcome: the same checkpoint, or the same refusal.
+fn assert_same_outcome_v1(bytes: &[u8], what: &str) -> bool {
+    let got = decode_v1(bytes).map(|saved| json_v1(&saved));
+    assert_eq!(
+        got,
+        decode_with_copy_v1(bytes).map(|saved| json_v1(&saved)),
+        "{what}"
+    );
+    got.is_ok()
+}
+
 /// Decodes `container` and every single-byte change (three per byte: header,
 /// document, table, padding and values alike), truncation and trailing tail
-/// of it with both `decode_v1` and the copying reference, asserting the same
-/// outcome for each. Returns how many were accepted and how many refused.
+/// of it with both `decode_v1` and the re-encoding reference, asserting the
+/// same outcome for each. Returns how many were accepted and how many refused.
 fn same_refusals_v1(container: &[u8]) -> (usize, usize) {
-    let outcome = |bytes: &[u8]| decode_v1(bytes).map(|saved| json_v1(&saved));
-    let reference = |bytes: &[u8]| decode_with_copy_v1(bytes).map(|saved| json_v1(&saved));
     let mut accepted = 0usize;
     let mut refused = 0usize;
     let mut check = |bytes: &[u8], what: &str| {
-        let got = outcome(bytes);
-        assert_eq!(got, reference(bytes), "{what}");
-        match got {
-            Ok(_) => accepted += 1,
-            Err(_) => refused += 1,
+        if assert_same_outcome_v1(bytes, what) {
+            accepted += 1;
+        } else {
+            refused += 1;
         }
     };
     check(container, "the container itself");
@@ -568,7 +578,6 @@ fn the_encoder_writes_and_refuses_what_the_buffered_encoder_did() {
             expected,
             "{what}"
         );
-        assert!(encodes_to_v1(owned, &expected).unwrap(), "{what}");
     }
     // A value count that is not the shape's product, and a shape whose
     // product overflows, in each section, owned and borrowed alike.
@@ -598,13 +607,12 @@ fn the_encoder_writes_and_refuses_what_the_buffered_encoder_did() {
                 expected,
                 "{what}"
             );
-            assert_eq!(encodes_to_v1(&owned, &[]).unwrap_err(), expected, "{what}");
         }
     }
 }
 
 #[test]
-fn the_streamed_canonical_check_refuses_exactly_what_a_reencoded_copy_refuses() {
+fn the_structure_check_alone_refuses_exactly_what_a_reencoded_copy_refuses() {
     let container = encode_v1(&python_fixture_v1()).unwrap();
     let (accepted, refused) = same_refusals_v1(&container);
     // Value bytes are data, so some changes decode; everything else is
@@ -615,6 +623,153 @@ fn the_streamed_canonical_check_refuses_exactly_what_a_reencoded_copy_refuses() 
         let container = encode_v1(&saved).unwrap();
         let (accepted, refused) = same_refusals_v1(&container);
         assert!(accepted >= 1 && refused > container.len(), "{what}");
+    }
+}
+
+/// Rewrites of a container that no single-byte change makes: reformatted
+/// JSON, reordered or moved sections, extra padding, unknown members and
+/// sections, and a reshaped tensor, which is the canonical encoding of
+/// another checkpoint. `decode_v1` and the re-encoding reference agree on
+/// each.
+#[test]
+fn rewritten_containers_are_refused_exactly_as_a_reencoded_copy_refuses_them() {
+    let container = encode_v1(&python_fixture_v1()).unwrap();
+    let (document, table_bytes, data) = parts(&container);
+    let table: SectionTableV1 = serde_json::from_slice(&table_bytes).unwrap();
+    let table_with = |change: &dyn Fn(&mut SectionTableV1)| {
+        let mut changed: SectionTableV1 = serde_json::from_slice(&table_bytes).unwrap();
+        change(&mut changed);
+        serde_json::to_vec(&changed).unwrap()
+    };
+    let as_value = |bytes: &[u8]| serde_json::from_slice::<serde_json::Value>(bytes).unwrap();
+    let with_member = |bytes: &[u8], name: &str| {
+        let mut value = as_value(bytes);
+        value[name] = serde_json::json!(0);
+        serde_json::to_vec(&value).unwrap()
+    };
+    // The members in reverse order, whether the map keeps their order or
+    // sorts them.
+    let reordered = {
+        let mut reversed = serde_json::Map::new();
+        for (name, member) in as_value(&document).as_object().unwrap().iter().rev() {
+            reversed.insert(name.clone(), member.clone());
+        }
+        serde_json::to_vec(&reversed).unwrap()
+    };
+    assert_ne!(reordered, document);
+    // The last tensor with values, and every one after it, 256 bytes later,
+    // the new padding zero.
+    let moved = table
+        .sections
+        .iter()
+        .rposition(|entry| entry.byte_length > 0)
+        .unwrap();
+    let start = table.sections[moved].offset as usize;
+    let moved_data = [&data[..start], &[0u8; 256], &data[start..]].concat();
+    let moved_table = table_with(&|table| {
+        for entry in &mut table.sections[moved..] {
+            entry.offset += 256;
+        }
+    });
+    let first_moments_first = table_with(&|table| {
+        table
+            .sections
+            .sort_by_key(|entry| entry.section != "first_moments")
+    });
+    let reshaped = table_with(&|table| {
+        let entry = &mut table.sections[0];
+        assert_eq!(entry.shape, vec![2, 3]);
+        entry.shape = vec![3, 2];
+    });
+    let cases: Vec<(&str, Vec<u8>, bool)> = vec![
+        (
+            "the container itself",
+            with_lengths(&document, &table_bytes, &data),
+            true,
+        ),
+        (
+            "a pretty document",
+            with_lengths(
+                &serde_json::to_vec_pretty(&as_value(&document)).unwrap(),
+                &table_bytes,
+                &data,
+            ),
+            false,
+        ),
+        (
+            "a document with its members in another order",
+            with_lengths(&reordered, &table_bytes, &data),
+            false,
+        ),
+        (
+            "an unknown document member",
+            with_lengths(&with_member(&document, "unknown"), &table_bytes, &data),
+            false,
+        ),
+        (
+            "a pretty table",
+            with_lengths(
+                &document,
+                &serde_json::to_vec_pretty(&table).unwrap(),
+                &data,
+            ),
+            false,
+        ),
+        (
+            "an unknown table member",
+            with_lengths(&document, &with_member(&table_bytes, "unknown"), &data),
+            false,
+        ),
+        (
+            "two entries swapped",
+            with_lengths(&document, &table_with(&|t| t.sections.swap(0, 1)), &data),
+            false,
+        ),
+        (
+            "first moments before parameters",
+            with_lengths(&document, &first_moments_first, &data),
+            false,
+        ),
+        (
+            "an unknown section",
+            with_lengths(
+                &document,
+                &table_with(&|t| t.sections.last_mut().unwrap().section = "third_moments".into()),
+                &data,
+            ),
+            false,
+        ),
+        (
+            "an ordinal off by one",
+            with_lengths(
+                &document,
+                &table_with(&|t| t.sections[1].ordinal = 2),
+                &data,
+            ),
+            false,
+        ),
+        (
+            "a tensor moved 256 bytes later",
+            with_lengths(&document, &moved_table, &moved_data),
+            false,
+        ),
+        (
+            "256 zero bytes before the data",
+            with_lengths(
+                &document,
+                &table_bytes,
+                &[&[0u8; 256], data.as_slice()].concat(),
+            ),
+            false,
+        ),
+        (
+            "a reshaped tensor, the encoding of another checkpoint",
+            with_lengths(&document, &reshaped, &data),
+            true,
+        ),
+    ];
+    for (what, bytes, accepted) in cases {
+        assert_eq!(assert_same_outcome_v1(&bytes, what), accepted, "{what}");
     }
 }
 

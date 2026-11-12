@@ -460,6 +460,16 @@ pub enum Subtype {
     /// Appended for the eternal catalog's wave S1d.
     Rhino = 361,
     Flagbearer = 362,
+    /// Appended for the eternal catalog's Premodern wave P3c (Spike
+    /// Feeder), with stable ids from 380 reserved for that wave.
+    Spike = 380,
+    /// Appended for the eternal catalog's Premodern wave P3f (Phyrexian
+    /// Processor's Minion tokens).
+    Minion = 381,
+    /// Appended for the eternal catalog's Vintage sideboard wave S1f (the
+    /// Junk token Overencumbered creates), with stable ids from 400 reserved
+    /// for that wave. An artifact type, not a creature type.
+    Junk = 400,
 }
 
 impl Subtype {
@@ -850,6 +860,10 @@ impl Subtype {
         Subtype::Rhino,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Flagbearer,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Spike,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Minion,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1097,6 +1111,9 @@ impl Subtype {
             321 => Subtype::Advisor,
             361 => Subtype::Rhino,
             362 => Subtype::Flagbearer,
+            380 => Subtype::Spike,
+            381 => Subtype::Minion,
+            400 => Subtype::Junk,
             _ => return None,
         })
     }
@@ -1323,6 +1340,9 @@ impl Subtype {
             Subtype::Advisor => true,
             Subtype::Rhino => true,
             Subtype::Flagbearer => true,
+            Subtype::Spike => true,
+            Subtype::Minion => true,
+            Subtype::Junk => false,
         }
     }
 
@@ -1434,6 +1454,8 @@ impl Subtype {
                     | Subtype::Advisor
                     | Subtype::Rhino
                     | Subtype::Flagbearer
+                    | Subtype::Spike
+                    | Subtype::Minion
             )
         {
             return true;
@@ -2428,6 +2450,10 @@ pub enum AltCostCondition {
     /// graveyard from anywhere this turn". Appended for the eternal catalog's
     /// wave S1c.
     OpponentThreeCardsToGraveyardThisTurnV1,
+    /// "If an opponent controls an Island and you control a Mountain" (Mogg
+    /// Salvage, `eternal_premodern_p3b_v1`). Appended for the eternal
+    /// catalog's wave P3b.
+    OpponentIslandYouMountainV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -3967,7 +3993,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x14be_9198_d279_894d;
+        const EXPECTED_ETERNAL: u64 = 0x3b51_9e61_7a3e_88cc;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

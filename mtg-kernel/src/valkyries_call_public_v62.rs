@@ -239,7 +239,7 @@ fn bindings(state: &GameState, selected: u16, viewer: PlayerId) -> Result<Vec<Bi
         {
             return Err("V62 altered or duplicate original Call death capture".into());
         }
-        crate::engine::validate_historical_ability_source_contract(state, *source)?;
+        crate::sampled_history_v1::validate_source(state, index, *source)?;
         crate::creature_death_capture_v1::validated_capture_death(state, index)?;
         let dead = state
             .objects
@@ -309,7 +309,7 @@ fn bindings(state: &GameState, selected: u16, viewer: PlayerId) -> Result<Vec<Bi
             owner: dead.owner,
             public: DeathV62 {
                 occurrence: ordinal(rows.len())?,
-                source: public::root(state, *source, Some(viewer))?,
+                source: public::archived_root(state, index, *source, Some(viewer))?,
                 departure: relation(
                     Zone::Battlefield,
                     died.zone_change_count,
@@ -374,12 +374,13 @@ pub(crate) fn capture_tinybones_compat_v72(
 pub(crate) fn capture_kaito_compat_v75(
     state: &GameState,
     viewer: PlayerId,
+    appendix: crate::policy_surface_v5::LimitedAppendixV1,
 ) -> Result<FactsV62, String> {
     capture_for_consumer(
         state,
         viewer,
         public::CounterScopeV61::TinybonesV72,
-        crate::optional_trigger_public_v1::ConsumerV1::KaitoV75,
+        crate::optional_trigger_public_v1::ConsumerV1::for_kaito(appendix),
     )
 }
 pub(crate) fn capture_chandra_compat_v74(

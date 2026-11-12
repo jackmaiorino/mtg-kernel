@@ -116,6 +116,25 @@ pub struct FactsV63 {
     pub complete_ordinary_observation: bool,
     pub owning_consumer_admitted: bool,
 }
+
+pub use crate::engine::niv_mizzet_resolution_v1::DrawOutcomeV1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DrawResultV1 {
+    pub occurrence: u32,
+    pub outcome: DrawOutcomeV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsumerFactsV1 {
+    pub appendix: FactsV63,
+    /// Only native completed or explicitly countered draws appear here.
+    /// Older histories and other removals retain the appendix's neutral stage.
+    pub results: Vec<DrawResultV1>,
+}
+
 pub fn producer_sha256() -> String {
     meaning::producer_sha256()
 }
@@ -285,8 +304,53 @@ fn original_damage_source(
     })
 }
 pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV63, String> {
+    capture_parts_scoped(state, viewer, public::ConsumerV1::Legacy).map(|(facts, _)| facts)
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn capture_for_consumer(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<ConsumerFactsV1, String> {
+    capture_consumer_scoped(state, viewer, public::ConsumerV1::Legacy)
+}
+
+pub(crate) fn capture_consumer_scoped(
+    state: &GameState,
+    viewer: PlayerId,
+    consumer: public::ConsumerV1,
+) -> Result<ConsumerFactsV1, String> {
+    let mut outcomes = crate::engine::niv_mizzet_resolution_v1::outcomes(state)?;
+    let (mut appendix, published) = capture_parts_scoped(state, viewer, consumer)?;
+    appendix
+        .authorized
+        .retain(|card| card.zone != Zone::Hand || card.owner == appendix.viewer);
+    let results = published
+        .into_iter()
+        .filter_map(|(occurrence, id)| {
+            outcomes.remove(&id).map(|outcome| DrawResultV1 {
+                occurrence,
+                outcome,
+            })
+        })
+        .collect();
+    if !outcomes.is_empty() {
+        return Err("Niv outcome lost its public damage occurrence".into());
+    }
+    Ok(ConsumerFactsV1 { appendix, results })
+}
+
+fn capture_parts_scoped(
+    state: &GameState,
+    viewer: PlayerId,
+    consumer: public::ConsumerV1,
+) -> Result<(FactsV63, Vec<(u32, crate::ids::StackItemId)>), String> {
     let selected = meaning::selected_id()?;
-    public::validate_state_checked(state)?;
+    public::validate_state_for_consumer(state, true, consumer)?;
     state
         .validate_attachment_relations()
         .map_err(|_| "V63 invalid native attachment relation")?;
@@ -403,6 +467,7 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV63, String> 
         }
     }
     let mut used_publications = BTreeSet::new();
+    let mut published_occurrences = Vec::new();
     for (at, event) in state.engine.event_history.iter().enumerate() {
         let E::NivMizzetVisionaryDamageV1 {
             observer,
@@ -471,6 +536,7 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV63, String> 
                 return Err("V63 draw amount changed".into());
             }
             used_publications.insert(id);
+            published_occurrences.push((ordinal(damage_draws.len())?, id));
             let rows = state
                 .stack
                 .iter()
@@ -502,7 +568,7 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV63, String> 
         };
         damage_draws.push(DamageDrawV63 {
             occurrence: ordinal(damage_draws.len())?,
-            observer: public::root(state, *observer, Some(viewer))?,
+            observer: public::archived_root(state, at, *observer, Some(viewer))?,
             damage_source: original_damage_source(
                 state,
                 *damage_source,
@@ -527,23 +593,26 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV63, String> 
     }) {
         return Err("V63 atomic Niv draw has no externally resumable stage".into());
     }
-    Ok(FactsV63 {
-        schema: SCHEMA.into(),
-        producer_sha256: producer_sha256(),
-        viewer: viewer.into(),
-        meaning: meaning::printed_meaning()?,
-        authorized,
-        current,
-        battlefield_counters,
-        casts,
-        damage_draws,
-        no_maximum_hand_size: [
-            crate::event::niv_mizzet_visionary_removes_hand_limit_v1(state, PlayerId::P0),
-            crate::event::niv_mizzet_visionary_removes_hand_limit_v1(state, PlayerId::P1),
-        ],
-        complete_ordinary_observation: false,
-        owning_consumer_admitted: false,
-    })
+    Ok((
+        FactsV63 {
+            schema: SCHEMA.into(),
+            producer_sha256: producer_sha256(),
+            viewer: viewer.into(),
+            meaning: meaning::printed_meaning()?,
+            authorized,
+            current,
+            battlefield_counters,
+            casts,
+            damage_draws,
+            no_maximum_hand_size: [
+                crate::event::niv_mizzet_visionary_removes_hand_limit_v1(state, PlayerId::P0),
+                crate::event::niv_mizzet_visionary_removes_hand_limit_v1(state, PlayerId::P1),
+            ],
+            complete_ordinary_observation: false,
+            owning_consumer_admitted: false,
+        },
+        published_occurrences,
+    ))
 }
 pub fn validate(state: &GameState, viewer: PlayerId, value: &FactsV63) -> Result<(), String> {
     if *value == capture(state, viewer)? {
@@ -558,4 +627,4 @@ pub fn validate(state: &GameState, viewer: PlayerId, value: &FactsV63) -> Result
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "niv_mizzet_public_v63/tests.rs"]
-mod tests;
+pub(crate) mod tests;

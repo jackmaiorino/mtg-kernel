@@ -787,6 +787,9 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::NonbasicLandCardInAGraveyardV1 => ObjF::AnyCard,
         S::DividedFourDamageCreaturesV1 => creature(),
         S::ControlledCreatureOrVehicleV1 => ObjF::Permanent,
+        S::NonblackCreatureManaValueV1(_) => creature(),
+        S::DividedTwoCountersCreaturesV1 => creature(),
+        S::UpToOneOpponentArtifactCreatureOrPlaneswalkerV1 => ObjF::Permanent,
     }
 }
 
@@ -829,7 +832,10 @@ pub(super) fn standard_target_origin(
         | S::UpToOneOpponentCreatureOrPlaneswalkerV1
         | S::UpToOneOpponentNoncreatureNonlandPermanentManaValueAtMostV1(_)
         | S::OpponentArtifactV1
-        | S::OpponentCreatureOrEnchantmentV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        | S::OpponentCreatureOrEnchantmentV1
+        | S::UpToOneOpponentArtifactCreatureOrPlaneswalkerV1 => {
+            (Some(ZoneF::Battlefield), Some(RelF::Opponent))
+        }
         S::LandCardInAGraveyardV1
         | S::InstantOrSorceryCardInAGraveyardV1
         | S::NonbasicLandCardInAGraveyardV1 => (Some(ZoneF::Graveyard), None),
@@ -860,6 +866,8 @@ pub(super) fn standard_target_origin(
         | S::UpToTwoArtifactsOrEnchantmentsV1
         | S::DividedTwoDamageAnyTargetsV1
         | S::CreatureManaValueAtMostV1(_)
+        | S::NonblackCreatureManaValueV1(_)
+        | S::DividedTwoCountersCreaturesV1
         | S::S1dV1(_)
         | S::CreatureOrPlaneswalkerManaValueAtMostV1(_)
         | S::CreatureLandOrPlaneswalkerV1
@@ -914,8 +922,10 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         S::DividedFourDamageCreaturesOrPlaneswalkersV1
         | S::DividedFourDamageCreaturesV1
         | S::DividedXDamageUpToTwoV1
-        | S::DividedTwoDamageAnyTargetsV1 => {
-            // Vocabulary gap: divided damage and repeated picks have no facet.
+        | S::DividedTwoDamageAnyTargetsV1
+        | S::DividedTwoCountersCreaturesV1 => {
+            // Vocabulary gap: divided damage and counters and repeated picks
+            // have no facet.
             out.atoms.push(Atom::Opaque);
         }
         S::CreatureManaValueAtMostV1(maximum) => {
@@ -1242,6 +1252,11 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, creature(), relation, zone);
             object(out, typed(CardType::Artifact), relation, zone);
         }
+        // The nonblack and exact mana value refinements have no facet, as
+        // for `TargetSpec::NonblackCreature`.
+        S::NonblackCreatureManaValueV1(_) => {
+            object(out, creature(), relation, zone);
+        }
         S::OpponentPermanentV1 | S::LandCardInAGraveyardV1 | S::LandCardInOwnGraveyardV1 => {
             object(out, standard_target_obj(filter), relation, zone);
         }
@@ -1318,6 +1333,12 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             out.atoms.push(Atom::Opaque);
         }
         S::UpToOneOpponentCreatureOrPlaneswalkerV1 => {
+            object(out, creature(), relation, zone);
+            object(out, typed(CardType::Planeswalker), relation, zone);
+            out.target(TargetAtom::UpTo);
+        }
+        S::UpToOneOpponentArtifactCreatureOrPlaneswalkerV1 => {
+            object(out, typed(CardType::Artifact), relation, zone);
             object(out, creature(), relation, zone);
             object(out, typed(CardType::Planeswalker), relation, zone);
             out.target(TargetAtom::UpTo);

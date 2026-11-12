@@ -571,12 +571,7 @@ impl LinearV1 {
         {
             return Err(NativePolicyValueErrorV1::ParameterInvariant(name));
         }
-        if !self
-            .weight
-            .iter()
-            .chain(&self.bias)
-            .all(|value| value.is_finite())
-        {
+        if !(all_finite_v1(&self.weight) && all_finite_v1(&self.bias)) {
             return Err(NativePolicyValueErrorV1::ParameterInvariant(name));
         }
         Ok(())
@@ -1253,7 +1248,7 @@ impl NativePolicyValueNetV1 {
                 actual.name != expected.name
                     || actual.shape != expected.shape
                     || actual.values.len() != expected.values.len()
-                    || actual.values.iter().any(|value| !value.is_finite())
+                    || !all_finite_v1(&actual.values)
             })
         {
             return Err(NativePolicyValueErrorV1::ParameterInvariant(
@@ -1296,7 +1291,7 @@ impl NativePolicyValueNetV1 {
             "card_embedding",
         )?;
         if self.card_embedding.len() != expected_embedding
-            || !self.card_embedding.iter().all(|value| value.is_finite())
+            || !all_finite_v1(&self.card_embedding)
             || self.card_embedding[..self.config.card_embedding_dim]
                 .iter()
                 .any(|value| value.to_bits() != 0)
@@ -1464,6 +1459,34 @@ pub(crate) fn sha256_update_f32_le_v1(hasher: &mut Sha256, values: &[f32]) {
         }
         hasher.update(&bytes[..chunk.len() * 4]);
     }
+}
+
+/// How many values one step of the validity scans below covers. A step has no
+/// branch per value, and a step that finds a failing value ends the scan.
+const VALIDITY_SCAN_BLOCK_V1: usize = 4096;
+
+/// Whether every value is finite: the answer of
+/// `values.iter().all(|value| value.is_finite())`. That loop leaves at the
+/// first failure, which keeps it scalar, and a train state's checks run it
+/// over every parameter and both moments each time the state is hashed, copied
+/// or loaded. This one compiles to vector compares.
+pub(crate) fn all_finite_v1(values: &[f32]) -> bool {
+    values.chunks(VALIDITY_SCAN_BLOCK_V1).all(|block| {
+        block
+            .iter()
+            .fold(true, |finite, value| finite & value.is_finite())
+    })
+}
+
+/// Whether every value is finite and not below zero: the opposite answer of
+/// `values.iter().any(|value| !value.is_finite() || *value < 0.0)`, as
+/// [`all_finite_v1`] computes it. A negative zero passes, as it does there.
+pub(crate) fn all_finite_and_not_negative_v1(values: &[f32]) -> bool {
+    values.chunks(VALIDITY_SCAN_BLOCK_V1).all(|block| {
+        block.iter().fold(true, |valid, value| {
+            valid & value.is_finite() & (*value >= 0.0)
+        })
+    })
 }
 
 /// The parameters as `gpu_exact_v1::net8` reads them: one buffer, and the
@@ -2463,7 +2486,7 @@ impl NativePolicyValueNetWideV1 {
                 actual.name != expected.name
                     || actual.shape != expected.shape
                     || actual.values.len() != expected.values.len()
-                    || actual.values.iter().any(|value| !value.is_finite())
+                    || !all_finite_v1(&actual.values)
             })
         {
             return Err(NativePolicyValueErrorV1::ParameterInvariant(
@@ -2497,7 +2520,7 @@ impl NativePolicyValueNetWideV1 {
             "card_embedding",
         )?;
         if self.card_embedding.len() != expected_embedding
-            || !self.card_embedding.iter().all(|value| value.is_finite())
+            || !all_finite_v1(&self.card_embedding)
             || self.card_embedding[..self.config.card_embedding_dim]
                 .iter()
                 .any(|value| value.to_bits() != 0)
@@ -4106,5 +4129,138 @@ mod linear_rows_bit_exact_tests {
             bits(&linear_rows_v1(linear, &input, 3)),
             bits(&linear_rows_reference_v1(linear, &input, 3)),
         );
+    }
+}
+
+#[cfg(test)]
+mod validity_scan_tests {
+    use super::*;
+    use crate::state::SplitMix64;
+
+    /// The loop [`all_finite_v1`] replaced.
+    fn all_finite_reference(values: &[f32]) -> bool {
+        values.iter().all(|value| value.is_finite())
+    }
+
+    /// The loop [`all_finite_and_not_negative_v1`] replaced.
+    fn all_finite_and_not_negative_reference(values: &[f32]) -> bool {
+        !values
+            .iter()
+            .any(|value| !value.is_finite() || *value < 0.0)
+    }
+
+    /// Finite values that are not below zero, with zeros of both signs, the
+    /// smallest subnormal and the largest finite value among them.
+    fn passing_values(rng: &mut SplitMix64, len: usize) -> Vec<f32> {
+        (0..len)
+            .map(|_| match rng.next_u64() % 8 {
+                0 => 0.0,
+                1 => -0.0,
+                2 => f32::from_bits(1),
+                3 => f32::MAX,
+                _ => (rng.next_u64() >> 40) as f32 / (1u64 << 24) as f32,
+            })
+            .collect()
+    }
+
+    /// Lengths around the vector width, the unrolled step and the block.
+    fn lengths() -> Vec<usize> {
+        let block = VALIDITY_SCAN_BLOCK_V1;
+        let mut lengths: Vec<usize> = (0..=40).collect();
+        lengths.extend([63, 64, 65, 127, 129]);
+        lengths.extend([block - 1, block, block + 1, block + 7, block + 8, block + 9]);
+        lengths.extend([2 * block - 1, 2 * block, 2 * block + 17]);
+        lengths
+    }
+
+    /// Positions at both ends of a slice of `len` values and around each
+    /// block boundary inside it.
+    fn positions(len: usize) -> Vec<usize> {
+        let block = VALIDITY_SCAN_BLOCK_V1;
+        let mut positions = vec![0, 1, 3, 4, 7, 8, len / 2];
+        positions.extend([block - 1, block, block + 1, 2 * block - 1, 2 * block]);
+        positions.extend((1..=9).filter_map(|back| len.checked_sub(back)));
+        positions.retain(|position| *position < len);
+        positions.sort_unstable();
+        positions.dedup();
+        positions
+    }
+
+    #[test]
+    fn the_scans_answer_as_the_loops_they_replaced() {
+        let failing_or_edge = [
+            f32::NAN,
+            -f32::NAN,
+            // A signaling NaN and a NaN with only its lowest payload bit.
+            f32::from_bits(0x7FA0_0000),
+            f32::from_bits(0xFF80_0001),
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            // Below zero: the smallest and the largest magnitudes.
+            f32::from_bits(0x8000_0001),
+            -f32::MIN_POSITIVE,
+            -1.0,
+            f32::MIN,
+            // Passing values at the edges.
+            -0.0,
+            0.0,
+            f32::from_bits(1),
+            f32::MIN_POSITIVE,
+            f32::MAX,
+        ];
+        let mut rng = SplitMix64::seed(0x5CA2_F121);
+        for len in lengths() {
+            let passing = passing_values(&mut rng, len);
+            assert!(all_finite_v1(&passing), "len={len}");
+            assert!(all_finite_and_not_negative_v1(&passing), "len={len}");
+            for position in positions(len) {
+                for value in failing_or_edge {
+                    let mut values = passing.clone();
+                    values[position] = value;
+                    assert_eq!(
+                        all_finite_v1(&values),
+                        all_finite_reference(&values),
+                        "len={len} position={position} bits={:#010x}",
+                        value.to_bits()
+                    );
+                    assert_eq!(
+                        all_finite_and_not_negative_v1(&values),
+                        all_finite_and_not_negative_reference(&values),
+                        "len={len} position={position} bits={:#010x}",
+                        value.to_bits()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn one_failing_value_anywhere_fails_the_scan() {
+        let len = 2 * VALIDITY_SCAN_BLOCK_V1 + 17;
+        let mut rng = SplitMix64::seed(0x0BAD_F10A);
+        let passing = passing_values(&mut rng, len);
+        for position in positions(len) {
+            for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let mut values = passing.clone();
+                values[position] = value;
+                assert!(!all_finite_v1(&values), "position={position}");
+                assert!(
+                    !all_finite_and_not_negative_v1(&values),
+                    "position={position}"
+                );
+            }
+            let mut values = passing.clone();
+            values[position] = f32::from_bits(0x8000_0001);
+            assert!(all_finite_v1(&values), "position={position}");
+            assert!(
+                !all_finite_and_not_negative_v1(&values),
+                "position={position}"
+            );
+            values[position] = -0.0;
+            assert!(
+                all_finite_and_not_negative_v1(&values),
+                "position={position}"
+            );
+        }
     }
 }
