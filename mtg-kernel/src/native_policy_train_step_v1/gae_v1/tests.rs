@@ -916,6 +916,7 @@ fn gradient_bits(result: &NativePolicyTrainStepResultV1) -> Vec<u32> {
 
 #[test]
 fn exact_parallel_backward_preserves_every_bit() {
+    use crate::native_policy_train_step_v1::accumulate_transposed_v1::with_reference_sequential_backward_for_test_v1 as with_reference;
     use crate::native_policy_train_step_v1::exact_parallel_backward_v1::{
         with_exact_backward_hooks_for_test_v1 as with_hooks, ExactBackwardHooksForTestV1,
     };
@@ -926,8 +927,10 @@ fn exact_parallel_backward_preserves_every_bit() {
     let batch = physical_groups(&steps);
     let start = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
     let mut sequential = start.clone();
+    // The reference's loops, not the sequential backward's transposed
+    // kernels (`the_sequential_backward_keeps_the_reference_bits`).
     let (expected, runs) = with_hooks(ExactBackwardHooksForTestV1::NONE, || {
-        profiled_step(&mut sequential, &batch, 1).unwrap()
+        with_reference(|| profiled_step(&mut sequential, &batch, 1).unwrap())
     });
     assert_eq!(runs, 0);
     let touched = expected
@@ -970,6 +973,68 @@ fn exact_parallel_backward_preserves_every_bit() {
         profiled_step(&mut start.clone(), &few, 4).unwrap()
     });
     assert_eq!(runs, 0);
+}
+
+/// The sequential backward accumulates hidden-width gradients transposed
+/// and passes over zero inputs (`AccumulateTransposedV1`). It gives the
+/// gradients, the telemetry and the state of the reference's loops bit for
+/// bit, over 399 substeps and with the recovery regularizer.
+#[test]
+fn the_sequential_backward_keeps_the_reference_bits() {
+    use crate::native_policy_train_step_v1::accumulate_transposed_v1::{
+        transposed_layers_for_test_v1 as transposed_layers,
+        with_reference_sequential_backward_for_test_v1 as with_reference,
+    };
+    let base = model();
+    let fixture = Fixture::capture(&base);
+    let steps = many_substeps(&fixture, 200);
+    let batch = physical_groups(&steps);
+    let start = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
+
+    let before = transposed_layers();
+    let mut reference = start.clone();
+    let expected = with_reference(|| profiled_step(&mut reference, &batch, 1).unwrap());
+    assert_eq!(transposed_layers(), before);
+    let mut transposed = start.clone();
+    let actual = profiled_step(&mut transposed, &batch, 1).unwrap();
+    let (layers, passing) = transposed_layers();
+    // Each substep has ten hidden-width layers at least: the scorer's, the
+    // value head's and two in each of four encoders.
+    assert!(layers - before.0 >= 399 * 10, "{}", layers - before.0);
+    #[cfg(target_arch = "x86_64")]
+    assert_eq!(passing - before.1, layers - before.0);
+    assert_eq!(gradient_bits(&actual), gradient_bits(&expected));
+    // Debug prints every float in shortest round-trip form, so equal text
+    // is equal bits.
+    assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    assert_eq!(state_bits(&transposed), state_bits(&reference));
+
+    // The recovery regularizer always takes this backward.
+    let few = fixture.substeps();
+    let few = groups(&few);
+    let recovery = |state: &mut NativePolicyValueTrainStateV1| {
+        state
+            .train_step_gae_recovery_v1(
+                crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+                &few,
+                &[0.3, -0.2],
+                &[0.15, -0.4],
+                VC,
+                LR,
+                0.01,
+                1,
+                false,
+            )
+            .unwrap()
+    };
+    let mut reference = start.clone();
+    let (expected, _) = with_reference(|| recovery(&mut reference));
+    let before = transposed_layers();
+    let mut transposed = start.clone();
+    let (actual, _) = recovery(&mut transposed);
+    assert!(transposed_layers().0 > before.0);
+    assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    assert_eq!(state_bits(&transposed), state_bits(&reference));
 }
 
 /// Under the portable math (B5) the update replays outputs recorded by the
