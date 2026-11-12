@@ -126,14 +126,20 @@ fn rows(state: &GameState) -> u64 {
 }
 
 /// Every validation the engine runs while playing `deal`, inside enclosing
-/// replays and operations included, matches the reference.
+/// replays and operations included, matches the reference. Many of them use
+/// a proof kept with the history, and each of those also runs the full
+/// check and asserts the same verdict.
 fn engine_validations_match_reference(deal: &DealV1) {
+    use crate::event_history_v1::proof_tests_v1;
     let mut last = 0;
+    let uses = proof_tests_v1::uses();
     let ((), compared, differences) = custody::comparing_with_v0_for_test(|| {
         play(deal, &mut |state| last = rows(state));
     });
+    let proved = proof_tests_v1::uses() - uses;
     assert!(last > 100, "{} journal rows", last);
     assert!(compared > 1000, "{compared} validations compared");
+    assert!(proved > 1000, "{proved} validations used a proof");
     assert_eq!(differences, Vec::<String>::new());
 }
 
