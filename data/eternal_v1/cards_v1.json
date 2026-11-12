@@ -29100,6 +29100,68 @@
     "shuffle"
    ],
    "java_file": "Mage.Sets/src/mage/cards/t/TriumphOfSaintKatherine.java"
+  },
+  {
+   "name": "Extinguisher Battleship",
+   "engine_capability": "full",
+   "mana_cost": "{8}",
+   "mana_value": 8,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [
+    "Spacecraft"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-mystic-forge-combo",
+    "legacy-tron"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "destroy_target",
+    "damage_each_creature",
+    "station",
+    "charge_counters"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/ExtinguisherBattleship.java"
+  },
+  {
+   "name": "Fiery Confluence",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}{R}",
+   "mana_value": 4,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-red-stompy"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "modal",
+    "damage_each_creature",
+    "damage_each_player",
+    "destroy_artifact"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FieryConfluence.java"
   }
  ]
 }

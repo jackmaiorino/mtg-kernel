@@ -54,6 +54,7 @@ mod build_eternal_s1f_v1;
 mod build_eternal_s1g_v1;
 mod build_eternal_s1j_v1;
 mod build_eternal_s1l_v1;
+mod build_eternal_s1m_v1;
 mod build_eternal_v1;
 mod build_eternal_vintage_v1;
 mod build_standard_v1;
@@ -3214,6 +3215,9 @@ enum AbilityCostRecipe {
     /// "Put N cards from your graveyard on the bottom of your library"
     /// (`CostComponent::PutOtherCardsFromOwnGraveyardOnLibraryBottomV1`).
     PutGraveyardCardsOnLibraryBottom(u8),
+    /// Station's "Tap another untapped creature you control"
+    /// (`CostComponent::TapOtherUntappedControlledCreatureV1`).
+    TapOtherUntappedControlledCreature,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -6537,6 +6541,9 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::PutGraveyardCardsOnLibraryBottom(count) => {
             format!("CostComponent::PutOtherCardsFromOwnGraveyardOnLibraryBottomV1({count})")
         }
+        AbilityCostRecipe::TapOtherUntappedControlledCreature => {
+            "CostComponent::TapOtherUntappedControlledCreatureV1".to_string()
+        }
     }
 }
 
@@ -6601,6 +6608,9 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::ExileTopCardOfLibrary => "exile_top_card_of_library".to_string(),
         AbilityCostRecipe::PutGraveyardCardsOnLibraryBottom(count) => {
             format!("put_graveyard_cards_on_library_bottom:{count}")
+        }
+        AbilityCostRecipe::TapOtherUntappedControlledCreature => {
+            "tap_other_untapped_controlled_creature".to_string()
         }
     }
 }
@@ -11589,6 +11599,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Spike" => "Subtype::Spike",
         "Minion" => "Subtype::Minion",
         "Junk" => "Subtype::Junk",
+        "Spacecraft" => "Subtype::Spacecraft",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",

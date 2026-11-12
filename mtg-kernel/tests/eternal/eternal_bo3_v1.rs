@@ -23,7 +23,7 @@ mod native;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 117] = [
+const PLAYABLE_75: [(&str, &str); 119] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -132,6 +132,8 @@ const PLAYABLE_75: [(&str, &str); 117] = [
     ("legacy", "legacy-cephalid-breakfast"),
     ("legacy", "legacy-azorius-tempo"),
     ("legacy", "legacy-azorius-control"),
+    ("legacy", "legacy-mystic-forge-combo"),
+    ("legacy", "legacy-red-stompy"),
     ("vintage", "vintage-esper-lurrus-control"),
     ("vintage", "vintage-dimir-lurrus-control"),
     ("vintage", "vintage-lurrus-po"),

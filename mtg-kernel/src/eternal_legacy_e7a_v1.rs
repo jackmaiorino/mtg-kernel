@@ -2776,11 +2776,13 @@ pub(crate) fn keyword_lost(state: &GameState, object: ObjectId, keyword: Keyword
 /// Dress Down whose ability applies, for a creature.
 pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
     let live = state.objects.try_get(object)?;
+    // A stationed Extinguisher Battleship's creature type doesn't depend on
+    // its abilities either (wave S1m).
     if live.zone != Zone::Battlefield
-        || !CARD_DEFS.get(live.card_def as usize).is_some_and(|def| {
+        || !(CARD_DEFS.get(live.card_def as usize).is_some_and(|def| {
             def.types_for_face(live.v4.face_index)
                 .contains(&CardType::Creature)
-        })
+        }) || crate::eternal_sideboard_s1m_v1::stationed(state, object))
     {
         return None;
     }

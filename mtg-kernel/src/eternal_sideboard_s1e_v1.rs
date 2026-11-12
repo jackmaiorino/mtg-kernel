@@ -275,24 +275,33 @@ const PORTAL_TRIGGERS: [TriggeredAbilityDef; 2] = [
     ),
 ];
 
-/// Triggered abilities of this module's cards, then of wave S1g's, the
-/// tail of the trigger tables.
-pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
+/// The printed triggers of this module's cards.
+fn own_triggers(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         AZURE_BEASTBINDER => &BEASTBINDER_TRIGGERS,
         PORTAL_TO_PHYREXIA => &PORTAL_TRIGGERS,
-        _ => crate::eternal_sideboard_s1g_v1::triggers_for(name),
+        _ => &[],
+    }
+}
+
+/// Triggered abilities of this module's cards, then of wave S1g's, the
+/// tail of the trigger tables.
+pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
+    match own_triggers(name) {
+        [] => crate::eternal_sideboard_s1g_v1::triggers_for(name),
+        own => own,
     }
 }
 
 /// Target specs of this module's triggered abilities, and of suspend's
 /// time-counter trigger on whatever card has suspend. `None` for every
-/// other card and effect.
+/// other card and effect, the later waves' printed triggers among them:
+/// those answer for themselves (wave S1m's targets).
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
     if suspend_tick(effect) {
         return Some(TargetSpec::None);
     }
-    if !triggers_for(name)
+    if !own_triggers(name)
         .iter()
         .any(|trigger| (trigger.effect)() == *effect)
     {
