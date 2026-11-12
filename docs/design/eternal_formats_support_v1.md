@@ -1374,6 +1374,83 @@ What S1b left pending, and what covers it now:
   offered no cast of it. Every session game checks that no cast is offered of a card with a
   single spell name that an observed Mage chose.
 
+### S1l: Lavinia qualification and Triumph of Saint Katherine
+
+After S1k, Lavinia, Azorius Renegade (Partial since S1) and Triumph of Saint Katherine (not in
+the registry) are the only gaps of four Legacy lists: Beanstalk Control without Yorion (3.4% of
+the field), the two Azorius Tempo lists (1.8% and 0.6%) and Jeskai Tempo (1.7%). Lavinia alone
+is the gap of Cephalid Breakfast (0.8%) and Azorius Control (0.3%). S1l qualifies Lavinia and
+marks her Full, and adds Triumph as a Full card. The Legacy full 75 share goes from 68.4% to
+77.0%, and the six lists join `PLAYABLE_75`. Bant Control's mainboard becomes playable; its
+sideboard still needs Doorkeeper Thrull. Four Partial S1 definitions remain.
+
+Lavinia:
+
+- Fixtures: `tests/eternal/eternal_sideboard_s1a_v1/lavinia.rs` covers, in both seats, the
+  branches S1 left unqualified: announced X and its restored actions, a Bestow cast against
+  the creature form, a selected split half and an overload's printed value, a Room door, free
+  resolution casts before their offer (Boarding Party), a madness cast refused before its
+  targets, Bilbo's paid graveyard casts, and the counter following its controller after a paid
+  exchange. The Bestow fixture's correction (its host is summoning sick) is in place. With S1's
+  prohibition and counter tests they run in the Eternal group, so they pass on Linux in each
+  pull request run and on hosted Windows in the Eternal jobs dispatched at each wave's head,
+  most recently #660's `b11740d0`, which take the place of the native packet, as in S1h.
+  Lavinia has no event kind of her own: her counter is a delayed trigger, and its state (spells
+  cast with no mana spent while she was in play) already serializes and hashes. No consumer
+  refuses her games.
+- A gap found in this review: miracle. Wave E5b pays a miracle cost as an effect payment while
+  the miracle trigger resolves, then casts the card under a resolution permission without
+  paying its mana cost, so the cast commits no mana and Lavinia would counter an opponent's
+  Terminus or Triumph cast for its miracle cost. Mana was spent to cast it: the miracle cost is
+  the spell's total cost (601.2f, 702.94a). The other casts made during a resolution (cascade,
+  rebound, suspend and Boarding Party's) are free and Amped Raptor's spends energy, so Lavinia
+  counters those, correctly. While an opponent's Lavinia is in play, S1l records the hand
+  incarnation whose miracle cost was paid, and the resolution cast from that incarnation counts
+  as having spent mana. A new fixture casts Terminus and Triumph for their miracle costs under
+  an opposing Lavinia, in both seats: neither is countered, and Terminus isn't offered while
+  its controller controls fewer than six lands.
+
+Triumph of Saint Katherine is built in `src/eternal_sideboard_s1l_v1.rs` and
+`build_eternal_s1l_v1.rs`, the new tail of the recipe chains after P3g's. Behavior follows the
+card's current Oracle text and rulings (2022-10-07 for miracle, 2024-01-12 for the pile), checked
+against its XMage source:
+
+- Triumph of Saint Katherine, {4}{W}, Creature - Human Warrior 5/5: "Lifelink. Praesidium
+  Protectiva - When this creature is put into your graveyard from the battlefield, exile it and
+  the top six cards of your library in a face-down pile. If you do, shuffle that pile and put it
+  back on top of your library. Miracle {1}{W}"
+  - Lifelink is the printed keyword.
+  - Miracle: E5b's miracle costs gain Triumph's {1}{W} beside Terminus's {W}. The reveal, the
+    trigger and the cast are E5b's (702.94a); the creature spell is cast while the trigger
+    resolves, so its timing is ignored, on either player's turn.
+  - Praesidium Protectiva is a leaves-the-battlefield trigger (603.10a) that works from the
+    graveyard, as Academy Rector's does, controlled by the player who controlled Triumph. A card
+    goes to its owner's graveyard, so "your graveyard" means the owner controlled it: trigger
+    collection skips the ability otherwise, and a stolen Triumph that dies doesn't trigger.
+  - Resolution: per the 2024-01-12 ruling, if Triumph isn't in its owner's graveyard as the
+    incarnation that died, or the library has fewer than six cards, nothing happens. Otherwise
+    Triumph is exiled from the graveyard and put on top of the library, and the top seven cards
+    are randomized by a new `randomize_library_top_v1`, the counterpart of
+    `randomize_library_bottom_v1`: every position fact in the pile is dropped, and each deeper
+    fact shifts one position with the insertion.
+  - The six library cards are face down in exile only during the resolution, seen by no one,
+    and return in random order with Triumph. They are randomized in place, keeping their
+    objects; no registry card reacts to a card being exiled from a library. Rest in Peace or a
+    Leyline of the Void exiles a dying Triumph instead, so the ability doesn't trigger.
+  - Known gap: in a real game, a player who knew cards in the pile (after Brainstorm, say)
+    knows they are among the top seven, in an unknown order. Library knowledge is per
+    position, so the observation drops those facts.
+- Consumers: Triumph's trigger on the stack, the miracle reveal and the paid cast already have
+  schema 5 representations (Terminus's), and the randomization is engine state, so no consumer
+  needs a successor.
+- Games: as in S1h and S1k, a white-blue deck with four Lavinias and four Triumphs in its
+  mainboard and a blue-black deck of free and expensive noncreature spells play each other
+  through public sessions, in both seats with ranked and seeded random actions, checking natural
+  terminals and replay. The test requires a Lavinia counter on the public stack, a Triumph cast
+  for its miracle cost from the action list and a resolved pile. Every session game checks that
+  no cast is offered of a noncreature spell whose printed mana value exceeds the acting
+  player's lands while an opposing Lavinia is on the battlefield.
+
 ## Execution
 
 Family workers implement bounded card groups in their own worktrees; one integrator owns
