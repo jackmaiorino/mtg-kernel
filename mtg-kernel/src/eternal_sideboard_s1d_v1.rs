@@ -18,6 +18,10 @@
 //! Island" (Spreading Seas), waterbend (tap artifacts and creatures to pay
 //! generic mana), and revealing X white cards from the hand as part of an
 //! activation (Martyr of Sands).
+//!
+//! Premodern wave P3g's Circle of Protection: Red shares the Circle code
+//! here, with the color as a parameter, and P3g adds the last-known colors
+//! of sources that left while their abilities wait.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::card_def::{CardDef, CardType, Keywords, Subtype, TargetSpec, CARD_DEFS};
@@ -55,6 +59,11 @@ pub struct S1dStateV1 {
     /// this turn (Navigator's Compass).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_land_types: Vec<ExtraLandTypeV1>,
+    /// Sources that left the battlefield or a hand this turn while a Circle
+    /// of Protection or a shield existed, with their last-known colors
+    /// (wave P3g).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub departed_sources: Vec<DepartedSourceV1>,
 }
 
 impl Hash for S1dStateV1 {
@@ -64,6 +73,10 @@ impl Hash for S1dStateV1 {
             self.cop_shields.hash(state);
             self.combat_skips.hash(state);
             self.extra_land_types.hash(state);
+            if !self.departed_sources.is_empty() {
+                b"circle-departed-sources/v1".hash(state);
+                self.departed_sources.hash(state);
+            }
         }
     }
 }
@@ -90,8 +103,38 @@ impl TurnV1 {
     }
 }
 
-/// "The next time a blue source of your choice would deal damage to you this
-/// turn, prevent that damage."
+/// The color a Circle of Protection names: wave S1d's blue, the serialized
+/// default, or wave P3g's red.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CircleColorV1 {
+    #[default]
+    Blue,
+    Red,
+}
+
+impl CircleColorV1 {
+    fn is_blue(&self) -> bool {
+        *self == Self::Blue
+    }
+
+    fn mask(self) -> u8 {
+        crate::card_def::mana_color_mask(match self {
+            Self::Blue => ManaColor::U,
+            Self::Red => ManaColor::R,
+        })
+    }
+
+    /// The Circle of Protection naming this color.
+    fn circle(self) -> &'static str {
+        match self {
+            Self::Blue => CIRCLE_OF_PROTECTION_BLUE,
+            Self::Red => CIRCLE_OF_PROTECTION_RED,
+        }
+    }
+}
+
+/// "The next time a blue (or red) source of your choice would deal damage to
+/// you this turn, prevent that damage."
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CopShieldV1 {
@@ -103,6 +146,22 @@ pub struct CopShieldV1 {
     /// A chosen permanent spell also protects against the permanent it becomes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spell: Option<CopSpellV1>,
+    /// The Circle's color, recorded only when it isn't blue.
+    #[serde(default, skip_serializing_if = "CircleColorV1::is_blue")]
+    pub color: CircleColorV1,
+}
+
+/// A source as it was just before it left the battlefield, or left a hand
+/// for a graveyard or exile, while a Circle of Protection or a shield
+/// existed: the incarnation an ability that still waits names, and its
+/// last-known color (113.7a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DepartedSourceV1 {
+    pub source: ObjectLinkV4,
+    /// The zone it left: the battlefield or a hand.
+    pub zone: Zone,
+    pub color_mask: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -125,6 +184,10 @@ impl Hash for CopShieldV1 {
             b"circle-permanent-spell/v1".hash(state);
             spell.hash(state);
         }
+        if !self.color.is_blue() {
+            b"circle-color/v1".hash(state);
+            self.color.hash(state);
+        }
     }
 }
 
@@ -143,6 +206,14 @@ fn s1d_state(state: &mut GameState) -> &mut S1dStateV1 {
 
 fn read_state(state: &GameState) -> Option<&S1dStateV1> {
     state.eternal_v1.as_ref().map(|eternal| &eternal.s1d)
+}
+
+/// As a turn begins the stack is empty and every shield has expired, so no
+/// departed source's record is still needed (wave P3g).
+pub(crate) fn begin_turn(state: &mut GameState, _player: PlayerId) {
+    if read_state(state).is_some_and(|s1d| !s1d.departed_sources.is_empty()) {
+        s1d_state(state).departed_sources.clear();
+    }
 }
 
 fn circle_cast_matches(state: &GameState, source: ObjectLinkV4, spell: CopSpellV1) -> bool {
@@ -254,6 +325,14 @@ pub enum S1dOpV1 {
     WaterbendManaV1 { amount: u8 },
     /// The actual reveal cost binds this single printed Martyr ability.
     MartyrRevealV1,
+    /// A Circle of Protection other than Blue (wave P3g's Red): choose a
+    /// source of `color`. A choice.
+    CircleChooseV1 { color: CircleColorV1 },
+    /// That Circle's shield against `source`.
+    CircleShieldV1 {
+        source: ObjectLinkV4,
+        color: CircleColorV1,
+    },
 }
 
 pub(crate) mod martyr;
@@ -265,6 +344,7 @@ impl S1dOpV1 {
         matches!(
             self,
             Self::CopChooseV1
+                | Self::CircleChooseV1 { .. }
                 | Self::CompassChooseV1
                 | Self::ReturnToDustV1
                 | Self::WaterbendOrDiscardV1
@@ -276,6 +356,8 @@ impl S1dOpV1 {
 // ---- Names and helpers --------------------------------------------------------------
 
 const ARASHIN_CLERIC: &str = "Arashin Cleric";
+const CIRCLE_OF_PROTECTION_BLUE: &str = "Circle of Protection: Blue";
+const CIRCLE_OF_PROTECTION_RED: &str = "Circle of Protection: Red";
 const COALITION_HONOR_GUARD: &str = "Coalition Honor Guard";
 const FOOT_NINJAS: &str = "Foot Ninjas";
 const GRUUL_TURF: &str = "Gruul Turf";
@@ -440,6 +522,35 @@ pub fn crypt_incursion() -> EffectOp {
 /// Circle of Protection: Blue's ability.
 pub fn cop_choose() -> EffectOp {
     s1d(S1dOpV1::CopChooseV1)
+}
+
+/// The ability of the Circle of Protection naming `color`. Blue keeps its
+/// serialized leaf.
+pub fn circle_choose(color: CircleColorV1) -> EffectOp {
+    match color {
+        CircleColorV1::Blue => cop_choose(),
+        _ => s1d(S1dOpV1::CircleChooseV1 { color }),
+    }
+}
+
+/// The color of the Circle of Protection whose ability `op` is.
+fn circle_choice_color(op: &EffectOp) -> Option<CircleColorV1> {
+    match op {
+        EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(op))) => match op {
+            S1dOpV1::CopChooseV1 => Some(CircleColorV1::Blue),
+            S1dOpV1::CircleChooseV1 { color } => Some(*color),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The shield option against `source` of the Circle naming `color`.
+fn circle_shield(source: ObjectLinkV4, color: CircleColorV1) -> EffectOp {
+    match color {
+        CircleColorV1::Blue => s1d(S1dOpV1::CopShieldV1 { source }),
+        _ => s1d(S1dOpV1::CircleShieldV1 { source, color }),
+    }
 }
 
 /// Firebending Lesson: "Firebending Lesson deals 2 damage to target
@@ -674,10 +785,6 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
 
 // ---- Effect leaves ------------------------------------------------------------------
 
-fn blue_mask() -> u8 {
-    crate::card_def::mana_color_mask(ManaColor::U)
-}
-
 fn white_mask() -> u8 {
     crate::card_def::mana_color_mask(ManaColor::W)
 }
@@ -749,25 +856,65 @@ fn stacked_delayed_source_link(effect: &EffectOp) -> Option<ObjectLinkV4> {
     }
 }
 
+/// Whether `object`'s card is in a public zone: the battlefield, the stack,
+/// a graveyard, the command zone or face up in exile.
+fn in_public_zone(state: &GameState, object: ObjectId) -> bool {
+    state
+        .objects
+        .try_get(object)
+        .is_some_and(|live| match live.zone {
+            Zone::Battlefield | Zone::Stack | Zone::Graveyard => true,
+            Zone::Exile | Zone::Command => live.v4.face_down_v1.is_none(),
+            _ => false,
+        })
+}
+
+/// The record of `source`'s departure from the zone its contract names, if
+/// it left while a Circle of Protection or a shield existed (wave P3g).
+fn departed_record(
+    state: &GameState,
+    source: crate::state::AbilitySourceContractV4,
+) -> Option<DepartedSourceV1> {
+    read_state(state)?
+        .departed_sources
+        .iter()
+        .copied()
+        .find(|record| {
+            record.source.object == source.source
+                && record.source.zone_change_count == source.zone_change_count
+                && record.zone == source.zone
+        })
+}
+
+/// The record of the resolving ability's source when that source is
+/// `object` and has left the zone its contract names (wave P3d's resolution
+/// scope keeps the contract).
+fn departed_resolving_source(state: &GameState, object: ObjectId) -> Option<DepartedSourceV1> {
+    let source = crate::eternal_premodern_p3d_v1::resolving_ability_source(state)?;
+    let live = state.objects.try_get(object)?;
+    if source.source != object || live.zone_change_count <= source.zone_change_count {
+        return None;
+    }
+    departed_record(state, source)
+}
+
 /// CR 609.7a. A public zone alone does not make a graveyard or exile card a
 /// source choice. Require an exact active reference or a direct eligible zone.
-fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
+/// `mask` is the Circle's color.
+fn circle_sources(state: &GameState, mask: u8) -> Vec<ObjectLinkV4> {
     use crate::eternal_legacy_e8a_v1::{link_live_in, E8aOpV1};
     use crate::eternal_premodern_p1b_v1::P1bOpV1;
     use crate::eternal_premodern_p2c_v1::P2cOpV1;
 
-    let mask = blue_mask();
     let mut sources = Vec::new();
     let mut include_live = |source: ObjectLinkV4| {
-        if state.objects.try_get(source.object).is_some_and(|live| {
-            live.zone_change_count == source.zone_change_count
-                && match live.zone {
-                    Zone::Battlefield | Zone::Stack | Zone::Graveyard => true,
-                    Zone::Exile | Zone::Command => live.v4.face_down_v1.is_none(),
-                    _ => false,
-                }
-                && crate::engine::object_color_mask(state, source.object) & mask != 0
-        }) {
+        if state
+            .objects
+            .try_get(source.object)
+            .is_some_and(|live| live.zone_change_count == source.zone_change_count)
+            && in_public_zone(state, source.object)
+            && crate::engine::object_color_mask(state, source.object) & mask != 0
+        {
             sources.push(source);
         }
     };
@@ -961,7 +1108,7 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
         let Some(source) = item.v4.ability_source_contract else {
             continue;
         };
-        if source.zone != Zone::Battlefield
+        if !matches!(source.zone, Zone::Battlefield | Zone::Hand)
             || state
                 .objects
                 .try_get(source.source)
@@ -969,7 +1116,9 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
         {
             continue;
         }
-        let historical = if crate::source_power_activation_v1::bombardment::selected(state, item) {
+        let historical = if source.zone != Zone::Battlefield {
+            None
+        } else if crate::source_power_activation_v1::bombardment::selected(state, item) {
             crate::source_power_activation_v1::bombardment::departed_source(state, item)
                 .ok()
                 .flatten()
@@ -986,7 +1135,15 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
             .ok()
             .filter(|facts| facts.source == source)
         };
-        if historical.is_some_and(|facts| facts.color_mask & mask != 0) {
+        // Otherwise the record of its departure (wave P3g) gives its
+        // last-known color, while its card is in a public zone.
+        let color_mask = match historical {
+            Some(facts) => Some(facts.color_mask),
+            None => departed_record(state, source)
+                .filter(|_| in_public_zone(state, source.source))
+                .map(|record| record.color_mask),
+        };
+        if color_mask.is_some_and(|color_mask| color_mask & mask != 0) {
             sources.push(ObjectLinkV4 {
                 object: source.source,
                 zone_change_count: source.zone_change_count,
@@ -998,10 +1155,10 @@ fn blue_sources(state: &GameState) -> Vec<ObjectLinkV4> {
     sources
 }
 
-fn circle_options(state: &GameState) -> Vec<EffectOp> {
-    blue_sources(state)
+fn circle_options(state: &GameState, color: CircleColorV1) -> Vec<EffectOp> {
+    circle_sources(state, color.mask())
         .into_iter()
-        .map(|source| s1d(S1dOpV1::CopShieldV1 { source }))
+        .map(|source| circle_shield(source, color))
         .collect()
 }
 
@@ -1009,10 +1166,15 @@ pub(crate) fn validate_circle_choice(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Result<(), String> {
-    if pending.resolving_item.inline_effect.as_ref() != Some(&cop_choose()) {
+    let Some(color) = pending
+        .resolving_item
+        .inline_effect
+        .as_ref()
+        .and_then(circle_choice_color)
+    else {
         return Ok(());
-    }
-    let options = circle_options(state);
+    };
+    let options = circle_options(state, color);
     let valid = match &pending.choice {
         Some(PendingEffectChoice::ChooseOption {
             player,
@@ -1072,6 +1234,58 @@ fn waterbend_finishable(state: &GameState, player: PlayerId, remaining: u8) -> b
             simulated.objects.get_mut(object).tapped = true;
             waterbend_finishable(&simulated, player, remaining - 1)
         })
+}
+
+/// Creates the shield of the Circle naming `color` against `source`. A
+/// chosen permanent spell binds its exact published cast.
+fn create_shield(state: &mut GameState, ctx: &ExecCtx, source: ObjectLinkV4, color: CircleColorV1) {
+    let now = TurnV1::now(state);
+    let spell = state
+        .objects
+        .try_get(source.object)
+        .filter(|live| {
+            live.zone == Zone::Stack && live.zone_change_count == source.zone_change_count
+        })
+        .and_then(|_| {
+            state.stack.iter().find(|item| {
+                item.source == source.object && item.kind == crate::state::StackItemKind::Spell
+            })
+        })
+        .and_then(|item| {
+            let mut receipts = state
+                .engine
+                .event_history
+                .scan_for_v1(&[crate::event_history_v1::EventKindV1::PublishedCastIdentityV1])
+                .iter()
+                .filter_map(|event| match event {
+                    event::CommittedEvent::PublishedCastIdentityV1 { receipt }
+                        if receipt.stack_item_id == item.v4.stack_item_id =>
+                    {
+                        Some(receipt.spell_cast_history_index)
+                    }
+                    _ => None,
+                });
+            let cast_history_index = receipts.next()?;
+            if receipts.next().is_some() {
+                return None;
+            }
+            let spell = CopSpellV1 {
+                item: item.v4.stack_item_id,
+                cast_history_index,
+                permanent: None,
+                entry_history_index: None,
+            };
+            circle_cast_matches(state, source, spell).then_some(spell)
+        });
+    let shields = &mut s1d_state(state).cop_shields;
+    shields.retain(|shield| shield.turn == now);
+    shields.push(CopShieldV1 {
+        source,
+        player: ctx.controller,
+        turn: now,
+        spell,
+        color,
+    });
 }
 
 pub(crate) fn execute(op: &S1dOpV1, ctx: &ExecCtx, state: &mut GameState) {
@@ -1136,57 +1350,8 @@ pub(crate) fn execute(op: &S1dOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 event::propose_and_commit(state, ProposedEvent::life_gain(ctx.controller, amount));
             }
         }
-        S1dOpV1::CopShieldV1 { source } => {
-            let now = TurnV1::now(state);
-            let spell = state
-                .objects
-                .try_get(source.object)
-                .filter(|live| {
-                    live.zone == Zone::Stack && live.zone_change_count == source.zone_change_count
-                })
-                .and_then(|_| {
-                    state.stack.iter().find(|item| {
-                        item.source == source.object
-                            && item.kind == crate::state::StackItemKind::Spell
-                    })
-                })
-                .and_then(|item| {
-                    let mut receipts = state
-                        .engine
-                        .event_history
-                        .scan_for_v1(&[
-                            crate::event_history_v1::EventKindV1::PublishedCastIdentityV1,
-                        ])
-                        .iter()
-                        .filter_map(|event| match event {
-                            event::CommittedEvent::PublishedCastIdentityV1 { receipt }
-                                if receipt.stack_item_id == item.v4.stack_item_id =>
-                            {
-                                Some(receipt.spell_cast_history_index)
-                            }
-                            _ => None,
-                        });
-                    let cast_history_index = receipts.next()?;
-                    if receipts.next().is_some() {
-                        return None;
-                    }
-                    let spell = CopSpellV1 {
-                        item: item.v4.stack_item_id,
-                        cast_history_index,
-                        permanent: None,
-                        entry_history_index: None,
-                    };
-                    circle_cast_matches(state, *source, spell).then_some(spell)
-                });
-            let shields = &mut s1d_state(state).cop_shields;
-            shields.retain(|shield| shield.turn == now);
-            shields.push(CopShieldV1 {
-                source: *source,
-                player: ctx.controller,
-                turn: now,
-                spell,
-            });
-        }
+        S1dOpV1::CopShieldV1 { source } => create_shield(state, ctx, *source, CircleColorV1::Blue),
+        S1dOpV1::CircleShieldV1 { source, color } => create_shield(state, ctx, *source, *color),
         S1dOpV1::DamageFlyingV1 => {
             let events = battlefield(state)
                 .filter(|&object| has_flying(state, object))
@@ -1301,6 +1466,7 @@ pub(crate) fn execute(op: &S1dOpV1, ctx: &ExecCtx, state: &mut GameState) {
         S1dOpV1::MartyrRevealV1 => martyr::resolve(state, ctx),
         // Choices run in `drive`.
         S1dOpV1::CopChooseV1
+        | S1dOpV1::CircleChooseV1 { .. }
         | S1dOpV1::CompassChooseV1
         | S1dOpV1::ReturnToDustV1
         | S1dOpV1::WaterbendOrDiscardV1
@@ -1318,8 +1484,12 @@ pub(crate) fn drive(
 ) -> Result<bool, String> {
     let controller = continuation.ctx.controller;
     match op {
-        S1dOpV1::CopChooseV1 => {
-            let options = circle_options(state);
+        S1dOpV1::CopChooseV1 | S1dOpV1::CircleChooseV1 { .. } => {
+            let color = match op {
+                S1dOpV1::CircleChooseV1 { color } => *color,
+                _ => CircleColorV1::Blue,
+            };
+            let options = circle_options(state, color);
             if !options.is_empty() {
                 push_choice(continuation, options, &path);
             }
@@ -1473,8 +1643,8 @@ pub(crate) mod statics {
         }
     }
 
-    /// Circle of Protection: Blue. Whether a shield prevents `damage`; the
-    /// shield is used up.
+    /// Circles of Protection. Whether a shield prevents `damage`; the shield
+    /// is used up.
     pub(crate) fn consume_circle_shield(state: &mut GameState, damage: &DamageProposed) -> bool {
         let Target::Player(player) = damage.target else {
             return false;
@@ -1499,6 +1669,10 @@ pub(crate) mod statics {
                 },
                 facts.color_mask,
             )
+        } else if let Some(record) = departed_resolving_source(state, damage.source) {
+            // 113.7a: the resolving ability's departed source deals the
+            // damage, as it last existed (wave P3g).
+            (record.source, record.color_mask)
         } else {
             let Some(live) = state.objects.try_get(damage.source) else {
                 return false;
@@ -1511,15 +1685,14 @@ pub(crate) mod statics {
                 crate::engine::object_color_mask(state, damage.source),
             )
         };
-        // CR 609.7b: losing blue does not spend the shield. Historical damage
-        // uses the exact published source incarnation and its damage-time LKI.
-        if color_mask & blue_mask() == 0 {
-            return false;
-        }
+        // CR 609.7b: losing the Circle's color does not spend the shield.
+        // Historical damage uses the exact published source incarnation and
+        // its damage-time LKI.
         let now = TurnV1::now(state);
         let position = s1d.cop_shields.iter().position(|shield| {
             shield.turn == now
                 && shield.player == player
+                && color_mask & shield.color.mask() != 0
                 && (shield.source == source
                     || shield.spell.is_some_and(|spell| {
                         spell.permanent == Some(source)
@@ -1531,6 +1704,49 @@ pub(crate) mod statics {
         };
         s1d_state(state).cop_shields.remove(position);
         true
+    }
+
+    /// Whether a Circle of Protection is on the battlefield or one of this
+    /// turn's shields exists, so departing sources are recorded.
+    fn circle_watching(state: &GameState) -> bool {
+        let now = TurnV1::now(state);
+        read_state(state).is_some_and(|s1d| s1d.cop_shields.iter().any(|shield| shield.turn == now))
+            || battlefield(state).any(|object| {
+                definition(state, object).is_some_and(|def| {
+                    [CircleColorV1::Blue, CircleColorV1::Red]
+                        .iter()
+                        .any(|color| def.name == color.circle())
+                })
+            })
+    }
+
+    /// Wave P3g. Records `object`'s incarnation and color just before it
+    /// leaves the battlefield, or leaves a hand for a graveyard or exile,
+    /// while a Circle or a shield exists: an ability of it may still wait,
+    /// and its damage is then dealt by that incarnation as it last existed
+    /// (113.7a). Sources of no Circle's color aren't recorded.
+    pub(crate) fn note_departure(state: &mut GameState, object: ObjectId, from: Zone, to: Zone) {
+        let leaves = match from {
+            Zone::Battlefield => to != Zone::Battlefield,
+            Zone::Hand => matches!(to, Zone::Graveyard | Zone::Exile),
+            _ => false,
+        };
+        if !leaves || !circle_watching(state) {
+            return;
+        }
+        let color_mask = crate::engine::object_color_mask(state, object);
+        if color_mask & (CircleColorV1::Blue.mask() | CircleColorV1::Red.mask()) == 0 {
+            return;
+        }
+        let record = DepartedSourceV1 {
+            source: live_link(state, object),
+            zone: from,
+            color_mask,
+        };
+        let records = &mut s1d_state(state).departed_sources;
+        if !records.contains(&record) {
+            records.push(record);
+        }
     }
 
     /// Stonehorn Dignitary: whether `player`'s combat phase, about to begin,

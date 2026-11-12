@@ -243,8 +243,7 @@ const SNAPSHOTS: [&str; 2] = [
 ];
 
 /// Executable S1 implementations with known missing reachable branches.
-const PARTIAL_S1: [&str; 7] = [
-    "Circle of Protection: Blue",
+const PARTIAL_S1: [&str; 6] = [
     "Coalition Honor Guard",
     "Hullbreacher",
     "Lavinia, Azorius Renegade",
@@ -627,6 +626,9 @@ pub(crate) struct Game {
     /// Attacker scan steps that offer only to leave the creature out while
     /// an Archon of Absolution taxes its attack.
     pub(crate) unpaid_exclusions: usize,
+    /// Circle of Protection source choices answered from the action list
+    /// (waves S1d and P3g).
+    pub(crate) circle_choices: usize,
 }
 
 /// Plays one game to a natural terminal and returns its transcript hash,
@@ -659,6 +661,7 @@ pub(crate) fn play_with_outside(
     let mut search_looks = [0; 2];
     let mut overloaded_spells = BTreeSet::new();
     let (mut taxed_inclusions, mut unpaid_exclusions) = (0, 0);
+    let mut circle_choices = 0;
     let mut companion_actions = 0;
     // The last chosen actions, reported if a game fails closed.
     let mut recent: Vec<String> = Vec::new();
@@ -722,6 +725,7 @@ last actions:
                 overloaded_spells: overloaded_spells.len(),
                 taxed_inclusions,
                 unpaid_exclusions,
+                circle_choices,
             };
         }
         let decision = &reply["decision"];
@@ -821,6 +825,17 @@ last actions:
             if let Some(id) = action["semantic"]["source"]["card_db_id"].as_u64() {
                 *cast_cards[seat].entry(id as u16).or_default() += 1;
             }
+        }
+        if action["semantic"]["action_kind"] == "choose_effect_option"
+            && action["semantic"]["source"]["card_db_id"]
+                .as_u64()
+                .is_some_and(|id| {
+                    CARD_DEFS[id as usize]
+                        .name
+                        .starts_with("Circle of Protection")
+                })
+        {
+            circle_choices += 1;
         }
         if action["semantic"]["action_kind"] == "choose_spell_mode" {
             if let (Some(source), Some(mode)) = (
@@ -1182,5 +1197,66 @@ fn s1j_archon_decks_finish_and_replay_through_public_sessions() {
     assert!(
         unpaid > 0,
         "no attacker scan step left out a creature it couldn't pay for"
+    );
+}
+
+/// Wave P3g's Circle of Protection: Red is a sideboard card, which the
+/// best-of-three harness rarely draws with a red source to choose, so a
+/// white-blue deck with four Circles, Arcane Laboratories and Akroma's
+/// Vengeances in its mainboard and a black-red deck with Seal of Fire,
+/// Infest and other red sources play each other through public sessions,
+/// both seats with ranked and with seeded random actions. The games answer
+/// a Circle's source choice from the JSONL action list.
+#[test]
+fn p3g_circle_decks_finish_and_replay_through_public_sessions() {
+    let white_blue = stress_deck(
+        &[("Plains", 14), ("Island", 10)],
+        [
+            "Circle of Protection: Red",
+            "Arcane Laboratory",
+            "Akroma's Vengeance",
+            "Thraben Inspector",
+            "Kor Skyfisher",
+            "Swords to Plowshares",
+            "Exalted Angel",
+            "Opt",
+            "Counterspell",
+        ],
+    );
+    let black_red = stress_deck(
+        &[("Mountain", 14), ("Swamp", 10)],
+        [
+            "Seal of Fire",
+            "Infest",
+            "Mogg Fanatic",
+            "Grim Lavamancer",
+            "Jackal Pup",
+            "Lightning Bolt",
+            "Siege-Gang Commander",
+            "Twinshot Sniper",
+            "Dark Ritual",
+        ],
+    );
+    let mut choices = 0;
+    for (pair, seed) in [
+        ([white_blue.clone(), black_red.clone()], 0x5033_4700_u64),
+        ([black_red, white_blue], 0x5033_4701),
+    ] {
+        for policy in [
+            Policy::Ranked,
+            Policy::Random(seed),
+            Policy::Random(seed + 16),
+            Policy::Random(seed + 32),
+        ] {
+            let game = play(pair.clone(), seed, policy);
+            let replay = play(pair.clone(), seed, policy);
+            assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+            choices += game.circle_choices;
+        }
+    }
+    println!("Circle source choices: {choices}");
+    assert!(
+        choices > 0,
+        "no Circle source was chosen from the action list"
     );
 }

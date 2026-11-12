@@ -156,9 +156,20 @@ pub(crate) fn abeyance_prohibits_cast(
 pub(crate) struct DepartureCauseV1 {
     /// The controller of the spell or ability whose effects are running.
     cause: Option<PlayerId>,
+    /// The resolving ability's source as its contract froze it when the
+    /// ability was activated or triggered. Wave P3g's Circles of Protection
+    /// read it to find damage a departed source deals (113.7a).
+    ability_source: Option<AbilitySourceContractV4>,
     /// The batch of simultaneous moves being committed, read before any of
     /// them happens.
     batch: Option<DepartureBatchV1>,
+}
+
+/// The scope a resolution entered, which `leave_resolution` restores.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct EnclosingResolutionV1 {
+    cause: Option<PlayerId>,
+    ability_source: Option<AbilitySourceContractV4>,
 }
 
 impl PartialEq for DepartureCauseV1 {
@@ -207,40 +218,61 @@ fn scope(state: &mut GameState) -> &mut DepartureCauseV1 {
     &mut state.engine.departure_cause_v1
 }
 
+fn enclosing(state: &GameState) -> EnclosingResolutionV1 {
+    let scope = &state.engine.departure_cause_v1;
+    EnclosingResolutionV1 {
+        cause: scope.cause,
+        ability_source: scope.ability_source,
+    }
+}
+
 /// Enters the scope of the spell or ability whose effects `ctx` runs, and
-/// returns the enclosing cause for `leave_resolution`. Only the outermost
-/// context of a stack item sets the cause: an effect nested in it may run
-/// for another player but belongs to the same resolution, and a context
-/// that doesn't come from a stack item (a mana ability, a cost, a
-/// state-based action) sets nothing.
-pub(crate) fn enter_resolution(state: &mut GameState, ctx: &ExecCtx) -> Option<PlayerId> {
-    let enclosing = scope(state).cause;
-    if enclosing.is_none() && ctx.stack_item_id.is_some() {
-        scope(state).cause = Some(ctx.controller);
+/// returns the enclosing scope for `leave_resolution`. Only the outermost
+/// context of a stack item sets the cause and the ability's source: an
+/// effect nested in it may run for another player but belongs to the same
+/// resolution, and a context that doesn't come from a stack item (a mana
+/// ability, a cost, a state-based action) sets nothing.
+pub(crate) fn enter_resolution(state: &mut GameState, ctx: &ExecCtx) -> EnclosingResolutionV1 {
+    let enclosing = enclosing(state);
+    if enclosing.cause.is_none() && ctx.stack_item_id.is_some() {
+        let scope = scope(state);
+        scope.cause = Some(ctx.controller);
+        scope.ability_source = ctx.ability_source_contract;
     }
     enclosing
 }
 
 /// Enters the scope of the effect continuation the engine is about to
-/// drive, and returns the enclosing cause for `leave_resolution`.
-pub(crate) fn enter_pending_resolution(state: &mut GameState) -> Option<PlayerId> {
-    let enclosing = scope(state).cause;
+/// drive, and returns the enclosing scope for `leave_resolution`.
+pub(crate) fn enter_pending_resolution(state: &mut GameState) -> EnclosingResolutionV1 {
+    let enclosing = enclosing(state);
     let resolving = state
         .engine
         .pending_effect
         .as_ref()
         .filter(|pending| pending.ctx.stack_item_id.is_some())
-        .map(|pending| pending.ctx.controller);
-    if enclosing.is_none() && resolving.is_some() {
-        scope(state).cause = resolving;
+        .map(|pending| (pending.ctx.controller, pending.ctx.ability_source_contract));
+    if let (None, Some((controller, ability_source))) = (enclosing.cause, resolving) {
+        let scope = scope(state);
+        scope.cause = Some(controller);
+        scope.ability_source = ability_source;
     }
     enclosing
 }
 
-/// Restores the cause `enter_resolution` or `enter_pending_resolution`
+/// Restores the scope `enter_resolution` or `enter_pending_resolution`
 /// returned.
-pub(crate) fn leave_resolution(state: &mut GameState, enclosing: Option<PlayerId>) {
-    scope(state).cause = enclosing;
+pub(crate) fn leave_resolution(state: &mut GameState, enclosing: EnclosingResolutionV1) {
+    let scope = scope(state);
+    scope.cause = enclosing.cause;
+    scope.ability_source = enclosing.ability_source;
+}
+
+/// The source contract of the ability whose effects are running, if a
+/// stack item's ability resolves (none for a spell).
+pub(crate) fn resolving_ability_source(state: &GameState) -> Option<AbilitySourceContractV4> {
+    let scope = &state.engine.departure_cause_v1;
+    scope.cause.and(scope.ability_source)
 }
 
 /// Reads the watchers and departing permanents of a batch of simultaneous
