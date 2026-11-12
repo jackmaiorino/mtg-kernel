@@ -5,10 +5,10 @@ reading it back, stage by stage, for the ordinary (net-8) learner and the S
 learner. It is measurement only: it changes no codec, wire format, default,
 validation or cache. It is the baseline later T2 milestones (borrowed views,
 streamed validation) are measured against. Milestones 2 (borrowed views) and
-3 (validated decode) changed what some stages do, not their names, so
-receipts of builds before and after them compare row for row; see
+3 (validated decode and restore) changed what some stages do, not their
+names, so receipts of builds before and after them compare row for row; see
 [After milestone 2](#after-milestone-2-borrowed-views) and
-[After milestone 3](#after-milestone-3-validated-decode).
+[After milestone 3](#after-milestone-3-validated-decode-and-restore).
 
 - Code: `mtg-kernel/src/expanded_deck_training_v1/checkpoint_codec_bench_v1.rs`
   and the binary `mtg-kernel/examples/checkpoint_codec_bench_v1.rs`, built only
@@ -280,7 +280,7 @@ T1's. S is unchanged: its encoder already writes from the borrowed state and
 its decoder reads straight into `f32`; its decode's re-encode (two hashes per
 decode) is milestone 3's.
 
-### After milestone 3 (validated decode)
+### After milestone 3 (validated decode and restore)
 
 Milestone 3's first part replaces each decoder's re-encoding with the check
 it stood for, made in place, without changing either format's bytes, what
@@ -311,7 +311,31 @@ any decoder accepts or what it refuses, or any refusal's message:
   tensor's first and last value bytes, every truncation, trailing tails and
   reformatted documents and tables both ways, with the same outcome.
 
-The restore's copies (ordinary item 9) are milestone 3's second part.
+Its second part removes the restore's snapshot copies, again without
+changing what the restore accepts, what it refuses or the state and policy
+it builds:
+
+- The restore (ordinary item 9) no longer copies the decoded checkpoint into a
+  train snapshot (3N `f32`, `restore_parameters`), or the model into the
+  template snapshots it checked them against. It borrows the decoded sections
+  as a `TrainTensorsV1`, each `u32` section read as `f32` in place under the
+  model's names and shapes, refused with `restore_parameters`' messages in its
+  order. It checks their digest against the checkpoint's
+  (`TrainTensorsV1::state_sha256_v1`, the same validation and the same memo
+  hit) and builds the state with `from_tensors_v1`, the constructor T1
+  accepted on #595: `from_snapshot_v1`'s checks in its order, with each
+  parameter written once into the model the restore owns, without a clone, and
+  each moment once into the state. The model's replacement checks read its
+  tensors in place instead of an expected snapshot, and the policy installs
+  one parameter snapshot of the built state. The tests restore a checkpoint
+  and 44 changed ones, and build states from a trained snapshot and 32 changed
+  ones, both ways, with the same refusal every time and otherwise the same
+  state and policy.
+
+What remains: the decode's `u32` section copy (item 8), which the restore
+now reads in place, the digest memo's held copy (item 2), which is milestone
+4's, and the restore's copies into the policy and the loaded-source cache
+(item 9), which are T1's.
 
 ## A-B-B-A
 
