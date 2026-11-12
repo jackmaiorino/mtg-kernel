@@ -2004,9 +2004,10 @@ and 616.1:
   incarnation, escapes a shield chosen while it was on the battlefield. P3g closes this:
   - Record: while a Circle of Protection is on the battlefield or a shield exists, a permanent
     that leaves the battlefield, and a card that leaves a hand for a graveyard or exile, records
-    its incarnation and color as they are just before the move, in S1d's state. The records are
-    dropped as each turn begins, when no ability can still wait on one and every shield has
-    expired.
+    its incarnation and color as they are just before the move, in S1d's state, if it is blue or
+    red, since no Circle can choose a source of neither color. The records are dropped as each
+    turn begins, when no ability can still wait on one and every shield has expired, and an
+    empty list adds nothing to a state's JSON or hash.
   - Menu: the source of an activated or triggered ability on the stack whose source has left
     the battlefield or hand its contract names is offered, by that incarnation, when a record
     gives it the Circle's color and its card is now in a public zone (a graveyard, exile face up,
@@ -2034,9 +2035,9 @@ and 616.1:
 - Infest, {1}{B}{B}, Sorcery: "All creatures get -2/-2 until end of turn." Drown in Sorrow's
   boost without its scry.
 - Akroma's Vengeance, {4}{W}{W}, Sorcery: "Destroy all artifacts, creatures, and enchantments.
-  Cycling {3}". One simultaneous destruction of every artifact, creature and enchantment on the
-  battlefield; regeneration shields apply and indestructible permanents stay. Cycling is wave
-  E6a's cycling ability.
+  Cycling {3}". Its destruction is Nevinyrral's Disk's (wave P2a): one simultaneous destruction
+  of every artifact, creature and enchantment on the battlefield, to which regeneration shields
+  apply and which indestructible permanents survive. Cycling is wave E6a's cycling ability.
 - Consumers: a sideboard Circle rarely reaches the battlefield with a red source to choose, so,
   as in S1j, a white deck with Circles of Protection: Red in its mainboard and a red deck with
   Seal of Fire play each other through public sessions, in both seats with ranked and seeded
