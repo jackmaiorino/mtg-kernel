@@ -16,12 +16,12 @@ fn restored(s: &GameState) -> GameState {
     assert_eq!(s.state_hash(), r.state_hash());
     r
 }
-fn next(s: &mut GameState) -> Decision {
+pub(crate) fn next(s: &mut GameState) -> Decision {
     let d = engine::advance_until_decision(s);
     assert!(!matches!(d, Decision::Halted { .. }), "{d:?}");
     d
 }
-fn answer(s: &mut GameState, a: Action) {
+pub(crate) fn answer(s: &mut GameState, a: Action) {
     let mut r = restored(s);
     engine::step(s, a.clone()).unwrap();
     engine::step(&mut r, a).unwrap();
@@ -40,7 +40,7 @@ fn quiet(s: &mut GameState, d: Decision) {
     };
     answer(s, a);
 }
-fn settle(s: &mut GameState) {
+pub(crate) fn settle(s: &mut GameState) {
     for _ in 0..160 {
         let d = next(s);
         if matches!(d, Decision::CastSpellOrPass { .. })
@@ -55,7 +55,7 @@ fn settle(s: &mut GameState) {
     }
     panic!("actual Etali stack did not finish");
 }
-fn paid(p: PlayerId, own: &[&str], other: &[&str]) -> (GameState, ObjectId) {
+pub(crate) fn paid(p: PlayerId, own: &[&str], other: &[&str]) -> (GameState, ObjectId) {
     let a = own.iter().map(|name| id(name)).collect::<Vec<_>>();
     let b = other.iter().map(|name| id(name)).collect::<Vec<_>>();
     let libraries = if p == PlayerId::P0 {
@@ -99,7 +99,7 @@ fn paid(p: PlayerId, own: &[&str], other: &[&str]) -> (GameState, ObjectId) {
     assert!(s.objects.get(source).summoning_sick);
     (s, source)
 }
-fn attack(s: &mut GameState, p: PlayerId, source: ObjectId) {
+pub(crate) fn attack(s: &mut GameState, p: PlayerId, source: ObjectId) {
     let turn = s.turn_key_v1();
     let generation = s.objects.get(source).zone_change_count;
     let mut saw_sick = false;
@@ -127,7 +127,7 @@ fn attack(s: &mut GameState, p: PlayerId, source: ObjectId) {
     }
     panic!("genuine paid source never reached its next attack");
 }
-fn batch(s: &mut GameState, p: PlayerId) -> ExileBatchChoice {
+pub(crate) fn batch(s: &mut GameState, p: PlayerId) -> ExileBatchChoice {
     for _ in 0..48 {
         let d = next(s);
         if let Some(pending) = &s.engine.pending_effect {

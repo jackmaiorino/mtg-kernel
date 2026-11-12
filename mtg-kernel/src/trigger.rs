@@ -4866,6 +4866,11 @@ pub(crate) fn invalid_sba_aura(
     if aura.zone != Zone::Battlefield {
         return false;
     }
+    // Overencumbered enchants a player (eternal wave S1f).
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(invalid) = crate::eternal_sideboard_s1f_v1::invalid_player_aura(state, id) {
+        return invalid;
+    }
     let definition = &crate::card_def::CARD_DEFS[aura.card_def as usize];
     if aura.v4.attached_to.is_some_and(|link| {
         crate::progenitus_v1::attachment_forbidden(state, id, link.object)
@@ -6146,13 +6151,7 @@ fn triggers_from_events(
                             };
                         let target_spec = target_spec_for_trigger(obj.card_def, &effect)
                             .unwrap_or(TargetSpec::None);
-                        let limit =
-                            per_turn_trigger_cap(def.condition).or_else(|| match def.condition {
-                                TriggerCondition::StandardV1(condition) => {
-                                    crate::standard_cards_v1::trigger_limit_per_turn(condition)
-                                }
-                                _ => None,
-                            });
+                        let limit = per_turn_trigger_cap(def.condition);
                         if let Some(maximum) = limit {
                             let ability_index =
                                 u16::try_from(ability_index).expect("bounded definition abilities");
@@ -6658,11 +6657,14 @@ fn draws_this_turn_snapshot(events: &[CommittedEvent], state: &GameState) -> Vec
 /// pairing.
 /// How many times per turn a triggered ability may trigger, tracked in
 /// `GameState::trigger_uses_v1`. `None` means unlimited.
-fn per_turn_trigger_cap(condition: TriggerCondition) -> Option<u16> {
+pub(crate) fn per_turn_trigger_cap(condition: TriggerCondition) -> Option<u16> {
     match condition {
         TriggerCondition::ControllerAddedPlusOneCountersToSelf { max_per_turn } => max_per_turn,
         TriggerCondition::BecomesTargetOfControllerSpellOrAbilityFirstTimeEachTurn => Some(1),
         TriggerCondition::OtherControlledCreatureWithPowerAtMostEntersOncePerTurn(_) => Some(1),
+        TriggerCondition::StandardV1(condition) => {
+            crate::standard_cards_v1::trigger_limit_per_turn(condition)
+        }
         _ => None,
     }
 }

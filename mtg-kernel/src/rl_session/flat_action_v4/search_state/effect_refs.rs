@@ -1445,25 +1445,40 @@ fn conflicts_in_scope(
     {
         return true;
     }
-    if state.engine.event_history.has_any(&[
-        EventKindV1::MuldrothaOptionsV1,
-        EventKindV1::MuldrothaSelectedV1,
-        EventKindV1::MuldrothaPlayedV1,
-    ]) && (!matches!(
-        scope,
-        ReferenceScopeV68::Muldrotha
-            | ReferenceScopeV68::Tinybones
-            | ReferenceScopeV68::Liliana
-            | ReferenceScopeV68::Chandra
-            | ReferenceScopeV68::Kaito
-    ) || crate::engine::muldrotha_v1::sampler_conflicts_v71(state, pool).unwrap_or(true))
+    if state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::MuldrothaOptionsV1,
+            EventKindV1::MuldrothaSelectedV1,
+            EventKindV1::MuldrothaPlayedV1,
+        ])
+        .iter()
+        .any(|event| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::MuldrothaOptionsV1 { .. }
+                    | crate::event::CommittedEvent::MuldrothaSelectedV1 { .. }
+                    | crate::event::CommittedEvent::MuldrothaPlayedV1 { .. }
+            )
+        })
+        && (!matches!(
+            scope,
+            ReferenceScopeV68::Muldrotha
+                | ReferenceScopeV68::Tinybones
+                | ReferenceScopeV68::Liliana
+                | ReferenceScopeV68::Chandra
+                | ReferenceScopeV68::Kaito
+        ) || crate::engine::muldrotha_v1::sampler_conflicts_v71(state, pool).unwrap_or(true))
     {
         return true;
     }
     if state
         .engine
         .event_history
-        .has_any(&[EventKindV1::TinybonesV72])
+        .scan_for_v1(&[EventKindV1::TinybonesV72])
+        .iter()
+        .any(|event| matches!(event, crate::event::CommittedEvent::TinybonesV72 { .. }))
         && (!matches!(
             scope,
             ReferenceScopeV68::Tinybones
@@ -1477,7 +1492,14 @@ fn conflicts_in_scope(
     if state
         .engine
         .event_history
-        .has_any(&[EventKindV1::LilianaDreadhordeV1])
+        .scan_for_v1(&[EventKindV1::LilianaDreadhordeV1])
+        .iter()
+        .any(|event| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::LilianaDreadhordeV1 { .. }
+            )
+        })
         && (!matches!(
             scope,
             ReferenceScopeV68::Liliana | ReferenceScopeV68::Chandra | ReferenceScopeV68::Kaito
@@ -1489,7 +1511,14 @@ fn conflicts_in_scope(
     if state
         .engine
         .event_history
-        .has_any(&[EventKindV1::ChandraFlameshaperV74])
+        .scan_for_v1(&[EventKindV1::ChandraFlameshaperV74])
+        .iter()
+        .any(|event| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::ChandraFlameshaperV74 { .. }
+            )
+        })
         && (!matches!(scope, ReferenceScopeV68::Chandra | ReferenceScopeV68::Kaito)
             || crate::effect::chandra_flameshaper_v1::sampler_conflicts_v74(state, pool)
                 .unwrap_or(true))
@@ -1499,7 +1528,9 @@ fn conflicts_in_scope(
     if (state
         .engine
         .event_history
-        .has_any(&[EventKindV1::KaitoCunningV75])
+        .scan_for_v1(&[EventKindV1::KaitoCunningV75])
+        .iter()
+        .any(|event| matches!(event, crate::event::CommittedEvent::KaitoCunningV75 { .. }))
         || state
             .engine
             .event_log
@@ -1513,7 +1544,9 @@ fn conflicts_in_scope(
     if state
         .engine
         .event_history
-        .has_any(&[EventKindV1::VivienReidV1])
+        .scan_for_v1(&[EventKindV1::VivienReidV1])
+        .iter()
+        .any(|event| matches!(event, crate::event::CommittedEvent::VivienReidV1 { .. }))
         || state.engine.event_log.iter().any(|e| {
             matches!(
                 e,
@@ -1896,7 +1929,8 @@ fn conflicts_in_scope(
             | FiendArtisanInputV1 { .. }
             | FiendArtisanPaidV1 { .. }
             | FiendArtisanSearchStartedV1 { .. }
-            | FiendArtisanSearchFinishedV1 { .. } => true,
+            | FiendArtisanSearchFinishedV1 { .. }
+            | FiendArtisanConsumerReceiptV1 { .. } => true,
             DrakeJournalV1 { .. }
             | DrakeHistoryRefV1 { .. }
             | ConquerorGainReplayBorrowV49 { .. }
@@ -2194,13 +2228,21 @@ fn conflicts_in_scope(
             | InspirationResolutionBoundaryV1 { .. } => false,
             ThousandYearStormV1 { journal } => match journal {
                 crate::effect::thousand_year_storm_v1::JournalV1::Cast { spell, observers, .. } => s.storm_snapshot(spell) || observers.iter().any(|source| s.a(source)),
-                crate::effect::thousand_year_storm_v1::JournalV1::Collected { .. } => false,
+                crate::effect::thousand_year_storm_v1::JournalV1::Collected { .. }
+                | crate::effect::thousand_year_storm_v1::JournalV1::CastForm { .. } | crate::effect::thousand_year_storm_v1::JournalV1::TargetFaces { .. } => false,
                 crate::effect::thousand_year_storm_v1::JournalV1::Published { item, .. } | crate::effect::thousand_year_storm_v1::JournalV1::Copy { item, .. } => s.storm_snapshot(item),
             },
             AleshaPowerLkiV1 { .. } => scope == ReferenceScopeV68::Legacy,
             NivMizzetVisionaryDamageV1 { .. }
             | NivMizzetVisionaryTriggerStackedV1 { .. }
             | NivMizzetVisionaryDamageSourceDepartureV1 { .. }
+            | NivMizzetVisionaryDrawEndedV1 { .. }
+            | LathrilReceiptV1 { .. }
+            | BlasphemousEdictReceiptV1 { .. }
+            | CuratorReceiptV1 { .. }
+            | GreatwurmCommitReceiptV1 { .. }
+            | HarvesterCommitReceiptV1 { .. }
+            | EtaliPrimalStormReceiptV1 { .. }
             | TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..} | TwinflameCombatPublishedV38 {..} | TwinflameCombatInputV38 {..} | TwinflameCombatOperationV38 {..} | TwinflameDynamicDamageSampleV38 {..} | TwinflameFieryCaptureV38 {..} | TwinflameFieryFinishedV38 {..}
             | InspirationResolutionInputV1 { .. } | InspirationResolutionOperationV1 { .. }
                 | InspirationEngineDepartureV1 { .. } | FaebloomJournalV43 { .. }

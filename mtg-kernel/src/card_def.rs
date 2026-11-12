@@ -466,6 +466,10 @@ pub enum Subtype {
     /// Appended for the eternal catalog's Premodern wave P3f (Phyrexian
     /// Processor's Minion tokens).
     Minion = 381,
+    /// Appended for the eternal catalog's Vintage sideboard wave S1f (the
+    /// Junk token Overencumbered creates), with stable ids from 400 reserved
+    /// for that wave. An artifact type, not a creature type.
+    Junk = 400,
 }
 
 impl Subtype {
@@ -1109,6 +1113,7 @@ impl Subtype {
             362 => Subtype::Flagbearer,
             380 => Subtype::Spike,
             381 => Subtype::Minion,
+            400 => Subtype::Junk,
             _ => return None,
         })
     }
@@ -1337,6 +1342,7 @@ impl Subtype {
             Subtype::Flagbearer => true,
             Subtype::Spike => true,
             Subtype::Minion => true,
+            Subtype::Junk => false,
         }
     }
 
@@ -3987,7 +3993,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x86cb_7038_b374_28c7;
+        const EXPECTED_ETERNAL: u64 = 0x3b51_9e61_7a3e_88cc;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

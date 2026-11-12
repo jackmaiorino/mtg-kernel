@@ -1226,6 +1226,9 @@ pub(crate) fn drive(
         EternalOpV1::S1eV1(op) => {
             crate::eternal_sideboard_s1e_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::S1fV1(op) => {
+            crate::eternal_sideboard_s1f_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::OutsideGameV1(op) => {
             crate::eternal_outside_game_v1::drive(state, continuation, op, path)
         }
@@ -2662,6 +2665,10 @@ pub(crate) fn cant_attack(state: &GameState, object: ObjectId) -> bool {
     if crate::eternal_sideboard_s1c_v1::statics::cant_attack(state, object) {
         return true;
     }
+    // Overencumbered's unpaid combat trigger (wave S1f).
+    if crate::eternal_sideboard_s1f_v1::cant_attack(state, object) {
+        return true;
+    }
     e3(state).is_some_and(|e3| {
         state.objects.try_get(object).is_some_and(|live| {
             let entry = ObjectLinkV4 {
@@ -2777,7 +2784,9 @@ pub(crate) fn set_free_quote(state: &mut GameState, card: Option<ObjectId>) {
 /// The cards Show and Tell lets `player` put onto the battlefield: an
 /// artifact, creature, enchantment or land card in their hand. An Aura
 /// would need a host chosen as it enters (303.4f), which the engine models
-/// only for Aura spells, so Auras are not offered.
+/// only for Aura spells, so Auras are not offered, except one that enchants
+/// a player: Overencumbered enters enchanting its controller's opponent
+/// (wave S1f).
 pub(crate) fn show_and_tell_cards(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
     hand_bindings(state, player, |def| {
         [
@@ -2788,7 +2797,8 @@ pub(crate) fn show_and_tell_cards(state: &GameState, player: PlayerId) -> Vec<Ef
         ]
         .into_iter()
         .any(|card_type| def.has_type(card_type))
-            && !def.subtypes.contains(&Subtype::Aura)
+            && (!def.subtypes.contains(&Subtype::Aura)
+                || crate::eternal_sideboard_s1f_v1::enchants_player(def))
     })
 }
 

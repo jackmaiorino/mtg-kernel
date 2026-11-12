@@ -85,32 +85,44 @@ pub(crate) fn land_override_timestamp(state: &GameState, host: ObjectId) -> Opti
     if object.zone != Zone::Battlefield {
         return None;
     }
-    let link = Some(ObjectLinkV4 {
-        object: host,
-        zone_change_count: object.zone_change_count,
-    });
     object
         .attachments
         .iter()
         .copied()
-        .filter_map(|aura| {
-            let source = state.objects.try_get(aura)?;
-            if aura == host
-                || source.zone != Zone::Battlefield
-                || source.v4.attached_to != link
-                || source.v4.face_down_v1.is_some()
-                || object.attachments.iter().filter(|&&id| id == aura).count() != 1
-                || creature_override(state, aura).is_some_and(|(c, _)| c.loses_abilities)
-                || crate::standard_creatures_v1::removal_timestamp(state, aura).is_some()
-            {
-                return None;
-            }
-            let definition = CARD_DEFS.get(source.card_def as usize)?;
-            (definition.is_executable()
-                && definition.attachment == Some(AttachmentDef::AuraLandOverride))
-            .then_some(source.v4.layer_timestamp.unwrap_or(0))
-        })
+        .filter_map(|aura| land_override_source_timestamp(state, host, aura))
         .max()
+}
+
+pub(crate) fn land_override_source_timestamp(
+    state: &GameState,
+    host: ObjectId,
+    aura: ObjectId,
+) -> Option<u64> {
+    if !cfg!(feature = "limited-fdn-fixtures") {
+        return None;
+    }
+    let object = state.objects.try_get(host)?;
+    if object.zone != Zone::Battlefield {
+        return None;
+    }
+    let link = Some(ObjectLinkV4 {
+        object: host,
+        zone_change_count: object.zone_change_count,
+    });
+    let source = state.objects.try_get(aura)?;
+    if aura == host
+        || source.zone != Zone::Battlefield
+        || source.v4.attached_to != link
+        || source.v4.face_down_v1.is_some()
+        || object.attachments.iter().filter(|&&id| id == aura).count() != 1
+        || creature_override(state, aura).is_some_and(|(c, _)| c.loses_abilities)
+        || crate::standard_creatures_v1::removal_timestamp(state, aura).is_some()
+    {
+        return None;
+    }
+    let definition = CARD_DEFS.get(source.card_def as usize)?;
+    (definition.is_executable() && definition.attachment == Some(AttachmentDef::AuraLandOverride))
+        .then_some(source.v4.layer_timestamp.unwrap_or(0))
 }
 
 /// Witness sets only Creature in layer 4. Later Moon replaces that with only
@@ -185,8 +197,17 @@ pub(crate) fn refuse_land_override_consumer(
     state: &GameState,
     viewer: crate::ids::PlayerId,
 ) -> Result<(), String> {
+    require_land_override_scope(state, viewer, None)
+}
+
+pub(crate) fn require_land_override_scope(
+    state: &GameState,
+    viewer: crate::ids::PlayerId,
+    allowed: Option<u16>,
+) -> Result<(), String> {
     let selected = state.objects.iter().any(|(id, object)| {
-        object.v4.face_down_v1.is_none()
+        Some(object.card_def) != allowed
+            && object.v4.face_down_v1.is_none()
             && (matches!(
                 object.zone,
                 Zone::Battlefield | Zone::Graveyard | Zone::Exile | Zone::Stack | Zone::Command

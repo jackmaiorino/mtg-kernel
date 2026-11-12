@@ -26,7 +26,7 @@ pub(super) struct QuoteV1 {
     controller: PlayerId,
     source: AbilitySourceContractV4,
 }
-pub(super) fn active_source(
+pub(crate) fn active_source(
     state: &GameState,
     player: PlayerId,
 ) -> Option<AbilitySourceContractV4> {
@@ -35,15 +35,28 @@ pub(super) fn active_source(
         .iter()
         .copied()
         .find_map(|id| {
-            let o = state.objects.get(id);
-            (o.zone == Zone::Battlefield
-                && o.controller == player
-                && definition(o.card_def)
-                && o.v4.face_index == 0
-                && o.v4.face_down_v1.is_none()
-                && crate::continuous_characteristics_v1::printed_abilities_active(state, id))
-            .then(|| AbilitySourceContractV4::capture(state, id))
+            active_source_at(state, player, id).then(|| AbilitySourceContractV4::capture(state, id))
         })
+}
+
+fn active_source_at(state: &GameState, player: PlayerId, id: ObjectId) -> bool {
+    let o = state.objects.get(id);
+    o.zone == Zone::Battlefield
+        && o.controller == player
+        && definition(o.card_def)
+        && o.v4.face_index == 0
+        && o.v4.face_down_v1.is_none()
+        && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+}
+
+pub(crate) fn original_permission_active(
+    state: &GameState,
+    source: AbilitySourceContractV4,
+) -> bool {
+    state.objects.try_get(source.source).is_some_and(|live| {
+        live.zone_change_count == source.zone_change_count
+            && active_source_at(state, source.controller, source.source)
+    })
 }
 fn hand(state: &GameState, spell: ObjectId, player: PlayerId) -> bool {
     state.objects.try_get(spell).is_some_and(|o| {
@@ -120,17 +133,27 @@ pub(super) fn seed_quote(state: &mut GameState, quote: QuoteV1) -> ChoiceV1 {
     append_options(state, quote.spell, quote.controller, quote.source, false)
 }
 pub(super) fn seed(state: &mut GameState, spell: ObjectId, player: PlayerId) -> Option<ChoiceV1> {
+    let (source, paid) = quoted_offer(state, spell, player)?;
+    Some(append_options(state, spell, player, source, paid))
+}
+
+/// Read-only quote for one already-offered native CastSpell action.
+pub(crate) fn quoted_offer(
+    state: &GameState,
+    spell: ObjectId,
+    player: PlayerId,
+) -> Option<(AbilitySourceContractV4, bool)> {
     if !offered_free(state, spell, player) {
         return None;
     }
     let source = active_source(state, player)?;
     let paid = is_castable_now(player, spell, CastMethodV4::Normal, state);
-    Some(append_options(state, spell, player, source, paid))
+    Some((source, paid))
 }
-fn options(state: &GameState, index: u64) -> Result<&OptionsV1, String> {
-    let Some(CommittedEvent::OmniscienceCastOptionsV1 { options: o }) = usize::try_from(index)
-        .ok()
-        .and_then(|i| state.engine.event_history.get(i))
+fn options(state: &GameState, index: u64, finalized: bool) -> Result<&OptionsV1, String> {
+    let at = usize::try_from(index).map_err(|_| "Omniscience option index width")?;
+    let Some(CommittedEvent::OmniscienceCastOptionsV1 { options: o }) =
+        state.engine.event_history.get(at)
     else {
         return Err("Omniscience original option record absent".into());
     };
@@ -158,7 +181,11 @@ fn options(state: &GameState, index: u64) -> Result<&OptionsV1, String> {
     if !d.is_executable() || !d.is_castable() || d.has_type(CardType::Land) {
         return Err("Omniscience original hand printing changed".into());
     }
-    validate_historical_ability_source_contract(state, o.source)?;
+    if finalized {
+        crate::sampled_history_v1::validate_source(state, at, o.source)?;
+    } else {
+        validate_historical_ability_source_contract(state, o.source)?;
+    }
     Ok(o)
 }
 pub(super) fn waiting(p: &PendingCast) -> bool {
@@ -205,7 +232,12 @@ pub(super) fn free_cast_for(state: &GameState, spell: ObjectId, player: PlayerId
         && origin.origin_zone == Zone::Hand
         && origin.origin_zone_change_count == hand_generation
         && hand_generation.checked_add(1) == Some(live.zone_change_count)
-        && options(state, options_history_index).is_ok_and(|o| {
+        && options(
+            state,
+            options_history_index,
+            origin.finalized_method.is_some(),
+        )
+        .is_ok_and(|o| {
             o.hand.source == spell
                 && o.controller == player
                 && o.hand.zone_change_count == hand_generation
@@ -219,7 +251,7 @@ pub(super) fn validate(state: &GameState, p: &PendingCast) -> Result<(), String>
             Err("Omniscience pending choice erased".into())
         } else { Ok(()) };
     };
-    let o = options(state, c.options_history_index)?;
+    let o = options(state, c.options_history_index, false)?;
     let cast = p
         .source_contract
         .spell_cast_origin
@@ -243,7 +275,7 @@ pub(super) fn validate(state: &GameState, p: &PendingCast) -> Result<(), String>
 pub(super) fn answer(state: &mut GameState, p: &PendingCast, index: u16) -> Result<(), String> {
     validate(state, p)?;
     let c = p.omniscience_v1.ok_or("Omniscience choice absent")?;
-    let o = options(state, c.options_history_index)?;
+    let o = options(state, c.options_history_index, false)?;
     if c.free.is_some() || !o.paid || index > 1 {
         return Err("Omniscience choice already selected/outside menu".into());
     }
@@ -335,7 +367,7 @@ pub(super) fn paid_contract(
     if state.engine.event_history.iter().filter(|e| matches!(e, CommittedEvent::OmniscienceCastSelectedV1 { stack_item_id:id, .. } if id == stack_item_id)).count() != 1 {
         return Err("Omniscience finalized receipt duplicated".into());
     }
-    let o = options(state, choice.options_history_index)?;
+    let o = options(state, choice.options_history_index, true)?;
     let mut before = contract;
     before.finalized_cast_binding = None;
     before.cast_method = original.cast_method;
@@ -399,6 +431,113 @@ pub(super) fn validate_finalized(
         return Err("Omniscience free alternative spell form changed".into());
     }
     Ok(())
+}
+
+pub(crate) fn pending_options<'a>(
+    state: &'a GameState,
+    pending: &PendingCast,
+) -> Result<Option<(ChoiceV1, &'a OptionsV1)>, String> {
+    validate_pending_cast(state, pending)?;
+    pending
+        .omniscience_v1
+        .map(|choice| Ok((choice, options(state, choice.options_history_index, false)?)))
+        .transpose()
+}
+
+pub(crate) fn published_options<'a>(
+    state: &'a GameState,
+    item: &StackItem,
+) -> Result<Option<(ChoiceV1, &'a OptionsV1)>, String> {
+    if item.kind != StackItemKind::Spell || item.is_copy {
+        return Ok(None);
+    }
+    if state
+        .stack
+        .iter()
+        .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+    {
+        validate_spell_stack_source(state, item)?;
+    } else if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|pending| pending.resolving_item == *item)
+    {
+        crate::effect::validate_pending_effect_choice(state)?;
+        validate_spell_source_contract_fields(state, item)?;
+    } else {
+        return Err("Omniscience published spell has no native owner".into());
+    }
+    let Some(index) = item
+        .v4
+        .source_contract
+        .and_then(|source| source.finalized_cast_binding)
+        .and_then(|binding| binding.omniscience_cast_v1)
+    else {
+        return Ok(None);
+    };
+    let Some(CommittedEvent::OmniscienceCastSelectedV1 { choice, .. }) = usize::try_from(index)
+        .ok()
+        .and_then(|i| state.engine.event_history.get(i))
+    else {
+        return Err("Omniscience finalized option receipt absent".into());
+    };
+    Ok(Some((
+        *choice,
+        options(state, choice.options_history_index, true)?,
+    )))
+}
+
+pub(crate) struct PaymentTermsV1 {
+    pub method: CastMethodV4,
+    pub mana_components: Vec<Cost>,
+    pub nonmana_component_count: usize,
+    pub discard_required: u16,
+}
+
+/// The same selected form and cost inputs used by native payment. Components
+/// are before generic modifiers and the legal mana-source solver.
+pub(crate) fn payment_terms(state: &GameState, pending: &PendingCast) -> Option<PaymentTermsV1> {
+    let choice = pending.omniscience_v1?;
+    choice.free?;
+    pending.cast_mode?;
+    let mode = pending.mode_chosen?;
+    let kicked = pending.kicked?;
+    if pending
+        .mandatory_additional_cost
+        .is_some_and(|cost| cost.pay_mana.is_none())
+    {
+        return None;
+    }
+    let item = state.stack.last()?;
+    let def = &card_def::CARD_DEFS[usize::from(pending.source_contract.card_def)];
+    let method = finalized_cast_method(pending, item.v4.cast_method?, def);
+    let costs = spell_costs_v1::selected_spell_mana_costs_for_source_v1(
+        pending.spell,
+        def,
+        (method, kicked, mode),
+        &pending.targets_chosen,
+        pending.controller,
+        state,
+    )?;
+    let mut nonmana_component_count = 0;
+    let mut discard_required = 0u16;
+    for component in costs.component_groups.iter().flat_map(|group| group.iter()) {
+        match component {
+            CostComponent::Mana(_) => {}
+            CostComponent::DiscardCards(count) | CostComponent::DiscardLandCardsV1(count) => {
+                nonmana_component_count += 1;
+                discard_required = discard_required.checked_add(u16::from(*count))?;
+            }
+            _ => nonmana_component_count += 1,
+        }
+    }
+    Some(PaymentTermsV1 {
+        method,
+        mana_components: costs.costs,
+        nonmana_component_count,
+        discard_required,
+    })
 }
 pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
     if crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, definition)
@@ -597,4 +736,12 @@ pub(crate) fn definition(id: u16) -> bool {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "omniscience_cast_v1_tests.rs"]
-mod tests;
+pub(crate) mod tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "omniscience_full_pool_sampling_tests.rs"]
+mod full_pool_sampling_tests;

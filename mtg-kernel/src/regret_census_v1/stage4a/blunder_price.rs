@@ -15,6 +15,10 @@
 //!   `PRICE_SCORERS` scores the same state: the bad row's logit margin over
 //!   the best other row, and the probability on the good row.
 //!
+//! - `search`: the search probe's choosers at each state of `PRICE_CASES`
+//!   (`{"id", "class", "index"}` lines; `search_probe.rs`, chooser list in
+//!   `PROBE_CHOOSERS`), with the `PRICE_SOURCES` policies.
+//!
 //! Environment: `LABEL_JOBS`, `PRICE_CASES` (jsonl), `PRICE_MODE`,
 //! `PRICE_SOURCES` (price: `{"candidate", "opponent"}` model sources),
 //! `PRICE_SCORERS` (score: `[{"name", "source"}]`), `PRICE_N` (default 64),
@@ -218,7 +222,7 @@ struct Rollout {
 }
 
 /// SplitMix64-style mix of a case key and a counter.
-fn mix(key: &str, index: usize, k: u64, salt: u64) -> u64 {
+pub(super) fn mix(key: &str, index: usize, k: u64, salt: u64) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64 ^ salt;
     for byte in key.bytes() {
         h = (h ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
@@ -309,7 +313,7 @@ fn rollout(
 }
 
 /// The session at decision `index` of the job, record-checked.
-fn restore(job: &LabelJob, index: usize) -> Result<Session, String> {
+pub(super) fn restore(job: &LabelJob, index: usize) -> Result<Session, String> {
     let mut s = crate::learned_bo3_v1::replay_game_session_v1(
         &job.config,
         job.uses_v3,
@@ -474,6 +478,9 @@ fn read_lines<T: for<'de> Deserialize<'de>>(var: &str) -> Result<Vec<T>, String>
 fn run_on_worker(out_path: &str) -> Result<(), String> {
     let mode = std::env::var("PRICE_MODE").map_err(|_| "PRICE_MODE is required")?;
     let jobs: Vec<LabelJob> = read_lines("LABEL_JOBS")?;
+    if mode == "search" {
+        return run_search(out_path, &jobs);
+    }
     let cases: Vec<Case> = read_lines("PRICE_CASES")?;
     let by_id: BTreeMap<&str, &LabelJob> = jobs.iter().map(|j| (j.id.as_str(), j)).collect();
     let bounds = WinSearchBoundsV1 {
@@ -529,6 +536,37 @@ fn run_on_worker(out_path: &str) -> Result<(), String> {
                 .map_err(|e| e.to_string())?;
             t.flush().map_err(|e| e.to_string())?;
         }
+    }
+    Ok(())
+}
+
+/// `PRICE_MODE=search` (`search_probe.rs`): one row per state, an error row
+/// for a state that fails.
+fn run_search(out_path: &str, jobs: &[LabelJob]) -> Result<(), String> {
+    use super::search_probe::{choosers, search_state, State};
+    let states: Vec<State> = read_lines("PRICE_CASES")?;
+    let by_id: BTreeMap<&str, &LabelJob> = jobs.iter().map(|j| (j.id.as_str(), j)).collect();
+    let sources: Sources = read_json("PRICE_SOURCES")?;
+    let mut candidate = load(&sources.candidate)?.0;
+    let opponent = load(&sources.opponent)?
+        .0
+        .legacy_policy_mut()
+        .ok_or("the opponent must be a Legacy source")?
+        .fork_for_search_v1()?;
+    let list = choosers()?;
+    let mut out = std::fs::File::create(out_path)
+        .map(std::io::BufWriter::new)
+        .map_err(|e| format!("{out_path}: {e}"))?;
+    for state in &states {
+        let row = match by_id.get(state.id.as_str()) {
+            None => Err("no label job for the state".to_string()),
+            Some(job) => search_state(job, state, &mut candidate, &opponent, &list),
+        }
+        .unwrap_or_else(
+            |e| json!({"kind": "error", "id": state.id, "index": state.index, "error": e}),
+        );
+        writeln!(out, "{row}").map_err(|e| e.to_string())?;
+        out.flush().map_err(|e| e.to_string())?;
     }
     Ok(())
 }

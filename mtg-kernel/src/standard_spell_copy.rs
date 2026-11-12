@@ -10,6 +10,7 @@ pub(crate) fn validate_copy_snapshot(state: &GameState, spell: &StackItem) -> Re
         .objects
         .try_get(source.source)
         .ok_or("copy snapshot source missing")?;
+    let storm_history = effect::thousand_year_storm_v1::owns_snapshot(state, spell);
     if spell.kind != StackItemKind::Spell
         || spell.inline_effect.is_some()
         || spell.madness_offer
@@ -21,7 +22,8 @@ pub(crate) fn validate_copy_snapshot(state: &GameState, spell: &StackItem) -> Re
         || !spell.v4.cauldron_grant.is_empty()
         || spell.source != source.source
         || spell.controller != source.controller
-        || source.card_def != live.card_def
+        || (source.card_def != live.card_def
+            && !(storm_history && live.zone_change_count > source.zone_change_count))
         || source.owner != live.owner
         || source.zone != Zone::Stack
         || spell.is_copy != source.spell_copy_origin.is_some()
@@ -138,7 +140,14 @@ pub(crate) fn validate_copy_snapshot(state: &GameState, spell: &StackItem) -> Re
         } else {
             contract
         };
-        if !stack_target_contract_is_structurally_valid(state, spec, index, target, contract) {
+        let valid = if storm_history {
+            crate::state::stack_target_contract_for_storm_snapshot(
+                state, spell, spec, index, target, contract,
+            )
+        } else {
+            stack_target_contract_is_structurally_valid(state, spec, index, target, contract)
+        };
+        if !valid {
             return Err("copy snapshot target contract is structurally malformed".into());
         }
     }
@@ -441,6 +450,28 @@ pub(crate) fn materialize_copy_snapshot(
     targets: Vec<Target>,
     contracts: Vec<StackTargetContractV4>,
 ) -> Result<(), String> {
+    materialize_copy_snapshot_owned(state, spell, controller, targets, contracts, None)
+}
+
+pub(crate) fn materialize_storm_copy_snapshot(
+    state: &mut GameState,
+    spell: &StackItem,
+    controller: PlayerId,
+    targets: Vec<Target>,
+    contracts: Vec<StackTargetContractV4>,
+    owner: effect::thousand_year_storm_v1::targets::CopyOwnerV1,
+) -> Result<(), String> {
+    materialize_copy_snapshot_owned(state, spell, controller, targets, contracts, Some(owner))
+}
+
+fn materialize_copy_snapshot_owned(
+    state: &mut GameState,
+    spell: &StackItem,
+    controller: PlayerId,
+    targets: Vec<Target>,
+    contracts: Vec<StackTargetContractV4>,
+    owner: Option<effect::thousand_year_storm_v1::targets::CopyOwnerV1>,
+) -> Result<(), String> {
     validate_copy_snapshot(state, spell)?;
     if targets.len() != spell.targets.len()
         || contracts.len() != targets.len()
@@ -458,7 +489,7 @@ pub(crate) fn materialize_copy_snapshot(
     // privately so any source, target, or stack-ID rejection leaves the arena,
     // ID allocator, stack, and targeting event log unchanged.
     let mut staged = state.clone();
-    materialize_validated_copy_snapshot(&mut staged, spell, controller, targets, contracts)?;
+    materialize_validated_copy_snapshot(&mut staged, spell, controller, targets, contracts, owner)?;
     *state = staged;
     Ok(())
 }
@@ -469,11 +500,16 @@ fn materialize_validated_copy_snapshot(
     controller: PlayerId,
     targets: Vec<Target>,
     contracts: Vec<StackTargetContractV4>,
+    owner: Option<effect::thousand_year_storm_v1::targets::CopyOwnerV1>,
 ) -> Result<(), String> {
     let origin = spell.v4.source_contract.ok_or("copy source missing")?;
     let source = state.objects.push(crate::state::GameObject {
         card_def: origin.card_def,
-        name: state.objects.get(origin.source).name.clone(),
+        name: if effect::thousand_year_storm_v1::owns_snapshot(state, spell) {
+            card_def::CARD_DEFS[origin.card_def as usize].name.into()
+        } else {
+            state.objects.get(origin.source).name.clone()
+        },
         owner: controller,
         controller,
         zone: Zone::Stack,
@@ -520,6 +556,9 @@ fn materialize_validated_copy_snapshot(
     // The object and source contract exist now; stack membership does not
     // exist until the insertion below. The targeting logger then checks the
     // complete stack contract, including that unique membership.
+    if let Some(owner) = owner {
+        effect::thousand_year_storm_v1::targets::publish_copy(state, owner, spell, &copy)?;
+    }
     validate_spell_source_contract_fields(state, &copy)?;
     state.stack.push(copy);
     log_final_targeting_events(state, id)?;
