@@ -10,6 +10,8 @@ use crate::{
     state::{GameState, Step, Zone},
 };
 
+#[path = "pilfer_probe.rs"]
+mod probe;
 #[path = "pilfer_sampling.rs"]
 mod sampling;
 

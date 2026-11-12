@@ -764,3 +764,5 @@ pub use chandra::{ChandraDecision, ChandraSession, ChandraSnapshot};
 
 mod kaito;
 pub use kaito::{KaitoDecision, KaitoSession, KaitoSnapshot};
+#[cfg(test)]
+pub(crate) use kaito::{ProbeCaptureV2, RevealedDiscardFamilyV2};

@@ -61,6 +61,54 @@ impl KaitoDecision {
     }
 }
 
+/// Audit-only proof from one authenticated native reveal/discard prompt.
+/// It is never serialized or supplied to the model. Private physical references
+/// remain only in the source operand so different sources cannot share a proof.
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct RevealedDiscardFamilyV2 {
+    prompt: Arc<()>,
+    meaning: RevealedDiscardMeaningV2,
+}
+#[cfg(test)]
+#[derive(Clone, PartialEq, Eq)]
+struct RevealedDiscardMeaningV2 {
+    actor: PlayerSeatV1,
+    source: crate::rl::CardStableRefV1,
+    target_owner: PlayerSeatV1,
+    printing: u16,
+}
+#[cfg(test)]
+impl RevealedDiscardFamilyV2 {
+    fn describes(&self, action: &ActionSemanticV1) -> bool {
+        matches!(action, ActionSemanticV1::ChooseEffectTarget {
+            actor, source, target: TargetRefV1::Object { object },
+            selected_count: 0, min_targets: 1, max_targets: 1,
+        } if *actor == self.meaning.actor && *source == self.meaning.source
+            && object.owner == self.meaning.target_owner
+            && object.zone == crate::state::Zone::Hand
+            && object.card_db_id == self.meaning.printing)
+    }
+    pub(crate) fn equivalent_actions(
+        &self,
+        action: &ActionSemanticV1,
+        other: &Self,
+        other_action: &ActionSemanticV1,
+    ) -> bool {
+        Arc::ptr_eq(&self.prompt, &other.prompt)
+            && self.meaning == other.meaning
+            && self.describes(action)
+            && other.describes(other_action)
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct ProbeCaptureV2 {
+    pub(crate) input: crate::current_tree_learner_v1::AuthenticatedInputV1,
+    pub(crate) actions: Vec<ActionSemanticV1>,
+    pub(crate) families: Vec<Option<RevealedDiscardFamilyV2>>,
+}
+
 enum HandFacts {
     CopyRows,
     NamesV2,
@@ -276,6 +324,103 @@ fn packet_from_current(
     Ok(NumericCurrent { packet, name_order })
 }
 impl KaitoSession {
+    #[cfg(test)]
+    pub(crate) fn probe_apply_v1(
+        &mut self,
+        decision: &KaitoDecision,
+        index: u32,
+    ) -> std::result::Result<(), (crate::current_actor_probe_v1::Stage, String)> {
+        use crate::current_actor_probe_v1::Stage;
+        if !Arc::ptr_eq(&self.owner, &decision.owner)
+            || self.generation != decision.generation
+            || index as usize >= decision.packet().actions.len()
+        {
+            return Err((Stage::Encoding, "stale probe owner or action range".into()));
+        }
+        let backend_index = decision
+            .current
+            .name_order
+            .as_ref()
+            .map_or(index, |order| order[index as usize]);
+        let facts = self
+            .hand_facts()
+            .map_err(|error| (Stage::Encoding, error.to_string()))?;
+        self.inner
+            .step_with_current_check(
+                &decision.backend,
+                backend_index,
+                |candidates, actions| {
+                    let fresh = packet_from_current(candidates, actions, &facts)
+                        .map_err(|e| (Stage::Encoding, e.to_string()))?;
+                    if fresh != decision.current {
+                        return Err((Stage::Encoding, "changed probe packet".into()));
+                    }
+                    Ok(())
+                },
+                |error| (Stage::Encoding, error.to_string()),
+                |error| (Stage::Engine, error.to_string()),
+            )
+            .map(|_| ())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn probe_capture_v2(&self, decision: &KaitoDecision) -> Result<ProbeCaptureV2> {
+        // Validates current owner, generation, native menu, typed operands and
+        // public hand facts before any audit equivalence can be issued.
+        let input = self.training_input_v1(decision)?;
+        let raw = decision.backend.actions();
+        let actions: Vec<_> = match &decision.current.name_order {
+            Some(order) => order
+                .iter()
+                .map(|&index| raw[index as usize].clone())
+                .collect(),
+            None => raw.to_vec(),
+        };
+        let mut families = vec![None; actions.len()];
+        if decision.current.name_order.is_some() {
+            // This fact is supplied only by the FullPool native
+            // DuressDiscard continuation validator, not by numeric equality.
+            let HandFacts::RevealMinimaV3 {
+                discard_owner: Some(owner),
+                ..
+            } = self.hand_facts()?
+            else {
+                return Err(Error::StaleBinding);
+            };
+            let prompt = Arc::new(());
+            for (index, action) in actions.iter().enumerate() {
+                let ActionSemanticV1::ChooseEffectTarget {
+                    actor,
+                    source,
+                    target: TargetRefV1::Object { object },
+                    selected_count: 0,
+                    min_targets: 1,
+                    max_targets: 1,
+                } = action
+                else {
+                    return Err(Error::StaleBinding);
+                };
+                if object.owner != owner || object.zone != crate::state::Zone::Hand {
+                    return Err(Error::StaleBinding);
+                }
+                families[index] = Some(RevealedDiscardFamilyV2 {
+                    prompt: prompt.clone(),
+                    meaning: RevealedDiscardMeaningV2 {
+                        actor: *actor,
+                        source: source.clone(),
+                        target_owner: owner,
+                        printing: object.card_db_id,
+                    },
+                });
+            }
+        }
+        Ok(ProbeCaptureV2 {
+            input,
+            actions,
+            families,
+        })
+    }
+
     fn hand_facts(&self) -> Result<HandFacts> {
         if let Some(mut minima) = self.inner.reveal_hand_minima_v3() {
             let reveal = self
