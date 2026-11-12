@@ -23,7 +23,7 @@ mod native;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 110] = [
+const PLAYABLE_75: [(&str, &str); 111] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -167,6 +167,7 @@ const PLAYABLE_75: [(&str, &str); 110] = [
     ("premodern", "premodern-mono-black-control"),
     ("premodern", "premodern-landstill-uw-control"),
     ("premodern", "premodern-bw-control"),
+    ("premodern", "premodern-grow"),
 ];
 
 fn id(name: &str) -> u16 {
@@ -682,7 +683,7 @@ fn native_opening_match_uses_real_london_keeps_and_preserves_the_profile_both_se
         Err(EternalBo3ErrorV1::NativeOpeningSetup { .. })
     ));
     let mut unrelated = main.clone();
-    unrelated[0] = id("Meddling Mage");
+    unrelated[0] = id("Coalition Honor Guard");
     assert!(matches!(
         EternalRegisteredDeckV1::new_with_native_opening_v1(
             format,

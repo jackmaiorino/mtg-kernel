@@ -2433,7 +2433,8 @@ fn neutral_semantic_v1(
         | ActionSemanticV1::ChooseLondonBottom { .. }
         | ActionSemanticV1::ChooseLondonMulligan { .. }
         | ActionSemanticV1::FinishDivineTargetsV44 { .. }
-        | ActionSemanticV1::TurnFaceUp { .. } => {
+        | ActionSemanticV1::TurnFaceUp { .. }
+        | ActionSemanticV1::ChooseMeddlingMageNameV1 { .. } => {
             Err("engine_contract_failure:semantic outside the Pauper neutral contract".to_string())
         }
         #[cfg(feature = "limited-fdn-fixtures")]

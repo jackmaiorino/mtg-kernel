@@ -1092,6 +1092,22 @@ pub struct PublicObservationProjectionV5 {
     /// otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_shroud: Option<PublicShroudV1>,
+    /// Each battlefield Meddling Mage whose chosen name applies, under the
+    /// public shroud contract (Limited schema 5, Eternal wave S1k): seat 0's
+    /// battlefield first, in public battlefield order. Absent while no
+    /// Mage's name applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meddling_mage_names: Option<Vec<PublicMeddlingMageNameV1>>,
+}
+
+/// A Meddling Mage and the card name it chose as it entered (Eternal wave
+/// S1k). Spells with that name can't be cast while its ability applies.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicMeddlingMageNameV1 {
+    pub source: CardStableRefV1,
+    /// The printed name: a card's, a split half's or Room door's, or an
+    /// Adventure, Omen or back face's.
+    pub name: String,
 }
 
 /// Shroud under the public shroud contract (Limited schema 5).
@@ -1412,6 +1428,17 @@ pub enum ActionSemanticV1 {
         actor: PlayerSeatV1,
         entry_ordinal: u32,
         creature_type: crate::creature_types_v60::CreatureTypeV60,
+    },
+    /// One option of Meddling Mage's as-enters name menu (Eternal wave S1k):
+    /// a first-letter group while `group` is `None`, then a name in the
+    /// chosen group. `option_text` is the letter or the printed name.
+    ChooseMeddlingMageNameV1 {
+        actor: PlayerSeatV1,
+        entry_ordinal: u32,
+        group: Option<u16>,
+        option_index: u16,
+        option_count: u16,
+        option_text: String,
     },
 }
 
@@ -1970,6 +1997,19 @@ fn public_shroud_v1(state: &GameState) -> Result<PublicShroudV1> {
     })
 }
 
+/// Wave S1k's Meddling Mage names, in public battlefield order.
+fn public_meddling_mage_names_v1(state: &GameState) -> Result<Vec<PublicMeddlingMageNameV1>> {
+    crate::eternal_sideboard_s1b_v1::applying_mage_names(state)
+        .into_iter()
+        .map(|(mage, name)| {
+            Ok(PublicMeddlingMageNameV1 {
+                source: card_ref(state, mage)?,
+                name: name.to_owned(),
+            })
+        })
+        .collect()
+}
+
 /// `public_shroud` is true only while building the schema 5 policy
 /// observation (`ObservationTextModeV2::PublicShroudV5Artifact`), which
 /// represents shroud. Every other observation refuses a permanent's or a
@@ -2465,7 +2505,15 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             "Eternal opening actions require their consumer successor".into(),
         ));
     }
-    if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state) {
+    // Only the schema 5 policy observation represents Meddling Mage's names
+    // (`meddling_mage_names`, wave S1k). It never reads a pending entry's
+    // saved world or answers, and still refuses a pending Metamorph copy menu.
+    let mage_refused = if text_mode == ObservationTextModeV2::PublicShroudV5Artifact {
+        crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_copy_successor(state)
+    } else {
+        crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state)
+    };
+    if mage_refused {
         return Err(RlContractError(
             "Meddling Mage named entry requires its consumer successor".into(),
         ));
@@ -3077,6 +3125,10 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
             public_shroud: (text_mode == ObservationTextModeV2::PublicShroudV5Artifact)
                 .then(|| public_shroud_v1(state))
                 .transpose()?,
+            meddling_mage_names: (text_mode == ObservationTextModeV2::PublicShroudV5Artifact)
+                .then(|| public_meddling_mage_names_v1(state))
+                .transpose()?
+                .filter(|names| !names.is_empty()),
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
@@ -5792,6 +5844,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             foundations_combat: public_foundations_combat_v1(state)?,
             london_mulligans: public_london_mulligans_v1(state),
             public_shroud: None,
+            meddling_mage_names: None,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
@@ -7328,11 +7381,39 @@ fn core_surface_action_candidates_fake_scoped_v50(
             | Decision::ChooseVariableCastKicker { .. }
             | Decision::ChooseEntryColorV36 { .. }
             | Decision::ChooseEntryCreatureTypeV1 { .. }
-            | Decision::ChooseMeddlingMageNameV1 { .. }
             | Decision::ChooseEternalOpeningV1 { .. } => {
                 return Err(RlContractError(
                     "variable cast targeting requires its legal-action successor".into(),
                 ))
+            }
+            // The engine's catalog menu (wave S1k): public names, never a
+            // hidden card. Each option answers with its index.
+            Decision::ChooseMeddlingMageNameV1 {
+                player,
+                entry_ordinal,
+                group,
+                options,
+            } => {
+                let actor = (*player).into();
+                let option_count = u16::try_from(options.len()).map_err(|_| {
+                    RlContractError(
+                        "Meddling Mage name menu exceeds the u16 option contract".into(),
+                    )
+                })?;
+                for (option_index, option_text) in (0..option_count).zip(options) {
+                    push_action(
+                        &mut out,
+                        ActionSemanticV1::ChooseMeddlingMageNameV1 {
+                            actor,
+                            entry_ordinal: *entry_ordinal,
+                            group: *group,
+                            option_index,
+                            option_count,
+                            option_text: option_text.clone(),
+                        },
+                        SurfaceAction::Action(Action::ChooseEffectOption(option_index)),
+                    )?;
+                }
             }
             Decision::ChooseTargets {
                 player,

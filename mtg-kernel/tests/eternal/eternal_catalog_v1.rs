@@ -243,12 +243,11 @@ const SNAPSHOTS: [&str; 2] = [
 ];
 
 /// Executable S1 implementations with known missing reachable branches.
-const PARTIAL_S1: [&str; 6] = [
+const PARTIAL_S1: [&str; 5] = [
     "Coalition Honor Guard",
     "Hullbreacher",
     "Lavinia, Azorius Renegade",
     "Martyr of Sands",
-    "Meddling Mage",
     "Standard Bearer",
 ];
 
@@ -586,6 +585,62 @@ fn collect_overloaded_spells(decision: &Value, spells: &mut BTreeSet<(u64, u64)>
     }
 }
 
+/// The names the decision's schema 5 observation lists for battlefield
+/// Meddling Mages (wave S1k).
+fn observed_mage_names(decision: &Value) -> BTreeSet<&str> {
+    decision["observation"]["projection"]["meddling_mage_names"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|row| row["name"].as_str().unwrap())
+        .collect()
+}
+
+/// The card's only spell name: none for split, Adventure, Omen and
+/// double-faced cards and cards with an alternative cost (a face-down
+/// morph or disguise spell has no name), which have other spell forms.
+fn single_spell_name(card_db_id: u64) -> Option<&'static str> {
+    let def = &CARD_DEFS[card_db_id as usize];
+    (def.name == def.object_name
+        && !def.name.contains(" // ")
+        && def.adventure.is_none()
+        && def.omen.is_none()
+        && def.transform_face.is_none()
+        && def.alt_cost.is_none())
+    .then_some(def.name)
+}
+
+/// A ranked seat's Meddling Mage name option (wave S1k): the first nonland
+/// card of its opponent's list with a single spell name, its letter and then
+/// its name. `None` when the decision isn't a Mage name menu or the menu
+/// doesn't offer that option.
+fn informed_mage_option<'a>(actions: &[&'a Value], decks: &[CustomDeckV1; 2]) -> Option<&'a Value> {
+    let semantic = &actions.first()?["semantic"];
+    if semantic["action_kind"] != "choose_meddling_mage_name_v1" {
+        return None;
+    }
+    let opponent = usize::from(semantic["actor"] == "p0");
+    let target = decks[opponent].cards.iter().find_map(|row| {
+        let id = card_id_by_name(&row.name)?;
+        if CARD_DEFS[usize::from(id)]
+            .types
+            .contains(&mtg_kernel::card_def::CardType::Land)
+        {
+            return None;
+        }
+        single_spell_name(u64::from(id))
+    })?;
+    let text = if semantic["group"].is_null() {
+        target.chars().next()?.to_ascii_uppercase().to_string()
+    } else {
+        target.to_owned()
+    };
+    actions
+        .iter()
+        .copied()
+        .find(|action| action["semantic"]["option_text"] == text.as_str())
+}
+
 /// How a test game picks among legal actions. `Ranked` casts and attacks
 /// but never activates an ability; `Random` reaches activations, so lands,
 /// mana rocks and activated abilities run too.
@@ -629,6 +684,13 @@ pub(crate) struct Game {
     /// Circle of Protection source choices answered from the action list
     /// (waves S1d and P3g).
     pub(crate) circle_choices: usize,
+    /// Meddling Mage name options chosen from the action list (wave S1k):
+    /// first-letter groups, then names.
+    pub(crate) mage_choices: [usize; 2],
+    /// Decisions whose observation lists a Meddling Mage name while the
+    /// acting player holds a card with that single spell name, which no
+    /// action casts.
+    pub(crate) mage_held_names: usize,
 }
 
 /// Plays one game to a natural terminal and returns its transcript hash,
@@ -662,6 +724,7 @@ pub(crate) fn play_with_outside(
     let mut overloaded_spells = BTreeSet::new();
     let (mut taxed_inclusions, mut unpaid_exclusions) = (0, 0);
     let mut circle_choices = 0;
+    let (mut mage_choices, mut mage_held_names) = ([0; 2], 0);
     let mut companion_actions = 0;
     // The last chosen actions, reported if a game fails closed.
     let mut recent: Vec<String> = Vec::new();
@@ -726,10 +789,36 @@ last actions:
                 taxed_inclusions,
                 unpaid_exclusions,
                 circle_choices,
+                mage_choices,
+                mage_held_names,
             };
         }
         let decision = &reply["decision"];
         collect_overloaded_spells(decision, &mut overloaded_spells);
+        // A spell whose only name a Mage chose is never offered (wave S1k).
+        let mage_names = observed_mage_names(decision);
+        if !mage_names.is_empty() {
+            for action in decision["legal_actions"].as_array().unwrap() {
+                let named = action["semantic"]["action_kind"] == "cast_spell"
+                    && action["semantic"]["source"]["card_db_id"]
+                        .as_u64()
+                        .and_then(single_spell_name)
+                        .is_some_and(|name| mage_names.contains(name));
+                assert!(
+                    !named,
+                    "seed={seed} step={index}: a Mage named the cast {action}"
+                );
+            }
+            mage_held_names += usize::from(
+                decision["observation"]["own_hand"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|card| card["stable"]["card_db_id"].as_u64())
+                    .filter_map(single_spell_name)
+                    .any(|name| mage_names.contains(name)),
+            );
+        }
         let actions: Vec<&Value> = decision["legal_actions"]
             .as_array()
             .unwrap()
@@ -785,7 +874,8 @@ last actions:
                 .find(|a| a["semantic"]["action_kind"] == "pass")
             {
                 Some(pass) if controls_stack_item(decision, &pass["semantic"]["actor"]) => *pass,
-                _ => *actions.iter().min_by_key(|a| rank(a)).unwrap(),
+                _ => informed_mage_option(&actions, &decks)
+                    .unwrap_or_else(|| *actions.iter().min_by_key(|a| rank(a)).unwrap()),
             },
             // A random seat starts no new spell or ability while it controls
             // two stack items, so a free ability (Nomads en-Kor's) cannot
@@ -836,6 +926,9 @@ last actions:
                 })
         {
             circle_choices += 1;
+        }
+        if action["semantic"]["action_kind"] == "choose_meddling_mage_name_v1" {
+            mage_choices[usize::from(!action["semantic"]["group"].is_null())] += 1;
         }
         if action["semantic"]["action_kind"] == "choose_spell_mode" {
             if let (Some(source), Some(mode)) = (
@@ -1259,4 +1352,74 @@ fn p3g_circle_decks_finish_and_replay_through_public_sessions() {
         choices > 0,
         "no Circle source was chosen from the action list"
     );
+}
+
+/// Wave S1k's Meddling Mage is a sideboard card, which the best-of-three
+/// harness rarely casts, so a white-blue deck with four Mages in its
+/// mainboard and a black-red deck play each other through public sessions,
+/// both seats with ranked and with seeded random actions. A ranked seat
+/// names its opponent's first single-name spell, Siege-Gang Commander,
+/// which a black-red seat holds until its fifth land, and a random seat
+/// takes any option. The games choose letters and names from the
+/// JSONL action list, and reach a decision whose observation lists a name
+/// the acting player holds and is offered no cast of. Every session game
+/// checks that no named spell is offered.
+#[test]
+fn s1k_meddling_mage_decks_finish_and_replay_through_public_sessions() {
+    let white_blue = stress_deck(
+        &[("Plains", 12), ("Island", 12)],
+        [
+            "Meddling Mage",
+            "Thraben Inspector",
+            "Mother of Runes",
+            "Kor Skyfisher",
+            "Swords to Plowshares",
+            "Exalted Angel",
+            "Counterspell",
+            "Brainstorm",
+            "Impulse",
+        ],
+    );
+    let black_red = stress_deck(
+        &[("Mountain", 12), ("Swamp", 12)],
+        [
+            "Siege-Gang Commander",
+            "Lightning Bolt",
+            "Chain Lightning",
+            "Dark Ritual",
+            "Jackal Pup",
+            "Hypnotic Specter",
+            "Duress",
+            "Ravenous Rats",
+            "Nantuko Shade",
+        ],
+    );
+    let (mut choices, mut held) = ([0; 2], 0);
+    for (pair, seed) in [
+        ([white_blue.clone(), black_red.clone()], 0x5331_4b00_u64),
+        ([black_red, white_blue], 0x5331_4b01),
+    ] {
+        for (seed, policy) in [
+            (seed, Policy::Ranked),
+            (seed + 2, Policy::Ranked),
+            (seed + 4, Policy::Ranked),
+            (seed + 6, Policy::Ranked),
+            (seed, Policy::Random(seed)),
+            (seed, Policy::Random(seed + 16)),
+        ] {
+            let game = play(pair.clone(), seed, policy);
+            let replay = play(pair.clone(), seed, policy);
+            assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+            for (total, count) in choices.iter_mut().zip(game.mage_choices) {
+                *total += count;
+            }
+            held += game.mage_held_names;
+        }
+    }
+    println!("Mage letters and names chosen: {choices:?}, named cards held: {held}");
+    assert!(
+        choices.iter().all(|count| *count > 0),
+        "no Mage letter or name was chosen from the action list: {choices:?}"
+    );
+    assert!(held > 0, "no decision listed a Mage name its actor held");
 }
