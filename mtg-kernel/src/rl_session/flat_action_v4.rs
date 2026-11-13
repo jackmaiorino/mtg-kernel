@@ -1616,8 +1616,8 @@ fn visible_order_triggers_shared_source_state_v1_with(
 /// positions share one source, a token that left the battlefield before the
 /// triggers were placed and then ceased to exist (111.8/704.5d). In the real
 /// game two Black Mage's Rods were attached to one Hero token; casting
-/// Reckoner's Bargain triggered both granted abilities, and paying its cost
-/// let state-based actions kill the token. `cease_to_exist` removes the token
+/// Reckoner's Bargain triggered both granted abilities, and the token died
+/// before the triggers were placed. `cease_to_exist` removes the token
 /// from its zone list but keeps its object record (zone `Graveyard`), so
 /// the live `card_ref` in each candidate names an object no zone holds.
 ///
