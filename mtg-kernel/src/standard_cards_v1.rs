@@ -439,6 +439,14 @@ pub enum StandardTargetV1 {
     /// controls" (Azure Beastbinder). Vintage wave S1e's filter
     /// (`eternal_sideboard_s1e_v1::targets`).
     UpToOneOpponentArtifactCreatureOrPlaneswalkerV1,
+    /// "Target noncreature permanent" (Extinguisher Battleship). Legacy
+    /// sideboard wave S1m's filters follow
+    /// (`eternal_sideboard_s1m_v1::targets`).
+    NoncreaturePermanentV1,
+    /// Fiery Confluence's chosen "Destroy target artifact" modes: this many
+    /// "target artifact" slots, each of which may name an artifact another
+    /// slot named (700.2d).
+    RepeatableArtifactsV1(u8),
 }
 
 impl StandardTargetV1 {
@@ -478,6 +486,9 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_sideboard_s1e_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_sideboard_s1m_v1::targets::counts(self) {
             return counts;
         }
         match self {
@@ -945,6 +956,11 @@ pub(crate) fn legal_targets(
         return targets;
     }
     if let Some(targets) =
+        crate::eternal_sideboard_s1m_v1::targets::legal_targets(target, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
         crate::eternal_sideboard_s1c_v1::targets::legal_targets(target, controller, prefix, state)
     {
         return targets;
@@ -1215,6 +1231,11 @@ pub(crate) fn target_matches(
         return matches;
     }
     if let Some(matches) =
+        crate::eternal_sideboard_s1m_v1::targets::target_matches(target, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
         crate::eternal_sideboard_s1c_v1::targets::target_matches(target, controller, object, state)
     {
         return matches;
@@ -1441,6 +1462,10 @@ pub(crate) fn target_matches(
         StandardTargetV1::DividedTwoCountersCreaturesV1 => false,
         // Answered by `eternal_sideboard_s1e_v1::targets` above.
         StandardTargetV1::UpToOneOpponentArtifactCreatureOrPlaneswalkerV1 => false,
+        // Answered by `eternal_sideboard_s1m_v1::targets` above.
+        StandardTargetV1::NoncreaturePermanentV1 | StandardTargetV1::RepeatableArtifactsV1(_) => {
+            false
+        }
     }
 }
 

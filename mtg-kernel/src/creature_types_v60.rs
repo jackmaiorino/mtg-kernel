@@ -629,6 +629,7 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         Subtype::Spike => Some(CreatureTypeV60::Spike),
         Subtype::Minion => Some(CreatureTypeV60::Minion),
         Subtype::Junk => None,
+        Subtype::Spacecraft => None,
     }
 }
 

@@ -76,6 +76,8 @@ mod eternal_sideboard_s1g_v1;
 mod eternal_sideboard_s1j_v1;
 #[path = "eternal/eternal_sideboard_s1l_v1.rs"]
 mod eternal_sideboard_s1l_v1;
+#[path = "eternal/eternal_sideboard_s1m_v1.rs"]
+mod eternal_sideboard_s1m_v1;
 #[path = "eternal/eternal_vintage_e4_v1.rs"]
 mod eternal_vintage_e4_v1;
 #[path = "eternal/eternal_vintage_e4b_v1.rs"]

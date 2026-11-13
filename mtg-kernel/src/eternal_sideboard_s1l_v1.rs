@@ -74,18 +74,27 @@ const TRIUMPH_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     effect: triumph_dies,
 }];
 
-/// Triggered abilities of this module's cards.
-pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
+/// The printed triggers of this module's cards.
+fn own_triggers(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         TRIUMPH_OF_SAINT_KATHERINE => &TRIUMPH_TRIGGERS,
         _ => &[],
     }
 }
 
+/// Triggered abilities of this module's cards, then of wave S1m's, the
+/// tail of the trigger tables.
+pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
+    match own_triggers(name) {
+        [] => crate::eternal_sideboard_s1m_v1::triggers_for(name),
+        own => own,
+    }
+}
+
 /// Target specs of this module's triggered abilities: Praesidium Protectiva
 /// targets nothing.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
-    triggers_for(name)
+    own_triggers(name)
         .iter()
         .any(|trigger| (trigger.effect)() == *effect)
         .then_some(TargetSpec::None)

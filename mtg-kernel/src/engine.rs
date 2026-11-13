@@ -5998,7 +5998,7 @@ pub(crate) fn evaluate_dynamic_value(
 fn activation_cost_object_candidates(
     player: PlayerId,
     source: ObjectId,
-    subtype: card_def::Subtype,
+    cost: TapOtherCostV1,
     state: &GameState,
     already_chosen: &[ObjectId],
 ) -> Vec<ObjectId> {
@@ -6012,7 +6012,7 @@ fn activation_cost_object_candidates(
             object.controller == player
                 && object.zone == Zone::Battlefield
                 && !object.tapped
-                && has_effective_subtype(state, candidate, subtype)
+                && cost.matches(state, candidate)
         })
         .collect()
 }
@@ -6101,10 +6101,34 @@ fn validate_counter_removal_prefix(
     Ok(())
 }
 
-fn activation_tap_cost_subtype(components: &[CostComponent]) -> Option<card_def::Subtype> {
+/// The other untapped permanent an activation's tap cost chooses: one with
+/// a subtype (a Gate, the Fishing Pole's Equipment) or, for station
+/// (702.184a), another creature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TapOtherCostV1 {
+    Subtype(card_def::Subtype),
+    CreatureV1,
+}
+
+impl TapOtherCostV1 {
+    /// Whether `candidate`'s current characteristics satisfy this cost.
+    fn matches(self, state: &GameState, candidate: ObjectId) -> bool {
+        match self {
+            Self::Subtype(subtype) => has_effective_subtype(state, candidate, subtype),
+            Self::CreatureV1 => object_has_type(state, candidate, CardType::Creature),
+        }
+    }
+}
+
+fn activation_tap_other_cost(components: &[CostComponent]) -> Option<TapOtherCostV1> {
     components.iter().find_map(|component| match component {
-        CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => Some(*subtype),
-        CostComponent::TapFishingPoleAttachedToSource => Some(card_def::Subtype::Equipment),
+        CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => {
+            Some(TapOtherCostV1::Subtype(*subtype))
+        }
+        CostComponent::TapFishingPoleAttachedToSource => {
+            Some(TapOtherCostV1::Subtype(card_def::Subtype::Equipment))
+        }
+        CostComponent::TapOtherUntappedControlledCreatureV1 => Some(TapOtherCostV1::CreatureV1),
         _ => None,
     })
 }
@@ -6354,13 +6378,13 @@ fn payable_activation_cost_object_candidates(
     components: &[CostComponent],
     state: &GameState,
 ) -> Vec<ObjectId> {
-    let Some(subtype) = activation_tap_cost_subtype(components) else {
+    let Some(cost) = activation_tap_other_cost(components) else {
         return Vec::new();
     };
     let candidates = if crate::fishing_pole_v39::named_cost(components) {
         crate::fishing_pole_v39::cost_candidates(state, player, source)
     } else {
-        activation_cost_object_candidates(player, source, subtype, state, &[])
+        activation_cost_object_candidates(player, source, cost, state, &[])
     };
     candidates
         .into_iter()
@@ -6640,7 +6664,8 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 pay_life_count += 1;
             }
             CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_)
-            | CostComponent::TapFishingPoleAttachedToSource => {
+            | CostComponent::TapFishingPoleAttachedToSource
+            | CostComponent::TapOtherUntappedControlledCreatureV1 => {
                 tap_other_permanent_count += 1;
                 saw_source_changing_component = true;
             }
@@ -6781,7 +6806,7 @@ fn can_pay_activation_components_with_x(
         return false;
     }
 
-    if activation_tap_cost_subtype(components).is_some() {
+    if activation_tap_other_cost(components).is_some() {
         return !payable_activation_cost_object_candidates(player, source, components, state)
             .is_empty();
     }
@@ -7038,7 +7063,24 @@ fn can_pay_components(
                 state.players[player.index()].life >= i32::from(*amount)
             }
             CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => {
-                !activation_cost_object_candidates(player, source, *subtype, state, &[]).is_empty()
+                !activation_cost_object_candidates(
+                    player,
+                    source,
+                    TapOtherCostV1::Subtype(*subtype),
+                    state,
+                    &[],
+                )
+                .is_empty()
+            }
+            CostComponent::TapOtherUntappedControlledCreatureV1 => {
+                !activation_cost_object_candidates(
+                    player,
+                    source,
+                    TapOtherCostV1::CreatureV1,
+                    state,
+                    &[],
+                )
+                .is_empty()
             }
             CostComponent::TapFishingPoleAttachedToSource => {
                 !crate::fishing_pole_v39::cost_candidates(state, player, source).is_empty()
@@ -7539,12 +7581,12 @@ fn validate_cost_component_choices_v1(
             return None;
         }
     }
-    let tap_other_subtype = activation_tap_cost_subtype(components);
-    if let Some(subtype) = tap_other_subtype {
+    let tap_other_subtype = activation_tap_other_cost(components);
+    if let Some(cost) = tap_other_subtype {
         let candidates = if crate::fishing_pole_v39::named_cost(components) {
             crate::fishing_pole_v39::cost_candidates(state, player, source)
         } else {
-            activation_cost_object_candidates(player, source, subtype, state, &[])
+            activation_cost_object_candidates(player, source, cost, state, &[])
         };
         if object_cost_chosen.len() != 1 || !candidates.contains(&object_cost_chosen[0]) {
             return None;
@@ -7840,7 +7882,8 @@ fn commit_cost_components_from_plan_v1(
             ),
             CostComponent::DiscardCards(_) => {}
             CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_)
-            | CostComponent::TapFishingPoleAttachedToSource => {
+            | CostComponent::TapFishingPoleAttachedToSource
+            | CostComponent::TapOtherUntappedControlledCreatureV1 => {
                 event::propose_and_commit(state, ProposedEvent::tap(object_cost_chosen[0]));
             }
             CostComponent::TapUntappedControlledPermanent(_) => {
@@ -17300,8 +17343,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
         });
     }
 
-    if activation_tap_cost_subtype(ability.cost).is_some() && pending.object_cost_chosen.is_empty()
-    {
+    if activation_tap_other_cost(ability.cost).is_some() && pending.object_cost_chosen.is_empty() {
         let candidates = payable_activation_cost_object_candidates(
             pending.controller,
             pending.source,
@@ -17474,7 +17516,7 @@ pub(crate) fn validate_pending_activation(
 
     let counter_cost = counter_removal_cost(ability.cost);
     let return_filter = return_permanent_filter_in(ability.cost);
-    let tap_cost_subtype = activation_tap_cost_subtype(ability.cost);
+    let tap_cost_subtype = activation_tap_other_cost(ability.cost);
     let sacrifice_cost = activation_controlled_object_cost(ability.cost);
     let returns_unblocked_attacker = has_unblocked_attacker_return_cost(ability.cost);
     let craft_material = has_craft_material_cost(ability.cost);
@@ -17578,10 +17620,17 @@ pub(crate) fn validate_pending_activation(
                 && unblocked_attacker_return_candidates(pending.controller, state, &[])
                     .iter()
                     .any(|candidate| candidate == &binding))
-                || tap_cost_subtype.is_some_and(|subtype| {
+                || tap_cost_subtype.is_some_and(|cost| {
                     binding.object != pending.source
                         && !live.tapped
-                        && subtype.is_in_subtype_ids(&live.v4.effective_subtype_ids)
+                        && match cost {
+                            TapOtherCostV1::Subtype(subtype) => {
+                                subtype.is_in_subtype_ids(&live.v4.effective_subtype_ids)
+                            }
+                            TapOtherCostV1::CreatureV1 => {
+                                object_has_type(state, binding.object, CardType::Creature)
+                            }
+                        }
                         && payable_activation_cost_object_candidates(
                             pending.controller,
                             pending.source,
@@ -23316,6 +23365,12 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
     if let Some(answer) = crate::eternal_vintage_v1::has_type_override(state, id, card_type) {
         return answer;
     }
+    // Extinguisher Battleship with station 5+ is a creature in addition to
+    // its other types (721.2b, wave S1m).
+    #[cfg(feature = "eternal-fixtures")]
+    if card_type == CardType::Creature && crate::eternal_sideboard_s1m_v1::stationed(state, id) {
+        return true;
+    }
     // Life's animated lands (Premodern wave P2c).
     #[cfg(feature = "eternal-fixtures")]
     if card_type == CardType::Creature
@@ -23674,14 +23729,21 @@ fn checked_base_power_v1(state: &GameState, id: ObjectId) -> Result<Option<i32>,
         Some(value) => Some(value),
         None => consuming_aberration_base_v1(state, id)?,
     };
-    Ok(base.or_else(|| {
-        if let Some(definition) = crate::full_text_v1::active_definition(state, id) {
-            return definition.power.map(i32::from);
-        }
-        card_def::CARD_DEFS[obj.card_def as usize]
-            .power_for_face(obj.v4.face_index)
-            .map(i32::from)
-    }))
+    Ok(base
+        .or_else(|| {
+            if let Some(definition) = crate::full_text_v1::active_definition(state, id) {
+                return definition.power.map(i32::from);
+            }
+            card_def::CARD_DEFS[obj.card_def as usize]
+                .power_for_face(obj.v4.face_index)
+                .map(i32::from)
+        })
+        // A station symbol's base power, below every other base setting
+        // (wave S1m).
+        .or_else(|| {
+            crate::eternal_sideboard_s1m_v1::station_base_power_toughness(state, id)
+                .map(|(power, _)| power)
+        }))
 }
 
 // The Standard query must remain lazy behind earlier layer results.
@@ -23708,14 +23770,21 @@ fn checked_base_toughness_v1(state: &GameState, id: ObjectId) -> Result<Option<i
         Some(value) => Some(value),
         None => consuming_aberration_base_v1(state, id)?,
     };
-    Ok(base.or_else(|| {
-        if let Some(definition) = crate::full_text_v1::active_definition(state, id) {
-            return definition.toughness.map(i32::from);
-        }
-        card_def::CARD_DEFS[obj.card_def as usize]
-            .toughness_for_face(obj.v4.face_index)
-            .map(i32::from)
-    }))
+    Ok(base
+        .or_else(|| {
+            if let Some(definition) = crate::full_text_v1::active_definition(state, id) {
+                return definition.toughness.map(i32::from);
+            }
+            card_def::CARD_DEFS[obj.card_def as usize]
+                .toughness_for_face(obj.v4.face_index)
+                .map(i32::from)
+        })
+        // A station symbol's base toughness, below every other base setting
+        // (wave S1m).
+        .or_else(|| {
+            crate::eternal_sideboard_s1m_v1::station_base_power_toughness(state, id)
+                .map(|(_, toughness)| toughness)
+        }))
 }
 
 /// The single layer-7 query used by native rules and current projections.
@@ -24085,6 +24154,11 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     if crate::eternal_premodern_p1b_v1::statics::granted_keywords(state, id).has(kw) {
         return true;
     }
+    // Extinguisher Battleship's station flying and trample (wave S1m).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1m_v1::granted_keywords(state, id).has(kw) {
+        return true;
+    }
     if printed_active
         && obj.zone == Zone::Battlefield
         && static_graveyard_threshold_keyword_for(def.name).is_some_and(|(minimum, keyword)| {
@@ -24368,12 +24442,14 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
         found = found | crate::standard_statics_v1::conditional_self_keywords(state, id);
     }
     // Anger's haste from its owner's graveyard (eternal wave E9a), Sterling
-    // Grove's shroud (Premodern wave P1b).
+    // Grove's shroud (Premodern wave P1b), Extinguisher Battleship's station
+    // flying and trample (wave S1m).
     #[cfg(feature = "eternal-fixtures")]
     {
         found = found
             | crate::eternal_legacy_e9a_v1::statics::granted_keywords(state, id)
-            | crate::eternal_premodern_p1b_v1::statics::granted_keywords(state, id);
+            | crate::eternal_premodern_p1b_v1::statics::granted_keywords(state, id)
+            | crate::eternal_sideboard_s1m_v1::granted_keywords(state, id);
     }
     if printed_active && obj.zone == Zone::Battlefield {
         if let Some((minimum, keyword)) = static_graveyard_threshold_keyword_for(def.name) {
@@ -25791,8 +25867,8 @@ fn pending_activation_action_stage(
         return_permanent_filter_in(ability.cost).is_some() && pending.object_cost_chosen.is_empty();
     let sacrifice_cost_incomplete = activation_permanent_sacrifice_needed(ability.cost)
         .is_some_and(|(needed, _)| pending.object_cost_chosen.len() < usize::from(needed));
-    let tap_cost_incomplete = activation_tap_cost_subtype(ability.cost).is_some()
-        && pending.object_cost_chosen.is_empty();
+    let tap_cost_incomplete =
+        activation_tap_other_cost(ability.cost).is_some() && pending.object_cost_chosen.is_empty();
     let unblocked_attacker_return_cost_incomplete =
         has_unblocked_attacker_return_cost(ability.cost) && pending.object_cost_chosen.is_empty();
     let craft_material_incomplete =
@@ -27188,7 +27264,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                 .push(binding);
             return Ok(());
         }
-        if activation_tap_cost_subtype(ability.cost).is_some() {
+        if activation_tap_other_cost(ability.cost).is_some() {
             if !payable_activation_cost_object_candidates(
                 pending.controller,
                 pending.source,
@@ -30915,10 +30991,23 @@ fn push_paid_activation(
     {
         paid_cost_objects.push(pending.source);
     }
-    let paid_cost_refs = paid_cost_objects
+    let mut paid_cost_refs: Vec<PaidCostRefV4> = paid_cost_objects
         .into_iter()
         .map(|object| PaidCostRefV4::capture(state, object))
         .collect();
+    // Station counts the tapped creature's power as the ability resolves, or
+    // as it last existed on the battlefield (702.184a and its rulings): the
+    // record is refreshed as last-known information if the creature leaves.
+    if ability
+        .cost
+        .contains(&CostComponent::TapOtherUntappedControlledCreatureV1)
+    {
+        for reference in &mut paid_cost_refs {
+            if reference.zone == Zone::Battlefield {
+                reference.power_lki = Some(effective_power(state, reference.object));
+            }
+        }
+    }
     let effect = (ability.effect)();
     if ability.activation_zone == Zone::Hand && state.objects.get(pending.source).zone == Zone::Hand
     {

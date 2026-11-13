@@ -470,6 +470,10 @@ pub enum Subtype {
     /// Junk token Overencumbered creates), with stable ids from 400 reserved
     /// for that wave. An artifact type, not a creature type.
     Junk = 400,
+    /// Appended for the eternal catalog's Legacy sideboard wave S1m
+    /// (Extinguisher Battleship), with stable ids from 420 reserved for that
+    /// wave. An artifact type, not a creature type.
+    Spacecraft = 420,
 }
 
 impl Subtype {
@@ -1114,6 +1118,7 @@ impl Subtype {
             380 => Subtype::Spike,
             381 => Subtype::Minion,
             400 => Subtype::Junk,
+            420 => Subtype::Spacecraft,
             _ => return None,
         })
     }
@@ -1343,6 +1348,7 @@ impl Subtype {
             Subtype::Spike => true,
             Subtype::Minion => true,
             Subtype::Junk => false,
+            Subtype::Spacecraft => false,
         }
     }
 
@@ -2275,6 +2281,15 @@ pub enum CostComponent {
     /// `ExileOtherCardsFromOwnGraveyard`'s, moved to the library bottom
     /// instead. Appended for the eternal catalog (Premodern wave P2c).
     PutOtherCardsFromOwnGraveyardOnLibraryBottomV1(u8),
+    /// "Tap another untapped creature you control" (station, 702.184a):
+    /// one untapped creature the payer controls, whoever owns it, other
+    /// than the source, chosen through `Decision::ChooseCostTargets` like
+    /// `TapOtherUntappedControlledPermanentWithSubtype`. Creatures tap
+    /// regardless of summoning sickness, since this is not {T}. The tapped
+    /// creature's paid-cost reference records its power, refreshed as
+    /// last-known information if it leaves. Activations only. Appended for
+    /// the eternal catalog (Legacy sideboard wave S1m).
+    TapOtherUntappedControlledCreatureV1,
 }
 
 impl CostComponent {
@@ -3993,7 +4008,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x26a3_31be_3f29_0abc;
+        const EXPECTED_ETERNAL: u64 = 0x8203_5013_49a0_1983;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

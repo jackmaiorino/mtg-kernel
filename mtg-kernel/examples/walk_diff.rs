@@ -1748,7 +1748,8 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             | card_def::CostComponent::ExileXCardsFromOwnGraveyardV1 { .. }
             | card_def::CostComponent::DiscardIslandAndAnotherCardV1
             | card_def::CostComponent::ExileTopCardOfLibraryV1
-            | card_def::CostComponent::PutOtherCardsFromOwnGraveyardOnLibraryBottomV1(_)) => {
+            | card_def::CostComponent::PutOtherCardsFromOwnGraveyardOnLibraryBottomV1(_)
+            | card_def::CostComponent::TapOtherUntappedControlledCreatureV1) => {
                 panic!("walk_diff has no Mage-pinned renderer for activated cost {unsupported:?}")
             }
         }

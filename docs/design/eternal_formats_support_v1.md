@@ -1451,6 +1451,98 @@ against its XMage source:
   no cast is offered of a noncreature spell whose printed mana value exceeds the acting
   player's lands while an opposing Lavinia is on the battlefield.
 
+### S1m: Extinguisher Battleship and Fiery Confluence
+
+After S1l, Extinguisher Battleship is the only gap of Mystic Forge Combo (3.5% of the field),
+which wishes for it with Karn, the Great Creator, and Fiery Confluence is the only gap of Red
+Stompy (1.0%). Neither card is in the registry. S1m adds both as Full cards. The Legacy full 75
+share goes from 77.0% to 81.5%, and the two lists join `PLAYABLE_75`. Tron (1.7%) also needs
+the Battleship, with Cityscape Leveler, Invasion Submersible and Summon: Bahamut.
+
+Both cards are built in `src/eternal_sideboard_s1m_v1.rs` and `build_eternal_s1m_v1.rs`, the
+new tail of the recipe chains after S1l's. Behavior follows the current Oracle text, the
+comprehensive rules for station (702.184, 721) and the rulings (the Edge of Eternities release
+notes for station, 2015-11-04 for Fiery Confluence), checked against the XMage sources:
+
+- Extinguisher Battleship, {8}, Artifact - Spacecraft: "When this Spacecraft enters, destroy
+  target noncreature permanent. Then this Spacecraft deals 4 damage to each creature. Station
+  (Tap another creature you control: Put charge counters equal to its power on this Spacecraft.
+  Station only as a sorcery. It's an artifact creature at 5+.) STATION 5+ Flying, trample 10/10"
+  - Spacecraft is a new artifact type (stable id 420).
+  - The entry trigger targets a noncreature permanent, a new
+    `StandardTargetV1::NoncreaturePermanentV1`. The Battleship qualifies itself: it enters with
+    no counters. The trigger destroys the target, then the Battleship deals 4 damage to each
+    creature, from its last-known state if it has left. If the target is illegal as the trigger
+    resolves, it doesn't resolve and deals no damage (608.2b, the card's ruling).
+  - Station (702.184a) is an activated ability at sorcery speed. Its cost is a new
+    `CostComponent::TapOtherUntappedControlledCreatureV1`: another untapped creature the
+    activating player controls, whoever owns it, chosen as the existing tap-another-permanent
+    costs are (`CostKind::TapPermanents`). Summoning sickness doesn't matter, since the cost
+    isn't {T}. The tapped creature's paid-cost reference records its power, which the engine
+    already refreshes as last-known information if that creature leaves. On resolution the
+    Battleship, if it is still the incarnation that activated, gets charge counters equal to
+    the creature's power then, or as it last existed on the battlefield, and none if that power
+    is 0 or less (rulings). It can be activated at any number of counters (721.4).
+  - Station 5+ (721.2b): on the battlefield with five or more charge counters, the Battleship
+    is a creature in addition to its types, with base power and toughness 10/10, flying and
+    trample; off the battlefield it has no power or toughness (721.2c). The creature type comes
+    from the counters alone, so an effect that later removes its abilities in layer 6 leaves it
+    a creature (613.6), and flying and trample follow the removal timestamps as granted
+    keywords do: Dress Down, Azure Beastbinder and Unable to Scream remove them when their
+    effects are later than the Battleship, and Oko's Elk sets its types anyway. The 10/10 is the
+    lowest-priority base: every other effect in the registry that can set the Battleship's base
+    power and toughness (Karn, the Great Creator's +1, the Tezzeret, Cruel Captain emblem's
+    Robot, Oko, Beastbinder, Unable to Scream) starts after it entered, so that effect wins by
+    timestamp (613.7), as the rulings require for Karn and the Tezzeret emblem. A Phyrexian
+    Metamorph copy has the Battleship's abilities with its own counters.
+  - Dress Down's "Creatures lose all abilities" reads printed creature types, so that types and
+    abilities don't depend on each other. A stationed Battleship's creature type doesn't depend
+    on its abilities, so Dress Down now applies to it too.
+  - Found in the fixtures: wave S1e's trigger target specs answered "no target" for every
+    trigger in the tables chained after its own (S1g's, S1l's and the Battleship's). S1g's and
+    S1l's triggers have no target, so only the Battleship's was affected. S1e now answers only
+    for its own triggers, as S1a, S1g and S1l do, and the Battleship's trigger gets its target
+    from this wave.
+- Fiery Confluence, {2}{R}{R}, Sorcery: "Choose three. You may choose the same mode more than
+  once. - Fiery Confluence deals 1 damage to each creature. - Fiery Confluence deals 2 damage to
+  each opponent. - Destroy target artifact."
+  - As for Eldrazi Confluence (E5b), the ten multisets of modes are ten modes, each offered only
+    when its targets exist. Each "Destroy target artifact" chosen is one slot of a new
+    `StandardTargetV1::RepeatableArtifactsV1(n)`, and a slot may name an artifact another slot
+    named (700.2d).
+  - The chosen modes are performed in printed order, and each damage mode chosen twice or three
+    times is a separate damage event (rulings). An illegal artifact target is skipped; if every
+    target is illegal, the spell doesn't resolve (608.2b).
+- Consumers: the station activation, its creature choice, the entry trigger's target and
+  Fiery Confluence's modes use existing schema 5 representations (activated abilities,
+  `ChooseCostTargets`, triggered-ability targets, Eldrazi Confluence's modes). Charge counters
+  and the Battleship's types, power, toughness and keywords are in each public card's counters
+  and characteristics, so no consumer needs a successor.
+- Fixtures, in both seats: both cards' printed characteristics and Full capability; the entry
+  trigger (destroying a land or an artifact, 4 damage to each creature, no damage when the
+  target left in response, the Battleship targeting itself); station (counters from the tapped
+  creature's power on resolution, last-known power after it left, none for power 0, a summoning
+  sick creature tapped, no activation without another untapped creature or at instant speed,
+  nothing when the Battleship left); the 10/10 flying trample creature at five counters,
+  attacking only once controlled since the turn began; Karn's +1 and the Tezzeret emblem's
+  Robot keeping their base power and toughness; Dress Down removing flying and trample from a
+  stationed Battleship; Fiery Confluence's mode offers, the same artifact named twice, damage
+  events in printed order and the spell not resolving when every target is illegal.
+- Games: a colorless deck with twelve Battleships, fast mana and creatures to station with and
+  a red deck of Mountains and twelve Fiery Confluences (custom decks have no copy limit) play
+  each other through public sessions, in both seats, three games of each pairing with ranked
+  actions and six with seeded random actions, checking natural terminals and replay. The test
+  requires a Battleship entry trigger resolving, a station activation chosen from the action
+  list, a stationed Battleship that is a creature in the observation, and a Fiery Confluence
+  cast with a destroy mode.
+  - Found in the first deck games: with four copies of each card in longer lists, no game cast
+    either card. Ranked seats spent their mana on the other spells first, `rank` never
+    activates an ability and takes Fiery Confluence's first mode, which has no destroy, and
+    random seats often tap their mana outside their main phases, so they rarely pay for the
+    Battleship. As S1k's Mage names and S1l's miracle reveals do, the harness gives ranked
+    seats an S1m option: they station a Battleship while it has fewer than five charge
+    counters, and choose Fiery Confluence's first offered mode with a destroy.
+
 ## Execution
 
 Family workers implement bounded card groups in their own worktrees; one integrator owns

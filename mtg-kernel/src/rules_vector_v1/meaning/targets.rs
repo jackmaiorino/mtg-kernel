@@ -790,6 +790,8 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::NonblackCreatureManaValueV1(_) => creature(),
         S::DividedTwoCountersCreaturesV1 => creature(),
         S::UpToOneOpponentArtifactCreatureOrPlaneswalkerV1 => ObjF::Permanent,
+        S::NoncreaturePermanentV1 => ObjF::Permanent,
+        S::RepeatableArtifactsV1(_) => typed(CardType::Artifact),
     }
 }
 
@@ -901,6 +903,8 @@ pub(super) fn standard_target_origin(
         | S::UpToOneNonbasicLandV1
         | S::ControlledCreatureThenUpToOneOpponentCreatureV1
         | S::TwoDistinctCreaturesV1
+        | S::NoncreaturePermanentV1
+        | S::RepeatableArtifactsV1(_)
         | S::CrewedSourceThisTurn => {
             // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
@@ -1342,6 +1346,23 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, creature(), relation, zone);
             object(out, typed(CardType::Planeswalker), relation, zone);
             out.target(TargetAtom::UpTo);
+        }
+        S::NoncreaturePermanentV1 => out.target(TargetAtom::Object {
+            obj: ObjF::Permanent,
+            controller: relation,
+            zone,
+            color: None,
+            mana_value_at_most: None,
+            excludes: Some(CardTypeF::Creature),
+        }),
+        S::RepeatableArtifactsV1(slots) => {
+            object(out, typed(CardType::Artifact), relation, zone);
+            if slots > 1 {
+                out.target(TargetAtom::MultipleTargets);
+            }
+            // Vocabulary gap: the slot count and repeated picks have no
+            // facet.
+            out.atoms.push(Atom::Opaque);
         }
         S::ControlledCreatureThenUpToOneOpponentCreatureV1 => {
             object(out, creature(), relation, zone);

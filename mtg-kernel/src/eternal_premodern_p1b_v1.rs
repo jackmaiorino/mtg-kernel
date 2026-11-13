@@ -421,7 +421,7 @@ fn legal_object_target(
 /// Target `index`, if it is an object still legal for the resolving
 /// ability under `spec`, judged from the ability's frozen source incarnation
 /// rather than whatever that object is now.
-fn legal_object_target_from_ability_source(
+pub(crate) fn legal_object_target_from_ability_source(
     ctx: &ExecCtx,
     state: &GameState,
     index: usize,

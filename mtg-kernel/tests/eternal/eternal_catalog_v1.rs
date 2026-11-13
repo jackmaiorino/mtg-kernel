@@ -729,9 +729,55 @@ fn informed_miracle_option<'a>(
         .find(|action| action["semantic"]["option_index"] == option)
 }
 
+/// Fiery Confluence's mode indices with a "Destroy target artifact": the
+/// multisets of its three modes that hold the third one.
+pub(crate) const FIERY_CONFLUENCE_DESTROY_MODES: [u64; 6] = [2, 4, 5, 7, 8, 9];
+
+/// The charge counters on the battlefield card that `source` names in the
+/// decision's public projection.
+fn public_charge_counters(decision: &Value, source: &Value) -> i64 {
+    decision["observation"]["projection"]["battlefield"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|cards| cards.as_array().into_iter().flatten())
+        .find(|card| card["stable"]["arena_id"] == source["arena_id"])
+        .and_then(|card| card["counters"]["charge"].as_i64())
+        .unwrap_or(0)
+}
+
+/// A ranked seat's use of the wave S1m cards, which `rank` never reaches: it
+/// stations an Extinguisher Battleship while it has fewer than five charge
+/// counters (`rank` never activates an ability), and it chooses Fiery
+/// Confluence's first offered mode with a "Destroy target artifact" (`rank`
+/// takes the first mode, 1 damage to each creature three times). `None` for
+/// any other decision.
+fn informed_s1m_option<'a>(actions: &[&'a Value], decision: &Value) -> Option<&'a Value> {
+    actions.iter().copied().find(|action| {
+        let semantic = &action["semantic"];
+        let source = semantic["source"]["card_db_id"]
+            .as_u64()
+            .map(|id| CARD_DEFS[id as usize].name);
+        match semantic["action_kind"].as_str() {
+            Some("activate_ability") => {
+                source == Some("Extinguisher Battleship")
+                    && public_charge_counters(decision, &semantic["source"]) < 5
+            }
+            Some("choose_spell_mode") => {
+                source == Some("Fiery Confluence")
+                    && semantic["mode_index"]
+                        .as_u64()
+                        .is_some_and(|mode| FIERY_CONFLUENCE_DESTROY_MODES.contains(&mode))
+            }
+            _ => false,
+        }
+    })
+}
+
 /// How a test game picks among legal actions. `Ranked` casts and attacks
-/// but never activates an ability; `Random` reaches activations, so lands,
-/// mana rocks and activated abilities run too.
+/// but activates no ability other than an Extinguisher Battleship's station;
+/// `Random` reaches activations, so lands, mana rocks and activated abilities
+/// run too.
 #[derive(Clone, Copy)]
 pub(crate) enum Policy {
     Ranked,
@@ -985,6 +1031,7 @@ last actions:
                 Some(pass) if controls_stack_item(decision, &pass["semantic"]["actor"]) => *pass,
                 _ => informed_mage_option(&actions, &decks)
                     .or_else(|| informed_miracle_option(&actions, &mut miracle_reveals))
+                    .or_else(|| informed_s1m_option(&actions, decision))
                     .unwrap_or_else(|| *actions.iter().min_by_key(|a| rank(a)).unwrap()),
             },
             // A random seat starts no new spell or ability while it controls
