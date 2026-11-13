@@ -127,6 +127,23 @@ class Node:
                             '--seed-root', c['seed_root'], '--state', str(self.root / 'state' / name),
                             '--ledger-source', str(source)])
 
+    def drive_c_segments(self, plan, name, step_seconds=1.0):
+        """Drive a C chain while advancing `chains.time` only between real stand-in segments so host startup and
+        filesystem latency never decide how many segments fit before `c_wall`."""
+        wall = [time.time()]
+        run_trainer = chains.run_trainer
+
+        def run_segment(*args, **kwargs):
+            result = run_trainer(*args, **kwargs)
+            wall[0] += step_seconds
+            return result
+
+        with mock.patch.object(chains, 'time', wraps=time) as clock, \
+                mock.patch.object(chains, 'run_trainer', side_effect=run_segment) as trainer:
+            clock.time.side_effect = lambda: wall[0]
+            code = self.drive(plan, name)
+        return code, trainer.call_count
+
 
 class ChainTests(unittest.TestCase):
     def setUp(self):
@@ -405,22 +422,7 @@ class ChainTests(unittest.TestCase):
     def test_c_chain_runs_segments_to_its_wall_and_matches_one_run(self):
         _, plan = self.node.stage0(c_wall=1.5)
         self.node.guard()
-        # Advance the driver's wall after each real stand-in segment. Host
-        # startup and filesystem latency must not decide whether two segments
-        # fit, while publication and state continuation still run in children.
-        wall = [time.time()]
-        run_trainer = chains.run_trainer
-
-        def run_segment(*args, **kwargs):
-            result = run_trainer(*args, **kwargs)
-            wall[0] += 1.0
-            return result
-
-        with mock.patch.object(chains, 'time', wraps=time) as clock, \
-                mock.patch.object(chains, 'run_trainer', side_effect=run_segment) as trainer:
-            clock.time.side_effect = lambda: wall[0]
-            self.assertEqual(self.node.drive(plan, 'c1'), 0)
-        self.assertEqual(trainer.call_count, 2)
+        self.assertEqual(self.node.drive_c_segments(plan, 'c1'), (0, 2))
         root = self.node.root
         end = json.loads((root / 'chains' / 'c1' / 'END.json').read_text())
         chain, records = retention.index(plan['chains']['c1']['manifest'])
@@ -521,7 +523,7 @@ class ChainTests(unittest.TestCase):
     # ------------------------------------------------------------ run and end
 
     def test_run_records_an_oom_kill_and_end_is_once(self):
-        path, plan = self.node.stage0()
+        path, plan = self.node.stage0(c_wall=600.0)
         self.node.guard()
         with mock.patch.dict(os.environ, {'FAKE_FAIL_AT': '3'}):
             self.node.drive(plan, 'c1')
@@ -839,7 +841,7 @@ class ChainTests(unittest.TestCase):
     def test_supervise_selects_replays_and_prunes_a_pair(self):
         path, plan = self.node.stage0(c_wall=1.5, r_nom_usec=10_000_000)
         self.node.guard()
-        self.assertEqual(self.node.drive(plan, 'c1'), 0)
+        self.assertEqual(self.node.drive_c_segments(plan, 'c1'), (0, 2))
         _, c_records = retention.index(plan['chains']['c1']['manifest'])
         r = c_records[-1]['ledger_usec']
         stop = (r // STEP_X + 3) * STEP_X
