@@ -905,9 +905,6 @@ struct TrajectoryPinsV1 {
     trajectories: Vec<PinnedFileV1>,
 }
 
-#[cfg(test)]
-mod tests;
-
 /// Descriptive only (collab LANES/w128-20261113/READING.md section 5): how
 /// far the parameters moved between two wide train states of one lineage, per
 /// widening coordinate class (`widening_v1::WideCoordinateClassV1`): the
@@ -969,3 +966,6 @@ pub fn w_movement_v1(from: &PinnedFileV1, to: &PinnedFileV1) -> Result<Value, St
         "claim": "descriptive only; no gate and no tuning input",
     }))
 }
+
+#[cfg(test)]
+mod tests;
