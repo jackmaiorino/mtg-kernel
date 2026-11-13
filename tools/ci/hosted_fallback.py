@@ -18,11 +18,14 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
+import urllib.error
 import urllib.request
 
 ADMISSION_MARKER = "MTG_CI_ADMISSION_TIMEOUT"
 HOSTED_WINDOWS = '"windows-2025"'
 WORKFLOW = "ci.yml"
+RETRYABLE_HTTP_STATUS = frozenset({404, 408, 429, 500, 502, 503, 504})
 # This run's group set -> the Windows-only set a hosted rerun covers. Unknown sets rerun every
 # Windows group.
 FALLBACK_SCOPES = {"pr": "windows-pr", "windows-complement": "windows-complement", "full": "windows-full"}
@@ -71,11 +74,30 @@ def run_jobs(repo: str, run_id: str) -> list[dict]:
         page += 1
 
 
-def job_log(repo: str, job_id: int) -> str | None:
-    try:
-        return _request("GET", f"/repos/{repo}/actions/jobs/{job_id}/logs").decode("utf-8", "replace")
-    except OSError:
-        return None
+def job_log(repo: str, job_id: int, *, attempts: int = 4, delay: float = 2.0, sleep=time.sleep) -> str | None:
+    """Fetch a completed job's log text, retrying briefly when GitHub has not yet finalized the log archive."""
+    last_reason = None
+    for attempt in range(attempts):
+        try:
+            text = _request("GET", f"/repos/{repo}/actions/jobs/{job_id}/logs").decode("utf-8", "replace")
+            if text:
+                return text
+            last_reason = "empty log archive"
+        except urllib.error.HTTPError as exc:
+            try:
+                exc.close()
+            except OSError:
+                pass
+            last_reason = f"HTTP {exc.code}"
+            if exc.code not in RETRYABLE_HTTP_STATUS:
+                break
+        except OSError as exc:
+            last_reason = type(exc).__name__
+        if attempt + 1 >= attempts:
+            break
+        sleep(delay * (2 ** attempt))
+    print(f"hosted_fallback: could not read log for failed self-hosted job {job_id} ({last_reason})", file=sys.stderr)
+    return None
 
 
 def main() -> int:
