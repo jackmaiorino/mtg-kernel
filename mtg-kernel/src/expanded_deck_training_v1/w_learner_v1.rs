@@ -781,6 +781,21 @@ pub fn widen_source_v1(
     optimizer: WideningOptimizerV1,
     output: &std::path::Path,
 ) -> Result<Value, String> {
+    widen_source_with_rows_v1(parent, seed_label, optimizer, None, output)
+}
+
+/// [`widen_source_v1`] with the equality check's games named explicitly:
+/// `rows`, when given, are trajectories the parent state itself played (each
+/// one's behavior state hash must be the parent's), for a parent whose own
+/// update trajectories are no longer kept. Without `rows` the check reads the
+/// parent checkpoint's own update trajectories, as `widen_source_v1` does.
+pub fn widen_source_with_rows_v1(
+    parent: &ExpandedModelSourceV1,
+    seed_label: &str,
+    optimizer: WideningOptimizerV1,
+    rows: Option<&[PinnedFileV1]>,
+    output: &std::path::Path,
+) -> Result<Value, String> {
     use crate::native_policy_train_step_v1::widening_v1::{
         widen_net8_snapshot_v1, TORCH_DEFAULT_UNIFORM_V1,
     };
@@ -833,9 +848,27 @@ pub fn widen_source_v1(
     // The equality check, on the shell with the widened net installed.
     let (mut wide, _) = super::initialize(parent)?;
     wide.install_wide_model_v1(Arc::new(wide_state.model_v1().clone()))?;
-    let metadata: TrajectoryPinsV1 = super::read_checkpoint_metadata_v1(checkpoint)?;
-    let episodes = read_trajectory_batch_v1(&metadata.trajectories, 1)?;
-    let mut rows = 0usize;
+    let parent_state_sha256 = hex_v1(&state.state_sha256_v1().map_err(err)?);
+    let (trajectories, rows_source) = match rows {
+        Some(pins) => {
+            ensure(!pins.is_empty(), "the widening rows list is empty")?;
+            (pins.to_vec(), "parent-played")
+        }
+        None => {
+            let metadata: TrajectoryPinsV1 = super::read_checkpoint_metadata_v1(checkpoint)?;
+            (metadata.trajectories, "parent-update-inputs")
+        }
+    };
+    let episodes = read_trajectory_batch_v1(&trajectories, 1)?;
+    if rows.is_some() {
+        for episode in &episodes {
+            ensure(
+                episode.behavior_state_sha256 == parent_state_sha256,
+                "a widening rows trajectory was not played by the parent state",
+            )?;
+        }
+    }
+    let mut rows_checked = 0usize;
     let mut logits = 0usize;
     for episode in &episodes {
         validate_trajectory(episode)?;
@@ -859,13 +892,13 @@ pub fn widen_source_v1(
                     && a.value == b.value,
                 "the widened net's outputs differ from the parent's",
             )?;
-            rows += 1;
+            rows_checked += 1;
             logits += a.logits.len();
         }
     }
     ensure(
-        rows > 0,
-        "the parent checkpoint's trajectories have no learner rows",
+        rows_checked > 0,
+        "the equality check's trajectories have no learner rows",
     )?;
     fs::create_dir(output).map_err(err)?;
     let container =
@@ -883,7 +916,7 @@ pub fn widen_source_v1(
         "schema": "w128-widening/v1",
         "parent": parent,
         "parent_checkpoint_sha256": checkpoint.sha256,
-        "parent_state_sha256": hex_v1(&state.state_sha256_v1().map_err(err)?),
+        "parent_state_sha256": parent_state_sha256,
         "construction": provenance,
         "seed_label": seed_label,
         "seed": seed,
@@ -892,7 +925,8 @@ pub fn widen_source_v1(
         "initial_state_sha256": w_state_sha256_v1(&wide_state)?,
         "initial_adam_step": wide_state.adam_step_v1(),
         "source": source,
-        "equality": {"trajectories": metadata.trajectories.len(), "learner_rows": rows,
+        "equality": {"trajectories": trajectories.len(), "rows_source": rows_source,
+            "learner_rows": rows_checked,
             "logits": logits, "comparison": "ieee-eq", "equal": true},
     });
     publish_json(output, "widening.json", &receipt)?;

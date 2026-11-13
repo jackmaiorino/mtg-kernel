@@ -435,3 +435,50 @@ fn movement_counts_changes_per_widening_class() {
     assert_eq!(total, 2_750_754);
     let _ = fs::remove_dir_all(&root);
 }
+
+/// The equality check on games the parent itself played (for a parent whose
+/// own update trajectories are gone), and its refusal of games another state
+/// played.
+#[test]
+fn widening_checks_explicit_parent_played_rows() {
+    on_large_stack(widening_explicit_rows_v1);
+}
+
+fn widening_explicit_rows_v1() {
+    let root = temp_root("rows");
+    let (_, parent) = net8_checkpoint_source(&root);
+    let played = trajectories_of(
+        &collect(
+            &parent,
+            vec![episode("p-self", 2_026_111_321, None)],
+            root.join("p-collect"),
+        )
+        .unwrap(),
+    );
+    let receipt = widen_source_with_rows_v1(
+        &parent,
+        "test|rows|1",
+        WideningOptimizerV1::Keep,
+        Some(&played),
+        &root.join("widen-rows"),
+    )
+    .unwrap();
+    assert_eq!(receipt["equality"]["rows_source"], "parent-played");
+    assert!(receipt["equality"]["learner_rows"].as_u64().unwrap() > 0);
+    // The parent's own update inputs were played by the state before it.
+    let earlier: Vec<PinnedFileV1> = {
+        let record: Value = read_pinned(parent.checkpoint.as_ref().unwrap()).unwrap();
+        serde_json::from_value(record["trajectories"].clone()).unwrap()
+    };
+    let refused = widen_source_with_rows_v1(
+        &parent,
+        "test|rows|1",
+        WideningOptimizerV1::Keep,
+        Some(&earlier),
+        &root.join("widen-earlier"),
+    )
+    .err()
+    .unwrap();
+    assert!(refused.contains("not played by the parent"), "{refused}");
+    let _ = fs::remove_dir_all(&root);
+}
